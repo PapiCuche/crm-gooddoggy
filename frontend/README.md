@@ -23,8 +23,8 @@ BACKEND_ORIGIN=http://127.0.0.1:8000 pnpm dev   # /api y /ws → Django (same-or
 
 ## Estructura
 
-- `src/app/`: `/login` y `/o` son el acceso (ver «Acceso»); `/o/[orgSlug]` es la ruta de tenant con el App Shell; `/` lleva a `/o`; `/status` muestra el estado del backend (consultado desde el servidor); `/demo` es la demo visual (ver abajo).
-- `src/components/app-shell/`: barra lateral, barra superior y workspace, con el lenguaje del Figma GOOD DOGGY. En pantallas pequeñas la barra lateral va en un menú (`<dialog>` nativo, con su botón de cerrar), que se abre con JavaScript: sin él, o antes de hidratar, la navegación no es alcanzable por debajo de `lg`. WCAG AA, `prefers-reduced-motion`.
+- `src/app/`: `/login` y `/o` son el acceso (ver «Acceso»); `/o/[orgSlug]` es el workspace de una organización (ver «Workspace de una organización»); `/` lleva a `/o`; `/status` muestra el estado del backend (consultado desde el servidor); `/demo` es la demo visual (ver abajo).
+- `src/components/app-shell/`: guardia de la organización (`TenantGate`), barra lateral, barra superior y workspace, con el lenguaje del Figma GOOD DOGGY. El workspace necesita JavaScript: hasta que la API responde, el HTML solo lleva el aviso de carga. En pantallas pequeñas la barra lateral va en un menú (`<dialog>` nativo, con su botón de cerrar). WCAG AA, `prefers-reduced-motion`.
 - `src/components/auth/`: formulario de acceso y lista de organizaciones.
 - `src/components/ui/`: componentes shadcn/ui y primitivas de formulario (`TextField`).
 - `src/lib/api/`: cliente generado por orval. **Nunca** tipos de API a mano: si cambia el contrato, regenerar el schema del backend y después ejecutar `pnpm api:generate`.
@@ -75,6 +75,19 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 - **`/o`:** organizaciones del usuario (`GET /api/v1/me/organizations/`). Con una sola entra directamente; con varias, lista para elegir; con ninguna, un estado vacío. `/o?elegir` muestra siempre la lista. Cada cambio de estado se anuncia en una región viva, y al reintentar tras un error el foco va al botón nuevo o a la lista que llegó.
 - **Sesión terminada:** `Providers` es el único punto que trata un 401 de una lectura: navega a `/login?next=…` con la ruta en la que estaba. Es una navegación completa, así que no queda estado en memoria.
 - La lista de organizaciones es la que devuelve la API para la sesión. Elegir una no autoriza nada: lo decide la API en cada petición a `/o/[orgSlug]`.
+
+## Workspace de una organización (F2-08, ADR-003 §5)
+
+`/o/[orgSlug]` no pinta nada del workspace hasta que la API responde a `GET /api/v1/o/{slug}/me/`, en cada entrada: la respuesta no se guarda entre visitas (`gcTime: 0`). La URL solo selecciona: quién es el usuario ahí y qué puede hacer lo dice la API.
+
+- **Guardia (`TenantGate`):** con la respuesta, monta el shell y deja el contexto en `useTenant()`. Sin sesión (401), `Providers` lleva a `/login` con vuelta a la misma ruta. Organización inexistente o sin membresía (404): la misma página de «no encontrada» que cualquier dirección que no existe. Cualquier otro error al entrar (organización suspendida, red, servidor): una tarjeta con el mensaje de su `code`, reintentar, cambiar de organización y cerrar sesión. Reintentar muestra el aviso de carga y, al terminar, deja el foco en el botón (si vuelve a fallar) o en el workspace (si abre). Con el workspace ya abierto, el contexto se vuelve a pedir al volver a la pestaña: un 401, un 403 o un 404 lo cierran; un fallo pasajero (red, servidor) no, y sigue en pantalla lo último que respondió la API.
+- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio». Cada fase añade los suyos.
+- **Es comodidad, no seguridad:** ocultar una entrada no protege nada. La API comprueba el permiso en cada petición, y una pantalla debe tratar el 403 aunque su entrada estuviera visible.
+- **Roles:** se muestran como etiquetas. Nada en la interfaz decide por el nombre o el código de un rol.
+- **Cambiar de organización:** enlace a `/o?elegir`.
+- **Cerrar sesión:** `POST /api/v1/auth/logout/`; al responder se vacía la caché de datos y se va a `/login`. Un 401 al cerrar significa que la sesión ya no existía y se trata igual. Otro error se muestra encima de las acciones y la sesión sigue abierta; sin red el cierre falla enseguida y no queda en cola. Desde que se pulsa hasta que la página cambia el botón queda ocupado (`aria-disabled`, sin perder el foco) y una segunda pulsación no cuenta. Está en la barra lateral y en la tarjeta de error de la guardia; `/o` (lista y «sin organizaciones») aún no lo ofrece.
+- **Título de la pestaña:** «Workspace · Good Doggy CRM» hasta que la API responde; después, el nombre de la organización.
+- **Inicio:** saluda con el nombre que da la API, muestra la organización y los roles. No hay datos de ejemplo: los módulos de negocio llegan con sus fases.
 
 ## Seguridad del navegador (F2-07)
 
