@@ -67,6 +67,14 @@ SESSION_ABSOLUTE_AGE = 7 * 24 * 60 * 60  # desde el inicio de sesión, haya o no
 SESSION_REFRESH_INTERVAL = 5 * 60  # cada cuánto se renueva la caducidad por inactividad
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_HTTPONLY = False  # legible por JS: el cliente la copia en X-CSRFToken (ADR-003 §3)
+# Límite de intentos de acceso (F2-03B): por contador, (intentos, ventana de calma, primer
+# bloqueo, bloqueo máximo), en segundos. Lo valida `apps.accounts.checks`. Valores
+# conservadores, pendientes de confirmación del PO (D-F2-8).
+LOGIN_THROTTLE = {
+    "identifier": (20, 15 * 60, 60, 60 * 60),  # la cuenta: no rechaza, endurece `pair` (D-F2-9)
+    "pair": (5, 15 * 60, 60, 15 * 60),  # una cuenta desde una dirección
+    "ip": (30, 15 * 60, 5 * 60, 60 * 60),  # muchas cuentas desde una dirección
+}
 ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {"default": env.database(env.required("DATABASE_URL"))}
@@ -89,6 +97,10 @@ CELERY_BEAT_SCHEDULE = {
     "accounts.purge_expired_sessions": {
         "task": "accounts.purge_expired_sessions",
         "schedule": crontab(hour=3, minute=17),
+    },
+    "accounts.purge_login_throttles": {  # F2-03B: cada hora, también a minuto fijo
+        "task": "accounts.purge_login_throttles",
+        "schedule": crontab(minute=7),
     },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
