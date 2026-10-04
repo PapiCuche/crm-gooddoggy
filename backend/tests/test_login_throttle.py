@@ -321,8 +321,16 @@ def test_a_simultaneous_burst_tries_no_more_passwords_than_the_limit(ana: User) 
     refused = [result for result in results if isinstance(result, throttle.Refused)]
     assert len(admitted) == 3 and len(refused) == 9  # el límite de `pair`
     assert sorted(len(started) for started in admitted) == [0, 0, 1]  # uno empieza el bloqueo
-    assert all(0 < result.seconds <= 60 for result in refused)
+    assert all(0 < result.seconds <= 60 for result in refused)  # nunca más que el bloqueo
     assert {row[0] for row in rows().values()} == {3}  # las tres claves; lo rechazado no cuenta
+
+
+def test_the_wait_never_exceeds_the_block_even_from_an_older_transaction(ana: User) -> None:
+    attempt = throttle.keys(EMAIL, "198.51.100.1")
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute("SELECT now()")  # el reloj de esta transacción queda fijado aquí…
+        assert together([lambda: fail(["198.51.100.1"] * 3)]) == [[INVALID] * 3]
+        assert throttle.blocked_for(attempt) == 60  # …antes de que otra empezara el bloqueo
 
 
 def test_a_burst_from_many_addresses_gets_one_attempt_each_once_the_account_is_hot(
