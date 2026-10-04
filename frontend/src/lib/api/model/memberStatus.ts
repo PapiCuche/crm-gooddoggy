@@ -5,10 +5,10 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
-import type { MembershipStatusEnum } from "./membershipStatusEnum";
+import type { ActiveOrSuspendedEnum } from "./activeOrSuspendedEnum";
 
 export interface MemberStatus {
   /** Identificador de la membresía. */
   id: string;
-  status: MembershipStatusEnum;
+  status: ActiveOrSuspendedEnum;
 }

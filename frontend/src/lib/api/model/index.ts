@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./activeOrSuspendedEnum";
 export * from "./error";
 export * from "./errorFields";
 export * from "./grant";
@@ -16,7 +17,6 @@ export * from "./membershipStatusEnum";
 export * from "./membersListParams";
 export * from "./memberStatus";
 export * from "./memberStatusChangeRequest";
-export * from "./memberStatusChangeStatusEnum";
 export * from "./memberUser";
 export * from "./organizationSummary";
 export * from "./paginatedMemberList";

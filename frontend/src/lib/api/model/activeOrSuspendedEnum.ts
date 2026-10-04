@@ -10,10 +10,10 @@
  * * `ACTIVE` - ACTIVE
  * * `SUSPENDED` - SUSPENDED
  */
-export type MemberStatusChangeStatusEnum =
-  (typeof MemberStatusChangeStatusEnum)[keyof typeof MemberStatusChangeStatusEnum];
+export type ActiveOrSuspendedEnum =
+  (typeof ActiveOrSuspendedEnum)[keyof typeof ActiveOrSuspendedEnum];
 
-export const MemberStatusChangeStatusEnum = {
+export const ActiveOrSuspendedEnum = {
   ACTIVE: "ACTIVE",
   SUSPENDED: "SUSPENDED",
 } as const;

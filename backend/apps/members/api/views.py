@@ -3,7 +3,6 @@
 from typing import Any
 from uuid import UUID
 
-from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
@@ -26,7 +25,7 @@ class MemberStatusChangeSerializer(serializers.Serializer[Any]):
 
 class MemberStatusSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField(help_text="Identificador de la membresía.")
-    status = serializers.ChoiceField(choices=settings.MEMBERSHIP_STATUSES)
+    status = serializers.ChoiceField(choices=[ACTIVE, SUSPENDED])
 
 
 class MemberStatusView(APIView):
@@ -54,6 +53,8 @@ class MemberStatusView(APIView):
         except ObjectDoesNotExist:
             raise NotFound from None
         except AccessDenied as denied:
+            if denied.reason is Denied.MEMBERSHIP:  # dejó de ser miembro mientras esperaba
+                raise NotFound from None
             if denied.reason is not Denied.LAST_OWNER:
                 raise
             message = "Debe quedar al menos un Owner activo en la organización."

@@ -5,8 +5,8 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
-import type { MemberStatusChangeStatusEnum } from "./memberStatusChangeStatusEnum";
+import type { ActiveOrSuspendedEnum } from "./activeOrSuspendedEnum";
 
 export interface MemberStatusChangeRequest {
-  status: MemberStatusChangeStatusEnum;
+  status: ActiveOrSuspendedEnum;
 }

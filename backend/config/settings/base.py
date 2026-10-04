@@ -166,7 +166,10 @@ SPECTACULAR_SETTINGS = {
     "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
     "SERVE_PERMISSIONS": ["core.api.permissions.Public"],  # ruta de plataforma (ADR-014 §4)
     # Un nombre por enumeración: sin esto la primera `status` del contrato sería `StatusEnum`.
-    "ENUM_NAME_OVERRIDES": {"MembershipStatusEnum": MEMBERSHIP_STATUSES},
+    "ENUM_NAME_OVERRIDES": {
+        "MembershipStatusEnum": MEMBERSHIP_STATUSES,
+        "ActiveOrSuspendedEnum": ["ACTIVE", "SUSPENDED"],  # los dos que la API cambia (F2-19)
+    },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
 STORAGE_BACKEND = env.optional("STORAGE_BACKEND", "s3")  # s3 | memory (tests)
