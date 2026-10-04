@@ -60,6 +60,7 @@ export function MembersList() {
     setMore("busy");
     const result = await members.fetchNextPage();
     setMore(result.isFetchNextPageError ? "idle" : "arrived");
+    if (result.error?.status === 403) heading.current?.focus(); // la lista se cierra: al título
   }
 
   async function retry() {

@@ -196,6 +196,18 @@ describe("MembersList", () => {
     await waitFor(() => expect(view.client.getQueryCache().getAll()).toHaveLength(0));
   });
 
+  it("una negativa al cargar más también cierra la lista, con el foco en el título", async () => {
+    mockApi({
+      [LIST]: { status: 200, body: { results: [ana], next: "abc" } },
+      [`${LIST}?cursor=abc`]: { status: 403, body: { code: "PERMISSION_DENIED" } },
+    });
+    screenOf();
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No tienes permiso para ver");
+    expect(screen.queryByText("ana@acme.pe")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+  });
+
   it("sin sesión no enseña un error: el login lo decide el proveedor", async () => {
     mockApi({ [LIST]: { status: 401, body: { code: "NOT_AUTHENTICATED" } } });
     const { client } = screenOf();
