@@ -53,7 +53,11 @@ export function MemberStatusAction({
     mutation: {
       networkMode: "always",
       onSuccess: async (result, { membershipId }) => {
-        // Una lectura en vuelo traería el estado anterior a la escritura y pisaría la fila.
+        // Una lectura en vuelo traería el estado anterior a la escritura y pisaría la fila: se
+        // cancela. Si era la lista entera (no «Cargar más»), se vuelve a pedir después: quien
+        // la pidió, otra fila con la pantalla desfasada, sigue necesitándola.
+        const read = queryClient.getQueryState(listKey);
+        const rereading = !!read && read.fetchStatus !== "idle" && !read.fetchMeta?.fetchMore;
         await queryClient.cancelQueries({ queryKey: listKey });
         if (result.id !== membershipId) {
           return void queryClient.invalidateQueries({ queryKey: listKey });
@@ -74,6 +78,7 @@ export function MemberStatusAction({
         );
         setDone(result.status); // lo que respondió la API, no lo que se pidió
         setTarget(null);
+        if (rereading) void queryClient.invalidateQueries({ queryKey: listKey });
       },
       onError: (error) => {
         if (!STALE.has(error.code)) return;

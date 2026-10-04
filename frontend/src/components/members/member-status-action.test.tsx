@@ -272,6 +272,42 @@ describe("MemberStatusAction", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("con la pantalla desfasada la confirmación se cierra, y el foco de quien se fue no se toca", async () => {
+    let rows = [member("ana"), member("luis"), member("eva", "SUSPENDED")];
+    const api = mockApi({
+      [LIST]: () => list(rows),
+      [STATUS("luis")]: { status: 409, body: { code: "INVALID_TRANSITION" } },
+      [STATUS("eva")]: { status: 200, body: { id: "eva", status: "ACTIVE" } },
+    });
+    renderApp(ui());
+    const luis = await ask();
+    const eva = await ask("Reactivar a eva@acme.pe");
+    const answerEva = hold(api);
+    fireEvent.click(within(eva).getByRole("button", { name: "Sí, reactivar" })); // en vuelo
+    await waitFor(() => expect(sent(api)).toHaveLength(1));
+    const answerLuis = hold(api);
+    fireEvent.click(within(luis).getByRole("button", { name: "Sí, suspender" }));
+    await waitFor(() => expect(sent(api)).toHaveLength(2));
+    const elsewhere = within(eva).getByRole("button", { name: "Cancelar" });
+    elsewhere.focus(); // el usuario ya está en otra fila cuando llega la negativa
+    const reread = hold(api); // la lista que pide la fila desfasada queda en vuelo
+    rows = [member("ana"), member("luis", "DEACTIVATED"), member("eva", "SUSPENDED")];
+    answerLuis();
+    expect(await screen.findByRole("alert")).toHaveTextContent("El estado de luis@acme.pe");
+    expect(screen.getAllByRole("group")).toHaveLength(1); // la de luis se cerró sin esperar
+    expect(screen.getByRole("button", { name: "Suspender a luis@acme.pe" })).toBeInTheDocument();
+    expect(elsewhere).toHaveFocus();
+    // El éxito de otra fila cancela esa lectura (traería a eva como antes) y la vuelve a pedir.
+    rows = [member("ana"), member("luis", "DEACTIVATED"), member("eva")]; // la API ya la reactivó
+    answerEva();
+    await screen.findByRole("button", { name: "Suspender a eva@acme.pe" });
+    reread();
+    await waitFor(() => expect(row("luis@acme.pe")).toHaveTextContent("Desactivado"));
+    expect(calls(api, "GET")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /luis@acme.pe/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeVisible();
+  });
+
   it("una lectura en vuelo no pisa la fila que acaba de cambiar", async () => {
     const api = mockApi({
       [LIST]: { status: 200, body: { results: [member("ana"), member("luis")], next: "abc" } },
@@ -324,6 +360,7 @@ describe("MemberStatusAction", () => {
     expect(row("luis@acme.pe")).toHaveTextContent("Suspendido"); // la lista ya lo dice
     expect(confirm).toHaveTextContent("Suspendiendo…"); // y la pregunta no se da la vuelta
     expect(screen.getByRole("group")).toHaveAccessibleName("Suspender a luis@acme.pe");
+    expect(screen.getByRole("group")).toHaveAccessibleDescription(/¿Suspender a luis@acme.pe/);
     release();
     await screen.findByRole("button", { name: "Reactivar a luis@acme.pe" });
     await tick();
