@@ -73,7 +73,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 - **Rechazos:** el mensaje sale del `code` de la API. `INVALID_CREDENTIALS` no dice si falló el correo o la contraseña. `RATE_LIMITED` muestra la espera de `Retry-After`, en minutos hacia arriba.
 - **Destino (`next`):** `safeNext` (`src/lib/next-path.ts`) resuelve el valor como lo haría el navegador y devuelve la ruta ya resuelta, solo si queda en este origen. Se cambian por `/o`: una URL absoluta, `//`, `\`, un carácter de control, una ruta que tras resolver sus puntos empieza por `//` (`/.//otro.sitio`), el propio `/login` y lo que no es una página (`/api/`, `/_next/`). Garantiza que el destino no sale del origen, no que la página exista.
 - **`/o`:** organizaciones del usuario (`GET /api/v1/me/organizations/`). Con una sola entra directamente; con varias, lista para elegir; con ninguna, un estado vacío. `/o?elegir` muestra siempre la lista. Cada cambio de estado se anuncia en una región viva, y al reintentar tras un error el foco va al botón nuevo o a la lista que llegó. Con el error en pantalla, volver a la pestaña o recuperar la red no pide nada: lo hace «Reintentar», y así no se pierden el foco ni un aviso del cierre de sesión.
-- **Sesión terminada:** `Providers` es el único punto que trata un 401 de una lectura: navega a `/login?next=…` con la ruta en la que estaba. Es una navegación completa, así que no queda estado en memoria.
+- **Sesión terminada:** `Providers` es el único punto que trata un 401 de una lectura o de una escritura: navega a `/login?next=…` con la ruta en la que estaba. El cierre de sesión trata su propio 401 (`meta.ownSessionEnd`). Es una navegación completa, así que no queda estado en memoria.
 - La lista de organizaciones es la que devuelve la API para la sesión. Elegir una no autoriza nada: lo decide la API en cada petición a `/o/[orgSlug]`.
 
 ## Workspace de una organización (F2-08, ADR-003 §5)
@@ -100,7 +100,20 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 - **Navegación:** la entrada «Miembros» pide el permiso `users.view`. Es comodidad: quien abre la URL sin el permiso ve el mensaje de «sin permiso» porque la API responde 403.
 - **Roles y estado:** se muestran tal como llegan. Nada decide por el nombre o el código de un rol. El estado es el de la membresía, no el de la cuenta.
 - **Título de la pestaña:** «Miembros · organización · Good Doggy CRM». Lo pone el shell a partir de la entrada de navegación de la ruta.
-- Solo lectura: invitar, activar, desactivar y cambiar roles son otros work items.
+- Invitar, dar de baja y cambiar roles son otros work items.
+
+### Suspender y reactivar (F2-21)
+
+Cada fila ofrece «Suspender» (miembro activo) o «Reactivar» (miembro suspendido), con `PUT /api/v1/o/{slug}/members/{id}/status/` (F2-19). Componente: `components/members/member-status-action.tsx`.
+
+- **A quién se ofrece:** a quien tiene el permiso `users.manage` según el contexto de la API. Nunca en la fila propia ni en miembros invitados o dados de baja. Es comodidad: las reglas las aplica la API (ADR-017) y un 403 se explica en la fila.
+- **Confirmación:** en la propia fila, con la consecuencia («perderá el acceso… y se cerrarán sus sesiones»), asociada al grupo (`aria-describedby`). Nada se envía sin confirmar. Al abrirla el foco va a «Cancelar».
+- **Lo que se confirma queda fijado al abrir.** Si la lista cambia debajo (otra persona suspendió al miembro), la pregunta y lo que se envía no se dan la vuelta. Si el miembro ya está en el estado pedido y nada se está enviando, la confirmación se cierra y se anuncia ese estado.
+- **Un envío:** una marca síncrona impide que dos pulsaciones seguidas sean dos peticiones; el botón queda ocupado (`aria-disabled`) hasta la respuesta. Sin red falla y se dice: una escritura no queda en cola.
+- **Éxito:** se cancela cualquier lectura de la lista que estuviera en vuelo (traería el estado anterior a la escritura) y la fila cambia en la lista ya cargada, con el estado que respondió la API. No se vuelven a pedir sus páginas, salvo que lo cancelado fuera una lectura de la lista entera: esa se repite después. Un «Cargar más» cancelado así vuelve a quedar libre: hay que pulsarlo otra vez. El resultado se anuncia (`role="status"`) y el foco pasa a la acción nueva si el usuario no se ha ido a otra parte.
+- **Errores que conservan la acción** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en la fila, por código, y el mismo botón reintenta.
+- **Pantalla desfasada** (`INVALID_TRANSITION`, `NOT_FOUND`): la lista se vuelve a pedir, y la acción, o la fila entera, puede desaparecer. Por eso el aviso («El estado de … ya había cambiado») vive en la lista (`role="alert"`), no en la fila, y el foco va al título si seguía en esa acción (o en ninguna parte). Si la nueva lectura falla, el aviso se queda y la lista no cambia. El aviso se quita al abrir otra confirmación.
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ## Seguridad del navegador (F2-07)
 

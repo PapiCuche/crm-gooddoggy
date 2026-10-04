@@ -46,6 +46,7 @@
       "CSRF_FAILED": "La página caducó. Recárgala e inténtalo de nuevo.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "ORG_SUSPENDED": "Esta organización está suspendida.",
+      "LAST_OWNER": "Debe quedar al menos un Owner activo en la organización.",
       "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos."
     }
   },
@@ -100,6 +101,23 @@
     "more": "Cargar más",
     "loadingMore": "Cargando más…",
     "loading": "Cargando miembros…",
-    "denied": "No tienes permiso para ver los miembros de esta organización."
+    "denied": "No tienes permiso para ver los miembros de esta organización.",
+    "action": {
+      "suspend": "Suspender",
+      "reactivate": "Reactivar",
+      "suspendLabel": "Suspender a {name}",
+      "reactivateLabel": "Reactivar a {name}",
+      "suspendAsk": "¿Suspender a {name}? Perderá el acceso a {organization} y se cerrarán sus sesiones.",
+      "reactivateAsk": "¿Reactivar a {name}? Volverá a entrar a {organization} con los roles que tenía.",
+      "suspendConfirm": "Sí, suspender",
+      "reactivateConfirm": "Sí, reactivar",
+      "suspendBusy": "Suspendiendo…",
+      "reactivateBusy": "Reactivando…",
+      "suspendDone": "{name} quedó suspendido.",
+      "reactivateDone": "{name} quedó activo.",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para cambiar a este miembro.",
+      "stale": "El estado de {name} ya había cambiado. Revisa la lista."
+    }
   }
 }

@@ -5,6 +5,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { MemberStatusAction } from "@/components/members/member-status-action";
 import { Button } from "@/components/ui/button";
 import { getMembersListQueryKey, membersList } from "@/lib/api/client";
 import type { Member } from "@/lib/api/model";
@@ -21,9 +22,12 @@ function fullName(user: Member["user"]): string {
 export function MembersList() {
   const t = useTranslations();
   const format = useFormatter();
-  const { organization } = useTenant();
+  const { organization, membership_id: own, permissions } = useTenant();
+  // Comodidad, no autorización: sin el permiso la API responde 403 a la acción (ADR-017).
+  const manages = permissions.some((grant) => grant.code === "users.manage");
+  const listKey = [...getMembersListQueryKey(organization.slug), "pages"];
   const members = useInfiniteQuery<Awaited<ReturnType<typeof membersList>>, ApiError>({
-    queryKey: [...getMembersListQueryKey(organization.slug), "pages"],
+    queryKey: listKey,
     queryFn: ({ pageParam, signal }) =>
       membersList(organization.slug, pageParam ? { cursor: pageParam as string } : undefined, {
         signal,
@@ -40,6 +44,14 @@ export function MembersList() {
   const still = (control: HTMLElement | null) =>
     document.activeElement === document.body || document.activeElement === control;
   const [retrying, setRetrying] = useState(false);
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-21). El aviso vive aquí:
+  // la acción, o su fila entera, puede desaparecer cuando llega la lista nueva.
+  const [notice, setNotice] = useState<string | null>(null);
+  function stale(name: string, here: boolean) {
+    setNotice(t("members.action.stale", { name }));
+    void members.refetch();
+    if (here) heading.current?.focus();
+  }
   // Como la guardia: una negativa cierra la lista aunque ya estuviera en pantalla, y sigue
   // cerrada hasta que la API responde bien (un fallo pasajero posterior no la reabre).
   const status = members.error?.status;
@@ -82,6 +94,11 @@ export function MembersList() {
   } else if (members.data) {
     body = (
       <>
+        {notice ? (
+          <p role="alert" className="text-danger">
+            {notice}
+          </p>
+        ) : null}
         <ul aria-label={t("members.title")} className="flex flex-col gap-2">
           {rows.map((member) => (
             <li
@@ -123,6 +140,19 @@ export function MembersList() {
                   })}
                 </span>
               </p>
+              {manages &&
+              member.id !== own &&
+              (member.status === "ACTIVE" || member.status === "SUSPENDED") ? (
+                <MemberStatusAction
+                  slug={organization.slug}
+                  member={member}
+                  name={fullName(member.user) || member.user.email}
+                  organization={organization.name}
+                  listKey={listKey}
+                  onAsk={() => setNotice(null)}
+                  onStale={stale}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

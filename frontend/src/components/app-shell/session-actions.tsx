@@ -27,6 +27,7 @@ export function SessionActions({ switcher = true }: { switcher?: boolean }) {
   const logout = useAuthLogout({
     mutation: {
       networkMode: "always",
+      meta: { ownSessionEnd: true }, // su 401 es «ya estaba cerrada»: no vuelve a esta pantalla
       onSuccess: leave,
       onError: (error) => error.status === 401 && leave(),
     },
