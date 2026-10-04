@@ -5,6 +5,9 @@ un savepoint que toma el bloqueo del rol Owner de la organización, relee los pe
 actor bajo ese bloqueo, comprueba todas las reglas, escribe y audita. Una denegación no
 escribe nada. `is_owner_role` solo identifica al rol Owner para dos restricciones (permisos
 sensibles y último Owner); por sí solo no concede nada.
+
+`ensure_can_manage_member` aplica las mismas reglas al estado de una membresía, que escribe
+`organizations` (F2-19, ADR-017): comprueba y conserva el bloqueo; no escribe ni audita.
 """
 
 from collections.abc import Iterable, Iterator
@@ -111,13 +114,45 @@ def _owner_remains(alias: str, owner: Role, without_membership_id: UUID) -> None
 
 
 def ensure_owner_remains(ctx: TenantContext, *, without_membership_id: UUID) -> None:
-    """Siempre queda un Owner activo sin contar a esa membresía. Para quien la desactive (E01-07).
+    """Siempre queda un Owner activo sin contar a esa membresía. Solo esa garantía, sin reglas
+    de escalada: suspender una membresía pasa por `ensure_can_manage_member` (F2-19).
 
     Toma el bloqueo del rol Owner: debe llamarse en el mismo `tenant_scope` y antes de escribir.
     No abre savepoint: el bloqueo dura hasta el final de ese scope, también si deniega.
     """
     alias = require_scope(ctx)
     _owner_remains(alias, _lock_owner_role(alias), without_membership_id)
+
+
+def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving: bool) -> None:
+    """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017). Para `apps.members`.
+
+    Permiso `users.manage`; nadie cambia la suya; el actor cubre todas las concesiones de todos
+    los roles del miembro, como para quitárselos (PO-1); y si `leaving` y el miembro es un Owner
+    activo, queda otro Owner activo. Una membresía de otra organización no existe: `DoesNotExist`.
+
+    Si no deniega, el bloqueo del rol Owner dura hasta el final del `tenant_scope`: quien llama
+    escribe a continuación, en ese mismo scope. Una denegación lo libera y no escribe nada.
+    """
+    membership_id = UUID(str(membership_id))
+    with _change(ctx, "users.manage") as actor:
+        if membership_id == actor.ectx.membership_id:
+            raise AccessDenied(Denied.SELF)
+        status = _member(actor.alias, membership_id)
+        held = RolePermission.objects.using(actor.alias)
+        grants = held.filter(role__assignments__membership_id=membership_id)
+        actor.must_cover(grants.values_list("permission_id", "scope"))
+        assigned = MembershipRole.objects.using(actor.alias)
+        holds = assigned.filter(membership_id=membership_id, role=actor.owner).exists()
+        if leaving and status == ACTIVE and holds:  # si ya no está activa, no deja de contar
+            _owner_remains(actor.alias, actor.owner, membership_id)
+
+
+def _member(alias: str, membership_id: UUID) -> str:
+    """Estado de la membresía. Es de esta organización (la filtra RLS), o no existe."""
+    memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
+    status: str = memberships.using(alias).values_list("status", flat=True).get(pk=membership_id)
+    return status
 
 
 def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str | None) -> None:
@@ -150,8 +185,7 @@ def assign_role(ctx: TenantContext, *, membership_id: UUID, role_id: UUID) -> No
         if membership_id == actor.ectx.membership_id:
             raise AccessDenied(Denied.SELF)
         role = Role.objects.using(actor.alias).get(pk=role_id)
-        memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
-        memberships.using(actor.alias).get(pk=membership_id)  # de esta organización, o no existe
+        _member(actor.alias, membership_id)
         actor.must_cover(role.grants.using(actor.alias).values_list("permission_id", "scope"))
         _, created = MembershipRole.objects.using(actor.alias).get_or_create(
             membership_id=membership_id, role=role

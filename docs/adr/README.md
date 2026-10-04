@@ -22,6 +22,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-014](ADR-014-api-errors-and-authentication.md) | Contrato de errores de la API, autenticación por sesión y rutas de plataforma | Accepted | 2026-10-02 |
 | [ADR-015](ADR-015-autonomous-delivery-program.md) | Programa de entrega autónoma con merge por gates (modifica la aprobación y el merge de ADR-009 dentro del programa) | Accepted | 2026-10-02 |
 | [ADR-016](ADR-016-api-list-convention.md) | Convención de los listados de la API: paginación por cursor | Accepted | 2026-10-04 |
+| [ADR-017](ADR-017-member-administration-module.md) | Administración de miembros en un módulo de orquestación (`apps.members`); reglas para suspender y reactivar | Accepted | 2026-10-04 |
 
 ## Plantilla
 

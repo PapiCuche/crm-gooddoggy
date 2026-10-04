@@ -24,6 +24,8 @@ import type {
 import type {
   Error,
   LoginRequest,
+  MemberStatus,
+  MemberStatusChangeRequest,
   MembersListParams,
   OrganizationSummary,
   PaginatedMemberList,
@@ -788,3 +790,115 @@ export function useMembersList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getMembersSetStatusUrl = (orgSlug: string, membershipId: string) => {
+  return `/api/v1/o/${orgSlug}/members/${membershipId}/status/`;
+};
+
+/**
+ * Suspende (`SUSPENDED`) o reactiva (`ACTIVE`) a un miembro. Repetir la petición no cambia
+ * nada. 403: sin `users.manage`, uno mismo, o un miembro con un rol que el actor no podría
+ * asignar. 409 `LAST_OWNER`: sería el último Owner activo. 409 `INVALID_TRANSITION`: la
+ * membresía está invitada o dada de baja.
+ */
+export const membersSetStatus = async (
+  orgSlug: string,
+  membershipId: string,
+  memberStatusChangeRequest: MemberStatusChangeRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MemberStatus> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<MemberStatus>(getMembersSetStatusUrl(orgSlug, membershipId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(memberStatusChangeRequest),
+  });
+};
+
+export const getMembersSetStatusMutationKey = () => ["membersSetStatus"] as const;
+
+export const getMembersSetStatusMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof membersSetStatus>>,
+    TError,
+    MembersSetStatusMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof membersSetStatus>>,
+  TError,
+  MembersSetStatusMutationVariables,
+  TContext
+> => {
+  const mutationKey = getMembersSetStatusMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof membersSetStatus>>,
+    MembersSetStatusMutationVariables
+  > = (props) => {
+    const { orgSlug, membershipId, data } = props ?? {};
+
+    return membersSetStatus(orgSlug, membershipId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MembersSetStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof membersSetStatus>>
+>;
+export type MembersSetStatusMutationBody = MemberStatusChangeRequest;
+export type MembersSetStatusMutationError = ErrorType<Error>;
+export type MembersSetStatusMutationVariables = {
+  orgSlug: string;
+  membershipId: string;
+  data: MemberStatusChangeRequest;
+};
+
+export const useMembersSetStatus = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof membersSetStatus>>,
+      TError,
+      MembersSetStatusMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof membersSetStatus>>,
+  TError,
+  MembersSetStatusMutationVariables,
+  TContext
+> => {
+  return useMutation(getMembersSetStatusMutationOptions(options), queryClient);
+};
