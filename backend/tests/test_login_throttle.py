@@ -177,8 +177,9 @@ def test_other_addresses_never_lock_the_owner_out(
     assert reply(login(stranger, password=WRONG)) == INVALID
     refused = login(stranger)
     assert reply(refused) == (429, LIMITED) and refused.headers["Retry-After"] == "120"
-    held = json.loads(audit(migrator)[-1][7])
-    assert (held["scope"], held["seconds"]) == ("identifier", 120) and held["failures"] >= 5
+    blocks = [json.loads(row[7]) for row in audit(migrator) if "throttled" in row[0]]
+    assert [held["seconds"] for held in blocks] == [120] + [240] * 5 + [400] * 10 + [120]
+    assert blocks[-1]["scope"] == "identifier" and blocks[-1]["failures"] >= 5
 
 
 def test_a_hot_account_makes_each_address_wait_longer_up_to_its_own_ceiling(ana: User) -> None:
@@ -402,7 +403,7 @@ def test_a_block_that_cannot_be_audited_does_not_change_the_reply(
 def test_the_purge_keeps_live_counters(ana: User, migrator: psycopg.Connection[Any]) -> None:
     job = base.CELERY_BEAT_SCHEDULE["accounts.purge_login_throttles"]
     assert (purge_login_throttles.name, purge_login_throttles.tenancy) == (job["task"], "platform")
-    assert len(job["schedule"].hour) == 24  # cada hora
+    assert [len(job["schedule"].hour), len(job["schedule"].minute)] == [24, 1]  # una vez cada hora
     fail(["198.51.100.1"] * 3)  # deja un bloqueo de 60 s en la cuenta con esa dirección
     fail(["198.51.100.2"], "luis@example.com")  # y contadores sin bloqueo
     total = LoginThrottle.objects.count()
@@ -441,9 +442,7 @@ def test_the_purge_keeps_live_counters(ana: User, migrator: psycopg.Connection[A
         {"ip": (7, 900, 4000, 3600)},  # el primer bloqueo, mayor que el máximo
         {"identifier": (5, 900, 30, 400)},  # la cuenta caliente esperaría menos que sin calentar
         {"identifier": (5, 900, 120, 150)},
-        {
-            "pair": (3, 59, 60, 200)
-        },  # una ventana de menos de 60 s (o intercambiada con los intentos)
+        {"pair": (3, 59, 60, 200)},  # ventana de menos de 60 s (o intercambiada con los intentos)
         {"ip": (1001, 900, 300, 3600)},  # más de 1000 intentos: nunca bloquearía
     ],
 )
