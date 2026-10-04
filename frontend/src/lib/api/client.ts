@@ -21,7 +21,15 @@ import type {
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { Error, LoginRequest, OrganizationSummary, SelfContext, Session } from "./model";
+import type {
+  Error,
+  LoginRequest,
+  MembersListParams,
+  OrganizationSummary,
+  PaginatedMemberList,
+  SelfContext,
+  Session,
+} from "./model";
 
 import { apiFetch } from "../http";
 import type { ErrorType } from "../http";
@@ -633,6 +641,146 @@ export function useMeContext<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getMeContextQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getMembersListUrl = (orgSlug: string, params?: MembersListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/members/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/members/`;
+};
+
+/**
+ * Quién pertenece a la organización, en cualquier estado, y con qué roles. Paginado por
+ * orden de alta (ADR-016).
+ */
+export const membersList = async (
+  orgSlug: string,
+  params?: MembersListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedMemberList> => {
+  return apiFetch<PaginatedMemberList>(getMembersListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getMembersListQueryKey = (orgSlug: string, params?: MembersListParams) => {
+  return [`/api/v1/o/${orgSlug}/members/`, ...(params ? [params] : [])] as const;
+};
+
+export const getMembersListQueryOptions = <
+  TData = Awaited<ReturnType<typeof membersList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: MembersListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof membersList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getMembersListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof membersList>>> = ({ signal }) =>
+    membersList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof membersList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type MembersListQueryResult = NonNullable<Awaited<ReturnType<typeof membersList>>>;
+export type MembersListQueryError = ErrorType<Error>;
+
+export function useMembersList<
+  TData = Awaited<ReturnType<typeof membersList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | MembersListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof membersList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof membersList>>,
+          TError,
+          Awaited<ReturnType<typeof membersList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useMembersList<
+  TData = Awaited<ReturnType<typeof membersList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: MembersListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof membersList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof membersList>>,
+          TError,
+          Awaited<ReturnType<typeof membersList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useMembersList<
+  TData = Awaited<ReturnType<typeof membersList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: MembersListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof membersList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useMembersList<
+  TData = Awaited<ReturnType<typeof membersList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: MembersListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof membersList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getMembersListQueryOptions(orgSlug, params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

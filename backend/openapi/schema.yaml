@@ -168,6 +168,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/members/:
+    get:
+      operationId: members_list
+      description: |-
+        Quién pertenece a la organización, en cualquier estado, y con qué roles. Paginado por
+        orden de alta (ADR-016).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - members
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMemberList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     Error:
@@ -213,6 +275,31 @@ components:
       required:
       - email
       - password
+    Member:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identificador de la membresía.
+        status:
+          $ref: '#/components/schemas/MembershipStatusEnum'
+        joined_at:
+          type: string
+          format: date-time
+        user:
+          $ref: '#/components/schemas/MemberUser'
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleName'
+          description: 'Solo para mostrar: no autorizan nada.'
+      required:
+      - id
+      - joined_at
+      - roles
+      - status
+      - user
     MemberOrganization:
       type: object
       properties:
@@ -244,6 +331,18 @@ components:
       - first_name
       - id
       - last_name
+    MembershipStatusEnum:
+      enum:
+      - INVITED
+      - ACTIVE
+      - SUSPENDED
+      - DEACTIVATED
+      type: string
+      description: |-
+        * `INVITED` - INVITED
+        * `ACTIVE` - ACTIVE
+        * `SUSPENDED` - SUSPENDED
+        * `DEACTIVATED` - DEACTIVATED
     OrganizationSummary:
       type: object
       properties:
@@ -258,6 +357,20 @@ components:
       - id
       - name
       - slug
+    PaginatedMemberList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     RoleName:
       type: object
       properties:

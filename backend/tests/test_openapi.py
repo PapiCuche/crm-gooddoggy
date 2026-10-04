@@ -33,6 +33,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/auth/session/",
         "/api/v1/me/organizations/",
         "/api/v1/o/{org_slug}/me/",
+        "/api/v1/o/{org_slug}/members/",
     }
     login = schema["paths"]["/api/v1/auth/login/"]["post"]
     assert login["operationId"] == "auth_login" and "security" not in login  # sin sesión previa

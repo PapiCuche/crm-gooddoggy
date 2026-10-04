@@ -154,6 +154,8 @@ REST_FRAMEWORK = {
     # tenant y alcance.
     "DEFAULT_PAGINATION_CLASS": "core.api.pagination.CursorPagination",
 }
+# Copia de `OrganizationMembership.Status` (los módulos de L2 no se importan): un test las compara.
+MEMBERSHIP_STATUSES = ["INVITED", "ACTIVE", "SUSPENDED", "DEACTIVATED"]
 SPECTACULAR_SETTINGS = {
     "TITLE": "Good Doggy CRM API",
     "DESCRIPTION": "Contrato de la API del backend. Fuente para el cliente TypeScript (orval).",
@@ -162,6 +164,8 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,  # tipos separados de petición/respuesta para orval
     "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
     "SERVE_PERMISSIONS": ["core.api.permissions.Public"],  # ruta de plataforma (ADR-014 §4)
+    # Un nombre por enumeración: sin esto la primera `status` del contrato sería `StatusEnum`.
+    "ENUM_NAME_OVERRIDES": {"MembershipStatusEnum": MEMBERSHIP_STATUSES},
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
 STORAGE_BACKEND = env.optional("STORAGE_BACKEND", "s3")  # s3 | memory (tests)

@@ -6,17 +6,18 @@ usuario es staff de plataforma. Todo se evalúa dentro del `tenant_scope` del pr
 RLS sigue siendo la segunda barrera. Ante cualquier duda se deniega o se falla.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import reduce
 from operator import or_
 from types import MappingProxyType
+from typing import Any
 from uuid import UUID
 
 from django.apps import apps
 from django.core.exceptions import PermissionDenied
-from django.db.models import Model, QuerySet
+from django.db.models import F, Model, QuerySet
 
 from apps.access.catalog import BY_CODE, PermissionDef, Scope
 from apps.access.models import Role, RolePermission
@@ -163,4 +164,25 @@ def organization_of(ectx: ExecutionContext) -> dict[str, object]:
     found: dict[str, object] = organizations.values("id", "slug", "name").get(
         pk=ectx.tenant.organization_id
     )
+    return found
+
+
+def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
+    """Las membresías de la organización, con su usuario. Las filtra RLS; quién puede verlas lo
+    decide el permiso de la vista (`ScopeFilter`)."""
+    _bound(ectx)
+    rows = apps.get_model("organizations", "OrganizationMembership")._default_manager
+    found: QuerySet[Any] = rows.using(require_scope(ectx.tenant)).select_related("user")
+    return found
+
+
+def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:
+    """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir. No comprueba
+    ningún permiso: quien llama pasa membresías que ya filtró (`ScopeFilter`)."""
+    _bound(ectx)
+    roles = Role.objects.using(require_scope(ectx.tenant))
+    held = roles.filter(assignments__membership_id__in=members).order_by("name", "code")
+    found: dict[UUID, list[Any]] = {}
+    for row in held.values("code", "name", member=F("assignments__membership_id")):
+        found.setdefault(row.pop("member"), []).append(row)
     return found
