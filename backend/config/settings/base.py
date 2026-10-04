@@ -169,6 +169,7 @@ SPECTACULAR_SETTINGS = {
     "ENUM_NAME_OVERRIDES": {
         "MembershipStatusEnum": MEMBERSHIP_STATUSES,
         "ActiveOrSuspendedEnum": ["ACTIVE", "SUSPENDED"],  # los dos que la API cambia (F2-19)
+        "ScopesEnum": "apps.access.catalog.Scope",  # un alcance: `scopes` (F2-11), `scope` (F2-22)
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
