@@ -313,6 +313,32 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Lo que la auditoría no ve:** es estática. No detecta una consulta escrita a mano dentro del manejador. Tampoco ve una vista que redefina `setup` o `http_method_not_allowed` para atender otro método. Una vista de `MEMBER` solo puede leer el contexto de ejecución, la organización de ese contexto, los roles de la propia membresía (código y nombre) y `request.user`; eso se revisa en el PR que añade la ruta.
 - Sin sesión, 401; sin membresía activa, en otra organización o con un slug inexistente, el mismo 404 con cualquier método; escribir siendo miembro, 403.
 
+## Directorio de miembros (F2-16, ADR-016)
+
+`GET /api/v1/o/{slug}/members/` lista quién pertenece a la organización. Exige el permiso `users.view` (sin él, 403; sin membresía activa, 404).
+
+```json
+{
+  "results": [
+    {
+      "id": "…",
+      "status": "ACTIVE",
+      "joined_at": "2026-10-04T15:49:34Z",
+      "user": {"id": "…", "email": "ana@acme.pe", "first_name": "Ana", "last_name": "López"},
+      "roles": [{"code": "owner", "name": "Owner"}]
+    }
+  ],
+  "next": null
+}
+```
+
+- **Qué incluye:** todas las membresías de la organización, en cualquier estado (`INVITED`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`). `id` es el de la membresía; `joined_at`, su fecha de alta.
+- **Qué no incluye:** contraseña, marcas de plataforma ni las otras organizaciones del usuario. La tabla `users` es global: el listado sale de `organization_memberships` (RLS con FORCE) y solo une los usuarios de esas filas.
+- **Roles:** nombre y código, para mostrar. Nada decide por ellos.
+- **Paginación:** por cursor, en orden de alta (`?limit=`, `?cursor=`; ver «Listados»). Dos consultas por página, sean cuantos sean los miembros: las membresías con su usuario y los roles de esa página.
+- **Solo lectura.** Invitar, activar, desactivar y cambiar roles son otros work items (E01-06, E01-07, E01-08).
+- `apps.access` lee las membresías con `apps.get_model`, como el motor de autorización: los módulos de L2 no se importan entre sí.
+
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 
 `apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Son internos: no hay API HTTP (E01-08).

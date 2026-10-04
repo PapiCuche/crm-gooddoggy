@@ -6,20 +6,21 @@ usuario es staff de plataforma. Todo se evalúa dentro del `tenant_scope` del pr
 RLS sigue siendo la segunda barrera. Ante cualquier duda se deniega o se falla.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import reduce
 from operator import or_
 from types import MappingProxyType
+from typing import Any
 from uuid import UUID
 
 from django.apps import apps
 from django.core.exceptions import PermissionDenied
-from django.db.models import Model, QuerySet
+from django.db.models import F, Model, QuerySet
 
 from apps.access.catalog import BY_CODE, PermissionDef, Scope
-from apps.access.models import Role, RolePermission
+from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.scopes import policy_for
 from core.db.models import TenantModel
 from core.tenancy.context import ActorType, TenantContext, TenantContextError
@@ -163,4 +164,27 @@ def organization_of(ectx: ExecutionContext) -> dict[str, object]:
     found: dict[str, object] = organizations.values("id", "slug", "name").get(
         pk=ectx.tenant.organization_id
     )
+    return found
+
+
+def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
+    """Las membresías de la organización, con su usuario. Las filtra RLS; quién puede verlas lo
+    decide el permiso de la vista (`ScopeFilter`)."""
+    _bound(ectx)
+    rows = apps.get_model("organizations", "OrganizationMembership")._default_manager
+    found: QuerySet[Any] = rows.using(require_scope(ectx.tenant)).select_related("user")
+    return found
+
+
+def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:
+    """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir."""
+    _bound(ectx)
+    held = MembershipRole.objects.using(require_scope(ectx.tenant)).filter(
+        membership_id__in=members
+    )
+    found: dict[UUID, list[Any]] = {}
+    for row in held.order_by("role__name", "role__code").values(
+        "membership_id", code=F("role__code"), name=F("role__name")
+    ):
+        found.setdefault(row.pop("membership_id"), []).append(row)
     return found
