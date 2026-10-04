@@ -167,7 +167,8 @@ describe("TenantGate", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Algo salió mal");
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     const asked = api.mock.calls.length;
-    await act(async () => void fireEvent(window, new Event("visibilitychange"))); // ni pregunta sola
+    const returns = ["visibilitychange", "offline", "online"]; // volver a la pestaña o a la red
+    await act(async () => returns.forEach((type) => fireEvent(window, new Event(type))));
     expect(api).toHaveBeenCalledTimes(asked);
     reply = { status: 200, body: ana };
     const release = hold(api);
