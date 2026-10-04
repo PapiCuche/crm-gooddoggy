@@ -83,9 +83,13 @@ class User(AbstractBaseUser):
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.email = canonical_email(self.email)
         if not (self._state.adding or args or kwargs.get("force_insert")):
-            if kwargs.get("update_fields") is None:  # la época solo la mueve `revoke_sessions`
-                fields = (f.name for f in self._meta.concrete_fields if not f.primary_key)
-                kwargs["update_fields"] = [name for name in fields if name != "session_epoch"]
+            names = kwargs.get("update_fields")
+            if names is None:  # como Django: los campos cargados, menos la clave
+                loaded = (f for f in self._meta.concrete_fields if f.attname in self.__dict__)
+                names = [f.name for f in loaded if not f.primary_key]
+            # La época de sesión solo la mueve `revoke_sessions`: una instancia leída antes de
+            # una revocación no la devuelve atrás (D-F2-11).
+            kwargs["update_fields"] = [name for name in names if name != "session_epoch"]
         super().save(*args, **kwargs)
 
 

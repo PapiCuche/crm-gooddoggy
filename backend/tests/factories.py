@@ -24,7 +24,7 @@ def make_user(**overrides: Any) -> User:
 
 def sign_in(client: Client, user: User) -> None:
     """Sesión de `user` sin pasar por el login: `force_login` más las marcas que pone el
-    servicio. Sin ellas, la sesión se considera caducada o revocada (F2-03A, F2-20)."""
+    servicio. Sin la de inicio se considera caducada; sin la época cuenta como de la época 0."""
     client.force_login(user)
     session = client.session
     session[AUTH_AT] = session[SEEN_AT] = int(time.time())

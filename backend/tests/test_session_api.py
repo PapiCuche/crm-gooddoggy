@@ -18,6 +18,7 @@ from django.db import OperationalError, connection, transaction
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from django.utils.connection import ConnectionDoesNotExist
 
 from apps.accounts import services
 from apps.accounts.models import User
@@ -335,11 +336,21 @@ def test_saving_a_user_read_before_the_revocation_does_not_bring_its_sessions_ba
     age(seen_at=6 * 60)  # y le toca renovarse: una sesión revocada se cierra, no se renueva
     stale = User.objects.get(pk=ana.pk)
     services.revoke_sessions(ana.pk)
-    stale.first_name = "Ana"
+    stale.first_name, stale.last_name, stale.is_active = "Otra", "Persona", False
     stale.save()  # guardado completo de una instancia con la época anterior
     saved = User.objects.get(pk=ana.pk)
-    assert (saved.first_name, saved.session_epoch) == (
-        "Ana",
-        1,
-    ) and saved.updated_at > ana.updated_at
+    assert (saved.first_name, saved.last_name, saved.is_active) == ("Otra", "Persona", False)
+    assert saved.session_epoch == 1 and saved.updated_at > ana.updated_at
+    stale.is_active = True
+    stale.save(update_fields=["is_active", "session_epoch"])  # ni nombrándola
+    stale.save(force_update=True)
+    saved = User.objects.get(pk=ana.pk)
+    assert (saved.is_active, saved.session_epoch) == (True, 1)
     assert reply(browser.get(SESSION)) == NO_SESSION
+    partial = User.objects.only("first_name").get(pk=ana.pk)
+    partial.first_name = "Ana"
+    with CaptureQueriesContext(connection) as queries:
+        partial.save()  # lee el email para canonicalizarlo y escribe solo lo cargado
+    assert len(queries) == 2 and User.objects.get(pk=ana.pk).last_name == "Persona"
+    with pytest.raises(ConnectionDoesNotExist):
+        services.revoke_sessions(ana.pk, using="otra")  # escribe en la conexión que se le pide

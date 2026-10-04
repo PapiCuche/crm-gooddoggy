@@ -291,11 +291,18 @@ def test_the_change_and_its_audit_are_atomic_and_hold_the_rbac_lock(
         with pytest.raises(RuntimeError):
             set_member_status(tenant, membership_id=rbac.m_eva, status="SUSPENDED")
     assert state(migrator) == before and status_of(migrator, rbac.m_eva) == "ACTIVE"
+    asked: list[Any] = []
+
+    def failing(*args: Any, **kwargs: Any) -> None:
+        asked.append((args, kwargs))
+        raise RuntimeError("sesiones sin revocar")
+
     with acting(rbac.a, rbac.ana) as tenant, monkeypatch.context() as patch:
-        patch.setattr(members, "revoke_sessions", broken)  # sin revocación no hay suspensión
+        patch.setattr(members, "revoke_sessions", failing)  # sin revocación no hay suspensión
         with pytest.raises(RuntimeError):
             set_member_status(tenant, membership_id=rbac.m_eva, status="SUSPENDED")
         assert OrganizationMembership.objects.get(pk=rbac.m_eva).status == "ACTIVE"
+    assert asked == [((rbac.eva.pk,), {"using": "default"})]  # en la conexión del scope
     assert state(migrator) == before
     link = {"membership_id": rbac.m_eva, "role_id": rbac.target.pk}
     changes = {
