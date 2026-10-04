@@ -55,7 +55,6 @@ class CursorPagination(pagination.CursorPagination):
     def paginate_queryset(self, queryset: Any, request: Any, view: Any = None) -> Any:
         """Solo lo que falla al leer el cursor es un 400 del cursor: un fallo al consultar las
         filas no es del cliente y no se disfraza."""
-        self.get_page_size(request)  # `limit` responde antes que `cursor`
         try:
             cursor = self.decode_cursor(request)
             if cursor is not None:
