@@ -8,12 +8,14 @@ import ipaddress
 import logging
 import time
 from typing import Any
+from uuid import UUID
 
 from django.contrib.auth import SESSION_KEY, authenticate
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import F
 from django.http import HttpRequest
 
 from apps.accounts import throttle
@@ -29,6 +31,7 @@ INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
 RATE_LIMITED = "RATE_LIMITED"
 AUTH_AT = "auth_at"  # cuándo se inició la sesión: límite absoluto (ADR-003 §2)
 SEEN_AT = "seen_at"  # última renovación de la caducidad por inactividad
+EPOCH = "epoch"  # época de sesión del usuario al iniciarla: revocar la deja atrás (D-F2-11)
 
 
 def _client(request: HttpRequest) -> dict[str, Any]:
@@ -127,11 +130,22 @@ def login(request: HttpRequest, *, email: str, password: str) -> User:
             request.session.clear()  # vacía: la clave nueva se crea antes de borrar la anterior
         django_login(request, user)  # rota el ID de sesión y el token CSRF
         request.session[AUTH_AT] = request.session[SEEN_AT] = int(time.time())
+        request.session[EPOCH] = user.session_epoch
         platform.record(
             "auth.login.succeeded", actor_type=platform.Actor.USER, actor_id=user.pk, **client
         )
         throttle.forgive(attempt, started)
     return user
+
+
+def revoke_sessions(user_id: UUID) -> None:
+    """Deja sin validez todas las sesiones abiertas del usuario (ADR-003 §2, D-F2-11).
+
+    No recorre las sesiones: incrementa la época del usuario, y `SessionLifetimeMiddleware`
+    destruye cada sesión de una época anterior cuando vuelve a presentarse. Corre en la
+    transacción de quien llama: si esa se deshace, no hay revocación. No comprueba permisos.
+    """
+    User.objects.filter(pk=user_id).update(session_epoch=F("session_epoch") + 1)
 
 
 def logout(request: HttpRequest) -> None:

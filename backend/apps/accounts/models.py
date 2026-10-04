@@ -54,6 +54,9 @@ class User(AbstractBaseUser):
     last_name = models.CharField(max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
     is_platform_staff = models.BooleanField(default=False)
+    # Época de sesión: cada sesión guarda la que había al iniciarla; revocar la incrementa y las
+    # sesiones anteriores dejan de valer (ADR-003 §2, D-F2-11).
+    session_epoch = models.PositiveIntegerField(default=0, db_default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

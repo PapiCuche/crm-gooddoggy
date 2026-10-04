@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.contrib.sessions.models import Session
 from django.core.exceptions import ObjectDoesNotExist
 from django.test import Client
 
@@ -32,6 +33,7 @@ world, rbac = test_authorization.world, test_anti_escalation.rbac
 real_stack = test_self_context.real_stack
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DENIED = (403, b'{"code":"PERMISSION_DENIED"}')
+NO_SESSION = (401, b'{"code":"NOT_AUTHENTICATED"}')
 STATUS = "SELECT status FROM organization_memberships WHERE id = %s"
 
 
@@ -60,7 +62,9 @@ def test_suspending_closes_the_organization_at_once_and_reactivating_restores_it
     before, roles = state(migrator), me(eva).json()["roles"]
     done = switch(ana, rbac.m_eva)
     assert reply(done) == (200, b'{"id":"%s","status":"SUSPENDED"}' % str(rbac.m_eva).encode())
-    assert reply(me(eva)) == NOT_FOUND  # desde su siguiente petición, sin cerrar su sesión
+    assert reply(me(eva)) == NO_SESSION  # su sesión ya no vale (ADR-003 §2)
+    eva = signed(User.objects.get(pk=rbac.eva.pk))  # vuelve a entrar: la organización, no
+    assert reply(me(eva)) == NOT_FOUND
     listed = [row["slug"] for row in eva.get("/api/v1/me/organizations/").json()]
     assert listed == ["org-b"] and me(eva, "org-b").status_code == 200
     assert switch(ana, rbac.m_eva).status_code == 200  # repetirlo no cambia nada ni audita
@@ -76,6 +80,28 @@ def test_suspending_closes_the_organization_at_once_and_reactivating_restores_it
         )
     ]
     assert state(migrator) == (before[0], before[1], before[2] + 2)
+
+
+def test_suspending_revokes_the_sessions_of_that_user_and_of_nobody_else(rbac: Any) -> None:
+    join(rbac.b, rbac.eva)
+    ana, luis, phone, laptop = (signed(u) for u in (rbac.ana, rbac.luis, rbac.eva, rbac.eva))
+
+    def epochs() -> list[int]:
+        users = User.objects.filter(pk__in=[rbac.ana.pk, rbac.luis.pk, rbac.eva.pk])
+        return list(users.order_by("email").values_list("session_epoch", flat=True))
+
+    assert reply(switch(luis, rbac.membership)) == DENIED  # una suspensión denegada no revoca
+    assert epochs() == [0, 0, 0] and me(phone).status_code == 200
+    assert switch(ana, rbac.m_eva).status_code == 200
+    for device in (phone, laptop):  # todas sus sesiones, también fuera de la organización
+        assert reply(device.get("/api/v1/me/organizations/")) == NO_SESSION
+    assert Session.objects.count() == 2 and epochs() == [0, 1, 0]  # ana, eva, luis
+    assert me(ana).status_code == me(luis).status_code == 200  # ni el actor ni un tercero
+    again = signed(User.objects.get(pk=rbac.eva.pk))
+    assert me(again, "org-b").status_code == 200 and reply(me(again)) == NOT_FOUND
+    assert switch(ana, rbac.m_eva).status_code == 200  # repetir no revoca otra vez
+    assert switch(ana, rbac.m_eva, "ACTIVE").status_code == 200  # reactivar tampoco
+    assert epochs() == [0, 1, 0] and me(again).status_code == 200
 
 
 def test_without_session_permission_or_membership_it_changes_and_reveals_nothing(

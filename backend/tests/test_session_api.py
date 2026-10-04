@@ -13,7 +13,7 @@ from celery.schedules import crontab
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
-from django.db import OperationalError, connection
+from django.db import OperationalError, connection, transaction
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -268,3 +268,39 @@ def test_the_session_of_a_deactivated_user_is_destroyed(ana: User, browser: Clie
     assert gone.cookies["crm_session"].value == ""  # y el navegador suelta la cookie
     User.objects.filter(pk=ana.pk).update(is_active=True)
     assert reply(browser.get(SESSION)) == NO_SESSION  # reactivar no la devuelve
+
+
+def test_revoking_ends_every_open_session_of_that_user_and_only_those(
+    ana: User, browser: Client
+) -> None:
+    login(browser)
+    other, third, luis = Client(), Client(), make_user(email="luis@example.com")
+    sign_in(other, ana)
+    sign_in(third, luis)
+    with pytest.raises(RuntimeError), transaction.atomic():
+        services.revoke_sessions(ana.pk)
+        raise RuntimeError("quien llamaba deshizo su transacción")
+    assert browser.get(SESSION).status_code == other.get(SESSION).status_code == 200
+    services.revoke_sessions(ana.pk)
+    for client in (browser, other):  # todas las suyas, en la siguiente petición de cada una
+        ended = client.get(SESSION)
+        assert reply(ended) == NO_SESSION and ended.cookies["crm_session"].value == ""
+    assert third.get(SESSION).status_code == 200  # la de otro usuario no cambia
+    assert [row.get_decoded()["_auth_user_id"] for row in Session.objects.all()] == [str(luis.pk)]
+    assert User.objects.get(pk=luis.pk).session_epoch == 0
+    late = Client()
+    sign_in(late, ana)  # `ana` se leyó antes de revocar: como un login simultáneo, no sobrevive
+    assert reply(late.get(SESSION)) == NO_SESSION
+    assert login(browser).status_code == 200  # puede volver a entrar: sesión de la época nueva
+    assert browser.get(SESSION).status_code == 200
+    assert Session.objects.get(pk=browser.session.session_key).get_decoded()[services.EPOCH] == 1
+
+
+def test_a_session_without_its_epoch_is_treated_as_revoked(ana: User) -> None:
+    client = Client()
+    client.force_login(ana)  # una sesión que no nació en el login
+    session = client.session
+    session[services.AUTH_AT] = session[services.SEEN_AT] = int(time.time())
+    session.save()
+    ended = client.get(SESSION)
+    assert reply(ended) == NO_SESSION and Session.objects.count() == 0
