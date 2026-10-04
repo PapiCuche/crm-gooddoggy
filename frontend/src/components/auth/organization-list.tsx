@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { SessionActions } from "@/components/app-shell/session-actions";
 import { Button } from "@/components/ui/button";
 import { useMeOrganizations } from "@/lib/api/client";
 import { apiErrorKey } from "@/lib/api-errors";
@@ -35,7 +36,8 @@ export function OrganizationList({ choose }: { choose: boolean }) {
 
   let announced = ""; // lo que oye un lector de pantalla cuando cambia el estado
   let content: ReactNode;
-  if (organizations.isPending || expired || only) {
+  const waiting = organizations.isPending || expired || !!only;
+  if (waiting) {
     announced = t("organizations.loading");
     content = <p className="text-muted">{announced}</p>;
   } else if (organizations.isError) {
@@ -92,6 +94,8 @@ export function OrganizationList({ choose }: { choose: boolean }) {
         {announced}
       </p>
       {content}
+      {/* Quien no puede entrar a ninguna organización, o la está eligiendo, también puede salir. */}
+      {waiting ? null : <SessionActions switcher={false} />}
     </div>
   );
 }

@@ -39,6 +39,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-15 | [#85](https://github.com/PapiCuche/crm-gooddoggy/issues/85) API list convention: cursor pagination | `feature/f2-api-list-convention` | — | backend |
 | F2-16 | [#89](https://github.com/PapiCuche/crm-gooddoggy/issues/89) Members directory API | `feature/f2-members-directory-api` | #85 | backend + API |
 | F2-17 | [#91](https://github.com/PapiCuche/crm-gooddoggy/issues/91) Members screen | `feature/f2-members-screen` | #89 | frontend |
+| F2-18 | [#93](https://github.com/PapiCuche/crm-gooddoggy/issues/93) Logout from the organization list | `feature/f2-logout-from-organizations` | #45 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
 

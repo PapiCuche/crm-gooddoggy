@@ -12,8 +12,9 @@ const ACTION =
   "hover:bg-surface-raised active:bg-surface-raised flex min-h-11 w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors aria-disabled:opacity-60 lg:min-h-9";
 
 // Cambiar de organización y cerrar sesión. El cierre lo hace la API (borra la sesión y la
-// cookie); aquí solo se olvida lo que la pantalla tenía en memoria.
-export function SessionActions() {
+// cookie); aquí solo se olvida lo que la pantalla tenía en memoria. `switcher={false}` donde
+// ya se está eligiendo organización (`/o`).
+export function SessionActions({ switcher = true }: { switcher?: boolean }) {
   const t = useTranslations();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -42,9 +43,11 @@ export function SessionActions() {
           {t(`errors.api.${apiErrorKey(logout.error)}`)}
         </p>
       ) : null}
-      <Link href="/o?elegir" className={ACTION}>
-        {t("shell.switchOrganization")}
-      </Link>
+      {switcher ? (
+        <Link href="/o?elegir" className={ACTION}>
+          {t("shell.switchOrganization")}
+        </Link>
+      ) : null}
       {/* `aria-disabled` y no `disabled`: el botón conserva el foco mientras se cierra. */}
       <button
         type="button"
