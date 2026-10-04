@@ -1,8 +1,9 @@
 """Paginación por cursor de los listados de la API (ADR-016).
 
-Es la clase por defecto de DRF: ningún listado sale entero. El cursor solo codifica una
-posición en el orden. El filtro de tenant y de alcance (`ScopeFilter`) ya se aplicó al queryset
-que llega aquí, así que el cursor de otra organización no puede traer filas ajenas.
+Es la clase por defecto de DRF: una vista genérica de lista queda paginada sin declararlo. El
+cursor solo codifica una posición en el orden. El filtro de tenant y de alcance (`ScopeFilter`)
+ya se aplicó al queryset que llega aquí, así que el cursor de otra organización no puede traer
+filas ajenas.
 """
 
 from typing import Any
@@ -29,30 +30,39 @@ class CursorPagination(pagination.CursorPagination):
         raw = request.query_params.get(LIMIT)
         if raw is None:
             return self.page_size
-        if not (raw.isascii() and raw.isdigit() and 1 <= int(raw) <= self.max_page_size):
+        digits = raw.isascii() and raw.isdigit() and len(raw) < 10  # `int()` tiene tope de cifras
+        if not (digits and 1 <= int(raw) <= self.max_page_size):
             raise ValidationError({LIMIT: [f"Un entero entre 1 y {self.max_page_size}."]})
         return int(raw)
 
     def get_ordering(self, request: Any, queryset: Any, view: Any) -> tuple[str, ...]:
-        """El orden lo declara la vista (`ordering`), nunca el cliente, y acaba en `id`: sin un
-        desempate único, dos páginas podrían repetir o saltarse filas."""
+        """El orden lo declara la vista (`ordering`), nunca el cliente, y es `id` o `-id`. El cursor
+        de DRF solo guarda la posición en la primera columna: si no es única, pagina por
+        desplazamiento dentro del empate (repite filas con inserciones y no pasa de 1000), y si
+        admite nulos, esas filas no salen nunca."""
         declared = getattr(view, "ordering", None) or self.ordering
         ordering = (declared,) if isinstance(declared, str) else tuple(declared)
-        if ordering[-1].lstrip("-") != "id":
-            raise ImproperlyConfigured(f"{type(view).__name__}.ordering debe terminar en `id`")
+        if ordering not in (("id",), ("-id",)):
+            raise ImproperlyConfigured(f"{type(view).__name__}.ordering debe ser `id` o `-id`")
         return ordering
 
     def decode_cursor(self, request: Any) -> Any:
         cursor = super().decode_cursor(request)
-        if cursor is not None and (cursor.position is None or cursor.reverse):
-            raise NotFound  # solo se emiten cursores hacia delante y con posición
+        if cursor is not None and (cursor.position is None or cursor.reverse or cursor.offset):
+            raise NotFound  # solo se emiten hacia delante, con posición y sin desplazamiento
         return cursor
 
     def paginate_queryset(self, queryset: Any, request: Any, view: Any = None) -> Any:
+        """Solo lo que falla al leer el cursor es un 400 del cursor: un fallo al consultar las
+        filas no es del cliente y no se disfraza."""
+        self.get_page_size(request)  # `limit` responde antes que `cursor`
         try:
-            return super().paginate_queryset(queryset, request, view)
+            cursor = self.decode_cursor(request)
+            if cursor is not None:
+                queryset.filter(id__gt=cursor.position)  # convierte la posición; no consulta
         except NotFound, InvalidValue, ValueError:  # ilegible, o con una posición imposible
             raise ValidationError({CURSOR: ["Cursor no válido."]}) from None
+        return super().paginate_queryset(queryset, request, view)
 
     def encode_cursor(self, cursor: Any) -> str:
         """El cursor opaco, no una URL: el cliente lo devuelve tal cual en `?cursor=`."""

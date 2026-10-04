@@ -150,7 +150,8 @@ REST_FRAMEWORK = {
     # (core.api.permissions).
     "DEFAULT_PERMISSION_CLASSES": ["apps.access.permissions.HasPermission"],
     "DEFAULT_FILTER_BACKENDS": ["apps.access.permissions.ScopeFilter"],
-    # ADR-016: ningún listado sale entero; se pagina después de filtrar por tenant y alcance.
+    # ADR-016: las vistas genéricas de lista se paginan por defecto, después de filtrar por
+    # tenant y alcance.
     "DEFAULT_PAGINATION_CLASS": "core.api.pagination.CursorPagination",
 }
 SPECTACULAR_SETTINGS = {

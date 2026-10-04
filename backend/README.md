@@ -188,12 +188,12 @@ Un slug imposible bajo `/api/v1/o/` responde 404 sin llegar a ninguna vista. El 
 
 ## Listados: paginación por cursor (F2-15, ADR-016)
 
-`core.api.pagination.CursorPagination` es el paginador por defecto de DRF: una vista de lista (`ListAPIView`, un `list` de viewset) queda paginada sin declararlo y nunca devuelve el listado entero.
+`core.api.pagination.CursorPagination` es el paginador por defecto de DRF: una vista de lista (`ListAPIView`, un `list` de viewset) queda paginada sin declararlo. Es un valor por defecto, no una barrera: una vista con `pagination_class = None`, o un `APIView` que arma la lista a mano, devuelve el listado entero. Un listado de tenant no hace ninguna de las dos cosas.
 
 - **Petición:** `?limit=` (por defecto 50, máximo 200) y `?cursor=` (el `next` de la página anterior).
 - **Respuesta:** `{"results": […], "next": "…"}`. `next` es `null` en la última página; es un valor opaco, no una URL. Sin total de filas ni página anterior.
-- **Errores:** un `limit` fuera de rango o un `cursor` que la API no emitió responden 400 `VALIDATION_ERROR` con el campo en `fields`.
-- **Orden:** lo declara la vista con `ordering`, nunca el cliente. Por defecto `id` (UUIDv7: orden de creación). Un orden propio debe terminar en `id`; si no, la vista falla al paginar.
+- **Errores:** un `limit` fuera de rango o un `cursor` ilegible o con una forma que la API no emite responden 400 `VALIDATION_ERROR` con el campo en `fields`. El cursor no va firmado: uno bien formado con otro `id` se acepta y solo cambia desde dónde se leen las filas propias.
+- **Orden:** lo declara la vista con `ordering`, nunca el cliente. Por defecto `id` (UUIDv7: orden de creación); la única alternativa es `-id`. Con cualquier otro orden la vista falla al paginar: el cursor de DRF solo guarda la primera columna, y si no es única y no nula repite o pierde filas.
 - **Tenancy:** se pagina después de `ScopeFilter`. El cursor solo dice desde qué posición se lee; uno fabricado o de otra organización no trae filas ajenas.
 - **Una vista de lista nueva** declara su queryset, `required_permissions` y, en OpenAPI, `**errors(400, 401, 403, 404)`. El tipo `Paginated…List` del contrato lo genera drf-spectacular.
 

@@ -13,7 +13,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import Client
 from django.urls import path
 from drf_spectacular.generators import SchemaGenerator
-from rest_framework import generics
+from rest_framework import generics, pagination
 
 import config.urls
 from core.api.pagination import CursorPagination
@@ -29,22 +29,22 @@ class Widgets(WidgetView, generics.ListAPIView):
     required_permissions = {"GET": VIEW}
 
 
-class ByName(Widgets):
-    ordering = ("-name", "id")  # el orden lo declara la vista
+class Newest(Widgets):
+    ordering = "-id"  # el orden lo declara la vista
 
 
 urlpatterns = [
     *config.urls.urlpatterns,
     path(TENANT + "widgets/", Widgets.as_view()),
-    path(TENANT + "by-name/", ByName.as_view()),
+    path(TENANT + "newest/", Newest.as_view()),
 ]
 
 
-def seed(migrator: psycopg.Connection[Any], org: UUID, count: int) -> None:
+def seed(migrator: psycopg.Connection[Any], org: UUID, count: int, pk: UUID | None = None) -> None:
     for index in range(count):
         migrator.execute(
             "INSERT INTO tenancy_app_widget (id, organization_id, name) VALUES (%s, %s, %s)",
-            [uuid4(), org, f"extra {index:03} {uuid4().hex[:6]}"],
+            [pk or uuid4(), org, f"extra {index:03} {uuid4().hex[:6]}"],
         )
 
 
@@ -56,7 +56,7 @@ def ids_of(migrator: psycopg.Connection[Any], org: UUID) -> set[str]:
 def walk(client: Client, target: str, limit: int, cursor: str | None = None) -> list[Any]:
     """Todas las filas desde `cursor`, página a página, siguiendo `next`."""
     rows: list[Any] = []
-    while True:
+    for _ in range(100):  # un `next` que no avanza es un fallo, no un test colgado
         query: dict[str, str | int] = {"limit": limit, **({"cursor": cursor} if cursor else {})}
         body = client.get(target, query).json()
         assert set(body) == {"results", "next"} and len(body["results"]) <= limit
@@ -64,6 +64,7 @@ def walk(client: Client, target: str, limit: int, cursor: str | None = None) -> 
         cursor = body["next"]
         if cursor is None:
             return rows
+    raise AssertionError("`next` nunca fue null")
 
 
 def token(**parts: str) -> str:
@@ -80,9 +81,12 @@ def test_walking_the_pages_returns_every_row_once(
     before = ids_of(migrator, api.a)
     first = api.client.get(url(), {"limit": 4}).json()
     assert len(first["results"]) == 4 and not first["next"].startswith("http")  # no es una URL
-    seed(migrator, api.a, 3)  # filas nuevas entre dos páginas
+    low, high = UUID(int=1), UUID(int=2**128 - 1)  # filas nuevas entre dos páginas:
+    seed(migrator, api.a, 1, low)  # una antes del cursor, que no desplaza a las demás,
+    seed(migrator, api.a, 1, high)  # y otra después, que llega al final
     found = [row["id"] for row in first["results"] + walk(api.client, url(), 4, first["next"])]
     assert len(found) == len(set(found)) and before <= set(found)  # ni repite ni se salta
+    assert str(low) not in found and found[-1] == str(high)
     assert set(found) <= ids_of(migrator, api.a) and found == sorted(found)  # nada de B; por `id`
 
 
@@ -94,7 +98,8 @@ def test_the_page_size_has_a_default_and_a_ceiling(
     body = api.client.get(url()).json()
     assert len(body["results"]) == 50 and body["next"]  # sin `limit`, nunca el listado entero
     assert len(api.client.get(url(), {"limit": 200}).json()["results"]) == 63
-    for bad in ("0", "201", "-1", "abc", "", "1.5", "٣", "9" * 30):
+    assert len(api.client.get(url(), {"limit": 1}).json()["results"]) == 1
+    for bad in ("0", "201", "-1", "abc", "", "1.5", "٣", "9" * 30, "9" * 5000):
         response = api.client.get(url(), {"limit": bad})
         assert response.status_code == 400 and response.json()["code"] == "VALIDATION_ERROR", bad
         assert list(response.json()["fields"]) == ["limit"]
@@ -103,11 +108,25 @@ def test_the_page_size_has_a_default_and_a_ceiling(
 def test_an_unreadable_or_impossible_cursor_is_a_validation_error(api: Any) -> None:
     give(api.a, api.membership, {VIEW: "ORGANIZATION"})
     position = str(api.mine)
-    forged = ("", "%%%", "ñ", token(p="no-es-un-uuid"), token(o="x", p=position), token(o="2"))
-    for bad in (*forged, token(r="1", p=position)):  # tampoco hay cursores hacia atrás
+    forged = ("", "%%%", "ñ", token(p="no-es-un-uuid"), token(p="\x00"), token(o="x", p=position))
+    # tampoco hay cursores sin posición, con desplazamiento ni hacia atrás
+    for bad in (*forged, token(o="2"), token(o="2", p=position), token(r="1", p=position)):
         response = api.client.get(url(), {"cursor": bad})
         assert response.status_code == 400 and list(response.json()["fields"]) == ["cursor"], bad
     assert api.client.get(url(), {"cursor": token(p=position)}).status_code == 200
+
+
+def test_a_failure_reading_the_rows_is_not_blamed_on_the_cursor(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    give(api.a, api.membership, {VIEW: "ORGANIZATION"})
+
+    def broken(*args: Any) -> None:
+        raise ValueError("fallo propio de la consulta")
+
+    monkeypatch.setattr(pagination.CursorPagination, "paginate_queryset", broken)
+    with pytest.raises(ValueError, match="propio de la consulta"):  # un 500, no un 400 del cursor
+        api.client.get(url(), {"cursor": token(p=str(api.mine))})
 
 
 def test_a_cursor_from_another_organization_reveals_nothing(
@@ -121,19 +140,21 @@ def test_a_cursor_from_another_organization_reveals_nothing(
     assert [row["name"] for row in walk(api.client, url(), 2)] == ["mine"]
 
 
-def test_the_view_declares_the_order_and_it_must_end_in_id(
+def test_the_view_declares_the_order_and_it_is_id_or_its_reverse(
     api: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     give(api.a, api.membership, {VIEW: "ORGANIZATION"})
     seed(migrator, api.a, 4)
-    names = [row["name"] for row in walk(api.client, url("by-name/"), 3)]
-    assert len(names) == 7 and names == sorted(names, reverse=True)
+    newest = [row["id"] for row in walk(api.client, url("newest/"), 3)]
+    assert len(newest) == 7 and newest == sorted(newest, reverse=True)
     chosen = api.client.get(url(), {"ordering": "-name", "limit": 200}).json()["results"]
     assert [row["id"] for row in chosen] == sorted(row["id"] for row in chosen)  # no lo elige él
     paginator = CursorPagination()
     assert paginator.get_ordering(None, None, SimpleNamespace()) == ("id",)
-    for unstable in ("name", ("name",), ("id", "name")):
-        with pytest.raises(ImproperlyConfigured, match="terminar en `id`"):
+    assert paginator.get_ordering(None, None, SimpleNamespace(ordering=["-id"])) == ("-id",)
+    # el cursor solo guarda la primera columna: con empates o nulos repite o pierde filas
+    for unstable in ("name", ("name", "id"), ("-name", "-id"), ("id", "name"), ("team_id", "id")):
+        with pytest.raises(ImproperlyConfigured, match="`id` o `-id`"):
             paginator.get_ordering(None, None, SimpleNamespace(ordering=unstable))
 
 

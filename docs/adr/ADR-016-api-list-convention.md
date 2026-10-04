@@ -7,7 +7,7 @@
 
 ## Context
 
-La API no tenía ningún listado. El backlog (E00-09) pide paginación por cursor, y el contrato de F1-08A no la incluyó. El primer listado real (el directorio de miembros de una organización) llega a continuación; sin una convención, cada lista inventaría sus parámetros, su orden y su sobre de respuesta, y el cliente generado tendría un tipo distinto para cada una.
+La API no tenía ningún listado paginado: el único que existe, `GET /api/v1/me/organizations/` (ruta de plataforma), devuelve en un array las organizaciones del propio usuario. El backlog (E00-09) pide paginación por cursor, y el contrato de F1-08A no la incluyó. El primer listado real (el directorio de miembros de una organización) llega a continuación; sin una convención, cada lista inventaría sus parámetros, su orden y su sobre de respuesta, y el cliente generado tendría un tipo distinto para cada una.
 
 Dos riesgos concretos de un listado sin convención:
 
@@ -18,7 +18,9 @@ Dos riesgos concretos de un listado sin convención:
 
 ### 1. Paginación por cursor, por defecto
 
-`core.api.pagination.CursorPagination` es el `DEFAULT_PAGINATION_CLASS` de DRF. Toda vista de lista queda paginada sin declararlo; una vista no puede devolver un listado entero.
+`core.api.pagination.CursorPagination` es el `DEFAULT_PAGINATION_CLASS` de DRF. Una vista genérica de lista (`ListAPIView`, el `list` de un viewset) queda paginada sin declararlo.
+
+Es un valor por defecto, no una barrera: una vista que declare `pagination_class = None`, o un `APIView` que construya la lista a mano, no pasa por el paginador y devuelve el listado entero. Un listado de tenant no hace ninguna de las dos cosas. Hoy lo comprueba la revisión; la auditoría del URLconf no lo detecta.
 
 ### 2. Parámetros
 
@@ -27,7 +29,9 @@ Dos riesgos concretos de un listado sin convención:
 | `limit` | Filas por página. Por defecto 50, máximo 200 |
 | `cursor` | El valor `next` de la página anterior. Sin él, la primera página |
 
-Un `limit` que no sea un entero entre 1 y 200, o un `cursor` que la API no emitió, responden 400 `VALIDATION_ERROR` con el campo en `fields` (ADR-014 §1). No se recortan ni se ignoran en silencio.
+Un `limit` que no sea un entero entre 1 y 200, o un `cursor` ilegible o con una forma que la API no emite (sin posición, con desplazamiento, hacia atrás, o con una posición que no es un identificador), responden 400 `VALIDATION_ERROR` con el campo en `fields` (ADR-014 §1). No se recortan ni se ignoran en silencio.
+
+El cursor no va firmado: uno bien formado con el identificador de otra posición se acepta, con el efecto que describe §5.
 
 ### 3. Respuesta
 
@@ -41,7 +45,8 @@ Un `limit` que no sea un entero entre 1 y 200, o un `cursor` que la API no emiti
 
 - El orden lo declara la vista (`ordering`), nunca el cliente.
 - Por defecto es `id`: los identificadores son UUIDv7 (ADR-004), así que es el orden de creación, único y estable.
-- Un orden propio debe terminar en `id` como desempate. Si no, la vista falla al paginar (`ImproperlyConfigured`): es un error de programación, no una respuesta.
+- La única alternativa es `-id` (lo más reciente primero). Con cualquier otro orden la vista falla al paginar (`ImproperlyConfigured`): es un error de programación, no una respuesta.
+- El motivo: el cursor de DRF solo guarda la posición en la primera columna del orden. Si esa columna no es única, las filas empatadas se recorren por desplazamiento, que repite filas cuando se insertan otras y no pasa de 1000 filas iguales (después devuelve siempre la misma página). Si admite nulos, las filas con nulo no salen nunca. Un desempate por `id` al final no evita ninguna de las dos cosas.
 
 ### 5. Tenancy y alcance
 
@@ -49,7 +54,7 @@ El paginador recibe el queryset después de `ScopeFilter` (ADR-003 §5): primero
 
 ### 6. Fuera de esta decisión
 
-Filtros, búsqueda, ordenación elegida por el cliente, total de filas y paginación hacia atrás. Cada uno se decide cuando una pantalla lo necesite, sin cambiar lo anterior.
+Filtros, búsqueda, ordenación elegida por el cliente, orden por otra columna (necesita un cursor por columna e `id`, que DRF no trae), total de filas y paginación hacia atrás. Cada uno se decide cuando una pantalla lo necesite, sin cambiar lo anterior.
 
 ## Alternatives considered
 
@@ -63,15 +68,15 @@ Filtros, búsqueda, ordenación elegida por el cliente, total de filas y paginac
 
 ## Consequences
 
-- Los listados de los módulos de negocio no necesitan código de paginación: declaran su queryset y, si hace falta, su orden.
+- Los listados de los módulos de negocio no necesitan código de paginación: declaran su queryset y, si hace falta, `-id` como orden.
 - El cliente generado (orval) tiene un tipo `Paginated…List` por recurso, con `results` y `next`.
 - Un listado no puede mostrar «página 3 de 12» ni saltar a una página: es el coste de no contar filas. Si una pantalla lo necesita, se decide entonces.
-- Con un orden que no sea `id`, las filas con el mismo valor en la primera columna se recorren por desplazamiento dentro del empate (comportamiento de DRF, con tope de 1000).
+- Un listado no puede ordenarse por nombre ni por fecha: solo por orden de creación, ascendente o descendente. El `order_by` del queryset de la vista se descarta al paginar.
 
 ## Security implications
 
-- Ningún listado sale entero: el tamaño de la respuesta tiene un máximo que el cliente no controla.
-- El cursor no lleva datos de la fila más allá de su posición en el orden (un identificador, o el valor de la columna de orden). Un orden por una columna sensible expondría ese valor en el cursor: no ordenar por columnas que el usuario no pueda leer.
+- Un listado paginado no sale entero: el tamaño de la respuesta tiene un máximo que el cliente no controla. Una vista que no pase por el paginador (§1) no tiene ese tope.
+- El cursor solo lleva un identificador: el `id` de una fila dentro del alcance del usuario. No lleva ningún otro dato de la fila.
 - La frontera de tenant no depende del cursor: la aplican RLS y `ScopeFilter` en cada petición.
 
 ## Operational implications
