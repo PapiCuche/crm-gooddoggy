@@ -624,13 +624,13 @@ def test_view_or_method_without_declaration_is_denied(
 def test_list_returns_only_rows_in_scope_filtered_in_sql(api: Any) -> None:
     give(api.a, api.membership, {VIEW: "OWN"})
     with CaptureQueriesContext(connection) as queries:
-        listed = api.client.get(url()).json()
+        listed = api.client.get(url()).json()["results"]
     assert [row["name"] for row in listed] == ["mine"]
     widgets = [query["sql"] for query in queries if "tenancy_app_widget" in query["sql"]]
     assert len(widgets) == 1 and '"assigned_user_id" IN' in widgets[0]  # no se filtra en Python
     give(api.a, api.membership, {VIEW: "ORGANIZATION"})  # otro rol: los alcances se unen
-    listed = api.client.get(url()).json()
-    assert [row["name"] for row in listed] == ["mine", "theirs", "widget A"]  # nada de B
+    listed = api.client.get(url()).json()["results"]
+    assert sorted(row["name"] for row in listed) == ["mine", "theirs", "widget A"]  # nada de B
 
 
 def test_object_out_of_scope_or_of_another_tenant_is_404_and_unchanged(
@@ -705,7 +705,7 @@ def test_permissions_are_read_once_per_request_and_again_on_the_next(api: Any) -
 
 def test_custom_role_and_renamed_owner_count_only_by_their_grants(api: Any) -> None:
     give(api.a, api.membership, {VIEW: "ORGANIZATION"}, code="warehouse_manager")
-    assert len(api.client.get(url()).json()) == 3  # rol propio de la organización
+    assert len(api.client.get(url()).json()["results"]) == 3  # rol propio de la organización
     assert api.client.get(url("members/")).status_code == 403
     with tenant_scope(ctx(api.a)) as scope:
         owner = next(role for role in clone_role_templates(scope) if role.is_owner_role)
@@ -730,7 +730,7 @@ def test_platform_staff_gets_no_bypass_and_platform_routes_are_excluded_by_route
     for target in (url(), detail(api.mine), url("members/"), url("undeclared/")):
         assert client.get(target).status_code == 403  # con membresía y sin concesiones
     give(api.a, membership.pk, {VIEW: "OWN"})
-    assert client.get(url()).json() == []  # solo lo que conceden sus roles
+    assert client.get(url()).json()["results"] == []  # solo lo que conceden sus roles
     for anybody in (Client(), api.client, client):
         assert anybody.get("/api/platform/open/").status_code == 200  # declara sus clases
     assert Client().get("/api/platform/defaults/").status_code == 401  # sin declarar ni sesión

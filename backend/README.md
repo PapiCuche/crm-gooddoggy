@@ -186,6 +186,17 @@ Ese test recorre todo el URLconf y falla si una ruta de tenant no es una vista d
 
 Un slug imposible bajo `/api/v1/o/` responde 404 sin llegar a ninguna vista. El resolvedor de tenant consulta la membresía exista o no la organización, para que el tiempo de respuesta del 404 no delate qué slugs existen.
 
+## Listados: paginación por cursor (F2-15, ADR-016)
+
+`core.api.pagination.CursorPagination` es el paginador por defecto de DRF: una vista de lista (`ListAPIView`, el `list` de un viewset genérico) queda paginada sin declararlo. Es un valor por defecto, no una barrera: una vista con `pagination_class = None`, o un `APIView` que arma la lista a mano, devuelve el listado entero. Un listado de tenant no hace ninguna de las dos cosas.
+
+- **Petición:** `?limit=` (por defecto 50, máximo 200) y `?cursor=` (el `next` de la página anterior).
+- **Respuesta:** `{"results": […], "next": "…"}`. `next` es `null` en la última página; es un valor opaco, no una URL. Sin total de filas ni página anterior.
+- **Errores:** un `limit` fuera de rango o un `cursor` ilegible o con una forma que la API no emite responden 400 `VALIDATION_ERROR` con el campo en `fields`. El cursor no va firmado: uno bien formado con otro `id` se acepta y solo cambia desde dónde se leen las filas propias.
+- **Orden:** lo declara la vista con `ordering`, nunca el cliente. Por defecto `id` (UUIDv7: orden de creación); la única alternativa es `-id`. El queryset devuelve cada fila una sola vez (ante un `join` a varios, `Exists` o `distinct()`). Con cualquier otro orden, o con filas repetidas, la vista falla al paginar: el cursor de DRF solo guarda la primera columna, y si no es única y no nula repite o pierde filas.
+- **Tenancy:** se pagina después de `ScopeFilter`. El cursor solo dice desde qué posición se lee; uno fabricado o de otra organización no trae filas ajenas.
+- **Una vista de lista nueva** declara su queryset, `required_permissions` y, en OpenAPI, `**errors(400, 401, 403, 404)`. El tipo `Paginated…List` del contrato lo genera drf-spectacular.
+
 ## Sesión, CSRF y rutas de plataforma (F2-13, ADR-014 §2 y §4)
 
 - `core.api.middleware.ApiCsrfMiddleware` exige el token CSRF en todo `POST`, `PUT`, `PATCH` y `DELETE` bajo `/api/`, haya sesión o no, y antes de resolver el tenant. No depende de la vista: DRF marca las suyas como exentas.
