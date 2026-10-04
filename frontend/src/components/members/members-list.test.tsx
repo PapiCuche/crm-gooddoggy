@@ -58,7 +58,7 @@ describe("MembersList", () => {
       "listitem",
     );
     expect(roles.map((role) => role.textContent)).toEqual(["Owner", "Ventas"]); // nombres
-    expect(second).toHaveTextContent("luis@acme.pe"); // sin nombre: el correo hace de nombre
+    expect(within(second).getAllByText("luis@acme.pe")).toHaveLength(1); // sin nombre: el correo, una vez
     expect(second).toHaveTextContent("Suspendido");
     expect(second).toHaveTextContent("Sin rol");
     expect(second).toHaveTextContent(/Alta: 1 ene\.? 2026/); // la fecha, en la zona de la aplicación

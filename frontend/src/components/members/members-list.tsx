@@ -12,8 +12,8 @@ import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
-function displayName(user: Member["user"]): string {
-  return `${user.first_name} ${user.last_name}`.trim() || user.email;
+function fullName(user: Member["user"]): string {
+  return `${user.first_name} ${user.last_name}`.trim();
 }
 
 // Directorio de miembros (F2-17): lo que devuelve `GET /api/v1/o/{slug}/members/`, página a
@@ -63,8 +63,12 @@ export function MembersList() {
               className="border-border bg-surface grid gap-x-4 gap-y-2 rounded-lg border p-4 focus-visible:outline-none sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_auto] sm:items-center"
             >
               <p className="flex min-w-0 flex-col leading-snug">
-                <span className="truncate font-medium">{displayName(member.user)}</span>
-                <span className="text-muted truncate text-sm">{member.user.email}</span>
+                <span className="truncate font-medium">
+                  {fullName(member.user) || member.user.email}
+                </span>
+                {fullName(member.user) ? (
+                  <span className="text-muted truncate text-sm">{member.user.email}</span>
+                ) : null}
               </p>
               <ul aria-label={t("members.roles")} className="flex flex-wrap gap-1.5">
                 {member.roles.map((role) => (
