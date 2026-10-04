@@ -47,7 +47,6 @@
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "ORG_SUSPENDED": "Esta organización está suspendida.",
       "LAST_OWNER": "Debe quedar al menos un Owner activo en la organización.",
-      "INVALID_TRANSITION": "El estado de este miembro ya había cambiado. La lista se actualizó.",
       "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos."
     }
   },
@@ -117,7 +116,8 @@
       "suspendDone": "{name} quedó suspendido.",
       "reactivateDone": "{name} quedó activo.",
       "cancel": "Cancelar",
-      "denied": "No tienes permiso para cambiar a este miembro."
+      "denied": "No tienes permiso para cambiar a este miembro.",
+      "stale": "El estado de {name} ya había cambiado. Revisa la lista."
     }
   }
 }
