@@ -630,7 +630,7 @@ def test_list_returns_only_rows_in_scope_filtered_in_sql(api: Any) -> None:
     assert len(widgets) == 1 and '"assigned_user_id" IN' in widgets[0]  # no se filtra en Python
     give(api.a, api.membership, {VIEW: "ORGANIZATION"})  # otro rol: los alcances se unen
     listed = api.client.get(url()).json()["results"]
-    assert [row["name"] for row in listed] == ["mine", "theirs", "widget A"]  # nada de B
+    assert sorted(row["name"] for row in listed) == ["mine", "theirs", "widget A"]  # nada de B
 
 
 def test_object_out_of_scope_or_of_another_tenant_is_404_and_unchanged(

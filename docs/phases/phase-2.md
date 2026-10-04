@@ -36,6 +36,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-03C | [#67](https://github.com/PapiCuche/crm-gooddoggy/issues/67) Session lifecycle and my organizations | `feature/f2-session-context` | #40 | backend + API |
 | F2-03D | [#76](https://github.com/PapiCuche/crm-gooddoggy/issues/76) Trusted proxy and client address | `feature/f2-trusted-proxy` | #40 | backend + infra |
 | F2-03E | [#81](https://github.com/PapiCuche/crm-gooddoggy/issues/81) IPv6 network scope for the login limit | `feature/f2-login-throttle-ipv6-network` | #61 y D-F2-10 | backend |
+| F2-15 | [#85](https://github.com/PapiCuche/crm-gooddoggy/issues/85) API list convention: cursor pagination | `feature/f2-api-list-convention` | — | backend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
 
