@@ -104,8 +104,7 @@ def test_after_n_failures_the_right_password_is_refused_until_the_wait_passes(
     with mock.patch.object(services, "authenticate") as checked:
         refused = login(client)  # la contraseña correcta: se rechaza antes de comprobarla
     assert reply(refused) == (429, LIMITED) and refused.headers["Retry-After"] == "60"
-    assert not checked.called
-    assert "crm_session" not in refused.cookies
+    assert "crm_session" not in refused.cookies and not checked.called
     actions = audit(migrator)
     assert [row[0] for row in actions] == ["auth.login.failed"] * 3 + ["auth.login.throttled"]
     assert actions[3][1:5] == ("DENIED", "ANONYMOUS", None, identifier_hash(EMAIL))
@@ -126,10 +125,11 @@ def test_after_n_failures_the_right_password_is_refused_until_the_wait_passes(
 
 
 def test_the_wait_reaches_its_ceiling_and_restarts_only_after_a_quiet_window(
-    ana: User, settings: Any
+    ana: User, settings: Any, migrator: psycopg.Connection[Any]
 ) -> None:
-    defaults = [throttle.Limit(*base.LOGIN_THROTTLE[scope]) for scope in throttle.SCOPES]
-    assert [rule.block(10**6) for rule in defaults] == [3600, 900, 3600]  # los máximos del README
+    defaults = [base.LOGIN_THROTTLE[scope] for scope in throttle.SCOPES]  # la tabla del README
+    assert defaults == [(20, 900, 60, 3600), (5, 900, 60, 900), (30, 900, 300, 3600)]
+    assert [throttle.Limit(*rule).block(10**6) for rule in defaults] == [3600, 900, 3600]
     quiet = {scope: (100, 900, 300, 3600) for scope in ("identifier", "ip")}
     settings.LOGIN_THROTTLE = {**quiet, "pair": LIMITS["pair"]}  # solo actúa `pair`
     client, waits = browser(), []
@@ -139,6 +139,8 @@ def test_the_wait_reaches_its_ceiling_and_restarts_only_after_a_quiet_window(
         later(waits[-1] + 1)
         assert reply(login(client, password=WRONG)) == INVALID  # otro fallo al acabar la espera
     assert waits == [60, 120, 200, 200, 200, 200] and sum(waits) > 900  # no vuelve a empezar
+    held = [json.loads(row[7])["seconds"] for row in audit(migrator) if "throttled" in row[0]]
+    assert held[:6] == waits  # la auditoría lleva la espera real, también la escalada
     later(200 + 899)  # el último bloqueo terminó hace menos de una ventana: sigue contando
     assert reply(login(client, password=WRONG)) == INVALID and count("par:") == 10
     later(200 + 901)  # una ventana entera de calma
@@ -393,13 +395,14 @@ def test_a_block_that_cannot_be_audited_does_not_change_the_reply(
     assert login(client).status_code == 429
     assert reports == [{"action": "auth.login.throttled"}]  # sin auditar, pero no en silencio
     assert reply(login(browser(""), "nadie@example.com", WRONG)) == INVALID
-    assert "sin dirección de cliente" in caplog.text  # la señal de un proxy mal declarado
+    assert [r.levelname for r in caplog.records if "sin dirección" in r.message] == ["WARNING"]
     assert EMAIL not in caplog.text and WRONG not in caplog.text
 
 
-def test_stale_counters_are_purged_and_live_ones_kept(ana: User, settings: Any) -> None:
-    task = settings.CELERY_BEAT_SCHEDULE["accounts.purge_login_throttles"]["task"]
-    assert (purge_login_throttles.name, purge_login_throttles.tenancy) == (task, "platform")
+def test_the_purge_keeps_live_counters(ana: User, migrator: psycopg.Connection[Any]) -> None:
+    job = base.CELERY_BEAT_SCHEDULE["accounts.purge_login_throttles"]
+    assert (purge_login_throttles.name, purge_login_throttles.tenancy) == (job["task"], "platform")
+    assert len(job["schedule"].hour) == 24  # cada hora
     fail(["198.51.100.1"] * 3)  # deja un bloqueo de 60 s en la cuenta con esa dirección
     fail(["198.51.100.2"], "luis@example.com")  # y contadores sin bloqueo
     total = LoginThrottle.objects.count()
@@ -408,14 +411,18 @@ def test_stale_counters_are_purged_and_live_ones_kept(ana: User, settings: Any) 
     assert purge_login_throttles() == 0  # aún no hay una ventana entera de calma
     later(20)
     assert purge_login_throttles() == total - 2  # los de `pair` se conservan más
-    later(throttle.PAIR_KEPT - 1000)
+    later(86400 - 1000)  # un día (README), no `PAIR_KEPT`
     assert purge_login_throttles() == 0  # con la cuenta caliente al volver seguirían contando
     later(1000)
     assert purge_login_throttles() == 2 and not LoginThrottle.objects.exists()
     fail(["198.51.100.1"] * 3)
     with connection.cursor() as cursor:  # un bloqueo que aún corre, con su último intento viejo
         cursor.execute("UPDATE login_throttles SET updated_at = now() - interval '1 hour'")
-    assert purge_login_throttles() == 2
+        cursor.execute("SET lock_timeout = '2s'")
+    migrator.execute("BEGIN; SELECT 1 FROM login_throttles WHERE key LIKE 'id:%' FOR UPDATE")
+    assert purge_login_throttles() == 1  # salta la fila que un acceso tiene bloqueada
+    migrator.execute("ROLLBACK")
+    assert purge_login_throttles() == 1
     assert [*rows()] == [throttle.keys(EMAIL, "198.51.100.1")["pair"]]  # el bloqueado sigue
 
 
@@ -434,8 +441,10 @@ def test_stale_counters_are_purged_and_live_ones_kept(ana: User, settings: Any) 
         {"ip": (7, 900, 4000, 3600)},  # el primer bloqueo, mayor que el máximo
         {"identifier": (5, 900, 30, 400)},  # la cuenta caliente esperaría menos que sin calentar
         {"identifier": (5, 900, 120, 150)},
-        {"pair": (900, 3, 60, 200)},  # intentos y ventana intercambiados: nunca bloquearía
-        {"ip": (5000, 900, 300, 3600)},
+        {
+            "pair": (3, 59, 60, 200)
+        },  # una ventana de menos de 60 s (o intercambiada con los intentos)
+        {"ip": (1001, 900, 300, 3600)},  # más de 1000 intentos: nunca bloquearía
     ],
 )
 def test_a_misconfigured_limit_does_not_start(settings: Any, change: dict[str, Any]) -> None:
