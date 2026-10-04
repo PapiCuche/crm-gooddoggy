@@ -14,7 +14,7 @@ from django.contrib.auth import SESSION_KEY, authenticate
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import DEFAULT_DB_ALIAS, transaction
 from django.db.models import F
 from django.http import HttpRequest
 
@@ -138,14 +138,15 @@ def login(request: HttpRequest, *, email: str, password: str) -> User:
     return user
 
 
-def revoke_sessions(user_id: UUID) -> None:
+def revoke_sessions(user_id: UUID, *, using: str = DEFAULT_DB_ALIAS) -> None:
     """Deja sin validez todas las sesiones abiertas del usuario (ADR-003 §2, D-F2-11).
 
     No recorre las sesiones: incrementa la época del usuario, y `SessionLifetimeMiddleware`
     destruye cada sesión de una época anterior cuando vuelve a presentarse. Corre en la
-    transacción de quien llama: si esa se deshace, no hay revocación. No comprueba permisos.
+    transacción de quien llama, en la conexión `using`: si esa se deshace, no hay revocación.
+    No comprueba permisos.
     """
-    User.objects.filter(pk=user_id).update(session_epoch=F("session_epoch") + 1)
+    User.objects.using(using).filter(pk=user_id).update(session_epoch=F("session_epoch") + 1)
 
 
 def logout(request: HttpRequest) -> None:

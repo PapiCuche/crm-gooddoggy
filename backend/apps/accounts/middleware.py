@@ -10,7 +10,8 @@
 - Usuario desactivado o borrado: Django deja de autenticar la sesión pero conserva la fila.
   Aquí se destruye, para que no reviva si el usuario se reactiva (OBS-F2-03A-2).
 - Revocada: la sesión guarda la época del usuario al iniciarla (`users.session_epoch`). Si ya
-  no coincide, o falta, se destruye (D-F2-11). El usuario ya está cargado: sin otra consulta.
+  no coincide, se destruye (D-F2-11). Una sesión sin época (anterior a F2-20) cuenta como de
+  la época 0: vale hasta la primera revocación. El usuario ya está cargado: sin otra consulta.
 
 Solo cubre HTTP: una conexión WebSocket deberá comprobar lo mismo al abrirse (OBS-F2-03C-1).
 """
@@ -63,7 +64,7 @@ class SessionLifetimeMiddleware:
             user = request.user
             if age >= settings.SESSION_ABSOLUTE_AGE or not user.is_authenticated:
                 _end(request)
-            elif session.get(EPOCH) != user.session_epoch:  # revocada (D-F2-11)
+            elif session.get(EPOCH, 0) != user.session_epoch:  # revocada (D-F2-11)
                 _end(request)
             elif not isinstance(seen, int) or now - seen >= settings.SESSION_REFRESH_INTERVAL:
                 session[SEEN_AT] = now

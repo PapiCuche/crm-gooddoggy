@@ -27,9 +27,10 @@ def set_member_status(ctx: TenantContext, *, membership_id: UUID, status: str) -
     """
     if status not in (ACTIVE, SUSPENDED):
         raise ValueError(f"estado no admitido: {status!r}")
-    with transaction.atomic(using=require_scope(ctx)):
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
         ensure_can_manage_member(ctx, membership_id=membership_id, leaving=status != ACTIVE)
         user_id = set_membership_status(ctx, membership_id=membership_id, status=status)
         if user_id is not None and status == SUSPENDED:
-            revoke_sessions(user_id)  # ADR-003 §2: en la misma transacción que la suspensión
+            revoke_sessions(user_id, using=alias)  # ADR-003 §2: en la misma transacción
         return user_id is not None

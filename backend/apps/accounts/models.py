@@ -82,6 +82,10 @@ class User(AbstractBaseUser):
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.email = canonical_email(self.email)
+        if not (self._state.adding or args or kwargs.get("force_insert")):
+            if kwargs.get("update_fields") is None:  # la época solo la mueve `revoke_sessions`
+                fields = (f.name for f in self._meta.concrete_fields if not f.primary_key)
+                kwargs["update_fields"] = [name for name in fields if name != "session_epoch"]
         super().save(*args, **kwargs)
 
 

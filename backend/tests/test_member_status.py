@@ -15,6 +15,7 @@ from apps.access.models import MembershipRole, RolePermission
 from apps.access.selectors import AccessDenied, Denied
 from apps.access.services import assign_role, ensure_can_manage_member
 from apps.accounts.models import User
+from apps.members import services as members
 from apps.members.api import views
 from apps.members.services import set_member_status
 from apps.organizations import services as organizations
@@ -102,6 +103,8 @@ def test_suspending_revokes_the_sessions_of_that_user_and_of_nobody_else(rbac: A
     assert switch(ana, rbac.m_eva).status_code == 200  # repetir no revoca otra vez
     assert switch(ana, rbac.m_eva, "ACTIVE").status_code == 200  # reactivar tampoco
     assert epochs() == [0, 1, 0] and me(again).status_code == 200
+    assert switch(ana, rbac.m_eva).status_code == 200  # una segunda suspensión revoca de nuevo
+    assert reply(me(again, "org-b")) == NO_SESSION and epochs() == [0, 2, 0]
 
 
 def test_without_session_permission_or_membership_it_changes_and_reveals_nothing(
@@ -288,6 +291,12 @@ def test_the_change_and_its_audit_are_atomic_and_hold_the_rbac_lock(
         with pytest.raises(RuntimeError):
             set_member_status(tenant, membership_id=rbac.m_eva, status="SUSPENDED")
     assert state(migrator) == before and status_of(migrator, rbac.m_eva) == "ACTIVE"
+    with acting(rbac.a, rbac.ana) as tenant, monkeypatch.context() as patch:
+        patch.setattr(members, "revoke_sessions", broken)  # sin revocación no hay suspensión
+        with pytest.raises(RuntimeError):
+            set_member_status(tenant, membership_id=rbac.m_eva, status="SUSPENDED")
+        assert OrganizationMembership.objects.get(pk=rbac.m_eva).status == "ACTIVE"
+    assert state(migrator) == before
     link = {"membership_id": rbac.m_eva, "role_id": rbac.target.pk}
     changes = {
         "ana": (

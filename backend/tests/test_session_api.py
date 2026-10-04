@@ -11,6 +11,7 @@ import psycopg
 import pytest
 from celery.schedules import crontab
 from django.conf import settings
+from django.contrib import auth
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
 from django.db import OperationalError, connection, transaction
@@ -280,7 +281,9 @@ def test_revoking_ends_every_open_session_of_that_user_and_only_those(
     with pytest.raises(RuntimeError), transaction.atomic():
         services.revoke_sessions(ana.pk)
         raise RuntimeError("quien llamaba deshizo su transacción")
-    assert browser.get(SESSION).status_code == other.get(SESSION).status_code == 200
+    with CaptureQueriesContext(connection) as queries:
+        assert browser.get(SESSION).status_code == 200
+    assert len(queries) == 2 and other.get(SESSION).status_code == 200  # la sesión y su usuario
     services.revoke_sessions(ana.pk)
     for client in (browser, other):  # todas las suyas, en la siguiente petición de cada una
         ended = client.get(SESSION)
@@ -289,18 +292,54 @@ def test_revoking_ends_every_open_session_of_that_user_and_only_those(
     assert [row.get_decoded()["_auth_user_id"] for row in Session.objects.all()] == [str(luis.pk)]
     assert User.objects.get(pk=luis.pk).session_epoch == 0
     late = Client()
-    sign_in(late, ana)  # `ana` se leyó antes de revocar: como un login simultáneo, no sobrevive
+    sign_in(late, ana)  # `ana` se leyó antes de revocar: una sesión de la época anterior
     assert reply(late.get(SESSION)) == NO_SESSION
     assert login(browser).status_code == 200  # puede volver a entrar: sesión de la época nueva
     assert browser.get(SESSION).status_code == 200
     assert Session.objects.get(pk=browser.session.session_key).get_decoded()[services.EPOCH] == 1
+    quiet = Client()
+    sign_in(quiet, User.objects.get(pk=ana.pk))
+    services.revoke_sessions(ana.pk)
+    services.revoke_sessions(ana.pk)  # dos seguidas sin presentarse: la época solo crece
+    assert User.objects.get(pk=ana.pk).session_epoch == 3
+    assert reply(quiet.get(SESSION)) == reply(browser.get(SESSION)) == NO_SESSION
 
 
-def test_a_session_without_its_epoch_is_treated_as_revoked(ana: User) -> None:
+def test_a_login_that_read_the_user_before_the_revocation_does_not_survive(
+    ana: User, browser: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def revoked_meanwhile(request: Any, user: User) -> None:
+        services.revoke_sessions(user.pk)  # entre comprobar la contraseña y abrir la sesión
+        auth.login(request, user)
+
+    monkeypatch.setattr("apps.accounts.services.django_login", revoked_meanwhile)
+    assert login(browser).status_code == 200
+    assert reply(browser.get(SESSION)) == NO_SESSION
+
+
+def test_a_session_without_its_epoch_lasts_until_the_first_revocation(ana: User) -> None:
     client = Client()
-    client.force_login(ana)  # una sesión que no nació en el login
+    client.force_login(ana)  # como una sesión abierta antes de F2-20: sin época
     session = client.session
     session[services.AUTH_AT] = session[services.SEEN_AT] = int(time.time())
     session.save()
-    ended = client.get(SESSION)
-    assert reply(ended) == NO_SESSION and Session.objects.count() == 0
+    assert client.get(SESSION).status_code == 200  # cuenta como de la época 0
+    services.revoke_sessions(ana.pk)
+    assert reply(client.get(SESSION)) == NO_SESSION and Session.objects.count() == 0
+
+
+def test_saving_a_user_read_before_the_revocation_does_not_bring_its_sessions_back(
+    ana: User, browser: Client
+) -> None:
+    login(browser)
+    age(seen_at=6 * 60)  # y le toca renovarse: una sesión revocada se cierra, no se renueva
+    stale = User.objects.get(pk=ana.pk)
+    services.revoke_sessions(ana.pk)
+    stale.first_name = "Ana"
+    stale.save()  # guardado completo de una instancia con la época anterior
+    saved = User.objects.get(pk=ana.pk)
+    assert (saved.first_name, saved.session_epoch) == (
+        "Ana",
+        1,
+    ) and saved.updated_at > ana.updated_at
+    assert reply(browser.get(SESSION)) == NO_SESSION
