@@ -92,7 +92,7 @@ Invitaciones (E01-06), baja definitiva, cambio de roles por API (E01-08) y reasi
 
 ## Security implications
 
-- `users.manage` es un permiso sensible; la ruta lo declara y el servicio lo relee bajo el bloqueo. Un actor suspendido mientras esperaba el bloqueo ya no es miembro y se le deniega.
+- `users.manage` es un permiso sensible; la ruta lo declara y el servicio lo relee bajo el bloqueo. Un actor suspendido mientras esperaba el bloqueo ya no es miembro: recibe 404.
 - La organización sale del contexto de la petición, nunca del cuerpo. Una membresía de otra organización no existe (RLS), y quien no tiene el permiso recibe 403 exista o no.
 - Una denegación no escribe nada: el savepoint se deshace y el middleware de tenant deshace la transacción de toda respuesta de error.
 - Cada cambio deja una fila de auditoría de tenant con el actor (`membership.suspended`, `membership.reactivated`), en la misma transacción.

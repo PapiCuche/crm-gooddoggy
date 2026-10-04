@@ -114,11 +114,16 @@ def test_without_session_permission_or_membership_it_changes_and_reveals_nothing
         set_member_status(tenant, membership_id=other, status="SUSPENDED")
     assert status_of(migrator, other) == "ACTIVE"
 
-    def gone(*args: Any, **kwargs: Any) -> None:
-        raise AccessDenied(Denied.MEMBERSHIP)
+    def lost(reason: Denied) -> Any:  # lo que el actor perdió mientras esperaba el bloqueo
+        def refuse(*args: Any, **kwargs: Any) -> None:
+            raise AccessDenied(reason)
 
-    monkeypatch.setattr(views, "set_member_status", gone)  # suspendido mientras esperaba
+        return refuse
+
+    monkeypatch.setattr(views, "set_member_status", lost(Denied.MEMBERSHIP))
     assert reply(switch(ana, rbac.m_eva)) == NOT_FOUND  # como cualquiera que no es miembro
+    monkeypatch.setattr(views, "set_member_status", lost(Denied.PERMISSION))
+    assert reply(switch(ana, rbac.m_eva)) == DENIED
 
 
 def test_nobody_changes_themselves_or_a_member_they_could_not_assign_roles_to(
@@ -208,7 +213,23 @@ def test_an_active_owner_always_remains(rbac: Any, migrator: psycopg.Connection[
     with tenant_scope(ctx(rbac.a)):
         OrganizationMembership.objects.filter(pk=rbac.membership).update(status="ACTIVE")
     assert state(migrator) == before
+    # El estado se lee bajo el bloqueo: zoe la reactiva y aún no confirma; luis espera y cuenta.
+    zoe = make_user(email="zoe@example.com")
+    give(rbac.a, join(rbac.a, zoe).pk, {"users.manage": None, "users.view": None})
     with tenant_scope(ctx(rbac.a)):
+        OrganizationMembership.objects.filter(pk=rbac.membership).update(status="SUSPENDED")
+    assert switch(signed(rbac.luis), rbac.m_eva).status_code == 200  # eva no es Owner: no cuenta
+    changes = {
+        "zoe": (
+            zoe,
+            lambda t: set_member_status(t, membership_id=rbac.membership, status="ACTIVE"),
+        ),
+        "luis": (rbac.luis, suspending(rbac.membership)),
+    }
+    assert race(rbac.a, changes, hold="zoe") == {"zoe": "ok", "luis": Denied.LAST_OWNER}
+    assert status_of(migrator, rbac.membership) == "ACTIVE"
+    with tenant_scope(ctx(rbac.a)):
+        OrganizationMembership.objects.filter(pk=rbac.m_eva).update(status="ACTIVE")
         MembershipRole.objects.create(membership_id=rbac.m_eva, role=owner)
     assert switch(signed(rbac.luis), rbac.membership).status_code == 200  # queda eva
 

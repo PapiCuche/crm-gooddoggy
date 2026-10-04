@@ -128,8 +128,8 @@ def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving
     """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017). Para `apps.members`.
 
     Permiso `users.manage`; nadie cambia la suya; el actor cubre todas las concesiones de todos
-    los roles del miembro, como para quitárselos (PO-1); y si `leaving`, queda un Owner activo
-    sin contarlo. Una membresía de otra organización no existe: `DoesNotExist`.
+    los roles del miembro, como para quitárselos (PO-1); y si `leaving` y el miembro es un Owner
+    activo, queda otro Owner activo. Una membresía de otra organización no existe: `DoesNotExist`.
 
     Si no deniega, el bloqueo del rol Owner dura hasta el final del `tenant_scope`: quien llama
     escribe a continuación, en ese mismo scope. Una denegación lo libera y no escribe nada.

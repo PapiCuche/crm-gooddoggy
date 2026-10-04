@@ -295,6 +295,10 @@ Por PO-2, quien tiene un rol no cambia sus concesiones, y todo Owner tiene el ro
 ### OBS-F2-05C-2 — La garantía de Owner activo tiene dos huecos fuera de este módulo
 `remove_role` la aplica. Desactivar una membresía (E01-07, en `apps.organizations`) debe llamar a `ensure_owner_remains` en el mismo `tenant_scope` y antes de escribir; hoy nada lo hace porque esa operación no existe. **Cerrado para la suspensión en F2-19 (ADR-017):** `apps.members` llama a `ensure_can_manage_member`, que incluye esa garantía, antes de escribir. La baja definitiva, cuando exista, debe pasar por el mismo camino. Desactivar un usuario global (`users.is_active`) no se puede comprobar desde un tenant: quien lo implemente debe revisar todas sus organizaciones.
 
+### OBS-F2-19-1 — Suspender una membresía todavía no revoca las sesiones
+ADR-003 §2 exige que al desactivar una membresía se revoquen las sesiones del usuario y se emita `session.revoked` por WebSocket. F2-19 (ADR-017 §5) entrega la suspensión sin eso: no existe el vínculo entre usuario y sesión (E01-07, E01-11). El usuario suspendido conserva su sesión, pero no entra en la organización: el resolvedor de tenancy comprueba la membresía en cada petición, y hoy no hay consumidores WebSocket de tenant. ADR-003 §2 sigue vigente.
+- Pendiente: work item de revocación de sesiones, antes de dar por cerrada E01-07.
+
 ### OBS-F2-05C-3 — Los servicios aún no tienen quien los llame
 No hay API HTTP (E01-08) ni bootstrap (F2-06). Tampoco existen revocar una concesión, cambiar su alcance, ni crear, renombrar o borrar roles: conceder un permiso ya concedido con otro alcance lanza `ValueError`. El step-up MFA para permisos sensibles llega con MFA (E01-03). Las denegaciones no se auditan (OBS-F2-05A-4). Un rol que conserve una concesión de un código retirado del catálogo no se puede asignar ni quitar con estos servicios: falla cerrado, y retirar un permiso sigue necesitando su migración de datos (OBS-F2-04-4).
 
