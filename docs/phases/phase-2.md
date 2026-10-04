@@ -42,6 +42,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-18 | [#93](https://github.com/PapiCuche/crm-gooddoggy/issues/93) Logout from the organization list | `feature/f2-logout-from-organizations` | #45 | frontend |
 | F2-19 | [#95](https://github.com/PapiCuche/crm-gooddoggy/issues/95) Suspend and reactivate a member (API) | `feature/f2-member-suspension-api` | #89 | backend + API |
 | F2-20 | [#97](https://github.com/PapiCuche/crm-gooddoggy/issues/97) Revoke the user's sessions when a membership is suspended | `feature/f2-session-revocation` | #95 | backend |
+| F2-21 | [#99](https://github.com/PapiCuche/crm-gooddoggy/issues/99) Suspend and reactivate a member from the members screen | `feature/f2-member-status-actions` | #95, #97 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
 
