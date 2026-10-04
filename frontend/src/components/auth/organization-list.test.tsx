@@ -9,6 +9,7 @@ const router = { replace: vi.fn() };
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 const MINE = "GET /api/v1/me/organizations/";
+const LOGOUT = "POST /api/v1/auth/logout/";
 const acme = { id: "1", slug: "acme", name: "Acme SAC" };
 const norte = { id: "2", slug: "acme-norte", name: "Acme Norte" };
 
@@ -39,6 +40,8 @@ describe("OrganizationList", () => {
     mockApi({ [MINE]: { status: 200, body: [acme] } });
     const first = renderApp(<OrganizationList choose={false} />);
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/o/acme"));
+    expect(screen.queryByRole("link")).not.toBeInTheDocument(); // ni la lista ni el cierre de
+    expect(screen.queryByRole("button")).not.toBeInTheDocument(); // sesión asoman antes de entrar
     first.unmount();
     router.replace.mockReset();
     renderApp(<OrganizationList choose />);
@@ -56,12 +59,57 @@ describe("OrganizationList", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
+  it("quien no tiene organizaciones también puede cerrar sesión", async () => {
+    document.cookie = "csrftoken=" + "t".repeat(32);
+    let reply: { status: number; body?: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    const api = mockApi({ [MINE]: { status: 200, body: [] }, [LOGOUT]: () => reply });
+    const view = renderApp(<OrganizationList choose={false} />);
+    const logout = await screen.findByRole("button", { name: "Cerrar sesión" });
+    expect(screen.queryByRole("link", { name: "Cambiar de organización" })).not.toBeInTheDocument();
+    fireEvent.click(logout);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal"); // un fallo se dice
+    expect(router.replace).not.toHaveBeenCalled();
+    reply = { status: 204 };
+    fireEvent.click(logout);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
+    expect(view.client.getQueryCache().getAll()).toEqual([]); // nada de lo leído sigue en memoria
+    const [, init] = api.mock.calls.findLast(([url]) => String(url).endsWith("/logout/")) ?? [];
+    expect(new Headers(init?.headers).get("X-CSRFToken")).toBe("t".repeat(32));
+  });
+
+  it("el cierre de sesión está con la lista y con el error, no mientras carga", async () => {
+    let reply: { status: number; body: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    const api = mockApi({ [MINE]: () => reply });
+    renderApp(<OrganizationList choose />);
+    expect(screen.queryByRole("button", { name: "Cerrar sesión" })).not.toBeInTheDocument();
+    await screen.findByRole("alert");
+    const logout = screen.getByRole("button", { name: "Cerrar sesión" });
+    logout.focus();
+    const asked = api.mock.calls.length;
+    for (const type of ["visibilitychange", "offline", "online"])
+      fireEvent(window, new Event(type));
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(api).toHaveBeenCalledTimes(asked); // con el error en pantalla no se pide nada solo
+    expect(logout).toHaveFocus(); // y el botón sigue siendo el mismo, con su foco
+    reply = { status: 200, body: [acme, norte] };
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await screen.findByRole("link", { name: /Acme Norte/ });
+    expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
+  });
+
   it("sin sesión no muestra un error: el login lo decide el proveedor", async () => {
     const api = mockApi({ [MINE]: { status: 401, body: { code: "NOT_AUTHENTICATED" } } });
     renderApp(<OrganizationList choose={false} />);
     await waitFor(() => expect(api).toHaveBeenCalledTimes(1)); // un 401 no se reintenta
     expect(await screen.findByRole("status")).toHaveTextContent("Cargando");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument(); // sin sesión no hay qué cerrar
     expect(router.replace).not.toHaveBeenCalled();
   });
 

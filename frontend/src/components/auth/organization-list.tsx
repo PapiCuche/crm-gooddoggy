@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { SessionActions } from "@/components/app-shell/session-actions";
 import { Button } from "@/components/ui/button";
 import { useMeOrganizations } from "@/lib/api/client";
 import { apiErrorKey } from "@/lib/api-errors";
@@ -15,7 +16,14 @@ import { ApiError } from "@/lib/http";
 export function OrganizationList({ choose }: { choose: boolean }) {
   const t = useTranslations();
   const router = useRouter();
-  const organizations = useMeOrganizations();
+  // Como la guardia del workspace: con el error en pantalla, volver a la pestaña o a la red no
+  // pide nada (se perderían el foco y los avisos). Ahí pregunta «Reintentar».
+  const organizations = useMeOrganizations({
+    query: {
+      refetchOnWindowFocus: ({ state }) => !!state.data,
+      refetchOnReconnect: ({ state }) => !!state.data,
+    },
+  });
   const region = useRef<HTMLDivElement>(null);
   const again = useRef<HTMLButtonElement>(null);
   const [retries, setRetries] = useState(0);
@@ -35,7 +43,8 @@ export function OrganizationList({ choose }: { choose: boolean }) {
 
   let announced = ""; // lo que oye un lector de pantalla cuando cambia el estado
   let content: ReactNode;
-  if (organizations.isPending || expired || only) {
+  const waiting = organizations.isPending || expired || !!only;
+  if (waiting) {
     announced = t("organizations.loading");
     content = <p className="text-muted">{announced}</p>;
   } else if (organizations.isError) {
@@ -92,6 +101,8 @@ export function OrganizationList({ choose }: { choose: boolean }) {
         {announced}
       </p>
       {content}
+      {/* Quien no puede entrar a ninguna organización, o la está eligiendo, también puede salir. */}
+      {waiting ? null : <SessionActions switcher={false} />}
     </div>
   );
 }

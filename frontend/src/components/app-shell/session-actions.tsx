@@ -12,8 +12,9 @@ const ACTION =
   "hover:bg-surface-raised active:bg-surface-raised flex min-h-11 w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors aria-disabled:opacity-60 lg:min-h-9";
 
 // Cambiar de organización y cerrar sesión. El cierre lo hace la API (borra la sesión y la
-// cookie); aquí solo se olvida lo que la pantalla tenía en memoria.
-export function SessionActions() {
+// cookie); aquí solo se olvida lo que la pantalla tenía en memoria. `switcher={false}` donde
+// ya se está eligiendo organización (`/o`).
+export function SessionActions({ switcher = true }: { switcher?: boolean }) {
   const t = useTranslations();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -21,7 +22,7 @@ export function SessionActions() {
     queryClient.clear();
     router.replace("/login");
   }
-  // En el hook, no en `mutate()`: así terminan aunque el shell se desmonte con la petición en vuelo.
+  // En el hook, no en `mutate()`: así terminan aunque la pantalla se desmonte con la petición en vuelo.
   // `networkMode`: sin red el cierre falla y se dice; no queda en cola para cuando vuelva.
   const logout = useAuthLogout({
     mutation: {
@@ -36,15 +37,17 @@ export function SessionActions() {
   const busy = !logout.isIdle && !failed; // hasta que cambia la página, no solo hasta la respuesta
   return (
     <div className="flex flex-col gap-1">
-      {/* Antes de las acciones: al aparecer no las mueve de donde se acaban de pulsar. */}
+      {/* Antes de las acciones: en la barra lateral, anclada abajo, no las mueve al aparecer. */}
       {failed ? (
         <p role="alert" className="text-danger px-3 text-sm">
           {t(`errors.api.${apiErrorKey(logout.error)}`)}
         </p>
       ) : null}
-      <Link href="/o?elegir" className={ACTION}>
-        {t("shell.switchOrganization")}
-      </Link>
+      {switcher ? (
+        <Link href="/o?elegir" className={ACTION}>
+          {t("shell.switchOrganization")}
+        </Link>
+      ) : null}
       {/* `aria-disabled` y no `disabled`: el botón conserva el foco mientras se cierra. */}
       <button
         type="button"
