@@ -107,10 +107,12 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 Cada fila ofrece «Suspender» (miembro activo) o «Reactivar» (miembro suspendido), con `PUT /api/v1/o/{slug}/members/{id}/status/` (F2-19). Componente: `components/members/member-status-action.tsx`.
 
 - **A quién se ofrece:** a quien tiene el permiso `users.manage` según el contexto de la API. Nunca en la fila propia ni en miembros invitados o dados de baja. Es comodidad: las reglas las aplica la API (ADR-017) y un 403 se explica en la fila.
-- **Confirmación:** en la propia fila, con la consecuencia («perderá el acceso… y se cerrarán sus sesiones»). Nada se envía sin confirmar. Al abrirla el foco va a «Cancelar».
+- **Confirmación:** en la propia fila, con la consecuencia («perderá el acceso… y se cerrarán sus sesiones»), asociada al grupo (`aria-describedby`). Nada se envía sin confirmar. Al abrirla el foco va a «Cancelar».
+- **Lo que se confirma queda fijado al abrir.** Si la lista cambia debajo (otra persona suspendió al miembro), la pregunta y lo que se envía no se dan la vuelta. Si el miembro ya está en el estado pedido y nada se está enviando, la confirmación se cierra y se anuncia ese estado.
 - **Un envío:** una marca síncrona impide que dos pulsaciones seguidas sean dos peticiones; el botón queda ocupado (`aria-disabled`) hasta la respuesta. Sin red falla y se dice: una escritura no queda en cola.
-- **Éxito:** la fila cambia en la lista ya cargada (no se vuelven a pedir sus páginas), el resultado se anuncia (`role="status"`) y el foco pasa a la acción nueva si el usuario no se ha ido a otra parte.
-- **Errores:** por código de la API. `PERMISSION_DENIED` tiene un texto propio de esta acción; `LAST_OWNER` e `INVALID_TRANSITION`, el suyo en `errors.api`. Con `INVALID_TRANSITION` o `NOT_FOUND` la pantalla ya no refleja a la API y la lista se vuelve a pedir. El mismo botón reintenta.
+- **Éxito:** se cancela cualquier lectura de la lista que estuviera en vuelo (traería el estado anterior a la escritura) y la fila cambia en la lista ya cargada, con el estado que respondió la API. No se vuelven a pedir sus páginas. Un «Cargar más» cancelado así vuelve a quedar libre: hay que pulsarlo otra vez. El resultado se anuncia (`role="status"`) y el foco pasa a la acción nueva si el usuario no se ha ido a otra parte.
+- **Errores que conservan la acción** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en la fila, por código, y el mismo botón reintenta.
+- **Pantalla desfasada** (`INVALID_TRANSITION`, `NOT_FOUND`): la lista se vuelve a pedir, y la acción, o la fila entera, puede desaparecer. Por eso el aviso («El estado de … ya había cambiado») vive en la lista (`role="alert"`), no en la fila, y el foco va al título. El aviso se quita al abrir otra confirmación.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ## Seguridad del navegador (F2-07)

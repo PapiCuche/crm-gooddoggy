@@ -238,6 +238,15 @@ describe("MemberStatusAction", () => {
     expect(assign).toHaveBeenCalledTimes(1);
   });
 
+  it("sin sesión al leer la lista también va al login", async () => {
+    const assign = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: "/o/acme/miembros", search: "", assign });
+    mockApi({ [LIST]: { status: 401, body: { code: "NOT_AUTHENTICATED" } } });
+    render(real(ui()));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?next=%2Fo%2Facme%2Fmiembros"));
+  });
+
   it.each([
     ["INVALID_TRANSITION", 409, [member("ana"), member("luis", "DEACTIVATED"), member("eva")]],
     ["NOT_FOUND", 404, [member("ana"), member("eva")]],
@@ -311,8 +320,10 @@ describe("MemberStatusAction", () => {
     luis = "SUSPENDED"; // y ahora, con la escritura en vuelo
     const other = screen.getByRole("button", { name: "Suspender a eva@acme.pe" });
     other.focus();
-    await act(async () => void (await view.client.invalidateQueries()));
-    expect(confirm).toHaveTextContent("Suspendiendo…"); // la pregunta no se da la vuelta
+    await refresh(view);
+    expect(row("luis@acme.pe")).toHaveTextContent("Suspendido"); // la lista ya lo dice
+    expect(confirm).toHaveTextContent("Suspendiendo…"); // y la pregunta no se da la vuelta
+    expect(screen.getByRole("group")).toHaveAccessibleName("Suspender a luis@acme.pe");
     release();
     await screen.findByRole("button", { name: "Reactivar a luis@acme.pe" });
     await tick();
