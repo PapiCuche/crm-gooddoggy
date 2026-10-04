@@ -4,15 +4,20 @@ Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`.""
 from typing import Any
 
 import pytest
+from django.conf import settings
 from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
+from apps.access.selectors import memberships, roles_by_membership
 from apps.accounts.models import User
+from apps.organizations.models import OrganizationMembership
+from core.tenancy.context import TenantContextError
+from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
-from tests.factories import make_user
-from tests.test_authorization import give
-from tests.test_memberships import join
+from tests.factories import TEST_PASSWORD, make_user
+from tests.test_authorization import acting, give
+from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, reply, signed
 
 world, real_stack = test_authorization.world, test_self_context.real_stack
@@ -57,6 +62,23 @@ def test_it_lists_every_member_of_the_organization_with_status_and_roles(world: 
     assert (third["status"], third["roles"]) == ("INVITED", [])
 
 
+def test_every_state_is_listed_whoever_the_user_is(world: Any) -> None:
+    give(world.a, world.membership, VIEW_USERS)
+    states = ["INVITED", "ACTIVE", "SUSPENDED", "DEACTIVATED"]
+    assert states == OrganizationMembership.Status.values == settings.MEMBERSHIP_STATUSES
+    made = [join(world.a, make_user(), status) for status in states]
+    with tenant_scope(ctx(world.a)):
+        made[0].save()  # mueve `updated_at`: `joined_at` es la fecha de alta, no la del cambio
+    made.append(join(world.a, make_user(is_active=False)))  # usuario inactivo: sigue en la lista
+    staff = User.objects.create_superuser("ops@example.com", TEST_PASSWORD)
+    made.append(join(world.a, staff))  # staff de plataforma: un miembro más, sin su marca
+    rows = members(signed(world.ana)).json()["results"][1:]  # la primera es la de ana
+    assert [(row["id"], row["status"]) for row in rows] == [(str(m.pk), m.status) for m in made]
+    assert set(rows[-1]["user"]) == {"id", "email", "first_name", "last_name"}
+    joined = [m.created_at.isoformat().replace("+00:00", "Z") for m in made]  # en UTC
+    assert [row["joined_at"] for row in rows] == joined
+
+
 def test_without_a_session_membership_or_permission_it_reveals_nothing(world: Any) -> None:
     assert members(Client()).status_code == 401
     client = signed(world.ana)
@@ -67,7 +89,10 @@ def test_without_a_session_membership_or_permission_it_reveals_nothing(world: An
         assert reply(members(client, org)) == NOT_FOUND
     outsider = signed(make_user(email="fuera@example.com"))
     assert reply(members(outsider)) == NOT_FOUND
-    assert client.post("/api/v1/o/org-a/members/", {}).status_code in (403, 405)  # solo lectura
+    client.cookies["csrftoken"] = token = "t" * 32  # con token responde la vista, no el CSRF
+    for write in (client.post, client.put, client.patch, client.delete):  # solo lectura
+        denied = write("/api/v1/o/org-a/members/", headers={"X-CSRFToken": token})
+        assert reply(denied) == (403, b'{"code":"PERMISSION_DENIED"}')
 
 
 def test_it_pages_by_cursor_without_a_query_per_member(world: Any) -> None:
@@ -90,3 +115,16 @@ def test_it_pages_by_cursor_without_a_query_per_member(world: Any) -> None:
     emails = [row["user"]["email"] for row in first["results"] + rest["results"]]
     assert emails == ["ana@example.com", *(f"m{index}@example.com" for index in range(6))]
     assert members(client, limit=201).json()["code"] == "VALIDATION_ERROR"
+
+
+def test_a_stale_context_fails_in_both_selectors(world: Any) -> None:
+    tenant = ctx(world.a, world.ana)
+    with acting(world.a, world.ana) as ectx:
+        assert memberships(ectx).count() == 1 and roles_by_membership(ectx, []) == {}
+    for read in (lambda: list(memberships(ectx)), lambda: roles_by_membership(ectx, [])):
+        with pytest.raises(TenantContextError):
+            read()  # fuera de toda transacción
+        with tenant_scope(ctx(world.b)), pytest.raises(TenantContextError):
+            read()  # scope de otra organización
+        with tenant_scope(tenant), pytest.raises(TenantContextError, match="recalcularlo"):
+            read()  # mismo contexto, otra transacción

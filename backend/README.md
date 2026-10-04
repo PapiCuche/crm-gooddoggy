@@ -323,7 +323,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
     {
       "id": "…",
       "status": "ACTIVE",
-      "joined_at": "2026-10-04T15:49:34Z",
+      "joined_at": "2026-10-04T15:49:34.123456Z",
       "user": {"id": "…", "email": "ana@acme.pe", "first_name": "Ana", "last_name": "López"},
       "roles": [{"code": "owner", "name": "Owner"}]
     }
@@ -332,12 +332,12 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 }
 ```
 
-- **Qué incluye:** todas las membresías de la organización, en cualquier estado (`INVITED`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`). `id` es el de la membresía; `joined_at`, su fecha de alta.
+- **Qué incluye:** todas las membresías de la organización, en cualquier estado (`INVITED`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`). `id` es el de la membresía; `joined_at`, su fecha de alta, en UTC (los microsegundos se omiten si son cero). `status` es el estado de la membresía, no el de la cuenta: un usuario con la cuenta global desactivada sigue saliendo con el estado de su membresía (por ejemplo `ACTIVE`) aunque no pueda entrar.
 - **Qué no incluye:** contraseña, marcas de plataforma ni las otras organizaciones del usuario. La tabla `users` es global: el listado sale de `organization_memberships` (RLS con FORCE) y solo une los usuarios de esas filas.
-- **Roles:** nombre y código, para mostrar. Nada decide por ellos.
+- **Roles:** nombre y código, para mostrar. Nada decide por ellos. Se ven con `users.view`, sin `roles.view`: quién tiene qué rol es dato del directorio; lo que concede cada rol no sale aquí.
 - **Paginación:** por cursor, en orden de alta (`?limit=`, `?cursor=`; ver «Listados»). Dos consultas por página, sean cuantos sean los miembros: las membresías con su usuario y los roles de esa página.
 - **Solo lectura.** Invitar, activar, desactivar y cambiar roles son otros work items (E01-06, E01-07, E01-08).
-- `apps.access` lee las membresías con `apps.get_model`, como el motor de autorización: los módulos de L2 no se importan entre sí.
+- `apps.access` lee las membresías con `apps.get_model`, como el motor de autorización: los módulos de L2 no se importan entre sí. Los selectores `memberships` y `roles_by_membership` filtran por organización, no por permiso: `users.view` lo exige la vista (`HasPermission` y `ScopeFilter`), y otra vista que los use declara el suyo.
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 

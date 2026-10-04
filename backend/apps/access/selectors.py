@@ -177,7 +177,8 @@ def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
 
 
 def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:
-    """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir."""
+    """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir. No comprueba
+    ningún permiso: quien llama pasa membresías que ya filtró (`ScopeFilter`)."""
     _bound(ectx)
     roles = Role.objects.using(require_scope(ectx.tenant))
     held = roles.filter(assignments__membership_id__in=members).order_by("name", "code")

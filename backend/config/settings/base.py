@@ -154,6 +154,7 @@ REST_FRAMEWORK = {
     # tenant y alcance.
     "DEFAULT_PAGINATION_CLASS": "core.api.pagination.CursorPagination",
 }
+# Copia de `OrganizationMembership.Status` (los módulos de L2 no se importan): un test las compara.
 MEMBERSHIP_STATUSES = ["INVITED", "ACTIVE", "SUSPENDED", "DEACTIVATED"]
 SPECTACULAR_SETTINGS = {
     "TITLE": "Good Doggy CRM API",
