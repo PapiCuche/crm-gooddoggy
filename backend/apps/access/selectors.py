@@ -20,7 +20,7 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import F, Model, QuerySet
 
 from apps.access.catalog import BY_CODE, PermissionDef, Scope
-from apps.access.models import MembershipRole, Role, RolePermission
+from apps.access.models import Role, RolePermission
 from apps.access.scopes import policy_for
 from core.db.models import TenantModel
 from core.tenancy.context import ActorType, TenantContext, TenantContextError
@@ -179,12 +179,9 @@ def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
 def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:
     """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir."""
     _bound(ectx)
-    held = MembershipRole.objects.using(require_scope(ectx.tenant)).filter(
-        membership_id__in=members
-    )
+    roles = Role.objects.using(require_scope(ectx.tenant))
+    held = roles.filter(assignments__membership_id__in=members).order_by("name", "code")
     found: dict[UUID, list[Any]] = {}
-    for row in held.order_by("role__name", "role__code").values(
-        "membership_id", code=F("role__code"), name=F("role__name")
-    ):
-        found.setdefault(row.pop("membership_id"), []).append(row)
+    for row in held.values("code", "name", member=F("assignments__membership_id")):
+        found.setdefault(row.pop("member"), []).append(row)
     return found
