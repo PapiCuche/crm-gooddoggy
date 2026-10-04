@@ -120,6 +120,35 @@ def ensure_owner_remains(ctx: TenantContext, *, without_membership_id: UUID) -> 
     _owner_remains(alias, _lock_owner_role(alias), without_membership_id)
 
 
+def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving: bool) -> None:
+    """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017). Para `apps.members`.
+
+    Permiso `users.manage`; nadie cambia la suya; el actor cubre todas las concesiones de todos
+    los roles del miembro, como para quitárselos (PO-1); y si `leaving`, queda un Owner activo
+    sin contarlo. Una membresía de otra organización no existe: `DoesNotExist`.
+
+    Si no deniega, el bloqueo del rol Owner dura hasta el final del `tenant_scope`: quien llama
+    escribe a continuación, en ese mismo scope. Una denegación lo libera y no escribe nada.
+    """
+    membership_id = UUID(str(membership_id))
+    with _change(ctx, "users.manage") as actor:
+        if membership_id == actor.ectx.membership_id:
+            raise AccessDenied(Denied.SELF)
+        _member(actor.alias, membership_id)
+        held = RolePermission.objects.using(actor.alias)
+        grants = held.filter(role__assignments__membership_id=membership_id)
+        actor.must_cover(grants.values_list("permission_id", "scope"))
+        assigned = MembershipRole.objects.using(actor.alias)
+        if leaving and assigned.filter(membership_id=membership_id, role=actor.owner).exists():
+            _owner_remains(actor.alias, actor.owner, membership_id)
+
+
+def _member(alias: str, membership_id: UUID) -> None:
+    """La membresía es de esta organización (la filtra RLS), o no existe."""
+    memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
+    memberships.using(alias).get(pk=membership_id)
+
+
 def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str | None) -> None:
     """Concede `code` a un rol. Repetir la misma concesión no hace nada; cambiarla es E01-08."""
     wanted = Scope(scope) if scope is not None else None
@@ -150,8 +179,7 @@ def assign_role(ctx: TenantContext, *, membership_id: UUID, role_id: UUID) -> No
         if membership_id == actor.ectx.membership_id:
             raise AccessDenied(Denied.SELF)
         role = Role.objects.using(actor.alias).get(pk=role_id)
-        memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
-        memberships.using(actor.alias).get(pk=membership_id)  # de esta organización, o no existe
+        _member(actor.alias, membership_id)
         actor.must_cover(role.grants.using(actor.alias).values_list("permission_id", "scope"))
         _, created = MembershipRole.objects.using(actor.alias).get_or_create(
             membership_id=membership_id, role=role

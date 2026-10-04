@@ -100,10 +100,11 @@ source_modules = ["core"]
 forbidden_modules = ["config", "apps"]
 
 [[tool.importlinter.contracts]]
-name = "Capas (module-dependencies §1): provisioning > organizations | access | accounts (L2) > audit | files (L1) > core (L0)"
+name = "Capas (module-dependencies §1): provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files (L1) > core (L0)"
 type = "layers"
 layers = [
-    "apps.provisioning",  # orquesta el alta: el único que une los tres módulos de L2 (F2-06)
+    # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
+    "apps.provisioning | apps.members",
     "apps.organizations | apps.access | apps.accounts",
     "apps.audit | apps.files",
     "core",
@@ -116,9 +117,15 @@ protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.o
 allowed_importers = ["apps.provisioning"]
 
 [[tool.importlinter.contracts]]
-name = "provisioning no toca los modelos de otros módulos (module-dependencies §3)"
+name = "Estado de una membresía: solo members llama a organizations.services (ADR-017)"
+type = "protected"
+protected_modules = ["apps.organizations.services"]
+allowed_importers = ["apps.members"]
+
+[[tool.importlinter.contracts]]
+name = "provisioning y members no tocan los modelos de otros módulos (module-dependencies §3)"
 type = "forbidden"
-source_modules = ["apps.provisioning"]
+source_modules = ["apps.provisioning", "apps.members"]
 forbidden_modules = ["apps.access.models", "apps.accounts.models", "apps.organizations.models"]
 allow_indirect_imports = true
 
