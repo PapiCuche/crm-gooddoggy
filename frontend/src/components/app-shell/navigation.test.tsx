@@ -39,5 +39,7 @@ describe("navegación del shell", () => {
       ["/o/acme", null],
       ["/o/acme/miembros", "page"],
     ]);
+    expect(screen.getByRole("banner")).toHaveTextContent("Workspace › Miembros");
+    expect(document.title).toBe("Miembros · Acme SAC · Good Doggy CRM"); // sección y organización
   });
 });
