@@ -11,12 +11,14 @@ import psycopg
 import pytest
 from celery.schedules import crontab
 from django.conf import settings
+from django.contrib import auth
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
-from django.db import OperationalError, connection
+from django.db import OperationalError, connection, transaction
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from django.utils.connection import ConnectionDoesNotExist
 
 from apps.accounts import services
 from apps.accounts.models import User
@@ -268,3 +270,87 @@ def test_the_session_of_a_deactivated_user_is_destroyed(ana: User, browser: Clie
     assert gone.cookies["crm_session"].value == ""  # y el navegador suelta la cookie
     User.objects.filter(pk=ana.pk).update(is_active=True)
     assert reply(browser.get(SESSION)) == NO_SESSION  # reactivar no la devuelve
+
+
+def test_revoking_ends_every_open_session_of_that_user_and_only_those(
+    ana: User, browser: Client
+) -> None:
+    login(browser)
+    other, third, luis = Client(), Client(), make_user(email="luis@example.com")
+    sign_in(other, ana)
+    sign_in(third, luis)
+    with pytest.raises(RuntimeError), transaction.atomic():
+        services.revoke_sessions(ana.pk)
+        raise RuntimeError("quien llamaba deshizo su transacción")
+    with CaptureQueriesContext(connection) as queries:
+        assert browser.get(SESSION).status_code == 200
+    assert len(queries) == 2 and other.get(SESSION).status_code == 200  # la sesión y su usuario
+    services.revoke_sessions(ana.pk)
+    for client in (browser, other):  # todas las suyas, en la siguiente petición de cada una
+        ended = client.get(SESSION)
+        assert reply(ended) == NO_SESSION and ended.cookies["crm_session"].value == ""
+    assert third.get(SESSION).status_code == 200  # la de otro usuario no cambia
+    assert [row.get_decoded()["_auth_user_id"] for row in Session.objects.all()] == [str(luis.pk)]
+    assert User.objects.get(pk=luis.pk).session_epoch == 0
+    late = Client()
+    sign_in(late, ana)  # `ana` se leyó antes de revocar: una sesión de la época anterior
+    assert reply(late.get(SESSION)) == NO_SESSION
+    assert login(browser).status_code == 200  # puede volver a entrar: sesión de la época nueva
+    assert browser.get(SESSION).status_code == 200
+    assert Session.objects.get(pk=browser.session.session_key).get_decoded()[services.EPOCH] == 1
+    quiet = Client()
+    sign_in(quiet, User.objects.get(pk=ana.pk))
+    services.revoke_sessions(ana.pk)
+    services.revoke_sessions(ana.pk)  # dos seguidas sin presentarse: la época solo crece
+    assert User.objects.get(pk=ana.pk).session_epoch == 3
+    assert reply(quiet.get(SESSION)) == reply(browser.get(SESSION)) == NO_SESSION
+
+
+def test_a_login_that_read_the_user_before_the_revocation_does_not_survive(
+    ana: User, browser: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def revoked_meanwhile(request: Any, user: User) -> None:
+        services.revoke_sessions(user.pk)  # entre comprobar la contraseña y abrir la sesión
+        auth.login(request, user)
+
+    monkeypatch.setattr("apps.accounts.services.django_login", revoked_meanwhile)
+    assert login(browser).status_code == 200
+    assert reply(browser.get(SESSION)) == NO_SESSION
+
+
+def test_a_session_without_its_epoch_lasts_until_the_first_revocation(ana: User) -> None:
+    client = Client()
+    client.force_login(ana)  # como una sesión abierta antes de F2-20: sin época
+    session = client.session
+    session[services.AUTH_AT] = session[services.SEEN_AT] = int(time.time())
+    session.save()
+    assert client.get(SESSION).status_code == 200  # cuenta como de la época 0
+    services.revoke_sessions(ana.pk)
+    assert reply(client.get(SESSION)) == NO_SESSION and Session.objects.count() == 0
+
+
+def test_saving_a_user_read_before_the_revocation_does_not_bring_its_sessions_back(
+    ana: User, browser: Client
+) -> None:
+    login(browser)
+    age(seen_at=6 * 60)  # y le toca renovarse: una sesión revocada se cierra, no se renueva
+    stale = User.objects.get(pk=ana.pk)
+    services.revoke_sessions(ana.pk)
+    stale.first_name, stale.last_name, stale.is_active = "Otra", "Persona", False
+    stale.save()  # guardado completo de una instancia con la época anterior
+    saved = User.objects.get(pk=ana.pk)
+    assert (saved.first_name, saved.last_name, saved.is_active) == ("Otra", "Persona", False)
+    assert saved.session_epoch == 1 and saved.updated_at > ana.updated_at
+    stale.is_active = True
+    stale.save(update_fields=["is_active", "session_epoch"])  # ni nombrándola
+    stale.save(force_update=True)
+    saved = User.objects.get(pk=ana.pk)
+    assert (saved.is_active, saved.session_epoch) == (True, 1)
+    assert reply(browser.get(SESSION)) == NO_SESSION
+    partial = User.objects.only("first_name").get(pk=ana.pk)
+    partial.first_name = "Ana"
+    with CaptureQueriesContext(connection) as queries:
+        partial.save()  # lee el email para canonicalizarlo y escribe solo lo cargado
+    assert len(queries) == 2 and User.objects.get(pk=ana.pk).last_name == "Persona"
+    with pytest.raises(ConnectionDoesNotExist):
+        services.revoke_sessions(ana.pk, using="otra")  # escribe en la conexión que se le pide

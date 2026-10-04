@@ -54,6 +54,9 @@ class User(AbstractBaseUser):
     last_name = models.CharField(max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
     is_platform_staff = models.BooleanField(default=False)
+    # Época de sesión: cada sesión guarda la que había al iniciarla; revocar la incrementa y las
+    # sesiones anteriores dejan de valer (ADR-003 §2, D-F2-11).
+    session_epoch = models.PositiveIntegerField(default=0, db_default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -79,6 +82,14 @@ class User(AbstractBaseUser):
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.email = canonical_email(self.email)
+        if not (self._state.adding or args or kwargs.get("force_insert")):
+            names = kwargs.get("update_fields")
+            if names is None:  # como Django: los campos cargados, menos la clave
+                loaded = (f for f in self._meta.concrete_fields if f.attname in self.__dict__)
+                names = [f.name for f in loaded if not f.primary_key]
+            # La época de sesión solo la mueve `revoke_sessions`: una instancia leída antes de
+            # una revocación no la devuelve atrás (D-F2-11).
+            kwargs["update_fields"] = [name for name in names if name != "session_epoch"]
         super().save(*args, **kwargs)
 
 

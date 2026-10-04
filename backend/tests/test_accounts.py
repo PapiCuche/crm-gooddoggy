@@ -159,6 +159,7 @@ def test_user_is_global_without_organization_or_role_fields() -> None:
         "last_name",
         "is_active",
         "is_platform_staff",
+        "session_epoch",  # época de sesión: global, del usuario (D-F2-11)
         "last_login",
         "created_at",
         "updated_at",

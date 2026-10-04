@@ -9,6 +9,9 @@
   pasajero de la base de datos no es eso: la fila sigue ahí y la sesión no se cierra.
 - Usuario desactivado o borrado: Django deja de autenticar la sesión pero conserva la fila.
   Aquí se destruye, para que no reviva si el usuario se reactiva (OBS-F2-03A-2).
+- Revocada: la sesión guarda la época del usuario al iniciarla (`users.session_epoch`). Si ya
+  no coincide, se destruye (D-F2-11). Una sesión sin época (anterior a F2-20) cuenta como de
+  la época 0: vale hasta la primera revocación. El usuario ya está cargado: sin otra consulta.
 
 Solo cubre HTTP: una conexión WebSocket deberá comprobar lo mismo al abrirse (OBS-F2-03C-1).
 """
@@ -24,7 +27,7 @@ from django.http import HttpRequest, HttpResponseBase
 from django.utils.cache import patch_vary_headers
 from django.utils.http import http_date
 
-from apps.accounts.services import AUTH_AT, SEEN_AT
+from apps.accounts.services import AUTH_AT, EPOCH, SEEN_AT
 
 
 def _end(request: HttpRequest) -> None:
@@ -58,7 +61,10 @@ class SessionLifetimeMiddleware:
         if SESSION_KEY in session:  # una sesión de usuario, siga valiendo o no
             now, started, seen = int(time.time()), session.get(AUTH_AT), session.get(SEEN_AT)
             age = now - started if isinstance(started, int) else settings.SESSION_ABSOLUTE_AGE
-            if age >= settings.SESSION_ABSOLUTE_AGE or not request.user.is_authenticated:
+            user = request.user
+            if age >= settings.SESSION_ABSOLUTE_AGE or not user.is_authenticated:
+                _end(request)
+            elif session.get(EPOCH, 0) != user.session_epoch:  # revocada (D-F2-11)
                 _end(request)
             elif not isinstance(seen, int) or now - seen >= settings.SESSION_REFRESH_INTERVAL:
                 session[SEEN_AT] = now

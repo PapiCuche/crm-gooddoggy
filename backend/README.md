@@ -286,10 +286,12 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
   - Inactividad: `SESSION_COOKIE_AGE` (12 h). Django solo renueva la caducidad al guardar la sesión, así que se guarda como mucho una vez cada `SESSION_REFRESH_INTERVAL` (5 min), no en cada petición. Se guarda antes de la vista: si la fila ya no existe (otra petición cerró la sesión), esta acaba en 401. Un fallo pasajero de la base de datos al guardar no cierra la sesión: esa petición responde 500 (OBS-F2-03C-2).
   - Absoluta: `SESSION_ABSOLUTE_AGE` (7 días) desde el login, haya o no actividad. Una sesión sin marca de inicio se trata como vencida.
   - Usuario desactivado o borrado: la sesión se destruye al detectarla (fila y cookie). Reactivar al usuario no la devuelve.
+  - Revocada: la sesión guarda la época del usuario al iniciarla (`users.session_epoch`). Si ya no coincide, se destruye al detectarla, también si le tocaba renovarse. Una sesión sin época (anterior a F2-20) cuenta como de la época 0. El usuario ya está cargado: no añade consultas.
+- **Revocar las sesiones de un usuario** (F2-20, D-F2-11): `accounts.services.revoke_sessions(user_id)` incrementa su época. Cada sesión abierta se destruye en su siguiente petición: una ruta que exige sesión responde 401. El usuario puede volver a iniciar sesión. Corre en la transacción de quien llama (`using=`) y no comprueba permisos. La época solo la mueve este servicio: `save()` sobre un `User` leído de la base nunca la escribe, tampoco nombrándola en `update_fields`, así que una instancia leída antes de una revocación no la devuelve atrás. Escriben fuera de esa protección `QuerySet.update`, `bulk_update` y una instancia construida a mano: ningún código los usa con ese campo. Como consecuencia, guardar un usuario cuya fila ya no existe falla en lugar de volver a insertarla. Hoy lo llama `apps.members` al suspender una membresía (ADR-003 §2).
 - **Logout.** Primero cierra la sesión y después audita `auth.logout`: un fallo de auditoría nunca la mantiene abierta. La cookie anterior deja de valer.
 - **Mis organizaciones.** No abre `tenant_scope`: lee las membresías del propio usuario dentro de `user_scope` (ADR-002 §3.2). No devuelve roles ni permisos: eso es `GET /api/v1/o/{slug}/me/` (F2-11).
 - **Purga.** `accounts.purge_expired_sessions` (tarea de plataforma, una vez al día a hora fija en beat) borra las filas caducadas de `django_session`.
-- **En tests:** `tests.factories.sign_in(client, user)` en lugar de `client.force_login(user)`, que no pone la marca de inicio.
+- **En tests:** `tests.factories.sign_in(client, user)` en lugar de `client.force_login(user)`, que no pone la marca de inicio ni la época. `user` debe estar recién leído si sus sesiones se revocaron: con una instancia anterior, la sesión nace revocada.
 
 ## Contexto propio en una organización (F2-11, ADR-003 §5)
 
@@ -343,13 +345,12 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 `PUT /api/v1/o/{slug}/members/{id}/status/` con `{"status": "SUSPENDED"}` o `{"status": "ACTIVE"}`. Responde `{"id": "…", "status": "…"}`. Exige el permiso `users.manage`.
 
-- **Efecto:** el miembro suspendido recibe 404 en esa organización desde su siguiente petición y deja de verla en `GET /api/v1/me/organizations/`. Su cuenta y sus otras organizaciones no cambian. Al reactivarlo vuelve con los roles que tenía.
-- **Pendiente:** ADR-003 §2 exige además revocar las sesiones del usuario al desactivar una membresía. Aún no se hace: falta el vínculo entre usuario y sesión (E01-07, E01-11).
+- **Efecto:** suspender revoca todas las sesiones del usuario (ADR-003 §2, F2-20): cada una se destruye en su siguiente petición, y toda ruta que exige sesión responde 401, también fuera de esa organización. Puede volver a iniciar sesión; en esa organización recibe 404 y deja de verla en `GET /api/v1/me/organizations/`. Su cuenta y sus otras organizaciones no cambian. Al reactivarlo vuelve con los roles que tenía. Reactivar, repetir una suspensión y una suspensión denegada no revocan nada.
 - **Reglas** (las mismas para suspender y para reactivar): nadie cambia su propia membresía; el actor debe cubrir todas las concesiones de todos los roles del miembro, como para quitárselos. Mientras el rol Owner conserve un permiso sensible (hoy siempre), solo un Owner suspende a un Owner o a otro administrador. Al suspender a un Owner activo debe quedar otro activo.
 - **Transiciones:** solo `ACTIVE` ↔ `SUSPENDED`. Repetir la petición responde 200 y no escribe ni audita. `INVITED` y `DEACTIVATED` no se tocan.
 - **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un miembro que el actor no cubre; no dice cuál); 404 si la membresía no es de la organización; 409 `LAST_OWNER` (también si la organización no tiene rol Owner); 409 `INVALID_TRANSITION`; 400 `VALIDATION_ERROR` con otro `status`. Los dos 409 llevan `message`.
 - **Auditoría de tenant:** `membership.suspended` y `membership.reactivated`, con el actor y el antes y el después, en la misma transacción que el cambio.
-- **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización) y después a `organizations.services.set_membership_status` (escritura y auditoría). `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
+- **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización), después a `organizations.services.set_membership_status` (escritura y auditoría) y, al suspender, a `accounts.services.revoke_sessions`. `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 

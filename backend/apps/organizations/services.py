@@ -26,9 +26,10 @@ class InvalidTransition(Exception):
     """La membresía no está en un estado desde el que se pueda suspender o reactivar."""
 
 
-def set_membership_status(ctx: TenantContext, *, membership_id: UUID, status: str) -> bool:
+def set_membership_status(ctx: TenantContext, *, membership_id: UUID, status: str) -> UUID | None:
     """Suspende (`ACTIVE` → `SUSPENDED`) o reactiva (`SUSPENDED` → `ACTIVE`) una membresía de
-    la organización de `ctx`, y lo audita. Devuelve si cambió: repetirlo no escribe nada.
+    la organización de `ctx`, y lo audita. Devuelve el usuario de la membresía si cambió, y
+    `None` si ya estaba así: repetirlo no escribe nada.
 
     `INVITED` y `DEACTIVATED` no se tocan: `InvalidTransition`. Una membresía de otra
     organización no existe: `DoesNotExist`.
@@ -42,11 +43,12 @@ def set_membership_status(ctx: TenantContext, *, membership_id: UUID, status: st
         rows = OrganizationMembership.objects.using(alias).select_for_update(no_key=True)
         membership = rows.get(pk=membership_id)
         if membership.status == wanted:
-            return False
+            return None
         if membership.status != origin:
             raise InvalidTransition(membership.status)
         membership.status = wanted
         membership.save(using=alias, update_fields=["status", "updated_at"])
         changes = {"status": [origin.value, wanted.value]}
         record(ctx, action, Entity("membership", membership.pk), changes)
-    return True
+    user_id: UUID = membership.user_id
+    return user_id
