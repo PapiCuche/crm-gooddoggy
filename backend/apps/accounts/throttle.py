@@ -26,6 +26,7 @@ from apps.accounts.emails import presented_email
 from apps.audit.platform import identifier_hash
 
 SCOPES = ("identifier", "pair", "ip")  # también el orden en que se bloquean las filas
+PAIR_KEPT = 24 * 60 * 60  # segundos de calma tras los que la purga borra un contador `pair`
 _QUIET = """GREATEST(t.updated_at, COALESCE(t.blocked_until, t.updated_at))
     < now() - %(window)s::int * interval '1 second'"""
 # Una sentencia que bloquea la fila: dos instancias no se pisan, y la segunda ve el bloqueo que
@@ -55,9 +56,13 @@ UPDATE login_throttles SET failures = GREATEST(failures - 1, 0),
   blocked_until = CASE WHEN %s OR failures - 1 < %s THEN NULL ELSE blocked_until END
 WHERE key = %s
 """
+# Borrar no cambia lo que haría el siguiente intento. Un contador `pair` en calma no vuelve a
+# empezar si su cuenta está caliente cuando la dirección regresa: por eso se conserva más.
 _PURGE = f"""
 DELETE FROM login_throttles WHERE id IN (
-  SELECT id FROM login_throttles AS t WHERE {_QUIET} FOR UPDATE SKIP LOCKED)
+  SELECT id FROM login_throttles AS t
+  WHERE {_QUIET} AND (left(t.key, 4) <> 'par:' OR {_QUIET.replace("window", "kept")})
+  FOR UPDATE SKIP LOCKED)
 """  # noqa: S608 — texto fijo, sin datos
 
 
@@ -171,7 +176,8 @@ def forgive(attempt: dict[str, str], started: list[Blocked]) -> None:
 
 def purge() -> int:
     """Borra los contadores que ya no cuentan: una ventana entera sin fallos y sin bloqueo en
-    curso. Salta las filas que un acceso tiene bloqueadas en ese momento."""
+    curso (`PAIR_KEPT` los de `pair`). Salta las filas que un acceso tiene bloqueadas."""
+    window = max(limit.window for limit in limits().values())
     with connection.cursor() as cursor:
-        cursor.execute(_PURGE, {"window": max(limit.window for limit in limits().values())})
+        cursor.execute(_PURGE, {"window": window, "kept": max(window, PAIR_KEPT)})
         return int(cursor.rowcount)

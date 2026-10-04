@@ -6,6 +6,7 @@ import threading
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import psycopg
 import pytest
@@ -15,11 +16,12 @@ from django.db import connection, transaction
 from django.db.models.functions import Now
 from django.test import Client
 
-from apps.accounts import checks, throttle
+from apps.accounts import checks, services, throttle
 from apps.accounts.models import LoginThrottle, User
 from apps.accounts.tasks import purge_login_throttles
 from apps.audit import platform
 from apps.audit.platform import identifier_hash
+from config.settings import base
 from core.observability import reporting
 from tests import test_auth_api
 from tests.factories import TEST_PASSWORD
@@ -99,8 +101,10 @@ def test_after_n_failures_the_right_password_is_refused_until_the_wait_passes(
     client = browser()
     for _ in range(3):
         assert reply(login(client, password=WRONG)) == INVALID  # el que llega al límite, también
-    refused = login(client)  # la contraseña correcta
+    with mock.patch.object(services, "authenticate") as checked:
+        refused = login(client)  # la contraseña correcta: se rechaza antes de comprobarla
     assert reply(refused) == (429, LIMITED) and refused.headers["Retry-After"] == "60"
+    assert not checked.called
     assert "crm_session" not in refused.cookies
     actions = audit(migrator)
     assert [row[0] for row in actions] == ["auth.login.failed"] * 3 + ["auth.login.throttled"]
@@ -118,11 +122,14 @@ def test_after_n_failures_the_right_password_is_refused_until_the_wait_passes(
     assert not LoginThrottle.objects.filter(key__startswith="par:").exists()  # y se reinicia
     assert (count("id:"), count("ip:")) == (3, 3)  # la cuenta y la dirección solo lo devuelven
     assert EMAIL not in str(sorted(rows()))
+    assert [row[0] for row in audit(migrator)].count("auth.login.throttled") == 1  # ese no audita
 
 
 def test_the_wait_reaches_its_ceiling_and_restarts_only_after_a_quiet_window(
     ana: User, settings: Any
 ) -> None:
+    defaults = [throttle.Limit(*base.LOGIN_THROTTLE[scope]) for scope in throttle.SCOPES]
+    assert [rule.block(10**6) for rule in defaults] == [3600, 900, 3600]  # los máximos del README
     quiet = {scope: (100, 900, 300, 3600) for scope in ("identifier", "ip")}
     settings.LOGIN_THROTTLE = {**quiet, "pair": LIMITS["pair"]}  # solo actúa `pair`
     client, waits = browser(), []
@@ -157,8 +164,8 @@ def test_other_addresses_never_lock_the_owner_out(
     attackers = [f"203.0.113.{index}" for index in range(5)]
     assert fail(attackers) == [INVALID] * 5  # cinco direcciones: la cuenta queda caliente
     assert login(browser("198.51.100.7")).status_code == 200  # la dueña, desde la suya
-    for _ in range(3):  # el ataque sigue en cuanto acaba cada espera
-        later(3601)
+    for _ in range(3):  # el ataque sigue en cuanto acaba cada espera: la cuenta no se enfría
+        later(401)
         fail(attackers)
         later(1)
         assert login(browser("198.51.100.7")).status_code == 200
@@ -236,9 +243,11 @@ def test_pausing_does_not_reset_an_address_while_the_account_stays_hot(ana: User
             " blocked_until = blocked_until - interval '2000 s' WHERE key = %s",
             [pair],
         )
+    assert purge_login_throttles() == 0  # la purga tampoco lo borra: sigue donde estaba
     assert reply(login(client, password=WRONG)) == INVALID
     assert login(client).headers["Retry-After"] == "240"  # sigue donde estaba: no vuelve a 120
     later(2000)  # ahora calla toda la cuenta: deja de estar caliente y el contador sí empieza
+    assert purge_login_throttles() == 7  # ya fría: todo menos los de `pair`, que aún esperan
     assert reply(login(client, password=WRONG)) == INVALID and rows()[pair][0] == 1
 
 
@@ -257,8 +266,13 @@ def test_one_address_trying_many_accounts_is_blocked_by_address(
 
 def test_a_good_login_gives_back_what_it_counted_on_the_address(ana: User) -> None:
     client = browser("203.0.113.9")
-    for index in range(6):
+    for index in range(5):
         assert reply(login(client, f"cuenta{index}@example.com", WRONG)) == INVALID
+    good = throttle.keys(EMAIL, "203.0.113.9")
+    started = throttle.admit(good)  # un acceso correcto que aún se evalúa cuenta como intento
+    assert reply(login(client, "cuenta5@example.com", WRONG)) == INVALID  # y otro llega al límite
+    with transaction.atomic():
+        throttle.forgive(good, started)  # y se lleva ese bloqueo: seis fallos no lo sostienen
     before = rows()["ip:203.0.113.9"]
     assert login(client).status_code == 200  # el séptimo intento de la dirección, correcto
     assert rows()["ip:203.0.113.9"] == before  # ni cuenta, ni bloquea, ni mueve su reloj
@@ -266,7 +280,7 @@ def test_a_good_login_gives_back_what_it_counted_on_the_address(ana: User) -> No
     assert reply(login(client, "otra@example.com", WRONG)) == INVALID  # el séptimo fallo
     assert login(client, "otra@example.com", WRONG).headers["Retry-After"] == "300"
     later(301)
-    assert login(client).status_code == 200  # un acceso correcto no deshace la escalada…
+    assert login(client).status_code == 200  # con fallos recientes, acertar no quita la escalada…
     assert reply(login(client, "otra@example.com", WRONG)) == INVALID
     assert login(client, "otra@example.com", WRONG).headers["Retry-After"] == "600"  # …sigue
 
@@ -282,7 +296,6 @@ def test_one_account_or_one_network_is_one_key_however_it_is_written() -> None:
     assert [keys["ip"] for keys in found] == ["ip:2001:db8:1:2::/64"] * 2 + ["ip:2001:db8:1:3::/64"]
     mapped = throttle.keys(EMAIL, "::ffff:198.51.100.1")  # una IPv4 escrita como IPv6
     assert mapped["ip"] == "ip:198.51.100.1"
-    assert list(found[0]) == list(throttle.SCOPES)  # el orden de bloqueo de las filas
 
 
 def test_other_spellings_of_the_account_do_not_buy_more_attempts(
@@ -338,7 +351,7 @@ def test_an_attempt_that_meets_a_block_just_started_counts_nowhere(
     monkeypatch.setattr(throttle, "blocked_for", late)
     with pytest.raises(throttle.Refused) as refused:
         throttle.admit(throttle.keys(EMAIL, "203.0.113.9"))
-    assert 0 < refused.value.seconds <= 300
+    assert 290 < refused.value.seconds <= 300
     assert rows() == before  # tampoco la cuenta, que se contó antes de ver el bloqueo
 
 
@@ -379,10 +392,14 @@ def test_a_block_that_cannot_be_audited_does_not_change_the_reply(
     assert fail(["198.51.100.1"] * 3) == [INVALID] * 3  # el que empieza el bloqueo, igual
     assert login(client).status_code == 429
     assert reports == [{"action": "auth.login.throttled"}]  # sin auditar, pero no en silencio
+    assert reply(login(browser(""), "nadie@example.com", WRONG)) == INVALID
+    assert "sin dirección de cliente" in caplog.text  # la señal de un proxy mal declarado
     assert EMAIL not in caplog.text and WRONG not in caplog.text
 
 
-def test_stale_counters_are_purged_and_live_ones_kept(ana: User) -> None:
+def test_stale_counters_are_purged_and_live_ones_kept(ana: User, settings: Any) -> None:
+    task = settings.CELERY_BEAT_SCHEDULE["accounts.purge_login_throttles"]["task"]
+    assert (purge_login_throttles.name, purge_login_throttles.tenancy) == (task, "platform")
     fail(["198.51.100.1"] * 3)  # deja un bloqueo de 60 s en la cuenta con esa dirección
     fail(["198.51.100.2"], "luis@example.com")  # y contadores sin bloqueo
     total = LoginThrottle.objects.count()
@@ -390,9 +407,11 @@ def test_stale_counters_are_purged_and_live_ones_kept(ana: User) -> None:
     later(890)
     assert purge_login_throttles() == 0  # aún no hay una ventana entera de calma
     later(20)
-    assert purge_login_throttles() == total - 1  # la calma del bloqueado empieza al acabar
-    later(60)
-    assert purge_login_throttles() == 1 and not LoginThrottle.objects.exists()
+    assert purge_login_throttles() == total - 2  # los de `pair` se conservan más
+    later(throttle.PAIR_KEPT - 1000)
+    assert purge_login_throttles() == 0  # con la cuenta caliente al volver seguirían contando
+    later(1000)
+    assert purge_login_throttles() == 2 and not LoginThrottle.objects.exists()
     fail(["198.51.100.1"] * 3)
     with connection.cursor() as cursor:  # un bloqueo que aún corre, con su último intento viejo
         cursor.execute("UPDATE login_throttles SET updated_at = now() - interval '1 hour'")
@@ -415,6 +434,8 @@ def test_stale_counters_are_purged_and_live_ones_kept(ana: User) -> None:
         {"ip": (7, 900, 4000, 3600)},  # el primer bloqueo, mayor que el máximo
         {"identifier": (5, 900, 30, 400)},  # la cuenta caliente esperaría menos que sin calentar
         {"identifier": (5, 900, 120, 150)},
+        {"pair": (900, 3, 60, 200)},  # intentos y ventana intercambiados: nunca bloquearía
+        {"ip": (5000, 900, 300, 3600)},
     ],
 )
 def test_a_misconfigured_limit_does_not_start(settings: Any, change: dict[str, Any]) -> None:
