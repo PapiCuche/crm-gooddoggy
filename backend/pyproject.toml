@@ -66,6 +66,7 @@ ignore_missing_imports = true
 module = [
     "apps.access.permissions", "core.api.authentication", "core.api.errors",
     "core.api.permissions", "tests.test_access_api", "tests.test_api_conventions",
+    "core.api.pagination", "tests.test_pagination",
 ]
 disallow_subclassing_any = false
 
