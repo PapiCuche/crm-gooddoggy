@@ -330,7 +330,7 @@ def test_the_wait_never_exceeds_the_block_even_from_an_older_transaction(ana: Us
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SELECT now()")  # el reloj de esta transacción queda fijado aquí…
         assert together([lambda: fail(["198.51.100.1"] * 3)]) == [[INVALID] * 3]
-        assert throttle.blocked_for(attempt) == 60  # …antes de que otra empezara el bloqueo
+        assert 0 < throttle.blocked_for(attempt) <= 60  # …antes de que otra empezara el bloqueo
 
 
 def test_a_burst_from_many_addresses_gets_one_attempt_each_once_the_account_is_hot(

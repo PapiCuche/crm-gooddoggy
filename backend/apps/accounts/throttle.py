@@ -46,9 +46,10 @@ _BLOCK = """
 UPDATE login_throttles SET blocked_until = now() + %s * interval '1 second' WHERE key = %s
 """
 # `clock_timestamp()`, no `now()`: `now()` es el inicio de la transacción que pregunta, que puede
-# ser anterior al de la que bloqueó, y la espera saldría mayor que el bloqueo.
+# ser anterior al de la que bloqueó, y la espera saldría mayor que el bloqueo. El filtro y la
+# resta leen el reloj en instantes distintos: un bloqueo que acaba entre los dos da 0, no negativo.
 _WAIT = """
-SELECT COALESCE(CEIL(EXTRACT(EPOCH FROM MAX(blocked_until) - clock_timestamp())), 0)::int
+SELECT GREATEST(CEIL(EXTRACT(EPOCH FROM MAX(blocked_until) - clock_timestamp())), 0)::int
 FROM login_throttles WHERE key = ANY(%s) AND blocked_until > clock_timestamp()
 """
 _RETURN_HEAT = "UPDATE login_throttles SET failures = GREATEST(failures - 1, 0) WHERE key = %s"
