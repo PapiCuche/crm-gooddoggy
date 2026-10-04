@@ -53,7 +53,7 @@ F2-09, F2-10, F2-12, F2-13, F2-06, F2-03A, F2-11 y F2-07 son prerrequisitos de *
 - Los work items de backend llevan el gate `required-check:backend gate`.
 - El orquestador `work-item-dependencies` pasa cada issue a `status:ready` cuando sus dependencias están cerradas ([delivery-automation.md](../architecture/delivery-automation.md)).
 - Tras F2-00 quedan listos a la vez F2-01 y F2-07: no dependen entre sí. Con más de un issue listo, el mantenedor elige; dentro del programa autónomo aplican los criterios de [ADR-015](../adr/ADR-015-autonomous-delivery-program.md) §4.
-- **Punto de integración del frontend:** F2-08. Hasta entonces ninguna ruta real muestra datos.
+- **Punto de integración del frontend:** F2-08. Con él, `/o/[orgSlug]` muestra datos reales de la API; `/login` y `/o` lo hacen desde F2-08B. Antes ninguna ruta real lo hacía.
 
 ### Tamaño
 

@@ -12,15 +12,21 @@
   },
   "shell": {
     "navigation": "Navegación principal",
-    "home": "Inicio",
-    "organization": "Organización",
-    "workspaceTitle": "Espacio de trabajo",
-    "workspaceEmpty": "Los módulos de la organización aparecerán aquí.",
     "workspace": "Workspace",
     "menu": "Abrir menú",
     "menuNavigation": "Navegación del menú",
     "menuTitle": "Menú",
-    "closeMenu": "Cerrar menú"
+    "closeMenu": "Cerrar menú",
+    "nav": {
+      "home": "Inicio"
+    },
+    "loading": "Cargando tu espacio…",
+    "noRole": "Sin rol asignado",
+    "switchOrganization": "Cambiar de organización",
+    "logout": "Cerrar sesión",
+    "loggingOut": "Cerrando sesión…",
+    "unavailableEyebrow": "Good Doggy / Workspace",
+    "unavailableTitle": "No pudimos abrir este espacio."
   },
   "errors": {
     "notFoundTitle": "Página no encontrada",
@@ -66,5 +72,14 @@
     "count": "{count, plural, one {# organización} other {# organizaciones}}.",
     "emptyTitle": "Aún no perteneces a ninguna organización.",
     "emptyBody": "Pide a quien administra la tuya que te invite con este correo."
+  },
+  "home": {
+    "eyebrow": "Good Doggy / Inicio",
+    "title": "Hola, {name}.",
+    "titleNoName": "Hola.",
+    "intro": "Estás en {organization}.",
+    "accessTitle": "Tu acceso",
+    "noRole": "Aún no tienes un rol en esta organización. Pide a quien la administra que te asigne uno.",
+    "modules": "Los módulos aparecerán en el menú a medida que se activen y según tus permisos."
   }
 }

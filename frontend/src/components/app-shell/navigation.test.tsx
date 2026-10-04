@@ -1,0 +1,50 @@
+import { screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { SelfContext } from "@/lib/api/model";
+import { mockApi, renderApp } from "@/test-utils";
+
+import { TenantGate } from "./tenant-gate";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+  usePathname: () => "/o/acme/miembros",
+  notFound: vi.fn(),
+}));
+// Hoy solo existe «Inicio», sin permiso: aquí se añade una entrada que sí lo pide.
+vi.mock("./navigation", async (original) => {
+  const real = await original<typeof import("./navigation")>();
+  const members = { key: "home", path: "/miembros", permission: "users.view" };
+  return { ...real, NAVIGATION: [...real.NAVIGATION, members] };
+});
+
+const ana: SelfContext = {
+  user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
+  organization: { id: "o1", slug: "acme", name: "Acme SAC" },
+  membership_id: "m1",
+  roles: [],
+  permissions: [],
+};
+const links = async (permissions: SelfContext["permissions"]) => {
+  mockApi({ "GET /api/v1/o/acme/me/": { status: 200, body: { ...ana, permissions } } });
+  renderApp(<TenantGate orgSlug="acme">pantalla</TenantGate>);
+  const nav = await screen.findByRole("navigation", { name: "Navegación principal" });
+  return within(nav)
+    .getAllByRole("link")
+    .map((link) => [link.getAttribute("href"), link.getAttribute("aria-current")]);
+};
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("navegación del shell", () => {
+  it("no lista una entrada cuyo permiso el usuario no tiene", async () => {
+    expect(await links([{ code: "audit.view", scopes: [] }])).toEqual([["/o/acme", null]]);
+  });
+
+  it("la lista con el permiso, y marca solo la entrada de la ruta actual", async () => {
+    expect(await links([{ code: "users.view", scopes: [] }])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/miembros", "page"],
+    ]);
+  });
+});

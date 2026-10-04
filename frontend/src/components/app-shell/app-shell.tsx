@@ -1,13 +1,27 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
+
+import { cn } from "@/lib/utils";
 
 import { MobileMenu } from "./mobile-menu";
+import { NAVIGATION, visibleItems } from "./navigation";
+import { SessionActions } from "./session-actions";
+import { useTenant } from "./tenant-context";
+
+function displayName(user: { first_name: string; last_name: string; email: string }): string {
+  return `${user.first_name} ${user.last_name}`.trim() || user.email;
+}
 
 // Barra lateral del workspace (Figma GOOD DOGGY, 5:212): fija en escritorio y dentro del
 // menú en móvil. `label` distingue las dos copias de la navegación para los lectores de pantalla.
-function Sidebar({ orgSlug, label }: { orgSlug: string; label: string }) {
+function Sidebar({ label, current }: { label: string; current: string }) {
   const t = useTranslations();
+  const { organization, permissions, roles, user } = useTenant();
+  const base = `/o/${organization.slug}`;
   return (
     <div className="bg-surface flex h-full w-56 flex-col overflow-y-auto">
       <p className="flex items-center gap-2 px-6 pt-6">
@@ -20,31 +34,61 @@ function Sidebar({ orgSlug, label }: { orgSlug: string; label: string }) {
         </span>
       </p>
       <p className="border-border mx-4 mt-5 flex flex-col rounded-lg border px-3 py-2.5 leading-snug">
-        <span className="text-muted text-[13px]">{t("shell.organization")}</span>
-        <span className="truncate font-mono text-sm">{orgSlug}</span>
+        <span className="truncate font-medium">{organization.name}</span>
+        <span className="text-muted truncate font-mono text-[13px]">{organization.slug}</span>
       </p>
       <nav aria-label={label} className="mx-4 mt-5">
         <ul className="flex flex-col gap-1">
-          <li>
-            <Link
-              href={`/o/${orgSlug}`} // slug ya validado por el layout (sin re-codificar)
-              aria-current="page"
-              className="border-foreground/10 bg-accent text-accent-foreground flex h-[37px] items-center gap-3 rounded-lg border px-3"
-            >
-              <span aria-hidden className="bg-surface size-3 rounded-[3px]" />
-              {t("shell.home")}
-            </Link>
-          </li>
+          {visibleItems(NAVIGATION, permissions).map((item) => {
+            const href = base + item.path;
+            const active = current === href;
+            return (
+              <li key={item.path}>
+                <Link
+                  href={href}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex h-11 items-center gap-3 rounded-lg border border-transparent px-3 lg:h-[37px]",
+                    active
+                      ? "border-foreground/10 bg-accent text-accent-foreground"
+                      : "hover:bg-surface-raised active:bg-surface-raised",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn("size-3 rounded-[3px]", active ? "bg-surface" : "bg-foreground")}
+                  />
+                  {t(`shell.nav.${item.key}`)}
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       </nav>
+      <div className="border-border mx-4 mt-auto flex flex-col gap-3 border-t py-4">
+        <p className="flex flex-col px-3 leading-snug">
+          <span className="truncate font-medium">{displayName(user)}</span>
+          <span className="text-muted truncate text-[13px]">
+            {roles.map((role) => role.name).join(" · ") || t("shell.noRole")}
+          </span>
+        </p>
+        <SessionActions />
+      </div>
     </div>
   );
 }
 
-// App Shell (barra lateral + barra superior + workspace). Solo estructura: los módulos de
-// negocio llegan con sus fases, y la navegación por permisos con F2-08.
-export function AppShell({ orgSlug, children }: { orgSlug: string; children: ReactNode }) {
+// App Shell (barra lateral + barra superior + workspace) de una organización. Lo que muestra
+// sale del contexto que devolvió la API; la navegación solo lista lo que el usuario puede abrir.
+export function AppShell({ children }: { children: ReactNode }) {
   const t = useTranslations();
+  const pathname = usePathname().replace(/\/$/, ""); // `/o/acme/` es la misma página
+  const { organization } = useTenant();
+  const item = NAVIGATION.find((entry) => pathname === `/o/${organization.slug}${entry.path}`);
+  const title = `${organization.name} · ${t("app.name")}`;
+  useEffect(() => {
+    document.title = title; // la pestaña dice en qué organización se está
+  }, [title]);
   return (
     <div className="flex min-h-dvh">
       <a
@@ -54,7 +98,7 @@ export function AppShell({ orgSlug, children }: { orgSlug: string; children: Rea
         {t("app.skipToContent")}
       </a>
       <aside className="sticky top-0 hidden h-dvh shrink-0 lg:block">
-        <Sidebar orgSlug={orgSlug} label={t("shell.navigation")} />
+        <Sidebar label={t("shell.navigation")} current={pathname} />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="border-border flex h-[60px] shrink-0 items-center gap-2 border-b px-4 lg:h-[70px] lg:border-l lg:px-8">
@@ -63,13 +107,14 @@ export function AppShell({ orgSlug, children }: { orgSlug: string; children: Rea
             title={t("shell.menuTitle")}
             closeLabel={t("shell.closeMenu")}
           >
-            <Sidebar orgSlug={orgSlug} label={t("shell.menuNavigation")} />
+            <Sidebar label={t("shell.menuNavigation")} current={pathname} />
           </MobileMenu>
           <p className="shrink-0">
-            {t("shell.workspace")} › {t("shell.home")}
+            {t("shell.workspace")}
+            {item ? ` › ${t(`shell.nav.${item.key}`)}` : null}
           </p>
-          <span className="text-muted ml-auto min-w-0 truncate font-mono text-sm lg:hidden">
-            {orgSlug}
+          <span className="text-muted ml-auto min-w-0 truncate text-sm lg:hidden">
+            {organization.name}
           </span>
         </header>
         <main
