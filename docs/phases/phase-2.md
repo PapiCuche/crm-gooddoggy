@@ -40,6 +40,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-16 | [#89](https://github.com/PapiCuche/crm-gooddoggy/issues/89) Members directory API | `feature/f2-members-directory-api` | #85 | backend + API |
 | F2-17 | [#91](https://github.com/PapiCuche/crm-gooddoggy/issues/91) Members screen | `feature/f2-members-screen` | #89 | frontend |
 | F2-18 | [#93](https://github.com/PapiCuche/crm-gooddoggy/issues/93) Logout from the organization list | `feature/f2-logout-from-organizations` | #45 | frontend |
+| F2-19 | [#95](https://github.com/PapiCuche/crm-gooddoggy/issues/95) Suspend and reactivate a member (API) | `feature/f2-member-suspension-api` | #89 | backend + API |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
 
@@ -292,7 +293,7 @@ El 404 de una ruta de tenant es idéntico en estado y cuerpo para "no existe" y 
 Por PO-2, quien tiene un rol no cambia sus concesiones, y todo Owner tiene el rol Owner. Un permiso sensible solo lo delega un Owner. Resultado: ningún Owner puede usar `grant_permission` para añadir concesiones al rol Owner, y nadie puede añadirle un permiso sensible. No hay excepción para el Owner ni para el staff de plataforma. Agrava OBS-F2-04-1: cada work item que amplíe el catálogo debe llevar esos permisos al rol Owner de las organizaciones existentes por otra vía (migración de datos o un paso de plataforma), y decidirlo antes de añadir el primero.
 
 ### OBS-F2-05C-2 — La garantía de Owner activo tiene dos huecos fuera de este módulo
-`remove_role` la aplica. Desactivar una membresía (E01-07, en `apps.organizations`) debe llamar a `ensure_owner_remains` en el mismo `tenant_scope` y antes de escribir; hoy nada lo hace porque esa operación no existe. Desactivar un usuario global (`users.is_active`) no se puede comprobar desde un tenant: quien lo implemente debe revisar todas sus organizaciones.
+`remove_role` la aplica. Desactivar una membresía (E01-07, en `apps.organizations`) debe llamar a `ensure_owner_remains` en el mismo `tenant_scope` y antes de escribir; hoy nada lo hace porque esa operación no existe. **Cerrado para la suspensión en F2-19 (ADR-017):** `apps.members` llama a `ensure_can_manage_member`, que incluye esa garantía, antes de escribir. La baja definitiva, cuando exista, debe pasar por el mismo camino. Desactivar un usuario global (`users.is_active`) no se puede comprobar desde un tenant: quien lo implemente debe revisar todas sus organizaciones.
 
 ### OBS-F2-05C-3 — Los servicios aún no tienen quien los llame
 No hay API HTTP (E01-08) ni bootstrap (F2-06). Tampoco existen revocar una concesión, cambiar su alcance, ni crear, renombrar o borrar roles: conceder un permiso ya concedido con otro alcance lanza `ValueError`. El step-up MFA para permisos sensibles llega con MFA (E01-03). Las denegaciones no se auditan (OBS-F2-05A-4). Un rol que conserve una concesión de un código retirado del catálogo no se puede asignar ni quitar con estos servicios: falla cerrado, y retirar un permiso sigue necesitando su migración de datos (OBS-F2-04-4).
