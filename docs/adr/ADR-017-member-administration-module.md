@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-04
 - **Deciders:** programa autónomo (ADR-015 §5). El mantenedor puede reemplazarlo.
-- **Related:** ADR-001, ADR-002 §3.2, ADR-003 §5, ADR-014 §1, [module-dependencies.md](../architecture/module-dependencies.md), OBS-F2-05C-2 y PO-1 en [phase-2.md](../phases/phase-2.md)
+- **Related:** ADR-001, ADR-002 §3.2, ADR-003 §2 y §5, ADR-014 §1, [module-dependencies.md](../architecture/module-dependencies.md), OBS-F2-05C-2 y PO-1 en [phase-2.md](../phases/phase-2.md)
 
 ## Context
 
@@ -20,7 +20,7 @@ Faltaba además decidir las reglas: el backlog dice «activar y desactivar usuar
 
 ### 1. Módulo `apps.members`, en la capa L2+
 
-`apps.members` orquesta la administración de los miembros de una organización. Importa los servicios públicos de `access` y de `organizations`; ninguno de los dos lo importa a él ni se importan entre sí. No tiene modelos ni importa los de otros módulos.
+`apps.members` orquesta la administración de los miembros de una organización. Importa `access.services` y `access.selectors` (públicos) y `organizations.services` (reservado a `apps.members`); ninguno de los dos módulos lo importa a él ni se importan entre sí. No tiene modelos ni importa los de otros módulos.
 
 Cada módulo conserva lo suyo:
 
@@ -31,7 +31,7 @@ Cada módulo conserva lo suyo:
 | `members.services.set_member_status` | Llama a los dos, en ese orden, dentro de un savepoint |
 | `members.api` | La ruta HTTP |
 
-`organizations.services` no comprueba permisos, así que no es API pública: un contrato de import-linter (`protected`) solo deja importarlo a `apps.members`.
+`organizations.services` no comprueba permisos, así que no es API pública: un contrato de import-linter (`protected`) solo deja importarlo a `apps.members`. El contrato mira los imports estáticos; un import dinámico (`importlib`) no lo detecta y lo cubre la revisión.
 
 ### 2. Reglas para suspender y reactivar
 
@@ -39,8 +39,8 @@ Las mismas en los dos sentidos. Reactivar devuelve el acceso con los roles que l
 
 1. Permiso `users.manage`, releído bajo el bloqueo.
 2. Nadie cambia su propia membresía.
-3. El actor cubre todas las concesiones de todos los roles del miembro, con alcance igual o superior, y un permiso sensible solo lo cubre un Owner. Es lo que ya exige quitarle esos roles (PO-1). Consecuencia: solo un Owner suspende a un Owner o a otro administrador.
-4. Al suspender a quien tiene el rol Owner, debe quedar otro Owner activo.
+3. El actor cubre todas las concesiones de todos los roles del miembro, con alcance igual o superior, y un permiso sensible solo lo cubre un Owner. Es lo que ya exige quitarle esos roles (PO-1). Consecuencia, mientras el rol Owner conserve un permiso sensible (hoy siempre: nace con todo el catálogo y no existe revocar concesiones): solo un Owner suspende a un Owner o a otro administrador.
+4. Al suspender a quien tiene el rol Owner y está activo, debe quedar otro Owner activo.
 
 Un miembro sin roles lo suspende cualquiera con `users.manage`.
 
@@ -57,19 +57,21 @@ Es `PUT` sobre el estado, no `PATCH` sobre el miembro: la operación es idempote
 | Respuesta | Cuándo |
 |---|---|
 | 403 `PERMISSION_DENIED` | Sin `users.manage`, uno mismo, o un miembro que el actor no cubre. No dice cuál |
-| 404 `NOT_FOUND` | La membresía no es de esta organización |
-| 409 `LAST_OWNER` | Sería el último Owner activo |
+| 404 `NOT_FOUND` | La membresía no es de esta organización, o el actor dejó de ser miembro mientras esperaba el bloqueo |
+| 409 `LAST_OWNER` | Sería el último Owner activo. También si la organización no tiene rol Owner: no admite ningún cambio (OBS-F2-05C-4) |
 | 409 `INVALID_TRANSITION` | La membresía está invitada o dada de baja |
 
-`LAST_OWNER` e `INVALID_TRANSITION` son códigos de dominio (ADR-014 §1) y llevan `message`.
+`LAST_OWNER` e `INVALID_TRANSITION` son códigos de dominio (ADR-014 §1) y llevan `message`. Los errores generales de ADR-014 (406, 415, `PARSE_ERROR`, 500) valen aquí como en toda la API y no se listan por operación.
 
 ### 5. Efecto
 
-El resolvedor de tenancy exige una membresía `ACTIVE` en cada petición: el miembro suspendido recibe 404 en esa organización desde la siguiente, y deja de verla en su lista. La sesión no se cierra: es global y sigue valiendo para sus otras organizaciones. La cuenta (`users.is_active`) no cambia.
+El resolvedor de tenancy exige una membresía `ACTIVE` en cada petición: el miembro suspendido recibe 404 en esa organización desde la siguiente, y deja de verla en su lista. La cuenta (`users.is_active`) y sus otras organizaciones no cambian.
+
+**Sesiones: pendiente, no decidido aquí.** ADR-003 §2 exige que al desactivar una membresía se revoquen las sesiones del usuario y se emita `session.revoked` por WebSocket. Sigue vigente y este ADR no lo reemplaza ni lo relaja. Esta entrega no lo cumple todavía: revocar necesita el vínculo entre usuario y sesión, que no existe (E01-07, E01-11). Hasta que llegue, el corte de acceso lo da solo el resolvedor de tenancy.
 
 ### 6. Fuera de esta decisión
 
-Invitaciones (E01-06), baja definitiva, cambio de roles por API (E01-08), cierre de las sesiones de un usuario y reasignación de sus conversaciones.
+Invitaciones (E01-06), baja definitiva, cambio de roles por API (E01-08) y reasignación de conversaciones. La revocación de sesiones (ADR-003 §2) y el step-up MFA para permisos sensibles (ADR-003 §5, E01-03) siguen siendo obligatorios y se aplicarán a esta operación cuando existan.
 
 ## Alternatives considered
 
@@ -86,6 +88,7 @@ Invitaciones (E01-06), baja definitiva, cambio de roles por API (E01-08), cierre
 - Un miembro con un rol que conserva un código retirado del catálogo no se puede suspender ni reactivar: falla cerrado, como asignar o quitar ese rol (OBS-F2-05C-3).
 - Todos los cambios de estado de una organización van en serie con sus cambios de RBAC (OBS-F2-05C-4).
 - El directorio (`GET …/members/`) sigue en `apps.access`. Moverlo a `apps.members` es un work item aparte.
+- `organizations/services.py` queda reservado a `apps.members`: un servicio de `organizations` que sí sea público (con sus propios permisos) irá en otro módulo del paquete o ajustará el contrato.
 
 ## Security implications
 
@@ -93,4 +96,5 @@ Invitaciones (E01-06), baja definitiva, cambio de roles por API (E01-08), cierre
 - La organización sale del contexto de la petición, nunca del cuerpo. Una membresía de otra organización no existe (RLS), y quien no tiene el permiso recibe 403 exista o no.
 - Una denegación no escribe nada: el savepoint se deshace y el middleware de tenant deshace la transacción de toda respuesta de error.
 - Cada cambio deja una fila de auditoría de tenant con el actor (`membership.suspended`, `membership.reactivated`), en la misma transacción.
-- Queda fuera: un usuario suspendido conserva su sesión global, y una conexión WebSocket abierta no se corta (hoy no hay consumidores de tenant).
+- **Pendiente respecto de ADR-003 §2:** el usuario suspendido conserva su sesión, y una conexión WebSocket abierta no se cortaría (hoy no hay consumidores de tenant). Con esa sesión no entra en la organización: cada petición vuelve a comprobar la membresía.
+- Desactivar la cuenta global de un Owner (`users.is_active`) no toma el bloqueo de RBAC y puede dejar una organización sin Owner activo (OBS-F2-05C-2). Hoy ningún código escribe ese campo; quien lo implemente debe revisar todas las organizaciones del usuario.

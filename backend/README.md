@@ -343,10 +343,11 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 `PUT /api/v1/o/{slug}/members/{id}/status/` con `{"status": "SUSPENDED"}` o `{"status": "ACTIVE"}`. Responde `{"id": "…", "status": "…"}`. Exige el permiso `users.manage`.
 
-- **Efecto:** el miembro suspendido recibe 404 en esa organización desde su siguiente petición y deja de verla en `GET /api/v1/me/organizations/`. Su sesión, su cuenta y sus otras organizaciones no cambian. Al reactivarlo vuelve con los roles que tenía.
-- **Reglas** (las mismas para suspender y para reactivar): nadie cambia su propia membresía; el actor debe cubrir todas las concesiones de todos los roles del miembro, como para quitárselos, así que solo un Owner suspende a un Owner o a otro administrador; al suspender a un Owner debe quedar otro activo.
+- **Efecto:** el miembro suspendido recibe 404 en esa organización desde su siguiente petición y deja de verla en `GET /api/v1/me/organizations/`. Su cuenta y sus otras organizaciones no cambian. Al reactivarlo vuelve con los roles que tenía.
+- **Pendiente:** ADR-003 §2 exige además revocar las sesiones del usuario al desactivar una membresía. Aún no se hace: falta el vínculo entre usuario y sesión (E01-07, E01-11).
+- **Reglas** (las mismas para suspender y para reactivar): nadie cambia su propia membresía; el actor debe cubrir todas las concesiones de todos los roles del miembro, como para quitárselos. Mientras el rol Owner conserve un permiso sensible (hoy siempre), solo un Owner suspende a un Owner o a otro administrador. Al suspender a un Owner activo debe quedar otro activo.
 - **Transiciones:** solo `ACTIVE` ↔ `SUSPENDED`. Repetir la petición responde 200 y no escribe ni audita. `INVITED` y `DEACTIVATED` no se tocan.
-- **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un miembro que el actor no cubre; no dice cuál); 404 si la membresía no es de la organización; 409 `LAST_OWNER`; 409 `INVALID_TRANSITION`; 400 `VALIDATION_ERROR` con otro `status`.
+- **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un miembro que el actor no cubre; no dice cuál); 404 si la membresía no es de la organización; 409 `LAST_OWNER` (también si la organización no tiene rol Owner); 409 `INVALID_TRANSITION`; 400 `VALIDATION_ERROR` con otro `status`. Los dos 409 llevan `message`.
 - **Auditoría de tenant:** `membership.suspended` y `membership.reactivated`, con el actor y el antes y el después, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización) y después a `organizations.services.set_membership_status` (escritura y auditoría). `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
 
