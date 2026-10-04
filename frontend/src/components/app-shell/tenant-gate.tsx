@@ -26,9 +26,10 @@ export function TenantGate({ orgSlug, children }: { orgSlug: string; children: R
   const context = useMeContext(orgSlug, {
     query: {
       gcTime: 0,
-      // Al volver a la pestaña solo pregunta con el workspace abierto. La tarjeta de error no se
-      // desmonta sola (perdería el foco y sus avisos): ahí pregunta «Reintentar».
+      // Al volver a la pestaña o la red solo pregunta con el workspace abierto. La tarjeta de
+      // error no se desmonta sola (perdería el foco y sus avisos): ahí pregunta «Reintentar».
       refetchOnWindowFocus: ({ state }) => !closed && !!state.data,
+      refetchOnReconnect: ({ state }) => !closed && !!state.data,
     },
   });
   const again = useRef<HTMLButtonElement>(null);
@@ -52,7 +53,7 @@ export function TenantGate({ orgSlug, children }: { orgSlug: string; children: R
   }
   // Organización inexistente o sin membresía: el mismo 404 que cualquier dirección que no existe.
   if (status === 404) notFound();
-  if (context.isPending || context.isFetching || status === 401) {
+  if (context.isPending || context.fetchStatus !== "idle" || status === 401) {
     // Cargando o reintentando. Sin sesión, `Providers` ya lleva al login: no se muestra un error.
     return (
       <p role="status" className="text-muted flex min-h-dvh items-center justify-center">

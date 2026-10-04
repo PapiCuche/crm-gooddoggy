@@ -191,7 +191,7 @@ describe("TenantGate", () => {
     expect(api).toHaveBeenCalledTimes(2);
     reply = { status: 200, body: ana };
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
-    await screen.findByRole("main");
+    await screen.findByRole("navigation", { name: "Navegación principal" }); // el shell, no la tarjeta
     reply = { status: 403, body: { code: "ORG_SUSPENDED" } };
     await back(); // con el workspace abierto sí pregunta, y esta respuesta lo cierra
     await screen.findByRole("alert");
