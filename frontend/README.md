@@ -32,7 +32,7 @@ BACKEND_ORIGIN=http://127.0.0.1:8000 pnpm dev   # /api y /ws → Django (same-or
 - `src/components/demo/`: landing y workspace de la demo visual, con sus datos ficticios.
 - `messages/es-PE.json`: catálogo i18n.
 
-Sin pantallas de negocio todavía. Las pantallas reales se construyen en `/o/[orgSlug]`, sobre la API y el cliente generado, con el Figma GOOD DOGGY como referencia visual ([AGENTS.md](../AGENTS.md) §11).
+La primera pantalla de gestión es «Miembros» (ver «Miembros»). Las pantallas reales se construyen en `/o/[orgSlug]`, sobre la API y el cliente generado, con el Figma GOOD DOGGY como referencia visual ([AGENTS.md](../AGENTS.md) §11).
 
 ## Lenguaje visual (F2-08A, D-F2-7)
 
@@ -81,13 +81,26 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 `/o/[orgSlug]` no pinta nada del workspace hasta que la API responde a `GET /api/v1/o/{slug}/me/`, en cada entrada: la respuesta no se guarda entre visitas (`gcTime: 0`). La URL solo selecciona: quién es el usuario ahí y qué puede hacer lo dice la API.
 
 - **Guardia (`TenantGate`):** con la respuesta, monta el shell y deja el contexto en `useTenant()`. Sin sesión (401), `Providers` lleva a `/login` con vuelta a la misma ruta. Organización inexistente o sin membresía (404): la misma página de «no encontrada» que cualquier dirección que no existe. Cualquier otro error al entrar (organización suspendida, red, servidor): una tarjeta con el mensaje de su `code`, reintentar, cambiar de organización y cerrar sesión. Reintentar muestra el aviso de carga y, al terminar, deja el foco en el botón (si vuelve a fallar) o en el workspace (si abre). Con el workspace ya abierto, el contexto se vuelve a pedir al volver a la pestaña o al recuperar la red, si la última respuesta tiene más de 30 segundos: un 401, un 403 o un 404 lo cierran, y sigue cerrado hasta que la API vuelve a responder bien; un fallo pasajero (red, servidor) no cierra el workspace ni lo reabre tras una negativa. Con la tarjeta de error en pantalla, ni volver a la pestaña ni recuperar la red piden nada: lo hace «Reintentar». Si el navegador sabe que no hay red, la petición espera en el aviso de carga y sigue sola al volver la conexión.
-- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio». Cada fase añade los suyos.
+- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio» y «Miembros» (`users.view`). Cada fase añade los suyos.
 - **Es comodidad, no seguridad:** ocultar una entrada no protege nada. La API comprueba el permiso en cada petición, y una pantalla debe tratar el 403 aunque su entrada estuviera visible.
 - **Roles:** se muestran como etiquetas. Nada en la interfaz decide por el nombre o el código de un rol.
 - **Cambiar de organización:** enlace a `/o?elegir`.
 - **Cerrar sesión:** `POST /api/v1/auth/logout/`; al responder se vacía la caché de datos y se va a `/login`. Un 401 al cerrar significa que la sesión ya no existía y se trata igual. Otro error se muestra encima de las acciones y la sesión sigue abierta; sin red el cierre falla enseguida y no queda en cola. Desde que se pulsa hasta que la página cambia el botón queda ocupado (`aria-disabled`, sin perder el foco) y una segunda pulsación no cuenta. Está en la barra lateral y en la tarjeta de error de la guardia; `/o` (lista y «sin organizaciones») aún no lo ofrece.
-- **Título de la pestaña:** «Workspace · Good Doggy CRM» hasta que la API responde; después, el nombre de la organización.
+- **Título de la pestaña:** «Workspace · Good Doggy CRM» hasta que la API responde; después, el nombre de la organización, precedido por la sección si no es el inicio.
 - **Inicio:** saluda con el nombre que da la API, muestra la organización y los roles. No hay datos de ejemplo: los módulos de negocio llegan con sus fases.
+
+## Miembros (F2-17)
+
+`/o/[orgSlug]/miembros` muestra quién pertenece a la organización, con su estado y sus roles: lo que devuelve `GET /api/v1/o/{slug}/members/` (F2-16), con el cliente generado.
+
+- **Componente:** `components/members/members-list.tsx`. Por miembro: nombre (o el correo si no tiene), correo, roles como etiquetas, estado de la membresía y fecha de alta en la zona horaria de la aplicación. Un nombre o un correo largo se parte en varias líneas; no se recorta.
+- **Paginación:** por cursor (ADR-016). «Cargar más» pide la página siguiente con el `next` de la anterior y desaparece cuando la API devuelve `null`. Desde la pulsación hasta la respuesta el botón queda ocupado (`aria-disabled`), también si el navegador sabe que no hay red y la petición espera. Al llegar la página el foco pasa a su primera fila, salvo que ya se haya ido a otra parte. Si esa página falla, lo ya cargado sigue en pantalla (salvo con un 403, que cierra la lista), el aviso aparece al lado del botón (no lo mueve) y el mismo botón reintenta; al reintentar el aviso se quita y vuelve si falla otra vez.
+- **Estados:** cargando; error con «Reintentar» (el botón no se desmonta mientras reintenta, y al abrir la lista el foco va al título); y sin permiso (403), con un mensaje propio y sin reintento.
+- **Negativas y sesión:** un 403 cierra la lista aunque ya estuviera en pantalla, y sigue cerrada hasta que la API vuelve a responder bien (un fallo pasajero no la reabre); si llega al reintentar o al cargar más, el foco va al título, salvo que el usuario ya lo haya llevado a otra parte. Sin sesión (401) no se muestra un error, tampoco al cargar más: `Providers` lleva al login. La lista no se guarda entre visitas (`gcTime: 0`): cada entrada pregunta a la API.
+- **Navegación:** la entrada «Miembros» pide el permiso `users.view`. Es comodidad: quien abre la URL sin el permiso ve el mensaje de «sin permiso» porque la API responde 403.
+- **Roles y estado:** se muestran tal como llegan. Nada decide por el nombre o el código de un rol. El estado es el de la membresía, no el de la cuenta.
+- **Título de la pestaña:** «Miembros · organización · Good Doggy CRM». Lo pone el shell a partir de la entrada de navegación de la ruta.
+- Solo lectura: invitar, activar, desactivar y cambiar roles son otros work items.
 
 ## Seguridad del navegador (F2-07)
 

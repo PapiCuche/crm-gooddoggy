@@ -18,7 +18,8 @@
     "menuTitle": "Menú",
     "closeMenu": "Cerrar menú",
     "nav": {
-      "home": "Inicio"
+      "home": "Inicio",
+      "members": "Miembros"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -81,5 +82,24 @@
     "accessTitle": "Tu acceso",
     "noRole": "Aún no tienes un rol en esta organización. Pide a quien la administra que te asigne uno.",
     "modules": "Los módulos aparecerán en el menú a medida que se activen y según tus permisos."
+  },
+  "members": {
+    "eyebrow": "Good Doggy / Miembros",
+    "title": "Miembros",
+    "intro": "Las personas que pertenecen a {organization}, con su estado y sus roles.",
+    "roles": "Roles",
+    "noRole": "Sin rol",
+    "status": {
+      "INVITED": "Invitado",
+      "ACTIVE": "Activo",
+      "SUSPENDED": "Suspendido",
+      "DEACTIVATED": "Desactivado"
+    },
+    "joined": "Alta: {date}",
+    "count": "{count, plural, one {# miembro en la lista} other {# miembros en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando miembros…",
+    "denied": "No tienes permiso para ver los miembros de esta organización."
   }
 }
