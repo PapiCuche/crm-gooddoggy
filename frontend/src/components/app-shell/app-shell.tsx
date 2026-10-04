@@ -85,9 +85,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname().replace(/\/$/, ""); // `/o/acme/` es la misma página
   const { organization } = useTenant();
   const item = NAVIGATION.find((entry) => pathname === `/o/${organization.slug}${entry.path}`);
-  const title = `${organization.name} · ${t("app.name")}`;
+  const section = item && item.path ? `${t(`shell.nav.${item.key}`)} · ` : "";
+  const title = `${section}${organization.name} · ${t("app.name")}`;
   useEffect(() => {
-    document.title = title; // la pestaña dice en qué organización se está
+    document.title = title; // la pestaña dice en qué sección y en qué organización se está
   }, [title]);
   return (
     <div className="flex min-h-dvh">

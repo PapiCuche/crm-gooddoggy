@@ -11,13 +11,6 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/o/acme/miembros",
   notFound: vi.fn(),
 }));
-// Hoy solo existe «Inicio», sin permiso: aquí se añade una entrada que sí lo pide.
-vi.mock("./navigation", async (original) => {
-  const real = await original<typeof import("./navigation")>();
-  const members = { key: "home", path: "/miembros", permission: "users.view" };
-  return { ...real, NAVIGATION: [...real.NAVIGATION, members] };
-});
-
 const ana: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
