@@ -97,14 +97,14 @@ describe("MembersList", () => {
     await waitFor(() => expect(loaded).toHaveFocus()); // el botón se fue: el foco, a la fila nueva
   });
 
-  it("al reabrir la pantalla con páginas en caché el foco no se mueve", async () => {
+  it("al montar con páginas ya cargadas el foco no se mueve", async () => {
     const api = mockApi(twoPages);
     const view = screenOf();
     fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 miembros"));
     view.unmount();
     renderIntl(<QueryClientProvider client={view.client}>{ui}</QueryClientProvider>);
-    expect(screen.getByRole("status")).toHaveTextContent("2 miembros"); // lo que había en caché
+    expect(screen.getByRole("status")).toHaveTextContent("2 miembros"); // aún no se ha recogido
     await waitFor(() => expect(api).toHaveBeenCalledTimes(4)); // y se vuelve a pedir
     expect(document.body).toHaveFocus();
   });
@@ -149,6 +149,7 @@ describe("MembersList", () => {
     fireEvent.click(more);
     await waitFor(() => expect(screen.getByText("luis@acme.pe").closest("li")).toHaveFocus());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(more).toHaveAttribute("aria-disabled", "false"); // llegó: el botón vuelve a estar libre
     reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
     more.focus();
     fireEvent.click(more);
@@ -216,6 +217,19 @@ describe("MembersList", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Cargando miembros");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("sin sesión al cargar más tampoco enseña un error", async () => {
+    mockApi({
+      [LIST]: { status: 200, body: { results: [ana], next: "abc" } },
+      [`${LIST}?cursor=abc`]: { status: 401, body: { code: "NOT_AUTHENTICATED" } },
+    });
+    screenOf();
+    const more = await screen.findByRole("button", { name: "Cargar más" });
+    fireEvent.click(more);
+    await waitFor(() => expect(more).toHaveAttribute("aria-disabled", "true"));
+    await waitFor(() => expect(more).toHaveAttribute("aria-disabled", "false")); // ya respondió
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("un fallo al cargar se dice, y reintentar lleva a la lista con el foco en el título", async () => {

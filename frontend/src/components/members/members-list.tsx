@@ -35,6 +35,10 @@ export function MembersList() {
   const heading = useRef<HTMLHeadingElement>(null);
   const fresh = useRef<HTMLLIElement>(null); // la primera fila de la última página cargada
   const moreButton = useRef<HTMLButtonElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
+  // El foco solo se mueve si sigue donde el usuario pulsó (o en ninguna parte).
+  const still = (control: HTMLElement | null) =>
+    document.activeElement === document.body || document.activeElement === control;
   const [retrying, setRetrying] = useState(false);
   // Como la guardia: una negativa cierra la lista aunque ya estuviera en pantalla, y sigue
   // cerrada hasta que la API responde bien (un fallo pasajero posterior no la reabre).
@@ -51,16 +55,16 @@ export function MembersList() {
   useEffect(() => {
     // «Cargar más» puede desaparecer: el foco sigue en lo que llegó. Solo tras pulsarlo (no al
     // reabrir la pantalla con páginas en caché) y si el foco no se fue ya a otra parte.
-    const active = document.activeElement;
-    if (more === "arrived" && (active === document.body || active === moreButton.current))
-      fresh.current?.focus();
+    if (more === "arrived" && still(moreButton.current)) fresh.current?.focus();
   }, [more]);
 
   async function loadMore() {
     setMore("busy");
     const result = await members.fetchNextPage();
-    setMore(result.isFetchNextPageError ? "idle" : "arrived");
-    if (result.error?.status === 403) heading.current?.focus(); // la lista se cierra: al título
+    // Llegó si hay una página más; un fallo o una petición cancelada no lo son.
+    setMore((result.data?.pages.length ?? 0) > pages.length ? "arrived" : "idle");
+    const closed = result.error?.status === 403; // la lista se cierra: el foco, al título
+    if (closed && still(moreButton.current)) heading.current?.focus();
   }
 
   async function retry() {
@@ -68,7 +72,8 @@ export function MembersList() {
     const result = await members.refetch();
     setRetrying(false);
     // La tarjeta se va (llegó la lista, o la API niega): el foco, al título.
-    if (result.isSuccess || result.error?.status === 403) heading.current?.focus();
+    const gone = result.isSuccess || result.error?.status === 403;
+    if (gone && still(retryButton.current)) heading.current?.focus();
   }
 
   let body;
@@ -137,7 +142,7 @@ export function MembersList() {
             </Button>
             {/* Al lado del botón: no lo mueve de donde se pulsó ni queda fuera de la vista. Se
                 quita al reintentar: si vuelve a fallar se monta de nuevo y se anuncia otra vez. */}
-            {members.isFetchNextPageError && more !== "busy" ? (
+            {members.isFetchNextPageError && status !== 401 && more !== "busy" ? (
               <p role="alert" className="text-danger min-w-0 self-center text-sm">
                 {t(`errors.api.${apiErrorKey(members.error)}`)}
               </p>
@@ -156,6 +161,7 @@ export function MembersList() {
           </p>
         ) : null}
         <Button
+          ref={retryButton}
           variant="primary"
           size="lg"
           aria-disabled={retrying}
