@@ -17,9 +17,20 @@ import { TenantProvider } from "./tenant-context";
 // usuario en esa organización. La URL solo selecciona; quien autoriza es la API.
 export function TenantGate({ orgSlug, children }: { orgSlug: string; children: ReactNode }) {
   const t = useTranslations();
+  const denies = (code?: number) => code === 401 || code === 403 || code === 404;
+  // Una negativa lo deja cerrado hasta que la API vuelve a responder bien: un fallo pasajero
+  // posterior no lo reabre con el contexto de antes de la negativa.
+  const [closed, setClosed] = useState(false);
   // `gcTime: 0`: al salir de la organización no queda su respuesta en memoria. Cada entrada
   // espera a la API en vez de decidir con lo que respondió en una visita anterior.
-  const context = useMeContext(orgSlug, { query: { gcTime: 0 } });
+  const context = useMeContext(orgSlug, {
+    query: {
+      gcTime: 0,
+      // Al volver a la pestaña solo pregunta con el workspace abierto. La tarjeta de error no se
+      // desmonta sola (perdería el foco y sus avisos): ahí pregunta «Reintentar».
+      refetchOnWindowFocus: ({ state }) => !closed && !!state.data && !denies(state.error?.status),
+    },
+  });
   const again = useRef<HTMLButtonElement>(null);
   const [retries, setRetries] = useState(0);
   useEffect(() => {
@@ -29,8 +40,10 @@ export function TenantGate({ orgSlug, children }: { orgSlug: string; children: R
   const status = context.error?.status;
   // Con el workspace abierto solo lo cierra una respuesta que niega el acceso. Un fallo pasajero
   // al refrescar (red, servidor) deja lo último que dijo la API y lo que haya en pantalla.
-  const denied = status === 401 || status === 403 || status === 404;
-  if (context.data && !denied) {
+  const denied = denies(status);
+  if (denied && !closed) setClosed(true);
+  if (closed && context.isSuccess) setClosed(false);
+  if (context.data && !denied && !closed) {
     return (
       <TenantProvider value={context.data}>
         <AppShell>{children}</AppShell>

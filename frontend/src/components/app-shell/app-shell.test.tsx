@@ -162,12 +162,41 @@ describe("TenantGate", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Esta organización está suspendida.");
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeInTheDocument(); // sin shell también
+    reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    await refresh(view.client); // tras la negativa, un fallo pasajero no reabre con lo de antes
+    expect(screen.getByRole("alert")).toHaveTextContent("Algo salió mal");
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    const asked = api.mock.calls.length;
+    await act(async () => void fireEvent(window, new Event("visibilitychange"))); // ni pregunta sola
+    expect(api).toHaveBeenCalledTimes(asked);
     reply = { status: 200, body: ana };
     const release = hold(api);
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Cargando tu espacio"); // se nota
     release();
     expect(await screen.findByRole("main")).toHaveTextContent("Hola, Ana.");
+  });
+
+  it("volver a la pestaña vuelve a preguntar con el workspace abierto, no con la tarjeta de error", async () => {
+    let reply: { status: number; body: unknown } = { status: 502, body: null };
+    const api = mockApi({ [ME]: () => reply });
+    const back = () =>
+      act(async () => {
+        fireEvent(window, new Event("visibilitychange")); // lo que escucha TanStack
+        await new Promise((resolve) => setTimeout(resolve));
+      });
+    renderApp(gate);
+    await screen.findByRole("alert"); // tarjeta al entrar: dos intentos y ningún dato
+    await back();
+    expect(api).toHaveBeenCalledTimes(2);
+    reply = { status: 200, body: ana };
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    await screen.findByRole("main");
+    reply = { status: 403, body: { code: "ORG_SUSPENDED" } };
+    await back(); // con el workspace abierto sí pregunta, y esta respuesta lo cierra
+    await screen.findByRole("alert");
+    await back(); // la tarjeta no se desmonta: conserva el foco y los avisos que tenga
+    expect(api).toHaveBeenCalledTimes(4);
   });
 
   it("`useTenant` solo existe por debajo de la guardia", () => {

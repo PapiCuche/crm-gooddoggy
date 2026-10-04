@@ -43,7 +43,7 @@ function Sidebar({ label, current }: { label: string; current: string }) {
             const href = base + item.path;
             const active = current === href;
             return (
-              <li key={item.key}>
+              <li key={item.path}>
                 <Link
                   href={href}
                   aria-current={active ? "page" : undefined}
