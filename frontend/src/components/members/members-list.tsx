@@ -30,28 +30,50 @@ export function MembersList() {
       }),
     initialPageParam: null,
     getNextPageParam: (last) => last.next,
+    gcTime: 0, // como la guardia: al salir no queda en memoria y cada entrada pregunta a la API
   });
   const heading = useRef<HTMLHeadingElement>(null);
   const fresh = useRef<HTMLLIElement>(null); // la primera fila de la última página cargada
+  const moreButton = useRef<HTMLButtonElement>(null);
   const [retrying, setRetrying] = useState(false);
+  // Como la guardia: una negativa cierra la lista aunque ya estuviera en pantalla, y sigue
+  // cerrada hasta que la API responde bien (un fallo pasajero posterior no la reabre).
+  const status = members.error?.status;
+  const [denied, setDenied] = useState(false);
+  if (status === 403 && !denied) setDenied(true);
+  if (denied && members.isSuccess) setDenied(false);
+  // «Cargar más»: ocupado desde la pulsación hasta la respuesta, también si espera a la red.
+  const [more, setMore] = useState<"idle" | "busy" | "arrived">("idle");
   const pages = members.data?.pages ?? [];
   const rows = pages.flatMap((page) => page.results);
   const firstOfLast = pages.length > 1 ? pages.at(-1)?.results[0]?.id : undefined;
 
   useEffect(() => {
-    fresh.current?.focus(); // «Cargar más» puede desaparecer: el foco sigue en lo que llegó
-  }, [firstOfLast]);
+    // «Cargar más» puede desaparecer: el foco sigue en lo que llegó. Solo tras pulsarlo (no al
+    // reabrir la pantalla con páginas en caché) y si el foco no se fue ya a otra parte.
+    const active = document.activeElement;
+    if (more === "arrived" && (active === document.body || active === moreButton.current))
+      fresh.current?.focus();
+  }, [more]);
+
+  async function loadMore() {
+    setMore("busy");
+    const result = await members.fetchNextPage();
+    setMore(result.isFetchNextPageError ? "idle" : "arrived");
+  }
 
   async function retry() {
     setRetrying(true);
     const result = await members.refetch();
     setRetrying(false);
-    if (result.isSuccess) heading.current?.focus(); // la tarjeta se va: el foco, al título
+    // La tarjeta se va (llegó la lista, o la API niega): el foco, al título.
+    if (result.isSuccess || result.error?.status === 403) heading.current?.focus();
   }
 
-  const status = members.error?.status;
   let body;
-  if (members.data) {
+  if (denied) {
+    body = <p role="alert">{t("members.denied")}</p>;
+  } else if (members.data) {
     body = (
       <>
         <ul aria-label={t("members.title")} className="flex flex-col gap-2">
@@ -63,11 +85,11 @@ export function MembersList() {
               className="border-border bg-surface grid gap-x-4 gap-y-2 rounded-lg border p-4 focus-visible:outline-none sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_auto] sm:items-center"
             >
               <p className="flex min-w-0 flex-col leading-snug">
-                <span className="truncate font-medium">
+                <span className="font-medium wrap-anywhere">
                   {fullName(member.user) || member.user.email}
                 </span>
                 {fullName(member.user) ? (
-                  <span className="text-muted truncate text-sm">{member.user.email}</span>
+                  <span className="text-muted text-sm wrap-anywhere">{member.user.email}</span>
                 ) : null}
               </p>
               <ul aria-label={t("members.roles")} className="flex flex-wrap gap-1.5">
@@ -101,27 +123,30 @@ export function MembersList() {
         <p role="status" className="sr-only">
           {t("members.count", { count: rows.length })}
         </p>
-        {members.isFetchNextPageError ? (
-          <p role="alert" className="text-danger text-sm">
-            {t(`errors.api.${apiErrorKey(members.error)}`)}
-          </p>
-        ) : null}
         {members.hasNextPage ? (
-          <Button
-            variant="accent"
-            size="lg"
-            className="self-start"
-            aria-disabled={members.isFetchingNextPage}
-            onClick={() => members.isFetchingNextPage || void members.fetchNextPage()}
-          >
-            {members.isFetchingNextPage ? t("members.loadingMore") : t("members.more")}
-          </Button>
+          <div className="flex items-start gap-3">
+            <Button
+              ref={moreButton}
+              variant="accent"
+              size="lg"
+              aria-disabled={more === "busy"}
+              onClick={() => more === "busy" || void loadMore()}
+            >
+              {more === "busy" ? t("members.loadingMore") : t("members.more")}
+            </Button>
+            {/* Al lado del botón: no lo mueve de donde se pulsó ni queda fuera de la vista. Se
+                quita al reintentar: si vuelve a fallar se monta de nuevo y se anuncia otra vez. */}
+            {members.isFetchNextPageError && more !== "busy" ? (
+              <p role="alert" className="text-danger min-w-0 self-center text-sm">
+                {t(`errors.api.${apiErrorKey(members.error)}`)}
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </>
     );
-  } else if (status === 403) {
-    body = <p role="alert">{t("members.denied")}</p>;
-  } else if (members.isError || retrying) {
+  } else if ((members.isError && status !== 401) || retrying) {
+    // Sin sesión (401), `Providers` ya lleva al login: queda el aviso de carga, sin error.
     body = (
       <div className="flex flex-col items-start gap-3">
         {members.isError ? (

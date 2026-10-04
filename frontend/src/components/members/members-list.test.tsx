@@ -1,9 +1,10 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { onlineManager, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Member, SelfContext } from "@/lib/api/model";
-import { mockApi, renderApp } from "@/test-utils";
+import { mockApi, renderApp, renderIntl } from "@/test-utils";
 
 import { MembersList } from "./members-list";
 
@@ -30,15 +31,22 @@ const ana = member("ana", {
     { code: "sales", name: "Ventas" },
   ],
 });
-const screenOf = () =>
-  renderApp(
-    <TenantProvider value={tenant}>
-      <MembersList />
-    </TenantProvider>,
-  );
+const ui = (
+  <TenantProvider value={tenant}>
+    <MembersList />
+  </TenantProvider>
+);
+const screenOf = () => renderApp(ui);
+const twoPages = {
+  [LIST]: { status: 200, body: { results: [ana], next: "abc" } },
+  [`${LIST}?cursor=abc`]: { status: 200, body: { results: [member("luis")], next: null } },
+};
 const rows = () => within(screen.getByRole("list", { name: "Miembros" })).getAllByRole("listitem");
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  onlineManager.setOnline(true);
+});
 
 describe("MembersList", () => {
   it("muestra lo que devuelve la API: nombre, correo, roles, estado y alta", async () => {
@@ -52,6 +60,8 @@ describe("MembersList", () => {
     ) as [HTMLElement, HTMLElement];
     expect(first).toHaveTextContent("Ana López");
     expect(first).toHaveTextContent("ana@acme.pe");
+    for (const text of ["Ana López", "ana@acme.pe"])
+      expect(screen.getByText(text)).toHaveClass("wrap-anywhere"); // largo: se parte, no se recorta
     expect(first).toHaveTextContent("Activo");
     expect(first).toHaveTextContent(/Alta: 4 oct\.? 2026/);
     const roles = within(within(first).getByRole("list", { name: "Roles" })).getAllByRole(
@@ -77,12 +87,43 @@ describe("MembersList", () => {
       },
     });
     screenOf();
-    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+    const more = await screen.findByRole("button", { name: "Cargar más" });
+    fireEvent.click(more);
+    fireEvent.click(more); // ocupado: la segunda pulsación no cuenta
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("3 miembros"));
     expect(api).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", { name: "Cargar más" })).not.toBeInTheDocument();
     const loaded = screen.getByText("luis@acme.pe", { selector: ".font-medium" }).closest("li");
     await waitFor(() => expect(loaded).toHaveFocus()); // el botón se fue: el foco, a la fila nueva
+  });
+
+  it("al reabrir la pantalla con páginas en caché el foco no se mueve", async () => {
+    const api = mockApi(twoPages);
+    const view = screenOf();
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 miembros"));
+    view.unmount();
+    renderIntl(<QueryClientProvider client={view.client}>{ui}</QueryClientProvider>);
+    expect(screen.getByRole("status")).toHaveTextContent("2 miembros"); // lo que había en caché
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(4)); // y se vuelve a pedir
+    expect(document.body).toHaveFocus();
+  });
+
+  it("sin red el botón queda ocupado, y la página no le quita el foco a quien ya se fue", async () => {
+    const api = mockApi(twoPages);
+    screenOf();
+    const more = await screen.findByRole("button", { name: "Cargar más" });
+    act(() => onlineManager.setOnline(false));
+    fireEvent.click(more);
+    expect(more).toHaveTextContent("Cargando más…");
+    expect(more).toHaveAttribute("aria-disabled", "true");
+    const title = screen.getByRole("heading", { level: 1 });
+    title.focus();
+    expect(api).toHaveBeenCalledTimes(1); // la petición espera a la red
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 miembros"));
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(title).toHaveFocus();
   });
 
   it("si la página siguiente falla lo dice y el mismo botón reintenta", async () => {
@@ -98,11 +139,21 @@ describe("MembersList", () => {
     const more = await screen.findByRole("button", { name: "Cargar más" });
     fireEvent.click(more);
     expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
+    expect(more.nextElementSibling).toBe(screen.getByRole("alert")); // al lado: no mueve el botón
     expect(screen.getByText("ana@acme.pe")).toBeVisible(); // lo ya cargado sigue en pantalla
-    reply = { status: 200, body: { results: [member("luis")], next: null } };
     fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("2 miembros"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // al reintentar se quita y,
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal"); // si falla, vuelve
+    reply = { status: 200, body: { results: [member("luis")], next: "abc" } };
+    more.focus();
+    fireEvent.click(more);
+    await waitFor(() => expect(screen.getByText("luis@acme.pe").closest("li")).toHaveFocus());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    more.focus();
+    fireEvent.click(more);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
+    expect(more).toHaveFocus(); // falló: el foco sigue en el botón, no vuelve a la fila anterior
   });
 
   it("sin el permiso lo explica y no ofrece reintentar: decide la API", async () => {
@@ -113,6 +164,46 @@ describe("MembersList", () => {
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("una negativa cierra la lista, también si ya estaba abierta, y un fallo pasajero no la reabre", async () => {
+    const page = { status: 200, body: { results: [ana], next: null } };
+    const failure = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    const denial = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    let reply: { status: number; body: unknown } = failure;
+    mockApi({ [LIST]: () => reply });
+    const view = screenOf();
+    const refresh = async (next: typeof reply) => {
+      reply = next; // como al volver a la pestaña; React se entera en una tarea posterior
+      await act(async () => {
+        await view.client.refetchQueries();
+        await new Promise((resolve) => setTimeout(resolve));
+      });
+    };
+    const retry = await screen.findByRole("button", { name: "Reintentar" });
+    reply = denial;
+    fireEvent.click(retry); // la API niega al reintentar: el foco no se queda en ninguna parte
+    expect(await screen.findByRole("alert")).toHaveTextContent("No tienes permiso para ver");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    await refresh(page);
+    expect(screen.getByText("ana@acme.pe")).toBeVisible(); // la API vuelve a responder bien
+    await refresh(denial);
+    expect(screen.getByRole("alert")).toHaveTextContent("No tienes permiso para ver");
+    expect(screen.queryByText("ana@acme.pe")).not.toBeInTheDocument(); // con la lista abierta
+    await refresh(failure);
+    expect(screen.queryByText("ana@acme.pe")).not.toBeInTheDocument(); // sigue cerrada
+    view.unmount(); // al salir no queda nada en memoria: la próxima entrada pregunta a la API
+    await waitFor(() => expect(view.client.getQueryCache().getAll()).toHaveLength(0));
+  });
+
+  it("sin sesión no enseña un error: el login lo decide el proveedor", async () => {
+    mockApi({ [LIST]: { status: 401, body: { code: "NOT_AUTHENTICATED" } } });
+    const { client } = screenOf();
+    await waitFor(() => expect(client.getQueryCache().getAll()[0]?.state.status).toBe("error"));
+    await act(() => new Promise((resolve) => setTimeout(resolve))); // React ya lo sabe
+    expect(screen.getByRole("status")).toHaveTextContent("Cargando miembros");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("un fallo al cargar se dice, y reintentar lleva a la lista con el foco en el título", async () => {
