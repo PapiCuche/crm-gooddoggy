@@ -16,7 +16,14 @@ import { ApiError } from "@/lib/http";
 export function OrganizationList({ choose }: { choose: boolean }) {
   const t = useTranslations();
   const router = useRouter();
-  const organizations = useMeOrganizations();
+  // Como la guardia del workspace: con el error en pantalla, volver a la pestaña o a la red no
+  // pide nada (se perderían el foco y los avisos). Ahí pregunta «Reintentar».
+  const organizations = useMeOrganizations({
+    query: {
+      refetchOnWindowFocus: ({ state }) => !!state.data,
+      refetchOnReconnect: ({ state }) => !!state.data,
+    },
+  });
   const region = useRef<HTMLDivElement>(null);
   const again = useRef<HTMLButtonElement>(null);
   const [retries, setRetries] = useState(0);

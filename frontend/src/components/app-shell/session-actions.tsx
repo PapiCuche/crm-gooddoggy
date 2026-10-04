@@ -22,7 +22,7 @@ export function SessionActions({ switcher = true }: { switcher?: boolean }) {
     queryClient.clear();
     router.replace("/login");
   }
-  // En el hook, no en `mutate()`: así terminan aunque el shell se desmonte con la petición en vuelo.
+  // En el hook, no en `mutate()`: así terminan aunque la pantalla se desmonte con la petición en vuelo.
   // `networkMode`: sin red el cierre falla y se dice; no queda en cola para cuando vuelva.
   const logout = useAuthLogout({
     mutation: {
@@ -37,7 +37,7 @@ export function SessionActions({ switcher = true }: { switcher?: boolean }) {
   const busy = !logout.isIdle && !failed; // hasta que cambia la página, no solo hasta la respuesta
   return (
     <div className="flex flex-col gap-1">
-      {/* Antes de las acciones: al aparecer no las mueve de donde se acaban de pulsar. */}
+      {/* Antes de las acciones: en la barra lateral, anclada abajo, no las mueve al aparecer. */}
       {failed ? (
         <p role="alert" className="text-danger px-3 text-sm">
           {t(`errors.api.${apiErrorKey(logout.error)}`)}

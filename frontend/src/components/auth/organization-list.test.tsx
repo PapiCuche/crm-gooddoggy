@@ -40,6 +40,8 @@ describe("OrganizationList", () => {
     mockApi({ [MINE]: { status: 200, body: [acme] } });
     const first = renderApp(<OrganizationList choose={false} />);
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/o/acme"));
+    expect(screen.queryByRole("link")).not.toBeInTheDocument(); // ni la lista ni el cierre de
+    expect(screen.queryByRole("button")).not.toBeInTheDocument(); // sesión asoman antes de entrar
     first.unmount();
     router.replace.mockReset();
     renderApp(<OrganizationList choose />);
@@ -83,11 +85,18 @@ describe("OrganizationList", () => {
       status: 500,
       body: { code: "INTERNAL_ERROR" },
     };
-    mockApi({ [MINE]: () => reply });
+    const api = mockApi({ [MINE]: () => reply });
     renderApp(<OrganizationList choose />);
     expect(screen.queryByRole("button", { name: "Cerrar sesión" })).not.toBeInTheDocument();
     await screen.findByRole("alert");
-    expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
+    const logout = screen.getByRole("button", { name: "Cerrar sesión" });
+    logout.focus();
+    const asked = api.mock.calls.length;
+    for (const type of ["visibilitychange", "offline", "online"])
+      fireEvent(window, new Event(type));
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(api).toHaveBeenCalledTimes(asked); // con el error en pantalla no se pide nada solo
+    expect(logout).toHaveFocus(); // y el botón sigue siendo el mismo, con su foco
     reply = { status: 200, body: [acme, norte] };
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     await screen.findByRole("link", { name: /Acme Norte/ });
@@ -100,6 +109,7 @@ describe("OrganizationList", () => {
     await waitFor(() => expect(api).toHaveBeenCalledTimes(1)); // un 401 no se reintenta
     expect(await screen.findByRole("status")).toHaveTextContent("Cargando");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument(); // sin sesión no hay qué cerrar
     expect(router.replace).not.toHaveBeenCalled();
   });
 
