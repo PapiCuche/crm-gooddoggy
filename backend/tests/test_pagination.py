@@ -10,7 +10,10 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db import connection
+from django.db.models import QuerySet
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.urls import path
 from drf_spectacular.generators import SchemaGenerator
 from rest_framework import generics, pagination
@@ -18,6 +21,7 @@ from rest_framework import generics, pagination
 import config.urls
 from core.api.pagination import CursorPagination
 from tests import test_access_api, test_authorization
+from tests.tenancy_app.models import Widget
 from tests.test_access_api import TENANT, WidgetView, url
 from tests.test_authorization import VIEW, give
 
@@ -33,10 +37,16 @@ class Newest(Widgets):
     ordering = "-id"  # el orden lo declara la vista
 
 
+class Repeated(Widgets):
+    def get_queryset(self) -> QuerySet[Widget]:
+        return Widget.objects.filter(widgetpart__isnull=False)  # una fila por cada pieza
+
+
 urlpatterns = [
     *config.urls.urlpatterns,
     path(TENANT + "widgets/", Widgets.as_view()),
     path(TENANT + "newest/", Newest.as_view()),
+    path(TENANT + "repeated/", Repeated.as_view()),
 ]
 
 
@@ -113,7 +123,11 @@ def test_an_unreadable_or_impossible_cursor_is_a_validation_error(api: Any) -> N
     for bad in (*forged, token(o="2"), token(o="2", p=position), token(r="1", p=position)):
         response = api.client.get(url(), {"cursor": bad})
         assert response.status_code == 400 and list(response.json()["fields"]) == ["cursor"], bad
-    assert api.client.get(url(), {"cursor": token(p=position)}).status_code == 200
+    with CaptureQueriesContext(connection) as queries:
+        assert api.client.get(url(), {"cursor": token(p=position)}).status_code == 200
+    assert sum("tenancy_app_widget" in query["sql"] for query in queries) == 1  # leerlo no consulta
+    both = api.client.get(url(), {"limit": "0", "cursor": "%%%"}).json()
+    assert list(both["fields"]) == ["limit"]  # con los dos mal, siempre el mismo
 
 
 def test_a_failure_reading_the_rows_is_not_blamed_on_the_cursor(
@@ -153,13 +167,31 @@ def test_the_view_declares_the_order_and_it_is_id_or_its_reverse(
     assert paginator.get_ordering(None, None, SimpleNamespace()) == ("id",)
     assert paginator.get_ordering(None, None, SimpleNamespace(ordering=["-id"])) == ("-id",)
     # el cursor solo guarda la primera columna: con empates o nulos repite o pierde filas
-    for unstable in ("name", ("name", "id"), ("-name", "-id"), ("id", "name"), ("team_id", "id")):
+    for unstable in (
+        "pk",
+        "name",
+        ("name", "id"),
+        ("-name", "-id"),
+        ("id", "name"),
+        ("team_id", "id"),
+    ):
         with pytest.raises(ImproperlyConfigured, match="`id` o `-id`"):
             paginator.get_ordering(None, None, SimpleNamespace(ordering=unstable))
 
 
+def test_a_list_that_repeats_rows_fails_instead_of_handing_out_a_dead_cursor(
+    api: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    give(api.a, api.membership, {VIEW: "ORGANIZATION"})
+    part = "INSERT INTO tenancy_app_widgetpart (id, organization_id, widget_id) VALUES (%s, %s, %s)"
+    for _ in range(3):  # tres piezas del mismo widget: el `join` lo devuelve tres veces
+        migrator.execute(part, [uuid4(), api.a, api.mine])
+    with pytest.raises(ImproperlyConfigured, match="repite filas"):
+        api.client.get(url("repeated/"), {"limit": 2})
+
+
 def test_the_contract_describes_the_envelope_and_its_parameters() -> None:
-    schema = SchemaGenerator(patterns=urlpatterns[-2:-1]).get_schema(public=True)
+    schema = SchemaGenerator(patterns=urlpatterns[-3:-2]).get_schema(public=True)
     operation = schema["paths"]["/api/v1/o/{org_slug}/widgets/"]["get"]
     query = {
         item["name"]: item["schema"] for item in operation["parameters"] if item["in"] == "query"

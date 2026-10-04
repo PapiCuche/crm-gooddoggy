@@ -18,7 +18,7 @@ Dos riesgos concretos de un listado sin convención:
 
 ### 1. Paginación por cursor, por defecto
 
-`core.api.pagination.CursorPagination` es el `DEFAULT_PAGINATION_CLASS` de DRF. Una vista genérica de lista (`ListAPIView`, el `list` de un viewset) queda paginada sin declararlo.
+`core.api.pagination.CursorPagination` es el `DEFAULT_PAGINATION_CLASS` de DRF. Una vista genérica de lista (`ListAPIView`, el `list` de un viewset genérico) queda paginada sin declararlo.
 
 Es un valor por defecto, no una barrera: una vista que declare `pagination_class = None`, o un `APIView` que construya la lista a mano, no pasa por el paginador y devuelve el listado entero. Un listado de tenant no hace ninguna de las dos cosas. Hoy lo comprueba la revisión; la auditoría del URLconf no lo detecta.
 
@@ -44,9 +44,10 @@ El cursor no va firmado: uno bien formado con el identificador de otra posición
 ### 4. Orden
 
 - El orden lo declara la vista (`ordering`), nunca el cliente.
-- Por defecto es `id`: los identificadores son UUIDv7 (ADR-004), así que es el orden de creación, único y estable.
+- Por defecto es `id`: los identificadores son UUIDv7 (ADR-004), así que es el orden en que se generaron, prácticamente el de creación, único y estable. El modelo listado tiene su clave en el campo `id`.
+- El queryset devuelve cada fila una sola vez. Un `join` a una relación de varios repite filas y el cursor deja de avanzar: se usa `Exists` o `distinct()`. Si aun así dos filas seguidas comparten `id`, la vista falla al paginar en lugar de entregar un cursor que después rechazaría.
 - La única alternativa es `-id` (lo más reciente primero). Con cualquier otro orden la vista falla al paginar (`ImproperlyConfigured`): es un error de programación, no una respuesta.
-- El motivo: el cursor de DRF solo guarda la posición en la primera columna del orden. Si esa columna no es única, las filas empatadas se recorren por desplazamiento, que repite filas cuando se insertan otras y no pasa de 1000 filas iguales (después devuelve siempre la misma página). Si admite nulos, las filas con nulo no salen nunca. Un desempate por `id` al final no evita ninguna de las dos cosas.
+- El motivo: el cursor de DRF solo guarda la posición en la primera columna del orden. Si esa columna no es única, las filas empatadas se recorren por desplazamiento, que repite filas cuando se insertan otras y no pasa de 1000 filas iguales (después devuelve siempre la misma página). Si admite nulos, las filas con nulo pueden no salir. Un desempate por `id` al final no evita ninguna de las dos cosas.
 
 ### 5. Tenancy y alcance
 

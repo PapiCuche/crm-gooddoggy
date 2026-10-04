@@ -39,7 +39,7 @@ class CursorPagination(pagination.CursorPagination):
         """El orden lo declara la vista (`ordering`), nunca el cliente, y es `id` o `-id`. El cursor
         de DRF solo guarda la posición en la primera columna: si no es única, pagina por
         desplazamiento dentro del empate (repite filas con inserciones y no pasa de 1000), y si
-        admite nulos, esas filas no salen nunca."""
+        admite nulos, esas filas pueden no salir."""
         declared = getattr(view, "ordering", None) or self.ordering
         ordering = (declared,) if isinstance(declared, str) else tuple(declared)
         if ordering not in (("id",), ("-id",)):
@@ -55,6 +55,7 @@ class CursorPagination(pagination.CursorPagination):
     def paginate_queryset(self, queryset: Any, request: Any, view: Any = None) -> Any:
         """Solo lo que falla al leer el cursor es un 400 del cursor: un fallo al consultar las
         filas no es del cliente y no se disfraza."""
+        self.get_page_size(request)  # con los dos mal, responde `limit`: un orden fijo
         try:
             cursor = self.decode_cursor(request)
             if cursor is not None:
@@ -65,6 +66,8 @@ class CursorPagination(pagination.CursorPagination):
 
     def encode_cursor(self, cursor: Any) -> str:
         """El cursor opaco, no una URL: el cliente lo devuelve tal cual en `?cursor=`."""
+        if cursor.offset or cursor.position is None:  # dos filas seguidas con el mismo `id`
+            raise ImproperlyConfigured("El listado repite filas: el cursor necesita un `id` único")
         link: str = super().encode_cursor(cursor)
         return parse_qs(urlsplit(link).query)[CURSOR][0]
 
