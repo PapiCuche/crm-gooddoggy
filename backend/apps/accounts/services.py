@@ -16,7 +16,8 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import HttpRequest
 
-from apps.accounts.emails import canonical_email
+from apps.accounts import throttle
+from apps.accounts.emails import canonical_email, presented_email
 from apps.accounts.models import User
 from apps.audit import platform
 from apps.audit.services import Entity, Result
@@ -25,6 +26,7 @@ from core.observability import reporting
 
 logger = logging.getLogger(__name__)
 INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+RATE_LIMITED = "RATE_LIMITED"
 AUTH_AT = "auth_at"  # cuándo se inició la sesión: límite absoluto (ADR-003 §2)
 SEEN_AT = "seen_at"  # última renovación de la caducidad por inactividad
 
@@ -75,13 +77,49 @@ def _audit_failure(email: str, client: dict[str, Any]) -> None:
         _unaudited(error, "auth.login.failed")
 
 
+def _rate_limited(seconds: int) -> ApiError:
+    """429 `RATE_LIMITED` con `Retry-After`: el mismo para una cuenta real y una inexistente."""
+    error = ApiError(RATE_LIMITED, 429)
+    error.wait = seconds  # el manejador de errores lo pasa a la cabecera
+    return error
+
+
+def _audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) -> None:
+    """Una fila cuando empieza un bloqueo, no una por cada intento rechazado después."""
+    try:
+        platform.record(
+            "auth.login.throttled",
+            actor_type=platform.Actor.ANONYMOUS,
+            identifier=None if blocked.scope == "ip" else presented_email(email),
+            metadata={
+                "scope": blocked.scope,
+                "failures": blocked.failures,
+                "seconds": blocked.seconds,
+            },
+            result=Result.DENIED,
+            **client,
+        )
+    except Exception as error:
+        _unaudited(error, "auth.login.throttled")
+
+
 def login(request: HttpRequest, *, email: str, password: str) -> User:
     """Autentica y abre la sesión. La misma respuesta para un email desconocido, una contraseña
     incorrecta y un usuario desactivado. Si el acceso no se puede auditar, no hay sesión."""
     client = _client(request)
+    if client["ip"] is None:  # todos compartirían un contador: lo delata el proxy de confianza
+        logger.warning("login sin dirección de cliente: revisar FORWARDED_ALLOW_IPS")
+    attempt = throttle.keys(email, client["ip"])
+    try:
+        started = throttle.admit(attempt)  # antes de mirar las credenciales, exista o no
+    except throttle.Refused as refused:
+        raise _rate_limited(refused.seconds) from None
     user = authenticate(request, username=email, password=password)
     if user is None:
+        throttle.failed(attempt)
         _audit_failure(email, client)
+        for blocked in started:
+            _audit_block(email, client, blocked)
         raise ApiError(INVALID_CREDENTIALS, 401)
     assert isinstance(user, User)  # noqa: S101 — el único backend es ModelBackend
     with transaction.atomic():
@@ -92,6 +130,7 @@ def login(request: HttpRequest, *, email: str, password: str) -> User:
         platform.record(
             "auth.login.succeeded", actor_type=platform.Actor.USER, actor_id=user.pk, **client
         )
+        throttle.forgive(attempt, started)
     return user
 
 

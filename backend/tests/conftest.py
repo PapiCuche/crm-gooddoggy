@@ -94,6 +94,7 @@ def tenant_db(
                 *TENANT_TABLES,
                 "organizations",
                 "django_session",
+                "login_throttles",
                 "users",
                 PLATFORM_AUDIT,
             ):

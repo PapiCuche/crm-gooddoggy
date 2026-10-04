@@ -31,3 +31,12 @@ def canonical_email(raw: str) -> str:
     if len(canonical) > MAX_LENGTH:  # el validador admite hasta 320; la columna, 254
         raise ValidationError("Email demasiado largo", code="invalid")
     return canonical
+
+
+def presented_email(raw: str) -> str:
+    """Lo que se presenta en un acceso, canónico si es un email válido: dos escrituras de la
+    misma cuenta se cuentan y se auditan como una. Lo inválido se deja como llegó."""
+    try:
+        return canonical_email(raw)
+    except ValidationError:
+        return raw

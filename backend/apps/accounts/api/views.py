@@ -36,7 +36,7 @@ class LoginView(APIView):
         tags=["auth"],
         auth=[],
         request=LoginSerializer,
-        responses={200: SessionSerializer, **errors(400, 401, 403)},
+        responses={200: SessionSerializer, **errors(400, 401, 403, 429)},
     )
     def post(self, request: Request) -> Response:
         """Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo."""

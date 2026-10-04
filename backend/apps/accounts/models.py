@@ -80,3 +80,25 @@ class User(AbstractBaseUser):
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.email = canonical_email(self.email)
         super().save(*args, **kwargs)
+
+
+class LoginThrottle(models.Model):
+    """Contador de intentos de acceso (F2-03B): platform-owned, compartido entre instancias.
+
+    `key` es `id:<huella>`, `par:<huella>:<dirección>` o `ip:<dirección>`. La huella
+    es la del email presentado (la de la auditoría de plataforma): el email nunca se
+    guarda. `updated_at` es el último fallo (o cuándo empezó el contador); las filas las
+    escribe `apps.accounts.throttle`.
+    """
+
+    id = uuid7_primary_key()
+    key = models.CharField(max_length=128, unique=True)
+    failures = models.PositiveIntegerField()
+    blocked_until = models.DateTimeField(null=True)
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "login_throttles"
+
+    def __str__(self) -> str:
+        return self.key.split(":", 1)[0]  # el tipo de clave, nunca la huella ni la IP
