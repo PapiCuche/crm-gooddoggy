@@ -28,7 +28,7 @@ export function TenantGate({ orgSlug, children }: { orgSlug: string; children: R
       gcTime: 0,
       // Al volver a la pestaña solo pregunta con el workspace abierto. La tarjeta de error no se
       // desmonta sola (perdería el foco y sus avisos): ahí pregunta «Reintentar».
-      refetchOnWindowFocus: ({ state }) => !closed && !!state.data && !denies(state.error?.status),
+      refetchOnWindowFocus: ({ state }) => !closed && !!state.data,
     },
   });
   const again = useRef<HTMLButtonElement>(null);
