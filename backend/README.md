@@ -132,7 +132,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 - `execution_context(ctx)`: membresía activa del usuario y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
 - `has_permission`, `can(ectx, code, obj)`, `require(...)` y `scoped(ectx, code, queryset)`: permiso, alcance sobre un objeto y filtro de listado. Todo dentro del `tenant_scope` del propio contexto.
 - `apps.access.scopes.register(Modelo, FieldScopes(...))`: cada modelo declara una vez sus columnas de propietario, equipo y sucursal, por el nombre de la columna (`assigned_user_id`, no `assigned_user`); de ahí salen el filtro y la verificación por objeto.
-- Todavía no hay equipos, y las sucursales (F2-43) aún no se enlazan a las membresías: `TEAM` y `BRANCH` equivalen a `OWN` (OBS-F2-05A-2).
+- Los equipos (F2-50) aún no tienen integrantes, y las sucursales (F2-43) aún no se enlazan a las membresías: `TEAM` y `BRANCH` equivalen a `OWN` (OBS-F2-05A-2).
 - El `ExecutionContext` es una foto de su transacción: usarlo en otro `tenant_scope` posterior falla; hay que recalcularlo.
 - Falla cerrado: un código de permiso inexistente lanza `UnknownPermission`; un modelo sin política lanza `ScopePolicyMissing`, también para quien tiene `ORGANIZATION`.
 
@@ -496,6 +496,33 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - **`branches.manage`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas.
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
+
+## Equipos (F2-50, E01-09)
+
+`GET /api/v1/o/{slug}/teams/` lista los equipos de la organización. Exige `teams.view` (sin él, 403; sin membresía activa, 404).
+
+```json
+{
+  "results": [
+    {
+      "id": "…",
+      "slug": "ventas",
+      "name": "Ventas",
+      "description": "Atiende a clientes nuevos",
+      "assignment_strategy": "MANUAL",
+      "is_active": true
+    }
+  ],
+  "next": null
+}
+```
+
+- **Qué incluye:** todos, activos e inactivos. `description` llega como texto vacío si no hay, nunca `null`.
+- **Paginación:** por cursor, en orden de creación (`?limit=`, `?cursor=`; ver «Listados»). Una consulta por página.
+- **Tabla `teams`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `slug` es único por organización y la base de datos solo admite minúsculas ASCII, cifras y guiones entre ellas (`ventas`, `soporte-2`), hasta 50 caracteres. `assignment_strategy` es uno de `MANUAL`, `ROUND_ROBIN`, `LOAD_BALANCED`, `SKILL_BASED` o `AI_RULES` (lo impone un `CHECK`); el modelo pone `MANUAL` por defecto. Nada aplica todavía la estrategia: es dato para el Inbox.
+- **`teams.view`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018), y las plantillas «Administrador» y «Supervisor» en las organizaciones nuevas.
+- **Solo lectura.** Crear y editar un equipo, sus integrantes y el permiso `teams.manage` son los siguientes work items. Hasta entonces la tabla solo se llena desde código.
+- El selector `organizations.selectors.teams` filtra por organización, no por permiso: el permiso lo exige la vista.
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 

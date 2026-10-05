@@ -47,7 +47,14 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 EDIT = "widgets.manage"  # segundo permiso de prueba con alcance
 DELEGATE = {"roles.manage": None, "users.manage": None, VIEW: "TEAM"}  # sin ser Owner
 # Lo que lleva la plantilla «Administrador» además de `users.manage`, su único permiso sensible.
-ADMIN_REST = ("organization.view", "branches.manage", "users.view", "users.invite", "roles.view")
+ADMIN_REST = (
+    "organization.view",
+    "branches.manage",
+    "users.view",
+    "users.invite",
+    "teams.view",
+    "roles.view",
+)
 STATE = (
     "SELECT (SELECT count(*) FROM role_permissions), (SELECT count(*) FROM membership_roles), "
     "(SELECT count(*) FROM audit_logs)"

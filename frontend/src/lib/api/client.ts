@@ -35,6 +35,7 @@ import type {
   PaginatedBranchList,
   PaginatedMemberList,
   PaginatedRoleList,
+  PaginatedTeamList,
   PatchedBranchUpdateRequest,
   PatchedRoleUpdateRequest,
   PermissionCatalog,
@@ -43,6 +44,7 @@ import type {
   RolesListParams,
   SelfContext,
   Session,
+  TeamsListParams,
 } from "./model";
 
 import { apiFetch } from "../http";
@@ -2189,3 +2191,143 @@ export const useRolesPermissionsRevoke = <TError = ErrorType<Error>, TContext = 
 > => {
   return useMutation(getRolesPermissionsRevokeMutationOptions(options), queryClient);
 };
+
+export const getTeamsListUrl = (orgSlug: string, params?: TeamsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/teams/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/teams/`;
+};
+
+/**
+ * Los equipos de la organización, activos e inactivos. Paginado por orden de creación
+ * (ADR-016).
+ */
+export const teamsList = async (
+  orgSlug: string,
+  params?: TeamsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedTeamList> => {
+  return apiFetch<PaginatedTeamList>(getTeamsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getTeamsListQueryKey = (orgSlug: string, params?: TeamsListParams) => {
+  return [`/api/v1/o/${orgSlug}/teams/`, ...(params ? [params] : [])] as const;
+};
+
+export const getTeamsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof teamsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TeamsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof teamsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getTeamsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof teamsList>>> = ({ signal }) =>
+    teamsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof teamsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type TeamsListQueryResult = NonNullable<Awaited<ReturnType<typeof teamsList>>>;
+export type TeamsListQueryError = ErrorType<Error>;
+
+export function useTeamsList<
+  TData = Awaited<ReturnType<typeof teamsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | TeamsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof teamsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof teamsList>>,
+          TError,
+          Awaited<ReturnType<typeof teamsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTeamsList<
+  TData = Awaited<ReturnType<typeof teamsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TeamsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof teamsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof teamsList>>,
+          TError,
+          Awaited<ReturnType<typeof teamsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTeamsList<
+  TData = Awaited<ReturnType<typeof teamsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TeamsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof teamsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useTeamsList<
+  TData = Awaited<ReturnType<typeof teamsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TeamsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof teamsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getTeamsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}

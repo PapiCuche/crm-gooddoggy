@@ -988,6 +988,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/teams/:
+    get:
+      operationId: teams_list
+      description: |-
+        Los equipos de la organización, activos e inactivos. Paginado por orden de creación
+        (ADR-016).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - teams
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTeamList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:
@@ -998,6 +1060,20 @@ components:
       description: |-
         * `ACTIVE` - ACTIVE
         * `SUSPENDED` - SUSPENDED
+    AssignmentStrategyEnum:
+      enum:
+      - MANUAL
+      - ROUND_ROBIN
+      - LOAD_BALANCED
+      - SKILL_BASED
+      - AI_RULES
+      type: string
+      description: |-
+        * `MANUAL` - Manual
+        * `ROUND_ROBIN` - Round Robin
+        * `LOAD_BALANCED` - Load Balanced
+        * `SKILL_BASED` - Skill Based
+        * `AI_RULES` - Ai Rules
     Branch:
       type: object
       properties:
@@ -1284,6 +1360,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedTeamList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Team'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PatchedBranchUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está. El código
@@ -1474,6 +1564,39 @@ components:
           $ref: '#/components/schemas/User'
       required:
       - user
+    Team:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          description: Clave estable del equipo, única en la organización.
+        name:
+          type: string
+        description:
+          type: string
+        assignment_strategy:
+          allOf:
+          - $ref: '#/components/schemas/AssignmentStrategyEnum'
+          description: |-
+            Cómo se repartirán sus conversaciones. Todavía no la aplica nada.
+
+            * `MANUAL` - Manual
+            * `ROUND_ROBIN` - Round Robin
+            * `LOAD_BALANCED` - Load Balanced
+            * `SKILL_BASED` - Skill Based
+            * `AI_RULES` - Ai Rules
+        is_active:
+          type: boolean
+      required:
+      - assignment_strategy
+      - description
+      - id
+      - is_active
+      - name
+      - slug
     User:
       type: object
       properties:
