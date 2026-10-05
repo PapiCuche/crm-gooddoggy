@@ -20,7 +20,8 @@
     "nav": {
       "home": "Inicio",
       "members": "Miembros",
-      "roles": "Roles"
+      "roles": "Roles",
+      "branches": "Sucursales"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -141,6 +142,22 @@
       "denied": "No tienes permiso para asignar ni quitar este rol a este miembro.",
       "stale": "Los roles de {name} o de la organización ya habían cambiado. Revisa la lista."
     }
+  },
+  "branches": {
+    "eyebrow": "Good Doggy / Sucursales",
+    "title": "Sucursales",
+    "intro": "Las sucursales y tiendas de {organization}.",
+    "active": "Activa",
+    "inactive": "Inactiva",
+    "noAddress": "Sin dirección",
+    "phone": "Teléfono: {phone}",
+    "timezone": "Zona horaria: {timezone}",
+    "empty": "Esta organización todavía no tiene sucursales.",
+    "count": "{count, plural, =0 {Sin sucursales en la lista} one {# sucursal en la lista} other {# sucursales en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando sucursales…",
+    "denied": "No tienes permiso para ver las sucursales de esta organización."
   },
   "roles": {
     "eyebrow": "Good Doggy / Roles",

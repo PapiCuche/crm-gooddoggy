@@ -198,6 +198,16 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 - **Límite conocido:** si una relectura de la lista trae el rol como no editable con su panel abierto, el panel se desmonta sin aviso: el foco se queda sin destino y un cambio que estuviera en vuelo cambia la tarjeta pero no se anuncia.
 
+## Sucursales (F2-46)
+
+`/o/[orgSlug]/sucursales` muestra las sucursales de la organización: lo que devuelve `GET /api/v1/o/{slug}/branches/` (F2-43), con el cliente generado.
+
+- **Componente:** `components/branches/branches-list.tsx`, sobre la lista por cursor compartida (ver «Miembros»): su paginación, sus estados y su foco son los mismos.
+- **Por sucursal:** nombre, código, dirección (calle, distrito y ciudad: lo que haya, en una línea; «Sin dirección» si no hay nada), teléfono si lo tiene, zona horaria y si está activa. Se listan también las inactivas.
+- **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el texto `empty` de la lista compartida, que solo usa esta pantalla: una organización siempre tiene miembros y roles.
+- **Navegación:** la entrada «Sucursales» pide el permiso `organization.view`, el que exige la API para leerlas; `branches.manage` solo no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
+- **Solo lectura.** Crear, editar y desactivar una sucursal desde la pantalla son los siguientes work items; la API ya lo permite (F2-44 y F2-45).
+
 ## Seguridad del navegador (F2-07)
 
 Next emite todas las cabeceras de seguridad del HTML; Caddy no añade ninguna.

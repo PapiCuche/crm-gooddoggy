@@ -89,10 +89,12 @@ describe("RolesList", () => {
       description: "  ", // solo espacios: como si no tuviera
       permissions: [
         ...codes.map((code, index) => ({ code, scope: scopes[index]! })),
-        ...["roles.view", "users.invite", "users.manage", "users.view"].map((code) => ({
-          code,
-          scope: null,
-        })),
+        ...["roles.view", "users.invite", "users.manage", "users.view", "branches.manage"].map(
+          (code) => ({
+            code,
+            scope: null,
+          }),
+        ),
         ...odd.map((code) => ({ code, scope: null })), // rutas de mensajes que no son un permiso
         { code: "x.y", scope: "REGION" as never }, // un alcance que estos textos no conocen
       ],
@@ -113,6 +115,7 @@ describe("RolesList", () => {
       ["Invitar miembros"],
       ["Administrar miembros"],
       ["Ver miembros"],
+      ["Administrar sucursales"],
       ...odd.map((code) => [code]),
       ["x.y", "REGION"],
     ]);
