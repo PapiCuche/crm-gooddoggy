@@ -61,7 +61,7 @@ describe("RolesList", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Cargando roles");
     expect(await screen.findByRole("list", { name: "Roles" })).toBeVisible();
     expect(card("Owner")).toHaveTextContent("De plantilla");
-    expect(card("Owner")).toHaveTextContent("1 miembro");
+    expect(within(card("Owner")).getByText("1 miembro")).toBeVisible(); // exacto: singular
     expect(grants("Owner")).toEqual([
       "Ver la auditoría", // el nombre del permiso, no su código
       "Administrar miembros",
@@ -78,6 +78,62 @@ describe("RolesList", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Roles");
     expect(screen.getByText(/Los roles de Acme SAC/)).toBeVisible();
     expect(screen.queryByRole("button")).not.toBeInTheDocument(); // solo lectura, una página
+  });
+
+  it("cada permiso del catálogo y cada alcance tiene su texto, y lo demás se enseña tal cual", async () => {
+    const codes = ["audit.view", "organization.manage", "organization.view", "roles.manage"];
+    const scopes = ["OWN", "TEAM", "BRANCH", "ORGANIZATION"] as const;
+    const odd = ["users", "users.constructor.name", "users.view.length", "constructor.prototype"];
+    const all = role("todo", {
+      description: "  ", // solo espacios: como si no tuviera
+      permissions: [
+        ...codes.map((code, index) => ({ code, scope: scopes[index]! })),
+        ...["roles.view", "users.invite", "users.manage", "users.view"].map((code) => ({
+          code,
+          scope: null,
+        })),
+        ...odd.map((code) => ({ code, scope: null })), // rutas de mensajes que no son un permiso
+        { code: "x.y", scope: "REGION" as never }, // un alcance que estos textos no conocen
+      ],
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockApi({ [LIST]: { status: 200, body: { results: [all], next: null } } });
+    screenOf();
+    await screen.findByRole("list", { name: "Roles" });
+    const shown = within(within(card("todo")).getByRole("list", { name: "Permisos de todo" }))
+      .getAllByRole("listitem")
+      .map((item) => [...item.children].map((part) => part.textContent));
+    expect(shown).toEqual([
+      ["Ver la auditoría", "Lo propio"],
+      ["Administrar la organización", "Su equipo"],
+      ["Ver la organización", "Su sucursal"],
+      ["Administrar roles", "Toda la organización"],
+      ["Ver roles"],
+      ["Invitar miembros"],
+      ["Administrar miembros"],
+      ["Ver miembros"],
+      ...odd.map((code) => [code]),
+      ["x.y", "REGION"],
+    ]);
+    expect(card("todo").querySelectorAll("p")).toHaveLength(2);
+    expect(screen.getByRole("status")).toHaveTextContent("1 rol en la lista");
+    expect(errors).not.toHaveBeenCalled(); // ningún texto sin resolver
+    errors.mockRestore();
+  });
+
+  it("al llegar desde otra lista pide y muestra sus propios datos", async () => {
+    const api = mockApi({
+      "GET /api/v1/o/acme/members/": { status: 200, body: { results: [], next: null } },
+      [LIST]: { status: 200, body: { results: [owner], next: null } },
+    });
+    const view = screenOf();
+    await screen.findByRole("list", { name: "Roles" });
+    const cached = view.client
+      .getQueryCache()
+      .getAll()
+      .map((query) => query.queryKey);
+    expect(cached).toEqual([["/api/v1/o/acme/roles/", "pages"]]); // su clave, con su organización
+    expect(api).toHaveBeenCalledTimes(1);
   });
 
   it("carga la página siguiente con el cursor y deja el foco en lo que llegó", async () => {
