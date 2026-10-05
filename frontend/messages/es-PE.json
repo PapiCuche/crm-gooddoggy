@@ -119,6 +119,24 @@
       "cancel": "Cancelar",
       "denied": "No tienes permiso para cambiar a este miembro.",
       "stale": "El estado de {name} ya había cambiado. Revisa la lista."
+    },
+    "roleAction": {
+      "trigger": "Roles",
+      "triggerLabel": "Cambiar los roles de {name}",
+      "panel": "Roles de {name}",
+      "assign": "Asignar",
+      "remove": "Quitar",
+      "assignLabel": "Asignar {role} a {name}",
+      "removeLabel": "Quitar {role} a {name}",
+      "assignBusy": "Asignando…",
+      "removeBusy": "Quitando…",
+      "assignDone": "Rol {role} asignado a {name}.",
+      "removeDone": "Rol {role} quitado a {name}.",
+      "close": "Cerrar",
+      "loading": "Cargando roles…",
+      "retry": "Reintentar",
+      "empty": "Esta organización no tiene roles.",
+      "denied": "No tienes permiso para asignar ni quitar este rol a este miembro."
     }
   },
   "roles": {
