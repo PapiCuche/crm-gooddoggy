@@ -24,6 +24,7 @@ export * from "./nullEnum";
 export * from "./organizationSummary";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
+export * from "./patchedRoleUpdateRequest";
 export * from "./permission";
 export * from "./permissionCatalog";
 export * from "./role";

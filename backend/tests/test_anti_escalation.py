@@ -27,10 +27,12 @@ from apps.access.services import (
     assign_role,
     clone_role_templates,
     covers,
+    delete_role,
     ensure_owner_remains,
     grant_permission,
     remove_role,
     revoke_permission,
+    update_role,
 )
 from apps.accounts.models import User
 from apps.organizations.models import OrganizationMembership
@@ -170,6 +172,8 @@ def test_services_need_the_manage_permission_and_the_active_scope(
     calls: tuple[tuple[Any, dict[str, Any]], ...] = (
         (grant_permission, grant),
         (revoke_permission, revoke),
+        (update_role, {"role_id": rbac.target.pk, "name": "Otro nombre"}),
+        (delete_role, {"role_id": rbac.target.pk}),
         (assign_role, link),
         (remove_role, link),
     )
@@ -415,6 +419,8 @@ def test_foreign_ids_never_exist_and_write_nothing(
     attempts: tuple[tuple[Any, dict[str, Any]], ...] = (
         (grant_permission, {"role_id": role_b.pk, "code": "organization.view", "scope": None}),
         (revoke_permission, {"role_id": role_b.pk, "code": "organization.view"}),
+        (update_role, {"role_id": role_b.pk, "name": "De otra"}),
+        (delete_role, {"role_id": role_b.pk}),
         (
             revoke_permission,
             {"role_id": rbac.target.pk, "code": "organization.view"},
@@ -552,6 +558,8 @@ def test_change_and_its_audit_are_atomic(
             (grant_permission, grant),
             (grant_permission, rescope),
             (revoke_permission, {"role_id": rbac.target.pk, "code": VIEW}),
+            (update_role, {"role_id": rbac.target.pk, "name": "Sin auditoría"}),
+            (delete_role, {"role_id": rbac.target.pk}),
             (remove_role, held),
         ):
             with pytest.raises(RuntimeError):
@@ -559,6 +567,8 @@ def test_change_and_its_audit_are_atomic(
     assert state(migrator) == before  # sin auditoría no hay cambio, y la petición sigue viva
     with tenant_scope(ctx(rbac.a)):
         assert set(rbac.target.grants.values_list("scope", flat=True)) == {"TEAM"}  # ni el alcance
+        kept = set(Role.objects.values_list("name", flat=True))
+        assert {"Rol destino", "Vendedor"} <= kept and "Sin auditoría" not in kept  # ni el nombre
     with acting(rbac.a, rbac.ana) as tenant:
         assign_role(tenant, **link)
     assert state(migrator) == (before[0], before[1] + 1, before[2] + 1)
@@ -571,7 +581,9 @@ def test_services_never_decide_by_role_code_name_or_platform_staff() -> None:
         assert forbidden not in code, forbidden
     for forbidden in ("role__code", "role__name", 'code="owner"', "request.user"):
         assert forbidden not in code, forbidden
-    assert code.count("is_system") == 1 and "is_system=True," in code  # solo al clonar plantillas
+    marks = [line.strip() for line in code.splitlines() if "is_system" in line]
+    # Al clonar plantillas, y para no borrar una (una regla del producto: no decide quién puede).
+    assert marks == ["if role.is_system:", "is_system=True,"]
     uses = [line.strip() for line in code.splitlines() if "is_owner_role" in line]
     assert uses == [  # la marca solo localiza el rol Owner (bloqueo) y se copia al clonar
         "owner: Role | None = roles.filter(is_owner_role=True).first()",

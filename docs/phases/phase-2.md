@@ -58,6 +58,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-35 | [#128](https://github.com/PapiCuche/crm-gooddoggy/issues/128) Create a role from the roles screen | `feature/f2-role-create-ui` | #103, #116, #126 | frontend |
 | F2-36 | [#130](https://github.com/PapiCuche/crm-gooddoggy/issues/130) Grant and revoke permissions from the roles screen | `feature/f2-role-permissions-ui` | #120, #124, #126, #128 | frontend |
 | F2-37 | [#132](https://github.com/PapiCuche/crm-gooddoggy/issues/132) Role permissions panel: encode the permission code in the URL; pending tests | `fix/f2-role-permissions-url-code` | #130 | frontend |
+| F2-38 | [#134](https://github.com/PapiCuche/crm-gooddoggy/issues/134) Rename and delete a role (API) | `feature/f2-role-update-delete-api` | #116, #124, #126 | backend + API |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -327,6 +328,7 @@ No hay API HTTP (E01-08) ni bootstrap (F2-06). Tampoco existen revocar una conce
 - ✅ F2-29 (#116): `create_role` existe y tiene ruta HTTP. Renombrar y borrar roles, y revocar una concesión, siguen sin existir.
 - ✅ F2-31 (#120): `grant_permission` tiene ruta HTTP y cambia el alcance de una concesión (antes lanzaba `ValueError`).
 - ✅ F2-33 (#124): `revoke_permission` existe y tiene ruta HTTP. Renombrar y borrar roles siguen sin existir. Una concesión de un permiso retirado del catálogo no se puede retirar por la API (falla cerrado).
+- ✅ F2-38 (#134): `update_role` y `delete_role` existen y tienen ruta HTTP. Con esto E01-08 tiene todas sus escrituras por API. Un rol con una concesión de un permiso retirado del catálogo tampoco se puede renombrar ni borrar (falla cerrado).
 
 ### OBS-F2-25-1 — Asignar el rol Owner exige cubrirlo, no ser Owner
 `assign_role` deja asignar el rol Owner a quien cubra todas sus concesiones. Hoy solo lo cubre un Owner: el rol nace con todos los permisos sensibles y no existe revocar una concesión. Si un rol Owner perdiera sus permisos sensibles, quien tuviera `users.manage` y el resto de sus concesiones podría crear Owners, y estos delegar lo sensible. F2-25 (#108) lo hace alcanzable por HTTP sin cambiar la regla.
@@ -337,6 +339,7 @@ No hay API HTTP (E01-08) ni bootstrap (F2-06). Tampoco existen revocar una conce
 ### OBS-F2-29-1 — Los códigos de los roles propios comparten espacio con los de plantilla
 El código de un rol propio sale de su nombre, y `clone_role_templates` inserta sin tomar el bloqueo de RBAC y salta los códigos que ya existen. Hoy no chocan: las plantillas se clonan solo al dar de alta la organización, antes de que nadie pueda crear roles. Si una fase posterior vuelve a clonar plantillas en organizaciones existentes (OBS-F2-04-1), un rol propio puede ocupar el código de una plantilla futura, y un alta simultánea puede acabar en un error de unicidad.
 - Quien reclone plantillas debe tomar antes el bloqueo de RBAC y decidir si los códigos propios llevan un prefijo reservado.
+- F2-38 (#134): un rol de plantilla se puede renombrar, pero no borrar (OBS-F2-04-2): un reclonado no tiene nada que volver a crear.
 
 ### OBS-F2-29-2 — Para la concesión de permisos por API (E01-08)
 Con roles propios vacíos ya creables: conceder un permiso a un rol que ya tiene miembros se lo entrega a quienes nadie cubrió al asignarlo (solo se comprueba a quien concede), así que la pantalla debe enseñar cuántos miembros tiene el rol. Y por PO-2, asignar un rol a otro administrador le impide concederle permisos.
@@ -388,6 +391,7 @@ ADR-011 prevé auditar los accesos denegados. El motor no escribe filas `DENIED`
 ### OBS-F2-04-2 — Los roles de sistema se pueden borrar y renombrar
 [02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.3 dice que un rol `is_system` no se borra y su código no cambia. F2-04 no lo impone: no existe gestión de roles hasta E01-08. Un rol plantilla borrado se vuelve a crear en el siguiente clonado.
 - Imponerlo en E01-08, junto con las reglas de edición del rol Owner.
+- ✅ F2-38 (#134): impuesto. `delete_role` no borra un rol `is_system` (409 `ROLE_IS_SYSTEM`) y ninguna ruta cambia el código de un rol. Renombrarlo y cambiar sus permisos sigue permitido, salvo en el Owner.
 
 ### OBS-F2-04-3 — `permissions`: PK UUIDv7 y `code` único
 [ADR-003](../adr/ADR-003-auth-session.md) §5 esboza `permissions(code PK)`; [ADR-004](../adr/ADR-004-identifiers.md) §1 exige PK UUIDv7 en todas las tablas y un test lo comprueba. Se cumple ADR-004: `id` UUIDv7 y `code` `UNIQUE`, que es la clave que referencian las concesiones (`permission_code`). Ningún ADR cambia.

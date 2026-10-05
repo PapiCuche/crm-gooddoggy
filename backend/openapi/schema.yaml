@@ -567,6 +567,123 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/roles/{role_id}/:
+    patch:
+      operationId: roles_update
+      description: 'Cambia el nombre o la descripción del rol; lo que no se envía
+        se queda como está, y el código no cambia. 403: como al borrarlo (sin `roles.manage`,
+        un rol que el actor tiene asignado, el rol Owner, o una concesión del rol
+        que el actor no cubre). 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`:
+        otro rol se lee igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: role_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - roles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedRoleUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: roles_delete
+      description: 'Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol
+        que el actor tiene asignado, el rol Owner, o una concesión del rol que el
+        actor no cubre (o sensible, si no es Owner). 404: el rol no es de la organización.
+        409 `ROLE_IS_SYSTEM`: es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene
+        miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no tiene
+        rol Owner.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: role_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - roles
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/{role_id}/permissions/{code}/:
     put:
       operationId: roles_permissions_grant
@@ -909,6 +1026,17 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PatchedRoleUpdateRequest:
+      type: object
+      description: Lo que se envía cambia; lo que no, se queda como está.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 255
     Permission:
       type: object
       properties:

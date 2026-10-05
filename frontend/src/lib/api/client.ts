@@ -31,6 +31,7 @@ import type {
   OrganizationSummary,
   PaginatedMemberList,
   PaginatedRoleList,
+  PatchedRoleUpdateRequest,
   PermissionCatalog,
   Role,
   RoleCreateRequest,
@@ -1446,6 +1447,194 @@ export const useRolesCreate = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getRolesCreateMutationOptions(options), queryClient);
+};
+
+export const getRolesUpdateUrl = (orgSlug: string, roleId: string) => {
+  return `/api/v1/o/${orgSlug}/roles/${roleId}/`;
+};
+
+/**
+ * Cambia el nombre o la descripción del rol; lo que no se envía se queda como está, y el código no cambia. 403: como al borrarlo (sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre). 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`: otro rol se lee igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.
+ */
+export const rolesUpdate = async (
+  orgSlug: string,
+  roleId: string,
+  patchedRoleUpdateRequest?: PatchedRoleUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Role> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Role>(getRolesUpdateUrl(orgSlug, roleId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedRoleUpdateRequest),
+  });
+};
+
+export const getRolesUpdateMutationKey = () => ["rolesUpdate"] as const;
+
+export const getRolesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rolesUpdate>>,
+    TError,
+    RolesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rolesUpdate>>,
+  TError,
+  RolesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getRolesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rolesUpdate>>,
+    RolesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, roleId, data } = props ?? {};
+
+    return rolesUpdate(orgSlug, roleId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RolesUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof rolesUpdate>>>;
+export type RolesUpdateMutationBody = PatchedRoleUpdateRequest | undefined;
+export type RolesUpdateMutationError = ErrorType<Error>;
+export type RolesUpdateMutationVariables = {
+  orgSlug: string;
+  roleId: string;
+  data?: PatchedRoleUpdateRequest;
+};
+
+export const useRolesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rolesUpdate>>,
+      TError,
+      RolesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rolesUpdate>>,
+  TError,
+  RolesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getRolesUpdateMutationOptions(options), queryClient);
+};
+
+export const getRolesDeleteUrl = (orgSlug: string, roleId: string) => {
+  return `/api/v1/o/${orgSlug}/roles/${roleId}/`;
+};
+
+/**
+ * Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IS_SYSTEM`: es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no tiene rol Owner.
+ */
+export const rolesDelete = async (
+  orgSlug: string,
+  roleId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getRolesDeleteUrl(orgSlug, roleId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRolesDeleteMutationKey = () => ["rolesDelete"] as const;
+
+export const getRolesDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rolesDelete>>,
+    TError,
+    RolesDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rolesDelete>>,
+  TError,
+  RolesDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getRolesDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rolesDelete>>,
+    RolesDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, roleId } = props ?? {};
+
+    return rolesDelete(orgSlug, roleId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RolesDeleteMutationResult = NonNullable<Awaited<ReturnType<typeof rolesDelete>>>;
+
+export type RolesDeleteMutationError = ErrorType<Error>;
+export type RolesDeleteMutationVariables = { orgSlug: string; roleId: string };
+
+export const useRolesDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rolesDelete>>,
+      TError,
+      RolesDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rolesDelete>>,
+  TError,
+  RolesDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getRolesDeleteMutationOptions(options), queryClient);
 };
 
 export const getRolesPermissionsGrantUrl = (orgSlug: string, roleId: string, code: string) => {
