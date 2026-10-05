@@ -50,7 +50,8 @@ export function FieldsForm<Name extends string>({
   heading: ReactNode;
   fields: readonly FormField<Name>[];
   write: Write;
-  send: (values: Record<Name, string>) => void; // lo escrito, sin espacios exteriores
+  // Recibe lo escrito, sin espacios exteriores, e inicia la escritura antes de volver.
+  send: (values: Record<Name, string>) => void;
   taken?: (error: ApiError) => { field: Name; text: string } | null; // un error propio de un campo
   denied: string;
   labels: { submit: string; busy: string; cancel: string };
@@ -60,6 +61,8 @@ export function FieldsForm<Name extends string>({
 }) {
   const errors = useTranslations("errors.api");
   const [missing, setMissing] = useState<readonly Name[]>([]);
+  // La escritura cuyo error ya se retiró aquí: la pantalla tarda una tarea en traerla vacía.
+  const [dropped, setDropped] = useState<Write | null>(null);
   const inputs = useRef<Partial<Record<Name, HTMLInputElement | null>>>({});
   const submitButton = useRef<HTMLButtonElement>(null);
   // Una escritura se envía una vez: el estado de la mutación llega a la pantalla una tarea
@@ -67,7 +70,8 @@ export function FieldsForm<Name extends string>({
   const sending = useRef(false);
   const sentWith = useRef<Write | null>(null); // la escritura tal como era al enviar
   // Sin sesión (401), `Providers` lleva al login: aquí no se enseña un error.
-  const error = write.isError && write.error?.status !== 401 ? write.error : null;
+  const failed = write.isError && write !== dropped;
+  const error = failed && write.error?.status !== 401 ? write.error : null;
   const busy = write.isPending || (write.isError && write.error?.status === 401);
   // La marca se suelta cuando la pantalla ya enseña el resultado, no al llegar la respuesta.
   // Un render solo de este formulario trae la escritura de antes de enviar, que aún no dice
@@ -116,6 +120,7 @@ export function FieldsForm<Name extends string>({
     const empty = fields.filter((field) => field.required && !values[field.name]);
     if (empty.length > 0) {
       write.reset();
+      setDropped(write);
       setMissing(empty.map((field) => field.name));
       inputs.current[empty[0]!.name]?.focus();
       return;
