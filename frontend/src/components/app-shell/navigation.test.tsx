@@ -42,4 +42,17 @@ describe("navegación del shell", () => {
     expect(screen.getByRole("banner")).toHaveTextContent("Workspace › Miembros");
     expect(document.title).toBe("Miembros · Acme SAC · Good Doggy CRM"); // sección y organización
   });
+
+  it("la entrada «Roles» pide `roles.view`: ver miembros no basta", async () => {
+    const both = [
+      { code: "users.view", scopes: [] },
+      { code: "roles.view", scopes: [] },
+    ];
+    expect(await links(both)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/miembros", "page"],
+      ["/o/acme/roles", null],
+    ]);
+    expect(screen.getByRole("link", { name: "Roles" })).toBeVisible();
+  });
 });

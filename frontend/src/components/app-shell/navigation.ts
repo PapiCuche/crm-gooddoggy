@@ -3,11 +3,16 @@ import type { Grant } from "@/lib/api/model";
 // Entradas de la navegación del workspace. `permission` es el permiso del catálogo que da
 // sentido a la entrada: sin él no se muestra. Es comodidad, no seguridad: la API decide en
 // cada petición. Solo se listan módulos que ya existen; cada fase añade los suyos.
-export type NavigationItem = { key: "home" | "members"; path: string; permission?: string };
+export type NavigationItem = {
+  key: "home" | "members" | "roles";
+  path: string;
+  permission?: string;
+};
 
 export const NAVIGATION: readonly NavigationItem[] = [
   { key: "home", path: "" },
   { key: "members", path: "/miembros", permission: "users.view" },
+  { key: "roles", path: "/roles", permission: "roles.view" },
 ];
 
 export function visibleItems<Item extends { permission?: string }>(

@@ -81,7 +81,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 `/o/[orgSlug]` no pinta nada del workspace hasta que la API responde a `GET /api/v1/o/{slug}/me/`, en cada entrada: la respuesta no se guarda entre visitas (`gcTime: 0`). La URL solo selecciona: quién es el usuario ahí y qué puede hacer lo dice la API.
 
 - **Guardia (`TenantGate`):** con la respuesta, monta el shell y deja el contexto en `useTenant()`. Sin sesión (401), `Providers` lleva a `/login` con vuelta a la misma ruta. Organización inexistente o sin membresía (404): la misma página de «no encontrada» que cualquier dirección que no existe. Cualquier otro error al entrar (organización suspendida, red, servidor): una tarjeta con el mensaje de su `code`, reintentar, cambiar de organización y cerrar sesión. Reintentar muestra el aviso de carga y, al terminar, deja el foco en el botón (si vuelve a fallar) o en el workspace (si abre). Con el workspace ya abierto, el contexto se vuelve a pedir al volver a la pestaña o al recuperar la red, si la última respuesta tiene más de 30 segundos: un 401, un 403 o un 404 lo cierran, y sigue cerrado hasta que la API vuelve a responder bien; un fallo pasajero (red, servidor) no cierra el workspace ni lo reabre tras una negativa. Con la tarjeta de error en pantalla, ni volver a la pestaña ni recuperar la red piden nada: lo hace «Reintentar». Si el navegador sabe que no hay red, la petición espera en el aviso de carga y sigue sola al volver la conexión.
-- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio» y «Miembros» (`users.view`). Cada fase añade los suyos.
+- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio», «Miembros» (`users.view`) y «Roles» (`roles.view`). Cada fase añade los suyos.
 - **Es comodidad, no seguridad:** ocultar una entrada no protege nada. La API comprueba el permiso en cada petición, y una pantalla debe tratar el 403 aunque su entrada estuviera visible.
 - **Roles:** se muestran como etiquetas. Nada en la interfaz decide por el nombre o el código de un rol.
 - **Cambiar de organización:** enlace a `/o?elegir`.
@@ -104,7 +104,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 
 ### Lista por cursor compartida (F2-24)
 
-`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `notice` es un aviso de la pantalla encima de la lista; el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. Hoy la usa la pantalla de miembros; las siguientes listas de gestión se construyen sobre ella.
+`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `notice` es un aviso de la pantalla encima de la lista; el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. La usan las pantallas de miembros y de roles; las siguientes listas de gestión se construyen sobre ella.
 
 ### Suspender y reactivar (F2-21)
 
@@ -118,6 +118,16 @@ Cada fila ofrece «Suspender» (miembro activo) o «Reactivar» (miembro suspend
 - **Errores que conservan la acción** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en la fila, por código, y el mismo botón reintenta.
 - **Pantalla desfasada** (`INVALID_TRANSITION`, `NOT_FOUND`): la lista se vuelve a pedir, y la acción, o la fila entera, puede desaparecer. Por eso el aviso («El estado de … ya había cambiado») vive en la lista (`role="alert"`), no en la fila, y el foco va al título si seguía en esa acción (o en ninguna parte). Si la nueva lectura falla, el aviso se queda y la lista no cambia. El aviso se quita al abrir otra confirmación.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+## Roles (F2-23)
+
+`/o/[orgSlug]/roles` muestra los roles de la organización: lo que devuelve `GET /api/v1/o/{slug}/roles/` (F2-22), con el cliente generado.
+
+- **Componente:** `components/roles/roles-list.tsx`, sobre la lista por cursor compartida (ver «Miembros»): su paginación, sus estados y su foco son los mismos.
+- **Por rol:** nombre, si es de plantilla o propio, descripción si la tiene, número de miembros y sus permisos, cada uno con su alcance si lo admite.
+- **Nombres de los permisos:** salen de `catalog.*` en `messages/es-PE.json` (`catalog.users.manage` para `users.manage`); los alcances, de `roles.scope.*`. Son textos planos, sin formato ICU. Un permiso o un alcance que esos textos no conocen se enseña con su código: no se oculta. El código llega de la API, así que el texto se busca por propiedades propias y no como una ruta de mensajes.
+- **Navegación:** la entrada «Roles» pide el permiso `roles.view`; `users.view` no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
+- **Solo lectura.** Nada decide por el nombre o el código de un rol. Crear o editar roles y asignarlos son otros work items (E01-08).
 
 ## Seguridad del navegador (F2-07)
 
