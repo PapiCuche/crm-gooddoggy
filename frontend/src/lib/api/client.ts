@@ -35,6 +35,7 @@ import type {
   PaginatedBranchList,
   PaginatedMemberList,
   PaginatedRoleList,
+  PatchedBranchUpdateRequest,
   PatchedRoleUpdateRequest,
   PermissionCatalog,
   Role,
@@ -780,6 +781,113 @@ export const useBranchesCreate = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getBranchesCreateMutationOptions(options), queryClient);
+};
+
+export const getBranchesUpdateUrl = (orgSlug: string, branchId: string) => {
+  return `/api/v1/o/${orgSlug}/branches/${branchId}/`;
+};
+
+/**
+ * Cambia lo que se envía; lo demás se queda como está, y el código no cambia. Enviar lo que ya hay no escribe nada. 404: la sucursal no es de la organización.
+ */
+export const branchesUpdate = async (
+  orgSlug: string,
+  branchId: string,
+  patchedBranchUpdateRequest?: PatchedBranchUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Branch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Branch>(getBranchesUpdateUrl(orgSlug, branchId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedBranchUpdateRequest),
+  });
+};
+
+export const getBranchesUpdateMutationKey = () => ["branchesUpdate"] as const;
+
+export const getBranchesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof branchesUpdate>>,
+    TError,
+    BranchesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof branchesUpdate>>,
+  TError,
+  BranchesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getBranchesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof branchesUpdate>>,
+    BranchesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, branchId, data } = props ?? {};
+
+    return branchesUpdate(orgSlug, branchId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BranchesUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof branchesUpdate>>>;
+export type BranchesUpdateMutationBody = PatchedBranchUpdateRequest | undefined;
+export type BranchesUpdateMutationError = ErrorType<Error>;
+export type BranchesUpdateMutationVariables = {
+  orgSlug: string;
+  branchId: string;
+  data?: PatchedBranchUpdateRequest;
+};
+
+export const useBranchesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof branchesUpdate>>,
+      TError,
+      BranchesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof branchesUpdate>>,
+  TError,
+  BranchesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getBranchesUpdateMutationOptions(options), queryClient);
 };
 
 export const getMeContextUrl = (orgSlug: string) => {

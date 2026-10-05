@@ -1,11 +1,13 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 y F2-44)."""
+de tenant (`…/branches/`, F2-43 a F2-45)."""
 
 from typing import Any
+from uuid import UUID
 
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
+from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,6 +20,7 @@ from apps.organizations.branches import (
     TIMEZONE_MAX,
     BranchCodeTaken,
     create_branch,
+    update_branch,
 )
 from apps.organizations.models import Branch
 from apps.organizations.selectors import branches, organizations_for_user
@@ -82,13 +85,31 @@ class BranchCreateSerializer(serializers.Serializer[Any]):
         problems = {}
         for field, value in attrs.items():
             try:
-                attrs[field] = CLEAN[field](value)
+                if field in CLEAN:  # `is_active` ya llega como booleano
+                    attrs[field] = CLEAN[field](value)
             except ValueError as error:
                 text = f"{error}."
                 problems[field] = [text[:1].upper() + text[1:]]
         if problems:
             raise serializers.ValidationError(problems)
         return attrs
+
+
+class JsonBooleanField(serializers.BooleanField):
+    """Solo `true` o `false`, como el comando. DRF aceptaría además `"no"`, `"off"`, `0` o `"1"`."""
+
+    def to_internal_value(self, data: Any) -> bool:
+        if not isinstance(data, bool):
+            self.fail("invalid", input=data)
+        return bool(data)
+
+
+class BranchUpdateSerializer(BranchCreateSerializer):
+    """Lo que se envía cambia; lo que no, se queda como está. El código no se cambia."""
+
+    code = None
+    name = serializers.CharField(max_length=NAME_MAX, required=False)
+    is_active = JsonBooleanField(required=False)
 
 
 TAKEN = "Ya existe una sucursal con ese código en la organización."
@@ -129,3 +150,30 @@ class BranchesView(generics.ListAPIView):
         except BranchCodeTaken:
             raise ApiError("BRANCH_CODE_TAKEN", 409, TAKEN) from None
         return Response(BranchSerializer(branch).data, status=201)
+
+
+class BranchView(APIView):
+    """Una sucursal: `PATCH` cambia sus datos, la desactiva o la reactiva (`is_active`). No hay
+    borrado."""
+
+    required_permissions = {"PATCH": "branches.manage"}
+
+    @extend_schema(
+        operation_id="branches_update",
+        tags=["branches"],
+        request=BranchUpdateSerializer,
+        responses={200: BranchSerializer, **errors(400, 401, 403, 404)},
+        description="Cambia lo que se envía; lo demás se queda como está, y el código no "
+        "cambia. Enviar lo que ya hay no escribe nada. 404: la sucursal no es de la "
+        "organización.",
+    )
+    def patch(self, request: Request, branch_id: UUID, **kwargs: Any) -> Response:
+        wanted = BranchUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            branch = update_branch(tenant, branch_id=branch_id, **wanted.validated_data)
+        except Branch.DoesNotExist:
+            raise NotFound from None
+        return Response(BranchSerializer(branch).data)

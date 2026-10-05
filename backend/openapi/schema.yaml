@@ -247,6 +247,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/branches/{branch_id}/:
+    patch:
+      operationId: branches_update
+      description: 'Cambia lo que se envía; lo demás se queda como está, y el código
+        no cambia. Enviar lo que ya hay no escribe nada. 404: la sucursal no es de
+        la organización.'
+      parameters:
+      - in: path
+        name: branch_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - branches
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedBranchUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Branch'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/me/:
     get:
       operationId: me_context
@@ -1226,6 +1284,34 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PatchedBranchUpdateRequest:
+      type: object
+      description: Lo que se envía cambia; lo que no, se queda como está. El código
+        no se cambia.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        address:
+          type: string
+          maxLength: 255
+        district:
+          type: string
+          maxLength: 100
+        city:
+          type: string
+          maxLength: 100
+        phone:
+          type: string
+          maxLength: 32
+        timezone:
+          type: string
+          minLength: 1
+          description: Zona horaria, por su nombre IANA.
+          maxLength: 64
+        is_active:
+          type: boolean
     PatchedRoleUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está.
