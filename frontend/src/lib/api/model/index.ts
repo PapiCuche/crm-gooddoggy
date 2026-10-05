@@ -10,6 +10,7 @@ export * from "./activeOrSuspendedEnum";
 export * from "./error";
 export * from "./errorFields";
 export * from "./grant";
+export * from "./grantScopeRequest";
 export * from "./loginRequest";
 export * from "./member";
 export * from "./memberOrganization";

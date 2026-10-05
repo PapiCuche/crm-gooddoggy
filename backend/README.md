@@ -365,7 +365,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Qué incluye:** todos los roles de la organización, de plantilla (`is_system`) o propios. `permissions` son sus concesiones tal como están guardadas, ordenadas por código (orden de Python, como en `…/me/`, no el de la intercalación de la base); `scope` es `null` si el permiso no admite alcance. Una concesión de un código que el catálogo ya no tiene se ve aquí, aunque el motor de autorización la ignore. `members` cuenta las membresías que tienen el rol, en cualquier estado.
 - **Qué no incluye:** la marca de rol Owner (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
 - **Paginación:** por cursor, en orden de creación (ver «Listados»). Tres consultas por página, sean cuantos sean los roles: los roles, sus concesiones y sus miembros.
-- **Lectura.** Crear un rol está en «Crear un rol»; asignarlos a un miembro, en «Roles de un miembro»; editar sus permisos, renombrarlos y borrarlos son otros work items (E01-08).
+- **Lectura.** Crear un rol está en «Crear un rol»; asignarlos a un miembro, en «Roles de un miembro»; conceder un permiso a un rol, en «Permisos de un rol»; revocar una concesión, renombrar un rol y borrarlo son otros work items (E01-08).
 - **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre; el segundo, también el identificador). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
 
 ## Crear un rol (F2-29, ADR-003 §5)
@@ -379,6 +379,19 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Errores:** 400 `VALIDATION_ERROR` con el campo; 403 sin el permiso (antes de mirar el cuerpo); 409 `ROLE_NAME_TAKEN`; 409 `LAST_OWNER` si la organización no tiene rol Owner (OBS-F2-05C-4).
 - **Concurrencia:** el alta corre bajo el bloqueo de RBAC de la organización, como los demás cambios: dos altas simultáneas con el mismo nombre van en fila y la segunda recibe el 409. La unicidad del nombre la comprueba el servicio; la base solo exige único el código.
 - **Auditoría de tenant:** `role.created`, con el nombre, la descripción y el código, en la misma transacción. Como toda auditoría, pasa por el redactor: un nombre con aspecto de secreto se guarda tal cual en el rol y redactado en el nombre y la etiqueta de la auditoría; el código, que sale de ese nombre, se audita tal cual.
+
+## Permisos de un rol (F2-31, ADR-003 §5)
+
+`PUT /api/v1/o/{slug}/roles/{role_id}/permissions/{code}/` deja el rol con ese permiso. El cuerpo lleva `{"scope": "OWN" | "TEAM" | "BRANCH" | "ORGANIZATION"}` si el permiso admite alcance, y va vacío (o con `scope` nulo) si no. Responde 204 sin cuerpo. Exige el permiso `roles.manage`.
+
+- **Reglas:** las de `access.services.grant_permission` (ver «Cambios de RBAC sin escalada»). Nadie concede un permiso que no tiene ni con más alcance; un permiso sensible solo lo delega un Owner; nadie cambia las concesiones de un rol que tiene asignado.
+- **Cambiar el alcance:** repetir la ruta con otro alcance lo cambia. El actor debe cubrir el alcance que había y el nuevo: reducir un alcance es retirar parte de una concesión, y retirar exige lo mismo que conceder.
+- **El rol Owner no se edita:** sus concesiones no cambian por esta ruta, sea quien sea el actor. Así no puede perder sus permisos sensibles (OBS-F2-25-1). Ampliarlo cuando crezca el catálogo necesita otra vía (OBS-F2-05C-1).
+- **Efecto:** inmediato y para todos los miembros del rol, en su siguiente petición. A ellos no los cubrió nadie uno a uno: solo se comprueba a quien concede (OBS-F2-29-2).
+- **Repetir** la misma concesión responde 204 y no escribe, si el actor pasa las reglas: quien no cubre lo que el rol ya tiene recibe 403 también al repetirlo, y así la respuesta no le dice qué alcance tiene el rol.
+- **Errores:** 400 `VALIDATION_ERROR` en `scope` si el alcance no es uno de los cuatro o no corresponde al permiso; 403 `PERMISSION_DENIED` sin decir la regla (y sin `roles.manage`, antes de mirar el cuerpo); 404 si el rol no es de la organización o el permiso no está en el catálogo; 409 `LAST_OWNER` si la organización no tiene rol Owner.
+- **Auditoría de tenant:** `role.permission_granted` al conceder y `role.permission_scope_changed` al cambiar el alcance, con el antes y el después, en la misma transacción.
+- **Sin step-up MFA** al delegar un permiso sensible: MFA no existe todavía (E01-03).
 
 ## Roles de un miembro (F2-25, ADR-003 §5)
 
@@ -406,15 +419,15 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 
-`apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); crear un rol, desde F2-29 («Crear un rol»); conceder un permiso a un rol aún no (E01-08).
+`apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); crear un rol, desde F2-29 («Crear un rol»); conceder un permiso a un rol, desde F2-31 («Permisos de un rol»).
 
 - `create_role(ctx, name=, description=)`, `grant_permission(ctx, role_id=, code=, scope=)`, `assign_role(ctx, membership_id=, role_id=)` y `remove_role(ctx, membership_id=, role_id=)`. Reciben el `TenantContext`, no una foto de permisos.
 - Cada cambio corre en un savepoint: toma el bloqueo del rol Owner de la organización (`SELECT … FOR NO KEY UPDATE`), relee los permisos del actor, comprueba las reglas, escribe y audita. Si algo falla, incluida la auditoría, no queda nada escrito.
-- **Reglas:** hace falta `roles.manage` para crear un rol y para conceder, y `users.manage` para asignar o quitar. Nadie delega un permiso que no tiene ni con un alcance más amplio (`TEAM` y `BRANCH` no se contienen entre sí). Un permiso sensible solo lo delega quien tiene asignado el rol Owner, y además debe tenerlo. Asignar y quitar un rol exigen cubrir todas sus concesiones. Nadie se asigna ni se quita roles, ni concede permisos a un rol que tiene asignado.
+- **Reglas:** hace falta `roles.manage` para crear un rol y para conceder, y `users.manage` para asignar o quitar. Nadie delega un permiso que no tiene ni con un alcance más amplio (`TEAM` y `BRANCH` no se contienen entre sí). Un permiso sensible solo lo delega quien tiene asignado el rol Owner, y además debe tenerlo. Asignar y quitar un rol exigen cubrir todas sus concesiones. Nadie se asigna ni se quita roles, ni concede permisos a un rol que tiene asignado. Cambiar el alcance de una concesión exige cubrir el que había y el nuevo. Las concesiones del rol Owner no se editan.
 - **Siempre queda un Owner activo** (membresía `ACTIVE` y usuario activo). `ensure_can_manage_member(ctx, membership_id=, leaving=)` aplica la misma garantía, y las reglas de escalada, a quien suspende o reactiva una membresía (F2-19).
-- `is_owner_role` solo localiza el rol Owner para esas dos restricciones; por sí solo no concede nada. Nada decide por el código o el nombre de un rol, ni por `is_platform_staff`.
-- Una denegación lanza `AccessDenied` con su motivo (`membership`, `permission`, `escalation`, `sensitive`, `self`, `last_owner`); un id de otra organización, o quitar un rol que la membresía no tiene (también al repetir la llamada), `DoesNotExist`. Repetir una concesión o una asignación no hace nada.
-- Auditoría: `role.created`, `role.permission_granted`, `membership.role_assigned` y `membership.role_removed`, con el antes y el después. `create_role` lanza además `RoleNameTaken` y `ValueError` (nombre o descripción que no sirven).
+- `is_owner_role` solo localiza el rol Owner para esas restricciones; por sí solo no concede nada. Nada decide por el código o el nombre de un rol, ni por `is_platform_staff`.
+- Una denegación lanza `AccessDenied` con su motivo (`membership`, `permission`, `escalation`, `sensitive`, `self`, `last_owner`, `owner_role`); un id de otra organización, o quitar un rol que la membresía no tiene (también al repetir la llamada), `DoesNotExist`. Repetir una concesión o una asignación no hace nada.
+- Auditoría: `role.created`, `role.permission_granted`, `role.permission_scope_changed`, `membership.role_assigned` y `membership.role_removed`, con el antes y el después. `create_role` lanza además `RoleNameTaken` y `ValueError` (nombre o descripción que no sirven).
 
 ## Identificadores y numeración (F1-05, ADR-004)
 

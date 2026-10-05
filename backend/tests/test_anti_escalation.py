@@ -190,8 +190,6 @@ def test_grant_needs_the_permission_and_a_scope_not_wider(
         grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="TEAM")  # igual
         grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="TEAM")  # repetir: nada
         grant_permission(tenant, role_id=rbac.roles["seller"].pk, code=VIEW, scope="OWN")  # menor
-        with pytest.raises(ValueError, match="otro alcance"):
-            grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="OWN")
         with pytest.raises(ValueError, match="no corresponde"):
             grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope=None)
         with pytest.raises(UnknownPermission):
@@ -202,6 +200,50 @@ def test_grant_needs_the_permission_and_a_scope_not_wider(
     first: tuple[Any, ...] = ("role.permission_granted", "role", rbac.target.pk, changes, {})
     first += (rbac.luis.pk,)
     assert audit(migrator)[0] == first and audit(migrator)[1][3]["scope"] == [None, "OWN"]
+
+
+def test_a_scope_changes_only_for_who_covers_both_and_never_on_the_owner_role(
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target, owner = rbac.target.pk, rbac.roles["owner"].pk
+    wide = give(rbac.a, rbac.m_eva, {VIEW: "ORGANIZATION"}).pk  # luis lo tiene con TEAM
+    give(rbac.a, rbac.m_luis, {EDIT: "ORGANIZATION"})
+    with acting(rbac.a, rbac.luis) as tenant:
+        grant_permission(tenant, role_id=target, code=VIEW, scope="TEAM")
+        grant_permission(tenant, role_id=target, code=EDIT, scope="ORGANIZATION")
+    before = state(migrator)
+    # No cubre el anterior, o el nuevo. Tampoco al repetir lo que el rol ya tiene: un 204 le
+    # diría qué alcance es.
+    for role, scope in ((wide, "TEAM"), (wide, "OWN"), (wide, "ORGANIZATION"), (target, "BRANCH")):
+        kwargs = {"role_id": role, "code": VIEW, "scope": scope}
+        assert denied(rbac.a, rbac.luis, grant_permission, **kwargs) is Denied.ESCALATION
+    for scopes in (("TEAM", "OWN"), ("OWN", "TEAM")):  # lo cubre: decide que es el rol Owner
+        for scope in scopes:  # conceder, y después cambiar o repetir lo que ya tiene
+            kwargs = {"role_id": owner, "code": VIEW, "scope": scope}
+            assert denied(rbac.a, rbac.luis, grant_permission, **kwargs) is Denied.OWNER_ROLE
+        with tenant_scope(ctx(rbac.a)):
+            RolePermission.objects.get_or_create(
+                role_id=owner, permission_id=VIEW, supports_scope=True, scope="TEAM"
+            )
+    assert state(migrator) == (before[0] + 1, before[1], before[2])  # solo la fila del test
+    before = state(migrator)
+    with acting(rbac.a, rbac.luis) as tenant:
+        grant_permission(tenant, role_id=target, code=VIEW, scope="OWN")  # reduce: cubre los dos
+        grant_permission(tenant, role_id=target, code=VIEW, scope="OWN")  # repetir: nada
+        grants = set(rbac.target.grants.values_list("permission_id", "scope"))
+        assert grants == {(VIEW, "OWN"), (EDIT, "ORGANIZATION")}  # solo esa concesión
+        grant_permission(tenant, role_id=target, code=VIEW, scope="TEAM")  # y lo devuelve
+    assert state(migrator) == (before[0], before[1], before[2] + 2)  # la misma fila, otro alcance
+    changed = {"permission": [VIEW, VIEW], "scope": ["TEAM", "OWN"]}
+    row: tuple[Any, ...] = ("role.permission_scope_changed", "role", target, changed, {})
+    assert audit(migrator)[-2] == (*row, rbac.luis.pk)
+    assert audit(migrator)[-1][3]["scope"] == ["OWN", "TEAM"]
+    before = state(migrator)
+    sensitive = PermissionDef(EDIT, "x", is_sensitive=True, supports_scope=True)
+    monkeypatch.setitem(BY_CODE, EDIT, sensitive)  # reducir lo sensible también es de un Owner
+    narrower = {"role_id": target, "code": EDIT, "scope": "OWN"}
+    assert denied(rbac.a, rbac.luis, grant_permission, **narrower) is Denied.SENSITIVE
+    assert state(migrator) == before
 
 
 def test_sensitive_permissions_only_by_an_owner_and_the_flag_alone_grants_nothing(
@@ -437,16 +479,24 @@ def test_change_and_its_audit_are_atomic(
     before = state(migrator)
     link = {"membership_id": rbac.m_eva, "role_id": rbac.roles["seller"].pk}
     grant = {"role_id": rbac.target.pk, "code": "organization.view", "scope": None}
+    give(rbac.a, rbac.membership, {VIEW: "ORGANIZATION"})
+    with acting(rbac.a, rbac.ana) as tenant:
+        grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="TEAM")
+    before = state(migrator)
+    rescope = {"role_id": rbac.target.pk, "code": VIEW, "scope": "OWN"}
     with acting(rbac.a, rbac.ana) as tenant, monkeypatch.context() as patch:
         patch.setattr(services, "record", broken)
         for service, kwargs in (
             (assign_role, link),
             (grant_permission, grant),
+            (grant_permission, rescope),
             (remove_role, held),
         ):
             with pytest.raises(RuntimeError):
                 service(tenant, **kwargs)
     assert state(migrator) == before  # sin auditoría no hay cambio, y la petición sigue viva
+    with tenant_scope(ctx(rbac.a)):
+        assert set(rbac.target.grants.values_list("scope", flat=True)) == {"TEAM"}  # ni el alcance
     with acting(rbac.a, rbac.ana) as tenant:
         assign_role(tenant, **link)
     assert state(migrator) == (before[0], before[1] + 1, before[2] + 1)
