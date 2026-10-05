@@ -7,6 +7,8 @@ import { CursorList } from "@/components/lists/cursor-list";
 import { getRolesListQueryKey, rolesList } from "@/lib/api/client";
 import type { Role } from "@/lib/api/model";
 
+import { RoleCreate } from "./role-create";
+
 // El texto de `messages` para `code` (`users.manage` es `messages.users.manage`), si existe y es
 // un texto. El código viene de la API: se busca por propiedades propias, paso a paso, y no como
 // una ruta de mensajes, que resolvería también `users` (un objeto) o `users.constructor.name`.
@@ -19,11 +21,14 @@ function text(messages: unknown, code: string): string | null {
   return typeof node === "string" ? node : null;
 }
 
-// Directorio de roles (F2-23): lo que devuelve `GET /api/v1/o/{slug}/roles/`. Solo muestra: nada
-// decide aquí por el nombre o el código de un rol, y qué puede ver cada quien lo decide la API.
+// Directorio de roles (F2-23): lo que devuelve `GET /api/v1/o/{slug}/roles/`. Nada decide aquí
+// por el nombre o el código de un rol, y qué puede ver o hacer cada quien lo decide la API.
 export function RolesList() {
   const t = useTranslations();
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Comodidad: «Crear rol» se ofrece a quien la API dijo que tiene `roles.manage` (F2-35).
+  const canManage = permissions.some((grant) => grant.code === "roles.manage");
+  const listKey = [...getRolesListQueryKey(organization.slug), "pages"];
   // Un permiso, o un alcance, que estos textos no conocen se enseña con su código: no se oculta.
   const { catalog, roles } = useMessages();
   const label = (code: string) => text(catalog, code) ?? code;
@@ -33,7 +38,8 @@ export function RolesList() {
     <CursorList<Role>
       section="roles"
       organization={organization.name}
-      listKey={[...getRolesListQueryKey(organization.slug), "pages"]}
+      listKey={listKey}
+      notice={canManage ? <RoleCreate slug={organization.slug} listKey={listKey} /> : undefined}
       fetchPage={(cursor, signal) =>
         rolesList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
