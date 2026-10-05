@@ -19,7 +19,15 @@ from apps.access.catalog import Scope
 from apps.access.models import Role
 from apps.access.permissions import IsMember, rbac_errors, request_context
 from apps.access.selectors import memberships, organization_of, role_names, roles_by_membership
-from apps.access.services import assign_role, remove_role
+from apps.access.services import (
+    DESCRIPTION_MAX,
+    NAME_MAX,
+    RoleNameTaken,
+    assign_role,
+    create_role,
+    remove_role,
+)
+from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
 
@@ -157,19 +165,64 @@ class RoleSerializer(serializers.Serializer[Any]):
     members = serializers.IntegerField(help_text="Membresías con este rol, en cualquier estado.")
 
 
+class RoleCreateSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField(max_length=NAME_MAX)
+    description = serializers.CharField(
+        max_length=DESCRIPTION_MAX, required=False, allow_blank=True
+    )
+
+    def validate(self, values: dict[str, str]) -> dict[str, str]:
+        for field, value in values.items():
+            if not value.isprintable():  # saltos de línea, nulos, controles
+                raise serializers.ValidationError({field: "Solo texto imprimible."})
+        return values
+
+
 @extend_schema_view(
     get=extend_schema(
         operation_id="roles_list",
         tags=["roles"],
         responses={200: RoleSerializer(many=True), **errors(400, 401, 403, 404)},
-    )
+    ),
+    post=extend_schema(
+        operation_id="roles_create",
+        tags=["roles"],
+        request=RoleCreateSerializer,
+        responses={201: RoleSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Crea un rol propio, vacío: sin permisos y sin miembros. El código lo "
+        "genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay un rol con ese nombre en la "
+        "organización (sin distinguir mayúsculas). 409 `LAST_OWNER`: la organización no tiene "
+        "rol Owner y no admite ningún cambio.",
+    ),
 )
 class RolesView(generics.ListAPIView):
     """Los roles de la organización, con lo que concede cada uno y cuántos miembros lo tienen.
-    Paginado por orden de creación (ADR-016)."""
+    Paginado por orden de creación (ADR-016). `POST` crea un rol propio (F2-29)."""
 
-    required_permissions = {"GET": "roles.view"}
+    required_permissions = {"GET": "roles.view", "POST": "roles.manage"}
     serializer_class = RoleSerializer
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = RoleCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                role = create_role(tenant, **wanted.validated_data)
+        except RoleNameTaken:
+            message = "Ya existe un rol con ese nombre en la organización."
+            raise ApiError("ROLE_NAME_TAKEN", 409, message) from None
+        row = {
+            "id": role.pk,
+            "code": role.code,
+            "name": role.name,
+            "description": role.description,
+            "is_system": role.is_system,
+            "permissions": [],
+            "members": 0,
+        }
+        return Response(RoleSerializer(row).data, status=201)
 
     def get_queryset(self) -> QuerySet[Role]:
         ectx = request_context(self.request)

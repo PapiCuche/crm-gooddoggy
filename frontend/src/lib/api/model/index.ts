@@ -24,6 +24,7 @@ export * from "./organizationSummary";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
 export * from "./role";
+export * from "./roleCreateRequest";
 export * from "./roleGrant";
 export * from "./roleName";
 export * from "./rolesListParams";

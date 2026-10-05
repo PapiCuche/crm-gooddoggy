@@ -365,8 +365,19 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Qué incluye:** todos los roles de la organización, de plantilla (`is_system`) o propios. `permissions` son sus concesiones tal como están guardadas, ordenadas por código (orden de Python, como en `…/me/`, no el de la intercalación de la base); `scope` es `null` si el permiso no admite alcance. Una concesión de un código que el catálogo ya no tiene se ve aquí, aunque el motor de autorización la ignore. `members` cuenta las membresías que tienen el rol, en cualquier estado.
 - **Qué no incluye:** la marca de rol Owner (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
 - **Paginación:** por cursor, en orden de creación (ver «Listados»). Tres consultas por página, sean cuantos sean los roles: los roles, sus concesiones y sus miembros.
-- **Solo lectura.** Asignarlos a un miembro está en «Roles de un miembro»; crear o editar roles es otro work item (E01-08).
+- **Lectura.** Crear un rol está en «Crear un rol»; asignarlos a un miembro, en «Roles de un miembro»; editar sus permisos, renombrarlos y borrarlos son otros work items (E01-08).
 - **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre; el segundo, también el identificador). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
+
+## Crear un rol (F2-29, ADR-003 §5)
+
+`POST /api/v1/o/{slug}/roles/` con `{"name": "…", "description": "…"}` crea un rol propio de la organización. Responde 201 con el rol en la forma del directorio. Exige el permiso `roles.manage`.
+
+- **Nace vacío:** sin concesiones, sin miembros, con `is_system` falso y sin la marca de Owner. Un rol vacío no concede nada, así que crearlo no tiene nada que cubrir. Concederle permisos es otro work item (E01-08); asignarlo, «Roles de un miembro».
+- **Nombre:** obligatorio, sin espacios exteriores, imprimible, de hasta 100 caracteres, y único en la organización sin distinguir mayúsculas (también frente a los roles de plantilla). `description` es opcional, de hasta 255.
+- **Código:** lo genera el servidor a partir del nombre (`Caja y Cobros` → `caja-y-cobros`), con un sufijo si ya está tomado. El cliente no lo elige: lo que envíe en `code` se ignora.
+- **Errores:** 400 `VALIDATION_ERROR` con el campo; 403 sin el permiso (antes de mirar el cuerpo); 409 `ROLE_NAME_TAKEN`; 409 `LAST_OWNER` si la organización no tiene rol Owner (OBS-F2-05C-4).
+- **Concurrencia:** el alta corre bajo el bloqueo de RBAC de la organización, como los demás cambios: dos altas simultáneas con el mismo nombre van en fila y la segunda recibe el 409. La unicidad del nombre la comprueba el servicio; la base solo exige único el código.
+- **Auditoría de tenant:** `role.created`, en la misma transacción.
 
 ## Roles de un miembro (F2-25, ADR-003 §5)
 
@@ -394,7 +405,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 
-`apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); conceder un permiso a un rol aún no (E01-08).
+`apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); crear un rol, desde F2-29 («Crear un rol»); conceder un permiso a un rol aún no (E01-08).
 
 - `grant_permission(ctx, role_id=, code=, scope=)`, `assign_role(ctx, membership_id=, role_id=)` y `remove_role(ctx, membership_id=, role_id=)`. Reciben el `TenantContext`, no una foto de permisos.
 - Cada cambio corre en un savepoint: toma el bloqueo del rol Owner de la organización (`SELECT … FOR NO KEY UPDATE`), relee los permisos del actor, comprueba las reglas, escribe y audita. Si algo falla, incluida la auditoría, no queda nada escrito.

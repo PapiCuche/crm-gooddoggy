@@ -412,7 +412,7 @@ paths:
       operationId: roles_list
       description: |-
         Los roles de la organización, con lo que concede cada uno y cuántos miembros lo tienen.
-        Paginado por orden de creación (ADR-016).
+        Paginado por orden de creación (ADR-016). `POST` crea un rol propio (F2-29).
       parameters:
       - name: cursor
         in: query
@@ -464,6 +464,65 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: roles_create
+      description: 'Crea un rol propio, vacío: sin permisos y sin miembros. El código
+        lo genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay un rol con ese nombre
+        en la organización (sin distinguir mayúsculas). 409 `LAST_OWNER`: la organización
+        no tiene rol Owner y no admite ningún cambio.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - roles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -700,6 +759,18 @@ components:
       - members
       - name
       - permissions
+    RoleCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 255
+      required:
+      - name
     RoleGrant:
       type: object
       properties:
