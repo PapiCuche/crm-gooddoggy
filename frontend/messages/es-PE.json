@@ -149,6 +149,22 @@
     "members": "{count, plural, =0 {Sin miembros} one {# miembro} other {# miembros}}",
     "permissions": "Permisos de {role}",
     "noPermission": "Sin permisos",
+    "create": {
+      "open": "Crear rol",
+      "title": "Nuevo rol",
+      "name": "Nombre",
+      "nameHint": "Hasta 100 caracteres. No puede leerse igual que el de otro rol.",
+      "description": "Descripción (opcional)",
+      "submit": "Crear",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "nameRequired": "Escribe un nombre para el rol.",
+      "nameTaken": "Ya hay un rol con ese nombre. Elige otro.",
+      "nameInvalid": "Ese nombre no sirve. Usa texto legible, de hasta 100 caracteres.",
+      "descriptionInvalid": "Esa descripción no sirve. Usa texto de hasta 255 caracteres, en una sola línea.",
+      "denied": "No tienes permiso para crear roles.",
+      "done": "Rol «{name}» creado, sin permisos. Está al final de la lista."
+    },
     "scope": {
       "OWN": "Lo propio",
       "TEAM": "Su equipo",
