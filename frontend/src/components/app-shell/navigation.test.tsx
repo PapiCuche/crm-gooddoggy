@@ -55,4 +55,21 @@ describe("navegación del shell", () => {
     ]);
     expect(screen.getByRole("link", { name: "Roles" })).toBeVisible();
   });
+
+  it("la entrada «Sucursales» pide `organization.view`: administrarlas no basta", async () => {
+    expect(await links([{ code: "branches.manage", scopes: [] }])).toEqual([["/o/acme", null]]);
+  });
+
+  it("con `organization.view` lista «Sucursales», al final", async () => {
+    const both = [
+      { code: "organization.view", scopes: [] },
+      { code: "roles.view", scopes: [] },
+    ];
+    expect(await links(both)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/roles", null],
+      ["/o/acme/sucursales", null],
+    ]);
+    expect(screen.getByRole("link", { name: "Sucursales" })).toBeVisible();
+  });
 });

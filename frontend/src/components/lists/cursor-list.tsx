@@ -25,7 +25,7 @@ type Section = {
 
 // Pantalla de un listado de tenant paginado por cursor (ADR-016): título, lista, «Cargar más» y
 // los estados de carga, error, sin permiso y sin sesión. La comparten las pantallas de gestión
-// (miembros, roles). Quién puede ver la lista lo decide la API: aquí un 403 solo se explica.
+// (miembros, roles, sucursales). Quién puede ver la lista lo decide la API: aquí un 403 solo se explica.
 // Los textos salen del espacio `section` de los mensajes.
 export function CursorList<Row extends { id: string }>({
   section,
@@ -33,6 +33,7 @@ export function CursorList<Row extends { id: string }>({
   listKey,
   fetchPage,
   notice,
+  empty,
   rowClassName,
   children,
   ref,
@@ -42,6 +43,7 @@ export function CursorList<Row extends { id: string }>({
   listKey: QueryKey;
   fetchPage: (cursor: string | undefined, signal: AbortSignal) => Promise<Page<Row>>;
   notice?: ReactNode; // aviso de la pantalla, encima de la lista
+  empty?: ReactNode; // lo que se ve en lugar de una lista sin filas
   rowClassName?: string;
   children: (row: Row) => ReactNode;
   ref?: Ref<CursorListHandle>;
@@ -112,21 +114,25 @@ export function CursorList<Row extends { id: string }>({
     body = (
       <>
         {notice}
-        <ul aria-label={t(`${section}.title`)} className="flex flex-col gap-2">
-          {rows.map((row) => (
-            <li
-              key={row.id}
-              ref={row.id === firstOfLast ? fresh : undefined}
-              tabIndex={row.id === firstOfLast ? -1 : undefined}
-              className={cn(
-                "border-border bg-surface rounded-lg border p-4 focus-visible:outline-none",
-                rowClassName,
-              )}
-            >
-              {children(row)}
-            </li>
-          ))}
-        </ul>
+        {rows.length === 0 && empty ? (
+          empty
+        ) : (
+          <ul aria-label={t(`${section}.title`)} className="flex flex-col gap-2">
+            {rows.map((row) => (
+              <li
+                key={row.id}
+                ref={row.id === firstOfLast ? fresh : undefined}
+                tabIndex={row.id === firstOfLast ? -1 : undefined}
+                className={cn(
+                  "border-border bg-surface rounded-lg border p-4 focus-visible:outline-none",
+                  rowClassName,
+                )}
+              >
+                {children(row)}
+              </li>
+            ))}
+          </ul>
+        )}
         <p role="status" className="sr-only">
           {t(`${section}.count`, { count: rows.length })}
         </p>
