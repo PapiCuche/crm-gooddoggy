@@ -9,6 +9,7 @@ import { getRolesListQueryKey, rolesList } from "@/lib/api/client";
 import type { Role } from "@/lib/api/model";
 
 import { RoleCreate } from "./role-create";
+import { RoleEditAction } from "./role-edit-action";
 import { RolePermissionsAction } from "./role-permissions-action";
 
 // El texto de `messages` para `code` (`users.manage` es `messages.users.manage`), si existe y es
@@ -96,15 +97,24 @@ export function RolesList() {
           </ul>
           {/* Comodidad: la API marca los roles que no admite editar (el Owner, uno propio). */}
           {canManage && role.editable ? (
-            <RolePermissionsAction
-              slug={organization.slug}
-              role={role}
-              listKey={listKey}
-              label={label}
-              scope={scope}
-              onAsk={() => setNotice(null)}
-              onStale={stale}
-            />
+            <div className="flex flex-wrap items-start gap-2">
+              <RoleEditAction
+                slug={organization.slug}
+                role={role}
+                listKey={listKey}
+                onAsk={() => setNotice(null)}
+                onStale={stale}
+              />
+              <RolePermissionsAction
+                slug={organization.slug}
+                role={role}
+                listKey={listKey}
+                label={label}
+                scope={scope}
+                onAsk={() => setNotice(null)}
+                onStale={stale}
+              />
+            </div>
           ) : null}
         </>
       )}
