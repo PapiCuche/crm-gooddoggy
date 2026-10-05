@@ -11,8 +11,16 @@ from django.db import IntegrityError, ProgrammingError, connection
 from django.db.models import ProtectedError
 from psycopg.errors import CheckViolation, ForeignKeyViolation, UniqueViolation
 
-from apps.access import services
-from apps.access.catalog import BY_CODE, PERMISSIONS, ROLE_TEMPLATES, RoleTemplate, Scope
+from apps.access import catalog, services
+from apps.access.apps import extend_owner_roles
+from apps.access.catalog import (
+    BY_CODE,
+    PERMISSIONS,
+    ROLE_TEMPLATES,
+    PermissionDef,
+    RoleTemplate,
+    Scope,
+)
 from apps.access.models import MembershipRole, Permission, Role, RolePermission
 from apps.access.services import clone_role_templates
 from apps.accounts.models import User
@@ -109,6 +117,79 @@ def test_post_migrate_resyncs_the_catalog(
     finally:
         migrator.execute("DELETE FROM role_permissions WHERE permission_code = 'old.granted'")
         migrator.execute("DELETE FROM permissions WHERE code = 'old.granted'")
+
+
+def as_migrator(command: Any) -> Any:
+    """Lo que hace el job de migraciones: con la conexión de Django como `crm_migrator`."""
+    runtime = dict(connection.settings_dict)
+    connection.close()
+    connection.settings_dict.update(migrator_settings())
+    try:
+        return command()
+    finally:
+        connection.close()
+        connection.settings_dict.clear()
+        connection.settings_dict.update(runtime)
+
+
+def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
+    rbac: dict[str, Any], migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-018: un permiso nuevo llega, tras el `migrate`, al rol Owner de cada organización."""
+    new = (PermissionDef("teams.manage", "users"), PermissionDef("leads.view", "x", False, True))
+    grants = "SELECT role_id, permission_code, scope FROM role_permissions"
+    audited = (
+        "SELECT actor_type, actor_id, metadata FROM platform_audit_logs "
+        "WHERE action = 'access.owner_roles.extended'"
+    )
+    a, b = rbac["A"], rbac["B"]
+    # El rol Owner de A, con otro código y otro nombre; un rol que solo se llama Owner y lleva su
+    # código; y un rol Owner, el de B, que ya tiene uno de los dos permisos con menos alcance.
+    migrator.execute(
+        "UPDATE roles SET code = 'fundador', name = 'Otro' WHERE id = %s", [a.roles["owner"].pk]
+    )
+    migrator.execute(
+        "INSERT INTO roles (id, organization_id, code, name, description, is_system, "
+        "is_owner_role, created_at, updated_at) "
+        "VALUES (uuidv7(), %s, 'owner', 'Owner', '', true, false, now(), now())",
+        [a.org],
+    )
+    migrator.execute(NEW_PERMISSION, ["leads.view", True])
+    migrator.execute(GRANT, [b.org, b.roles["owner"].pk, "leads.view", True, "TEAM"])
+    before = set(migrator.execute(grants).fetchall())
+    monkeypatch.setattr(catalog, "PERMISSIONS", (*PERMISSIONS, *new))
+    try:
+        assert extend_owner_roles("default") == 0  # el runtime no ve otra organización: nada
+        assert set(migrator.execute(grants).fetchall()) == before
+        as_migrator(lambda: call_command("migrate", verbosity=0))
+        added = set(migrator.execute(grants).fetchall()) - before
+        assert added == {  # solo los roles Owner, y solo lo que les faltaba
+            (a.roles["owner"].pk, "teams.manage", None),
+            (a.roles["owner"].pk, "leads.view", "ORGANIZATION"),  # todo el alcance
+            (b.roles["owner"].pk, "teams.manage", None),  # el `TEAM` que ya tenía no se toca
+        }
+        assert before <= set(migrator.execute(grants).fetchall())  # nada se quita ni cambia
+        assert migrator.execute(audited).fetchall() == [
+            (
+                "SYSTEM",
+                None,
+                {"grants": 3, "permissions": ["leads.view", "teams.manage"], "roles": 2},
+            )
+        ]
+        as_migrator(lambda: call_command("migrate", verbosity=0))  # otro despliegue: nada
+        assert set(migrator.execute(grants).fetchall()) == before | added
+        assert len(migrator.execute(audited).fetchall()) == 1
+        migrator.execute(  # si a un rol Owner le falta una, la función dice cuántas añadió
+            "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = 'teams.manage'",
+            [a.roles["owner"].pk],
+        )
+        assert as_migrator(lambda: extend_owner_roles("default")) == 1
+        assert set(migrator.execute(grants).fetchall()) == before | added
+        assert len(migrator.execute(audited).fetchall()) == 2
+    finally:
+        for code in ("teams.manage", "leads.view"):
+            migrator.execute("DELETE FROM role_permissions WHERE permission_code = %s", [code])
+            migrator.execute("DELETE FROM permissions WHERE code = %s", [code])
 
 
 def test_scope_is_null_exactly_when_the_permission_has_no_scope(

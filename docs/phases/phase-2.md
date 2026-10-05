@@ -61,6 +61,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-38 | [#134](https://github.com/PapiCuche/crm-gooddoggy/issues/134) Rename and delete a role (API) | `feature/f2-role-update-delete-api` | #116, #124, #126 | backend + API |
 | F2-39 | [#136](https://github.com/PapiCuche/crm-gooddoggy/issues/136) Rename a role from the roles screen | `feature/f2-role-edit-ui` | #128, #130, #134 | frontend |
 | F2-40 | [#138](https://github.com/PapiCuche/crm-gooddoggy/issues/138) Delete a role from the roles screen | `feature/f2-role-delete-ui` | #134, #136 | frontend |
+| F2-41 | [#140](https://github.com/PapiCuche/crm-gooddoggy/issues/140) The Owner role follows the permission catalog (ADR-018) | `feature/f2-owner-role-follows-catalog` | #120 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -314,6 +315,7 @@ El 404 de una ruta de tenant es idéntico en estado y cuerpo para "no existe" y 
 ### OBS-F2-05C-1 — Ningún Owner puede ampliar el rol Owner
 Por PO-2, quien tiene un rol no cambia sus concesiones, y todo Owner tiene el rol Owner. Un permiso sensible solo lo delega un Owner. Resultado: ningún Owner puede usar `grant_permission` para añadir concesiones al rol Owner, y nadie puede añadirle un permiso sensible. No hay excepción para el Owner ni para el staff de plataforma. Agrava OBS-F2-04-1: cada work item que amplíe el catálogo debe llevar esos permisos al rol Owner de las organizaciones existentes por otra vía (migración de datos o un paso de plataforma), y decidirlo antes de añadir el primero.
 - F2-31 (#120): desde ahora nadie añade ni cambia ninguna concesión del rol Owner con `grant_permission`, sensible o no, sea o no Owner. La vía para ampliarlo sigue pendiente.
+- ✅ F2-41 (#140, ADR-018): la vía existe. El rol Owner recibe los permisos nuevos del catálogo en el job de migraciones, no por la API.
 
 ### OBS-F2-05C-2 — La garantía de Owner activo tiene dos huecos fuera de este módulo
 `remove_role` la aplica. Desactivar una membresía (E01-07, en `apps.organizations`) debe llamar a `ensure_owner_remains` en el mismo `tenant_scope` y antes de escribir; hoy nada lo hace porque esa operación no existe. **Cerrado para la suspensión en F2-19 (ADR-017):** `apps.members` llama a `ensure_can_manage_member`, que incluye esa garantía, antes de escribir. La baja definitiva, cuando exista, debe pasar por el mismo camino. Desactivar un usuario global (`users.is_active`) no se puede comprobar desde un tenant: quien lo implemente debe revisar todas sus organizaciones.
@@ -389,6 +391,7 @@ ADR-011 prevé auditar los accesos denegados. El motor no escribe filas `DENIED`
 `clone_role_templates` no toca un rol que ya existe y `sync_permissions` solo sincroniza `permissions`. El rol Owner se modela con concesiones explícitas de todo el catálogo, así que una organización ya creada no recibe los permisos que añada una fase posterior.
 - Todo work item que añada permisos al catálogo debe decidir cómo llegan al rol Owner de cada organización (localizado por `is_owner_role`, nunca por código): migración de datos o un paso tras el `migrate`.
 - Lo mismo aplica a las demás plantillas si se quiere que los cambios lleguen a roles ya clonados.
+- ✅ F2-41 (#140, ADR-018): cerrada para el rol Owner. El job de migraciones le añade lo que le falte del catálogo. Las demás plantillas siguen sin seguir al catálogo, por decisión: en una organización que ya existe son roles suyos.
 
 ### OBS-F2-04-2 — Los roles de sistema se pueden borrar y renombrar
 [02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.3 dice que un rol `is_system` no se borra y su código no cambia. F2-04 no lo impone: no existe gestión de roles hasta E01-08. Un rol plantilla borrado se vuelve a crear en el siguiente clonado.
