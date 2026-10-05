@@ -93,7 +93,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 
 `/o/[orgSlug]/miembros` muestra quién pertenece a la organización, con su estado y sus roles: lo que devuelve `GET /api/v1/o/{slug}/members/` (F2-16), con el cliente generado.
 
-- **Componente:** `components/members/members-list.tsx`. Por miembro: nombre (o el correo si no tiene), correo, roles como etiquetas, estado de la membresía y fecha de alta en la zona horaria de la aplicación. Un nombre o un correo largo se parte en varias líneas; no se recorta.
+- **Componente:** `components/members/members-list.tsx`, sobre la lista por cursor compartida (abajo). Por miembro: nombre (o el correo si no tiene), correo, roles como etiquetas, estado de la membresía y fecha de alta en la zona horaria de la aplicación. Un nombre o un correo largo se parte en varias líneas; no se recorta.
 - **Paginación:** por cursor (ADR-016). «Cargar más» pide la página siguiente con el `next` de la anterior y desaparece cuando la API devuelve `null`. Desde la pulsación hasta la respuesta el botón queda ocupado (`aria-disabled`), también si el navegador sabe que no hay red y la petición espera. Al llegar la página el foco pasa a su primera fila, salvo que ya se haya ido a otra parte. Si esa página falla, lo ya cargado sigue en pantalla (salvo con un 403, que cierra la lista), el aviso aparece al lado del botón (no lo mueve) y el mismo botón reintenta; al reintentar el aviso se quita y vuelve si falla otra vez.
 - **Estados:** cargando; error con «Reintentar» (el botón no se desmonta mientras reintenta, y al abrir la lista el foco va al título); y sin permiso (403), con un mensaje propio y sin reintento.
 - **Negativas y sesión:** un 403 cierra la lista aunque ya estuviera en pantalla, y sigue cerrada hasta que la API vuelve a responder bien (un fallo pasajero no la reabre); si llega al reintentar o al cargar más, el foco va al título, salvo que el usuario ya lo haya llevado a otra parte. Sin sesión (401) no se muestra un error, tampoco al cargar más: `Providers` lleva al login. La lista no se guarda entre visitas (`gcTime: 0`): cada entrada pregunta a la API.
@@ -101,6 +101,10 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 - **Roles y estado:** se muestran tal como llegan. Nada decide por el nombre o el código de un rol. El estado es el de la membresía, no el de la cuenta.
 - **Título de la pestaña:** «Miembros · organización · Good Doggy CRM». Lo pone el shell a partir de la entrada de navegación de la ruta.
 - Invitar, dar de baja y cambiar roles son otros work items.
+
+### Lista por cursor compartida (F2-24)
+
+`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `notice` es un aviso de la pantalla encima de la lista; el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. Hoy la usa la pantalla de miembros; las siguientes listas de gestión se construyen sobre ella.
 
 ### Suspender y reactivar (F2-21)
 
