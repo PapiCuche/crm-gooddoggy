@@ -69,6 +69,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-46 | [#150](https://github.com/PapiCuche/crm-gooddoggy/issues/150) Branches screen | `feature/f2-branches-screen` | #144 | frontend |
 | F2-47 | [#152](https://github.com/PapiCuche/crm-gooddoggy/issues/152) Create a branch from the branches screen | `feature/f2-branch-create-ui` | #146, #150 | frontend |
 | F2-48 | [#154](https://github.com/PapiCuche/crm-gooddoggy/issues/154) Shared fields form for write screens | `chore/f2-fields-form` | #152 | frontend |
+| F2-49 | [#156](https://github.com/PapiCuche/crm-gooddoggy/issues/156) Edit a branch from the branches screen | `feature/f2-branch-edit-ui` | #148, #154 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

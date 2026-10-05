@@ -1,33 +1,57 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { CursorList } from "@/components/lists/cursor-list";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import { branchesList, getBranchesListQueryKey } from "@/lib/api/client";
 import type { Branch } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { BranchCreate } from "./branch-create";
+import { BranchEditAction } from "./branch-edit-action";
 
 // Sucursales (F2-46): lo que devuelve `GET /api/v1/o/{slug}/branches/`, página a página. La
 // lista, sus estados y su foco son los de `CursorList`. Quién puede verlas lo decide la API.
 export function BranchesList() {
   const t = useTranslations();
   const { organization, permissions } = useTenant();
-  // Comodidad: «Crear sucursal» se ofrece a quien la API dijo que tiene `branches.manage`.
+  // Comodidad: crear y editar se ofrecen a quien la API dijo que tiene `branches.manage`.
   const canManage = permissions.some((grant) => grant.code === "branches.manage");
   const listKey = [...getBranchesListQueryKey(organization.slug), "pages"];
+  const list = useRef<CursorListHandle>(null);
+  // Una edición respondió que la pantalla ya no refleja a la API (F2-49). El aviso vive aquí:
+  // el formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
+  const [notice, setNotice] = useState<string | null>(null);
+  function stale(text: string, here: boolean) {
+    setNotice(text);
+    list.current?.refetch();
+    if (here) list.current?.focusHeading();
+  }
+  const ask = () => setNotice(null);
 
   return (
     <CursorList<Branch>
+      ref={list}
       section="branches"
       organization={organization.name}
       listKey={listKey}
       fetchPage={(cursor, signal) =>
         branchesList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
-      notice={canManage ? <BranchCreate slug={organization.slug} listKey={listKey} /> : null}
+      notice={
+        <>
+          {canManage ? (
+            <BranchCreate slug={organization.slug} listKey={listKey} onAsk={ask} />
+          ) : null}
+          {notice ? (
+            <p role="alert" className="text-danger">
+              {notice}
+            </p>
+          ) : null}
+        </>
+      }
       empty={<p className="text-muted">{t("branches.empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] sm:items-start"
     >
@@ -63,6 +87,17 @@ export function BranchesList() {
             >
               {t(branch.is_active ? "branches.active" : "branches.inactive")}
             </p>
+            {canManage ? (
+              <div className="flex flex-wrap items-start gap-2 sm:col-span-3">
+                <BranchEditAction
+                  slug={organization.slug}
+                  branch={branch}
+                  listKey={listKey}
+                  onAsk={ask}
+                  onStale={stale}
+                />
+              </div>
+            ) : null}
           </>
         );
       }}
