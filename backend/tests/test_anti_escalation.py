@@ -30,6 +30,7 @@ from apps.access.services import (
     ensure_owner_remains,
     grant_permission,
     remove_role,
+    revoke_permission,
 )
 from apps.accounts.models import User
 from apps.organizations.models import OrganizationMembership
@@ -165,7 +166,13 @@ def test_services_need_the_manage_permission_and_the_active_scope(
     before = state(migrator)
     grant = {"role_id": rbac.target.pk, "code": "organization.view", "scope": None}
     link = {"membership_id": rbac.m_luis, "role_id": rbac.roles["seller"].pk}
-    calls = ((grant_permission, grant), (assign_role, link), (remove_role, link))
+    revoke = {"role_id": rbac.roles["seller"].pk, "code": "organization.view"}
+    calls: tuple[tuple[Any, dict[str, Any]], ...] = (
+        (grant_permission, grant),
+        (revoke_permission, revoke),
+        (assign_role, link),
+        (remove_role, link),
+    )
     staff = User.objects.create_superuser("ops@example.com", TEST_PASSWORD)
     for service, kwargs in calls:
         assert denied(rbac.a, rbac.eva, service, **kwargs) is Denied.PERMISSION  # sin roles
@@ -244,6 +251,55 @@ def test_a_scope_changes_only_for_who_covers_both_and_never_on_the_owner_role(
     narrower = {"role_id": target, "code": EDIT, "scope": "OWN"}
     assert denied(rbac.a, rbac.luis, grant_permission, **narrower) is Denied.SENSITIVE
     assert state(migrator) == before
+
+
+def test_revoking_needs_what_granting_needs_and_never_touches_the_owner_role(
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = rbac.roles["owner"].pk
+    roles = {
+        "wide": give(rbac.a, rbac.m_eva, {VIEW: "ORGANIZATION"}).pk,  # luis lo tiene con TEAM
+        "other": give(rbac.a, rbac.m_eva, {"users.view": None}).pk,  # luis no lo tiene
+        "admin": give(rbac.a, rbac.m_eva, {"users.manage": None}).pk,  # sensible: no es Owner
+        "narrow": give(rbac.a, rbac.m_eva, {VIEW: "OWN", EDIT: "TEAM"}).pk,
+    }
+    with tenant_scope(ctx(rbac.a)):  # una concesión del rol Owner que luis sí cubre
+        RolePermission.objects.create(
+            role_id=owner, permission_id=VIEW, supports_scope=True, scope="TEAM"
+        )
+    before = state(migrator)
+    refused = (
+        (rbac.luis, roles["wide"], VIEW, Denied.ESCALATION),
+        (rbac.luis, roles["other"], "users.view", Denied.ESCALATION),
+        (rbac.luis, roles["admin"], "users.manage", Denied.SENSITIVE),
+        (rbac.luis, rbac.delegator.pk, VIEW, Denied.SELF),  # PO-2: tampoco para quitarse algo
+        (rbac.ana, owner, "organization.view", Denied.SELF),
+        (rbac.luis, owner, VIEW, Denied.OWNER_ROLE),
+        (rbac.luis, owner, "no.existe", Denied.OWNER_ROLE),  # sin decir qué tiene el rol Owner
+    )
+    for user, role, code, reason in refused:
+        assert denied(rbac.a, user, revoke_permission, role_id=role, code=code) is reason, code
+    assert state(migrator) == before
+    with acting(rbac.a, rbac.luis) as tenant:
+        revoke_permission(tenant, role_id=roles["narrow"], code=VIEW)  # lo cubre: TEAM sobre OWN
+        with pytest.raises(ObjectDoesNotExist):
+            revoke_permission(tenant, role_id=roles["narrow"], code=VIEW)  # repetir: ya no está
+    with tenant_scope(ctx(rbac.a)):
+        left = RolePermission.objects.filter(role_id=roles["narrow"])
+        assert set(left.values_list("permission_id", "scope")) == {(EDIT, "TEAM")}  # solo esa
+    with acting(rbac.a, rbac.ana) as tenant:
+        revoke_permission(tenant, role_id=roles["admin"], code="users.manage")  # la Owner sí
+    assert state(migrator) == (before[0] - 2, before[1], before[2] + 2)
+    changes = {"permission": [VIEW, None], "scope": ["OWN", None]}
+    row: tuple[Any, ...] = ("role.permission_revoked", "role", roles["narrow"], changes, {})
+    assert audit(migrator)[-2] == (*row, rbac.luis.pk)
+    assert audit(migrator)[-1][3] == {"permission": ["users.manage", None], "scope": [None, None]}
+    give(rbac.a, rbac.membership, {EDIT: "ORGANIZATION"})
+    monkeypatch.delitem(
+        BY_CODE, EDIT
+    )  # retirado del catálogo: falla cerrado, también para la Owner
+    gone = {"role_id": roles["narrow"], "code": EDIT}
+    assert denied(rbac.a, rbac.ana, revoke_permission, **gone) is Denied.ESCALATION
 
 
 def test_sensitive_permissions_only_by_an_owner_and_the_flag_alone_grants_nothing(
@@ -358,6 +414,11 @@ def test_foreign_ids_never_exist_and_write_nothing(
     before = state(migrator)
     attempts: tuple[tuple[Any, dict[str, Any]], ...] = (
         (grant_permission, {"role_id": role_b.pk, "code": "organization.view", "scope": None}),
+        (revoke_permission, {"role_id": role_b.pk, "code": "organization.view"}),
+        (
+            revoke_permission,
+            {"role_id": rbac.target.pk, "code": "organization.view"},
+        ),  # no la tiene
         (assign_role, {"membership_id": rbac.m_eva, "role_id": role_b.pk}),
         (assign_role, {"membership_id": m_carla, "role_id": rbac.roles["seller"].pk}),
         (remove_role, {"membership_id": m_carla, "role_id": role_b.pk}),
@@ -490,6 +551,7 @@ def test_change_and_its_audit_are_atomic(
             (assign_role, link),
             (grant_permission, grant),
             (grant_permission, rescope),
+            (revoke_permission, {"role_id": rbac.target.pk, "code": VIEW}),
             (remove_role, held),
         ):
             with pytest.raises(RuntimeError):

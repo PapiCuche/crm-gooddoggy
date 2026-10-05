@@ -35,6 +35,7 @@ from apps.access.services import (
     create_role,
     grant_permission,
     remove_role,
+    revoke_permission,
     role_name,
 )
 from core.api.errors import ApiError
@@ -318,12 +319,12 @@ class GrantScopeSerializer(serializers.Serializer[Any]):
 
 
 class RolePermissionView(APIView):
-    """Un permiso de un rol: `PUT` lo deja concedido con ese alcance. Las reglas son las de
-    `access.services.grant_permission` (ADR-003 §5): nadie concede lo que no tiene ni con más
-    alcance; lo sensible, solo un Owner; nadie cambia un rol que tiene asignado; el rol Owner
-    no se edita."""
+    """Un permiso de un rol: `PUT` lo deja concedido con ese alcance y `DELETE` lo retira. Las
+    reglas son las de `access.services` (ADR-003 §5): nadie concede ni retira lo que no tiene,
+    ni con más alcance; lo sensible, solo un Owner; nadie cambia un rol que tiene asignado; el
+    rol Owner no se edita."""
 
-    required_permissions = {"PUT": "roles.manage"}
+    required_permissions = {"PUT": "roles.manage", "DELETE": "roles.manage"}
 
     @extend_schema(
         operation_id="roles_permissions_grant",
@@ -351,4 +352,22 @@ class RolePermissionView(APIView):
         except ScopeMismatch:
             message = "El alcance no corresponde a este permiso."
             raise serializers.ValidationError({"scope": message}) from None
+        return Response(status=204)
+
+    @extend_schema(
+        operation_id="roles_permissions_revoke",
+        tags=["roles"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Retira ese permiso al rol. Los miembros del rol dejan de tenerlo en su "
+        "siguiente petición. 403: como al concederlo (sin `roles.manage`, un rol que el actor "
+        "tiene asignado, el rol Owner, una concesión que el actor no cubre, o un permiso "
+        "sensible si el actor no es Owner). 404: el rol no es de la organización o no tiene "
+        "esa concesión. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite "
+        "ningún cambio.",
+    )
+    def delete(self, request: Request, role_id: UUID, code: str, **kwargs: Any) -> Response:
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        with rbac_errors():
+            revoke_permission(tenant, role_id=role_id, code=code)
         return Response(status=204)

@@ -1436,3 +1436,91 @@ export const useRolesPermissionsGrant = <TError = ErrorType<Error>, TContext = u
 > => {
   return useMutation(getRolesPermissionsGrantMutationOptions(options), queryClient);
 };
+
+export const getRolesPermissionsRevokeUrl = (orgSlug: string, roleId: string, code: string) => {
+  return `/api/v1/o/${orgSlug}/roles/${roleId}/permissions/${code}/`;
+};
+
+/**
+ * Retira ese permiso al rol. Los miembros del rol dejan de tenerlo en su siguiente petición. 403: como al concederlo (sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, una concesión que el actor no cubre, o un permiso sensible si el actor no es Owner). 404: el rol no es de la organización o no tiene esa concesión. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+ */
+export const rolesPermissionsRevoke = async (
+  orgSlug: string,
+  roleId: string,
+  code: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getRolesPermissionsRevokeUrl(orgSlug, roleId, code), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getRolesPermissionsRevokeMutationKey = () => ["rolesPermissionsRevoke"] as const;
+
+export const getRolesPermissionsRevokeMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rolesPermissionsRevoke>>,
+    TError,
+    RolesPermissionsRevokeMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rolesPermissionsRevoke>>,
+  TError,
+  RolesPermissionsRevokeMutationVariables,
+  TContext
+> => {
+  const mutationKey = getRolesPermissionsRevokeMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rolesPermissionsRevoke>>,
+    RolesPermissionsRevokeMutationVariables
+  > = (props) => {
+    const { orgSlug, roleId, code } = props ?? {};
+
+    return rolesPermissionsRevoke(orgSlug, roleId, code, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RolesPermissionsRevokeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rolesPermissionsRevoke>>
+>;
+
+export type RolesPermissionsRevokeMutationError = ErrorType<Error>;
+export type RolesPermissionsRevokeMutationVariables = {
+  orgSlug: string;
+  roleId: string;
+  code: string;
+};
+
+export const useRolesPermissionsRevoke = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rolesPermissionsRevoke>>,
+      TError,
+      RolesPermissionsRevokeMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rolesPermissionsRevoke>>,
+  TError,
+  RolesPermissionsRevokeMutationVariables,
+  TContext
+> => {
+  return useMutation(getRolesPermissionsRevokeMutationOptions(options), queryClient);
+};

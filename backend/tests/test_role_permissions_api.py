@@ -1,7 +1,7 @@
-"""F2-31: `PUT /api/v1/o/{slug}/roles/{role_id}/permissions/{code}/` concede un permiso a un
-rol o cambia su alcance. Middleware, sesión, motor de autorización y PostgreSQL con el rol
-`crm_app`. Las reglas son las de `access.services.grant_permission` (F2-05C); aquí se comprueba
-que la ruta no las salta."""
+"""F2-31 y F2-33: `PUT /api/v1/o/{slug}/roles/{role_id}/permissions/{code}/` concede un permiso
+a un rol o cambia su alcance, y `DELETE` lo retira. Middleware, sesión, motor de autorización y
+PostgreSQL con el rol `crm_app`. Las reglas son las de `access.services` (F2-05C); aquí se
+comprueba que la ruta no las salta."""
 
 from typing import Any
 from uuid import uuid4
@@ -12,7 +12,7 @@ from django.test import Client
 
 from apps.access.api import views
 from apps.access.catalog import BY_CODE
-from apps.access.models import MembershipRole
+from apps.access.models import MembershipRole, RolePermission
 from apps.access.selectors import AccessDenied, Denied
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
@@ -125,7 +125,7 @@ def test_without_session_permission_or_a_valid_request_it_changes_nothing(
     lone = b'{"scope": "%sud800"}' % bytes([92])  # un sustituto suelto: no es texto (F2-32)
     answer = ana.put(url, lone, "application/json", headers={"X-CSRFToken": "t" * 32})
     assert reply(answer) == (400, b'{"code":"PARSE_ERROR"}')
-    for other in ("get", "post", "patch", "delete"):  # solo PUT
+    for other in ("get", "post", "patch"):  # solo PUT y DELETE
         assert reply(grant(ana, target, "users.view", method=other)) == DENIED
     assert state(migrator) == before
     reached: list[Any] = []
@@ -183,4 +183,112 @@ def test_the_route_cannot_skip_the_rules_of_the_service(
     carla = make_user(email="carla@example.com")  # una organización sin rol Owner: nada cambia
     orphan = give(rbac.b, join(rbac.b, carla).pk, {"roles.manage": None, "users.view": None}).pk
     stuck = grant(signed(carla), orphan, "users.view", org="org-b")
+    assert (stuck.status_code, stuck.json()["code"]) == (409, "LAST_OWNER")
+
+
+def test_revoking_takes_the_permission_from_the_members_at_once(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    target = give(rbac.a, rbac.m_eva, {"organization.view": None, VIEW: "TEAM"}, code="lectura").pk
+    give(rbac.a, rbac.membership, {VIEW: "ORGANIZATION"})  # la Owner, además, con el de prueba
+    before, ana, eva = state(migrator), signed(rbac.ana), signed(rbac.eva)
+    assert held(eva) == {"organization.view": [], VIEW: ["TEAM"]}
+    done = grant(ana, target, VIEW, method="delete")
+    assert reply(done) == DONE and "Content-Type" not in done.headers  # sin cuerpo
+    assert held(eva) == {"organization.view": []}  # en su siguiente petición
+    assert reply(grant(ana, target, VIEW, method="delete")) == NOT_FOUND  # ya no la tiene
+    assert reply(grant(ana, target, "organization.view", method="delete")) == DONE
+    listed = ana.get("/api/v1/o/org-a/roles/").json()["results"]
+    assert {row["id"]: row for row in listed}[str(target)]["permissions"] == []
+    assert held(eva) == {} and state(migrator) == (before[0] - 2, before[1], before[2] + 2)
+    revoked = (([VIEW, None], ["TEAM", None]), (["organization.view", None], [None, None]))
+    assert audit(migrator)[-2:] == [
+        ("role.permission_revoked", "role", target, {"permission": p, "scope": s}, {}, rbac.ana.pk)
+        for p, s in revoked
+    ]
+
+
+def test_revoking_without_session_permission_or_the_grant_changes_nothing(
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = give(rbac.a, rbac.m_luis, {"organization.view": None}, code="lectura").pk
+    stranger = join(rbac.b, make_user(email="otra@example.com")).pk
+    foreign = give(rbac.b, stranger, {"users.view": None}, code="de-b").pk
+    rest = [code for code in BY_CODE if code not in ("roles.manage", VIEW, EDIT)]
+    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # todo el catálogo menos `roles.manage`
+    before, eva, ana = state(migrator), signed(rbac.eva), signed(rbac.ana)
+    assert grant(Client(), target, "organization.view", method="delete").status_code == 401
+    for role, code in ((target, "organization.view"), (target, "users.view"), (foreign, "x")):
+        assert reply(grant(eva, role, code, method="delete")) == DENIED  # ni dice qué existe
+    missing: tuple[tuple[Any, str], ...] = (
+        (foreign, "users.view"),  # rol de otra organización
+        (uuid4(), "organization.view"),
+        ("no-es-uuid", "organization.view"),
+        (target, "users.view"),  # el rol no tiene esa concesión
+        (target, "users.mange"),  # ni esta, que no está en el catálogo
+    )
+    for absent, code in missing:
+        assert reply(grant(ana, absent, code, method="delete")) == NOT_FOUND, (absent, code)
+    for org in ("org-b", "no-existe"):
+        gone = grant(ana, target, "organization.view", org=org, method="delete")
+        assert reply(gone) == NOT_FOUND
+    no_token = Client(enforce_csrf_checks=True)
+    no_token.force_login(rbac.ana)
+    url = f"/api/v1/o/org-a/roles/{target}/permissions/organization.view/"
+    assert no_token.delete(url).json()["code"] == "CSRF_FAILED"
+    assert state(migrator) == before
+    reached: list[Any] = []
+    monkeypatch.setattr(views, "revoke_permission", lambda *a, **kwargs: reached.append(kwargs))
+    assert reply(grant(eva, target, "organization.view", method="delete")) == DENIED
+    assert reached == []  # sin `roles.manage` se deniega antes del servicio y de su bloqueo
+    assert reply(grant(ana, target, "organization.view", method="delete")) == DONE
+    assert reached == [{"role_id": target, "code": "organization.view"}]
+    for reason, expected in (
+        (Denied.MEMBERSHIP, NOT_FOUND),  # lo que el actor perdió mientras esperaba el bloqueo
+        (Denied.PERMISSION, DENIED),
+        (Denied.OWNER_ROLE, DENIED),
+    ):
+
+        def lost(*args: Any, reason: Denied = reason, **kwargs: Any) -> None:
+            raise AccessDenied(reason)
+
+        monkeypatch.setattr(views, "revoke_permission", lost)
+        assert reply(grant(ana, target, "organization.view", method="delete")) == expected
+
+
+def test_revoking_cannot_skip_the_rules_of_the_service(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    owner = rbac.roles["owner"].pk
+    roles = {
+        "wide": give(rbac.a, rbac.m_eva, {VIEW: "ORGANIZATION"}).pk,  # luis lo tiene con TEAM
+        "other": give(rbac.a, rbac.m_eva, {"users.view": None}).pk,  # luis no lo tiene
+        "admin": give(rbac.a, rbac.m_eva, {"users.manage": None}).pk,  # sensible
+        "narrow": give(rbac.a, rbac.m_eva, {VIEW: "OWN"}).pk,
+    }
+    with tenant_scope(ctx(rbac.a)):  # una concesión del rol Owner que luis sí cubre
+        RolePermission.objects.create(
+            role_id=owner, permission_id=VIEW, supports_scope=True, scope="TEAM"
+        )
+    before, luis, ana = state(migrator), signed(rbac.luis), signed(rbac.ana)
+    refused = (
+        (luis, roles["wide"], VIEW),  # más alcance del que tiene
+        (luis, roles["other"], "users.view"),  # un permiso que no tiene
+        (luis, roles["admin"], "users.manage"),  # sensible: lo tiene, pero no es Owner
+        (luis, rbac.delegator.pk, VIEW),  # un rol que tiene asignado (PO-2)
+        (ana, owner, "organization.view"),
+        (luis, owner, VIEW),  # el rol Owner no se edita, aunque cubra la concesión
+        (luis, owner, "no.existe"),  # ni dice qué concesiones tiene
+        (ana, roles["wide"], VIEW),  # la Owner tampoco retira lo que no cubre: lo tiene con TEAM
+    )
+    for client, role, code in refused:
+        assert reply(grant(client, role, code, method="delete")) == DENIED, (role, code)
+    assert state(migrator) == before  # una negativa no escribe nada
+    assert reply(grant(luis, roles["narrow"], VIEW, method="delete")) == DONE  # lo que sí cubre
+    assert reply(grant(ana, roles["admin"], "users.manage", method="delete")) == DONE
+    assert state(migrator) == (before[0] - 2, before[1], before[2] + 2)
+    carla = make_user(email="carla@example.com")  # una organización sin rol Owner: nada cambia
+    give(rbac.b, join(rbac.b, carla).pk, {"roles.manage": None})
+    orphan = give(rbac.b, join(rbac.b, make_user()).pk, {"roles.manage": None}).pk
+    stuck = grant(signed(carla), orphan, "roles.manage", org="org-b", method="delete")
     assert (stuck.status_code, stuck.json()["code"]) == (409, "LAST_OWNER")
