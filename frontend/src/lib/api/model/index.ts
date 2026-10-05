@@ -28,6 +28,7 @@ export * from "./organizationSummary";
 export * from "./paginatedBranchList";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
+export * from "./patchedBranchUpdateRequest";
 export * from "./patchedRoleUpdateRequest";
 export * from "./permission";
 export * from "./permissionCatalog";

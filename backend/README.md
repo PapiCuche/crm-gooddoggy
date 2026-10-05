@@ -455,7 +455,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Auditoría de tenant:** `membership.suspended` y `membership.reactivated`, con el actor y el antes y el después, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización), después a `organizations.services.set_membership_status` (escritura y auditoría) y, al suspender, a `accounts.services.revoke_sessions`. `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
 
-## Sucursales (F2-43 y F2-44, E01-09)
+## Sucursales (F2-43 a F2-45, E01-09)
 
 `GET /api/v1/o/{slug}/branches/` lista las sucursales de la organización. Exige `organization.view` (sin él, 403; sin membresía activa, 404).
 
@@ -483,16 +483,19 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Tabla `branches`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `code` es único por organización y la base de datos solo admite mayúsculas ASCII, cifras y guiones entre ellas (`LIM-01`), hasta 20 caracteres: dos códigos no se distinguen solo por mayúsculas, acentos, espacios o letras Unicode de igual aspecto. Los parecidos dentro de ASCII (`O` y `0`, `I` y `1`) siguen siendo códigos distintos. `timezone` es un nombre IANA que la tabla no comprueba; el modelo pone `America/Lima` por defecto (la columna no tiene valor por defecto).
 - El selector `organizations.selectors.branches` filtra por organización, no por permiso: el permiso lo exige la vista, y otra vista que lo use declara el suyo.
 
-Crear exige `branches.manage` (F2-44):
+Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 
 - `POST /api/v1/o/{slug}/branches/` con `{"code", "name", "address"?, "district"?, "city"?, "phone"?, "timezone"?}` crea una sucursal activa y responde 201 con la forma del listado. 409 `BRANCH_CODE_TAKEN` si la organización ya tiene ese código.
 - **Código:** se acepta en minúsculas y se guarda en mayúsculas; solo letras ASCII, cifras y guiones entre ellas, hasta 20.
 - **Textos:** una línea imprimible, sin espacios exteriores ni repetidos (se guardan en forma NFC). El nombre es obligatorio y lleva alguna letra o cifra. `timezone` es un nombre IANA exacto (`America/Lima`, `UTC`); sin él, `America/Lima`.
 - Un campo que no sirve responde 400 `VALIDATION_ERROR` con su nombre en `fields`.
-- **Auditoría de tenant:** `branch.created`, con lo que se guardó (sin los campos vacíos). La etiqueta de la entidad es el código.
+- `PATCH /api/v1/o/{slug}/branches/{branch_id}/` con cualquiera de `name`, `address`, `district`, `city`, `phone`, `timezone` e `is_active` cambia lo que se envía y responde 200 con la sucursal. Valen las mismas reglas de texto y de zona horaria. Desactivar es `{"is_active": false}`, y reactivar, `true`. 404 si la sucursal no es de la organización.
+- **El código no cambia:** un `code` en el cuerpo de `PATCH` se ignora, como cualquier campo desconocido.
+- **Sin cambios, no escribe.** Enviar lo que ya hay (o un cuerpo vacío) responde 200 con la sucursal y no deja fila de auditoría.
+- **Auditoría de tenant:** `branch.created`, con lo que se guardó (sin los campos vacíos), y `branch.updated`, con el antes y el después de lo que cambió. La etiqueta de la entidad es el código.
 - **`branches.manage`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas.
-- El comando (`apps.organizations.branches.create_branch`) no comprueba permisos: solo lo importa la API del módulo, que declara el permiso (contrato de import-linter).
-- **Editar y desactivar** una sucursal es el siguiente work item. No hay borrado.
+- Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
+- No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 

@@ -1,8 +1,8 @@
-"""Comandos de sucursales (F2-44, E01-09): crear una.
+"""Comandos de sucursales (F2-44 y F2-45, E01-09): crear una y cambiar sus datos.
 
 No comprueban permisos: `organizations` no importa `access`. Por eso no son API pública: solo
 los importa la API del módulo, que declara `branches.manage` (contrato de import-linter).
-Validan lo que guardan, también para quien no llega por HTTP, y auditan.
+Validan lo que guardan, también para quien no llega por HTTP, y auditan cada cambio.
 """
 
 import re
@@ -11,6 +11,7 @@ import zoneinfo
 from collections.abc import Callable
 from functools import cache, partial
 from typing import Any
+from uuid import UUID
 
 from django.db import IntegrityError, transaction
 
@@ -81,15 +82,22 @@ CLEAN: dict[str, Callable[[Any], Any]] = {
     **{field: partial(_line, limit=limit) for field, limit in TEXT_MAX.items()},
     "timezone": branch_timezone,
 }
+CREATE = frozenset(CLEAN)
+UPDATE = CREATE - {"code"} | {"is_active"}  # el código no cambia: así se nombra la sucursal
 
 
-def cleaned(fields: dict[str, Any]) -> dict[str, Any]:
+def cleaned(fields: dict[str, Any], allowed: frozenset[str] = CREATE) -> dict[str, Any]:
     """Cada campo como se guarda. `ValueError` con el nombre del primero que no sirve."""
-    if unknown := set(fields) - set(CLEAN):
+    if unknown := set(fields) - allowed:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     result = {}
     for field, value in fields.items():
         try:
+            if field == "is_active":
+                if not isinstance(value, bool):
+                    raise ValueError("tiene que ser verdadero o falso")
+                result[field] = value
+                continue
             if not isinstance(value, str):
                 raise ValueError("tiene que ser texto")
             result[field] = CLEAN[field](value)
@@ -114,4 +122,26 @@ def create_branch(ctx: TenantContext, **fields: Any) -> Branch:
         if "branches_org_code_uq" not in str(error):
             raise
         raise BranchCodeTaken(values["code"]) from None
+    return branch
+
+
+def update_branch(ctx: TenantContext, *, branch_id: UUID, **fields: Any) -> Branch:
+    """Cambia lo que se envía de una sucursal de la organización de `ctx` y lo audita con el
+    antes y el después. Si nada cambia, no escribe ni audita. Una sucursal de otra organización
+    no existe: `DoesNotExist`."""
+    alias = require_scope(ctx)
+    values = cleaned(fields, UPDATE)
+    with transaction.atomic(using=alias):  # savepoint: el cambio y su auditoría, o nada
+        rows = Branch.objects.using(alias).select_for_update(no_key=True)
+        branch: Branch = rows.get(pk=branch_id)
+        changes = {
+            field: [getattr(branch, field), value]
+            for field, value in values.items()
+            if getattr(branch, field) != value
+        }
+        if changes:
+            for field, (_, value) in changes.items():
+                setattr(branch, field, value)
+            branch.save(using=alias, update_fields=[*changes, "updated_at"])
+            record(ctx, "branch.updated", Entity("branch", branch.pk, branch.code), changes)
     return branch
