@@ -206,8 +206,8 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 - **Por sucursal:** nombre, código, dirección (calle, distrito y ciudad: lo que haya, en una línea; «Sin dirección» si no hay nada), teléfono si lo tiene, zona horaria y si está activa. Se listan también las inactivas.
 - **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»), que solo usa esta pantalla: una organización siempre tiene miembros y roles.
 - **Navegación:** la entrada «Sucursales» pide el permiso `organization.view`, el que exige la API para leerlas; `branches.manage` solo no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Escrituras:** crear una sucursal está en «Crear una sucursal» y corregir sus datos, en «Editar una sucursal»; activarla y desactivarla desde la pantalla es el siguiente work item (la API ya lo permite, F2-45).
-- **Aviso de la lista:** una edición que descubre que la sucursal ya no existe lo explica aquí, encima de la lista (`role="alert"`), y la lista se vuelve a pedir. Abrir «Crear sucursal» o «Editar» lo retira.
+- **Escrituras:** crear una sucursal está en «Crear una sucursal» y corregir sus datos, en «Editar una sucursal»; desactivarla y reactivarla, en «Desactivar y reactivar una sucursal». No hay borrado.
+- **Aviso de la lista:** una acción que descubre que la sucursal ya no existe lo explica aquí, encima de la lista (`role="alert"`), y la lista se vuelve a pedir. Abrir «Crear sucursal», «Editar» o una confirmación lo retira.
 
 ### Crear una sucursal (F2-47)
 
@@ -234,6 +234,17 @@ En cada tarjeta, «Editar» abre un formulario con los datos de la sucursal y en
 - **Éxito:** el formulario se cierra, la tarjeta enseña en esos seis campos lo que guardó la API sin volver a pedir la lista, y el resultado se anuncia (`role="status"`, solo para lector de pantalla: la tarjeta ya lo enseña). Una lectura de la lista en vuelo se cancela para que no pise lo guardado; si era la lista entera se repite, y un «Cargar más» hay que pulsarlo otra vez. Si la API responde con otra sucursal, no se da por guardado: se explica como un fallo y la lista se vuelve a pedir.
 - **Errores, por `code`:** cada campo que la API no acepta, junto a él; sin permiso, red o fallo del servidor, en el formulario. Un 404 es pantalla desfasada: el formulario se cierra, lo explica el aviso de la lista y el foco va al título si seguía en la tarjeta de la sucursal o en ninguna parte.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+### Desactivar y reactivar una sucursal (F2-51)
+
+Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está activa y «Reactivar» si no, y envía `PATCH /api/v1/o/{slug}/branches/{id}/` con `{"is_active": false | true}` (F2-45). Componente: `components/branches/branch-status-action.tsx`, hermano de la acción de estado de un miembro (ver «Suspender y reactivar»): confirmación, envío, foco y errores son los mismos.
+
+- **A quién se ofrece:** a quien tiene `branches.manage` según el contexto de la API. Es comodidad: la API decide.
+- **Pide confirmación en la tarjeta** y dice qué pasa: una sucursal inactiva sigue en la lista y se puede reactivar. El foco va a «Cancelar». Nada se envía sin confirmar, y lo que se confirma queda fijado al abrir.
+- **Solo viaja `is_active`.** Tras el éxito la tarjeta enseña el estado que respondió la API (solo el estado: los demás datos pudo cambiarlos «Editar» mientras tanto), sin volver a pedir la lista, y se anuncia (`role="status"`). Una lectura en vuelo se cancela para que no pise el cambio.
+- **Si otro lo hizo antes** con la confirmación abierta, la confirmación se cierra y se anuncia el estado: no hay nada que confirmar.
+- **Errores, por `code`, en la tarjeta:** sin permiso, red y fallo del servidor; el mismo botón reintenta. Un 404 es pantalla desfasada: la confirmación se cierra, lo explica el aviso de la lista y el foco va al título si seguía en la tarjeta.
+- **Desactivar no tiene más efecto todavía:** nada depende de una sucursal (ni membresías, ni almacenes, ni pedidos).
 
 ### Formulario de campos compartido (F2-48)
 
