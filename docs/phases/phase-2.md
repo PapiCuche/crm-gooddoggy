@@ -336,6 +336,7 @@ El código de un rol propio sale de su nombre, y `clone_role_templates` inserta 
 
 ### OBS-F2-29-2 — Para la concesión de permisos por API (E01-08)
 Con roles propios vacíos ya creables: conceder un permiso a un rol que ya tiene miembros se lo entrega a quienes nadie cubrió al asignarlo (solo se comprueba a quien concede), así que la pantalla debe enseñar cuántos miembros tiene el rol. Y por PO-2, asignar un rol a otro administrador le impide concederle permisos.
+- F2-33 (#124): lo mismo al retirar. Quien tiene `users.manage` puede asignar a un Owner un rol que cubre, y desde entonces ese Owner no puede cambiar las concesiones de ese rol ni quitárselo a sí mismo. No bloquea a la organización: otro administrador, u otro Owner, sí puede, y el Owner puede quitárselo a los demás miembros.
 
 ### OBS-F2-05C-4 — Todos los cambios de RBAC de una organización van en serie
 Comparten el bloqueo del rol Owner. Un cambio que escribe lo mantiene hasta el COMMIT de la petición; una denegación lo libera al deshacer su savepoint. `ensure_owner_remains` no abre savepoint: su bloqueo dura hasta el final del `tenant_scope`, también si deniega, porque quien la llama debe escribir bajo ese mismo bloqueo. Es deliberado: son operaciones poco frecuentes y así la relectura de permisos y el recuento de Owners no tienen carreras. Una organización sin rol Owner no admite ningún cambio.

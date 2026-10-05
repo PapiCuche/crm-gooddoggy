@@ -395,7 +395,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 `DELETE` en la misma ruta retira el permiso al rol. Responde 204 sin cuerpo y exige `roles.manage`.
 
-- **Retirar exige lo mismo que conceder** (`access.services.revoke_permission`): el actor cubre la concesión que retira, con su alcance; un permiso sensible solo lo retira un Owner; nadie cambia las concesiones de un rol que tiene asignado. Retirar no da poder a nadie, pero se lo quita a otros.
+- **Retirar exige lo mismo que conceder** (`access.services.revoke_permission`): el actor cubre la concesión que retira, con su alcance; un permiso sensible solo lo retira un Owner; nadie cambia las concesiones de un rol que tiene asignado, tampoco un Owner (OBS-F2-29-2). Retirar no da poder a nadie, pero se lo quita a otros.
 - **El rol Owner tampoco pierde concesiones**, sea quien sea el actor: como siempre queda un Owner activo, ninguna retirada deja a la organización sin quien la administre.
 - **Efecto:** inmediato y para todos los miembros del rol.
 - **Repetir:** retirar una concesión que el rol no tiene responde 404.

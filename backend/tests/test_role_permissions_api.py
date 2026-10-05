@@ -206,6 +206,8 @@ def test_revoking_takes_the_permission_from_the_members_at_once(
         ("role.permission_revoked", "role", target, {"permission": p, "scope": s}, {}, rbac.ana.pk)
         for p, s in revoked
     ]
+    label = "SELECT DISTINCT entity_label FROM audit_logs WHERE action = 'role.permission_revoked'"
+    assert migrator.execute(label).fetchall() == [("Rol propio",)]  # el nombre, no el código
 
 
 def test_revoking_without_session_permission_or_the_grant_changes_nothing(
@@ -226,6 +228,9 @@ def test_revoking_without_session_permission_or_the_grant_changes_nothing(
         ("no-es-uuid", "organization.view"),
         (target, "users.view"),  # el rol no tiene esa concesión
         (target, "users.mange"),  # ni esta, que no está en el catálogo
+        (target, "ORGANIZATION.VIEW"),  # el código es exacto: la tiene, pero no con mayúsculas
+        (target, "organization.view%20"),  # ni con un espacio
+        (target, "organization.view%00"),  # ni con un NUL, que PostgreSQL no admite: 404, no 500
     )
     for absent, code in missing:
         assert reply(grant(ana, absent, code, method="delete")) == NOT_FOUND, (absent, code)
@@ -265,6 +270,7 @@ def test_revoking_cannot_skip_the_rules_of_the_service(
         "other": give(rbac.a, rbac.m_eva, {"users.view": None}).pk,  # luis no lo tiene
         "admin": give(rbac.a, rbac.m_eva, {"users.manage": None}).pk,  # sensible
         "narrow": give(rbac.a, rbac.m_eva, {VIEW: "OWN"}).pk,
+        "mine": give(rbac.a, rbac.membership, {"users.view": None}).pk,  # otro rol de la Owner
     }
     with tenant_scope(ctx(rbac.a)):  # una concesión del rol Owner que luis sí cubre
         RolePermission.objects.create(
@@ -279,6 +285,8 @@ def test_revoking_cannot_skip_the_rules_of_the_service(
         (ana, owner, "organization.view"),
         (luis, owner, VIEW),  # el rol Owner no se edita, aunque cubra la concesión
         (luis, owner, "no.existe"),  # ni dice qué concesiones tiene
+        (luis, owner, "x%00"),  # tampoco con un código que la base no admite
+        (ana, roles["mine"], "users.view"),  # PO-2 también para la Owner: la cubre, pero es suyo
         (ana, roles["wide"], VIEW),  # la Owner tampoco retira lo que no cubre: lo tiene con TEAM
     )
     for client, role, code in refused:

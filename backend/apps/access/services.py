@@ -261,6 +261,8 @@ def revoke_permission(ctx: TenantContext, *, role_id: UUID, code: str) -> None:
             raise AccessDenied(Denied.SELF)
         if role.pk == actor.owner.pk:
             raise AccessDenied(Denied.OWNER_ROLE)
+        if "\x00" in code:  # PostgreSQL no admite NUL en un texto: esa concesión no existe
+            raise RolePermission.DoesNotExist
         grant = RolePermission.objects.using(actor.alias).get(role=role, permission_id=code)
         actor.must_cover([(code, grant.scope)])
         grant.delete(using=actor.alias)
