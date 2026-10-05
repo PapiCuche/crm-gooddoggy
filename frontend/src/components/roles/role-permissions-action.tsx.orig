@@ -60,8 +60,7 @@ export function RolePermissionsAction({
   // pantalla una tarea después de la pulsación).
   const sending = useRef(false);
   const catalog = useQuery<Permission[], ApiError>({
-    // Clave propia: aquí se guarda la lista, no la respuesta entera que guardaría el hook generado.
-    queryKey: [...getPermissionsListQueryKey(slug), "results"],
+    queryKey: getPermissionsListQueryKey(slug),
     queryFn: async ({ signal }) => (await permissionsList(slug, { signal })).results,
     enabled: held !== null, // nada se pide hasta abrir el panel
     staleTime: 0, // y cada apertura vuelve a preguntar

@@ -341,7 +341,6 @@ describe("RolePermissionsAction", () => {
     const group = await panel();
     const button = action(group, "Conceder Ver miembros a Caja");
     const shut = within(group).getByRole("button", { name: "Cerrar" });
-    expect(fireEvent.keyDown(shut, { key: "Enter", repeat: true })).toBe(false); // ni abre y cierra
     expect(fireEvent.keyDown(button, { key: "Enter", repeat: true })).toBe(false);
     expect(fireEvent.keyDown(button, { key: "Enter" })).toBe(true); // la primera sí activa
     expect(fireEvent.keyDown(button, { key: "Tab", repeat: true })).toBe(true);

@@ -183,7 +183,7 @@
       "close": "Cerrar",
       "loading": "Cargando permisos…",
       "retry": "Reintentar",
-      "denied": "No puedes hacer este cambio: hace falta tener ese permiso y, si es sensible, ser Owner.",
+      "denied": "No puedes hacer este cambio: hace falta tener ese permiso y, si es sensible, ser Owner. Tampoco se cambian los permisos de un rol que tienes asignado.",
       "stale": "El rol {role} o sus permisos ya habían cambiado. Revisa la lista."
     },
     "scope": {

@@ -160,15 +160,16 @@ Encima de la lista, «Crear rol» abre un formulario con nombre y descripción y
 
 Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET /api/v1/o/{slug}/permissions/`, F2-34): «Conceder» los que el rol no tiene y «Retirar» los que tiene, con `PUT` y `DELETE /api/v1/o/{slug}/roles/{id}/permissions/{code}/` (F2-31, F2-33). Componente: `components/roles/role-permissions-action.tsx`, hermano del panel «Roles» de la pantalla de miembros: mismas reglas de envío, foco y errores.
 
-- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API, y solo en los roles que la API marca `editable` (no el rol Owner ni uno propio). Es comodidad: las reglas contra la escalada las aplica la API (ADR-003 §5), y un 403 se explica en el panel.
+- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API, y solo en los roles que la API marca `editable`: no el rol Owner ni uno que tenga asignado quien mira (no confundir con la etiqueta «Propio» de la tarjeta, que es un rol que no es de plantilla: esos sí se editan). Lo decide `editable`, no `is_system`. Es comodidad: las reglas contra la escalada las aplica la API (ADR-003 §5), y un 403 se explica en el panel.
 - **A quién alcanza:** el panel dice cuántos miembros tiene el rol. Lo que se cambia les llega a todos en su siguiente petición.
-- **Catálogo:** se pide al abrir y en cada apertura. Los nombres salen de `catalog.*` en los textos; un permiso sin texto se enseña con su código. Los sensibles llevan la marca «Sensible».
+- **Catálogo:** se pide al abrir y en cada apertura; al reabrir se enseña el de la vez anterior hasta que llega el nuevo. Los nombres salen de `catalog.*` en los textos; un permiso sin texto se enseña con su código. Los sensibles llevan la marca «Sensible».
 - **Permisos con alcance:** se enseñan con su alcance, o como «Sin conceder», sin botón. Elegir el alcance llegará con el primer permiso del catálogo que lo use.
 - **Lo que hace cada botón queda fijado al abrir**, y solo cambia con las respuestas propias. Un cambio cada vez, enviado una sola vez; el segundo clic de un doble clic y un Enter mantenido se ignoran.
 - **Éxito:** se cancela la lectura de la lista que estuviera en vuelo y los permisos de la tarjeta cambian en la lista ya cargada. El resultado se anuncia y el botón, ya con la acción contraria, conserva el foco.
-- **Errores, por `code`:** `PERMISSION_DENIED` (con un texto propio: hace falta tener el permiso y, si es sensible, ser Owner), `LAST_OWNER`, red o fallo del servidor se explican en el panel y el mismo botón reintenta.
+- **Errores, por `code`:** `PERMISSION_DENIED` (con un texto propio: hace falta tener el permiso y, si es sensible, ser Owner, y el rol no puede ser uno que quien mira tenga asignado; la API no dice cuál de las reglas fue), `LAST_OWNER`, red o fallo del servidor se explican en el panel y el mismo botón reintenta.
 - **Pantalla desfasada (404):** el rol ya no existe o ya no tiene esa concesión. El panel se cierra, la lista se vuelve a pedir y lo explica un aviso de la lista (`role="alert"`); el foco va al título si seguía en el panel.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+- **Límite conocido:** si una relectura de la lista trae el rol como no editable con su panel abierto, el panel se desmonta sin aviso: el foco se queda sin destino y un cambio que estuviera en vuelo cambia la tarjeta pero no se anuncia.
 
 ## Seguridad del navegador (F2-07)
 
