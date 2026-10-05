@@ -559,7 +559,7 @@ def test_change_and_its_audit_are_atomic(
             (grant_permission, rescope),
             (revoke_permission, {"role_id": rbac.target.pk, "code": VIEW}),
             (update_role, {"role_id": rbac.target.pk, "name": "Sin auditoría"}),
-            (delete_role, {"role_id": rbac.roles["seller"].pk}),
+            (delete_role, {"role_id": rbac.target.pk}),
             (remove_role, held),
         ):
             with pytest.raises(RuntimeError):
@@ -581,7 +581,9 @@ def test_services_never_decide_by_role_code_name_or_platform_staff() -> None:
         assert forbidden not in code, forbidden
     for forbidden in ("role__code", "role__name", 'code="owner"', "request.user"):
         assert forbidden not in code, forbidden
-    assert code.count("is_system") == 1 and "is_system=True," in code  # solo al clonar plantillas
+    marks = [line.strip() for line in code.splitlines() if "is_system" in line]
+    # Al clonar plantillas, y para no borrar una (una regla del producto: no decide quién puede).
+    assert marks == ["if role.is_system:", "is_system=True,"]
     uses = [line.strip() for line in code.splitlines() if "is_owner_role" in line]
     assert uses == [  # la marca solo localiza el rol Owner (bloqueo) y se copia al clonar
         "owner: Role | None = roles.filter(is_owner_role=True).first()",

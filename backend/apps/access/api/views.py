@@ -32,6 +32,7 @@ from apps.access.services import (
     DESCRIPTION_MAX,
     NAME_MAX,
     RoleInUse,
+    RoleIsSystem,
     RoleNameTaken,
     ScopeMismatch,
     assign_role,
@@ -306,9 +307,10 @@ class RoleView(APIView):
         request=RoleUpdateSerializer,
         responses={200: RoleSerializer, **errors(400, 401, 403, 404, 409)},
         description="Cambia el nombre o la descripción del rol; lo que no se envía se queda "
-        "como está, y el código no cambia. 403: sin `roles.manage`, un rol que el actor tiene "
-        "asignado o el rol Owner. 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`: "
-        "otro rol se lee igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.",
+        "como está, y el código no cambia. 403: como al borrarlo (sin `roles.manage`, un rol "
+        "que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no "
+        "cubre). 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`: otro rol se lee "
+        "igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.",
     )
     def patch(self, request: Request, role_id: UUID, **kwargs: Any) -> Response:
         wanted = RoleUpdateSerializer(data=request.data)
@@ -328,9 +330,9 @@ class RoleView(APIView):
         responses={204: None, **errors(401, 403, 404, 409)},
         description="Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el "
         "actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o "
-        "sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IN_USE`: "
-        "el rol tiene miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no "
-        "tiene rol Owner.",
+        "sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IS_SYSTEM`: "
+        "es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier "
+        "estado. 409 `LAST_OWNER`: la organización no tiene rol Owner.",
     )
     def delete(self, request: Request, role_id: UUID, **kwargs: Any) -> Response:
         tenant = context.current()
@@ -338,6 +340,8 @@ class RoleView(APIView):
         try:
             with rbac_errors():
                 delete_role(tenant, role_id=role_id)
+        except RoleIsSystem:
+            raise ApiError("ROLE_IS_SYSTEM", 409, "Un rol de plantilla no se borra.") from None
         except RoleInUse:
             message = "El rol tiene miembros: quítaselo antes de borrarlo."
             raise ApiError("ROLE_IN_USE", 409, message) from None

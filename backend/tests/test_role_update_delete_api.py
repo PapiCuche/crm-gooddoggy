@@ -58,7 +58,10 @@ def test_renaming_changes_the_name_everywhere_and_never_the_code(
             role=rbac.target, permission_id=VIEW, supports_scope=True, scope="TEAM"
         )
     before, ana = count(migrator), signed(rbac.ana)
+    stamp = "SELECT updated_at FROM roles WHERE id = %s"
+    was = migrator.execute(stamp, [target]).fetchone()
     done = edit(ana, target, {"name": "  Caja   Fuerte ", "description": " Guarda la caja "})
+    assert migrator.execute(stamp, [target]).fetchone() > was  # type: ignore[operator]
     assert (done.status_code, done.json()) == (
         200,
         {
@@ -143,6 +146,8 @@ def test_deleting_removes_the_role_and_its_grants_but_never_one_with_members(
     assert audit(migrator)[-1] == (
         "role.deleted", "role", spare.pk, changes, metadata, rbac.ana.pk
     )  # fmt: skip
+    label = "SELECT entity_label FROM audit_logs WHERE action = 'role.deleted'"
+    assert migrator.execute(label).fetchall() == [("Sobra",)]
     listed = ana.get("/api/v1/o/org-a/roles/").json()["results"]
     assert "sobra" not in {row["code"] for row in listed}
     assert reply(delete(ana, spare.pk)) == NOT_FOUND  # repetirlo: ya no existe
@@ -198,7 +203,7 @@ def test_without_session_permission_or_the_role_it_changes_nothing(
 
 
 def test_the_route_cannot_skip_the_rules_of_the_services(
-    rbac: Any, migrator: psycopg.Connection[Any]
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = rbac.roles["owner"].pk
     roles = {
@@ -206,6 +211,7 @@ def test_the_route_cannot_skip_the_rules_of_the_services(
         "other": give(rbac.a, rbac.m_eva, {"users.view": None}).pk,  # luis no lo tiene
         "admin": give(rbac.a, rbac.m_eva, {"users.manage": None}).pk,  # sensible: no es Owner
         "narrow": give(rbac.a, rbac.m_eva, {VIEW: "OWN"}).pk,
+        "mixed": give(rbac.a, rbac.m_eva, {"users.view": None, VIEW: "OWN"}).pk,  # cada uno, una
         "mine": give(rbac.a, rbac.membership, {"users.view": None}).pk,  # otro rol de la Owner
     }
     marta = join(rbac.a, make_user(email="marta@example.com")).pk
@@ -213,7 +219,7 @@ def test_the_route_cannot_skip_the_rules_of_the_services(
     with tenant_scope(ctx(rbac.a)):  # sin miembros: lo que decide es la regla, no el 409
         MembershipRole.objects.filter(membership_id=rbac.m_eva).delete()
         Role.objects.filter(pk=owner).update(code="fundador", name="Otro")
-        Role.objects.filter(pk=rbac.roles["seller"].pk).update(code="owner", name="Owner")
+        Role.objects.filter(pk=rbac.target.pk).update(code="owner", name="Owner")  # uno propio
     before, luis, ana = count(migrator), signed(rbac.luis), signed(rbac.ana)
     name = {"name": "Renombrado"}
     for client, role in (  # ni renombrar ni borrar: un rol propio (PO-2) o el rol Owner
@@ -224,16 +230,28 @@ def test_the_route_cannot_skip_the_rules_of_the_services(
     ):
         assert reply(edit(client, role, name)) == DENIED, role
         assert reply(delete(client, role)) == DENIED, role
-    for role in (roles["wide"], roles["other"], roles["admin"]):  # borrar es retirar: cubrirlo
+    for role in (roles["wide"], roles["other"], roles["admin"], roles["mixed"]):  # cubrirlo todo
         assert reply(delete(luis, role)) == DENIED, role
+        assert reply(edit(luis, role, name)) == DENIED, role  # su nombre lo lee quien lo asigna
+        assert reply(edit(luis, role)) == DENIED, role  # y un PATCH vacío enseñaría lo que concede
+    assert reply(delete(ana, roles["mixed"])) == DENIED  # todas las concesiones, no la primera
     assert reply(delete(luis, used)) == DENIED  # y eso va antes que decir si tiene miembros
     assert count(migrator) == before  # una negativa no escribe nada
-    assert edit(luis, roles["wide"], name).status_code == 200  # renombrar no mueve poder
-    assert reply(delete(luis, roles["narrow"])) == DONE  # lo que sí cubre
+    assert edit(luis, roles["narrow"], name).status_code == 200  # lo que sí cubre
+    assert reply(delete(luis, roles["narrow"])) == DONE
     assert reply(delete(ana, roles["admin"])) == DONE  # la Owner retira lo sensible
-    by_code = delete(ana, rbac.roles["seller"].pk)  # nada decide por el código o el nombre
+    by_code = delete(ana, rbac.target.pk)  # nada decide por el código o el nombre
     assert reply(by_code) == DONE
-    assert count(migrator) == (before[0] - 3, before[1], before[2] + 4, before[3] - 3)
+    assert count(migrator) == (before[0] - 2, before[1], before[2] + 4, before[3] - 3)
+    kept = count(migrator)
+    for template in ("admin", "supervisor", "seller"):  # una plantilla se edita, no se borra
+        system = delete(ana, rbac.roles[template].pk)
+        assert (system.status_code, system.json()["code"]) == (409, "ROLE_IS_SYSTEM"), template
+        assert set(system.json()) == {"code", "message"}
+    assert reply(delete(luis, rbac.roles["admin"].pk)) == DENIED  # y cubrirla va antes
+    assert count(migrator) == kept
+    renamed = edit(ana, rbac.roles["seller"].pk, {"name": "Ventas"}).json()  # renombrarla, sí
+    assert (renamed["name"], renamed["code"], renamed["is_system"]) == ("Ventas", "seller", True)
     carla = make_user(email="carla@example.com")  # una organización sin rol Owner: nada cambia
     give(rbac.b, join(rbac.b, carla).pk, {"roles.manage": None})
     orphan = give(rbac.b, join(rbac.b, make_user()).pk, {"users.view": None}).pk
@@ -242,6 +260,10 @@ def test_the_route_cannot_skip_the_rules_of_the_services(
         delete(signed(carla), orphan, "org-b"),
     ):
         assert (stuck.status_code, stuck.json()["code"]) == (409, "LAST_OWNER")
+    give(rbac.a, rbac.membership, {VIEW: "ORGANIZATION"})
+    monkeypatch.delitem(BY_CODE, VIEW)  # retirado del catálogo: falla cerrado, también la Owner
+    assert reply(delete(ana, roles["wide"])) == DENIED
+    assert reply(edit(ana, roles["wide"], {"name": "Otro más"})) == DENIED
 
 
 def test_the_services_check_the_name_and_the_description_themselves(

@@ -227,6 +227,10 @@ class RoleInUse(Exception):
     """El rol tiene miembros, en cualquier estado: primero se les quita."""
 
 
+class RoleIsSystem(Exception):
+    """Un rol de plantilla no se borra (modelo de datos §E.3): se edita."""
+
+
 def _editable(actor: _Actor, role_id: UUID) -> Role:
     """El rol, si este actor puede cambiarlo o borrarlo: ni uno que tiene asignado (PO-2), ni
     el rol Owner, que no se edita sea quien sea el actor."""
@@ -243,13 +247,17 @@ def update_role(
 ) -> Role:
     """Cambia el nombre o la descripción de un rol (F2-38); `None` deja el campo como está.
 
-    Exige `roles.manage`. El nombre sigue las reglas del alta y no puede leerse igual que el de
-    otro rol (`RoleNameTaken`); el código no cambia. Lo que no cambia nada no escribe ni audita.
+    Exige `roles.manage` y cubrir las concesiones del rol, como para borrarlo: quien asigna un
+    rol lo elige por su nombre, y la respuesta de la ruta enseña esas concesiones. El nombre sigue
+    las reglas del alta y no puede leerse igual que el de otro rol (`RoleNameTaken`); el código
+    no cambia. Lo que no cambia nada no escribe ni audita.
     """
     name = None if name is None else role_name(name)
     description = None if description is None else role_description(description)
     with _change(ctx, "roles.manage") as actor:
         role = _editable(actor, role_id)
+        held = RolePermission.objects.using(actor.alias).filter(role=role)
+        actor.must_cover(held.values_list("permission_id", "scope"))
         changes: dict[str, list[str]] = {}
         if name is not None and name != role.name:
             _name_is_free(Role.objects.using(actor.alias).exclude(pk=role.pk), name)
@@ -266,14 +274,16 @@ def update_role(
 
 def delete_role(ctx: TenantContext, *, role_id: UUID) -> None:
     """Borra un rol y sus concesiones (F2-38). Exige lo mismo que retirárselas una a una (como
-    PO-1): cubrirlas todas y, si alguna es sensible, ser Owner. Un rol con miembros no se borra
-    (`RoleInUse`): no se deja a nadie sin un rol por borrarlo.
+    PO-1): cubrirlas todas y, si alguna es sensible, ser Owner. Un rol de plantilla no se borra
+    (`RoleIsSystem`), y uno con miembros tampoco (`RoleInUse`): no se deja a nadie sin un rol.
     """
     with _change(ctx, "roles.manage") as actor:
         role = _editable(actor, role_id)
         held = RolePermission.objects.using(actor.alias).filter(role=role)
         grants = sorted(held.values_list("permission_id", "scope"), key=lambda grant: grant[0])
         actor.must_cover(grants)
+        if role.is_system:  # una regla del producto, no una autorización: no decide quién puede
+            raise RoleIsSystem(role.name)
         if MembershipRole.objects.using(actor.alias).filter(role=role).exists():
             raise RoleInUse(role.name)
         Role.objects.using(actor.alias).filter(pk=role.pk).delete()  # y, con él, sus concesiones

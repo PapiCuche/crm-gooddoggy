@@ -1454,7 +1454,7 @@ export const getRolesUpdateUrl = (orgSlug: string, roleId: string) => {
 };
 
 /**
- * Cambia el nombre o la descripción del rol; lo que no se envía se queda como está, y el código no cambia. 403: sin `roles.manage`, un rol que el actor tiene asignado o el rol Owner. 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`: otro rol se lee igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.
+ * Cambia el nombre o la descripción del rol; lo que no se envía se queda como está, y el código no cambia. 403: como al borrarlo (sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre). 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`: otro rol se lee igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.
  */
 export const rolesUpdate = async (
   orgSlug: string,
@@ -1561,7 +1561,7 @@ export const getRolesDeleteUrl = (orgSlug: string, roleId: string) => {
 };
 
 /**
- * Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no tiene rol Owner.
+ * Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IS_SYSTEM`: es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no tiene rol Owner.
  */
 export const rolesDelete = async (
   orgSlug: string,
