@@ -38,7 +38,7 @@ Tras cada `migrate`, después de sincronizar `permissions`, `apps.access.apps.ex
 - **Solo añade.** No quita concesiones ni cambia el alcance de las que hay.
 - **Solo el rol Owner**, localizado por `is_owner_role` (único por organización por restricción), nunca por código ni por nombre. Una organización sin rol Owner no recibe nada. El estado de la organización no cuenta: una suspendida también lo recibe.
 - **Una transacción por organización**, dentro de su `tenant_scope` y con el actor `SYSTEM`, como el alta de una organización. Si una falla, las anteriores ya están hechas y el siguiente `migrate` termina el resto.
-- **Corre con `crm_migrator`**, el rol dueño de las tablas, cuya credencial ya equivale a acceso total (ADR-002 §2). El runtime no gana ningún privilegio: `crm_app`, sin tenant activo, no ve los roles de ninguna organización, y con un tenant activo la función se niega.
+- **Corre con `crm_migrator`**, el rol dueño de las tablas, cuya credencial ya equivale a acceso total (ADR-002 §1.1). El runtime no gana ningún privilegio: `crm_app`, sin tenant activo, no ve los roles de ninguna organización; con un tenant activo la función se niega, y también si la conexión conserva un contexto filtrado a la sesión.
 - **Un despliegue sin permisos nuevos no escribe nada**: una consulta, y termina.
 
 Un work item que necesite un permiso nuevo solo lo añade al catálogo.
@@ -49,9 +49,9 @@ Los permisos nuevos de Administrador, Supervisor o Vendedor llegan a las organiz
 
 ### 4. Auditoría
 
-El cambio es de cada organización, así que queda en la auditoría de cada una (ADR-013 §1): una fila `role.permission_granted` por concesión, con el actor `SYSTEM` y `metadata.source = "catalog"`, en la misma transacción que la concesión. El Owner la ve como cualquier otra concesión de sus roles. Sin esa fila, la concesión no se escribe.
+El cambio es de cada organización, así que queda en la auditoría de cada una (ADR-013 §1): una fila `role.permission_granted` por concesión, con el actor `SYSTEM` y `metadata.source = "catalog"`, en la misma transacción que la concesión. Queda en `audit_logs` de esa organización, bajo su RLS, como cualquier otra concesión de sus roles; la vista de auditoría (E01-13) la mostrará igual. Sin esa fila, la concesión no se escribe.
 
-Además, cada ejecución que añade algo deja una fila en la auditoría de plataforma: `access.owner_roles.extended`, actor `SYSTEM`, con los códigos añadidos, el número de roles y el de concesiones. Es el resumen de una operación de plataforma sobre varias organizaciones; no sustituye a las filas de cada una. Se escribe al final: si falla, las concesiones ya hechas conservan su fila de tenant y el siguiente `migrate` no tiene nada que resumir.
+Además, como toda operación de plataforma que entra en un tenant (ADR-013 §5), cada ejecución que encuentra algo que añadir deja dos filas en la auditoría de plataforma, con el actor `SYSTEM`: `access.owner_roles.extend.started` antes de entrar en la primera organización (si no se puede escribir, no empieza) y `access.owner_roles.extended` al terminar, con resultado `SUCCESS` o `FAILED`, los códigos añadidos (hasta 50) y el número de roles y de concesiones confirmados. Si una organización falla, la fila de resultado cuenta lo ya confirmado y el siguiente `migrate` deja las suyas. Es el resumen de una operación de plataforma sobre varias organizaciones; no sustituye a las filas de cada una. Todas las filas de una ejecución, en los dos registros, comparten `correlation_id`.
 
 ### 5. Lo que no cambia
 

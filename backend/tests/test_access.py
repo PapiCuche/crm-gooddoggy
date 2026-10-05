@@ -9,6 +9,7 @@ import pytest
 from django.core.management import call_command
 from django.db import IntegrityError, ProgrammingError, connection
 from django.db.models import ProtectedError
+from django.test.utils import CaptureQueriesContext
 from psycopg.errors import CheckViolation, ForeignKeyViolation, UniqueViolation
 
 from apps.access import catalog, services
@@ -146,7 +147,15 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
     grants = "SELECT role_id, permission_code, scope FROM role_permissions"
     summary = (
         "SELECT actor_type, actor_id, metadata FROM platform_audit_logs "
-        "WHERE action = 'access.owner_roles.extended'"
+        "WHERE action = 'access.owner_roles.extended' AND result = 'SUCCESS'"
+    )
+    runs = (  # intención y resultado de cada ejecución (ADR-013 §5), unidos por `correlation_id`
+        "SELECT action, result, metadata->>'grants', metadata->>'error' FROM platform_audit_logs "
+        "WHERE action LIKE 'access.owner_roles.%' ORDER BY occurred_at, id"
+    )
+    linked = (
+        "SELECT count(DISTINCT p.id), count(DISTINCT t.id) FROM platform_audit_logs p "
+        "JOIN audit_logs t USING (correlation_id)"
     )
     trail = (
         "SELECT organization_id, actor_type, actor_id, entity_id, entity_label, "
@@ -180,12 +189,17 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
         before = set(migrator.execute(grants).fetchall())
         monkeypatch.setattr(catalog, "PERMISSIONS", (*PERMISSIONS, *new))
         assert extend_owner_roles("default") == 0  # el runtime, sin tenant, no ve ningún rol
-        with tenant_scope(ctx(a.org)), pytest.raises(TenantContextError):  # y con uno, se niega
-            extend_owner_roles("default")
+        with tenant_scope(ctx(a.org)), CaptureQueriesContext(connection) as read:
+            with pytest.raises(TenantContextError):  # y con uno, se niega antes de leer nada
+                extend_owner_roles("default")
+        assert not read.captured_queries
         with monkeypatch.context() as broken, pytest.raises(RuntimeError, match="sin auditoría"):
             broken.setattr(audit_services, "record", unaudited)
             as_migrator(lambda: call_command("migrate", verbosity=0))
         assert set(migrator.execute(grants).fetchall()) == before  # sin su fila, no ocurre
+        started = ("access.owner_roles.extend.started", "SUCCESS", None, None)
+        failed = ("access.owner_roles.extended", "FAILED", "0", "RuntimeError")
+        assert migrator.execute(runs).fetchall() == [started, failed]  # y queda dicho que falló
         as_migrator(lambda: call_command("migrate", verbosity=0))
         added = set(migrator.execute(grants).fetchall()) - before
         assert added == {  # solo los roles Owner, y solo lo que les faltaba
@@ -201,8 +215,13 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
             (a.org, *system, *owner_a, "leads.view", "ORGANIZATION", "catalog"),
             (b.org, *system, *owner_b, "teams.manage", None, "catalog"),
         }
+        was = "SELECT changes->'permission'->>0, changes->'scope'->>0 FROM audit_logs"
+        assert set(migrator.execute(was).fetchall()) == {(None, None)}  # antes no había nada
         whole = {"codes": 2, "grants": 3, "permissions": ["leads.view", "teams.manage"], "roles": 2}
         assert migrator.execute(summary).fetchall() == [("SYSTEM", None, whole)]
+        done = ("access.owner_roles.extended", "SUCCESS", "3", None)
+        assert migrator.execute(runs).fetchall() == [started, failed, started, done]
+        assert migrator.execute(linked).fetchone() == (2, 3)  # las dos filas de esa ejecución
         as_migrator(lambda: call_command("migrate", verbosity=0))  # otro despliegue: nada
         assert set(migrator.execute(grants).fetchall()) == before | added
         assert len(migrator.execute(summary).fetchall()) == 1
@@ -225,17 +244,90 @@ def test_extending_owner_roles_does_not_wait_for_the_audit_partitions(
     rbac: dict[str, Any], migrator: psycopg.Connection[Any]
 ) -> None:
     """`access` va antes que `audit` en `post_migrate`: un año sin desplegar no lo bloquea."""
-    migrator.execute(f"DROP TABLE {partition()}")
-    migrator.execute(
-        "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = 'users.invite'",
-        [rbac["A"].roles["owner"].pk],
-    )
+    owner = [rbac["A"].roles["owner"].pk]  # `users.invite` lo tiene también el rol Administrador
+    invite = "FROM role_permissions WHERE role_id = %s AND permission_code = 'users.invite'"
     try:
+        for table in (partition(), partition().removeprefix("platform_")):  # la de cada registro
+            migrator.execute(f"DROP TABLE {table}")
+        migrator.execute(f"DELETE {invite}", owner)
         as_migrator(lambda: call_command("migrate", verbosity=0))
     finally:
         migrator.execute("SELECT public.platform_audit_ensure_partitions(12)")
+        migrator.execute("SELECT public.audit_ensure_partitions(12)")
+    assert migrator.execute(f"SELECT count(*) {invite}", owner).fetchone() == (1,)
+    assert migrator.execute("SELECT count(*) FROM audit_logs").fetchone() == (1,)
     extended = "SELECT count(*) FROM platform_audit_logs WHERE action LIKE 'access.owner_roles.%'"
-    assert migrator.execute(extended).fetchone() == (1,)
+    assert migrator.execute(extended).fetchone() == (2,)  # intención y resultado
+
+
+def test_a_failure_halfway_keeps_what_is_done_and_says_so(
+    rbac: dict[str, Any], migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Una transacción por organización: la que falla no deja nada, las anteriores quedan, la
+    fila de resultado cuenta solo lo confirmado y el siguiente `migrate` termina el resto."""
+    gone = "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = ANY(%s)"
+    for key in ("A", "B"):
+        migrator.execute(gone, [rbac[key].roles["owner"].pk, ["users.invite", "roles.manage"]])
+    real, calls = audit_services.record, []
+
+    def third_fails(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args[0].organization_id)
+        if len(calls) == 4:  # la segunda concesión de la segunda organización
+            raise RuntimeError("sin auditoría")
+        return real(*args, **kwargs)
+
+    with monkeypatch.context() as broken, pytest.raises(RuntimeError, match="sin auditoría"):
+        broken.setattr(audit_services, "record", third_fails)
+        as_migrator(lambda: call_command("migrate", verbosity=0))
+    per_org = "SELECT organization_id, count(*) FROM audit_logs GROUP BY 1"
+    held = (
+        "SELECT organization_id, count(*) FROM role_permissions WHERE role_id = ANY(%s) GROUP BY 1"
+    )
+    owners = [[rbac[key].roles["owner"].pk for key in ("A", "B")]]
+    assert migrator.execute(per_org).fetchall() == [(calls[0], 2)]
+    assert dict(migrator.execute(held, owners).fetchall()) == {
+        calls[0]: len(PERMISSIONS),
+        calls[3]: len(PERMISSIONS) - 2,
+    }
+    result = "SELECT result, metadata FROM platform_audit_logs WHERE action LIKE '%%.extended'"
+    partial = {"codes": 2, "grants": 2, "roles": 1, "error": "RuntimeError"}
+    partial["permissions"] = ["roles.manage", "users.invite"]
+    assert migrator.execute(result).fetchall() == [("FAILED", partial)]
+    as_migrator(lambda: call_command("migrate", verbosity=0))
+    assert set(dict(migrator.execute(held, owners).fetchall()).values()) == {len(PERMISSIONS)}
+    assert dict(migrator.execute(per_org).fetchall()) == {calls[0]: 2, calls[3]: 2}
+
+
+def test_the_runtime_cannot_extend_through_a_leaked_session_context(
+    rbac: dict[str, Any], migrator: psycopg.Connection[Any]
+) -> None:
+    """Con un contexto filtrado a la sesión el runtime sí ve un rol Owner: se niega, y cierra."""
+    a = rbac["A"]
+    migrator.execute("DELETE FROM role_permissions WHERE role_id = %s", [a.roles["owner"].pk])
+    raw("SELECT set_config('app.tenant_id', %s, " + "false)", [str(a.org)])  # simula un bug
+    with pytest.raises(TenantContextError, match="conserva contexto"):
+        extend_owner_roles("default")
+    assert connection.connection is None
+    assert migrator.execute(
+        "SELECT count(*) FROM role_permissions WHERE role_id = %s", [a.roles["owner"].pk]
+    ).fetchone() == (0,)
+
+
+def test_the_platform_row_names_at_most_fifty_codes(
+    rbac: dict[str, Any], migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La fila de plataforma tiene un tamaño máximo: lleva la cuenta entera y 50 códigos."""
+    new = tuple(PermissionDef(f"probe.p{n:02d}", "x") for n in range(51))
+    monkeypatch.setattr(catalog, "PERMISSIONS", (*PERMISSIONS, *new))
+    row = "SELECT metadata FROM platform_audit_logs WHERE action = 'access.owner_roles.extended'"
+    try:
+        as_migrator(lambda: call_command("migrate", verbosity=0))
+        ((data,),) = migrator.execute(row).fetchall()
+        assert (data["codes"], data["grants"], data["roles"]) == (51, 102, 2)
+        assert data["permissions"] == [permission.code for permission in new[:50]]
+    finally:
+        migrator.execute("DELETE FROM role_permissions WHERE permission_code LIKE 'probe.%'")
+        migrator.execute("DELETE FROM permissions WHERE code LIKE 'probe.%'")
 
 
 def test_scope_is_null_exactly_when_the_permission_has_no_scope(
