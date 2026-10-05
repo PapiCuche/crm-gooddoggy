@@ -142,7 +142,7 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 - **Por rol:** nombre, si es de plantilla o propio, descripción si la tiene, número de miembros y sus permisos, cada uno con su alcance si lo admite.
 - **Nombres de los permisos:** salen de `catalog.*` en `messages/es-PE.json` (`catalog.users.manage` para `users.manage`); los alcances, de `roles.scope.*`. Son textos planos, sin formato ICU. Un permiso o un alcance que esos textos no conocen se enseña con su código: no se oculta. El código llega de la API, así que el texto se busca por propiedades propias y no como una ruta de mensajes.
 - **Navegación:** la entrada «Roles» pide el permiso `roles.view`; `users.view` no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; conceder y retirar sus permisos, en «Permisos de un rol»; renombrarlo y borrarlo son otros work items (E01-08).
+- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; renombrarlo, en «Editar un rol»; conceder y retirar sus permisos, en «Permisos de un rol»; borrarlo es otro work item (E01-08).
 
 ### Crear un rol (F2-35)
 
@@ -155,6 +155,19 @@ Encima de la lista, «Crear rol» abre un formulario con nombre y descripción y
 - **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El rol nuevo va al final: si hay «Cargar más», aparece al cargar la última página. Un «Cargar más» que estuviera en vuelo se cancela y hay que pulsarlo otra vez. Si esa relectura falla, el aviso se queda y la lista no cambia; si la API niega la lista (403), la pantalla se cierra con su aviso de «sin permiso». El foco vuelve a «Crear rol».
 - **Errores, por `code`:** los del nombre (`ROLE_NAME_TAKEN`, o un 400 con el campo `name`) y los de la descripción se explican junto a su campo; un error del nombre lleva el foco al nombre. Sin permiso, `LAST_OWNER`, red o fallo del servidor, en el formulario. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío. Nunca se enseña el texto de la respuesta.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+### Editar un rol (F2-39)
+
+Cada rol editable ofrece «Editar», que abre un formulario con su nombre y su descripción y envía `PATCH /api/v1/o/{slug}/roles/{id}/` (F2-38). Componente: `components/roles/role-edit-action.tsx`, hermano de «Crear rol»: los mismos campos y textos, y las mismas reglas de envío, foco y errores.
+
+- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API, y solo en los roles que la API marca `editable`. Una plantilla que no sea el Owner se puede renombrar: lo decide `editable`, no `is_system`. Es comodidad: la API exige además cubrir todos los permisos del rol, y un 403 se explica en el formulario.
+- **Lo que se edita queda fijado al abrir**: si la lista cambia debajo, el formulario sigue con lo que el usuario abrió. «Cancelar» descarta lo escrito.
+- **Un envío:** Enter, un segundo clic, «Cancelar» o seguir escribiendo mientras se envía no hacen nada, y un Enter mantenido no repite la pulsación. Se envían siempre los dos campos, sin sus espacios exteriores; la API no escribe lo que no cambia.
+- **Éxito:** se cancela la lectura de la lista que estuviera en vuelo y la tarjeta enseña el nombre y la descripción que guardó la API, sin volver a pedir las páginas; lo demás de la fila no se toca (la respuesta puede ser anterior a un cambio de «Permisos» hecho mientras tanto). Si lo cancelado era la lista entera, se repite después; un «Cargar más» cancelado hay que pulsarlo otra vez. El resultado se anuncia (`role="status"`, no visible) y el foco vuelve a «Editar», salvo que el usuario ya esté en otra parte. Si la API responde con otro rol, no se da por guardado: se explica como un fallo nuestro y la lista se vuelve a pedir.
+- **Errores, por `code`:** los del nombre (`ROLE_NAME_TAKEN`, o un 400 con el campo `name`) y los de la descripción, junto a su campo; `PERMISSION_DENIED` (con un texto propio: hace falta cubrir los permisos del rol y, si alguno es sensible, ser Owner, y el rol no puede ser uno que quien mira tenga asignado; la API no dice cuál de las reglas fue), `LAST_OWNER`, red o fallo del servidor, en el formulario. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío.
+- **Pantalla desfasada (404):** el rol ya no existe. El formulario se cierra, la lista se vuelve a pedir y lo explica un aviso de la lista; el foco va al título si seguía en la tarjeta del rol (el formulario o su panel «Permisos») o en ninguna parte.
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+- **Límites conocidos:** se envían los dos campos con lo fijado al abrir: el que no se toca pisa lo que otra persona hubiera cambiado en él mientras tanto. Si una relectura de la lista trae el rol como no editable con el formulario abierto, el formulario se desmonta sin aviso: lo escrito se pierde, el foco se queda sin destino y un envío que estuviera en vuelo cambia la tarjeta pero no se anuncia.
 
 ### Permisos de un rol (F2-36)
 

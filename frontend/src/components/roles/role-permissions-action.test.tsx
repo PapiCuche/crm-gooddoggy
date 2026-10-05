@@ -100,6 +100,8 @@ async function panel(name = "Caja") {
   return group;
 }
 const action = (group: HTMLElement, name: string) => within(group).getByRole("button", { name });
+// El aviso del panel: el último de la tarjeta (antes va el de «Editar», F2-39).
+const announced = (name: string) => within(card(name)).getAllByRole("status").at(-1)!;
 
 beforeEach(() => {
   document.cookie = "csrftoken=t"; // con token: una escritura no pide antes el CSRF
@@ -312,7 +314,7 @@ describe("RolePermissionsAction", () => {
     mockApi({ [LIST]: () => list(rows), [CATALOG]: catalog, [GRANT("r2", "users.view")]: done });
     const view = renderApp(ui());
     const group = await panel();
-    const status = within(card("Caja")).getByRole("status"); // montado antes de tener texto
+    const status = announced("Caja"); // montado antes de tener texto
     expect(status).toBeEmptyDOMElement();
     rows = [roles[0]!, { ...caja, permissions: [{ code: "users.view", scope: null }] }, roles[2]!];
     await act(() => view.client.refetchQueries()); // otra persona cambió el rol con el panel abierto
@@ -375,7 +377,7 @@ describe("RolePermissionsAction", () => {
     fireEvent.click(shut);
     await panel(); // cada apertura vuelve a pedir el catálogo y no arrastra el anuncio anterior
     expect(calls(api, "GET", "/permissions/")).toHaveLength(2);
-    expect(within(card("Caja")).getByRole("status")).toBeEmptyDOMElement();
+    expect(announced("Caja")).toBeEmptyDOMElement();
   });
 
   it("una lectura en vuelo no pisa lo recién cambiado: se cancela, y la lista entera se repite", async () => {

@@ -21,6 +21,7 @@ import {
 import type { Permission, Role } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import { ApiError } from "@/lib/http";
+import { cn } from "@/lib/utils";
 
 type Pages = InfiniteData<Awaited<ReturnType<typeof rolesList>>>;
 type Change = { permission: Permission; grant: boolean };
@@ -164,7 +165,8 @@ export function RolePermissionsAction({
   return (
     <div
       ref={root}
-      className="flex flex-col items-start gap-2"
+      // Abierta ocupa su fila: la acción vecina de la tarjeta pasa a otra línea.
+      className={cn("flex flex-col items-start gap-2", open && "w-full")}
       // Enter mantenido repite la pulsación: abriría y cerraría el panel sin parar («Permisos» y
       // «Cerrar» se relevan el foco) y, en un botón recién dado la vuelta, desharía lo hecho.
       onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
