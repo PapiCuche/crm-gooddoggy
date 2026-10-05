@@ -6,4 +6,9 @@ urlpatterns = [
     path("me/", views.SelfContextView.as_view(), name="me-context"),
     path("members/", views.MembersView.as_view(), name="members"),
     path("roles/", views.RolesView.as_view(), name="roles"),
+    path(
+        "members/<uuid:membership_id>/roles/<uuid:role_id>/",
+        views.MemberRoleView.as_view(),
+        name="member-role",
+    ),
 ]

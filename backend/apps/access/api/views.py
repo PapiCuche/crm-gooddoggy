@@ -1,7 +1,10 @@
-"""Rutas de tenant de `access`: el contexto propio (`…/me/`, F2-11) y los directorios de
-miembros (`…/members/`, F2-16) y de roles (`…/roles/`, F2-22)."""
+"""Rutas de tenant de `access`: el contexto propio (`…/me/`, F2-11), los directorios de
+miembros (`…/members/`, F2-16) y de roles (`…/roles/`, F2-22) y los roles de un miembro
+(`…/members/{id}/roles/{role_id}/`, F2-25)."""
 
+from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.db.models import QuerySet
@@ -14,9 +17,11 @@ from rest_framework.views import APIView
 from apps.access import directory
 from apps.access.catalog import Scope
 from apps.access.models import Role
-from apps.access.permissions import IsMember, request_context
+from apps.access.permissions import IsMember, rbac_errors, request_context
 from apps.access.selectors import memberships, organization_of, role_names, roles_by_membership
+from apps.access.services import assign_role, remove_role
 from core.api.schema import errors
+from core.tenancy import context
 
 
 class MemberUserSerializer(serializers.Serializer[Any]):
@@ -183,3 +188,44 @@ class RolesView(generics.ListAPIView):
             for role in page
         ]
         return self.get_paginated_response(RoleSerializer(rows, many=True).data)
+
+
+class MemberRoleView(APIView):
+    """Un rol de un miembro: `PUT` lo asigna y `DELETE` se lo quita. Las reglas son las de
+    `access.services` (ADR-003 §5): nadie cambia sus propios roles; el actor cubre todas las
+    concesiones del rol; lo sensible, solo un Owner; siempre queda un Owner activo."""
+
+    required_permissions = {"PUT": "users.manage", "DELETE": "users.manage"}
+
+    def _change(self, service: Callable[..., None], membership_id: UUID, role_id: UUID) -> Response:
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        with rbac_errors():
+            service(tenant, membership_id=membership_id, role_id=role_id)
+        return Response(status=204)
+
+    @extend_schema(
+        operation_id="members_roles_assign",
+        tags=["members"],
+        request=None,
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Asigna el rol al miembro. Repetirlo no cambia nada. 403: sin "
+        "`users.manage`, uno mismo, o un rol que el actor no cubre. 404: el miembro o el rol "
+        "no son de la organización. 409 `LAST_OWNER`: la organización no tiene rol Owner y "
+        "no admite ningún cambio.",
+    )
+    def put(self, request: Request, membership_id: UUID, role_id: UUID, **kwargs: Any) -> Response:
+        return self._change(assign_role, membership_id, role_id)
+
+    @extend_schema(
+        operation_id="members_roles_remove",
+        tags=["members"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Quita el rol al miembro. 403: como al asignarlo. 404: el miembro no "
+        "tiene ese rol, o no son de la organización. 409 `LAST_OWNER`: sería el último Owner "
+        "activo, o la organización no tiene rol Owner.",
+    )
+    def delete(
+        self, request: Request, membership_id: UUID, role_id: UUID, **kwargs: Any
+    ) -> Response:
+        return self._change(remove_role, membership_id, role_id)

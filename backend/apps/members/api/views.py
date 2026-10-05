@@ -3,15 +3,13 @@
 from typing import Any
 from uuid import UUID
 
-from django.core.exceptions import ObjectDoesNotExist
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
-from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access.selectors import AccessDenied, Denied
+from apps.access.permissions import rbac_errors
 from apps.members.services import ACTIVE, SUSPENDED, set_member_status
 from apps.organizations.services import InvalidTransition
 from core.api.errors import ApiError
@@ -49,16 +47,8 @@ class MemberStatusView(APIView):
         tenant = context.current()
         assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
         try:
-            set_member_status(tenant, membership_id=membership_id, status=status)
-        except ObjectDoesNotExist:
-            raise NotFound from None
-        except AccessDenied as denied:
-            if denied.reason is Denied.MEMBERSHIP:  # dejó de ser miembro mientras esperaba
-                raise NotFound from None
-            if denied.reason is not Denied.LAST_OWNER:
-                raise
-            message = "Debe quedar al menos un Owner activo en la organización."
-            raise ApiError("LAST_OWNER", 409, message) from None
+            with rbac_errors():
+                set_member_status(tenant, membership_id=membership_id, status=status)
         except InvalidTransition:
             message = "Solo se suspende a un miembro activo y se reactiva a uno suspendido."
             raise ApiError("INVALID_TRANSITION", 409, message) from None

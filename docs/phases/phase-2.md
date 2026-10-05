@@ -45,6 +45,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-21 | [#99](https://github.com/PapiCuche/crm-gooddoggy/issues/99) Suspend and reactivate a member from the members screen | `feature/f2-member-status-actions` | #95, #97 | frontend |
 | F2-22 | [#101](https://github.com/PapiCuche/crm-gooddoggy/issues/101) Roles directory API | `feature/f2-roles-directory-api` | #85, #89 | backend + API |
 | F2-23 | [#103](https://github.com/PapiCuche/crm-gooddoggy/issues/103) Roles screen | `feature/f2-roles-screen` | #101, #104 | frontend |
+| F2-25 | [#108](https://github.com/PapiCuche/crm-gooddoggy/issues/108) Assign and remove a member's role (API) | `feature/f2-member-roles-api` | #89, #101 | backend + API |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -309,6 +310,11 @@ ADR-003 §2 exige que al desactivar una membresía se revoquen las sesiones del 
 
 ### OBS-F2-05C-3 — Los servicios aún no tienen quien los llame
 No hay API HTTP (E01-08) ni bootstrap (F2-06). Tampoco existen revocar una concesión, cambiar su alcance, ni crear, renombrar o borrar roles: conceder un permiso ya concedido con otro alcance lanza `ValueError`. El step-up MFA para permisos sensibles llega con MFA (E01-03). Las denegaciones no se auditan (OBS-F2-05A-4). Un rol que conserve una concesión de un código retirado del catálogo no se puede asignar ni quitar con estos servicios: falla cerrado, y retirar un permiso sigue necesitando su migración de datos (OBS-F2-04-4).
+- ✅ F2-25 (#108): `assign_role` y `remove_role` tienen ruta HTTP. `grant_permission` sigue sin API. Lo anterior describe el estado previo.
+
+### OBS-F2-25-1 — Asignar el rol Owner exige cubrirlo, no ser Owner
+`assign_role` deja asignar el rol Owner a quien cubra todas sus concesiones. Hoy solo lo cubre un Owner: el rol nace con todos los permisos sensibles y no existe revocar una concesión. Si un rol Owner perdiera sus permisos sensibles, quien tuviera `users.manage` y el resto de sus concesiones podría crear Owners, y estos delegar lo sensible. F2-25 (#108) lo hace alcanzable por HTTP sin cambiar la regla.
+- El work item que añada revocar concesiones (E01-08) debe exigir ser Owner para asignar el rol Owner, o impedir que el rol Owner pierda su último permiso sensible.
 
 ### OBS-F2-05C-4 — Todos los cambios de RBAC de una organización van en serie
 Comparten el bloqueo del rol Owner. Un cambio que escribe lo mantiene hasta el COMMIT de la petición; una denegación lo libera al deshacer su savepoint. `ensure_owner_remains` no abre savepoint: su bloqueo dura hasta el final del `tenant_scope`, también si deniega, porque quien la llama debe escribir bajo ese mismo bloqueo. Es deliberado: son operaciones poco frecuentes y así la relectura de permisos y el recuento de Owners no tienen carreras. Una organización sin rol Owner no admite ningún cambio.

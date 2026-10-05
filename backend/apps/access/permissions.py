@@ -10,9 +10,11 @@ otra frontera, con sus propias `permission_classes` y `filter_backends`. Se excl
 ruta, no por el actor: ser staff de plataforma no abre ninguna ruta de tenant.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Model, QuerySet
 from rest_framework.exceptions import NotFound
 from rest_framework.filters import BaseFilterBackend
@@ -20,12 +22,14 @@ from rest_framework.permissions import BasePermission
 
 from apps.access.selectors import (
     AccessDenied,
+    Denied,
     ExecutionContext,
     can,
     execution_context,
     has_permission,
     scoped,
 )
+from core.api.errors import ApiError
 from core.tenancy import context
 
 
@@ -91,3 +95,23 @@ class ScopeFilter(BaseFilterBackend):
         if ectx is None or code is None:
             return queryset.none()
         return scoped(ectx, code, queryset)
+
+
+@contextmanager
+def rbac_errors() -> Iterator[None]:
+    """Lo que lanza un cambio de RBAC o de membresía, con la forma del contrato (ADR-014 §1,
+    ADR-017 §4). Lo que no es de esta organización no existe: 404. Un actor que dejó de ser
+    miembro mientras esperaba el bloqueo, también. `LAST_OWNER` es un 409 con su código. El
+    resto de negativas (permiso, uno mismo, escalada, sensible) sigue siendo un 403 sin motivo.
+    """
+    try:
+        yield
+    except ObjectDoesNotExist:
+        raise NotFound from None
+    except AccessDenied as denied:
+        if denied.reason is Denied.MEMBERSHIP:
+            raise NotFound from None
+        if denied.reason is not Denied.LAST_OWNER:
+            raise
+        message = "Debe quedar al menos un Owner activo en la organización."
+        raise ApiError("LAST_OWNER", 409, message) from None
