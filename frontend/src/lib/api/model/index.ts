@@ -8,6 +8,7 @@
 
 export * from "./activeOrSuspendedEnum";
 export * from "./branch";
+export * from "./branchCreateRequest";
 export * from "./branchesListParams";
 export * from "./error";
 export * from "./errorFields";
