@@ -65,6 +65,16 @@ def test_it_creates_an_empty_role_that_can_be_listed_and_assigned(
     assert ana.put(link, headers={"X-CSRFToken": "t" * 32}).status_code == 204  # y se asigna
     assert create(ana, {"name": "Sin descripción"}).json()["description"] == ""
     assert create(ana, {"name": "Dos   espacios"}).json()["name"] == "Dos espacios"  # como se lee
+    stored = [
+        create(ana, {"name": name}).json()["name"] for name in ("Cafe\u0301 \u00b2", "Sur\u00a0A")
+    ]
+    assert stored == [
+        "Caf\u00e9 \u00b2",
+        "Sur A",
+    ]  # NFC, no NFKC; el espacio de no separación, uno más
+    assert (
+        create(ana, {"name": "\U0001f436"}).status_code == 201
+    )  # solo un emoji también es un nombre
     assert create(ana, {"name": "Otra", "code": "x", "is_system": True}).json()["code"] == "otra"
 
 
@@ -75,8 +85,12 @@ def test_the_name_is_unique_in_the_organization_and_the_code_never_collides(rbac
         "Ventas Norte", "ventas norte", " VENTAS NORTE ", "Ventas   Norte",  # mayúsculas y espacios
         "Owner", "vendedor",  # también los de plantilla
         "Owner\ufe0f", "Own\u034fer", "Owner\u3164", "Ｏｗｎｅｒ",  # no se ve, o es otra anchura
+        "Owner \ufe0f", "Owner\u17b5", "Owner\u180b", "Owner\U000e0100", "Owner\ufffc",
+        "Admi\u0307nistrador", "Supervi\u0307sor",  # un punto sobre la i, que ya lo lleva
+        "Caja", "Cafe\u034f\u0301",  # frente a un nombre guardado con un carácter que no se ve
     )  # fmt: skip
     assert create(ana, {"name": "Café"}).status_code == 201  # NFC…
+    assert create(ana, {"name": "Caja\ufe0f"}).status_code == 201
     for taken in (*same, "Cafe\u0301"):  # …y NFD: la misma palabra
         again = create(ana, {"name": taken})
         assert (again.status_code, again.json()["code"]) == (409, "ROLE_NAME_TAKEN"), taken
@@ -155,6 +169,8 @@ def test_without_session_permission_or_a_valid_body_it_creates_nothing(
         ({"name": "\u0301"}, "name"),  # solo una marca
         ({"name": "\u2800\ufe0f"}, "name"),
         ({"name": "sin\u200bjuntura"}, "name"),
+        ({"name": "\u0301 \u0301"}, "name"),
+        ({"name": "\u0958" * 100}, "name"),  # 100 al escribirlo, 200 en la forma en que se guarda
         ({"name": "a\u0001b", "description": "c\u0002d"}, "name"),
         ({"name": ["lista"]}, "name"),
         ({"name": "X", "description": "d" * 256}, "description"),
@@ -182,7 +198,7 @@ def test_the_service_checks_the_same_and_needs_the_active_scope(rbac: Any) -> No
     with acting(rbac.a, rbac.ana) as tenant:
         assert create_role(tenant, name="Con texto", description="  x  ").description == "x"
     with acting(rbac.a, rbac.ana) as tenant:
-        role = create_role(tenant, name="  Desde el servicio  ")
+        role = create_role(tenant, name="  Desde   el servicio  ")
         assert (role.name, role.code, role.description) == (
             "Desde el servicio",
             "desde-el-servicio",

@@ -169,6 +169,7 @@ class RoleNameTaken(Exception):
 def role_name(name: str) -> str:
     """El nombre tal como se guarda, o `ValueError` si no sirve. Lo usa también la API, para
     responder 400 con el mismo criterio."""
+    name = names.spaced(name)
     printable = name.strip().isprintable()  # antes de limpiar: un salto de línea no es un espacio
     name = names.clean(name)
     if not (name and printable and len(name) <= NAME_MAX and names.legible(name)):
