@@ -22,6 +22,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  BranchesListParams,
   Error,
   GrantScopeRequest,
   LoginRequest,
@@ -29,6 +30,7 @@ import type {
   MemberStatusChangeRequest,
   MembersListParams,
   OrganizationSummary,
+  PaginatedBranchList,
   PaginatedMemberList,
   PaginatedRoleList,
   PatchedRoleUpdateRequest,
@@ -528,6 +530,146 @@ export function useMeOrganizations<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getMeOrganizationsQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getBranchesListUrl = (orgSlug: string, params?: BranchesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/branches/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/branches/`;
+};
+
+/**
+ * Las sucursales de la organización, activas e inactivas. Paginado por orden de creación
+ * (ADR-016).
+ */
+export const branchesList = async (
+  orgSlug: string,
+  params?: BranchesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedBranchList> => {
+  return apiFetch<PaginatedBranchList>(getBranchesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getBranchesListQueryKey = (orgSlug: string, params?: BranchesListParams) => {
+  return [`/api/v1/o/${orgSlug}/branches/`, ...(params ? [params] : [])] as const;
+};
+
+export const getBranchesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof branchesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BranchesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof branchesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getBranchesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof branchesList>>> = ({ signal }) =>
+    branchesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof branchesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type BranchesListQueryResult = NonNullable<Awaited<ReturnType<typeof branchesList>>>;
+export type BranchesListQueryError = ErrorType<Error>;
+
+export function useBranchesList<
+  TData = Awaited<ReturnType<typeof branchesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | BranchesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof branchesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof branchesList>>,
+          TError,
+          Awaited<ReturnType<typeof branchesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useBranchesList<
+  TData = Awaited<ReturnType<typeof branchesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BranchesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof branchesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof branchesList>>,
+          TError,
+          Awaited<ReturnType<typeof branchesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useBranchesList<
+  TData = Awaited<ReturnType<typeof branchesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BranchesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof branchesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useBranchesList<
+  TData = Awaited<ReturnType<typeof branchesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BranchesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof branchesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getBranchesListQueryOptions(orgSlug, params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

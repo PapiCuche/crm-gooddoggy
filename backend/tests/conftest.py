@@ -26,6 +26,7 @@ TENANT_TABLES += ("files",)  # F1-08
 TENANT_TABLES += ("organization_memberships",)  # F2-02
 # F2-04: delante, porque referencian a las membresías y la limpieza borra en este orden.
 TENANT_TABLES = ("membership_roles", "role_permissions", "roles", *TENANT_TABLES)
+TENANT_TABLES += ("branches",)  # F2-43
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

@@ -1,14 +1,18 @@
-"""Selectores públicos de plataforma (docs/architecture/module-dependencies.md §3).
+"""Selectores públicos (docs/architecture/module-dependencies.md §3).
 
-Se ejecutan sin tenant activo. Las membresías se leen dentro de `user_scope`: la política
-SELECT de `organization_memberships` solo deja ver las del propio usuario (ADR-002 §3.2).
+Los de plataforma se ejecutan sin tenant activo. Las membresías se leen dentro de
+`user_scope`: la política SELECT de `organization_memberships` solo deja ver las del propio
+usuario (ADR-002 §3.2).
+`branches` es de tenant: se lee dentro de un `tenant_scope`.
 """
 
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from apps.organizations.models import Organization, OrganizationMembership
+from django.db.models import QuerySet
+
+from apps.organizations.models import Branch, Organization, OrganizationMembership
 from core.tenancy.resolution import ACCESSIBLE_STATUSES, OrganizationRef
 from core.tenancy.scope import user_scope
 
@@ -65,3 +69,9 @@ def organizations_for_user(user: Any) -> list[OrganizationSummary]:
         OrganizationSummary(*row)
         for row in rows.order_by("name", "slug").values_list("id", "slug", "name")
     ]
+
+
+def branches() -> QuerySet[Branch]:
+    """Sucursales de la organización del `tenant_scope` activo, activas e inactivas. Filtra por
+    organización, no por permiso: el permiso lo exige quien las sirve (`HasPermission`)."""
+    return Branch.objects.all()

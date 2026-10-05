@@ -455,6 +455,35 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Auditoría de tenant:** `membership.suspended` y `membership.reactivated`, con el actor y el antes y el después, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización), después a `organizations.services.set_membership_status` (escritura y auditoría) y, al suspender, a `accounts.services.revoke_sessions`. `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
 
+## Sucursales (F2-43, E01-09)
+
+`GET /api/v1/o/{slug}/branches/` lista las sucursales de la organización. Exige `organization.view` (sin él, 403; sin membresía activa, 404).
+
+```json
+{
+  "results": [
+    {
+      "id": "…",
+      "code": "LIM-01",
+      "name": "Centro de Lima",
+      "address": "Av. Wilson 1234",
+      "district": "Cercado",
+      "city": "Lima",
+      "phone": "+51 1 555 0100",
+      "timezone": "America/Lima",
+      "is_active": true
+    }
+  ],
+  "next": null
+}
+```
+
+- **Qué incluye:** todas, activas e inactivas. Lo opcional (`address`, `district`, `city`, `phone`) llega como texto vacío, nunca `null`.
+- **Paginación:** por cursor, en orden de creación (`?limit=`, `?cursor=`; ver «Listados»). Una consulta por página.
+- **Tabla `branches`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `code` es único por organización y la base de datos solo admite mayúsculas ASCII, cifras y guiones entre ellas (`LIM-01`), hasta 20 caracteres: dos códigos no pueden leerse igual. `timezone` es un nombre IANA; por defecto, `America/Lima`.
+- **Solo lectura.** Crear, editar y desactivar una sucursal, con el permiso `branches.manage`, es el siguiente work item. No hay borrado.
+- El selector `organizations.selectors.branches` filtra por organización, no por permiso: el permiso lo exige la vista, y otra vista que lo use declara el suyo.
+
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 
 `apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); crear un rol, desde F2-29 («Crear un rol»); conceder un permiso a un rol y retirarlo, desde F2-31 y F2-33 («Permisos de un rol»).
