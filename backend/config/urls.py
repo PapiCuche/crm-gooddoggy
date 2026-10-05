@@ -14,4 +14,5 @@ urlpatterns = [
     # Rutas de tenant: `TenantResolutionMiddleware` resuelve el slug antes de la vista.
     path("api/v1/o/<slug:org_slug>/", include("apps.access.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.members.api.urls")),
+    path("api/v1/o/<slug:org_slug>/", include("apps.organizations.api.tenant_urls")),
 ]

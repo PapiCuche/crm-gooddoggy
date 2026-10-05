@@ -1,4 +1,5 @@
-"""Organizaciones (platform-owned, sin RLS de tenant; ADR-001 §2) y sus membresías."""
+"""Organizaciones (platform-owned, sin RLS de tenant; ADR-001 §2), sus membresías y sus
+sucursales (tenant-owned)."""
 
 from django.conf import settings
 from django.db import models
@@ -65,3 +66,42 @@ class OrganizationMembership(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+
+class Branch(TenantModel):
+    """Sucursal o tienda física (tenant-owned; modelo de datos §E.1).
+
+    `code` es la clave que eligen las personas. La BD solo admite mayúsculas ASCII, cifras y
+    guiones entre ellas: así dos códigos de una organización no se distinguen solo por
+    mayúsculas, acentos, espacios o letras Unicode de igual aspecto. Los parecidos dentro de
+    ASCII (`O` y `0`, `I` y `1`) siguen siendo códigos distintos.
+    """
+
+    id = uuid7_primary_key()
+    code = models.CharField(max_length=20)
+    name = models.CharField(max_length=100)
+    address = models.CharField(max_length=255, blank=True)
+    district = models.CharField(max_length=100, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    phone = models.CharField(max_length=32, blank=True)
+    timezone = models.CharField(max_length=64, default="America/Lima")  # nombre IANA
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "branches"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "code"], name="branches_org_code_uq"
+            ),
+            models.UniqueConstraint(  # destino de las FK compuestas `branch_id` que vendrán
+                fields=["organization_id", "id"], name="branches_org_id_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(code__regex=r"^[A-Z0-9]+(-[A-Z0-9]+)*$"), name="branches_code_ck"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.code

@@ -7,6 +7,8 @@
  */
 
 export * from "./activeOrSuspendedEnum";
+export * from "./branch";
+export * from "./branchesListParams";
 export * from "./error";
 export * from "./errorFields";
 export * from "./grant";
@@ -22,6 +24,7 @@ export * from "./memberStatusChangeRequest";
 export * from "./memberUser";
 export * from "./nullEnum";
 export * from "./organizationSummary";
+export * from "./paginatedBranchList";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
 export * from "./patchedRoleUpdateRequest";

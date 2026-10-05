@@ -63,6 +63,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-40 | [#138](https://github.com/PapiCuche/crm-gooddoggy/issues/138) Delete a role from the roles screen | `feature/f2-role-delete-ui` | #134, #136 | frontend |
 | F2-41 | [#140](https://github.com/PapiCuche/crm-gooddoggy/issues/140) The Owner role follows the permission catalog (ADR-018) | `feature/f2-owner-role-follows-catalog` | #120 | backend |
 | F2-42 | [#142](https://github.com/PapiCuche/crm-gooddoggy/issues/142) The roles directory test no longer fails on a random id | `fix/f2-roles-test-random-id` | #126 | backend |
+| F2-43 | [#144](https://github.com/PapiCuche/crm-gooddoggy/issues/144) Branches: table and directory by API | `feature/f2-branches-directory` | — | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -174,6 +175,18 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 ## Observaciones vivas (de revisiones)
 
 Se registran como `OBS-F2-<nn>-<n>`.
+
+### OBS-F2-43-1 — Sucursales: dónde viven y qué decidió el programa
+E01-09 empieza por las sucursales (F2-43, #144). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
+- **Módulo.** La tabla, el selector y la ruta de lectura están en `apps.organizations`, como agrupa el modelo de datos (§E.1). La ruta no importa `access`: declara su permiso y lo aplican `HasPermission` y `ScopeFilter`, los valores por defecto de DRF.
+- **Quién las lee.** Quien tiene `organization.view`. El catálogo no tiene un permiso de lectura propio de sucursales (03 §H solo define `branches.manage`), y todas las plantillas llevan `organization.view`.
+- **Código.** Mayúsculas ASCII, cifras y guiones entre ellas, hasta 20 caracteres, impuesto con un `CHECK`. El modelo de datos solo pedía que fuera único por organización; con esta forma dos códigos no se distinguen solo por mayúsculas, acentos, espacios o letras Unicode de igual aspecto. No evita los parecidos dentro de ASCII: `LIM-01`, `LIM-O1` y `L1M-01` son tres códigos válidos y distintos; si importa, lo decide la escritura por API.
+- **Zona horaria.** `America/Lima` si no se indica. La tabla no comprueba que el nombre exista: lo hará la escritura por API.
+
+### OBS-F2-43-2 — Lo que `branches` no lleva todavía
+- `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado, como en roles. Una sucursal se desactiva con `is_active`. Cuando exista el borrado, `UNIQUE (organization_id, code)` pasa a ser un índice parcial.
+- Las escrituras por API y el permiso `branches.manage`: siguiente work item. Hasta entonces la tabla solo se llena desde código.
+- `organization_memberships.default_branch_id` y `ExecutionContext.branch_ids` (OBS-F2-05A-2): el alcance `BRANCH` sigue equivaliendo a `OWN`.
 
 ### OBS-F2-06-1 — La contraseña inicial del Owner la escribe el operador
 No hay envío de correo (D-F2-5): ni invitación ni restablecimiento. El comando de alta pide la contraseña del Owner nuevo al operador y no la muestra ni la registra. El producto no puede obligar todavía a cambiarla en el primer acceso.
@@ -375,7 +388,7 @@ La auditoría rechaza un decorador alrededor de `as_view()` (uno que responda an
 `execution_context` lee la membresía y sus concesiones una vez, dentro del `tenant_scope` de la petición. Revocar un rol surte efecto en la siguiente petición, no a mitad de una (coherente con ADR-003 §5). Sin caché. La foto queda ligada a su transacción: usarla en un `tenant_scope` posterior falla con `TenantContextError`, aunque el contexto sea igual. En DRF (F2-05B) la foto se guarda en la petición HTTP, así que la comparten todos los envoltorios `Request` que DRF crea para ella (por ejemplo al describir la vista en un OPTIONS).
 
 ### OBS-F2-05A-2 — TEAM y BRANCH equivalen a OWN hasta E01-09
-No existen tablas de equipos ni sucursales. `ExecutionContext.team_ids` y `branch_ids` están vacíos, así que esos alcances nunca dan más que OWN. E01-09 debe rellenarlos en `execution_context` sin añadir una consulta por rol.
+No existe la tabla de equipos, y la de sucursales (F2-43) aún no se enlaza a las membresías (OBS-F2-43-2). `ExecutionContext.team_ids` y `branch_ids` están vacíos, así que esos alcances nunca dan más que OWN. E01-09 debe rellenarlos en `execution_context` sin añadir una consulta por rol.
 
 ### OBS-F2-05A-3 — La transacción de la petición se confirma aunque la vista falle
 ✅ Resuelta en F2-12 (#59): `TenantResolutionMiddleware` deshace la transacción de la petición cuando la respuesta es 400 o superior. Un servicio sigue comprobando antes de escribir, pero un error ya no deja escrituras a medias. Lo que sigue describe el estado anterior.
