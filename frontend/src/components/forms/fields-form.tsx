@@ -24,6 +24,8 @@ export type FormField<Name extends string> = {
   required?: string; // lo que se dice si falta; sin él, el campo es opcional
   hint?: string;
   inputMode?: "tel";
+  defaultValue?: string; // lo que hay al abrir (un formulario de edición)
+  list?: string; // el `id` de un `<datalist>` de sugerencias
 };
 // Lo que el formulario necesita saber de la escritura: el resultado de `useMutation` en el
 // render de la pantalla (un objeto nuevo cada vez que ella se pinta).
@@ -152,6 +154,8 @@ export function FieldsForm<Name extends string>({
           name={field.name}
           autoComplete="off"
           inputMode={field.inputMode}
+          defaultValue={field.defaultValue}
+          list={field.list}
           maxLength={field.max}
           hint={field.hint}
           error={fieldError(field)}

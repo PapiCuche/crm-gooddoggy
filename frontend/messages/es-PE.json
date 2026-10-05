@@ -183,6 +183,20 @@
       "phoneInvalid": "Ese teléfono no sirve. Usa texto en una línea, de hasta 32 caracteres.",
       "denied": "No tienes permiso para crear sucursales.",
       "done": "Sucursal «{name}» creada. Va al final de la lista."
+    },
+    "edit": {
+      "trigger": "Editar",
+      "triggerLabel": "Editar la sucursal {branch}",
+      "title": "Editar {branch}",
+      "timezone": "Zona horaria",
+      "timezoneHint": "Por su nombre, como America/Lima. Al escribir se sugieren las que conoce tu navegador.",
+      "timezoneRequired": "Escribe una zona horaria.",
+      "timezoneInvalid": "Esa zona horaria no existe. Escríbela tal cual, por ejemplo America/Lima.",
+      "submit": "Guardar",
+      "busy": "Guardando…",
+      "denied": "No tienes permiso para cambiar sucursales.",
+      "done": "Sucursal «{name}» guardada.",
+      "stale": "La sucursal {branch} ya no existe. Revisa la lista."
     }
   },
   "roles": {

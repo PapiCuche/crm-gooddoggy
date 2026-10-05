@@ -206,7 +206,8 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 - **Por sucursal:** nombre, código, dirección (calle, distrito y ciudad: lo que haya, en una línea; «Sin dirección» si no hay nada), teléfono si lo tiene, zona horaria y si está activa. Se listan también las inactivas.
 - **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»), que solo usa esta pantalla: una organización siempre tiene miembros y roles.
 - **Navegación:** la entrada «Sucursales» pide el permiso `organization.view`, el que exige la API para leerlas; `branches.manage` solo no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **La lista es lectura.** Crear una sucursal está en «Crear una sucursal»; editarla y desactivarla desde la pantalla es el siguiente work item (la API ya lo permite, F2-45).
+- **Escrituras:** crear una sucursal está en «Crear una sucursal» y corregir sus datos, en «Editar una sucursal»; activarla y desactivarla desde la pantalla es el siguiente work item (la API ya lo permite, F2-45).
+- **Aviso de la lista:** una edición que descubre que la sucursal ya no existe lo explica aquí, encima de la lista (`role="alert"`), y la lista se vuelve a pedir. Abrir «Crear sucursal» o «Editar» lo retira.
 
 ### Crear una sucursal (F2-47)
 
@@ -221,12 +222,25 @@ Encima de la lista, «Crear sucursal» abre un formulario y envía `POST /api/v1
 - **Errores, por `code`:** el código repetido (`BRANCH_CODE_TAKEN`) y cada campo que la API no acepta (un 400 con ese campo en `fields`) se explican junto a su campo, y el foco va al primero si seguía en el botón o en ninguna parte. Sin permiso, red o fallo del servidor, en el formulario; un 400 sin un campo del formulario se trata como un fallo nuestro. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío. Nunca se enseña el texto de la respuesta.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
+### Editar una sucursal (F2-49)
+
+En cada tarjeta, «Editar» abre un formulario con los datos de la sucursal y envía `PATCH /api/v1/o/{slug}/branches/{id}/` (F2-45). Componente: `components/branches/branch-edit-action.tsx`, sobre el formulario de campos compartido; lo propio de editar una fila sigue a `role-edit-action.tsx`.
+
+- **A quién se ofrece:** a quien tiene `branches.manage` según el contexto de la API, en todas las sucursales, activas o no. Es comodidad: la API decide, y un 403 se explica en el formulario.
+- **Campos:** nombre, dirección, distrito, ciudad, teléfono y zona horaria. El código no se edita ni se envía, y el estado tampoco.
+- **Zona horaria:** un campo de texto, obligatorio, con las zonas que conoce el navegador como sugerencias (`<datalist>`, con `UTC` añadida). La API decide si la zona existe: si no, lo dice junto al campo.
+- **Lo que se edita queda fijado al abrir:** si la lista cambia debajo, el formulario sigue enseñando lo que el usuario abrió. «Cancelar» descarta lo escrito y devuelve el foco a «Editar».
+- **Se envían los seis campos**, sin sus espacios exteriores, con lo fijado al abrir en los que no se tocan: pisan lo que otra persona hubiera cambiado en ellos mientras tanto (límite conocido, como en «Editar un rol»). La API cambia y audita solo lo que es distinto de lo guardado.
+- **Éxito:** el formulario se cierra, la tarjeta enseña en esos seis campos lo que guardó la API sin volver a pedir la lista, y el resultado se anuncia (`role="status"`, solo para lector de pantalla: la tarjeta ya lo enseña). Una lectura de la lista en vuelo se cancela para que no pise lo guardado; si era la lista entera se repite, y un «Cargar más» hay que pulsarlo otra vez. Si la API responde con otra sucursal, no se da por guardado: se explica como un fallo y la lista se vuelve a pedir.
+- **Errores, por `code`:** cada campo que la API no acepta, junto a él; sin permiso, red o fallo del servidor, en el formulario. Un 404 es pantalla desfasada: el formulario se cierra, lo explica el aviso de la lista y el foco va al título si seguía en la tarjeta de la sucursal o en ninguna parte.
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
 ### Formulario de campos compartido (F2-48)
 
-`components/forms/fields-form.tsx` (`FieldsForm`) tiene el camino de envío de un formulario de campos de texto, el que describen «Crear un rol» y «Crear una sucursal». Hoy lo usa «Crear sucursal»; los formularios de roles conservan su copia.
+`components/forms/fields-form.tsx` (`FieldsForm`) tiene el camino de envío de un formulario de campos de texto, el que describen «Crear un rol» y «Crear una sucursal». Hoy lo usan «Crear sucursal» y «Editar sucursal»; los formularios de roles conservan su copia.
 
 - **Lo que hace:** pinta los campos, «Cancelar» y el botón de envío; comprueba los obligatorios; envía una vez por pulsación; explica los errores de la API por `code` (los de un campo, junto a él; los demás, en el formulario; un 401, ocupado y sin error); y mueve el foco al primer campo al abrir y al primer campo con error si el foco seguía en el botón o en ninguna parte.
-- **Lo que pone la pantalla:** la escritura (el resultado de `useMutation`), qué hacer con lo escrito (`send`, que recibe los valores sin espacios exteriores), los campos con sus textos ya resueltos (etiqueta, límite, ayuda, aviso de obligatorio y de no válido), el error propio de un campo que no es un 400 (`taken`: un código repetido), y el texto de «sin permiso». Abrir y cerrar, el botón que abre, el anuncio del resultado, lo que pasa con la lista y la guarda del Enter mantenido siguen en la pantalla.
+- **Lo que pone la pantalla:** la escritura (el resultado de `useMutation`), qué hacer con lo escrito (`send`, que recibe los valores sin espacios exteriores), los campos con sus textos ya resueltos (etiqueta, límite, ayuda, aviso de obligatorio y de no válido) y, si hace falta, su valor inicial y el `id` de una lista de sugerencias, el error propio de un campo que no es un 400 (`taken`: un código repetido), y el texto de «sin permiso». Abrir y cerrar, el botón que abre, el anuncio del resultado, lo que pasa con la lista y la guarda del Enter mantenido siguen en la pantalla.
 - **La marca de envío vive en el formulario** y se suelta en un efecto de maquetación cuando la escritura ya no está en curso. Un render solo del formulario (por ejemplo, al retirar un aviso de «falta» justo antes de enviar) trae la escritura tal como era antes de enviar y no la suelta: se compara con la que había al enviar. Por eso `write` debe ser el resultado de `useMutation` del render de la pantalla, no un objeto guardado, y `send` debe iniciar esa escritura antes de volver (`mutate`, sin esperar a nada): si no la inicia, el formulario deja de responder —también «Cancelar»— hasta el siguiente render de la pantalla; si la inicia más tarde, un render de la pantalla entre medias suelta la marca y otra pulsación sería otra escritura.
 - **El formulario se monta al abrir y se desmonta al cerrar:** los avisos y lo escrito no sobreviven a un cierre.
 

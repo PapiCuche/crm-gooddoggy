@@ -21,7 +21,15 @@ const FIELDS = [
 // Crear una sucursal (F2-47), con `POST /api/v1/o/{slug}/branches/` (F2-44). Nace activa y con
 // la zona horaria que pone la API. Quién puede crearla lo decide la API: la pantalla ofrece el
 // formulario y explica la respuesta. El camino de envío es el de `FieldsForm`.
-export function BranchCreate({ slug, listKey }: { slug: string; listKey: QueryKey }) {
+export function BranchCreate({
+  slug,
+  listKey,
+  onAsk,
+}: {
+  slug: string;
+  listKey: QueryKey;
+  onAsk: () => void; // se abre el formulario: el aviso anterior de la lista ya no aplica
+}) {
   const t = useTranslations("branches.create");
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -53,7 +61,10 @@ export function BranchCreate({ slug, listKey }: { slug: string; listKey: QueryKe
 
   function show(next: boolean) {
     create.reset();
-    if (next) setDone(null);
+    if (next) {
+      setDone(null);
+      onAsk();
+    }
     setOpen(next);
   }
 
