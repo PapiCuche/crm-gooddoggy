@@ -22,6 +22,8 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  Branch,
+  BranchCreateRequest,
   BranchesListParams,
   Error,
   GrantScopeRequest,
@@ -33,6 +35,7 @@ import type {
   PaginatedBranchList,
   PaginatedMemberList,
   PaginatedRoleList,
+  PatchedBranchUpdateRequest,
   PatchedRoleUpdateRequest,
   PermissionCatalog,
   Role,
@@ -556,7 +559,7 @@ export const getBranchesListUrl = (orgSlug: string, params?: BranchesListParams)
 
 /**
  * Las sucursales de la organización, activas e inactivas. Paginado por orden de creación
- * (ADR-016).
+ * (ADR-016). `POST` crea una (F2-44).
  */
 export const branchesList = async (
   orgSlug: string,
@@ -677,6 +680,215 @@ export function useBranchesList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getBranchesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/branches/`;
+};
+
+/**
+ * Crea una sucursal activa. `timezone` es `America/Lima` si no se envía. 409 `BRANCH_CODE_TAKEN`: ya hay en la organización una sucursal con ese código.
+ */
+export const branchesCreate = async (
+  orgSlug: string,
+  branchCreateRequest: BranchCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Branch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Branch>(getBranchesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(branchCreateRequest),
+  });
+};
+
+export const getBranchesCreateMutationKey = () => ["branchesCreate"] as const;
+
+export const getBranchesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof branchesCreate>>,
+    TError,
+    BranchesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof branchesCreate>>,
+  TError,
+  BranchesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getBranchesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof branchesCreate>>,
+    BranchesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return branchesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BranchesCreateMutationResult = NonNullable<Awaited<ReturnType<typeof branchesCreate>>>;
+export type BranchesCreateMutationBody = BranchCreateRequest;
+export type BranchesCreateMutationError = ErrorType<Error>;
+export type BranchesCreateMutationVariables = { orgSlug: string; data: BranchCreateRequest };
+
+export const useBranchesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof branchesCreate>>,
+      TError,
+      BranchesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof branchesCreate>>,
+  TError,
+  BranchesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getBranchesCreateMutationOptions(options), queryClient);
+};
+
+export const getBranchesUpdateUrl = (orgSlug: string, branchId: string) => {
+  return `/api/v1/o/${orgSlug}/branches/${branchId}/`;
+};
+
+/**
+ * Cambia lo que se envía; lo demás se queda como está, y el código no cambia. 404: la sucursal no es de la organización.
+ */
+export const branchesUpdate = async (
+  orgSlug: string,
+  branchId: string,
+  patchedBranchUpdateRequest?: PatchedBranchUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Branch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Branch>(getBranchesUpdateUrl(orgSlug, branchId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedBranchUpdateRequest),
+  });
+};
+
+export const getBranchesUpdateMutationKey = () => ["branchesUpdate"] as const;
+
+export const getBranchesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof branchesUpdate>>,
+    TError,
+    BranchesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof branchesUpdate>>,
+  TError,
+  BranchesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getBranchesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof branchesUpdate>>,
+    BranchesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, branchId, data } = props ?? {};
+
+    return branchesUpdate(orgSlug, branchId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BranchesUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof branchesUpdate>>>;
+export type BranchesUpdateMutationBody = PatchedBranchUpdateRequest | undefined;
+export type BranchesUpdateMutationError = ErrorType<Error>;
+export type BranchesUpdateMutationVariables = {
+  orgSlug: string;
+  branchId: string;
+  data?: PatchedBranchUpdateRequest;
+};
+
+export const useBranchesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof branchesUpdate>>,
+      TError,
+      BranchesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof branchesUpdate>>,
+  TError,
+  BranchesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getBranchesUpdateMutationOptions(options), queryClient);
+};
 
 export const getMeContextUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/me/`;

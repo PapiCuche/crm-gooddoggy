@@ -226,6 +226,9 @@
       "view": "Ver la organización",
       "manage": "Administrar la organización"
     },
+    "branches": {
+      "manage": "Administrar sucursales"
+    },
     "users": {
       "view": "Ver miembros",
       "manage": "Administrar miembros",

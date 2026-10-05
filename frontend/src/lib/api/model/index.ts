@@ -8,6 +8,7 @@
 
 export * from "./activeOrSuspendedEnum";
 export * from "./branch";
+export * from "./branchCreateRequest";
 export * from "./branchesListParams";
 export * from "./error";
 export * from "./errorFields";
@@ -27,6 +28,7 @@ export * from "./organizationSummary";
 export * from "./paginatedBranchList";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
+export * from "./patchedBranchUpdateRequest";
 export * from "./patchedRoleUpdateRequest";
 export * from "./permission";
 export * from "./permissionCatalog";
