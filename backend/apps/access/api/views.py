@@ -2,7 +2,7 @@
 miembros (`…/members/`, F2-16) y de roles (`…/roles/`, F2-22) y los roles de un miembro
 (`…/members/{id}/roles/{role_id}/`, F2-25)."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from operator import attrgetter
 from typing import Any
 from uuid import UUID
@@ -21,6 +21,7 @@ from apps.access.catalog import BY_CODE, Scope
 from apps.access.models import Role
 from apps.access.permissions import IsMember, rbac_errors, request_context
 from apps.access.selectors import (
+    ExecutionContext,
     UnknownPermission,
     memberships,
     organization_of,
@@ -30,14 +31,18 @@ from apps.access.selectors import (
 from apps.access.services import (
     DESCRIPTION_MAX,
     NAME_MAX,
+    RoleInUse,
     RoleNameTaken,
     ScopeMismatch,
     assign_role,
     create_role,
+    delete_role,
     grant_permission,
     remove_role,
     revoke_permission,
+    role_description,
     role_name,
+    update_role,
 )
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -195,9 +200,39 @@ class RoleCreateSerializer(serializers.Serializer[Any]):
             raise serializers.ValidationError(str(error)) from None
 
     def validate_description(self, value: str) -> str:
-        if not value.isprintable():  # saltos de línea, nulos, controles
-            raise serializers.ValidationError("Solo texto imprimible.")
-        return value
+        try:
+            return role_description(value)  # saltos de línea, nulos, controles
+        except ValueError:
+            raise serializers.ValidationError("Solo texto imprimible.") from None
+
+
+class RoleUpdateSerializer(RoleCreateSerializer):
+    """Lo que se envía cambia; lo que no, se queda como está."""
+
+    name = serializers.CharField(max_length=NAME_MAX, required=False)
+
+
+TAKEN = "Ya existe un rol con ese nombre en la organización."
+
+
+def role_rows(ectx: ExecutionContext, roles: Sequence[Role]) -> list[dict[str, Any]]:
+    """Los roles en la forma del directorio. Tres consultas, sean cuantos sean."""
+    ids = [role.pk for role in roles]
+    grants, members = directory.grants_by_role(ectx, ids), directory.members_by_role(ectx, ids)
+    locked = directory.locked_roles(ectx, ids)
+    return [
+        {
+            "id": role.pk,
+            "code": role.code,
+            "name": role.name,
+            "description": role.description,
+            "is_system": role.is_system,
+            "permissions": grants.get(role.pk, []),
+            "members": members.get(role.pk, 0),
+            "editable": role.pk not in locked,
+        }
+        for role in roles
+    ]
 
 
 @extend_schema_view(
@@ -233,8 +268,7 @@ class RolesView(generics.ListAPIView):
             with rbac_errors():
                 role = create_role(tenant, **wanted.validated_data)
         except RoleNameTaken:
-            message = "Ya existe un rol con ese nombre en la organización."
-            raise ApiError("ROLE_NAME_TAKEN", 409, message) from None
+            raise ApiError("ROLE_NAME_TAKEN", 409, TAKEN) from None
         row = {
             "id": role.pk,
             "code": role.code,
@@ -256,23 +290,58 @@ class RolesView(generics.ListAPIView):
         ectx = request_context(request)
         assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
         page = self.paginate_queryset(self.filter_queryset(self.get_queryset()))
-        ids = [role.pk for role in page]
-        grants, members = directory.grants_by_role(ectx, ids), directory.members_by_role(ectx, ids)
-        locked = directory.locked_roles(ectx, ids)
-        rows = [
-            {
-                "id": role.pk,
-                "code": role.code,
-                "name": role.name,
-                "description": role.description,
-                "is_system": role.is_system,
-                "permissions": grants.get(role.pk, []),
-                "members": members.get(role.pk, 0),
-                "editable": role.pk not in locked,
-            }
-            for role in page
-        ]
-        return self.get_paginated_response(RoleSerializer(rows, many=True).data)
+        return self.get_paginated_response(RoleSerializer(role_rows(ectx, page), many=True).data)
+
+
+class RoleView(APIView):
+    """Un rol: `PATCH` cambia su nombre o su descripción y `DELETE` lo borra. Las reglas son las
+    de `access.services` (ADR-003 §5): el rol Owner no se edita ni se borra, y nadie cambia ni
+    borra un rol que tiene asignado."""
+
+    required_permissions = {"PATCH": "roles.manage", "DELETE": "roles.manage"}
+
+    @extend_schema(
+        operation_id="roles_update",
+        tags=["roles"],
+        request=RoleUpdateSerializer,
+        responses={200: RoleSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia el nombre o la descripción del rol; lo que no se envía se queda "
+        "como está, y el código no cambia. 403: sin `roles.manage`, un rol que el actor tiene "
+        "asignado o el rol Owner. 404: el rol no es de la organización. 409 `ROLE_NAME_TAKEN`: "
+        "otro rol se lee igual. 409 `LAST_OWNER`: la organización no tiene rol Owner.",
+    )
+    def patch(self, request: Request, role_id: UUID, **kwargs: Any) -> Response:
+        wanted = RoleUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant, ectx = context.current(), request_context(request)
+        assert tenant is not None and ectx is not None  # noqa: S101 — ya lo comprobó la vista
+        try:
+            with rbac_errors():
+                role = update_role(tenant, role_id=role_id, **wanted.validated_data)
+        except RoleNameTaken:
+            raise ApiError("ROLE_NAME_TAKEN", 409, TAKEN) from None
+        return Response(RoleSerializer(role_rows(ectx, [role])[0]).data)
+
+    @extend_schema(
+        operation_id="roles_delete",
+        tags=["roles"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el "
+        "actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o "
+        "sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IN_USE`: "
+        "el rol tiene miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no "
+        "tiene rol Owner.",
+    )
+    def delete(self, request: Request, role_id: UUID, **kwargs: Any) -> Response:
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                delete_role(tenant, role_id=role_id)
+        except RoleInUse:
+            message = "El rol tiene miembros: quítaselo antes de borrarlo."
+            raise ApiError("ROLE_IN_USE", 409, message) from None
+        return Response(status=204)
 
 
 class PermissionSerializer(serializers.Serializer[Any]):

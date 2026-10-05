@@ -38,6 +38,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/members/{membership_id}/status/",
         "/api/v1/o/{org_slug}/permissions/",
         "/api/v1/o/{org_slug}/roles/",
+        "/api/v1/o/{org_slug}/roles/{role_id}/",
         "/api/v1/o/{org_slug}/roles/{role_id}/permissions/{code}/",
     }
     login = schema["paths"]["/api/v1/auth/login/"]["post"]
