@@ -62,6 +62,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-39 | [#136](https://github.com/PapiCuche/crm-gooddoggy/issues/136) Rename a role from the roles screen | `feature/f2-role-edit-ui` | #128, #130, #134 | frontend |
 | F2-40 | [#138](https://github.com/PapiCuche/crm-gooddoggy/issues/138) Delete a role from the roles screen | `feature/f2-role-delete-ui` | #134, #136 | frontend |
 | F2-41 | [#140](https://github.com/PapiCuche/crm-gooddoggy/issues/140) The Owner role follows the permission catalog (ADR-018) | `feature/f2-owner-role-follows-catalog` | #120 | backend |
+| F2-42 | [#142](https://github.com/PapiCuche/crm-gooddoggy/issues/142) The roles directory test no longer fails on a random id | `fix/f2-roles-test-random-id` | #126 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
