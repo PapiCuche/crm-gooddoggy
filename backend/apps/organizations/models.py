@@ -177,7 +177,7 @@ class TeamMember(TenantModel):
 
     id = uuid7_primary_key()
     team = models.ForeignKey(
-        Team, models.CASCADE, related_name="members", db_constraint=False, db_index=False
+        Team, models.PROTECT, related_name="members", db_constraint=False, db_index=False
     )
     membership = models.ForeignKey(
         OrganizationMembership,

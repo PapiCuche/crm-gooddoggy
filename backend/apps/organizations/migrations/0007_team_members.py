@@ -56,7 +56,7 @@ class Migration(migrations.Migration):
                     models.ForeignKey(
                         db_constraint=False,
                         db_index=False,
-                        on_delete=django.db.models.deletion.CASCADE,
+                        on_delete=django.db.models.deletion.PROTECT,
                         related_name="members",
                         to="organizations.team",
                     ),

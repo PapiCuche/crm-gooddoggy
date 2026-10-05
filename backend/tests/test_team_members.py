@@ -7,10 +7,11 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.db import IntegrityError, ProgrammingError, connection
+from django.db.models import ProtectedError
 from django.test.utils import CaptureQueriesContext
 
 from apps.access.selectors import execution_context, scoped
-from apps.organizations.models import Team, TeamMember
+from apps.organizations.models import OrganizationMembership, Team, TeamMember
 from core.tenancy.context import TenantContextError, TenantContextMissing
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
@@ -96,6 +97,7 @@ def test_team_scope_now_reaches_the_resources_of_my_teams(
 def test_rls_hides_and_refuses_the_rows_of_another_organization(world: Any) -> None:
     luis = make_user(email="luis@example.com")
     mine = add(world.a, team(world.a, "a-1").pk, world.membership)
+    assert (mine.team_role, mine.is_active) == ("MEMBER", True)  # lo que pone el modelo
     theirs = add(world.b, team(world.b, "b-1").pk, join(world.b, luis).pk)
     assert raw("SELECT count(*) FROM team_members") == [(0,)]  # sin tenant, nada
     with pytest.raises(TenantContextMissing):
@@ -153,6 +155,11 @@ def test_the_database_rejects_a_repeated_member_an_unknown_role_and_dangling_ref
         migrator.execute(INSERT, [uuid4(), sales, other, "MEMBER"])
     with pytest.raises(psycopg.errors.ForeignKeyViolation):  # con equipos, no se borra sin más
         migrator.execute("DELETE FROM organization_memberships WHERE id = %s", [other])
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):  # ni un equipo con integrantes
+        migrator.execute("DELETE FROM teams WHERE id = %s", [sales])
+    for model, pk in ((Team, sales), (OrganizationMembership, other)):  # ni con el ORM
+        with pytest.raises(ProtectedError), tenant_scope(ctx(world.a)):
+            model.objects.get(pk=pk).delete()
     found = migrator.execute(
         "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint"
         " WHERE conrelid = 'team_members'::regclass AND contype IN ('u', 'f')"
@@ -173,3 +180,7 @@ def test_the_database_rejects_a_repeated_member_an_unknown_role_and_dangling_ref
             "FOREIGN KEY (organization_id, team_id) REFERENCES teams(organization_id, id)",
         ),
     ]
+    index = migrator.execute(  # el que usa `execution_context` en cada petición
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'team_members_org_member_idx'"
+    ).fetchone()
+    assert index and index[0].endswith("USING btree (organization_id, membership_id)")
