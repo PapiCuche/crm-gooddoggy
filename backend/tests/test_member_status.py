@@ -136,6 +136,9 @@ def test_without_session_permission_or_membership_it_changes_and_reveals_nothing
         assert list(answer.json()["fields"]) == ["status"]
     token = {"X-CSRFToken": ana.cookies["csrftoken"].value}
     assert ana.put(url, {}, "application/json", headers=token).status_code == 400
+    lone = b'{"status":"%sd800"}' % (bytes([92]) + b"u")  # medio carácter: el campo lo repetía
+    unreadable = ana.put(url, lone, "application/json", headers=token)
+    assert reply(unreadable) == (400, b'{"code":"PARSE_ERROR"}')  # y la respuesta era un 500
     for other_method in (ana.get, ana.post, ana.patch, ana.delete):  # solo PUT
         assert reply(other_method(url, headers=token)) == DENIED
     assert state(migrator) == before and status_of(migrator, rbac.m_eva) == "ACTIVE"

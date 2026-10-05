@@ -1,6 +1,7 @@
 """Cuerpos de la API: JSON, y solo en UTF-8."""
 
 import codecs
+import json
 from collections.abc import Mapping
 from typing import IO, Any
 
@@ -39,6 +40,11 @@ class Utf8JSONParser(JSONParser):
     el anidamiento que desborda al analizador (`RecursionError`) y, antes de llegar ahí, el
     que el analizador lee pero desborda después a quien lo recorre (un campo de DRF hace
     `str()` de lo que recibe).
+
+    Una cadena con un sustituto Unicode suelto (el escape de medio carácter, sin su pareja)
+    tampoco es texto: no se puede guardar ni devolver en UTF-8. Los campos de texto la rechazan
+    uno a uno; un campo de opción la repite en su mensaje de error, y la respuesta acababa en
+    un 500. Aquí se rechaza entera, en valores y en claves: 400 `PARSE_ERROR`.
     """
 
     def parse(
@@ -62,4 +68,8 @@ class Utf8JSONParser(JSONParser):
             raise ParseError from None
         if _nested_beyond(data, MAX_DEPTH):
             raise ParseError
+        try:
+            json.dumps(data, ensure_ascii=False).encode()
+        except UnicodeEncodeError:
+            raise ParseError from None
         return data
