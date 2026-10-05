@@ -7,6 +7,11 @@ urlpatterns = [
     path("members/", views.MembersView.as_view(), name="members"),
     path("roles/", views.RolesView.as_view(), name="roles"),
     path(
+        "roles/<uuid:role_id>/permissions/<str:code>/",
+        views.RolePermissionView.as_view(),
+        name="role-permission",
+    ),
+    path(
         "members/<uuid:membership_id>/roles/<uuid:role_id>/",
         views.MemberRoleView.as_view(),
         name="member-role",

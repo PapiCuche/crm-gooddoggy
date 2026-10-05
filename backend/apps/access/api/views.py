@@ -10,6 +10,7 @@ from django.conf import settings
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
+from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,13 +19,20 @@ from apps.access import directory
 from apps.access.catalog import Scope
 from apps.access.models import Role
 from apps.access.permissions import IsMember, rbac_errors, request_context
-from apps.access.selectors import memberships, organization_of, role_names, roles_by_membership
+from apps.access.selectors import (
+    UnknownPermission,
+    memberships,
+    organization_of,
+    role_names,
+    roles_by_membership,
+)
 from apps.access.services import (
     DESCRIPTION_MAX,
     NAME_MAX,
     RoleNameTaken,
     assign_role,
     create_role,
+    grant_permission,
     remove_role,
     role_name,
 )
@@ -295,3 +303,49 @@ class MemberRoleView(APIView):
         self, request: Request, membership_id: UUID, role_id: UUID, **kwargs: Any
     ) -> Response:
         return self._change(remove_role, membership_id, role_id)
+
+
+class GrantScopeSerializer(serializers.Serializer[Any]):
+    scope = serializers.ChoiceField(
+        choices=Scope.choices,
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="Alcance de la concesión. Se omite, o es nulo, en un permiso sin alcance.",
+    )
+
+
+class RolePermissionView(APIView):
+    """Un permiso de un rol: `PUT` lo deja concedido con ese alcance. Las reglas son las de
+    `access.services.grant_permission` (ADR-003 §5): nadie concede lo que no tiene ni con más
+    alcance; lo sensible, solo un Owner; nadie cambia un rol que tiene asignado; el rol Owner
+    no se edita."""
+
+    required_permissions = {"PUT": "roles.manage"}
+
+    @extend_schema(
+        operation_id="roles_permissions_grant",
+        tags=["roles"],
+        request=GrantScopeSerializer,
+        responses={204: None, **errors(400, 401, 403, 404, 409)},
+        description="Deja el rol con ese permiso y ese alcance: lo concede o cambia el alcance "
+        "que tenía. Repetirlo no cambia nada. Los miembros del rol lo reciben en su siguiente "
+        "petición. 400: el alcance no corresponde al permiso. 403: sin `roles.manage`, un rol "
+        "que el actor tiene asignado, el rol Owner, o una concesión (la nueva o la anterior) "
+        "que el actor no cubre. 404: el rol no es de la organización o el permiso no existe. "
+        "409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.",
+    )
+    def put(self, request: Request, role_id: UUID, code: str, **kwargs: Any) -> Response:
+        wanted = GrantScopeSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                grant_permission(tenant, role_id=role_id, code=code, **wanted.validated_data)
+        except UnknownPermission:
+            raise NotFound from None
+        except ValueError:
+            message = "El alcance no corresponde a este permiso."
+            raise serializers.ValidationError({"scope": message}) from None
+        return Response(status=204)

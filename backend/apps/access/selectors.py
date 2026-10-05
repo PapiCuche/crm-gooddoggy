@@ -37,6 +37,7 @@ class Denied(StrEnum):
     SENSITIVE = "sensitive"  # permiso sensible: solo lo delega un Owner
     SELF = "self"  # nadie modifica sus propios roles
     LAST_OWNER = "last_owner"  # siempre queda un Owner activo
+    OWNER_ROLE = "owner_role"  # las concesiones del rol Owner no se editan
 
 
 class AccessDenied(PermissionDenied):

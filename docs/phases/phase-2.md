@@ -51,6 +51,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-28 | [#114](https://github.com/PapiCuche/crm-gooddoggy/issues/114) Suspend action: release the send flag when the result shows | `fix/f2-status-action-send-flag` | #99, #112 | frontend |
 | F2-29 | [#116](https://github.com/PapiCuche/crm-gooddoggy/issues/116) Create a custom role (API) | `feature/f2-role-create-api` | #101, #108 | backend + API |
 | F2-30 | [#118](https://github.com/PapiCuche/crm-gooddoggy/issues/118) Deeply nested JSON bodies answer 400, not 500 | `fix/f2-nested-json-body` | — | backend |
+| F2-31 | [#120](https://github.com/PapiCuche/crm-gooddoggy/issues/120) Grant a permission to a role (API) | `feature/f2-role-permission-grant-api` | #101, #116 | backend + API |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -317,10 +318,12 @@ ADR-003 §2 exige que al desactivar una membresía se revoquen las sesiones del 
 No hay API HTTP (E01-08) ni bootstrap (F2-06). Tampoco existen revocar una concesión, cambiar su alcance, ni crear, renombrar o borrar roles: conceder un permiso ya concedido con otro alcance lanza `ValueError`. El step-up MFA para permisos sensibles llega con MFA (E01-03). Las denegaciones no se auditan (OBS-F2-05A-4). Un rol que conserve una concesión de un código retirado del catálogo no se puede asignar ni quitar con estos servicios: falla cerrado, y retirar un permiso sigue necesitando su migración de datos (OBS-F2-04-4).
 - ✅ F2-25 (#108): `assign_role` y `remove_role` tienen ruta HTTP. `grant_permission` sigue sin API. Lo anterior describe el estado previo.
 - ✅ F2-29 (#116): `create_role` existe y tiene ruta HTTP. Renombrar y borrar roles, y revocar una concesión, siguen sin existir.
+- ✅ F2-31 (#120): `grant_permission` tiene ruta HTTP y cambia el alcance de una concesión (antes lanzaba `ValueError`).
 
 ### OBS-F2-25-1 — Asignar el rol Owner exige cubrirlo, no ser Owner
 `assign_role` deja asignar el rol Owner a quien cubra todas sus concesiones. Hoy solo lo cubre un Owner: el rol nace con todos los permisos sensibles y no existe revocar una concesión. Si un rol Owner perdiera sus permisos sensibles, quien tuviera `users.manage` y el resto de sus concesiones podría crear Owners, y estos delegar lo sensible. F2-25 (#108) lo hace alcanzable por HTTP sin cambiar la regla.
 - El work item que añada revocar concesiones (E01-08) debe exigir ser Owner para asignar el rol Owner, o impedir que el rol Owner pierda su último permiso sensible.
+- F2-31 (#120): las concesiones del rol Owner no se editan con `grant_permission` (ni conceder ni cambiar un alcance), sea quien sea el actor. Revocar deberá respetar la misma regla; con ella el rol Owner no pierde sus permisos sensibles por la API.
 
 ### OBS-F2-29-1 — Los códigos de los roles propios comparten espacio con los de plantilla
 El código de un rol propio sale de su nombre, y `clone_role_templates` inserta sin tomar el bloqueo de RBAC y salta los códigos que ya existen. Hoy no chocan: las plantillas se clonan solo al dar de alta la organización, antes de que nadie pueda crear roles. Si una fase posterior vuelve a clonar plantillas en organizaciones existentes (OBS-F2-04-1), un rol propio puede ocupar el código de una plantilla futura, y un alta simultánea puede acabar en un error de unicidad.

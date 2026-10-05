@@ -212,7 +212,12 @@ def create_role(ctx: TenantContext, *, name: str, description: str = "") -> Role
 
 
 def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str | None) -> None:
-    """Concede `code` a un rol. Repetir la misma concesión no hace nada; cambiarla es E01-08."""
+    """Deja el rol con `code` y ese alcance: lo concede, o cambia el alcance que tenía (F2-31).
+
+    Repetir la misma concesión no hace nada. Cambiar un alcance exige cubrir el que había y el
+    nuevo: reducirlo es retirar parte de una concesión, y retirar exige lo mismo que conceder
+    (como PO-1). Las concesiones del rol Owner no se editan, sea quien sea el actor.
+    """
     wanted = Scope(scope) if scope is not None else None
     if (wanted is not None) != definition(code).supports_scope:
         raise ValueError(f"{code}: el alcance no corresponde a este permiso")
@@ -220,18 +225,24 @@ def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str
         role = Role.objects.using(actor.alias).get(pk=role_id)
         if actor.holds(role):  # cambiar las concesiones de un rol propio es modificarse a uno mismo
             raise AccessDenied(Denied.SELF)
-        actor.must_cover([(code, wanted)])
-        grants = RolePermission.objects.using(actor.alias)
-        current = grants.filter(role=role, permission_id=code).values_list("scope", flat=True)
-        if current:
-            if current[0] != wanted:
-                raise ValueError(f"{code}: ya concedido con otro alcance")
+        if role.pk == actor.owner.pk:
+            raise AccessDenied(Denied.OWNER_ROLE)
+        grants = RolePermission.objects.using(actor.alias).filter(role=role, permission_id=code)
+        held = list(grants.values_list("scope", flat=True))
+        actor.must_cover([(code, wanted), *((code, old) for old in held)])
+        if held == [wanted]:
+            return
+        entity = Entity("role", role.pk, role.name)
+        if held:
+            grants.update(scope=wanted)
+            changes = {"permission": [code, code], "scope": [held[0], wanted]}
+            record(ctx, "role.permission_scope_changed", entity, changes)
             return
         grants.create(
             role=role, permission_id=code, supports_scope=wanted is not None, scope=wanted
         )
         changes = {"permission": [None, code], "scope": [None, wanted]}
-        record(ctx, "role.permission_granted", Entity("role", role.pk, role.name), changes)
+        record(ctx, "role.permission_granted", entity, changes)
 
 
 def assign_role(ctx: TenantContext, *, membership_id: UUID, role_id: UUID) -> None:

@@ -190,8 +190,6 @@ def test_grant_needs_the_permission_and_a_scope_not_wider(
         grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="TEAM")  # igual
         grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="TEAM")  # repetir: nada
         grant_permission(tenant, role_id=rbac.roles["seller"].pk, code=VIEW, scope="OWN")  # menor
-        with pytest.raises(ValueError, match="otro alcance"):
-            grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope="OWN")
         with pytest.raises(ValueError, match="no corresponde"):
             grant_permission(tenant, role_id=rbac.target.pk, code=VIEW, scope=None)
         with pytest.raises(UnknownPermission):
@@ -202,6 +200,33 @@ def test_grant_needs_the_permission_and_a_scope_not_wider(
     first: tuple[Any, ...] = ("role.permission_granted", "role", rbac.target.pk, changes, {})
     first += (rbac.luis.pk,)
     assert audit(migrator)[0] == first and audit(migrator)[1][3]["scope"] == [None, "OWN"]
+
+
+def test_a_scope_changes_only_for_who_covers_both_and_never_on_the_owner_role(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    target, owner = rbac.target.pk, rbac.roles["owner"].pk
+    wide = give(rbac.a, rbac.m_eva, {VIEW: "ORGANIZATION"}).pk  # luis lo tiene con TEAM
+    with acting(rbac.a, rbac.luis) as tenant:
+        grant_permission(tenant, role_id=target, code=VIEW, scope="TEAM")
+    before = state(migrator)
+    for role, scope in ((wide, "TEAM"), (wide, "OWN"), (target, "ORGANIZATION")):
+        kwargs = {"role_id": role, "code": VIEW, "scope": scope}  # no cubre el anterior, o el nuevo
+        assert denied(rbac.a, rbac.luis, grant_permission, **kwargs) is Denied.ESCALATION
+    for code, scope in ((VIEW, "TEAM"), (VIEW, "OWN")):  # lo cubre: decide que es el rol Owner
+        kwargs = {"role_id": owner, "code": code, "scope": scope}
+        assert denied(rbac.a, rbac.luis, grant_permission, **kwargs) is Denied.OWNER_ROLE
+    assert state(migrator) == before
+    with acting(rbac.a, rbac.luis) as tenant:
+        grant_permission(tenant, role_id=target, code=VIEW, scope="OWN")  # reduce: cubre los dos
+        grant_permission(tenant, role_id=target, code=VIEW, scope="OWN")  # repetir: nada
+        assert set(rbac.target.grants.values_list("permission_id", "scope")) == {(VIEW, "OWN")}
+        grant_permission(tenant, role_id=target, code=VIEW, scope="TEAM")  # y lo devuelve
+    assert state(migrator) == (before[0], before[1], before[2] + 2)  # la misma fila, otro alcance
+    changed = {"permission": [VIEW, VIEW], "scope": ["TEAM", "OWN"]}
+    row: tuple[Any, ...] = ("role.permission_scope_changed", "role", target, changed, {})
+    assert audit(migrator)[-2] == (*row, rbac.luis.pk)
+    assert audit(migrator)[-1][3]["scope"] == ["OWN", "TEAM"]
 
 
 def test_sensitive_permissions_only_by_an_owner_and_the_flag_alone_grants_nothing(
