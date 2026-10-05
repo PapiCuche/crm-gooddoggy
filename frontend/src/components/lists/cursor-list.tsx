@@ -9,8 +9,19 @@ import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import messages from "../../../messages/es-PE.json";
+
 type Page<Row> = { results: Row[]; next: string | null };
 export type CursorListHandle = { refetch: () => void; focusHeading: () => void };
+// Los textos que esta lista lee de su sección. Un espacio de mensajes al que le falte alguno
+// no es una sección válida: el fallo sale al compilar, no como una clave en pantalla.
+type ListText =
+  "eyebrow" | "title" | "intro" | "loading" | "denied" | "count" | "more" | "loadingMore";
+type Section = {
+  [Key in keyof typeof messages]: (typeof messages)[Key] extends Record<ListText, string>
+    ? Key
+    : never;
+}[keyof typeof messages];
 
 // Pantalla de un listado de tenant paginado por cursor (ADR-016): título, lista, «Cargar más» y
 // los estados de carga, error, sin permiso y sin sesión. La comparten las pantallas de gestión
@@ -26,7 +37,7 @@ export function CursorList<Row extends { id: string }>({
   children,
   ref,
 }: {
-  section: "members"; // el espacio de mensajes de la pantalla; cada lista nueva añade el suyo
+  section: Section;
   organization: string;
   listKey: QueryKey;
   fetchPage: (cursor: string | undefined, signal: AbortSignal) => Promise<Page<Row>>;
@@ -48,10 +59,12 @@ export function CursorList<Row extends { id: string }>({
   const fresh = useRef<HTMLLIElement>(null); // la primera fila de la última página cargada
   const moreButton = useRef<HTMLButtonElement>(null);
   const retryButton = useRef<HTMLButtonElement>(null);
-  useImperativeHandle(ref, () => ({
-    refetch: () => void list.refetch(),
-    focusHeading: () => heading.current?.focus(),
-  }));
+  const { refetch } = list;
+  useImperativeHandle(
+    ref,
+    () => ({ refetch: () => void refetch(), focusHeading: () => heading.current?.focus() }),
+    [refetch],
+  );
   // El foco solo se mueve si sigue donde el usuario pulsó (o en ninguna parte).
   const still = (control: HTMLElement | null) =>
     document.activeElement === document.body || document.activeElement === control;
