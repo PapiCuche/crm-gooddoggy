@@ -15,6 +15,6 @@ export interface Member {
   status: MembershipStatusEnum;
   joined_at: string;
   user: MemberUser;
-  /** Solo para mostrar: no autorizan nada. */
+  /** No autorizan nada. `id` nombra el rol en las rutas que lo asignan o quitan. */
   roles: MemberRole[];
 }

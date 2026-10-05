@@ -95,7 +95,10 @@ class MemberSerializer(serializers.Serializer[Any]):
     status = serializers.ChoiceField(choices=settings.MEMBERSHIP_STATUSES)
     joined_at = serializers.DateTimeField()
     user = MemberUserSerializer()
-    roles = MemberRoleSerializer(many=True, help_text="Solo para mostrar: no autorizan nada.")
+    roles = MemberRoleSerializer(
+        many=True,
+        help_text="No autorizan nada. `id` nombra el rol en las rutas que lo asignan o quitan.",
+    )
 
 
 @extend_schema_view(

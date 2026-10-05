@@ -540,7 +540,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MemberRole'
-          description: 'Solo para mostrar: no autorizan nada.'
+          description: No autorizan nada. `id` nombra el rol en las rutas que lo asignan
+            o quitan.
       required:
       - id
       - joined_at

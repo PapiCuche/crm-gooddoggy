@@ -366,7 +366,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Qué no incluye:** la marca de rol Owner (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
 - **Paginación:** por cursor, en orden de creación (ver «Listados»). Tres consultas por página, sean cuantos sean los roles: los roles, sus concesiones y sus miembros.
 - **Solo lectura.** Asignarlos a un miembro está en «Roles de un miembro»; crear o editar roles es otro work item (E01-08).
-- **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
+- **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre; el segundo, también el identificador). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
 
 ## Roles de un miembro (F2-25, ADR-003 §5)
 
