@@ -1,11 +1,11 @@
 """Servicios de `access`: roles plantilla y cambios de RBAC sin escalada (ADR-003 §5, F2-05C).
 
-Crear un rol, conceder un permiso a un rol, y asignar o quitar un rol a una membresía. Cada
-cambio corre en un savepoint que toma el bloqueo del rol Owner de la organización, relee los
-permisos del actor bajo ese bloqueo, comprueba todas las reglas, escribe y audita. Una
-denegación no escribe nada. `is_owner_role` solo identifica al rol Owner para tres
-restricciones (permisos sensibles, último Owner y que sus concesiones no se editan); por sí
-solo no concede nada.
+Crear un rol, conceder o retirar un permiso de un rol, y asignar o quitar un rol a una
+membresía. Cada cambio corre en un savepoint que toma el bloqueo del rol Owner de la
+organización, relee los permisos del actor bajo ese bloqueo, comprueba todas las reglas, escribe
+y audita. Una denegación no escribe nada. `is_owner_role` solo identifica al rol Owner para
+tres restricciones (permisos sensibles, último Owner y que sus concesiones no se editan); por
+sí solo no concede nada.
 
 `ensure_can_manage_member` aplica las mismas reglas al estado de una membresía, que escribe
 `organizations` (F2-19, ADR-017): comprueba y conserva el bloqueo; no escribe ni audita.
@@ -248,6 +248,26 @@ def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str
         )
         changes = {"permission": [None, code], "scope": [None, wanted]}
         record(ctx, "role.permission_granted", entity, changes)
+
+
+def revoke_permission(ctx: TenantContext, *, role_id: UUID, code: str) -> None:
+    """Retira `code` a un rol (F2-33). Exige lo mismo que concederlo (como PO-1): cubrir la
+    concesión con su alcance y, si es sensible, ser Owner. Las concesiones del rol Owner no se
+    editan. Si el rol no tiene esa concesión (también al repetir la llamada), `DoesNotExist`.
+    """
+    with _change(ctx, "roles.manage") as actor:
+        role = Role.objects.using(actor.alias).get(pk=role_id)
+        if actor.holds(role):  # PO-2: también al quitar
+            raise AccessDenied(Denied.SELF)
+        if role.pk == actor.owner.pk:
+            raise AccessDenied(Denied.OWNER_ROLE)
+        if "\x00" in code:  # PostgreSQL no admite NUL en un texto: esa concesión no existe
+            raise RolePermission.DoesNotExist
+        grant = RolePermission.objects.using(actor.alias).get(role=role, permission_id=code)
+        actor.must_cover([(code, grant.scope)])
+        grant.delete(using=actor.alias)
+        changes = {"permission": [code, None], "scope": [grant.scope, None]}
+        record(ctx, "role.permission_revoked", Entity("role", role.pk, role.name), changes)
 
 
 def assign_role(ctx: TenantContext, *, membership_id: UUID, role_id: UUID) -> None:
