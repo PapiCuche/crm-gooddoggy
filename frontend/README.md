@@ -148,12 +148,12 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 
 Encima de la lista, «Crear rol» abre un formulario con nombre y descripción y envía `POST /api/v1/o/{slug}/roles/` (F2-29). Componente: `components/roles/role-create.tsx`. El rol nace sin permisos.
 
-- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API. Es comodidad: la API decide, y un 403 se explica en el formulario.
+- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API y además ve la lista (`roles.view`): el formulario vive sobre ella. Es comodidad: la API decide, y un 403 se explica en el formulario.
 - **Abrir no envía nada.** El foco va al nombre. «Cancelar» cierra, descarta lo escrito y devuelve el foco a «Crear rol».
-- **Un envío:** la misma marca síncrona de las demás escrituras; Enter, un segundo clic o «Cancelar» mientras se envía no hacen nada. Sin red falla y se dice.
+- **Un envío:** la misma marca síncrona de las demás escrituras; Enter, un segundo clic, «Cancelar» o seguir escribiendo mientras se envía no hacen nada, y un Enter mantenido no repite la pulsación. Sin red falla y se dice.
 - **Lo que valida la pantalla:** que haya nombre, y las longitudes máximas de los campos. Lo demás lo decide la API: se envía lo escrito sin sus espacios exteriores y se anuncia el nombre que la API guardó.
-- **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El rol nuevo va al final: si hay «Cargar más», aparece al cargar la última página. El foco vuelve a «Crear rol».
-- **Errores, por `code`:** los del nombre (`ROLE_NAME_TAKEN`, o un 400 con el campo `name`) y los de la descripción se explican junto a su campo; un error del nombre lleva el foco al nombre. Sin permiso, `LAST_OWNER`, red o fallo del servidor, en el formulario. Lo escrito no se pierde, y al corregir el error se retira. Nunca se enseña el texto de la respuesta.
+- **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El rol nuevo va al final: si hay «Cargar más», aparece al cargar la última página. Un «Cargar más» que estuviera en vuelo se cancela y hay que pulsarlo otra vez. Si esa relectura falla, el aviso se queda y la lista no cambia; si la API niega la lista (403), la pantalla se cierra con su aviso de «sin permiso». El foco vuelve a «Crear rol».
+- **Errores, por `code`:** los del nombre (`ROLE_NAME_TAKEN`, o un 400 con el campo `name`) y los de la descripción se explican junto a su campo; un error del nombre lleva el foco al nombre. Sin permiso, `LAST_OWNER`, red o fallo del servidor, en el formulario. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío. Nunca se enseña el texto de la respuesta.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ## Seguridad del navegador (F2-07)

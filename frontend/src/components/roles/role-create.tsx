@@ -102,13 +102,20 @@ export function RoleCreate({ slug, listKey }: { slug: string; listKey: QueryKey 
   }
 
   // Al corregir, el error anterior ya no describe lo escrito.
+  // La marca, no `busy`: tras reintentar, la pantalla tarda una tarea en saber que se envía.
   function edited() {
+    if (sending.current) return;
     if (missing) setMissing(false);
-    if (create.isError && !busy) create.reset();
+    if (create.isError) create.reset();
   }
 
   return (
-    <div className="flex flex-col items-start gap-3">
+    <div
+      className="flex flex-col items-start gap-3"
+      // Enter mantenido repite la pulsación: tras crear reabriría el formulario (y borraría el
+      // aviso), y tras un error reenviaría sin parar.
+      onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
+    >
       {open ? (
         <form
           noValidate
@@ -175,7 +182,7 @@ export function RoleCreate({ slug, listKey }: { slug: string; listKey: QueryKey 
         </Button>
       )}
       {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}
-      <p role="status" className={done ? "text-sm" : "sr-only"}>
+      <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
         {done ? t("done", { name: done }) : ""}
       </p>
     </div>

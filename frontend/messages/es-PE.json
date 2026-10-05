@@ -163,7 +163,7 @@
       "nameInvalid": "Ese nombre no sirve. Usa texto legible, de hasta 100 caracteres.",
       "descriptionInvalid": "Esa descripción no sirve. Usa texto de hasta 255 caracteres, en una sola línea.",
       "denied": "No tienes permiso para crear roles.",
-      "done": "Rol «{name}» creado, sin permisos. Está al final de la lista."
+      "done": "Rol «{name}» creado, sin permisos. Va al final de la lista."
     },
     "scope": {
       "OWN": "Lo propio",

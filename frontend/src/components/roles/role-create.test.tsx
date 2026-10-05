@@ -1,6 +1,7 @@
 import { onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Providers } from "@/app/providers";
@@ -93,6 +94,7 @@ describe("RoleCreate", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(trigger()).toHaveFocus();
+    await tick(); // una petición sale unas microtareas después de la pulsación
     expect(calls(api, "POST")).toHaveLength(0);
     fireEvent.click(trigger()); // al reabrir, vacío: lo cancelado no se arrastra
     expect(field(screen.getByRole("form"), "Nombre")).toHaveValue("");
@@ -260,5 +262,213 @@ describe("RoleCreate", () => {
     expect(assign).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Creando…" })).toBeInTheDocument();
+  });
+});
+
+// Revisión de F2-35: lo que la primera tanda de tests no fijaba.
+describe("RoleCreate: marca de envío, foco y avisos", () => {
+  const twice = () => {
+    let sent = 0;
+    return () =>
+      ++sent === 1
+        ? { status: 500, body: { code: "INTERNAL_ERROR" } }
+        : { status: 201, body: role(`r${sent}`, `Caja ${sent}`) };
+  };
+
+  it("reintentar y escribir antes de que la pantalla diga «Creando…» no suelta la marca", async () => {
+    const api = mockApi({ [LIST]: list(), [CREATE]: twice() });
+    renderApp(ui());
+    const form = await opened();
+    fill(form, "Caja");
+    send(form);
+    await within(form).findByRole("alert");
+    const release = hold(api);
+    send(form); // el mismo botón reintenta…
+    fireEvent.input(field(form, "Nombre"), { target: { value: "Cajas" } }); // …y se sigue escribiendo
+    await tick();
+    expect(form).toHaveAttribute("aria-busy", "true");
+    fireEvent.submit(form);
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    await tick();
+    expect(screen.getByRole("form")).toBe(form); // ni se cierra con la escritura en vuelo
+    expect(calls(api, "POST")).toHaveLength(2); // el 500 y un solo reintento
+    release();
+    await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
+    expect(calls(api, "POST")).toHaveLength(2);
+  });
+
+  it("sin sesión, escribir no desocupa el formulario", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [CREATE]: { status: 401, body: { code: "NOT_AUTHENTICATED" } },
+    });
+    renderApp(ui());
+    const form = await opened();
+    fill(form, "Caja");
+    send(form);
+    await tick();
+    fill(form, "Cajas", "otra");
+    await tick();
+    fireEvent.submit(form);
+    await tick();
+    expect(form).toHaveAttribute("aria-busy", "true");
+    expect(calls(api, "POST")).toHaveLength(1);
+  });
+
+  it.each([
+    ["un error", { status: 500, body: { code: "INTERNAL_ERROR" } }],
+    ["el alta", { status: 201, body: role("r2", "Caja") }],
+  ])("una pulsación entre la respuesta (%s) y el render no reenvía", async (_, reply) => {
+    const api = mockApi({ [LIST]: list(), [CREATE]: reply });
+    renderApp(ui());
+    const form = await opened();
+    fill(form, "Caja");
+    const release = hold(api);
+    send(form);
+    await tick();
+    await act(async () => {
+      release();
+      for (let turn = 0; turn < 100; turn++) await null; // llega la respuesta; aún no hay render
+      fireEvent.submit(form);
+    });
+    await tick();
+    expect(calls(api, "POST")).toHaveLength(1);
+  });
+
+  it("un render ajeno justo antes de pulsar no deja la marca a merced de un efecto pasivo", async () => {
+    const api = mockApi({ [LIST]: list(), [CREATE]: { status: 201, body: role("r2", "Caja") } });
+    let again = () => {};
+    // Cada render da un contexto nuevo: `RolesList` y el formulario se vuelven a pintar.
+    function Shell() {
+      const [turn, setTurn] = useState(0);
+      again = () => setTurn(turn + 1);
+      return <div data-turn={turn}>{ui(tenant("roles.view", "roles.manage"))}</div>;
+    }
+    renderApp(<Shell />);
+    const form = await opened();
+    fill(form, "Caja");
+    hold(api); // la escritura no llega a responder
+    const submit = within(form).getByRole("button", { name: "Crear" });
+    const watch = new MutationObserver(() => submit.click()); // pulsa tras ese render
+    watch.observe(form.closest("[data-turn]")!, { attributes: true });
+    setTimeout(again); // fuera de un evento: sus efectos pasivos llegan después
+    await waitFor(() => expect(calls(api, "POST")).toHaveLength(1));
+    watch.disconnect();
+    await tick();
+    fireEvent.click(submit); // otra pulsación con la escritura en vuelo
+    await tick();
+    expect(calls(api, "POST")).toHaveLength(1);
+  });
+
+  it("el foco no se mueve solo, ni cuando el usuario ya está en otra parte", async () => {
+    let reply: { status: number; body: unknown } = { status: 201, body: role("r2", "Nuevo") };
+    const api = mockApi({ [LIST]: list(role("r1", "Caja")), [CREATE]: () => reply });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Roles" });
+    expect(document.body).toHaveFocus(); // al montar, «Crear rol» no toma el foco
+    let form = await opened();
+    fill(form, "Nuevo");
+    let release = hold(api);
+    send(form);
+    await tick();
+    const heading = screen.getByRole("heading", { level: 1 });
+    heading.focus(); // el usuario se fue al título mientras se enviaba
+    release();
+    await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
+    await tick();
+    expect(heading).toHaveFocus();
+
+    reply = { status: 409, body: { code: "ROLE_NAME_TAKEN" } };
+    form = await opened();
+    fill(form, "Nuevo");
+    release = hold(api);
+    send(form);
+    await tick();
+    const cancel = within(form).getByRole("button", { name: "Cancelar" });
+    cancel.focus(); // ya no está en el botón pulsado
+    release();
+    await within(form).findByRole("alert");
+    await tick();
+    expect(cancel).toHaveFocus();
+    cancel.blur(); // en ninguna parte: el mismo error, otra vez, lleva el foco al nombre
+    expect(document.body).toHaveFocus();
+    release = hold(api);
+    fireEvent.submit(form);
+    await tick();
+    release();
+    await waitFor(() => expect(field(form, "Nombre")).toHaveFocus());
+  });
+
+  it("al reabrir no queda el error anterior, y cada campo retira su error al corregirlo", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [CREATE]: {
+        status: 400,
+        body: { code: "VALIDATION_ERROR", fields: { description: [{ code: "invalid" }] } },
+      },
+    });
+    renderApp(ui());
+    let form = await opened();
+    fill(form, "Caja", "x");
+    send(form);
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Esa descripción no sirve");
+    fireEvent.input(field(form, "Descripción (opcional)"), { target: { value: "y" } });
+    await waitFor(() => expect(within(form).queryByRole("alert")).not.toBeInTheDocument());
+    send(form);
+    await within(form).findByRole("alert");
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    form = await opened();
+    await tick();
+    expect(within(form).queryByRole("alert")).not.toBeInTheDocument();
+    const submit = within(form).getByRole("button", { name: "Crear" });
+    send(form); // sin nombre
+    expect(within(form).getByRole("alert")).toHaveTextContent("Escribe un nombre");
+    submit.focus();
+    send(form); // otra vez sin nombre, desde el botón: el foco vuelve al campo
+    expect(field(form, "Nombre")).toHaveFocus();
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    form = await opened();
+    expect(within(form).queryByRole("alert")).not.toBeInTheDocument();
+    expect(calls(api, "POST")).toHaveLength(2);
+  });
+
+  it("el aviso existe antes de tener texto, se ve, y dice el nombre que guardó la API", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [CREATE]: { status: 201, body: role("r2", "Ventas Norte") },
+    });
+    renderApp(ui());
+    const form = await opened();
+    const notice = form.parentElement!.querySelector('[role="status"]')!;
+    expect(notice).toBeEmptyDOMElement();
+    expect(notice).toHaveClass("sr-only");
+    fill(form, "ventas   norte");
+    const release = hold(api);
+    send(form);
+    await tick();
+    expect(within(form).getByRole("button", { name: "Cancelar" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    release();
+    await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
+    expect(notice).toBeInTheDocument(); // el mismo nodo: una región viva que cambia, no una nueva
+    expect(notice.textContent).toBe(
+      "Rol «Ventas Norte» creado, sin permisos. Va al final de la lista.",
+    );
+    expect(notice).not.toHaveClass("sr-only");
+    expect(calls(api, "POST")).toHaveLength(1);
+  });
+
+  it("Enter mantenido no vuelve a pulsar: ni reabre el formulario ni reenvía", async () => {
+    mockApi({ [LIST]: list() });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Roles" });
+    expect(fireEvent.keyDown(trigger(), { key: "Enter", repeat: true })).toBe(false);
+    expect(fireEvent.keyDown(trigger(), { key: "Enter" })).toBe(true);
+    const form = await opened();
+    expect(fireEvent.keyDown(field(form, "Nombre"), { key: "Enter", repeat: true })).toBe(false);
+    expect(fireEvent.keyDown(field(form, "Nombre"), { key: "a", repeat: true })).toBe(true);
+    expect(fireEvent.keyDown(field(form, "Nombre"), { key: "Tab", repeat: true })).toBe(true);
   });
 });
