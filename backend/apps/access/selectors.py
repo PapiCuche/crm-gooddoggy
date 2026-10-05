@@ -16,8 +16,9 @@ from typing import Any
 from uuid import UUID
 
 from django.apps import apps
+from django.contrib.postgres.expressions import ArraySubquery
 from django.core.exceptions import PermissionDenied
-from django.db.models import F, Model, QuerySet
+from django.db.models import F, Model, OuterRef, QuerySet
 
 from apps.access.catalog import BY_CODE, PermissionDef, Scope
 from apps.access.models import Role, RolePermission
@@ -58,7 +59,7 @@ class ExecutionContext:
     scope: object  # transacción en la que se leyó: la foto no sirve en un scope posterior
     membership_id: UUID
     permissions: Mapping[str, frozenset[Scope | None]]  # {None} si el permiso no admite alcance
-    team_ids: frozenset[UUID] = frozenset()  # E01-09
+    team_ids: frozenset[UUID] = frozenset()  # los equipos de la membresía (F2-52)
     branch_ids: frozenset[UUID] = frozenset()  # E01-09
 
 
@@ -75,10 +76,15 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
     if ctx.actor_type != ActorType.USER or ctx.user_id is None:
         raise AccessDenied(Denied.MEMBERSHIP)
     memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
+    # Los equipos van en la misma consulta que la membresía: cuentan todos aquellos a los que
+    # pertenece, también si el equipo o la pertenencia están inactivos.
+    belongs = apps.get_model("organizations", "TeamMember")._default_manager.using(alias)
+    teams = ArraySubquery(belongs.filter(membership_id=OuterRef("pk")).values("team_id"))
     row = (
         memberships.using(alias)
         .filter(user_id=ctx.user_id)
-        .values_list("pk", "status", "user__is_active")
+        .annotate(teams=teams)
+        .values_list("pk", "status", "user__is_active", "teams")
         .first()
     )
     if row is None or row[1] != ACTIVE or not row[2]:
@@ -90,7 +96,9 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
         if known is not None and (scope is not None) == known.supports_scope:
             effective.setdefault(code, set()).add(Scope(scope) if scope else None)
     frozen = {code: frozenset(scopes) for code, scopes in effective.items()}
-    return ExecutionContext(ctx, scope_token(ctx), row[0], MappingProxyType(frozen))
+    return ExecutionContext(
+        ctx, scope_token(ctx), row[0], MappingProxyType(frozen), team_ids=frozenset(row[3])
+    )
 
 
 def bound(ectx: ExecutionContext) -> None:

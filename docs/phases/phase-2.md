@@ -72,6 +72,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-49 | [#156](https://github.com/PapiCuche/crm-gooddoggy/issues/156) Edit a branch from the branches screen | `feature/f2-branch-edit-ui` | #148, #154 | frontend |
 | F2-50 | [#158](https://github.com/PapiCuche/crm-gooddoggy/issues/158) Teams: table and directory by API | `feature/f2-teams-directory` | #144 | backend |
 | F2-51 | [#160](https://github.com/PapiCuche/crm-gooddoggy/issues/160) Deactivate and reactivate a branch from the branches screen | `feature/f2-branch-status-ui` | #148, #156 | frontend |
+| F2-52 | [#162](https://github.com/PapiCuche/crm-gooddoggy/issues/162) Team members: table and own teams in the authorization engine | `feature/f2-team-members-model` | #158 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -195,7 +196,7 @@ Lo que `teams` no lleva todavía:
 - `business_hours_schedule_id`: no existen los horarios (E01-10).
 - `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado; un equipo se desactivará con `is_active`.
 - Las escrituras por API y el permiso `teams.manage`. La matriz de 03 §H da a «Supervisor» la gestión de sus propios equipos: `teams.manage` necesita alcance (`TEAM`), y eso exige decidir antes dónde vive su administración, porque `organizations` no importa `access` (ADR-017). Va en el siguiente work item, con su decisión escrita.
-- Los integrantes (`team_members`) y `ExecutionContext.team_ids` (OBS-F2-05A-2): el alcance `TEAM` sigue equivaliendo a `OWN`.
+- ✅ F2-52 (#162): los integrantes (`team_members`) y `ExecutionContext.team_ids`. Decisiones de ese work item, a confirmar: para el alcance `TEAM` cuentan todos los equipos a los que pertenece la membresía, también los inactivos y con cualquier `team_role`; `last_assigned_at` y `skills` (modelo de datos §E.2) no se crean hasta que exista la asignación automática (Inbox, Fase 6); un equipo con integrantes no se borra, ni con el ORM (`PROTECT`) ni con SQL directo (la FK no borra en cascada): antes hay que quitarlos; lo mismo una membresía con equipos.
 
 ### OBS-F2-44-1 — Escrituras de sucursales: reglas que decidió el programa
 F2-44 (#146) añade `POST …/branches/` y F2-45 (#148), `PATCH …/branches/{id}/`, con las mismas reglas. Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
@@ -417,8 +418,8 @@ La auditoría rechaza un decorador alrededor de `as_view()` (uno que responda an
 ### OBS-F2-05A-1 — Los permisos son una foto por petición
 `execution_context` lee la membresía y sus concesiones una vez, dentro del `tenant_scope` de la petición. Revocar un rol surte efecto en la siguiente petición, no a mitad de una (coherente con ADR-003 §5). Sin caché. La foto queda ligada a su transacción: usarla en un `tenant_scope` posterior falla con `TenantContextError`, aunque el contexto sea igual. En DRF (F2-05B) la foto se guarda en la petición HTTP, así que la comparten todos los envoltorios `Request` que DRF crea para ella (por ejemplo al describir la vista en un OPTIONS).
 
-### OBS-F2-05A-2 — TEAM y BRANCH equivalen a OWN hasta E01-09
-La tabla de equipos (F2-50) aún no tiene integrantes (OBS-F2-50-1), y la de sucursales (F2-43) aún no se enlaza a las membresías (OBS-F2-43-2). `ExecutionContext.team_ids` y `branch_ids` están vacíos, así que esos alcances nunca dan más que OWN. E01-09 debe rellenarlos en `execution_context` sin añadir una consulta por rol.
+### OBS-F2-05A-2 — BRANCH equivale a OWN hasta que la membresía tenga sucursal
+✅ `TEAM`, resuelto en F2-52 (#162): `execution_context` rellena `ExecutionContext.team_ids` con los equipos de la membresía (`team_members`), en la misma consulta que la membresía y sin una consulta por rol. Queda `BRANCH`: la tabla de sucursales (F2-43) aún no se enlaza a las membresías (OBS-F2-43-2), `branch_ids` está vacío y ese alcance nunca da más que OWN.
 
 ### OBS-F2-05A-3 — La transacción de la petición se confirma aunque la vista falle
 ✅ Resuelta en F2-12 (#59): `TenantResolutionMiddleware` deshace la transacción de la petición cuando la respuesta es 400 o superior. Un servicio sigue comprobando antes de escribir, pero un error ya no deja escrituras a medias. Lo que sigue describe el estado anterior.
