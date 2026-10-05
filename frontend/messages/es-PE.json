@@ -136,7 +136,8 @@
       "loading": "Cargando roles…",
       "retry": "Reintentar",
       "empty": "Esta organización no tiene roles.",
-      "denied": "No tienes permiso para asignar ni quitar este rol a este miembro."
+      "denied": "No tienes permiso para asignar ni quitar este rol a este miembro.",
+      "stale": "Los roles de {name} o de la organización ya habían cambiado. Revisa la lista."
     }
   },
   "roles": {

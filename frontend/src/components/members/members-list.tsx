@@ -30,8 +30,8 @@ export function MembersList() {
   // Una acción respondió que la pantalla ya no refleja a la API (F2-21). El aviso vive aquí:
   // la acción, o su fila entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
-  function stale(name: string, here: boolean) {
-    setNotice(t("members.action.stale", { name }));
+  function stale(text: string, here: boolean) {
+    setNotice(text);
     list.current?.refetch();
     if (here) list.current?.focusHeading();
   }

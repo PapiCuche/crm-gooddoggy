@@ -32,7 +32,7 @@ export function MemberStatusAction({
   organization: string;
   listKey: QueryKey;
   onAsk: () => void; // se abre una confirmación: el aviso anterior de la lista ya no aplica
-  onStale: (name: string, here: boolean) => void; // `here`: el foco seguía en esta acción
+  onStale: (notice: string, here: boolean) => void; // `here`: el foco seguía en esta acción
 }) {
   const t = useTranslations("members.action");
   const errors = useTranslations("errors.api");
@@ -83,7 +83,7 @@ export function MemberStatusAction({
       onError: (error) => {
         if (!STALE.has(error.code)) return;
         const active = document.activeElement;
-        onStale(name, active === document.body || !!root.current?.contains(active));
+        onStale(t("stale", { name }), active === document.body || !!root.current?.contains(active));
         setTarget(null);
       },
       // Sin sesión sigue ocupado hasta que cambia la página.
