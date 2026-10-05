@@ -124,12 +124,14 @@ Cada fila ofrece «Suspender» (miembro activo) o «Reactivar» (miembro suspend
 Cada fila ofrece «Roles», que abre un panel con los roles de la organización: «Asignar» los que el miembro no tiene y «Quitar» los que tiene, con `PUT` y `DELETE /api/v1/o/{slug}/members/{id}/roles/{role_id}/` (F2-25). Componente: `components/members/member-roles-action.tsx`.
 
 - **A quién se ofrece:** a quien tiene `users.manage` y `roles.view` según el contexto de la API (el panel necesita ver los roles). Nunca en la fila propia; el estado del miembro no importa. Es comodidad: las reglas contra la escalada las aplica la API (ADR-003 §5) y un 403 se explica en el panel.
-- **Dos pasos:** abrir el panel y pulsar el botón del rol. Abrir no envía nada, y los roles de la organización se piden entonces (todas sus páginas), no antes. Al abrir, el foco va a «Cerrar».
+- **Dos pasos:** abrir el panel y pulsar el botón del rol. Abrir no envía nada. Conceder un rol no pide otra confirmación, tampoco el de Owner: nada en la pantalla decide por el nombre o el código de un rol, y las reglas las aplica la API. Al abrir, el foco va a «Cerrar».
+- **Roles del panel:** los de la organización, todas sus páginas, pedidos al abrir y vueltos a pedir en cada apertura. Si la petición falla, «Reintentar» no se desmonta mientras reintenta y, al llegar los roles, el foco pasa a «Cerrar». Un cursor que no avanza se trata como un error, no como una lista sin fin.
 - **Lo que hace cada botón queda fijado al abrir.** Los roles que el miembro tiene se anotan al abrir el panel y solo cambian con las respuestas propias: si la lista cambia debajo, ningún botón pasa de «Asignar» a «Quitar» por sí solo.
-- **Un cambio cada vez**, enviado una sola vez; mientras tanto todos los botones del panel quedan ocupados (`aria-disabled`) y solo el pulsado lo dice. Sin red falla y se dice.
-- **Éxito:** como al suspender, se cancela la lectura de la lista que estuviera en vuelo y los roles de la fila cambian en la lista ya cargada, en el orden del directorio (por nombre). El botón pulsado pasa a la acción contraria y conserva el foco. El resultado se anuncia (`role="status"`).
+- **Un cambio cada vez**, enviado una sola vez. La marca que lo impide se suelta cuando la pantalla ya enseña el resultado, no al llegar la respuesta. Mientras tanto todos los botones del panel quedan ocupados (`aria-disabled`) y solo el pulsado lo dice (`aria-busy`). Sin red falla y se dice.
+- **Una pulsación de más no deshace:** al terminar, el botón pulsado pasa a la acción contraria y conserva el foco; el segundo clic de un doble clic y una tecla mantenida se ignoran.
+- **Éxito:** como al suspender, se cancela la lectura de la lista que estuviera en vuelo y los roles de la fila cambian en la lista ya cargada, por nombre y, a igualdad, por código. Ese orden es una aproximación al del directorio (la intercalación de la base); la siguiente lectura trae el exacto. El resultado se anuncia (`role="status"`).
 - **Errores que conservan el panel** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en el panel y el mismo botón reintenta.
-- **Pantalla desfasada** (404: el miembro o el rol ya no existen, o ya no tiene ese rol): el panel se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista, como al suspender.
+- **Pantalla desfasada** (404: el miembro o el rol ya no existen, o ya no tiene ese rol): el panel se cierra, la lista y los roles se vuelven a pedir y lo explica el aviso de la lista, con su propio texto («Los roles de … ya habían cambiado»).
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ## Roles (F2-23)

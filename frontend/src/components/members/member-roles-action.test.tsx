@@ -150,6 +150,9 @@ describe("MemberRolesAction", () => {
     expect(calls(api, "DELETE")).toEqual(["/api/v1/o/acme/members/luis/roles/sales/"]);
     expect(calls(api, "GET").filter((url) => url.includes("/members/"))).toHaveLength(1);
     expect(shown("eva@acme.pe")).toEqual(["Sin rol"]); // solo cambia la fila de la respuesta
+    fireEvent.click(within(group).getByRole("button", { name: "Cerrar" }));
+    const again = await panel(); // la fila guardó el rol con su id: al reabrir se ofrece quitarlo
+    expect(within(again).getByRole("button", { name: "Quitar Caja a luis@acme.pe" })).toBeVisible();
   });
 
   it.each([
