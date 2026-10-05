@@ -20,6 +20,7 @@ from django.apps import apps
 from django.db import transaction
 from django.utils.text import slugify
 
+from apps.access import names
 from apps.access.catalog import BY_CODE, ROLE_TEMPLATES, Scope
 from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.selectors import (
@@ -162,13 +163,24 @@ DESCRIPTION_MAX = Role._meta.get_field("description").max_length or 0
 
 
 class RoleNameTaken(Exception):
-    """Ya hay en la organización un rol con ese nombre (sin distinguir mayúsculas)."""
+    """Ya hay en la organización un rol cuyo nombre se lee igual (`names.key`)."""
+
+
+def role_name(name: str) -> str:
+    """El nombre tal como se guarda, o `ValueError` si no sirve. Lo usa también la API, para
+    responder 400 con el mismo criterio."""
+    printable = name.strip().isprintable()  # antes de limpiar: un salto de línea no es un espacio
+    name = names.clean(name)
+    if not (name and printable and len(name) <= NAME_MAX and names.legible(name)):
+        raise ValueError(f"nombre obligatorio, legible e imprimible, hasta {NAME_MAX} caracteres")
+    return name
 
 
 def _free_code(roles: Any, name: str) -> str:
     """Código para un rol nuevo: del nombre, con un sufijo si ya está tomado. Lo genera el
-    servidor; se llama bajo el bloqueo de RBAC, que serializa las altas de la organización."""
-    base = slugify(name)[:40] or "rol"
+    servidor; se llama bajo el bloqueo de RBAC, que serializa las altas de la organización.
+    El corte a 40 deja sitio al sufijo dentro de los 50 de la columna."""
+    base = slugify(name)[:40].strip("-_") or "rol"
     taken = set(roles.filter(code__startswith=base).values_list("code", flat=True))
     return next(
         c for n in range(1, len(taken) + 2) if (c := base if n == 1 else f"{base}-{n}") not in taken
@@ -178,21 +190,23 @@ def _free_code(roles: Any, name: str) -> str:
 def create_role(ctx: TenantContext, *, name: str, description: str = "") -> Role:
     """Crea un rol propio de la organización, vacío: sin concesiones y sin miembros (F2-29).
 
-    Exige `roles.manage`. El nombre es obligatorio y único en la organización sin distinguir
-    mayúsculas (`RoleNameTaken`). Un rol vacío no concede nada: no hay nada que cubrir.
+    Exige `roles.manage`. El nombre es obligatorio y no puede leerse igual que el de otro rol
+    de la organización (`RoleNameTaken`). Un rol vacío no concede nada: no hay nada que cubrir.
     """
-    name, description = name.strip(), description.strip()
-    if not name or len(name) > NAME_MAX or not name.isprintable():
-        raise ValueError(f"nombre obligatorio, imprimible y de hasta {NAME_MAX} caracteres")
+    name, description = role_name(name), description.strip()
     if len(description) > DESCRIPTION_MAX or not description.isprintable():
         raise ValueError(f"descripción imprimible y de hasta {DESCRIPTION_MAX} caracteres")
     with _change(ctx, "roles.manage") as actor:
         roles = Role.objects.using(actor.alias)
-        if roles.filter(name__iexact=name).exists():
+        wanted = names.key(name)
+        if any(names.key(other) == wanted for other in roles.values_list("name", flat=True)):
             raise RoleNameTaken(name)
         role = Role(code=_free_code(roles, name), name=name, description=description)
         role.save(using=actor.alias)
-        record(ctx, "role.created", Entity("role", role.pk, role.name), {"name": [None, name]})
+        changes = {"name": [None, name], "description": [None, description]}
+        record(
+            ctx, "role.created", Entity("role", role.pk, role.name), changes, {"role": role.code}
+        )
         return role
 
 

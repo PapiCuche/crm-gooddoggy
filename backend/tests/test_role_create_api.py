@@ -53,34 +53,54 @@ def test_it_creates_an_empty_role_that_can_be_listed_and_assigned(
     )
     assert (role.organization_id, role.is_system, role.is_owner_role) == (rbac.a, False, False)
     assert state(migrator) == (before[0], before[1], before[2] + 1)  # ni concesiones ni miembros
+    created = {"name": [None, "Caja y Cobros"], "description": [None, "Cobra en tienda"]}
     assert audit(migrator)[-1] == (
-        "role.created", "role", role.pk, {"name": [None, "Caja y Cobros"]}, {}, rbac.ana.pk
+        "role.created", "role", role.pk, created, {"role": "caja-y-cobros"}, rbac.ana.pk
     )  # fmt: skip
+    label = "SELECT entity_label FROM audit_logs WHERE action = 'role.created'"
+    assert migrator.execute(label).fetchall() == [("Caja y Cobros",)]
     listed = ana.get(URL.format("org-a")).json()["results"]
     assert listed[-1] == made.json()  # en el directorio, al final: por orden de creación
     link = f"/api/v1/o/org-a/members/{rbac.m_eva}/roles/{role.pk}/"
     assert ana.put(link, headers={"X-CSRFToken": "t" * 32}).status_code == 204  # y se asigna
     assert create(ana, {"name": "Sin descripción"}).json()["description"] == ""
+    assert create(ana, {"name": "Dos   espacios"}).json()["name"] == "Dos espacios"  # como se lee
     assert create(ana, {"name": "Otra", "code": "x", "is_system": True}).json()["code"] == "otra"
 
 
 def test_the_name_is_unique_in_the_organization_and_the_code_never_collides(rbac: Any) -> None:
     ana = signed(rbac.ana)
     assert create(ana, {"name": "Ventas Norte"}).status_code == 201
-    for taken in ("Ventas Norte", "ventas norte", " VENTAS NORTE ", "Owner", "vendedor"):
-        again = create(ana, {"name": taken})  # también los de plantilla, sin distinguir mayúsculas
+    same = (
+        "Ventas Norte", "ventas norte", " VENTAS NORTE ", "Ventas   Norte",  # mayúsculas y espacios
+        "Owner", "vendedor",  # también los de plantilla
+        "Owner\ufe0f", "Own\u034fer", "Owner\u3164", "Ｏｗｎｅｒ",  # no se ve, o es otra anchura
+    )  # fmt: skip
+    assert create(ana, {"name": "Café"}).status_code == 201  # NFC…
+    for taken in (*same, "Cafe\u0301"):  # …y NFD: la misma palabra
+        again = create(ana, {"name": taken})
         assert (again.status_code, again.json()["code"]) == (409, "ROLE_NAME_TAKEN"), taken
         assert set(again.json()) == {"code", "message"}
     codes = [
         create(ana, {"name": name}).json()["code"] for name in ("Ventas-Norte", "ventas_norte")
     ]
     assert codes == ["ventas-norte-2", "ventas_norte"]  # otro nombre, mismo código de partida
+    for free in ("Ventas", "Norte", "Ventas Norte 2"):  # contenido en otro, o que lo contiene
+        assert create(ana, {"name": free}).status_code == 201, free
+    long = [create(ana, {"name": "c" * 99 + last}).json()["code"] for last in "xyz"]
+    assert long == ["c" * 40, "c" * 40 + "-2", "c" * 40 + "-3"]  # 40 más el sufijo caben en 50
+    assert create(ana, {"name": "b" * 39 + " d"}).json()["code"] == "b" * 39  # sin guion final
+    made = create(ana, {"name": "Larga", "description": "d" * 255})
+    assert (made.status_code, len(made.json()["description"])) == (201, 255)
     assert create(ana, {"name": "¡¿?!"}).json()["code"] == "rol"  # un nombre sin letras ni dígitos
     assert create(ana, {"name": "é" * 100}).status_code == 201  # el máximo: el código se recorta
     carla = make_user(email="carla@example.com")
-    with tenant_scope(ctx(rbac.b)):
-        Role.objects.create(code="owner", name="Owner", is_owner_role=True)
     give(rbac.b, join(rbac.b, carla).pk, {"roles.manage": None})
+    stuck = create(signed(carla), {"name": "Sin Owner"}, org="org-b")  # sin rol Owner: nada cambia
+    assert (stuck.status_code, stuck.json()["code"]) == (409, "LAST_OWNER")
+    with tenant_scope(ctx(rbac.b)):
+        assert not Role.objects.filter(name="Sin Owner").exists()
+        Role.objects.create(code="owner", name="Owner", is_owner_role=True)
     there = create(signed(carla), {"name": "Ventas Norte"}, org="org-b")  # otra organización
     assert (there.status_code, there.json()["code"]) == (201, "ventas-norte")
 
@@ -131,6 +151,11 @@ def test_without_session_permission_or_a_valid_body_it_creates_nothing(
         ({"name": "a" * 101}, "name"),
         ({"name": "dos\nlíneas"}, "name"),
         ({"name": "nulo\x00"}, "name"),
+        ({"name": "\u3164"}, "name"),  # no se ve nada
+        ({"name": "\u0301"}, "name"),  # solo una marca
+        ({"name": "\u2800\ufe0f"}, "name"),
+        ({"name": "sin\u200bjuntura"}, "name"),
+        ({"name": "a\u0001b", "description": "c\u0002d"}, "name"),
         ({"name": ["lista"]}, "name"),
         ({"name": "X", "description": "d" * 256}, "description"),
         ({"name": "X", "description": "con\ttabulador"}, "description"),
@@ -138,7 +163,7 @@ def test_without_session_permission_or_a_valid_body_it_creates_nothing(
     for body, field in bad:
         answer = create(ana, body)
         assert (answer.status_code, answer.json()["code"]) == (400, "VALIDATION_ERROR"), body
-        assert list(answer.json()["fields"]) == [field], body
+        assert list(answer.json()["fields"])[0] == field, body
     with tenant_scope(ctx(rbac.a)):
         assert Role.objects.count() == roles
     assert state(migrator) == before
@@ -150,9 +175,12 @@ def test_the_service_checks_the_same_and_needs_the_active_scope(rbac: Any) -> No
     with acting(rbac.a, rbac.eva) as tenant, pytest.raises(AccessDenied) as denied:
         create_role(tenant, name="Sin permiso")
     assert denied.value.reason is Denied.PERMISSION
-    for name, description in (("", ""), ("a" * 101, ""), ("dos\nlíneas", ""), ("X", "d" * 256)):
+    refused = (("", ""), ("a" * 101, ""), ("dos\nlíneas", ""), ("\u3164", ""), ("X", "d" * 256))
+    for name, description in (*refused, ("X", "a\tb")):
         with acting(rbac.a, rbac.ana) as tenant, pytest.raises(ValueError, match="imprimible"):
             create_role(tenant, name=name, description=description)
+    with acting(rbac.a, rbac.ana) as tenant:
+        assert create_role(tenant, name="Con texto", description="  x  ").description == "x"
     with acting(rbac.a, rbac.ana) as tenant:
         role = create_role(tenant, name="  Desde el servicio  ")
         assert (role.name, role.code, role.description) == (

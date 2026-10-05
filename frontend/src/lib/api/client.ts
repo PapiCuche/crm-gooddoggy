@@ -1228,7 +1228,7 @@ export const getRolesCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea un rol propio, vacío: sin permisos y sin miembros. El código lo genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay un rol con ese nombre en la organización (sin distinguir mayúsculas). 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+ * Crea un rol propio, vacío: sin permisos y sin miembros. El código lo genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay en la organización un rol cuyo nombre se lee igual (mayúsculas, espacios repetidos, formas Unicode). 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
  */
 export const rolesCreate = async (
   orgSlug: string,

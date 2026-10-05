@@ -26,6 +26,7 @@ from apps.access.services import (
     assign_role,
     create_role,
     remove_role,
+    role_name,
 )
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -171,11 +172,16 @@ class RoleCreateSerializer(serializers.Serializer[Any]):
         max_length=DESCRIPTION_MAX, required=False, allow_blank=True
     )
 
-    def validate(self, values: dict[str, str]) -> dict[str, str]:
-        for field, value in values.items():
-            if not value.isprintable():  # saltos de línea, nulos, controles
-                raise serializers.ValidationError({field: "Solo texto imprimible."})
-        return values
+    def validate_name(self, value: str) -> str:
+        try:
+            return role_name(value)  # el mismo criterio que el servicio, como un 400
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from None
+
+    def validate_description(self, value: str) -> str:
+        if not value.isprintable():  # saltos de línea, nulos, controles
+            raise serializers.ValidationError("Solo texto imprimible.")
+        return value
 
 
 @extend_schema_view(
@@ -190,9 +196,9 @@ class RoleCreateSerializer(serializers.Serializer[Any]):
         request=RoleCreateSerializer,
         responses={201: RoleSerializer, **errors(400, 401, 403, 404, 409)},
         description="Crea un rol propio, vacío: sin permisos y sin miembros. El código lo "
-        "genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay un rol con ese nombre en la "
-        "organización (sin distinguir mayúsculas). 409 `LAST_OWNER`: la organización no tiene "
-        "rol Owner y no admite ningún cambio.",
+        "genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay en la organización un rol cuyo "
+        "nombre se lee igual (mayúsculas, espacios repetidos, formas Unicode). 409 "
+        "`LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.",
     ),
 )
 class RolesView(generics.ListAPIView):
