@@ -1,5 +1,5 @@
 """Organizaciones (platform-owned, sin RLS de tenant; ADR-001 §2), sus membresías y sus
-sucursales y equipos (tenant-owned)."""
+sucursales, equipos e integrantes de cada equipo (tenant-owned)."""
 
 from django.conf import settings
 from django.db import models
@@ -111,7 +111,7 @@ class Team(TenantModel):
     """Equipo de la organización: Ventas, Soporte… (tenant-owned; modelo de datos §E.2).
 
     `slug` es su clave estable. La BD solo admite minúsculas ASCII, cifras y guiones entre
-    ellas. Los integrantes (`team_members`) llegan en otro work item.
+    ellas. Sus integrantes están en `TeamMember`.
     """
 
     class Strategy(models.TextChoices):
@@ -159,3 +159,56 @@ class Team(TenantModel):
 
     def __str__(self) -> str:
         return self.slug
+
+
+class TeamMember(TenantModel):
+    """Pertenencia de una membresía a un equipo (N:M; modelo de datos §E.2).
+
+    Las FK al equipo y a la membresía son compuestas con `organization_id` (migración): la BD
+    impide enlazar un equipo de una organización con una membresía de otra. Por eso las FK
+    simples de Django no crean constraint ni índice propios. De aquí salen los equipos propios
+    del motor de autorización (`ExecutionContext.team_ids`): cuentan todos, también si el
+    equipo o la pertenencia están inactivos.
+    """
+
+    class Role(models.TextChoices):
+        MEMBER = "MEMBER"
+        SUPERVISOR = "SUPERVISOR"
+
+    id = uuid7_primary_key()
+    team = models.ForeignKey(
+        Team, models.CASCADE, related_name="members", db_constraint=False, db_index=False
+    )
+    membership = models.ForeignKey(
+        OrganizationMembership,
+        models.PROTECT,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    team_role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
+    # Participa en la asignación automática del equipo. Nada la aplica hasta el Inbox (Fase 6).
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "team_members"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "team", "membership"],
+                name="team_members_team_membership_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(team_role__in=["MEMBER", "SUPERVISOR"]),
+                name="team_members_team_role_ck",
+            ),
+        ]
+        indexes = [  # lado referenciante de la FK a la membresía y «equipos de una membresía»
+            models.Index(
+                fields=["organization_id", "membership"], name="team_members_org_member_idx"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
