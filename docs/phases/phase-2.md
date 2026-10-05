@@ -50,6 +50,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-27 | [#112](https://github.com/PapiCuche/crm-gooddoggy/issues/112) Assign and remove roles from the members screen | `feature/f2-member-roles-ui` | #108, #110, #99 | frontend |
 | F2-28 | [#114](https://github.com/PapiCuche/crm-gooddoggy/issues/114) Suspend action: release the send flag when the result shows | `fix/f2-status-action-send-flag` | #99, #112 | frontend |
 | F2-29 | [#116](https://github.com/PapiCuche/crm-gooddoggy/issues/116) Create a custom role (API) | `feature/f2-role-create-api` | #101, #108 | backend + API |
+| F2-30 | [#118](https://github.com/PapiCuche/crm-gooddoggy/issues/118) Deeply nested JSON bodies answer 400, not 500 | `fix/f2-nested-json-body` | — | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

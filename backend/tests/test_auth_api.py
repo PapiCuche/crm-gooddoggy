@@ -1,6 +1,7 @@
 """F2-03A: iniciar sesión y sesión actual (ADR-003 §2–3, ADR-013 §5, ADR-014 §3). Middleware,
 sesiones en BD y auditoría de plataforma reales."""
 
+import io
 import json
 import logging
 from collections.abc import Iterator
@@ -21,6 +22,7 @@ from apps.accounts.models import User
 from apps.audit import platform
 from apps.audit.platform import identifier_hash
 from config.settings import base
+from core.api.parsers import Utf8JSONParser
 from core.observability import reporting
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_memberships import join
@@ -183,6 +185,35 @@ def test_the_body_charset_never_picks_a_codec(ana: User, browser: Client, charse
     assert Session.objects.count() == 0
     for known in ("UTF-8", "no-existe"):  # un charset desconocido se ignora: se lee como UTF-8
         assert post(known).status_code == 200
+
+
+@pytest.mark.parametrize("opening, closing", [(b"[", b"]"), (b'{"a":', b"}"), (b"[", b"")])
+def test_a_body_nested_beyond_the_parser_is_a_parse_error(
+    ana: User, browser: Client, caplog: pytest.LogCaptureFixture, opening: bytes, closing: bytes
+) -> None:
+    """Sin sesión y con ella: lo que el analizador no puede leer es un 400, no un 500."""
+
+    def post(depth: int) -> Any:
+        token = {"X-CSRFToken": browser.cookies["csrftoken"].value}
+        body = opening * depth + b"1" * bool(closing) + closing * depth
+        return browser.generic("POST", LOGIN, body, "application/json", headers=token)
+
+    caplog.set_level(logging.ERROR, logger="django.request")
+    assert reply(post(200_000)) == (400, b'{"code":"PARSE_ERROR"}')
+    assert Session.objects.count() == 0
+    if closing:  # anidado, pero se puede leer: la validación de siempre
+        assert post(50).json()["code"] == "VALIDATION_ERROR"
+    login(browser)
+    assert reply(post(200_000)) == (400, b'{"code":"PARSE_ERROR"}')
+    assert Session.objects.count() == 1  # la sesión que había sigue ahí
+    assert not caplog.records  # nada que el servidor tenga que mirar
+
+    class Unreadable(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            raise OSError("se cortó la conexión")
+
+    with pytest.raises(OSError):  # solo el desbordamiento pasa a ser un cuerpo ilegible
+        Utf8JSONParser().parse(Unreadable(), "application/json", {"encoding": "utf-8"})
 
 
 def test_session_expires_twelve_hours_after_login(ana: User, browser: Client) -> None:
