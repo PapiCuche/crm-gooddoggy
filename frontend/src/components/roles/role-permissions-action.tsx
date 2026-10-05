@@ -20,7 +20,7 @@ import {
 } from "@/lib/api/client";
 import type { Permission, Role } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
-import type { ApiError } from "@/lib/http";
+import { ApiError } from "@/lib/http";
 
 type Pages = InfiniteData<Awaited<ReturnType<typeof rolesList>>>;
 type Change = { permission: Permission; grant: boolean };
@@ -71,10 +71,15 @@ export function RolePermissionsAction({
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
   const change = useMutation<void, ApiError, Change>({
     networkMode: "always",
-    mutationFn: ({ permission, grant }) =>
-      grant
-        ? rolesPermissionsGrant(slug, role.id, permission.code, {})
-        : rolesPermissionsRevoke(slug, role.id, permission.code),
+    mutationFn: ({ permission, grant }) => {
+      // El cliente generado pone el código en la ruta tal cual: aquí se codifica, y uno que solo
+      // tenga puntos (`..` subiría de ruta) no se envía. El catálogo es de la API, pero es texto.
+      const code = encodeURIComponent(permission.code);
+      if (/^\.+$/.test(code)) return Promise.reject(new ApiError(400, "VALIDATION_ERROR"));
+      return grant
+        ? rolesPermissionsGrant(slug, role.id, code, {})
+        : rolesPermissionsRevoke(slug, role.id, code);
+    },
     onSuccess: async (_result, { permission, grant }) => {
       // Una lectura en vuelo traería las concesiones de antes y pisaría la tarjeta: se cancela.
       // Si era la lista entera (no «Cargar más»), se vuelve a pedir después.

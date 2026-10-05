@@ -57,6 +57,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-34 | [#126](https://github.com/PapiCuche/crm-gooddoggy/issues/126) Permission catalog and editable flag for role editing (API) | `feature/f2-role-editing-read-api` | #101, #124 | backend + API |
 | F2-35 | [#128](https://github.com/PapiCuche/crm-gooddoggy/issues/128) Create a role from the roles screen | `feature/f2-role-create-ui` | #103, #116, #126 | frontend |
 | F2-36 | [#130](https://github.com/PapiCuche/crm-gooddoggy/issues/130) Grant and revoke permissions from the roles screen | `feature/f2-role-permissions-ui` | #120, #124, #126, #128 | frontend |
+| F2-37 | [#132](https://github.com/PapiCuche/crm-gooddoggy/issues/132) Role permissions panel: encode the permission code in the URL; pending tests | `fix/f2-role-permissions-url-code` | #130 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
