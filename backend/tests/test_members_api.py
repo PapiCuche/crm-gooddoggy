@@ -31,7 +31,7 @@ def members(client: Client, org: str = "org-a", **query: Any) -> Any:
 
 def test_it_lists_every_member_of_the_organization_with_status_and_roles(world: Any) -> None:
     User.objects.filter(pk=world.ana.pk).update(first_name="Ana", last_name="López")
-    give(world.a, world.membership, VIEW_USERS, code="lectora")
+    lectora = give(world.a, world.membership, VIEW_USERS, code="lectora")
     luis, marta = make_user(email="luis@example.com"), make_user(email="marta@example.com")
     suspended, invited = join(world.a, luis, "SUSPENDED"), join(world.a, marta, "INVITED")
     give(world.a, suspended.pk, {}, code="b")
@@ -55,7 +55,7 @@ def test_it_lists_every_member_of_the_organization_with_status_and_roles(world: 
             "first_name": "Ana",
             "last_name": "López",
         },
-        "roles": [{"code": "lectora", "name": "Rol propio"}],
+        "roles": [{"id": str(lectora.pk), "code": "lectora", "name": "Rol propio"}],
     }  # ni contraseña, ni marcas de plataforma, ni sus otras organizaciones
     assert (second["status"], second["user"]["email"]) == ("SUSPENDED", "luis@example.com")
     assert [role["code"] for role in second["roles"]] == ["a", "b"]  # todos sus roles

@@ -5,9 +5,9 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
+import type { MemberRole } from "./memberRole";
 import type { MembershipStatusEnum } from "./membershipStatusEnum";
 import type { MemberUser } from "./memberUser";
-import type { RoleName } from "./roleName";
 
 export interface Member {
   /** Identificador de la membresía. */
@@ -16,5 +16,5 @@ export interface Member {
   joined_at: string;
   user: MemberUser;
   /** Solo para mostrar: no autorizan nada. */
-  roles: RoleName[];
+  roles: MemberRole[];
 }

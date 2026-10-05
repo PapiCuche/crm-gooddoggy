@@ -13,6 +13,7 @@ export * from "./grant";
 export * from "./loginRequest";
 export * from "./member";
 export * from "./memberOrganization";
+export * from "./memberRole";
 export * from "./membershipStatusEnum";
 export * from "./membersListParams";
 export * from "./memberStatus";

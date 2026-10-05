@@ -539,7 +539,7 @@ components:
         roles:
           type: array
           items:
-            $ref: '#/components/schemas/RoleName'
+            $ref: '#/components/schemas/MemberRole'
           description: 'Solo para mostrar: no autorizan nada.'
       required:
       - id
@@ -561,6 +561,21 @@ components:
       - id
       - name
       - slug
+    MemberRole:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        id:
+          type: string
+          format: uuid
+          description: El que piden las rutas que asignan o quitan el rol.
+      required:
+      - code
+      - id
+      - name
     MemberStatus:
       type: object
       properties:

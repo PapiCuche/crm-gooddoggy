@@ -86,12 +86,16 @@ class SelfContextView(APIView):
         return Response(SelfContextSerializer(payload).data)
 
 
+class MemberRoleSerializer(RoleNameSerializer):
+    id = serializers.UUIDField(help_text="El que piden las rutas que asignan o quitan el rol.")
+
+
 class MemberSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField(help_text="Identificador de la membresía.")
     status = serializers.ChoiceField(choices=settings.MEMBERSHIP_STATUSES)
     joined_at = serializers.DateTimeField()
     user = MemberUserSerializer()
-    roles = RoleNameSerializer(many=True, help_text="Solo para mostrar: no autorizan nada.")
+    roles = MemberRoleSerializer(many=True, help_text="Solo para mostrar: no autorizan nada.")
 
 
 @extend_schema_view(
