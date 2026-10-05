@@ -97,4 +97,41 @@ describe("CursorList", () => {
     view.unmount();
     expect(handle.current).toBeNull(); // una respuesta que llegue después ya no pide nada
   });
+
+  it("`empty` solo sustituye a una lista sin filas: ni al cargar, ni con un error o una negativa", async () => {
+    let reply: { status: number; body: unknown } = page([]);
+    mockApi({ [LIST]: () => reply });
+    const withEmpty = (
+      <CursorList<Row>
+        section="members"
+        organization="Acme SAC"
+        listKey={["lista"]}
+        fetchPage={fetchPage}
+        notice={<p>aviso de la pantalla</p>}
+        empty={<p>sin filas</p>}
+      >
+        {(row) => <span>fila {row.id}</span>}
+      </CursorList>
+    );
+    const view = renderApp(withEmpty);
+    expect(screen.queryByText("sin filas")).not.toBeInTheDocument(); // todavía no se sabe
+    expect(await screen.findByText("sin filas")).toBeVisible();
+    expect(screen.getByText("aviso de la pantalla")).toBeVisible(); // el aviso sigue encima
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("0 miembros en la lista");
+    view.unmount();
+    for (const [status, code] of [
+      [500, "INTERNAL_ERROR"],
+      [403, "PERMISSION_DENIED"],
+    ] as const) {
+      reply = { status, body: { code } };
+      const failed = renderApp(withEmpty);
+      await screen.findByRole("alert");
+      expect(screen.queryByText("sin filas")).not.toBeInTheDocument();
+      failed.unmount();
+    }
+    reply = page([]);
+    renderApp(ui); // sin `empty`, la lista vacía de siempre
+    expect(await screen.findByRole("list", { name: "Miembros" })).toBeEmptyDOMElement();
+  });
 });

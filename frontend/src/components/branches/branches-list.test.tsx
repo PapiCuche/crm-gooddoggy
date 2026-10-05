@@ -68,6 +68,15 @@ describe("BranchesList", () => {
       "Inactiva", // también las inactivas
     ]);
     expect(lines("Cusco")).toEqual(["CuscoCUZ", "Sin dirección", "Zona horaria: UTC", "Activa"]);
+    for (const text of [
+      "Centro de Lima",
+      "LIM-01",
+      "Av. Wilson 1234, Cercado, Lima",
+      "Zona horaria: UTC",
+    ])
+      expect(screen.getByText(text)).toHaveClass("wrap-anywhere"); // largo: se parte, no se recorta
+    expect(screen.getByText(/Teléfono/)).toHaveClass("wrap-anywhere");
+    expect(screen.getByText("Good Doggy / Sucursales")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("3 sucursales en la lista");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Sucursales");
     expect(screen.getByText("Las sucursales y tiendas de Acme SAC.")).toBeVisible();
