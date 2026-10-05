@@ -50,11 +50,8 @@ const calls = (api: ReturnType<typeof mockApi>, method: string) =>
 const sent = (api: ReturnType<typeof mockApi>) => calls(api, "PATCH");
 const body = (call?: unknown[]) => JSON.parse(String((call?.[1] as RequestInit).body));
 const tick = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 5)));
-const announced = (name: string) =>
-  within(card(name))
-    .getAllByRole("status")
-    .map((region) => region.textContent)
-    .join("");
+// La región de esta acción, montada desde el principio: la segunda, tras la de «Editar».
+const announced = (name: string) => within(card(name)).getAllByRole("status")[1]!.textContent;
 // Deja en espera la siguiente respuesta de la API hasta que se llama a lo que devuelve.
 function hold(api: ReturnType<typeof mockApi>) {
   const answer = api.getMockImplementation()!;
@@ -117,6 +114,8 @@ describe("BranchStatusAction", () => {
     expect(group).toHaveAccessibleDescription(/Seguirá en la lista como inactiva/);
     const cancel = within(group).getByRole("button", { name: "Cancelar" });
     expect(cancel).toHaveFocus(); // la opción que no cambia nada
+    expect(fireEvent.keyDown(cancel, { key: "Enter", repeat: true })).toBe(false); // mantenido
+    expect(fireEvent.keyDown(cancel, { key: "Enter" })).toBe(true);
     expect(within(card("Lima")).getByRole("button", { name: /^Editar/ })).toBeVisible(); // sigue
     fireEvent.click(cancel);
     expect(screen.getByRole("button", { name: "Desactivar la sucursal Lima" })).toHaveFocus();
@@ -140,10 +139,10 @@ describe("BranchStatusAction", () => {
     confirm.focus();
     fireEvent.click(confirm);
     fireEvent.click(confirm); // ocupado: la segunda pulsación no cuenta
+    const cancel = within(group).getByRole("button", { name: "Cancelar" });
+    fireEvent.click(cancel); // ya se envió, aunque la pantalla aún no lo diga: no se cierra
     await waitFor(() => expect(confirm).toHaveTextContent("Desactivando…"));
-    expect(confirm).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(within(group).getByRole("button", { name: "Cancelar" })); // ya se envió
-    expect(screen.getByRole("group")).toBeInTheDocument();
+    for (const button of [confirm, cancel]) expect(button).toHaveAttribute("aria-disabled", "true");
     release();
     const next = await screen.findByRole("button", { name: "Reactivar la sucursal Lima" });
     await waitFor(() => expect(next).toHaveFocus()); // el botón pulsado se fue
@@ -246,6 +245,7 @@ describe("BranchStatusAction", () => {
     const group = await ask();
     rows = [all[0]!, all[2]!]; // lo que la API tiene de verdad: la sucursal ya no existe
     fireEvent.click(within(group).getByRole("button", { name: "Sí, desactivar" }));
+    (document.activeElement as HTMLElement).blur(); // el foco, en ninguna parte
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /sucursal Lima/ })).not.toBeInTheDocument(),
@@ -345,9 +345,9 @@ describe("BranchStatusAction", () => {
   });
 
   it("lo que se confirma queda fijado al abrir, aunque la lista cambie debajo", async () => {
-    let active = true;
+    let [name, active] = ["Lima", true];
     const api = mockApi({
-      [LIST]: () => list([all[0]!, branch("b2", "Lima", active), all[2]!]),
+      [LIST]: () => list([all[0]!, branch("b2", name, active), all[2]!]),
       [STATUS("b2")]: { status: 200, body: { ...all[1]!, is_active: false } },
     });
     const view = renderApp(ui());
@@ -378,6 +378,9 @@ describe("BranchStatusAction", () => {
     expect(body(sent(api)[0])).toEqual({ is_active: false });
     expect(announced("Lima")).toBe("La sucursal Lima quedó inactiva.");
     expect(other).toHaveFocus(); // el usuario ya estaba en otra parte: el foco no se le quita
+    name = "Lima Centro"; // la sucursal cambia de nombre después: el anuncio no se repite con él
+    await refresh(view);
+    expect(announced("Lima Centro")).toBe("La sucursal Lima quedó inactiva.");
   });
 
   it("una pulsación entre la respuesta y el render no reenvía, ni la suelta un render ajeno", async () => {

@@ -39,7 +39,9 @@ export function BranchStatusAction({
   // Lo que se confirma (el estado que se pide) queda fijado al abrir: si la lista cambia
   // debajo, la pregunta y lo que se envía siguen siendo lo que el usuario leyó.
   const [target, setTarget] = useState<boolean | null>(null);
-  const [done, setDone] = useState<boolean | null>(null);
+  // El anuncio, con el nombre de entonces: si «Editar» lo cambia después, no se anuncia otra vez.
+  const [done, setDone] = useState<string | null>(null);
+  const said = (active: boolean) => t(`${verb(active)}Done`, { branch: branch.name });
   // Una escritura se envía una vez: el estado de la mutación llega a la pantalla una tarea
   // después de la pulsación, y dos pulsaciones seguidas no deben ser dos peticiones.
   const sending = useRef(false);
@@ -70,7 +72,7 @@ export function BranchStatusAction({
               }
             : data,
         );
-        setDone(saved.is_active); // lo que respondió la API, no lo que se pidió
+        setDone(said(saved.is_active)); // lo que respondió la API, no lo que se pidió
         setTarget(null);
         if (rereading) void queryClient.invalidateQueries({ queryKey: listKey });
       },
@@ -97,7 +99,7 @@ export function BranchStatusAction({
   // Otro lo hizo antes, con la confirmación abierta: no hay nada que confirmar.
   if (target !== null && target === branch.is_active && !busy) {
     setTarget(null);
-    setDone(target);
+    setDone(said(target));
   }
 
   const open = target !== null;
@@ -126,6 +128,8 @@ export function BranchStatusAction({
       ref={root}
       // Abierta ocupa su fila: «Editar», a su lado, pasa a otra línea.
       className={cn("flex flex-col items-start gap-2", open && "w-full")}
+      // Enter mantenido repite la pulsación: reabriría la confirmación o reenviaría sin parar.
+      onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
     >
       {target !== null ? (
         <div
@@ -186,7 +190,7 @@ export function BranchStatusAction({
       )}
       {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}
       <p role="status" className="sr-only">
-        {done !== null ? t(`${verb(done)}Done`, { branch: branch.name }) : ""}
+        {done}
       </p>
     </div>
   );
