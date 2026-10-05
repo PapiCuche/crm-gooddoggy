@@ -1,13 +1,15 @@
 "use client";
 
 import { useMessages, useTranslations } from "next-intl";
+import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { CursorList } from "@/components/lists/cursor-list";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import { getRolesListQueryKey, rolesList } from "@/lib/api/client";
 import type { Role } from "@/lib/api/model";
 
 import { RoleCreate } from "./role-create";
+import { RolePermissionsAction } from "./role-permissions-action";
 
 // El texto de `messages` para `code` (`users.manage` es `messages.users.manage`), si existe y es
 // un texto. El código viene de la API: se busca por propiedades propias, paso a paso, y no como
@@ -29,6 +31,15 @@ export function RolesList() {
   // Comodidad: «Crear rol» se ofrece a quien la API dijo que tiene `roles.manage` (F2-35).
   const canManage = permissions.some((grant) => grant.code === "roles.manage");
   const listKey = [...getRolesListQueryKey(organization.slug), "pages"];
+  const list = useRef<CursorListHandle>(null);
+  // Un cambio de permisos respondió que la pantalla ya no refleja a la API (F2-36). El aviso
+  // vive aquí: el panel, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
+  const [notice, setNotice] = useState<string | null>(null);
+  function stale(text: string, here: boolean) {
+    setNotice(text);
+    list.current?.refetch();
+    if (here) list.current?.focusHeading();
+  }
   // Un permiso, o un alcance, que estos textos no conocen se enseña con su código: no se oculta.
   const { catalog, roles } = useMessages();
   const label = (code: string) => text(catalog, code) ?? code;
@@ -36,10 +47,20 @@ export function RolesList() {
 
   return (
     <CursorList<Role>
+      ref={list}
       section="roles"
       organization={organization.name}
       listKey={listKey}
-      notice={canManage ? <RoleCreate slug={organization.slug} listKey={listKey} /> : undefined}
+      notice={
+        <>
+          {canManage ? <RoleCreate slug={organization.slug} listKey={listKey} /> : null}
+          {notice ? (
+            <p role="alert" className="text-danger">
+              {notice}
+            </p>
+          ) : null}
+        </>
+      }
       fetchPage={(cursor, signal) =>
         rolesList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
@@ -73,6 +94,18 @@ export function RolesList() {
               <li className="text-muted text-sm">{t("roles.noPermission")}</li>
             ) : null}
           </ul>
+          {/* Comodidad: la API marca los roles que no admite editar (el Owner, uno propio). */}
+          {canManage && role.editable ? (
+            <RolePermissionsAction
+              slug={organization.slug}
+              role={role}
+              listKey={listKey}
+              label={label}
+              scope={scope}
+              onAsk={() => setNotice(null)}
+              onStale={stale}
+            />
+          ) : null}
         </>
       )}
     </CursorList>

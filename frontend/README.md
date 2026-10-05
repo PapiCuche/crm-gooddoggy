@@ -142,7 +142,7 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 - **Por rol:** nombre, si es de plantilla o propio, descripción si la tiene, número de miembros y sus permisos, cada uno con su alcance si lo admite.
 - **Nombres de los permisos:** salen de `catalog.*` en `messages/es-PE.json` (`catalog.users.manage` para `users.manage`); los alcances, de `roles.scope.*`. Son textos planos, sin formato ICU. Un permiso o un alcance que esos textos no conocen se enseña con su código: no se oculta. El código llega de la API, así que el texto se busca por propiedades propias y no como una ruta de mensajes.
 - **Navegación:** la entrada «Roles» pide el permiso `roles.view`; `users.view` no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; editar sus permisos, renombrarlo y borrarlo son otros work items (E01-08).
+- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; conceder y retirar sus permisos, en «Permisos de un rol»; renombrarlo y borrarlo son otros work items (E01-08).
 
 ### Crear un rol (F2-35)
 
@@ -154,6 +154,20 @@ Encima de la lista, «Crear rol» abre un formulario con nombre y descripción y
 - **Lo que valida la pantalla:** que haya nombre, y las longitudes máximas de los campos. Lo demás lo decide la API: se envía lo escrito sin sus espacios exteriores y se anuncia el nombre que la API guardó.
 - **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El rol nuevo va al final: si hay «Cargar más», aparece al cargar la última página. Un «Cargar más» que estuviera en vuelo se cancela y hay que pulsarlo otra vez. Si esa relectura falla, el aviso se queda y la lista no cambia; si la API niega la lista (403), la pantalla se cierra con su aviso de «sin permiso». El foco vuelve a «Crear rol».
 - **Errores, por `code`:** los del nombre (`ROLE_NAME_TAKEN`, o un 400 con el campo `name`) y los de la descripción se explican junto a su campo; un error del nombre lleva el foco al nombre. Sin permiso, `LAST_OWNER`, red o fallo del servidor, en el formulario. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío. Nunca se enseña el texto de la respuesta.
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+### Permisos de un rol (F2-36)
+
+Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET /api/v1/o/{slug}/permissions/`, F2-34): «Conceder» los que el rol no tiene y «Retirar» los que tiene, con `PUT` y `DELETE /api/v1/o/{slug}/roles/{id}/permissions/{code}/` (F2-31, F2-33). Componente: `components/roles/role-permissions-action.tsx`, hermano del panel «Roles» de la pantalla de miembros: mismas reglas de envío, foco y errores.
+
+- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API, y solo en los roles que la API marca `editable` (no el rol Owner ni uno propio). Es comodidad: las reglas contra la escalada las aplica la API (ADR-003 §5), y un 403 se explica en el panel.
+- **A quién alcanza:** el panel dice cuántos miembros tiene el rol. Lo que se cambia les llega a todos en su siguiente petición.
+- **Catálogo:** se pide al abrir y en cada apertura. Los nombres salen de `catalog.*` en los textos; un permiso sin texto se enseña con su código. Los sensibles llevan la marca «Sensible».
+- **Permisos con alcance:** se enseñan con su alcance, o como «Sin conceder», sin botón. Elegir el alcance llegará con el primer permiso del catálogo que lo use.
+- **Lo que hace cada botón queda fijado al abrir**, y solo cambia con las respuestas propias. Un cambio cada vez, enviado una sola vez; el segundo clic de un doble clic y un Enter mantenido se ignoran.
+- **Éxito:** se cancela la lectura de la lista que estuviera en vuelo y los permisos de la tarjeta cambian en la lista ya cargada. El resultado se anuncia y el botón, ya con la acción contraria, conserva el foco.
+- **Errores, por `code`:** `PERMISSION_DENIED` (con un texto propio: hace falta tener el permiso y, si es sensible, ser Owner), `LAST_OWNER`, red o fallo del servidor se explican en el panel y el mismo botón reintenta.
+- **Pantalla desfasada (404):** el rol ya no existe o ya no tiene esa concesión. El panel se cierra, la lista se vuelve a pedir y lo explica un aviso de la lista (`role="alert"`); el foco va al título si seguía en el panel.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ## Seguridad del navegador (F2-07)
