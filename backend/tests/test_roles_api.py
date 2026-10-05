@@ -1,6 +1,8 @@
 """F2-22: `GET /api/v1/o/{slug}/roles/`, el directorio de roles de una organización.
 Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,7 +10,8 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from apps.access import directory
+from apps.access import directory, permissions, scopes, selectors, services
+from apps.access.api import views
 from apps.access.catalog import BY_CODE, PERMISSIONS
 from apps.access.models import MembershipRole, Role
 from core.tenancy.context import TenantContextError
@@ -194,3 +197,40 @@ def test_the_permission_catalog_lists_every_permission_by_code(rbac: Any) -> Non
     eva.cookies["csrftoken"] = token = "t" * 32
     for write in (eva.post, eva.put, eva.patch, eva.delete):  # solo lectura
         assert reply(write(url.format("org-a"), headers={"X-CSRFToken": token})) == DENIED
+
+
+def test_editable_costs_one_query_and_the_catalog_reads_no_table(
+    rbac: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    give(rbac.a, rbac.m_eva, {"roles.view": None})
+    eva = signed(rbac.eva)
+
+    def queries(path: str) -> list[str]:
+        with CaptureQueriesContext(connection) as captured:
+            assert eva.get(f"/api/v1/o/org-a/{path}/").status_code == 200
+        return [query["sql"] for query in captured]
+
+    catalog, listed = queries("permissions"), queries("roles")
+    assert len(listed) == len(catalog) + 4  # roles, concesiones, miembros y editables
+    assert not any('FROM "permissions"' in sql for sql in catalog)  # sale del código
+    monkeypatch.delitem(BY_CODE, EDIT)  # su fila sigue en la tabla
+    codes = [row["code"] for row in eva.get("/api/v1/o/org-a/permissions/").json()["results"]]
+    assert EDIT not in codes and VIEW in codes
+
+
+def test_the_owner_flag_is_read_once_to_paint_and_never_to_decide() -> None:
+    def code(module: Any) -> str:
+        source = re.sub(r'""".*?"""', "", Path(str(module.__file__)).read_text(), flags=re.S)
+        return "\n".join(line.split("#")[0] for line in source.splitlines())
+
+    uses = [line.strip() for line in code(directory).splitlines() if "is_owner_role" in line]
+    assert uses == [
+        'return set(found.filter(Q(is_owner_role=True) | own).values_list("pk", flat=True))'
+    ]
+    for forbidden in ("role__code", "role__name", "code=", "name="):
+        assert forbidden not in code(directory), forbidden
+    for module in (views, permissions):  # la vista no lee la marca: la pide al lector
+        assert "is_owner_role" not in code(module), module.__name__
+    for module in (selectors, scopes, permissions, services):  # quien decide no lee de aquí
+        assert "import directory" not in code(module), module.__name__
+        assert "access.directory" not in code(module), module.__name__
