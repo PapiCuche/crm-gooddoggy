@@ -1,14 +1,16 @@
-"""Comandos de equipos (F2-53, E01-09): crear uno.
+"""Comandos de equipos (F2-53 y F2-54, E01-09): crear uno y cambiar sus datos.
 
 Como los de sucursales, no comprueban permisos (`organizations` no importa `access`) y por eso
 no son API pública: solo los importa la API del módulo, que declara `teams.manage` (contrato
-de import-linter). Validan lo que guardan, también para quien no llega por HTTP, y auditan.
+de import-linter). Validan lo que guardan, también para quien no llega por HTTP, y auditan
+cada cambio.
 """
 
 import re
 from collections.abc import Callable
 from functools import partial
 from typing import Any
+from uuid import UUID
 
 from django.db import IntegrityError, transaction
 
@@ -47,15 +49,22 @@ CLEAN: dict[str, Callable[[str], str]] = {
     "description": partial(line, limit=DESCRIPTION_MAX),
     "assignment_strategy": team_strategy,
 }
+CREATE = frozenset(CLEAN)
+UPDATE = CREATE - {"slug"} | {"is_active"}  # el `slug` no cambia: es la clave del equipo
 
 
-def cleaned(fields: dict[str, Any]) -> dict[str, str]:
+def cleaned(fields: dict[str, Any], allowed: frozenset[str] = CREATE) -> dict[str, Any]:
     """Cada campo como se guarda. `ValueError` con el nombre del primero que no sirve."""
-    if unknown := set(fields) - set(CLEAN):
+    if unknown := set(fields) - allowed:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
-    result = {}
+    result: dict[str, Any] = {}
     for field, value in fields.items():
         try:
+            if field == "is_active":
+                if not isinstance(value, bool):
+                    raise ValueError("tiene que ser verdadero o falso")
+                result[field] = value
+                continue
             if not isinstance(value, str):
                 raise ValueError("tiene que ser texto")
             result[field] = CLEAN[field](value)
@@ -80,4 +89,26 @@ def create_team(ctx: TenantContext, **fields: Any) -> Team:
         if "teams_org_slug_uq" not in str(error):
             raise
         raise TeamSlugTaken(values["slug"]) from None
+    return team
+
+
+def update_team(ctx: TenantContext, *, team_id: UUID, **fields: Any) -> Team:
+    """Cambia lo que se envía de un equipo de la organización de `ctx` y lo audita con el antes
+    y el después. Si nada cambia, no escribe ni audita. Un equipo de otra organización no
+    existe: `DoesNotExist`."""
+    alias = require_scope(ctx)
+    values = cleaned(fields, UPDATE)
+    with transaction.atomic(using=alias):  # savepoint: el cambio y su auditoría, o nada
+        rows = Team.objects.using(alias).select_for_update(no_key=True)
+        team: Team = rows.get(pk=team_id)
+        changes = {
+            field: [getattr(team, field), value]
+            for field, value in values.items()
+            if getattr(team, field) != value
+        }
+        if changes:
+            for field, (_, value) in changes.items():
+                setattr(team, field, value)
+            team.save(using=alias, update_fields=[*changes, "updated_at"])
+            record(ctx, "team.updated", Entity("team", team.pk, team.slug), changes)
     return team

@@ -32,6 +32,7 @@ export * from "./paginatedRoleList";
 export * from "./paginatedTeamList";
 export * from "./patchedBranchUpdateRequest";
 export * from "./patchedRoleUpdateRequest";
+export * from "./patchedTeamUpdateRequest";
 export * from "./permission";
 export * from "./permissionCatalog";
 export * from "./role";

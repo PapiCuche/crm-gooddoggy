@@ -8,4 +8,5 @@ urlpatterns = [
     path("branches/", views.BranchesView.as_view(), name="branches"),
     path("branches/<uuid:branch_id>/", views.BranchView.as_view(), name="branch"),
     path("teams/", views.TeamsView.as_view(), name="teams"),
+    path("teams/<uuid:team_id>/", views.TeamView.as_view(), name="team"),
 ]

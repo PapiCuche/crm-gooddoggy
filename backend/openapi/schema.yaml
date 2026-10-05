@@ -1108,6 +1108,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/teams/{team_id}/:
+    patch:
+      operationId: teams_update
+      description: 'Cambia lo que se envía; lo demás se queda como está, y el `slug`
+        no cambia. Enviar lo que ya hay no escribe nada. 404: el equipo no es de la
+        organización.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: team_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - teams
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTeamUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:
@@ -1471,6 +1529,22 @@ components:
         description:
           type: string
           maxLength: 255
+    PatchedTeamUpdateRequest:
+      type: object
+      description: Lo que se envía cambia; lo que no, se queda como está. El `slug`
+        no se cambia.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 255
+        assignment_strategy:
+          $ref: '#/components/schemas/AssignmentStrategyEnum'
+        is_active:
+          type: boolean
     Permission:
       type: object
       properties:

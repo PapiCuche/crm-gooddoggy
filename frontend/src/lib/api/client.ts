@@ -38,6 +38,7 @@ import type {
   PaginatedTeamList,
   PatchedBranchUpdateRequest,
   PatchedRoleUpdateRequest,
+  PatchedTeamUpdateRequest,
   PermissionCatalog,
   Role,
   RoleCreateRequest,
@@ -2434,4 +2435,111 @@ export const useTeamsCreate = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getTeamsCreateMutationOptions(options), queryClient);
+};
+
+export const getTeamsUpdateUrl = (orgSlug: string, teamId: string) => {
+  return `/api/v1/o/${orgSlug}/teams/${teamId}/`;
+};
+
+/**
+ * Cambia lo que se envía; lo demás se queda como está, y el `slug` no cambia. Enviar lo que ya hay no escribe nada. 404: el equipo no es de la organización.
+ */
+export const teamsUpdate = async (
+  orgSlug: string,
+  teamId: string,
+  patchedTeamUpdateRequest?: PatchedTeamUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Team> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Team>(getTeamsUpdateUrl(orgSlug, teamId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedTeamUpdateRequest),
+  });
+};
+
+export const getTeamsUpdateMutationKey = () => ["teamsUpdate"] as const;
+
+export const getTeamsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof teamsUpdate>>,
+    TError,
+    TeamsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof teamsUpdate>>,
+  TError,
+  TeamsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTeamsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof teamsUpdate>>,
+    TeamsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, teamId, data } = props ?? {};
+
+    return teamsUpdate(orgSlug, teamId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TeamsUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof teamsUpdate>>>;
+export type TeamsUpdateMutationBody = PatchedTeamUpdateRequest | undefined;
+export type TeamsUpdateMutationError = ErrorType<Error>;
+export type TeamsUpdateMutationVariables = {
+  orgSlug: string;
+  teamId: string;
+  data?: PatchedTeamUpdateRequest;
+};
+
+export const useTeamsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof teamsUpdate>>,
+      TError,
+      TeamsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof teamsUpdate>>,
+  TError,
+  TeamsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getTeamsUpdateMutationOptions(options), queryClient);
 };
