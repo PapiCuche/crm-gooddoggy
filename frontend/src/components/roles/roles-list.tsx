@@ -9,6 +9,7 @@ import { getRolesListQueryKey, rolesList } from "@/lib/api/client";
 import type { Role } from "@/lib/api/model";
 
 import { RoleCreate } from "./role-create";
+import { RoleDeleteAction } from "./role-delete-action";
 import { RoleEditAction } from "./role-edit-action";
 import { RolePermissionsAction } from "./role-permissions-action";
 
@@ -36,10 +37,17 @@ export function RolesList() {
   // Un cambio de permisos respondió que la pantalla ya no refleja a la API (F2-36). El aviso
   // vive aquí: el panel, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
+  // Un rol borrado (F2-40) también se anuncia aquí: su tarjeta ya no está para decirlo.
+  const [done, setDone] = useState<string | null>(null);
   function stale(text: string, here: boolean) {
     setNotice(text);
+    setDone(null);
     list.current?.refetch();
     if (here) list.current?.focusHeading();
+  }
+  function ask() {
+    setNotice(null);
+    setDone(null);
   }
   // Un permiso, o un alcance, que estos textos no conocen se enseña con su código: no se oculta.
   const { catalog, roles } = useMessages();
@@ -54,10 +62,17 @@ export function RolesList() {
       listKey={listKey}
       notice={
         <>
-          {canManage ? <RoleCreate slug={organization.slug} listKey={listKey} /> : null}
+          {canManage ? <RoleCreate slug={organization.slug} listKey={listKey} onAsk={ask} /> : null}
           {notice ? (
             <p role="alert" className="text-danger">
               {notice}
+            </p>
+          ) : null}
+          {/* Montado desde el principio para quien puede borrar: un lector de pantalla anuncia
+              el resultado cuando cambia. */}
+          {canManage ? (
+            <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
+              {done ?? ""}
             </p>
           ) : null}
         </>
@@ -102,7 +117,7 @@ export function RolesList() {
                 slug={organization.slug}
                 role={role}
                 listKey={listKey}
-                onAsk={() => setNotice(null)}
+                onAsk={ask}
                 onStale={stale}
               />
               <RolePermissionsAction
@@ -111,9 +126,24 @@ export function RolesList() {
                 listKey={listKey}
                 label={label}
                 scope={scope}
-                onAsk={() => setNotice(null)}
+                onAsk={ask}
                 onStale={stale}
               />
+              {/* Una plantilla no se borra: la API lo dice con `is_system` y lo impone. */}
+              {role.is_system ? null : (
+                <RoleDeleteAction
+                  slug={organization.slug}
+                  role={role}
+                  listKey={listKey}
+                  onAsk={ask}
+                  onGone={(text, how) => {
+                    if (how.stale) return stale(text, how.here);
+                    setNotice(null);
+                    setDone(text);
+                    if (how.here) list.current?.focusHeading();
+                  }}
+                />
+              )}
             </div>
           ) : null}
         </>

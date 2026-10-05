@@ -60,6 +60,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-37 | [#132](https://github.com/PapiCuche/crm-gooddoggy/issues/132) Role permissions panel: encode the permission code in the URL; pending tests | `fix/f2-role-permissions-url-code` | #130 | frontend |
 | F2-38 | [#134](https://github.com/PapiCuche/crm-gooddoggy/issues/134) Rename and delete a role (API) | `feature/f2-role-update-delete-api` | #116, #124, #126 | backend + API |
 | F2-39 | [#136](https://github.com/PapiCuche/crm-gooddoggy/issues/136) Rename a role from the roles screen | `feature/f2-role-edit-ui` | #128, #130, #134 | frontend |
+| F2-40 | [#138](https://github.com/PapiCuche/crm-gooddoggy/issues/138) Delete a role from the roles screen | `feature/f2-role-delete-ui` | #134, #136 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

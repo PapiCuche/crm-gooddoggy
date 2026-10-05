@@ -48,6 +48,8 @@
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "ORG_SUSPENDED": "Esta organización está suspendida.",
       "LAST_OWNER": "Debe quedar al menos un Owner activo en la organización.",
+      "ROLE_IN_USE": "Este rol tiene miembros. Quítaselo antes de borrarlo.",
+      "ROLE_IS_SYSTEM": "Un rol de plantilla no se borra.",
       "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos."
     }
   },
@@ -174,6 +176,17 @@
       "denied": "No puedes cambiar este rol: hace falta tener todos sus permisos y, si alguno es sensible, ser Owner. Tampoco se cambia un rol que tienes asignado.",
       "done": "Rol «{name}» guardado.",
       "stale": "El rol {role} ya no existe o había cambiado. Revisa la lista."
+    },
+    "delete": {
+      "trigger": "Borrar",
+      "label": "Borrar el rol {role}",
+      "ask": "¿Borrar el rol {role}? Se borra con sus permisos y no se puede deshacer.",
+      "confirm": "Sí, borrar",
+      "busy": "Borrando…",
+      "cancel": "Cancelar",
+      "denied": "No puedes borrar este rol: hace falta tener todos sus permisos y, si alguno es sensible, ser Owner. Tampoco se borra un rol que tienes asignado.",
+      "done": "Rol «{role}» borrado.",
+      "stale": "El rol {role} ya no existía. Revisa la lista."
     },
     "grants": {
       "trigger": "Permisos",
