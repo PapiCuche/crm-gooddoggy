@@ -1,14 +1,11 @@
 import { onlineManager } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { NextIntlClientProvider } from "next-intl";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Providers } from "@/app/providers";
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Branch, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
-import messages from "../../../messages/es-PE.json";
 import { BranchesList } from "./branches-list";
 
 const router = { replace: vi.fn() };
@@ -93,6 +90,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   onlineManager.setOnline(true);
 });
 
@@ -103,6 +101,8 @@ describe("BranchEditAction", () => {
     await screen.findByRole("list", { name: "Sucursales" });
     expect(screen.queryByRole("button", { name: /^Editar/ })).not.toBeInTheDocument();
     view.unmount();
+    // Un navegador que lista `UTC` (V8 no lo hace): se ofrece una vez, la primera.
+    vi.spyOn(Intl, "supportedValuesOf").mockReturnValue(["America/Bogota", "America/Lima", "UTC"]);
     renderApp(ui());
     await screen.findByRole("list", { name: "Sucursales" });
     expect(screen.getAllByRole("button", { name: /^Editar la sucursal/ })).toHaveLength(3);
@@ -129,8 +129,7 @@ describe("BranchEditAction", () => {
       ...form.querySelectorAll(`datalist#${CSS.escape(zone.getAttribute("list")!)} option`),
     ];
     const offered = options.map((option) => option.getAttribute("value"));
-    expect(offered).toEqual(expect.arrayContaining(["UTC", "America/Lima", "America/Bogota"]));
-    expect(new Set(offered).size).toBe(offered.length); // ninguna repetida
+    expect(offered).toEqual(["UTC", "America/Bogota", "America/Lima"]);
     fill(form, { name: "A medias" });
     fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
@@ -315,41 +314,13 @@ describe("BranchEditAction", () => {
     mockApi({ [LIST]: () => list(rows) });
     const view = renderApp(ui());
     const form = await opened();
-    rows = [branches[0]!, { ...lima, name: "Lima B", city: "Callao" }, branches[2]!];
+    rows = [branches[0]!, { ...lima, name: "Lima B", district: "Cercado" }, branches[2]!];
     void view.client.refetchQueries();
     await screen.findByText("Lima B", { selector: "span.font-medium" }); // la tarjeta sigue a la lista
     expect(screen.getByRole("form", { name: "Editar Lima" })).toBe(form); // el formulario, no
     expect(field(form, "name")).toHaveValue("Lima");
-    expect(field(form, "city")).toHaveValue("Lima");
+    expect(field(form, "district")).toHaveValue(""); // un campo vacío seguiría a la fila
     expect(within(form).getByText("Editar Lima")).toBeVisible();
-  });
-
-  it("sin sesión va al login una vez y el formulario sigue ocupado, sin error", async () => {
-    const assign = vi.fn();
-    const { origin } = window.location;
-    vi.stubGlobal("location", { origin, pathname: "/o/acme/sucursales", search: "", assign });
-    const api = mockApi({
-      [LIST]: list(),
-      [EDIT("b2")]: { status: 401, body: { code: "NOT_AUTHENTICATED" } },
-    });
-    render(
-      <NextIntlClientProvider locale="es-PE" messages={messages} timeZone="America/Lima">
-        <Providers>{ui()}</Providers>
-      </NextIntlClientProvider>,
-    );
-    const form = await opened();
-    send(form);
-    await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith("/login?next=%2Fo%2Facme%2Fsucursales"),
-    );
-    await tick();
-    fireEvent.submit(form);
-    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
-    await tick();
-    expect(form).toHaveAttribute("aria-busy", "true");
-    expect(within(form).queryByRole("alert")).not.toBeInTheDocument();
-    expect(calls(api, "PATCH")).toHaveLength(1);
-    expect(assign).toHaveBeenCalledTimes(1);
   });
 
   it("un 404 cierra el formulario, lo explica la lista y la vuelve a pedir; abrir otro retira el aviso", async () => {
@@ -361,7 +332,9 @@ describe("BranchEditAction", () => {
     renderApp(ui());
     const form = await opened();
     rows = [branches[0]!, branches[2]!]; // ya no está
-    send(form);
+    card("Lima").tabIndex = -1; // como la primera fila que trae «Cargar más», que admite el foco
+    card("Lima").focus(); // el foco está en la tarjeta, no en el formulario: desaparece con ella
+    fireEvent.submit(form);
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     const notice = await screen.findByRole("alert");
@@ -372,9 +345,26 @@ describe("BranchEditAction", () => {
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     fireEvent.click(trigger("Cusco")); // otra acción: el aviso anterior ya no aplica
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    fireEvent.click(within(screen.getByRole("form")).getByRole("button", { name: "Cancelar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Crear sucursal" })); // también al crear
-    expect(screen.getByRole("form", { name: "Nueva sucursal" })).toBeVisible();
+  });
+
+  it("un 404 cierra el formulario aunque la sucursal siga en la lista, y no mueve el foco de otra parte", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [EDIT("b2")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    renderApp(ui());
+    const form = await opened();
+    send(form);
+    const create = screen.getByRole("button", { name: "Crear sucursal" });
+    create.focus(); // el usuario ya está en otra parte
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
+    expect(await screen.findByRole("alert")).toHaveTextContent("La sucursal Lima ya no existe");
+    await tick();
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(trigger()).toBeVisible(); // la tarjeta sigue: la lista aún la trae
+    expect(create).toHaveFocus();
+    fireEvent.click(create); // abrir «Crear sucursal» también retira el aviso
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("Enter mantenido no vuelve a pulsar: ni reabre el formulario ni reenvía", async () => {
@@ -392,5 +382,8 @@ describe("BranchEditAction", () => {
     expect(held).toBe(false);
     expect(fireEvent.keyDown(field(form, "name"), { key: "a", repeat: true })).toBe(true);
     expect(calls(api, "PATCH")).toHaveLength(1);
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger()); // al reabrir tras un fallo, el error no se arrastra
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

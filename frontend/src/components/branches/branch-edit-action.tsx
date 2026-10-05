@@ -104,7 +104,8 @@ export function BranchEditAction({
         // La sucursal ya no existe: lo explica la lista, que se vuelve a pedir.
         if (error.status !== 404) return;
         const active = document.activeElement;
-        const here = active === document.body || !!root.current?.contains(active);
+        // La tarjeta entera desaparece: también si el foco estaba en ella o en otra acción suya.
+        const here = active === document.body || !!root.current?.closest("li")?.contains(active);
         onStale(t("stale", { branch: branch.name }), here);
         setEditing(null);
       },
