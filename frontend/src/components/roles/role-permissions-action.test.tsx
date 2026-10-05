@@ -1,4 +1,4 @@
-import { onlineManager } from "@tanstack/react-query";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -416,5 +416,111 @@ describe("RolePermissionsAction", () => {
     await within(group).findByRole("button", { name: "Retirar Ver miembros a Caja" });
     release();
     await waitFor(() => expect(card("Caja")).toHaveTextContent("7 miembros"));
+  });
+
+  it("el código del permiso va codificado en la ruta, y uno hecho solo de puntos no se envía", async () => {
+    const odd = ["x/../../../members/m1/roles/r9", "a?b#c%", ".."].map((code) => permission(code));
+    const api = mockApi({ [LIST]: list(), [CATALOG]: { status: 200, body: { results: odd } } });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Roles" });
+    for (const { code } of odd) {
+      fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+      fireEvent.click(await screen.findByRole("button", { name: `Conceder ${code} a Caja` }));
+      // La API no conoce esa ruta (404: cierra el panel) o, sin enviar nada, es un fallo nuestro.
+      const alert = await screen.findByRole("alert");
+      if (code !== "..") continue;
+      expect(alert).toHaveTextContent("Algo salió mal de nuestro lado");
+      fireEvent.click(screen.getByRole("button", { name: "Cerrar" }));
+    }
+    const base = "/api/v1/o/acme/roles/r2/permissions/";
+    expect(calls(api, "PUT").map(([url]) => String(url))).toEqual([
+      `${base}x%2F..%2F..%2F..%2Fmembers%2Fm1%2Froles%2Fr9/`,
+      `${base}a%3Fb%23c%25/`,
+    ]);
+    expect(calls(api, "DELETE")).toHaveLength(0);
+  });
+
+  it.each([
+    ["en ninguna parte", true],
+    ["en otra parte", false],
+  ])(
+    "tras un 404, con el foco %s, el foco va al título solo si no estaba en otro sitio",
+    async (_where, moved) => {
+      const api = mockApi({
+        [LIST]: list(),
+        [CATALOG]: catalog,
+        [REVOKE("r2", "roles.view")]: { status: 404, body: { code: "NOT_FOUND" } },
+      });
+      renderApp(ui());
+      const group = await panel();
+      const elsewhere = screen.getByRole("button", { name: "Crear rol" });
+      if (moved) (document.activeElement as HTMLElement).blur();
+      else elsewhere.focus();
+      fireEvent.click(action(group, "Retirar Ver roles a Caja"));
+      await waitFor(() => expect(calls(api, "GET", "/roles/")).toHaveLength(2));
+      await screen.findByRole("alert");
+      expect(moved ? screen.getByRole("heading", { level: 1 }) : elsewhere).toHaveFocus();
+    },
+  );
+
+  it("sin sesión al pedir el catálogo va al login y no enseña un error", async () => {
+    const assign = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: "/o/acme/roles", search: "", assign });
+    mockApi({ [LIST]: list(), [CATALOG]: { status: 401, body: { code: "NOT_AUTHENTICATED" } } });
+    render(
+      <NextIntlClientProvider locale="es-PE" messages={messages} timeZone="America/Lima">
+        <Providers>{ui()}</Providers>
+      </NextIntlClientProvider>,
+    );
+    await screen.findByRole("list", { name: "Roles" });
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+    const group = screen.getByRole("group", { name: "Permisos de Caja" });
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?next=%2Fo%2Facme%2Froles"));
+    await tick();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(group).queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+    expect(within(group).getByText("Cargando permisos…")).toHaveAttribute("role", "status");
+  });
+
+  it("al reintentar el catálogo, el foco no se mueve si el usuario ya está en otra parte", async () => {
+    let answer: { status: number; body: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    const api = mockApi({ [LIST]: list(), [CATALOG]: () => answer });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Roles" });
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+    const group = screen.getByRole("group", { name: "Permisos de Caja" });
+    const retry = await within(group).findByRole("button", { name: "Reintentar" });
+    answer = catalog;
+    const asked = calls(api, "GET", "/permissions/").length; // con los reintentos automáticos
+    const release = hold(api);
+    fireEvent.click(retry);
+    fireEvent.click(retry); // mientras reintenta: una sola petición más
+    await tick();
+    expect(retry).toHaveAttribute("aria-disabled", "true"); // sigue montado, ocupado
+    const elsewhere = screen.getByRole("button", { name: "Crear rol" });
+    elsewhere.focus();
+    release();
+    await within(group).findByRole("button", { name: /Ver miembros/ });
+    expect(elsewhere).toHaveFocus();
+    expect(calls(api, "GET", "/permissions/")).toHaveLength(asked + 1);
+  });
+
+  it("el catálogo no se vuelve a pedir solo al volver a la pestaña ni al recuperar la red", async () => {
+    const api = mockApi({ [LIST]: list(), [CATALOG]: catalog });
+    renderApp(ui());
+    await panel();
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      onlineManager.setOnline(false);
+      onlineManager.setOnline(true);
+    });
+    await tick();
+    expect(calls(api, "GET", "/permissions/")).toHaveLength(1);
+    focusManager.setFocused(undefined);
   });
 });
