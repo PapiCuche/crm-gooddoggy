@@ -119,6 +119,19 @@ Cada fila ofrece «Suspender» (miembro activo) o «Reactivar» (miembro suspend
 - **Pantalla desfasada** (`INVALID_TRANSITION`, `NOT_FOUND`): la lista se vuelve a pedir, y la acción, o la fila entera, puede desaparecer. Por eso el aviso («El estado de … ya había cambiado») vive en la lista (`role="alert"`), no en la fila, y el foco va al título si seguía en esa acción (o en ninguna parte). Si la nueva lectura falla, el aviso se queda y la lista no cambia. El aviso se quita al abrir otra confirmación.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
+### Asignar y quitar roles (F2-27)
+
+Cada fila ofrece «Roles», que abre un panel con los roles de la organización: «Asignar» los que el miembro no tiene y «Quitar» los que tiene, con `PUT` y `DELETE /api/v1/o/{slug}/members/{id}/roles/{role_id}/` (F2-25). Componente: `components/members/member-roles-action.tsx`.
+
+- **A quién se ofrece:** a quien tiene `users.manage` y `roles.view` según el contexto de la API (el panel necesita ver los roles). Nunca en la fila propia; el estado del miembro no importa. Es comodidad: las reglas contra la escalada las aplica la API (ADR-003 §5) y un 403 se explica en el panel.
+- **Dos pasos:** abrir el panel y pulsar el botón del rol. Abrir no envía nada, y los roles de la organización se piden entonces (todas sus páginas), no antes. Al abrir, el foco va a «Cerrar».
+- **Lo que hace cada botón queda fijado al abrir.** Los roles que el miembro tiene se anotan al abrir el panel y solo cambian con las respuestas propias: si la lista cambia debajo, ningún botón pasa de «Asignar» a «Quitar» por sí solo.
+- **Un cambio cada vez**, enviado una sola vez; mientras tanto todos los botones del panel quedan ocupados (`aria-disabled`) y solo el pulsado lo dice. Sin red falla y se dice.
+- **Éxito:** como al suspender, se cancela la lectura de la lista que estuviera en vuelo y los roles de la fila cambian en la lista ya cargada, en el orden del directorio (por nombre). El botón pulsado pasa a la acción contraria y conserva el foco. El resultado se anuncia (`role="status"`).
+- **Errores que conservan el panel** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en el panel y el mismo botón reintenta.
+- **Pantalla desfasada** (404: el miembro o el rol ya no existen, o ya no tiene ese rol): el panel se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista, como al suspender.
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
 ## Roles (F2-23)
 
 `/o/[orgSlug]/roles` muestra los roles de la organización: lo que devuelve `GET /api/v1/o/{slug}/roles/` (F2-22), con el cliente generado.

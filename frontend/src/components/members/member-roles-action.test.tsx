@@ -113,35 +113,37 @@ describe("MemberRolesAction", () => {
 
   it("asigna y quita de uno en uno, cambia la fila sin volver a pedir la lista y lo anuncia", async () => {
     const api = mockApi({
-      [LIST]: everyone(),
+      [LIST]: list([member("ana"), member("luis", [sales]), member("eva")]),
       [ROLES]: all,
-      [link("PUT", "luis", "sales")]: { status: 204 },
-      [link("DELETE", "luis", "cash")]: { status: 204 },
+      [link("PUT", "luis", "cash")]: { status: 204 },
+      [link("DELETE", "luis", "sales")]: { status: 204 },
     });
     renderApp(ui());
     const group = await panel();
     const release = hold(api);
-    const assign = within(group).getByRole("button", { name: "Asignar Ventas a luis@acme.pe" });
+    const assign = within(group).getByRole("button", { name: "Asignar Caja a luis@acme.pe" });
+    const other = within(group).getByRole("button", { name: "Quitar Ventas a luis@acme.pe" });
     assign.focus();
     fireEvent.click(assign);
     fireEvent.click(assign); // ocupado: la segunda pulsación no cuenta
-    fireEvent.click(within(group).getByRole("button", { name: "Quitar Caja a luis@acme.pe" }));
+    fireEvent.click(other);
     await waitFor(() => expect(assign).toHaveTextContent("Asignando…"));
     for (const button of within(group).getAllByRole("button"))
       expect(button).toHaveAttribute("aria-disabled", "true"); // un cambio cada vez
+    expect(other).toHaveTextContent(/^Quitar$/); // solo el botón pulsado dice que está en ello
     fireEvent.click(within(group).getByRole("button", { name: "Cerrar" })); // ya se envió
     expect(screen.getByRole("group")).toBeInTheDocument();
     release();
-    await waitFor(() => expect(assign).toHaveAccessibleName("Quitar Ventas a luis@acme.pe"));
+    await waitFor(() => expect(assign).toHaveAccessibleName("Quitar Caja a luis@acme.pe"));
     expect(assign).toHaveFocus(); // el mismo botón, ahora con la acción contraria
-    expect(shown("luis@acme.pe")).toEqual(["Caja", "Ventas"]); // en el orden del directorio
+    expect(shown("luis@acme.pe")).toEqual(["Caja", "Ventas"]); // por nombre, como el directorio
     const status = () => within(row("luis@acme.pe")).getAllByRole("status").at(-1);
-    expect(status()).toHaveTextContent("Rol Ventas asignado a luis@acme.pe.");
-    fireEvent.click(within(group).getByRole("button", { name: "Quitar Caja a luis@acme.pe" }));
-    await waitFor(() => expect(shown("luis@acme.pe")).toEqual(["Ventas"]));
-    expect(status()).toHaveTextContent("Rol Caja quitado a luis@acme.pe.");
-    expect(calls(api, "PUT")).toEqual(["/api/v1/o/acme/members/luis/roles/sales/"]);
-    expect(calls(api, "DELETE")).toEqual(["/api/v1/o/acme/members/luis/roles/cash/"]);
+    expect(status()).toHaveTextContent("Rol Caja asignado a luis@acme.pe.");
+    fireEvent.click(other);
+    await waitFor(() => expect(shown("luis@acme.pe")).toEqual(["Caja"]));
+    expect(status()).toHaveTextContent("Rol Ventas quitado a luis@acme.pe.");
+    expect(calls(api, "PUT")).toEqual(["/api/v1/o/acme/members/luis/roles/cash/"]);
+    expect(calls(api, "DELETE")).toEqual(["/api/v1/o/acme/members/luis/roles/sales/"]);
     expect(calls(api, "GET").filter((url) => url.includes("/members/"))).toHaveLength(1);
     expect(shown("eva@acme.pe")).toEqual(["Sin rol"]); // solo cambia la fila de la respuesta
   });
@@ -218,6 +220,40 @@ describe("MemberRolesAction", () => {
     expect(calls(api, "PUT")).toHaveLength(1);
     expect(calls(api, "DELETE")).toHaveLength(0);
     expect(shown("luis@acme.pe")).toEqual(["Ventas"]);
+  });
+
+  it("una lectura en vuelo no pisa los roles que acaban de cambiar", async () => {
+    let luis = member("luis");
+    const api = mockApi({
+      [LIST]: () => ({ status: 200, body: { results: [member("ana"), luis], next: "abc" } }),
+      [`${LIST}?cursor=abc`]: { status: 200, body: { results: [member("eva")], next: null } },
+      [ROLES]: all,
+      [link("PUT", "luis", "sales")]: { status: 204 },
+      [link("PUT", "luis", "cash")]: { status: 204 },
+    });
+    const members = () => calls(api, "GET").filter((url) => url.includes("/members/"));
+    const view = renderApp(ui());
+    const group = await panel();
+    const more = screen.getByRole("button", { name: "Cargar más" });
+    let release = hold(api); // «Cargar más» sale ahora, con la lista de antes de la escritura
+    fireEvent.click(more);
+    await waitFor(() => expect(members()).toHaveLength(2));
+    fireEvent.click(within(group).getByRole("button", { name: "Asignar Ventas a luis@acme.pe" }));
+    await within(group).findByRole("button", { name: "Quitar Ventas a luis@acme.pe" });
+    release();
+    await tick();
+    expect(shown("luis@acme.pe")).toEqual(["Ventas"]); // esa lectura se canceló
+    await waitFor(() => expect(more).toHaveAttribute("aria-disabled", "false"));
+    // Si lo que estaba en vuelo era la lista entera, se repite después de la escritura.
+    release = hold(api);
+    act(() => void view.client.refetchQueries({ queryKey: ["/api/v1/o/acme/members/", "pages"] }));
+    await waitFor(() => expect(members()).toHaveLength(3));
+    luis = member("luis", [cash, sales]); // lo que la API tendrá tras la escritura
+    fireEvent.click(within(group).getByRole("button", { name: "Asignar Caja a luis@acme.pe" }));
+    await within(group).findByRole("button", { name: "Quitar Caja a luis@acme.pe" });
+    release();
+    await waitFor(() => expect(members()).toHaveLength(4));
+    expect(shown("luis@acme.pe")).toEqual(["Caja", "Ventas"]);
   });
 
   it("los roles del panel: todas sus páginas, sin roles, y un fallo que se puede reintentar", async () => {
