@@ -95,12 +95,21 @@ class BranchCreateSerializer(serializers.Serializer[Any]):
         return attrs
 
 
+class JsonBooleanField(serializers.BooleanField):
+    """Solo `true` o `false`, como el comando. DRF aceptaría además `"no"`, `"off"`, `0` o `"1"`."""
+
+    def to_internal_value(self, data: Any) -> bool:
+        if not isinstance(data, bool):
+            self.fail("invalid", input=data)
+        return bool(data)
+
+
 class BranchUpdateSerializer(BranchCreateSerializer):
     """Lo que se envía cambia; lo que no, se queda como está. El código no se cambia."""
 
     code = None
     name = serializers.CharField(max_length=NAME_MAX, required=False)
-    is_active = serializers.BooleanField(required=False)
+    is_active = JsonBooleanField(required=False)
 
 
 TAKEN = "Ya existe una sucursal con ese código en la organización."

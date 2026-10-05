@@ -14,7 +14,7 @@ from apps.organizations.branches import update_branch
 from apps.organizations.models import Branch
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_branch_writes, test_self_context
-from tests.test_anti_escalation import audit
+from tests.test_anti_escalation import audit, race
 from tests.test_authorization import give
 from tests.test_branch_writes import DENIED, ROWS, URL, send
 from tests.test_branches import branch
@@ -24,6 +24,7 @@ from tests.test_self_context import NOT_FOUND, reply, signed
 world, real_stack = test_authorization.world, test_self_context.real_stack
 ana = test_branch_writes.ana
 pytestmark = pytest.mark.usefixtures("tenant_db")
+STAMPS = "SELECT id, xmin::text, updated_at FROM branches ORDER BY id"  # cambian al escribir
 
 
 def update(client: Client, branch_id: Any, body: Any, org: str = "org-a") -> Any:
@@ -52,10 +53,11 @@ def test_it_changes_only_what_is_sent_and_audits_the_difference(
     assert audit(migrator)[-1] == ("branch.updated", "branch", lima.pk, changes, {}, world.ana.pk)
     label = "SELECT entity_label FROM audit_logs WHERE action = 'branch.updated'"
     assert migrator.execute(label).fetchall() == [("LIM",)]
-    before = migrator.execute(ROWS).fetchone()
+    before, stamps = migrator.execute(ROWS).fetchone(), migrator.execute(STAMPS).fetchall()
     for same in ({}, {"name": "Lima Centro"}, {"code": "OTRO", "organization_id": str(world.b)}):
         assert update(ana, lima.pk, same).json() == edited.json()  # el código no se cambia
     assert migrator.execute(ROWS).fetchone() == before  # sin cambios, ni escribe ni audita
+    assert migrator.execute(STAMPS).fetchall() == stamps  # ni un `UPDATE`: las mismas filas
     listed = {row["code"]: row for row in ana.get(URL.format("org-a")).json()["results"]}
     assert listed["LIM"] == edited.json() and listed["AQP"]["name"] == "Arequipa"
     with tenant_scope(ctx(world.a)):
@@ -79,6 +81,24 @@ def test_it_deactivates_and_reactivates(
     assert audit(migrator)[-1][3] == {"is_active": [False, True]}
 
 
+def test_two_edits_at_once_queue_and_each_audits_what_it_found(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    lima = branch(world.a, "LIM", name="Lima")
+
+    def edit(**fields: Any) -> tuple[Any, Any]:
+        return world.ana, lambda tenant: update_branch(tenant, branch_id=lima.pk, **fields)
+
+    changes = {"first": edit(name="Uno"), "second": edit(name="Dos", is_active=False)}
+    race(world.a, changes, hold="first")  # el segundo espera el bloqueo de la fila y la relee
+    assert [row[3] for row in audit(migrator)] == [
+        {"name": ["Lima", "Uno"]},
+        {"name": ["Uno", "Dos"], "is_active": [True, False]},  # su «antes» es lo que dejó el otro
+    ]
+    race(world.a, {"first": edit(is_active=True), "second": edit(is_active=True)}, hold="first")
+    assert len(audit(migrator)) == 3  # el segundo ya la encontró activa: ni escribe ni audita
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -95,6 +115,9 @@ def test_it_deactivates_and_reactivates(
         ("timezone", "localtime"),
         ("is_active", "quizá"),
         ("is_active", None),
+        ("is_active", "false"),  # solo los booleanos de JSON, como el comando
+        ("is_active", "no"),
+        ("is_active", 0),
     ],
 )
 def test_a_field_that_does_not_fit_is_a_400_that_names_it(
