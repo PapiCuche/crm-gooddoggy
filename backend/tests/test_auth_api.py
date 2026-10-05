@@ -233,6 +233,8 @@ def test_a_string_that_is_not_text_is_a_parse_error(
         b'{"email":"a@example.com","password":"x","%(u)sdfff":1}',  # en una clave
         b'{"email":"a@example.com","password":"x","extra":[{"a":["%(u)sd800"]}]}',  # anidado
         b'{"email":"a@example.com","password":"%(u)sdc36%(u)sd83d"}',  # la pareja, al revés
+        b'{"email":"a@example.com","password":"%(u)sdc80"}',  # el que usa `surrogateescape`
+        b'["%(u)sd800"]',  # y un cuerpo que no es un objeto
     ):
         assert reply(post(body)) == (400, b'{"code":"PARSE_ERROR"}'), body
     pair = b'{"email":"ana@example.com","password":"%(u)sd83d%(u)sdc36"}'  # un emoji: es texto
