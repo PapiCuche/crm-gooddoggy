@@ -196,7 +196,7 @@ describe("MemberRolesAction", () => {
     rows = [member("ana"), member("luis"), member("eva")]; // otro se lo quitó antes
     fireEvent.click(within(group).getByRole("button", { name: "Quitar Caja a luis@acme.pe" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Los roles de luis@acme.pe o de la organización ya habían cambiado. Revisa la lista.",
+      /^Los roles de luis@acme.pe o de la organización ya habían cambiado. Revisa la lista.$/,
     );
     expect(screen.queryByRole("group")).not.toBeInTheDocument(); // el panel se cierra
     await waitFor(() => expect(shown("luis@acme.pe")).toEqual(["Sin rol"]));
@@ -223,6 +223,8 @@ describe("MemberRolesAction", () => {
     await waitFor(() => expect(assign).toHaveAccessibleName("Quitar Ventas a luis@acme.pe"));
     fireEvent.click(assign, { detail: 2 }); // el segundo clic de un doble clic: no lo quita
     expect(fireEvent.keyDown(assign, { key: "Enter", repeat: true })).toBe(false); // ni una tecla mantenida
+    expect(fireEvent.keyDown(assign, { key: "Enter" })).toBe(true); // la primera pulsación sí activa
+    expect(fireEvent.keyDown(assign, { key: "Tab", repeat: true })).toBe(true); // y Tab mantenido navega
     await tick();
     expect(calls(api, "DELETE")).toEqual([]);
     // Entre la respuesta y el siguiente render el botón sigue ocupado: no se reenvía.
@@ -230,12 +232,38 @@ describe("MemberRolesAction", () => {
     const release = hold(api);
     fireEvent.click(remove);
     await tick();
-    release();
-    setImmediate(() => fireEvent.click(remove)); // una pulsación en cola detrás de la respuesta
-    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 30)));
+    await act(async () => {
+      release();
+      for (let turn = 0; turn < 100; turn++) await null; // llega la respuesta; aún no hay render
+      fireEvent.click(remove); // una pulsación entre la respuesta y el render
+    });
+    await tick();
     expect(calls(api, "DELETE")).toHaveLength(1);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(shown("luis@acme.pe")).toEqual(["Ventas"]);
+  });
+
+  it("un render ajeno justo antes de la pulsación no suelta la marca", async () => {
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [member("ana"), member("luis")], next: "abc" } },
+      [`${LIST}?cursor=abc`]: list([member("eva")]),
+      [ROLES]: all,
+      [link("PUT", "luis", "sales")]: { status: 204 },
+    });
+    renderApp(ui());
+    const group = await panel();
+    const assign = within(group).getByRole("button", { name: "Asignar Ventas a luis@acme.pe" });
+    const more = hold(api); // la página 2 llega en un render que no viene de un evento
+    hold(api); // y la escritura no llega a responder
+    const rows = screen.getByRole("list", { name: "Miembros" });
+    new MutationObserver(() => assign.click()).observe(rows, { childList: true }); // pulsa tras ese render
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await tick();
+    more();
+    await waitFor(() => expect(calls(api, "PUT")).toHaveLength(1));
+    fireEvent.click(assign); // otra pulsación con la primera en vuelo
+    await tick();
+    expect(calls(api, "PUT")).toHaveLength(1);
   });
 
   it("asignar un rol que ya no existe también es pantalla desfasada, y la segunda página se parchea", async () => {
@@ -336,6 +364,10 @@ describe("MemberRolesAction", () => {
     reply = { status: 200, body: { results: [sales], next: "abc" } };
     const retry = within(group).getByRole("button", { name: "Reintentar" });
     retry.focus();
+    act(() => onlineManager.setOnline(false));
+    act(() => onlineManager.setOnline(true)); // vuelve la red: no se repide solo ni se lleva el foco
+    await tick();
+    expect(retry).toHaveFocus();
     const release = hold(api);
     fireEvent.click(retry);
     await waitFor(() => expect(retry).toHaveTextContent("Cargando roles…"));
@@ -380,7 +412,9 @@ describe("MemberRolesAction", () => {
         <Providers>{ui()}</Providers>
       </NextIntlClientProvider>,
     );
-    const group = await panel();
+    fireEvent.click(within(await panel()).getByRole("button", { name: "Cerrar" }));
+    const group = await panel(); // cada apertura vuelve a pedir los roles
+    expect(calls(api, "GET").filter((url) => url.includes("roles/?"))).toHaveLength(2);
     onlineManager.setOnline(false); // una escritura no espera en cola a que vuelva la red
     api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     fireEvent.click(within(group).getByRole("button", { name: "Quitar Caja a luis@acme.pe" }));

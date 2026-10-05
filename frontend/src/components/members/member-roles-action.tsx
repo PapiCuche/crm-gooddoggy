@@ -8,7 +8,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -78,6 +78,8 @@ export function MemberRolesAction({
     queryFn: ({ signal }) => allRoles(slug, signal),
     enabled: held !== null, // nada se pide hasta abrir el panel
     staleTime: 0, // y cada apertura vuelve a preguntar
+    refetchOnWindowFocus: false, // no por su cuenta: «Reintentar» se desmontaría con el foco
+    refetchOnReconnect: false,
   });
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
   const change = useMutation<void, ApiError, Change>({
@@ -132,7 +134,7 @@ export function MemberRolesAction({
   const open = held !== null;
   // La marca se suelta cuando la pantalla ya enseña el resultado, no al llegar la respuesta:
   // una pulsación entre las dos cosas reenviaría lo mismo. Sin sesión (401) no se suelta.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!busy) sending.current = false;
   });
 
@@ -206,7 +208,9 @@ export function MemberRolesAction({
                       aria-busy={mine}
                       // El botón pasa a la acción contraria al terminar: el segundo clic de un
                       // doble clic, o una tecla mantenida, no deben deshacer lo recién hecho.
-                      onKeyDown={(event) => event.repeat && event.preventDefault()}
+                      onKeyDown={(event) =>
+                        event.repeat && event.key === "Enter" && event.preventDefault()
+                      }
                       onClick={(event) => event.detail > 1 || send(role, assign)}
                     >
                       {t(`${assign ? "assign" : "remove"}${mine ? "Busy" : ""}`)}
