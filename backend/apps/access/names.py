@@ -4,7 +4,6 @@ Un nombre lo escribe una persona y lo lee otra en una lista. `str.isprintable` y
 bastan: dejan pasar caracteres que no se ven, y dos cadenas distintas pueden pintarse igual.
 """
 
-import re
 import unicodedata
 
 # Sin tinta en pantalla y, casi todos, imprimibles para Python: rellenos, selectores de
@@ -29,6 +28,28 @@ _UNSEEN = frozenset(
 )
 
 
+# Letras que ya llevan su punto (Soft_Dotted, tras NFKC y casefold) y las dos que lo reciben
+# de un U+0307: «ı» y «ȷ» con punto se pintan como «i» y «j».
+_DOTTED = frozenset("ij\u0249\u0268\u029d\u03f3\u0456\u0458\u1d96\U0001df1a")
+_DOTLESS = {"\u0131": "i", "\u0237": "j"}
+
+
+def _one_dot(text: str) -> str:
+    """Sin el punto superior (U+0307) que cae sobre una letra que ya lo lleva, aunque entre
+    ambos haya marcas que no van arriba (un ogonek, un punto inferior)."""
+    out: list[str] = []
+    for char in unicodedata.normalize("NFD", text):
+        if char == "\u0307":
+            at = len(out) - 1
+            while at >= 0 and unicodedata.combining(out[at]) not in (0, 230):
+                at -= 1
+            if at >= 0 and (out[at] in _DOTTED or out[at] in _DOTLESS):
+                out[at] = _DOTLESS.get(out[at], out[at])
+                continue
+        out.append(char)
+    return "".join(out)
+
+
 def spaced(name: str) -> str:
     """Todo separador de espacio (el de no separación, el ideográfico) es un espacio. Un salto
     de línea o un tabulador no lo son: siguen ahí para que la validación los rechace."""
@@ -43,12 +64,12 @@ def clean(name: str) -> str:
 def key(name: str) -> str:
     """Dos nombres con la misma clave se leen igual: sin distinguir mayúsculas, formas de
     composición, de anchura o de compatibilidad (un superíndice, una ligadura), espacios
-    repetidos ni caracteres que no se ven. No cubre letras
-    de otro alfabeto que se parecen (una «О» cirílica): eso no lo resuelve una validación."""
-    folded = unicodedata.normalize("NFKC", name).casefold()
-    folded = re.sub("(?<=[ij])\u0307", "", folded)  # un punto sobre una letra que ya lo lleva
-    seen = "".join(char for char in folded if char not in _UNSEEN)
-    return " ".join(unicodedata.normalize("NFC", seen).split())
+    repetidos, caracteres que no se ven, el guion tipográfico ni un punto añadido a una letra
+    que ya lo lleva. No cubre letras de otro alfabeto que se parecen (una «О» cirílica): eso
+    no lo resuelve una validación."""
+    folded = unicodedata.normalize("NFKC", name).casefold().replace("\u2010", "-")
+    seen = "".join(char for char in folded if char not in _UNSEEN)  # antes del punto: no lo tapan
+    return " ".join(unicodedata.normalize("NFC", _one_dot(seen)).split())
 
 
 def legible(name: str) -> bool:

@@ -88,9 +88,21 @@ def test_the_name_is_unique_in_the_organization_and_the_code_never_collides(rbac
         "Owner \ufe0f", "Owner\u17b5", "Owner\u180b", "Owner\U000e0100", "Owner\ufffc",
         "Admi\u0307nistrador", "Supervi\u0307sor",  # un punto sobre la i, que ya lo lleva
         "Caja", "Cafe\u034f\u0301",  # frente a un nombre guardado con un carácter que no se ve
+        "Caj\u0307a", "STRASSE",  # el punto sobre la j; «ß» es «ss»
+        "Admi\u034f\u0307nistrador", "Supervi\ufe0f\u0307sor",  # el punto, tras algo que no se ve
+        "Adm\u0131\u0307nistrador", "Ca\u0237\u0307a",  # sin punto propio: con él son «i» y «j»
+        "Adm\u012f\u0307n", "Admi\u0307\u0328n",  # con una marca inferior en medio
+        "Zona \u0456\u0307",  # la «i» cirílica también lleva su punto
+        "Owner\U0001d159", "Owner\ufe00", "Owner\U000e01ef",  # los extremos de cada rango
+        "Owner\u17b4", "Owner\u180f", "Owner\u115f",
     )  # fmt: skip
     assert create(ana, {"name": "Café"}).status_code == 201  # NFC…
     assert create(ana, {"name": "Caja\ufe0f"}).status_code == 201
+    assert create(ana, {"name": "Adm\u012fn"}).status_code == 201
+    assert create(ana, {"name": "Zona \u0456"}).status_code == 201
+    assert create(ana, {"name": "Adm\u00edn"}).status_code == 201
+    code = create(ana, {"name": "Stra\u00dfe"}).json()["code"]
+    assert code == "strae"  # el código sale del nombre, no de la clave
     for taken in (*same, "Cafe\u0301"):  # …y NFD: la misma palabra
         again = create(ana, {"name": taken})
         assert (again.status_code, again.json()["code"]) == (409, "ROLE_NAME_TAKEN"), taken
@@ -99,8 +111,15 @@ def test_the_name_is_unique_in_the_organization_and_the_code_never_collides(rbac
         create(ana, {"name": name}).json()["code"] for name in ("Ventas-Norte", "ventas_norte")
     ]
     assert codes == ["ventas-norte-2", "ventas_norte"]  # otro nombre, mismo código de partida
-    for free in ("Ventas", "Norte", "Ventas Norte 2"):  # contenido en otro, o que lo contiene
-        assert create(ana, {"name": free}).status_code == 201, free
+    for hyphen in "\u2010\u2011":  # el guion tipográfico se pinta como el del teclado
+        assert create(ana, {"name": f"Ventas{hyphen}Norte"}).status_code == 409, hyphen
+    free = (
+        "Ventas", "Norte", "Ventas Norte 2",  # contenido en otro, o que lo contiene
+        "V\u0307entas Norte", "Ventas N\u022frte",  # un punto sobre una letra que no lo lleva
+        "Adm\u0131nistrador", "Admi\u0301\u0307n",  # sin punto, o con el punto sobre una tilde
+    )  # fmt: skip
+    for name in free:
+        assert create(ana, {"name": name}).status_code == 201, name
     long = [create(ana, {"name": "c" * 99 + last}).json()["code"] for last in "xyz"]
     assert long == ["c" * 40, "c" * 40 + "-2", "c" * 40 + "-3"]  # 40 más el sufijo caben en 50
     assert create(ana, {"name": "b" * 39 + " d"}).json()["code"] == "b" * 39  # sin guion final
@@ -169,6 +188,7 @@ def test_without_session_permission_or_a_valid_body_it_creates_nothing(
         ({"name": "\u0301"}, "name"),  # solo una marca
         ({"name": "\u2800\ufe0f"}, "name"),
         ({"name": "sin\u200bjuntura"}, "name"),
+        ({"name": "dos\u2028líneas"}, "name"),  # un separador de línea no es un espacio
         ({"name": "\u0301 \u0301"}, "name"),
         ({"name": "\u0958" * 100}, "name"),  # 100 al escribirlo, 200 en la forma en que se guarda
         ({"name": "a\u0001b", "description": "c\u0002d"}, "name"),
@@ -198,7 +218,7 @@ def test_the_service_checks_the_same_and_needs_the_active_scope(rbac: Any) -> No
     with acting(rbac.a, rbac.ana) as tenant:
         assert create_role(tenant, name="Con texto", description="  x  ").description == "x"
     with acting(rbac.a, rbac.ana) as tenant:
-        role = create_role(tenant, name="  Desde   el servicio  ")
+        role = create_role(tenant, name="\t Desde   el servicio \n")
         assert (role.name, role.code, role.description) == (
             "Desde el servicio",
             "desde-el-servicio",
