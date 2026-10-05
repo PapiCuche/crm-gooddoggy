@@ -234,7 +234,9 @@ def test_the_route_cannot_skip_the_rules_of_the_services(
         assert reply(delete(luis, role)) == DENIED, role
         assert reply(edit(luis, role, name)) == DENIED, role  # su nombre lo lee quien lo asigna
         assert reply(edit(luis, role)) == DENIED, role  # y un PATCH vacío enseñaría lo que concede
+        assert reply(edit(luis, role, {"name": "owner"})) == DENIED, role  # ni si el nombre existe
     assert reply(delete(ana, roles["mixed"])) == DENIED  # todas las concesiones, no la primera
+    assert reply(edit(ana, roles["mixed"], name)) == DENIED  # tampoco al renombrar
     assert reply(delete(luis, used)) == DENIED  # y eso va antes que decir si tiene miembros
     assert count(migrator) == before  # una negativa no escribe nada
     assert edit(luis, roles["narrow"], name).status_code == 200  # lo que sí cubre
@@ -243,11 +245,16 @@ def test_the_route_cannot_skip_the_rules_of_the_services(
     by_code = delete(ana, rbac.target.pk)  # nada decide por el código o el nombre
     assert reply(by_code) == DONE
     assert count(migrator) == (before[0] - 2, before[1], before[2] + 4, before[3] - 3)
+    with tenant_scope(ctx(rbac.a)):  # una con un miembro, y otra vacía: luis la cubre
+        MembershipRole.objects.create(membership_id=marta, role=rbac.roles["supervisor"])
+        RolePermission.objects.filter(role=rbac.roles["seller"]).delete()
     kept = count(migrator)
     for template in ("admin", "supervisor", "seller"):  # una plantilla se edita, no se borra
         system = delete(ana, rbac.roles[template].pk)
         assert (system.status_code, system.json()["code"]) == (409, "ROLE_IS_SYSTEM"), template
+        assert system.json()["message"] == "Un rol de plantilla no se borra."  # sin su nombre
         assert set(system.json()) == {"code", "message"}
+    assert delete(luis, rbac.roles["seller"].pk).json()["code"] == "ROLE_IS_SYSTEM"  # no solo Owner
     assert reply(delete(luis, rbac.roles["admin"].pk)) == DENIED  # y cubrirla va antes
     assert count(migrator) == kept
     renamed = edit(ana, rbac.roles["seller"].pk, {"name": "Ventas"}).json()  # renombrarla, sí
