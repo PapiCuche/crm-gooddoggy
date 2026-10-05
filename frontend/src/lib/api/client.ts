@@ -30,6 +30,8 @@ import type {
   OrganizationSummary,
   PaginatedMemberList,
   PaginatedRoleList,
+  Role,
+  RoleCreateRequest,
   RolesListParams,
   SelfContext,
   Session,
@@ -1099,7 +1101,7 @@ export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
 
 /**
  * Los roles de la organización, con lo que concede cada uno y cuántos miembros lo tienen.
- * Paginado por orden de creación (ADR-016).
+ * Paginado por orden de creación (ADR-016). `POST` crea un rol propio (F2-29).
  */
 export const rolesList = async (
   orgSlug: string,
@@ -1220,3 +1222,105 @@ export function useRolesList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getRolesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/roles/`;
+};
+
+/**
+ * Crea un rol propio, vacío: sin permisos y sin miembros. El código lo genera el servidor. 409 `ROLE_NAME_TAKEN`: ya hay en la organización un rol cuyo nombre se lee igual (mayúsculas, espacios repetidos, formas Unicode). 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+ */
+export const rolesCreate = async (
+  orgSlug: string,
+  roleCreateRequest: RoleCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Role> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Role>(getRolesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(roleCreateRequest),
+  });
+};
+
+export const getRolesCreateMutationKey = () => ["rolesCreate"] as const;
+
+export const getRolesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rolesCreate>>,
+    TError,
+    RolesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rolesCreate>>,
+  TError,
+  RolesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getRolesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rolesCreate>>,
+    RolesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return rolesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RolesCreateMutationResult = NonNullable<Awaited<ReturnType<typeof rolesCreate>>>;
+export type RolesCreateMutationBody = RoleCreateRequest;
+export type RolesCreateMutationError = ErrorType<Error>;
+export type RolesCreateMutationVariables = { orgSlug: string; data: RoleCreateRequest };
+
+export const useRolesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rolesCreate>>,
+      TError,
+      RolesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rolesCreate>>,
+  TError,
+  RolesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getRolesCreateMutationOptions(options), queryClient);
+};
