@@ -138,7 +138,7 @@ def test_rls_hides_and_refuses_the_branches_of_another_organization(world: Any) 
 @pytest.mark.parametrize(
     "code", ["", "lim", "LIM-", "-LIM", "LIM--1", "LIM 1", "LÍM", "LIM\n", "LIM_1", "ＬＩＭ"]
 )
-def test_the_database_only_takes_codes_that_cannot_read_alike(
+def test_the_database_only_takes_uppercase_ascii_codes(
     world: Any, migrator: psycopg.Connection[Any], code: str
 ) -> None:
     with pytest.raises(psycopg.errors.CheckViolation):
@@ -156,3 +156,11 @@ def test_the_database_rejects_a_repeated_code_and_a_missing_organization(
         migrator.execute(INSERT, [world.a, "A" * 21])
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         migrator.execute(INSERT, [uuid4(), "LIM"])
+    unique = migrator.execute(
+        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint"
+        " WHERE conrelid = 'branches'::regclass AND contype = 'u'"
+    ).fetchall()
+    assert sorted(unique) == [  # la segunda es el destino de las FK compuestas `branch_id`
+        ("branches_org_code_uq", "UNIQUE (organization_id, code)"),
+        ("branches_org_id_uq", "UNIQUE (organization_id, id)"),
+    ]

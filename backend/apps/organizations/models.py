@@ -72,7 +72,9 @@ class Branch(TenantModel):
     """Sucursal o tienda física (tenant-owned; modelo de datos §E.1).
 
     `code` es la clave que eligen las personas. La BD solo admite mayúsculas ASCII, cifras y
-    guiones entre ellas: así dos códigos de una organización no pueden leerse igual.
+    guiones entre ellas: así dos códigos de una organización no se distinguen solo por
+    mayúsculas, acentos, espacios o letras Unicode de igual aspecto. Los parecidos dentro de
+    ASCII (`O` y `0`, `I` y `1`) siguen siendo códigos distintos.
     """
 
     id = uuid7_primary_key()

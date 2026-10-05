@@ -132,7 +132,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 - `execution_context(ctx)`: membresía activa del usuario y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
 - `has_permission`, `can(ectx, code, obj)`, `require(...)` y `scoped(ectx, code, queryset)`: permiso, alcance sobre un objeto y filtro de listado. Todo dentro del `tenant_scope` del propio contexto.
 - `apps.access.scopes.register(Modelo, FieldScopes(...))`: cada modelo declara una vez sus columnas de propietario, equipo y sucursal, por el nombre de la columna (`assigned_user_id`, no `assigned_user`); de ahí salen el filtro y la verificación por objeto.
-- Hasta E01-09 no hay equipos ni sucursales: `TEAM` y `BRANCH` equivalen a `OWN` (OBS-F2-05A-2).
+- Todavía no hay equipos, y las sucursales (F2-43) aún no se enlazan a las membresías: `TEAM` y `BRANCH` equivalen a `OWN` (OBS-F2-05A-2).
 - El `ExecutionContext` es una foto de su transacción: usarlo en otro `tenant_scope` posterior falla; hay que recalcularlo.
 - Falla cerrado: un código de permiso inexistente lanza `UnknownPermission`; un modelo sin política lanza `ScopePolicyMissing`, también para quien tiene `ORGANIZATION`.
 
@@ -480,7 +480,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 - **Qué incluye:** todas, activas e inactivas. Lo opcional (`address`, `district`, `city`, `phone`) llega como texto vacío, nunca `null`.
 - **Paginación:** por cursor, en orden de creación (`?limit=`, `?cursor=`; ver «Listados»). Una consulta por página.
-- **Tabla `branches`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `code` es único por organización y la base de datos solo admite mayúsculas ASCII, cifras y guiones entre ellas (`LIM-01`), hasta 20 caracteres: dos códigos no pueden leerse igual. `timezone` es un nombre IANA; por defecto, `America/Lima`.
+- **Tabla `branches`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `code` es único por organización y la base de datos solo admite mayúsculas ASCII, cifras y guiones entre ellas (`LIM-01`), hasta 20 caracteres: dos códigos no se distinguen solo por mayúsculas, acentos, espacios o letras Unicode de igual aspecto. Los parecidos dentro de ASCII (`O` y `0`, `I` y `1`) siguen siendo códigos distintos. `timezone` es un nombre IANA que la tabla no comprueba; el modelo pone `America/Lima` por defecto (la columna no tiene valor por defecto).
 - **Solo lectura.** Crear, editar y desactivar una sucursal, con el permiso `branches.manage`, es el siguiente work item. No hay borrado.
 - El selector `organizations.selectors.branches` filtra por organización, no por permiso: el permiso lo exige la vista, y otra vista que lo use declara el suyo.
 
