@@ -46,7 +46,7 @@ def sync_permissions(sender: Any, using: str = "default", **kwargs: Any) -> None
             logger.warning(
                 "permisos fuera del catálogo que siguen concedidos", extra={"codes": kept}
             )
-        extend_owner_roles(using)
+    extend_owner_roles(using)  # fuera de esa transacción: cada organización lleva la suya
 
 
 def extend_owner_roles(using: str) -> int:
@@ -54,44 +54,71 @@ def extend_owner_roles(using: str) -> int:
     que le falten, con alcance `ORGANIZATION` si el permiso lo admite; devuelve cuántas.
 
     Solo añade: no quita nada ni cambia un alcance, y no toca ningún otro rol. El rol Owner se
-    localiza por `is_owner_role`. Corre en el job de migraciones (`crm_migrator`, dueño de las
-    tablas), nunca en el runtime: `crm_app` no puede escribir en otra organización. Lo que añade
-    queda en la auditoría de plataforma; no hay actor de tenant, y no se inventa uno.
+    localiza por `is_owner_role`. Cada organización es una transacción, dentro de su
+    `tenant_scope` con el actor SYSTEM: la concesión queda en la auditoría de esa organización,
+    como cualquier otra (ADR-013 §1), y la operación entera, en la de plataforma.
+
+    Corre en el job de migraciones (`crm_migrator`, dueño de las tablas). El runtime no puede:
+    sin tenant activo `crm_app` no ve los roles de ninguna organización, y con uno activo la
+    función se niega.
     """
+    from django.db.models import Count, Q
+
     from apps.access.catalog import PERMISSIONS, Scope
     from apps.access.models import Role, RolePermission
     from apps.audit import platform
+    from apps.audit.apps import ensure_partitions
+    from apps.audit.services import Entity, record
+    from core.tenancy.context import TenantContext, require_no_tenant
+    from core.tenancy.scope import tenant_scope
 
+    require_no_tenant("extend_owner_roles")
+    catalog = {permission.code: permission for permission in PERMISSIONS}
+    held = Count("grants", filter=Q(grants__permission_id__in=catalog))
     owners = Role._base_manager.using(using).filter(is_owner_role=True)
-    grants = RolePermission._base_manager.using(using)
-    held: set[tuple[Any, Any]] = set(
-        grants.filter(role__in=owners).values_list("role_id", "permission_id")
+    short = list(
+        owners.annotate(held=held)
+        .filter(held__lt=len(catalog))
+        .values_list("pk", "organization_id")
     )
-    missing = [
-        RolePermission(
-            organization_id=organization,
-            role_id=role,
-            permission_id=permission.code,
-            supports_scope=permission.supports_scope,
-            scope=Scope.ORGANIZATION if permission.supports_scope else None,
+    if not short:
+        return 0  # lo normal: un despliegue sin permisos nuevos no escribe nada
+    # `access` va antes que `audit` en `post_migrate`: la partición del mes puede faltar.
+    ensure_partitions(sender=None, using=using)
+    added: list[str] = []
+    for role_id, organization_id in short:
+        ctx = TenantContext(organization_id, "migrate")  # actor SYSTEM, sin usuario
+        with tenant_scope(ctx, using=using):
+            role = Role.objects.using(using).get(pk=role_id)
+            grants = RolePermission.objects.using(using)
+            has = set(grants.filter(role=role).values_list("permission_id", flat=True))
+            for code, permission in catalog.items():
+                if code in has:
+                    continue
+                scope = Scope.ORGANIZATION if permission.supports_scope else None
+                grants.create(
+                    role=role,
+                    permission_id=code,
+                    supports_scope=permission.supports_scope,
+                    scope=scope,
+                )
+                changes = {"permission": [None, code], "scope": [None, scope]}
+                entity = Entity("role", role.pk, role.name)
+                record(ctx, "role.permission_granted", entity, changes, {"source": "catalog"})
+                added.append(code)
+    if using == DEFAULT_DB_ALIAS:  # la auditoría de plataforma escribe en esa conexión
+        codes = sorted(set(added))
+        platform.record(
+            "access.owner_roles.extended",
+            actor_type=platform.Actor.SYSTEM,
+            metadata={
+                "permissions": codes[:50],  # acotado: la fila tiene un tamaño máximo
+                "codes": len(codes),
+                "roles": len(short),
+                "grants": len(added),
+            },
         )
-        for role, organization in owners.values_list("pk", "organization_id")
-        for permission in PERMISSIONS
-        if (role, permission.code) not in held
-    ]
-    if missing:
-        grants.bulk_create(missing)
-        if using == DEFAULT_DB_ALIAS:  # la auditoría de plataforma escribe en esa conexión
-            platform.record(
-                "access.owner_roles.extended",
-                actor_type=platform.Actor.SYSTEM,
-                metadata={
-                    "permissions": sorted({grant.permission_id for grant in missing}),
-                    "roles": len({grant.role_id for grant in missing}),
-                    "grants": len(missing),
-                },
-            )
-    return len(missing)
+    return len(added)
 
 
 class AccessConfig(AppConfig):

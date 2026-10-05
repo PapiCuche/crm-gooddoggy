@@ -36,9 +36,10 @@ El rol Owner de cada organización tiene todos los permisos del catálogo, con a
 Tras cada `migrate`, después de sincronizar `permissions`, `apps.access.apps.extend_owner_roles` añade al rol Owner de cada organización las concesiones del catálogo que le falten.
 
 - **Solo añade.** No quita concesiones ni cambia el alcance de las que hay.
-- **Solo el rol Owner**, localizado por `is_owner_role` (único por organización por restricción), nunca por código ni por nombre. Una organización sin rol Owner no recibe nada.
-- **Corre con `crm_migrator`**, el rol dueño de las tablas, cuya credencial ya equivale a acceso total (ADR-002 §2). El runtime no gana ningún privilegio: `crm_app`, sin contexto de tenant, no ve los roles de ninguna organización y la misma función no escribe nada.
-- **Un despliegue sin permisos nuevos no escribe nada.**
+- **Solo el rol Owner**, localizado por `is_owner_role` (único por organización por restricción), nunca por código ni por nombre. Una organización sin rol Owner no recibe nada. El estado de la organización no cuenta: una suspendida también lo recibe.
+- **Una transacción por organización**, dentro de su `tenant_scope` y con el actor `SYSTEM`, como el alta de una organización. Si una falla, las anteriores ya están hechas y el siguiente `migrate` termina el resto.
+- **Corre con `crm_migrator`**, el rol dueño de las tablas, cuya credencial ya equivale a acceso total (ADR-002 §2). El runtime no gana ningún privilegio: `crm_app`, sin tenant activo, no ve los roles de ninguna organización, y con un tenant activo la función se niega.
+- **Un despliegue sin permisos nuevos no escribe nada**: una consulta, y termina.
 
 Un work item que necesite un permiso nuevo solo lo añade al catálogo.
 
@@ -48,7 +49,9 @@ Los permisos nuevos de Administrador, Supervisor o Vendedor llegan a las organiz
 
 ### 4. Auditoría
 
-Cada ejecución que añade algo deja una fila en la auditoría de plataforma (ADR-013): `access.owner_roles.extended`, actor `SYSTEM`, con los códigos añadidos, el número de roles y el de concesiones. No escribe en la auditoría de tenant: no hay actor de tenant, y no se inventa uno ni una organización ficticia.
+El cambio es de cada organización, así que queda en la auditoría de cada una (ADR-013 §1): una fila `role.permission_granted` por concesión, con el actor `SYSTEM` y `metadata.source = "catalog"`, en la misma transacción que la concesión. El Owner la ve como cualquier otra concesión de sus roles. Sin esa fila, la concesión no se escribe.
+
+Además, cada ejecución que añade algo deja una fila en la auditoría de plataforma: `access.owner_roles.extended`, actor `SYSTEM`, con los códigos añadidos, el número de roles y el de concesiones. Es el resumen de una operación de plataforma sobre varias organizaciones; no sustituye a las filas de cada una. Se escribe al final: si falla, las concesiones ya hechas conservan su fila de tenant y el siguiente `migrate` no tiene nada que resumir.
 
 ### 5. Lo que no cambia
 
@@ -57,6 +60,8 @@ Retirar o renombrar un permiso sigue siendo una migración de datos que reescrib
 ## Consequences
 
 - OBS-F2-04-1 queda cerrada para el rol Owner, y OBS-F2-05C-1 tiene su «otra vía».
-- El orden de despliegue ya era migrar antes de servir el código nuevo: cuando una ruta exige un permiso nuevo, los Owner ya lo tienen.
+- Migrando antes de servir el código nuevo, cuando una ruta exige un permiso nuevo los Owner ya lo tienen.
 - Un rol Owner con una concesión más estrecha que `ORGANIZATION` (solo posible escribiendo en la base) no se corrige: el paso no cambia alcances.
+- Con muchas organizaciones, el despliegue que trae un permiso nuevo hace una transacción por organización; los demás, una consulta.
+- Que el código nuevo no sirva antes de migrar lo garantiza hoy el `compose` local (`migrate` termina antes de arrancar los servicios). El despliegue de producción, cuando exista, debe conservar ese orden.
 - Quien quiera llevar un permiso nuevo a las plantillas ya clonadas necesita su propia decisión (OBS-F2-29-1 describe el riesgo de reclonar).

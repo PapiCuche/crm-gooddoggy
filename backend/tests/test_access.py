@@ -24,11 +24,13 @@ from apps.access.catalog import (
 from apps.access.models import MembershipRole, Permission, Role, RolePermission
 from apps.access.services import clone_role_templates
 from apps.accounts.models import User
+from apps.audit import services as audit_services
 from core.tenancy.context import TenantContextError
 from core.tenancy.scope import tenant_scope
 from tests.conftest import migrator_settings
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_memberships import ctx, join, raw
+from tests.test_platform_audit import partition
 from tests.test_tenancy import raw_count
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -135,18 +137,29 @@ def as_migrator(command: Any) -> Any:
 def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
     rbac: dict[str, Any], migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ADR-018: un permiso nuevo llega, tras el `migrate`, al rol Owner de cada organización."""
-    new = (PermissionDef("teams.manage", "users"), PermissionDef("leads.view", "x", False, True))
+    """ADR-018: un permiso nuevo llega, tras el `migrate`, al rol Owner de cada organización, y
+    queda en la auditoría de cada una."""
+    new = (  # uno sensible y sin alcance; otro con alcance
+        PermissionDef("teams.manage", "users", True),
+        PermissionDef("leads.view", "x", False, True),
+    )
     grants = "SELECT role_id, permission_code, scope FROM role_permissions"
-    audited = (
+    summary = (
         "SELECT actor_type, actor_id, metadata FROM platform_audit_logs "
         "WHERE action = 'access.owner_roles.extended'"
     )
+    trail = (
+        "SELECT organization_id, actor_type, actor_id, entity_id, entity_label, "
+        "changes->'permission'->>1, changes->'scope'->>1, metadata->>'source' FROM audit_logs "
+        "WHERE action = 'role.permission_granted'"
+    )
     a, b = rbac["A"], rbac["B"]
-    # El rol Owner de A, con otro código y otro nombre; un rol que solo se llama Owner y lleva su
-    # código; y un rol Owner, el de B, que ya tiene uno de los dos permisos con menos alcance.
+    # El rol Owner de A, con otro código, otro nombre y sin marca de plantilla; un rol que solo se
+    # llama Owner y lleva su código; y B, suspendida, cuyo rol Owner ya tiene uno de los dos
+    # permisos con menos alcance y otro que el catálogo ya no tiene.
     migrator.execute(
-        "UPDATE roles SET code = 'fundador', name = 'Otro' WHERE id = %s", [a.roles["owner"].pk]
+        "UPDATE roles SET code = 'fundador', name = 'Otro', is_system = false WHERE id = %s",
+        [a.roles["owner"].pk],
     )
     migrator.execute(
         "INSERT INTO roles (id, organization_id, code, name, description, is_system, "
@@ -154,13 +167,25 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
         "VALUES (uuidv7(), %s, 'owner', 'Owner', '', true, false, now(), now())",
         [a.org],
     )
-    migrator.execute(NEW_PERMISSION, ["leads.view", True])
-    migrator.execute(GRANT, [b.org, b.roles["owner"].pk, "leads.view", True, "TEAM"])
-    before = set(migrator.execute(grants).fetchall())
-    monkeypatch.setattr(catalog, "PERMISSIONS", (*PERMISSIONS, *new))
+    migrator.execute("UPDATE organizations SET status = 'SUSPENDED' WHERE id = %s", [b.org])
+
+    def unaudited(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("sin auditoría")
+
     try:
-        assert extend_owner_roles("default") == 0  # el runtime no ve otra organización: nada
-        assert set(migrator.execute(grants).fetchall()) == before
+        migrator.execute(NEW_PERMISSION, ["leads.view", True])
+        migrator.execute(GRANT, [b.org, b.roles["owner"].pk, "leads.view", True, "TEAM"])
+        migrator.execute(NEW_PERMISSION, ["old.kept", False])
+        migrator.execute(GRANT, [b.org, b.roles["owner"].pk, "old.kept", False, None])
+        before = set(migrator.execute(grants).fetchall())
+        monkeypatch.setattr(catalog, "PERMISSIONS", (*PERMISSIONS, *new))
+        assert extend_owner_roles("default") == 0  # el runtime, sin tenant, no ve ningún rol
+        with tenant_scope(ctx(a.org)), pytest.raises(TenantContextError):  # y con uno, se niega
+            extend_owner_roles("default")
+        with monkeypatch.context() as broken, pytest.raises(RuntimeError, match="sin auditoría"):
+            broken.setattr(audit_services, "record", unaudited)
+            as_migrator(lambda: call_command("migrate", verbosity=0))
+        assert set(migrator.execute(grants).fetchall()) == before  # sin su fila, no ocurre
         as_migrator(lambda: call_command("migrate", verbosity=0))
         added = set(migrator.execute(grants).fetchall()) - before
         assert added == {  # solo los roles Owner, y solo lo que les faltaba
@@ -169,27 +194,48 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
             (b.roles["owner"].pk, "teams.manage", None),  # el `TEAM` que ya tenía no se toca
         }
         assert before <= set(migrator.execute(grants).fetchall())  # nada se quita ni cambia
-        assert migrator.execute(audited).fetchall() == [
-            (
-                "SYSTEM",
-                None,
-                {"grants": 3, "permissions": ["leads.view", "teams.manage"], "roles": 2},
-            )
-        ]
+        system = ("SYSTEM", None)  # sin usuario: nadie de la organización lo hizo
+        owner_a, owner_b = (a.roles["owner"].pk, "Otro"), (b.roles["owner"].pk, "Owner")
+        assert set(migrator.execute(trail).fetchall()) == {  # cada organización ve las suyas
+            (a.org, *system, *owner_a, "teams.manage", None, "catalog"),
+            (a.org, *system, *owner_a, "leads.view", "ORGANIZATION", "catalog"),
+            (b.org, *system, *owner_b, "teams.manage", None, "catalog"),
+        }
+        whole = {"codes": 2, "grants": 3, "permissions": ["leads.view", "teams.manage"], "roles": 2}
+        assert migrator.execute(summary).fetchall() == [("SYSTEM", None, whole)]
         as_migrator(lambda: call_command("migrate", verbosity=0))  # otro despliegue: nada
         assert set(migrator.execute(grants).fetchall()) == before | added
-        assert len(migrator.execute(audited).fetchall()) == 1
-        migrator.execute(  # si a un rol Owner le falta una, la función dice cuántas añadió
-            "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = 'teams.manage'",
-            [a.roles["owner"].pk],
+        assert len(migrator.execute(summary).fetchall()) == 1
+        assert len(migrator.execute(trail).fetchall()) == 3
+        migrator.execute(  # si a un rol Owner le faltan, la función dice cuántas añadió
+            "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = ANY(%s)",
+            [a.roles["owner"].pk, ["teams.manage", "leads.view"]],
         )
-        assert as_migrator(lambda: extend_owner_roles("default")) == 1
+        assert as_migrator(lambda: extend_owner_roles("default")) == 2  # concesiones, no roles
         assert set(migrator.execute(grants).fetchall()) == before | added
-        assert len(migrator.execute(audited).fetchall()) == 2
+        assert len(migrator.execute(summary).fetchall()) == 2
+        assert len(migrator.execute(trail).fetchall()) == 5
     finally:
-        for code in ("teams.manage", "leads.view"):
+        for code in ("teams.manage", "leads.view", "old.kept"):
             migrator.execute("DELETE FROM role_permissions WHERE permission_code = %s", [code])
             migrator.execute("DELETE FROM permissions WHERE code = %s", [code])
+
+
+def test_extending_owner_roles_does_not_wait_for_the_audit_partitions(
+    rbac: dict[str, Any], migrator: psycopg.Connection[Any]
+) -> None:
+    """`access` va antes que `audit` en `post_migrate`: un año sin desplegar no lo bloquea."""
+    migrator.execute(f"DROP TABLE {partition()}")
+    migrator.execute(
+        "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = 'users.invite'",
+        [rbac["A"].roles["owner"].pk],
+    )
+    try:
+        as_migrator(lambda: call_command("migrate", verbosity=0))
+    finally:
+        migrator.execute("SELECT public.platform_audit_ensure_partitions(12)")
+    extended = "SELECT count(*) FROM platform_audit_logs WHERE action LIKE 'access.owner_roles.%'"
+    assert migrator.execute(extended).fetchone() == (1,)
 
 
 def test_scope_is_null_exactly_when_the_permission_has_no_scope(
