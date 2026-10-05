@@ -46,7 +46,7 @@ def test_it_lists_every_role_with_what_it_grants_and_how_many_hold_it(
     with tenant_scope(ctx(rbac.a)):
         for other in others:
             MembershipRole.objects.create(membership_id=other.pk, role=custom)
-    foreign = give(rbac.b, join(rbac.b, make_user()).pk, {"users.view": None}, code="de-b")
+    foreign = give(rbac.b, join(rbac.b, make_user()).pk, {"users.view": None}, code="solo-en-b")
     monkeypatch.delitem(BY_CODE, EDIT)  # un código que el catálogo ya no tiene: se sigue viendo
     body = roles(signed(rbac.ana)).json()
     assert body["next"] is None and [row["code"] for row in body["results"]] == made
@@ -80,9 +80,9 @@ def test_it_lists_every_role_with_what_it_grants_and_how_many_hold_it(
     }
     system = {code: by_code[code]["is_system"] for code in made}  # de plantilla, no «es Owner»
     assert [code for code in made if system[code]] == ["owner", "admin", "supervisor", "seller"]
-    # El rol de la otra organización no sale: por código y por identificador, no buscando el
-    # texto `de-b` en la respuesta, que lleva identificadores aleatorios y uno puede contenerlo.
-    assert "de-b" not in by_code and str(foreign.pk) not in {row["id"] for row in body["results"]}
+    # El rol de la otra organización no sale en ningún campo: ni su código, que lleva letras que
+    # un identificador aleatorio no puede contener (`de-b` sí cabía en un UUID), ni su id.
+    assert "solo-en-b" not in str(body) and str(foreign.pk) not in str(body)
     assert "is_owner_role" not in str(body)  # ni la marca de Owner (con `_`: no cabe en un id)
 
 
