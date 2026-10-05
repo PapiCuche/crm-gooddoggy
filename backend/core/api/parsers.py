@@ -4,8 +4,27 @@ import codecs
 from collections.abc import Mapping
 from typing import IO, Any
 
-from rest_framework.exceptions import UnsupportedMediaType
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from rest_framework.parsers import JSONParser
+
+MAX_DEPTH = 100  # niveles de `[` o `{`; ningún cuerpo de la API pasa de unos pocos
+_NESTS = (dict, list)  # una tupla: `isinstance` con `dict | list` tarda el triple
+
+
+def _nested_beyond(value: Any, limit: int) -> bool:
+    """¿Anida más de `limit` niveles? Por niveles y sin recursión: un valor muy anidado no
+    puede desbordar aquí."""
+    level = [value] if isinstance(value, _NESTS) else []
+    for _ in range(limit):
+        if not level:
+            return False
+        level = [
+            child
+            for item in level
+            for child in (item.values() if isinstance(item, dict) else item)
+            if isinstance(child, _NESTS)
+        ]
+    return bool(level)
 
 
 class Utf8JSONParser(JSONParser):
@@ -14,6 +33,12 @@ class Utf8JSONParser(JSONParser):
     Python registra como códecs `zlib`, `bz2` o `rot13`. Aceptarlos dejaría a un cliente sin
     sesión hacer que el servidor descomprima un cuerpo cientos de veces mayor que el límite de
     tamaño de Django, que solo mide los bytes recibidos.
+
+    Un cuerpo que anida más de `MAX_DEPTH` niveles se rechaza como cualquier JSON roto: 400
+    `PARSE_ERROR`. Sin ese límite hay dos formas de acabar en un 500 con su traza en el log:
+    el anidamiento que desborda al analizador (`RecursionError`) y, antes de llegar ahí, el
+    que el analizador lee pero desborda después a quien lo recorre (un campo de DRF hace
+    `str()` de lo que recibe).
     """
 
     def parse(
@@ -31,4 +56,10 @@ class Utf8JSONParser(JSONParser):
             codec = ""
         if codec != "utf-8":
             raise UnsupportedMediaType(media_type or "")
-        return super().parse(stream, media_type, parser_context)
+        try:
+            data = super().parse(stream, media_type, parser_context)
+        except RecursionError:
+            raise ParseError from None
+        if _nested_beyond(data, MAX_DEPTH):
+            raise ParseError
+        return data

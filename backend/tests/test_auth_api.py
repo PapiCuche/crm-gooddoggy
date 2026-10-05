@@ -1,6 +1,7 @@
 """F2-03A: iniciar sesión y sesión actual (ADR-003 §2–3, ADR-013 §5, ADR-014 §3). Middleware,
 sesiones en BD y auditoría de plataforma reales."""
 
+import io
 import json
 import logging
 from collections.abc import Iterator
@@ -21,6 +22,7 @@ from apps.accounts.models import User
 from apps.audit import platform
 from apps.audit.platform import identifier_hash
 from config.settings import base
+from core.api.parsers import Utf8JSONParser
 from core.observability import reporting
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_memberships import join
@@ -183,6 +185,47 @@ def test_the_body_charset_never_picks_a_codec(ana: User, browser: Client, charse
     assert Session.objects.count() == 0
     for known in ("UTF-8", "no-existe"):  # un charset desconocido se ignora: se lee como UTF-8
         assert post(known).status_code == 200
+
+
+@pytest.mark.parametrize("opening, closing", [(b"[", b"]"), (b'{"a":', b"}"), (b"[", b"")])
+def test_a_body_nested_too_deep_is_a_parse_error(
+    ana: User, browser: Client, caplog: pytest.LogCaptureFixture, opening: bytes, closing: bytes
+) -> None:
+    """Sin sesión y con ella: un anidamiento que desbordaría al analizador, o a quien recorre
+    lo que el analizador sí lee, es un 400, no un 500."""
+    too_deep, invalid = (400, b'{"code":"PARSE_ERROR"}'), "VALIDATION_ERROR"
+
+    def post(depth: int, field: bool = False) -> Any:
+        token = {"X-CSRFToken": browser.cookies["csrftoken"].value}
+        body = opening * depth + b"1" * bool(closing) + closing * depth
+        if field:
+            body = b'{"password":"x","email":' + body + b"}"
+        return browser.generic("POST", LOGIN, body, "application/json", headers=token)
+
+    caplog.set_level(logging.ERROR, logger="django.request")
+    assert reply(post(200_000)) == too_deep  # desborda al analizador
+    assert Session.objects.count() == 0
+    if closing:
+        assert post(100).json()["code"] == invalid  # el límite: se lee y se valida como siempre
+        assert reply(post(101)) == too_deep
+        assert post(99, field=True).json()["code"] == invalid  # el campo cuenta un nivel más
+        for depth in (100, 2_000, 35_000, 70_000, 110_000):  # se leen, pero no se recorren
+            assert reply(post(depth, field=True)) == too_deep, depth
+    login(browser)
+    assert reply(post(200_000)) == too_deep
+    assert Session.objects.count() == 1  # la sesión que había sigue ahí
+    assert not caplog.records  # nada que el servidor tenga que mirar
+
+
+@pytest.mark.parametrize("error", [OSError, RuntimeError])
+def test_only_the_overflow_becomes_an_unreadable_body(error: type[Exception]) -> None:
+    class Unreadable(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            raise error("se cortó la conexión")
+
+    with pytest.raises(error) as raised:
+        Utf8JSONParser().parse(Unreadable(), "application/json", {"encoding": "utf-8"})
+    assert type(raised.value) is error
 
 
 def test_session_expires_twelve_hours_after_login(ana: User, browser: Client) -> None:
