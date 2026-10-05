@@ -60,9 +60,10 @@ def test_it_lists_every_role_with_what_it_grants_and_how_many_hold_it(
             {"code": VIEW, "scope": "BRANCH"},
         ],
         "members": 6,  # en cualquier estado, y con la cuenta desactivada
+        "editable": True,
     }
     owner = by_code["owner"]
-    assert (owner["is_system"], owner["members"]) == (True, 1)
+    assert (owner["is_system"], owner["members"], owner["editable"]) == (True, 1, False)
     assert [grant["code"] for grant in owner["permissions"]] == sorted(p.code for p in PERMISSIONS)
     assert by_code["target"] == {  # sin descripción, sin concesiones y sin miembros
         "id": str(rbac.target.pk),
@@ -72,6 +73,7 @@ def test_it_lists_every_role_with_what_it_grants_and_how_many_hold_it(
         "is_system": False,
         "permissions": [],
         "members": 0,
+        "editable": True,
     }
     system = {code: by_code[code]["is_system"] for code in made}  # de plantilla, no «es Owner»
     assert [code for code in made if system[code]] == ["owner", "admin", "supervisor", "seller"]
@@ -105,7 +107,7 @@ def test_it_pages_by_cursor_without_a_query_per_role(rbac: Any) -> None:
     few, before = queries(), len(roles(client).json()["results"])
     for index in range(5):
         give(rbac.a, rbac.m_eva, {"users.view": None}, code=f"extra{index}")
-    assert queries() == few  # roles, concesiones y miembros: una consulta cada uno
+    assert queries() == few  # roles, concesiones, miembros y editables: una consulta cada uno
     first = roles(client, limit=2).json()
     assert len(first["results"]) == 2 and first["next"]
     rest = roles(client, limit=200, cursor=first["next"]).json()
@@ -120,10 +122,12 @@ def test_a_stale_context_fails_in_every_reader(rbac: Any) -> None:
         assert directory.roles(ectx).count() == 6
         assert directory.grants_by_role(ectx, []) == {}
         assert directory.members_by_role(ectx, []) == {}
+        assert directory.locked_roles(ectx, []) == set()
     readers = (
         lambda: list(directory.roles(ectx)),
         lambda: directory.grants_by_role(ectx, []),
         lambda: directory.members_by_role(ectx, []),
+        lambda: directory.locked_roles(ectx, []),
     )
     for read in readers:
         with pytest.raises(TenantContextError):
@@ -132,3 +136,61 @@ def test_a_stale_context_fails_in_every_reader(rbac: Any) -> None:
             read()  # scope de otra organización
         with tenant_scope(tenant), pytest.raises(TenantContextError, match="recalcularlo"):
             read()  # mismo contexto, otra transacción
+
+
+def test_editable_is_false_for_the_owner_role_and_for_the_roles_of_who_asks(rbac: Any) -> None:
+    """Los dos casos en que la API rechaza cualquier cambio de concesiones (F2-31, F2-33)."""
+    reader = give(rbac.a, rbac.m_eva, {"roles.view": None}, code="lectora").pk
+    give(rbac.a, rbac.m_luis, {"roles.view": None}, code="otra")
+    with tenant_scope(ctx(rbac.a)):  # nada decide por el código o el nombre: otro rol «owner»
+        Role.objects.filter(pk=rbac.roles["owner"].pk).update(code="fundador", name="Otro")
+        Role.objects.filter(pk=rbac.target.pk).update(code="owner", name="Owner")
+        MembershipRole.objects.create(membership_id=rbac.m_eva, role_id=rbac.roles["seller"].pk)
+        MembershipRole.objects.create(membership_id=rbac.m_luis, role_id=reader)  # el de eva
+
+    def locked(user: Any) -> set[str]:
+        rows = roles(signed(user)).json()["results"]
+        assert all(isinstance(row["editable"], bool) for row in rows)
+        return {row["code"] for row in rows if not row["editable"]}
+
+    assert locked(rbac.ana) == {"fundador"}  # su único rol es el Owner
+    assert locked(rbac.eva) == {"fundador", "lectora", "seller"}
+    assert locked(rbac.luis) == {"fundador", "delegator", "otra", "lectora"}
+    with tenant_scope(ctx(rbac.a)):  # una membresía suspendida de otra persona no bloquea nada
+        MembershipRole.objects.create(
+            membership_id=join(rbac.a, make_user(), "SUSPENDED").pk, role_id=rbac.roles["admin"].pk
+        )
+    assert locked(rbac.ana) == {"fundador"}
+    first = roles(signed(rbac.eva), limit=1).json()["results"]  # también página a página
+    assert [(row["code"], row["editable"]) for row in first] == [("fundador", False)]
+
+
+def test_the_permission_catalog_lists_every_permission_by_code(rbac: Any) -> None:
+    url = "/api/v1/o/{}/permissions/"
+    assert Client().get(url.format("org-a")).status_code == 401
+    give(rbac.a, rbac.m_eva, {"users.view": None, "roles.manage": None})  # no basta
+    eva = signed(rbac.eva)
+    assert reply(eva.get(url.format("org-a"))) == DENIED
+    give(rbac.a, rbac.m_eva, {"roles.view": None})
+    body = eva.get(url.format("org-a")).json()
+    assert set(body) == {"results"}  # una lista cerrada: sin cursor
+    assert [row for row in body["results"] if row["code"] not in (VIEW, EDIT)] == [
+        {
+            "code": p.code,
+            "module": p.module,
+            "is_sensitive": p.is_sensitive,
+            "supports_scope": p.supports_scope,
+        }
+        for p in sorted(PERMISSIONS, key=lambda p: p.code)
+    ]
+    assert [row["code"] for row in body["results"]] == sorted(BY_CODE)  # el que usa el motor
+    scoped = {row["code"] for row in body["results"] if row["supports_scope"]}
+    assert scoped == {VIEW, EDIT}  # los dos de prueba; el catálogo v1 no tiene ninguno
+    sensitive = {row["code"] for row in body["results"] if row["is_sensitive"]}
+    assert sensitive == {p.code for p in PERMISSIONS if p.is_sensitive} and sensitive
+    assert body == signed(rbac.ana).get(url.format("org-a")).json()  # el mismo para todos
+    for org in ("org-b", "no-existe"):
+        assert reply(eva.get(url.format(org))) == NOT_FOUND
+    eva.cookies["csrftoken"] = token = "t" * 32
+    for write in (eva.post, eva.put, eva.patch, eva.delete):  # solo lectura
+        assert reply(write(url.format("org-a"), headers={"X-CSRFToken": token})) == DENIED

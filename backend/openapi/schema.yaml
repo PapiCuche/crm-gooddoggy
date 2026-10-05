@@ -407,6 +407,45 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/permissions/:
+    get:
+      operationId: permissions_list
+      description: Los permisos que se pueden conceder a un rol, ordenados por código.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - roles
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionCatalog'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/:
     get:
       operationId: roles_list
@@ -870,6 +909,34 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    Permission:
+      type: object
+      properties:
+        code:
+          type: string
+        module:
+          type: string
+          description: Módulo del producto al que pertenece.
+        is_sensitive:
+          type: boolean
+          description: Solo lo delega y lo retira un Owner.
+        supports_scope:
+          type: boolean
+          description: Si se concede con un alcance (`OWN`, `TEAM`, `BRANCH`, `ORGANIZATION`).
+      required:
+      - code
+      - is_sensitive
+      - module
+      - supports_scope
+    PermissionCatalog:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+      required:
+      - results
     Role:
       type: object
       properties:
@@ -892,9 +959,15 @@ components:
         members:
           type: integer
           description: Membresías con este rol, en cualquier estado.
+        editable:
+          type: boolean
+          description: 'Falso para el rol Owner y para un rol que tiene asignado quien
+            pregunta: la API rechaza cualquier cambio de sus concesiones. Es una ayuda
+            para la interfaz, no una autorización: cada escritura aplica sus reglas.'
       required:
       - code
       - description
+      - editable
       - id
       - is_system
       - members

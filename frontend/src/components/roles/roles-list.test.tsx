@@ -23,6 +23,7 @@ const role = (code: string, extra: Partial<Role> = {}): Role => ({
   is_system: false,
   permissions: [],
   members: 0,
+  editable: true,
   ...extra,
 });
 const owner = role("owner", {

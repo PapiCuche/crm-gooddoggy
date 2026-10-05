@@ -355,7 +355,8 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
       "description": "",
       "is_system": true,
       "permissions": [{"code": "organization.view", "scope": null}],
-      "members": 3
+      "members": 3,
+      "editable": true
     }
   ],
   "next": null
@@ -363,10 +364,23 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 ```
 
 - **Qué incluye:** todos los roles de la organización, de plantilla (`is_system`) o propios. `permissions` son sus concesiones tal como están guardadas, ordenadas por código (orden de Python, como en `…/me/`, no el de la intercalación de la base); `scope` es `null` si el permiso no admite alcance. Una concesión de un código que el catálogo ya no tiene se ve aquí, aunque el motor de autorización la ignore. `members` cuenta las membresías que tienen el rol, en cualquier estado.
-- **Qué no incluye:** la marca de rol Owner (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
-- **Paginación:** por cursor, en orden de creación (ver «Listados»). Tres consultas por página, sean cuantos sean los roles: los roles, sus concesiones y sus miembros.
+- **`editable`** (F2-34) es falso para el rol Owner y para un rol que tiene asignado quien pregunta: los dos casos en que la API rechaza cualquier cambio de sus concesiones («Permisos de un rol»). Es una ayuda para que la pantalla no ofrezca lo que se va a rechazar; no autoriza nada ni dice que el actor cubra cada concesión. Depende de quién pregunta.
+- **Qué no incluye:** la marca de rol Owner como tal (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
+- **Paginación:** por cursor, en orden de creación (ver «Listados»). Cuatro consultas por página, sean cuantos sean los roles: los roles, sus concesiones, sus miembros y cuáles no son editables.
 - **Lectura.** Crear un rol está en «Crear un rol»; asignarlos a un miembro, en «Roles de un miembro»; conceder y retirar un permiso de un rol, en «Permisos de un rol»; renombrar un rol y borrarlo son otros work items (E01-08).
-- **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre; el segundo, también el identificador). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
+- **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol; `directory.locked_roles` lee la marca de Owner solo para `editable` (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre; el segundo, también el identificador). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
+
+## Catálogo de permisos (F2-34)
+
+`GET /api/v1/o/{slug}/permissions/` devuelve los permisos que se pueden conceder a un rol. Exige `roles.view`.
+
+```json
+{"results": [{"code": "users.manage", "module": "users", "is_sensitive": true, "supports_scope": false}]}
+```
+
+- Es el catálogo del producto (`apps.access.catalog`), el mismo para todas las organizaciones, ordenado por código. Sale del código, no de la base: es una lista cerrada y no se pagina (no lleva `next`).
+- `is_sensitive`: solo lo delega y lo retira un Owner. `supports_scope`: se concede con un alcance.
+- Los nombres para mostrar no están aquí: son textos de la interfaz.
 
 ## Crear un rol (F2-29, ADR-003 §5)
 

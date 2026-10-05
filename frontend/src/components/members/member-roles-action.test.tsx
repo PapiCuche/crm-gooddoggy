@@ -30,6 +30,7 @@ const role = (id: string, name: string): Role => ({
   is_system: false,
   permissions: [],
   members: 0,
+  editable: true,
 });
 const sales = role("sales", "Ventas");
 const cash = role("cash", "Caja");

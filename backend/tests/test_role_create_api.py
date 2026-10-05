@@ -49,6 +49,7 @@ def test_it_creates_an_empty_role_that_can_be_listed_and_assigned(
             "is_system": False,
             "permissions": [],
             "members": 0,
+            "editable": True,
         },
     )
     assert (role.organization_id, role.is_system, role.is_owner_role) == (rbac.a, False, False)
