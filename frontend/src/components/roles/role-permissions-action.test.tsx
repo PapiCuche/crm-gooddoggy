@@ -523,4 +523,56 @@ describe("RolePermissionsAction", () => {
     expect(calls(api, "GET", "/permissions/")).toHaveLength(1);
     focusManager.setFocused(undefined);
   });
+
+  it("al retirar, el código también va codificado; solo puntos no se envía y el panel sigue usable", async () => {
+    const mine = ["x/../../../members/m1/roles/r9", ".", ".."];
+    const held = role("r2", "Caja", { permissions: mine.map((code) => ({ code, scope: null })) });
+    const api = mockApi({
+      [LIST]: list([held]),
+      [CATALOG]: {
+        status: 200,
+        body: { results: [...mine, "..a"].map((code) => permission(code)) },
+      },
+      [GRANT("r2", "..a")]: done,
+    });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Roles" });
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+    const group = screen.getByRole("group", { name: "Permisos de Caja" });
+    for (const code of [".", ".."]) {
+      fireEvent.click(await within(group).findByRole("button", { name: `Retirar ${code} a Caja` }));
+      await tick();
+      expect(within(group).getByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
+      expect(writes(api)).toHaveLength(0);
+    }
+    // La marca de envío se soltó, y un código que solo empieza por puntos sí se envía.
+    fireEvent.click(action(group, "Conceder ..a a Caja"));
+    await within(group).findByRole("button", { name: "Retirar ..a a Caja" });
+    fireEvent.click(action(group, `Retirar ${mine[0]} a Caja`));
+    await waitFor(() => expect(calls(api, "DELETE")).toHaveLength(1));
+    const base = "/api/v1/o/acme/roles/r2/permissions/";
+    expect(calls(api, "PUT").map(([url]) => String(url))).toEqual([`${base}..a/`]);
+    expect(calls(api, "DELETE").map(([url]) => String(url))).toEqual([
+      `${base}x%2F..%2F..%2F..%2Fmembers%2Fm1%2Froles%2Fr9/`,
+    ]);
+  });
+
+  it("al reintentar el catálogo con el foco en ninguna parte, el foco pasa a «Cerrar»", async () => {
+    let answer: { status: number; body: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    mockApi({ [LIST]: list(), [CATALOG]: () => answer });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Roles" });
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+    const group = screen.getByRole("group", { name: "Permisos de Caja" });
+    const retry = await within(group).findByRole("button", { name: "Reintentar" });
+    (document.activeElement as HTMLElement).blur();
+    expect(document.body).toHaveFocus();
+    answer = catalog;
+    fireEvent.click(retry);
+    await within(group).findByRole("button", { name: /Ver miembros/ });
+    expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus();
+  });
 });
