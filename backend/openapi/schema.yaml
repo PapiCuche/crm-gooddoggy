@@ -993,7 +993,7 @@ paths:
       operationId: teams_list
       description: |-
         Los equipos de la organización, activos e inactivos. Paginado por orden de creación
-        (ADR-016).
+        (ADR-016). `POST` crea uno (F2-53).
       parameters:
       - name: cursor
         in: query
@@ -1045,6 +1045,64 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: teams_create
+      description: 'Crea un equipo activo, sin integrantes. `assignment_strategy`
+        es `MANUAL` si no se envía. 409 `TEAM_SLUG_TAKEN`: ya hay en la organización
+        un equipo con ese `slug`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - teams
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -1595,6 +1653,26 @@ components:
       - description
       - id
       - is_active
+      - name
+      - slug
+    TeamCreateRequest:
+      type: object
+      properties:
+        slug:
+          type: string
+          minLength: 1
+          description: Se guarda en minúsculas y no cambia después.
+          maxLength: 50
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 255
+        assignment_strategy:
+          $ref: '#/components/schemas/AssignmentStrategyEnum'
+      required:
       - name
       - slug
     User:

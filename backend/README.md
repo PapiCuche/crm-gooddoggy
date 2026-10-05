@@ -497,7 +497,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
 
-## Equipos (F2-50, E01-09)
+## Equipos (F2-50 a F2-53, E01-09)
 
 `GET /api/v1/o/{slug}/teams/` lista los equipos de la organización. Exige `teams.view` (sin él, 403; sin membresía activa, 404).
 
@@ -521,7 +521,15 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - **Paginación:** por cursor, en orden de creación (`?limit=`, `?cursor=`; ver «Listados»). Una consulta por página.
 - **Tabla `teams`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `slug` es único por organización y la base de datos solo admite minúsculas ASCII, cifras y guiones entre ellas (`ventas`, `soporte-2`), hasta 50 caracteres. `assignment_strategy` es uno de `MANUAL`, `ROUND_ROBIN`, `LOAD_BALANCED`, `SKILL_BASED` o `AI_RULES` (lo impone un `CHECK`); el modelo pone `MANUAL` por defecto. Nada aplica todavía la estrategia: es dato para el Inbox.
 - **`teams.view`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018), y las plantillas «Administrador» y «Supervisor» en las organizaciones nuevas.
-- **Solo lectura.** Crear y editar un equipo, gestionar sus integrantes por API y el permiso `teams.manage` son los siguientes work items. Hasta entonces las tablas solo se llenan desde código.
+- **Crear (F2-53):** `POST /api/v1/o/{slug}/teams/` con `{"slug", "name", "description"?, "assignment_strategy"?}` crea un equipo activo, sin integrantes, y responde 201 con la forma del listado. Exige `teams.manage`. 409 `TEAM_SLUG_TAKEN` si la organización ya tiene ese `slug`.
+  - **`slug`:** se acepta en mayúsculas y se guarda en minúsculas; solo letras ASCII, cifras y guiones entre ellas, hasta 50.
+  - **Textos:** el nombre es obligatorio, una línea imprimible de hasta 100 con alguna letra o cifra; la descripción, una línea de hasta 255. Se guardan en forma NFC, sin espacios exteriores ni repetidos. Son las mismas reglas que en sucursales (`apps.organizations.text`).
+  - **`assignment_strategy`:** uno de los cinco valores exactos; sin él, `MANUAL`.
+  - Un campo que no sirve responde 400 `VALIDATION_ERROR` con su nombre en `fields`.
+  - **Auditoría de tenant:** `team.created`, con lo que se guardó (sin los campos vacíos). La etiqueta de la entidad es el `slug`.
+- **`teams.manage`** está en el catálogo como lo lista 03 §H: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas; «Supervisor» no (D-F2-12, en la fase).
+- El comando (`apps.organizations.teams.create_team`) no comprueba permisos, como los de sucursales: el mismo contrato de import-linter solo deja importarlo a la API del módulo.
+- **Editar un equipo y gestionar sus integrantes por API** son los siguientes work items. Hasta entonces `team_members` solo se llena desde código.
 - **Integrantes (`team_members`, F2-52):** qué membresías pertenecen a cada equipo, con su papel en él (`team_role`: `MEMBER` o `SUPERVISOR`) y si participan en la asignación automática (`is_active`). Tenant-owned, con RLS forzado. Las FK al equipo y a la membresía son compuestas con `organization_id`: la base de datos no deja enlazar un equipo de una organización con una membresía de otra. Un par equipo-membresía es único. Un equipo con integrantes no se borra, ni una membresía con equipos: antes hay que quitarlos. Todavía no hay ruta que los lea ni los escriba.
 - **Equipos propios en el motor de autorización:** `ExecutionContext.team_ids` son los equipos de la membresía de quien pide; se leen en la misma consulta que la membresía. Cuentan todos, también un equipo inactivo y una pertenencia con `is_active` en falso: esos dos datos hablan de la asignación, no de lo que alguien puede ver. `team_role` tampoco cambia el alcance. Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia todavía.
 - El selector `organizations.selectors.teams` filtra por organización, no por permiso: el permiso lo exige la vista.
