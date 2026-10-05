@@ -98,7 +98,7 @@ export function MemberStatusAction({
     if (!busy) sending.current = false;
   });
   // Otro lo hizo antes, con la confirmación abierta: no hay nada que confirmar.
-  if (target && target === member.status && !change.isPending) {
+  if (target && target === member.status && !busy) {
     setTarget(null);
     setDone(target);
   }

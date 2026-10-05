@@ -182,6 +182,10 @@ describe("MemberStatusAction", () => {
     expect(within(row("luis@acme.pe")).getByRole("status")).toBeEmptyDOMElement();
     await tick(); // estos errores no vuelven a pedir la lista
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(lists));
+    fireEvent.click(confirm); // falla otra vez, sin llegar a pintarse «Suspendiendo…»
+    await waitFor(() => expect(sent(api)).toHaveLength(2));
+    await tick();
+    expect(within(group).getByRole("alert")).toHaveTextContent(text);
     reply = { status: 200, body: { id: "luis", status: "SUSPENDED" } };
     fireEvent.click(confirm); // el mismo botón reintenta
     await screen.findByRole("button", { name: "Reactivar a luis@acme.pe" });
@@ -423,5 +427,7 @@ describe("MemberStatusAction", () => {
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2)); // se pregunta a la API
     expect(status()).toBeEmptyDOMElement();
     expect(row("eva@acme.pe")).toHaveTextContent("Suspendido"); // el de la lista, no el recibido
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" })); // la confirmación sigue viva
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
   });
 });
