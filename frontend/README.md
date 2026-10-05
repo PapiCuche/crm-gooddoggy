@@ -206,7 +206,20 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 - **Por sucursal:** nombre, código, dirección (calle, distrito y ciudad: lo que haya, en una línea; «Sin dirección» si no hay nada), teléfono si lo tiene, zona horaria y si está activa. Se listan también las inactivas.
 - **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»), que solo usa esta pantalla: una organización siempre tiene miembros y roles.
 - **Navegación:** la entrada «Sucursales» pide el permiso `organization.view`, el que exige la API para leerlas; `branches.manage` solo no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Solo lectura.** Crear, editar y desactivar una sucursal desde la pantalla son los siguientes work items; la API ya lo permite (F2-44 y F2-45).
+- **La lista es lectura.** Crear una sucursal está en «Crear una sucursal»; editarla y desactivarla desde la pantalla es el siguiente work item (la API ya lo permite, F2-45).
+
+### Crear una sucursal (F2-47)
+
+Encima de la lista, «Crear sucursal» abre un formulario y envía `POST /api/v1/o/{slug}/branches/` (F2-44). Componente: `components/branches/branch-create.tsx`, hermano de `role-create.tsx`: el camino de escritura es el mismo.
+
+- **A quién se ofrece:** a quien tiene `branches.manage` según el contexto de la API y además ve la lista (`organization.view`): el formulario vive sobre ella, también cuando no hay ninguna sucursal. Es comodidad: la API decide, y un 403 se explica en el formulario.
+- **Campos:** código y nombre, obligatorios; dirección, distrito, ciudad y teléfono, opcionales. Cada uno con el límite de la API. La zona horaria no se pide: la API pone `America/Lima` y el formulario lo dice.
+- **Abrir no envía nada.** El foco va al código. «Cancelar» cierra, descarta lo escrito y devuelve el foco a «Crear sucursal».
+- **Un envío:** la misma marca síncrona de las demás escrituras; Enter, un segundo clic, «Cancelar» o seguir escribiendo mientras se envía no hacen nada, y un Enter mantenido no repite la pulsación. Sin red falla y se dice.
+- **Lo que valida la pantalla:** que haya código y nombre, y las longitudes máximas. Lo demás lo decide la API: se envía lo escrito sin sus espacios exteriores (el código, tal como se escribió: la API lo pasa a mayúsculas) y se anuncia el nombre que la API guardó.
+- **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. La sucursal nueva va al final: si hay «Cargar más», aparece al cargar la última página. El foco vuelve a «Crear sucursal».
+- **Errores, por `code`:** el código repetido (`BRANCH_CODE_TAKEN`) y cada campo que la API no acepta (un 400 con ese campo en `fields`) se explican junto a su campo, y el foco va al primero si seguía en el botón o en ninguna parte. Sin permiso, red o fallo del servidor, en el formulario; un 400 sin un campo del formulario se trata como un fallo nuestro. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío. Nunca se enseña el texto de la respuesta.
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ## Seguridad del navegador (F2-07)
 
