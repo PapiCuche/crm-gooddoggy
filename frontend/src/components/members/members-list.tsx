@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
+import { MemberRolesAction } from "@/components/members/member-roles-action";
 import { MemberStatusAction } from "@/components/members/member-status-action";
 import { getMembersListQueryKey, membersList } from "@/lib/api/client";
 import type { Member } from "@/lib/api/model";
@@ -21,14 +22,16 @@ export function MembersList() {
   const format = useFormatter();
   const { organization, membership_id: own, permissions } = useTenant();
   // Comodidad, no autorización: sin el permiso la API responde 403 a la acción (ADR-017).
-  const manages = permissions.some((grant) => grant.code === "users.manage");
+  const can = (code: string) => permissions.some((grant) => grant.code === code);
+  const manages = can("users.manage");
+  const assigns = manages && can("roles.view"); // el panel de roles necesita verlos
   const listKey = [...getMembersListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
   // Una acción respondió que la pantalla ya no refleja a la API (F2-21). El aviso vive aquí:
   // la acción, o su fila entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
-  function stale(name: string, here: boolean) {
-    setNotice(t("members.action.stale", { name }));
+  function stale(text: string, here: boolean) {
+    setNotice(text);
     list.current?.refetch();
     if (here) list.current?.focusHeading();
   }
@@ -94,6 +97,16 @@ export function MembersList() {
               member={member}
               name={fullName(member.user) || member.user.email}
               organization={organization.name}
+              listKey={listKey}
+              onAsk={() => setNotice(null)}
+              onStale={stale}
+            />
+          ) : null}
+          {assigns && member.id !== own ? (
+            <MemberRolesAction
+              slug={organization.slug}
+              member={member}
+              name={fullName(member.user) || member.user.email}
               listKey={listKey}
               onAsk={() => setNotice(null)}
               onStale={stale}
