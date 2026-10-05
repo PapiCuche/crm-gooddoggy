@@ -210,7 +210,7 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 
 ### Crear una sucursal (F2-47)
 
-Encima de la lista, «Crear sucursal» abre un formulario y envía `POST /api/v1/o/{slug}/branches/` (F2-44). Componente: `components/branches/branch-create.tsx`, hermano de `role-create.tsx`: el camino de escritura es el mismo.
+Encima de la lista, «Crear sucursal» abre un formulario y envía `POST /api/v1/o/{slug}/branches/` (F2-44). Componente: `components/branches/branch-create.tsx`, sobre el formulario de campos compartido (abajo): el camino de escritura es el mismo que en `role-create.tsx`.
 
 - **A quién se ofrece:** a quien tiene `branches.manage` según el contexto de la API y además ve la lista (`organization.view`): el formulario vive sobre ella, también cuando no hay ninguna sucursal. Es comodidad: la API decide, y un 403 se explica en el formulario.
 - **Campos:** código y nombre, obligatorios; dirección, distrito, ciudad y teléfono, opcionales. Cada uno con el límite de la API. La zona horaria no se pide: la API pone `America/Lima` y el formulario lo dice.
@@ -220,6 +220,15 @@ Encima de la lista, «Crear sucursal» abre un formulario y envía `POST /api/v1
 - **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. La sucursal nueva va al final: si hay «Cargar más», aparece al cargar la última página. Un «Cargar más» que estuviera en vuelo se cancela y hay que pulsarlo otra vez. Si esa relectura falla, el aviso se queda y la lista no cambia; si la API niega la lista (403), la pantalla se cierra con su aviso de «sin permiso» y el formulario deja de ofrecerse. El foco vuelve a «Crear sucursal», salvo que el usuario ya esté en otra parte.
 - **Errores, por `code`:** el código repetido (`BRANCH_CODE_TAKEN`) y cada campo que la API no acepta (un 400 con ese campo en `fields`) se explican junto a su campo, y el foco va al primero si seguía en el botón o en ninguna parte. Sin permiso, red o fallo del servidor, en el formulario; un 400 sin un campo del formulario se trata como un fallo nuestro. Lo escrito no se pierde, y al escribir en cualquier campo los errores se retiran hasta el siguiente envío. Nunca se enseña el texto de la respuesta.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+### Formulario de campos compartido (F2-48)
+
+`components/forms/fields-form.tsx` (`FieldsForm`) tiene el camino de envío de un formulario de campos de texto, el que describen «Crear un rol» y «Crear una sucursal». Hoy lo usa «Crear sucursal»; los formularios de roles conservan su copia.
+
+- **Lo que hace:** pinta los campos, «Cancelar» y el botón de envío; comprueba los obligatorios; envía una vez por pulsación; explica los errores de la API por `code` (los de un campo, junto a él; los demás, en el formulario; un 401, ocupado y sin error); y mueve el foco al primer campo al abrir y al primer campo con error si el foco seguía en el botón o en ninguna parte.
+- **Lo que pone la pantalla:** la escritura (el resultado de `useMutation`), qué hacer con lo escrito (`send`, que recibe los valores sin espacios exteriores), los campos con sus textos ya resueltos (etiqueta, límite, ayuda, aviso de obligatorio y de no válido), el error propio de un campo que no es un 400 (`taken`: un código repetido), y el texto de «sin permiso». Abrir y cerrar, el botón que abre, el anuncio del resultado, lo que pasa con la lista y la guarda del Enter mantenido siguen en la pantalla.
+- **La marca de envío vive en el formulario** y se suelta en un efecto de maquetación cuando la escritura ya no está en curso. Un render solo del formulario (por ejemplo, al retirar un aviso de «falta» justo antes de enviar) trae la escritura tal como era antes de enviar y no la suelta: se compara con la que había al enviar. Por eso `write` debe ser el resultado de `useMutation` del render de la pantalla, no un objeto guardado, y `send` debe iniciar esa escritura antes de volver (`mutate`, sin esperar a nada): si no la inicia, el formulario deja de responder —también «Cancelar»— hasta el siguiente render de la pantalla; si la inicia más tarde, un render de la pantalla entre medias suelta la marca y otra pulsación sería otra escritura.
+- **El formulario se monta al abrir y se desmonta al cerrar:** los avisos y lo escrito no sobreviven a un cierre.
 
 ## Seguridad del navegador (F2-07)
 
