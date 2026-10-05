@@ -29,6 +29,8 @@ import type {
   MembersListParams,
   OrganizationSummary,
   PaginatedMemberList,
+  PaginatedRoleList,
+  RolesListParams,
   SelfContext,
   Session,
 } from "./model";
@@ -902,3 +904,143 @@ export const useMembersSetStatus = <TError = ErrorType<Error>, TContext = unknow
 > => {
   return useMutation(getMembersSetStatusMutationOptions(options), queryClient);
 };
+
+export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/roles/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/roles/`;
+};
+
+/**
+ * Los roles de la organización, con lo que concede cada uno y cuántos miembros lo tienen.
+ * Paginado por orden de creación (ADR-016).
+ */
+export const rolesList = async (
+  orgSlug: string,
+  params?: RolesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedRoleList> => {
+  return apiFetch<PaginatedRoleList>(getRolesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getRolesListQueryKey = (orgSlug: string, params?: RolesListParams) => {
+  return [`/api/v1/o/${orgSlug}/roles/`, ...(params ? [params] : [])] as const;
+};
+
+export const getRolesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof rolesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: RolesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof rolesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getRolesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof rolesList>>> = ({ signal }) =>
+    rolesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof rolesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type RolesListQueryResult = NonNullable<Awaited<ReturnType<typeof rolesList>>>;
+export type RolesListQueryError = ErrorType<Error>;
+
+export function useRolesList<
+  TData = Awaited<ReturnType<typeof rolesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | RolesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof rolesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof rolesList>>,
+          TError,
+          Awaited<ReturnType<typeof rolesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useRolesList<
+  TData = Awaited<ReturnType<typeof rolesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: RolesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof rolesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof rolesList>>,
+          TError,
+          Awaited<ReturnType<typeof rolesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useRolesList<
+  TData = Awaited<ReturnType<typeof rolesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: RolesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof rolesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useRolesList<
+  TData = Awaited<ReturnType<typeof rolesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: RolesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof rolesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getRolesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}

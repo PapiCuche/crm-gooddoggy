@@ -92,22 +92,23 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
     return ExecutionContext(ctx, scope_token(ctx), row[0], MappingProxyType(frozen))
 
 
-def _bound(ectx: ExecutionContext) -> None:
-    """La foto solo vale dentro del mismo `tenant_scope` (misma transacción) en que se leyó."""
+def bound(ectx: ExecutionContext) -> None:
+    """La foto solo vale dentro del mismo `tenant_scope` (misma transacción) en que se leyó.
+    Lo comprueba todo lo que lee con ella, también los lectores de `directory`."""
     if scope_token(ectx.tenant) is not ectx.scope:
         raise TenantContextError("ExecutionContext de otro tenant_scope: hay que recalcularlo")
 
 
 def has_permission(ectx: ExecutionContext, code: str) -> bool:
     """Nivel 1: ¿tiene el permiso, con cualquier alcance?"""
-    _bound(ectx)
+    bound(ectx)
     definition(code)
     return bool(ectx.permissions.get(code))
 
 
 def can(ectx: ExecutionContext, code: str, obj: Model | None = None) -> bool:
     """Niveles 1 y 2: permiso y, si lo admite, alcance sobre `obj`."""
-    _bound(ectx)
+    bound(ectx)
     permission = definition(code)
     scopes = ectx.permissions.get(code)
     if not scopes:
@@ -133,7 +134,7 @@ def require(ectx: ExecutionContext, code: str, obj: Model | None = None) -> None
 
 def scoped[M: Model](ectx: ExecutionContext, code: str, queryset: QuerySet[M]) -> QuerySet[M]:
     """Filtro de listado: las mismas filas para las que `can(ectx, code, obj)` es verdadero."""
-    _bound(ectx)
+    bound(ectx)
     permission = definition(code)
     if not issubclass(queryset.model, TenantModel):
         raise TypeError("scoped() solo filtra modelos tenant-owned")
@@ -151,7 +152,7 @@ def scoped[M: Model](ectx: ExecutionContext, code: str, queryset: QuerySet[M]) -
 
 def role_names(ectx: ExecutionContext) -> list[dict[str, str]]:
     """Roles de la membresía, para mostrar. Nunca para decidir: eso son los permisos."""
-    _bound(ectx)
+    bound(ectx)
     roles = Role.objects.using(require_scope(ectx.tenant))
     held = roles.filter(assignments__membership_id=ectx.membership_id)
     return list(held.order_by("name", "code").values("code", "name"))
@@ -159,7 +160,7 @@ def role_names(ectx: ExecutionContext) -> list[dict[str, str]]:
 
 def organization_of(ectx: ExecutionContext) -> dict[str, object]:
     """Identidad de la organización del contexto (tabla platform-owned, sin datos de negocio)."""
-    _bound(ectx)
+    bound(ectx)
     organizations = apps.get_model("organizations", "Organization")._default_manager
     found: dict[str, object] = organizations.values("id", "slug", "name").get(
         pk=ectx.tenant.organization_id
@@ -170,7 +171,7 @@ def organization_of(ectx: ExecutionContext) -> dict[str, object]:
 def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
     """Las membresías de la organización, con su usuario. Las filtra RLS; quién puede verlas lo
     decide el permiso de la vista (`ScopeFilter`)."""
-    _bound(ectx)
+    bound(ectx)
     rows = apps.get_model("organizations", "OrganizationMembership")._default_manager
     found: QuerySet[Any] = rows.using(require_scope(ectx.tenant)).select_related("user")
     return found
@@ -179,7 +180,7 @@ def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
 def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:
     """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir. No comprueba
     ningún permiso: quien llama pasa membresías que ya filtró (`ScopeFilter`)."""
-    _bound(ectx)
+    bound(ectx)
     roles = Role.objects.using(require_scope(ectx.tenant))
     held = roles.filter(assignments__membership_id__in=members).order_by("name", "code")
     found: dict[UUID, list[Any]] = {}
