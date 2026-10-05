@@ -2,7 +2,7 @@
 
 import { type InfiniteData, type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { type membersList, useMembersSetStatus } from "@/lib/api/client";
@@ -86,13 +86,17 @@ export function MemberStatusAction({
         onStale(t("stale", { name }), active === document.body || !!root.current?.contains(active));
         setTarget(null);
       },
-      // Sin sesión sigue ocupado hasta que cambia la página.
-      onSettled: (_result, error) => void (sending.current = error?.status === 401),
     },
   });
   // Sin sesión (401), `Providers` lleva al login: aquí no se enseña un error.
   const failed = change.isError && change.error.status !== 401 && !STALE.has(change.error.code);
   const busy = change.isPending || (change.isError && change.error.status === 401);
+  // La marca se suelta cuando la pantalla ya enseña el resultado, no al llegar la respuesta:
+  // una pulsación entre las dos cosas reenviaría lo mismo. En un efecto de layout: uno pasivo
+  // de un render anterior podría llegar después de la pulsación. Sin sesión (401) no se suelta.
+  useLayoutEffect(() => {
+    if (!busy) sending.current = false;
+  });
   // Otro lo hizo antes, con la confirmación abierta: no hay nada que confirmar.
   if (target && target === member.status && !change.isPending) {
     setTarget(null);

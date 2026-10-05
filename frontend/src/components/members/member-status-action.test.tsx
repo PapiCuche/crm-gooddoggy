@@ -369,6 +369,47 @@ describe("MemberStatusAction", () => {
     expect(other).toHaveFocus(); // el usuario ya estaba en otra parte: el foco no se le quita
   });
 
+  it("una pulsación entre la respuesta y el render no reenvía, ni la suelta un render ajeno", async () => {
+    let reply: { status: number; body: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [member("ana"), member("luis")], next: "abc" } },
+      [`${LIST}?cursor=abc`]: list([member("eva")]),
+      [STATUS("luis")]: () => reply,
+    });
+    renderApp(ui());
+    const group = await ask();
+    const confirm = within(group).getByRole("button", { name: "Sí, suspender" });
+    const release = hold(api);
+    fireEvent.click(confirm);
+    await tick();
+    await act(async () => {
+      release();
+      for (let turn = 0; turn < 100; turn++) await null; // llega el error; aún no hay render
+      fireEvent.click(confirm); // una pulsación entre la respuesta y el render
+    });
+    await tick();
+    expect(sent(api)).toHaveLength(1);
+    expect(within(group).getByRole("alert")).toBeVisible(); // y el mismo botón reintenta después
+    // Un render que no viene de un evento (llega la página 2) justo antes de pulsar.
+    reply = { status: 200, body: { id: "luis", status: "SUSPENDED" } };
+    const more = hold(api);
+    hold(api); // la escritura no llega a responder
+    const rows = screen.getByRole("list", { name: "Miembros" });
+    const watch = new MutationObserver(() => confirm.click()); // pulsa tras ese render
+    watch.observe(rows, { childList: true });
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await tick();
+    more();
+    await waitFor(() => expect(sent(api)).toHaveLength(2));
+    watch.disconnect();
+    fireEvent.click(confirm); // otra pulsación con la escritura en vuelo
+    await tick();
+    expect(sent(api)).toHaveLength(2);
+  });
+
   it("la fila enseña lo que respondió la API, y una respuesta de otro miembro no se aplica", async () => {
     let reply: unknown = { id: "luis", status: "ACTIVE" };
     const api = mockApi({ [LIST]: list(), [STATUS("luis")]: () => ({ status: 200, body: reply }) });
