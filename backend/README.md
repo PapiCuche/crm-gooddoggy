@@ -368,6 +368,17 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Solo lectura.** Crear o editar roles y asignarlos por API son otros work items (E01-08).
 - **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
 
+## Roles de un miembro (F2-25, ADR-003 §5)
+
+`PUT /api/v1/o/{slug}/members/{membership_id}/roles/{role_id}/` asigna el rol al miembro; `DELETE` en la misma ruta se lo quita. Las dos responden 204 sin cuerpo y exigen el permiso `users.manage`.
+
+- **Reglas:** las de `access.services.assign_role` y `remove_role` (ver «Cambios de RBAC sin escalada»). Nadie cambia sus propios roles; el actor cubre todas las concesiones del rol, con alcance igual o superior; un permiso sensible solo lo delega un Owner; quitar exige lo mismo que asignar; siempre queda un Owner activo. La ruta no añade ni quita ninguna.
+- **Efecto:** inmediato. Los permisos se leen en cada petición: el miembro los tiene, o deja de tenerlos, en la siguiente.
+- **Repetir:** asignar un rol que ya tiene responde 204 y no escribe. Quitar un rol que no tiene responde 404.
+- **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un rol que el actor no cubre; no dice cuál); 404 si el miembro o el rol no son de la organización; 409 `LAST_OWNER` al quitar el rol Owner al último Owner activo.
+- **Auditoría de tenant:** `membership.role_assigned` y `membership.role_removed`, que escriben los servicios en la misma transacción.
+- `access.permissions.rbac_errors()` da a esas negativas la forma del contrato; lo usa también la suspensión de miembros.
+
 ## Suspender y reactivar a un miembro (F2-19, ADR-017)
 
 `PUT /api/v1/o/{slug}/members/{id}/status/` con `{"status": "SUSPENDED"}` o `{"status": "ACTIVE"}`. Responde `{"id": "…", "status": "…"}`. Exige el permiso `users.manage`.
@@ -381,7 +392,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 
-`apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Son internos: no hay API HTTP (E01-08).
+`apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); conceder un permiso a un rol aún no (E01-08).
 
 - `grant_permission(ctx, role_id=, code=, scope=)`, `assign_role(ctx, membership_id=, role_id=)` y `remove_role(ctx, membership_id=, role_id=)`. Reciben el `TenantContext`, no una foto de permisos.
 - Cada cambio corre en un savepoint: toma el bloqueo del rol Owner de la organización (`SELECT … FOR NO KEY UPDATE`), relee los permisos del actor, comprueba las reglas, escribe y audita. Si algo falla, incluida la auditoría, no queda nada escrito.

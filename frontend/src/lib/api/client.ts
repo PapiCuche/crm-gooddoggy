@@ -793,6 +793,182 @@ export function useMembersList<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getMembersRolesAssignUrl = (orgSlug: string, membershipId: string, roleId: string) => {
+  return `/api/v1/o/${orgSlug}/members/${membershipId}/roles/${roleId}/`;
+};
+
+/**
+ * Asigna el rol al miembro. Repetirlo no cambia nada. 403: sin `users.manage`, uno mismo, o un rol que el actor no cubre. 404: el miembro o el rol no son de la organización.
+ */
+export const membersRolesAssign = async (
+  orgSlug: string,
+  membershipId: string,
+  roleId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getMembersRolesAssignUrl(orgSlug, membershipId, roleId), {
+    ...options,
+    method: "PUT",
+  });
+};
+
+export const getMembersRolesAssignMutationKey = () => ["membersRolesAssign"] as const;
+
+export const getMembersRolesAssignMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof membersRolesAssign>>,
+    TError,
+    MembersRolesAssignMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof membersRolesAssign>>,
+  TError,
+  MembersRolesAssignMutationVariables,
+  TContext
+> => {
+  const mutationKey = getMembersRolesAssignMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof membersRolesAssign>>,
+    MembersRolesAssignMutationVariables
+  > = (props) => {
+    const { orgSlug, membershipId, roleId } = props ?? {};
+
+    return membersRolesAssign(orgSlug, membershipId, roleId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MembersRolesAssignMutationResult = NonNullable<
+  Awaited<ReturnType<typeof membersRolesAssign>>
+>;
+
+export type MembersRolesAssignMutationError = ErrorType<Error>;
+export type MembersRolesAssignMutationVariables = {
+  orgSlug: string;
+  membershipId: string;
+  roleId: string;
+};
+
+export const useMembersRolesAssign = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof membersRolesAssign>>,
+      TError,
+      MembersRolesAssignMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof membersRolesAssign>>,
+  TError,
+  MembersRolesAssignMutationVariables,
+  TContext
+> => {
+  return useMutation(getMembersRolesAssignMutationOptions(options), queryClient);
+};
+
+export const getMembersRolesRemoveUrl = (orgSlug: string, membershipId: string, roleId: string) => {
+  return `/api/v1/o/${orgSlug}/members/${membershipId}/roles/${roleId}/`;
+};
+
+/**
+ * Quita el rol al miembro. 403: como al asignarlo. 404: el miembro no tiene ese rol, o no son de la organización. 409 `LAST_OWNER`: sería el último Owner activo.
+ */
+export const membersRolesRemove = async (
+  orgSlug: string,
+  membershipId: string,
+  roleId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getMembersRolesRemoveUrl(orgSlug, membershipId, roleId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getMembersRolesRemoveMutationKey = () => ["membersRolesRemove"] as const;
+
+export const getMembersRolesRemoveMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof membersRolesRemove>>,
+    TError,
+    MembersRolesRemoveMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof membersRolesRemove>>,
+  TError,
+  MembersRolesRemoveMutationVariables,
+  TContext
+> => {
+  const mutationKey = getMembersRolesRemoveMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof membersRolesRemove>>,
+    MembersRolesRemoveMutationVariables
+  > = (props) => {
+    const { orgSlug, membershipId, roleId } = props ?? {};
+
+    return membersRolesRemove(orgSlug, membershipId, roleId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MembersRolesRemoveMutationResult = NonNullable<
+  Awaited<ReturnType<typeof membersRolesRemove>>
+>;
+
+export type MembersRolesRemoveMutationError = ErrorType<Error>;
+export type MembersRolesRemoveMutationVariables = {
+  orgSlug: string;
+  membershipId: string;
+  roleId: string;
+};
+
+export const useMembersRolesRemove = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof membersRolesRemove>>,
+      TError,
+      MembersRolesRemoveMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof membersRolesRemove>>,
+  TError,
+  MembersRolesRemoveMutationVariables,
+  TContext
+> => {
+  return useMutation(getMembersRolesRemoveMutationOptions(options), queryClient);
+};
+
 export const getMembersSetStatusUrl = (orgSlug: string, membershipId: string) => {
   return `/api/v1/o/${orgSlug}/members/${membershipId}/status/`;
 };
