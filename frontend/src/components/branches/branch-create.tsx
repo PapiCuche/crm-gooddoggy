@@ -113,6 +113,7 @@ export function BranchCreate({ slug, listKey }: { slug: string; listKey: QueryKe
       inputs.current[empty[0]!]?.focus();
       return;
     }
+    if (missing.length > 0) setMissing([]); // un aviso anterior no tapa la respuesta de la API
     sending.current = true;
     create.mutate({
       orgSlug: slug,

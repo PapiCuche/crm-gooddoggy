@@ -1,6 +1,7 @@
 import { onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Providers } from "@/app/providers";
@@ -129,6 +130,7 @@ describe("BranchCreate", () => {
     expect(await screen.findByText("Esta organización todavía no tiene sucursales.")).toBeVisible();
     const form = await opened(); // también se ofrece sin ninguna sucursal
     fill(form, { code: " lim-01 ", name: "  Centro   de Lima ", city: " Lima ", phone: "  " });
+    fill(form, { address: " Av. Wilson 1234 ", district: " Cercado " });
     const release = hold(api);
     send(form);
     fireEvent.submit(form); // Enter y un segundo clic mientras se envía: una sola sucursal
@@ -146,13 +148,15 @@ describe("BranchCreate", () => {
     expect(body(calls(api, "POST")[0])).toEqual({
       code: "lim-01",
       name: "Centro   de Lima",
-      address: "",
-      district: "",
+      address: "Av. Wilson 1234",
+      district: "Cercado",
       city: "Lima",
       phone: "",
     });
     const done = screen.getByText("Sucursal «Centro de Lima» creada. Va al final de la lista.");
     expect(done).toHaveAttribute("role", "status");
+    expect(done.textContent).toContain("«Centro de Lima»"); // exacto: `getByText` junta espacios
+    expect(done).not.toHaveClass("sr-only"); // se ve
     await waitFor(() => expect(trigger()).toHaveFocus());
     expect(await screen.findByText("Centro de Lima", { selector: ".font-medium" })).toBeVisible();
     expect(calls(api, "GET")).toHaveLength(2); // la lista, otra vez
@@ -171,14 +175,33 @@ describe("BranchCreate", () => {
     expect(field(form, "code")).toHaveAccessibleDescription("Escribe un código para la sucursal.");
     expect(field(form, "name")).toHaveAccessibleDescription("Escribe un nombre para la sucursal.");
     expect(field(form, "code")).toHaveFocus();
+    send(form); // otra vez, desde el botón: el foco vuelve al campo
+    expect(field(form, "code")).toHaveFocus();
     fill(form, { code: "LIM" }); // al corregir, los avisos se retiran hasta el siguiente envío
     expect(field(form, "name")).not.toHaveAttribute("aria-invalid");
     send(form);
     expect(field(form, "code")).not.toHaveAttribute("aria-invalid");
     expect(field(form, "name")).toHaveFocus();
     expect(field(form, "city")).toHaveValue("Lima"); // lo escrito no se pierde
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger()); // al reabrir no queda el aviso anterior
+    expect(within(screen.getByRole("form")).queryByRole("alert")).not.toBeInTheDocument();
     await tick();
     expect(calls(api, "POST")).toHaveLength(0);
+  });
+
+  it("un campo rellenado sin evento no deja el aviso de «falta» tapando la respuesta", async () => {
+    const api = mockApi({ [LIST]: list(), [CREATE]: { status: 500, body: { code: "X" } } });
+    renderApp(ui());
+    const form = await opened();
+    send(form); // faltan los dos
+    for (const name of ["code", "name"] as const)
+      fireEvent.change(field(form, name), { target: { value: "LIM" } }); // sin `input`
+    send(form);
+    fireEvent.submit(form); // retirar el aviso no suelta la marca
+    expect(await within(form).findByText(/Algo salió mal/)).toHaveAttribute("role", "alert");
+    expect(within(form).getAllByRole("alert")).toHaveLength(1);
+    expect(calls(api, "POST")).toHaveLength(1);
   });
 
   it("un código repetido se explica junto al código, con el foco en él, y se puede corregir", async () => {
@@ -197,6 +220,8 @@ describe("BranchCreate", () => {
       ),
     );
     expect(field(form, "code")).toHaveFocus();
+    send(form); // sin corregir: el mismo error, otra vez, vuelve a llevar el foco
+    await waitFor(() => expect(field(form, "code")).toHaveFocus());
     expect(form).not.toHaveTextContent("texto de la API"); // nunca el texto de la respuesta
     expect(field(form, "name")).toHaveValue("Lima");
     fill(form, { code: "LIM-2" });
@@ -204,7 +229,7 @@ describe("BranchCreate", () => {
     reply = { status: 201, body: branch("LIM-2", "Lima") };
     send(form);
     await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
-    expect(calls(api, "POST")).toHaveLength(2);
+    expect(calls(api, "POST")).toHaveLength(3);
   });
 
   it("cada campo que la API no acepta lo dice junto a él, y el foco va al primero", async () => {
@@ -218,7 +243,8 @@ describe("BranchCreate", () => {
     renderApp(ui());
     const form = await opened();
     fill(form, { code: "LIM", name: "ㅤ" });
-    send(form);
+    (document.activeElement as HTMLElement).blur(); // el foco, en ninguna parte
+    fireEvent.submit(form);
     await waitFor(() => expect(field(form, "name")).toHaveAttribute("aria-invalid", "true"));
     const bad = Object.keys(LABELS).filter((name) =>
       field(form, name as Field).hasAttribute("aria-invalid"),
@@ -228,14 +254,17 @@ describe("BranchCreate", () => {
     expect(field(form, "phone")).toHaveAccessibleDescription(/Ese teléfono no sirve/);
     expect(field(form, "name")).toHaveFocus(); // el primero en el orden del formulario
     expect(within(form).getAllByRole("alert")).toHaveLength(3); // sin un error general además
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger()); // al reabrir no queda el error anterior
+    expect(within(screen.getByRole("form")).queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
     [403, { code: "PERMISSION_DENIED" }, "No tienes permiso para crear sucursales."],
     [400, { code: "VALIDATION_ERROR", fields: { timezone: [] } }, "Algo salió mal de nuestro lado"],
     [400, { code: "VALIDATION_ERROR" }, "Algo salió mal de nuestro lado"],
-    [500, { code: "INTERNAL_ERROR" }, "Algo salió mal de nuestro lado"],
-    [418, { code: "CODIGO_NUEVO", message: "texto de la API" }, "Algo salió mal de nuestro lado"],
+    [500, { code: "INTERNAL_ERROR", fields: { name: [] } }, "Algo salió mal de nuestro lado"],
+    [409, { code: "CODIGO_NUEVO", message: "texto de la API" }, "Algo salió mal de nuestro lado"],
   ])("un %i se explica en el formulario, sin perder lo escrito", async (status, reply, text) => {
     const api = mockApi({ [LIST]: list(), [CREATE]: { status, body: reply } });
     renderApp(ui());
@@ -318,26 +347,64 @@ describe("BranchCreate", () => {
     await within(form).findByRole("alert");
   });
 
+  it("un render ajeno justo antes de pulsar no deja la marca a merced de un efecto pasivo", async () => {
+    const api = mockApi({ [LIST]: list(), [CREATE]: { status: 201, body: branch("LIM", "Lima") } });
+    let again = () => {};
+    // Cada render da un contexto nuevo: `BranchesList` y el formulario se vuelven a pintar.
+    function Shell() {
+      const [turn, setTurn] = useState(0);
+      again = () => setTurn(turn + 1);
+      return <div data-turn={turn}>{ui(tenant("organization.view", "branches.manage"))}</div>;
+    }
+    renderApp(<Shell />);
+    const form = await opened();
+    fill(form, { code: "LIM", name: "Lima" });
+    hold(api); // la escritura no llega a responder
+    const submit = within(form).getByRole("button", { name: "Crear" });
+    const watch = new MutationObserver(() => submit.click()); // pulsa tras ese render
+    watch.observe(form.closest("[data-turn]")!, { attributes: true });
+    setTimeout(again); // fuera de un evento: sus efectos pasivos llegan después
+    await waitFor(() => expect(calls(api, "POST")).toHaveLength(1));
+    watch.disconnect();
+    await tick();
+    fireEvent.click(submit); // otra pulsación con la escritura en vuelo
+    await tick();
+    expect(calls(api, "POST")).toHaveLength(1);
+  });
+
   it("el foco no se mueve solo cuando el usuario ya está en otra parte", async () => {
-    const api = mockApi({
-      [LIST]: list(),
-      [CREATE]: { status: 409, body: { code: "BRANCH_CODE_TAKEN" } },
-    });
+    let reply: { status: number; body: unknown } = {
+      status: 409,
+      body: { code: "BRANCH_CODE_TAKEN" },
+    };
+    const api = mockApi({ [LIST]: list(), [CREATE]: () => reply });
     renderApp(ui());
     const form = await opened();
     fill(form, { code: "LIM", name: "Lima" });
-    const release = hold(api);
+    let release = hold(api);
     send(form);
     await tick();
     field(form, "city").focus(); // mientras se envía, el usuario sigue rellenando
     release();
     await waitFor(() => expect(field(form, "code")).toHaveAttribute("aria-invalid", "true"));
     expect(field(form, "city")).toHaveFocus();
+    reply = { status: 201, body: branch("LIM", "Lima") };
+    release = hold(api);
+    send(form);
+    await tick();
+    const heading = screen.getByRole("heading", { level: 1 });
+    heading.focus(); // se fue al título: al cerrarse el formulario, el foco tampoco se le quita
+    release();
+    await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
+    expect(heading).toHaveFocus();
   });
 
   it("Enter mantenido no vuelve a pulsar: ni reabre el formulario ni reenvía", async () => {
     const api = mockApi({ [LIST]: list(), [CREATE]: { status: 500, body: { code: "X" } } });
     renderApp(ui());
+    await screen.findByText(/en la lista$/);
+    expect(document.body).toHaveFocus(); // al montar, «Crear sucursal» no toma el foco
+    expect(fireEvent.keyDown(trigger(), { key: "Enter", repeat: true })).toBe(false);
     const form = await opened();
     fill(form, { code: "LIM", name: "Lima" });
     send(form);
@@ -349,6 +416,7 @@ describe("BranchCreate", () => {
     expect(held).toBe(false); // la pulsación repetida se descarta
     const once = fireEvent.keyDown(field(form, "name"), { key: "Enter" });
     expect(once).toBe(true); // una pulsación normal, no
+    expect(fireEvent.keyDown(field(form, "name"), { key: "a", repeat: true })).toBe(true);
     expect(calls(api, "POST")).toHaveLength(1);
   });
 });
