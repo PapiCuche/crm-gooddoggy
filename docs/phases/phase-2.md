@@ -304,6 +304,7 @@ El 404 de una ruta de tenant es idéntico en estado y cuerpo para "no existe" y 
 
 ### OBS-F2-05C-1 — Ningún Owner puede ampliar el rol Owner
 Por PO-2, quien tiene un rol no cambia sus concesiones, y todo Owner tiene el rol Owner. Un permiso sensible solo lo delega un Owner. Resultado: ningún Owner puede usar `grant_permission` para añadir concesiones al rol Owner, y nadie puede añadirle un permiso sensible. No hay excepción para el Owner ni para el staff de plataforma. Agrava OBS-F2-04-1: cada work item que amplíe el catálogo debe llevar esos permisos al rol Owner de las organizaciones existentes por otra vía (migración de datos o un paso de plataforma), y decidirlo antes de añadir el primero.
+- F2-31 (#120): desde ahora nadie añade ni cambia ninguna concesión del rol Owner con `grant_permission`, sensible o no, sea o no Owner. La vía para ampliarlo sigue pendiente.
 
 ### OBS-F2-05C-2 — La garantía de Owner activo tiene dos huecos fuera de este módulo
 `remove_role` la aplica. Desactivar una membresía (E01-07, en `apps.organizations`) debe llamar a `ensure_owner_remains` en el mismo `tenant_scope` y antes de escribir; hoy nada lo hace porque esa operación no existe. **Cerrado para la suspensión en F2-19 (ADR-017):** `apps.members` llama a `ensure_can_manage_member`, que incluye esa garantía, antes de escribir. La baja definitiva, cuando exista, debe pasar por el mismo camino. Desactivar un usuario global (`users.is_active`) no se puede comprobar desde un tenant: quien lo implemente debe revisar todas sus organizaciones.

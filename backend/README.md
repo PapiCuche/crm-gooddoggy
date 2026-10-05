@@ -388,7 +388,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Cambiar el alcance:** repetir la ruta con otro alcance lo cambia. El actor debe cubrir el alcance que había y el nuevo: reducir un alcance es retirar parte de una concesión, y retirar exige lo mismo que conceder.
 - **El rol Owner no se edita:** sus concesiones no cambian por esta ruta, sea quien sea el actor. Así no puede perder sus permisos sensibles (OBS-F2-25-1). Ampliarlo cuando crezca el catálogo necesita otra vía (OBS-F2-05C-1).
 - **Efecto:** inmediato y para todos los miembros del rol, en su siguiente petición. A ellos no los cubrió nadie uno a uno: solo se comprueba a quien concede (OBS-F2-29-2).
-- **Repetir** la misma concesión responde 204 y no escribe.
+- **Repetir** la misma concesión responde 204 y no escribe, si el actor pasa las reglas: quien no cubre lo que el rol ya tiene recibe 403 también al repetirlo, y así la respuesta no le dice qué alcance tiene el rol.
 - **Errores:** 400 `VALIDATION_ERROR` en `scope` si el alcance no es uno de los cuatro o no corresponde al permiso; 403 `PERMISSION_DENIED` sin decir la regla (y sin `roles.manage`, antes de mirar el cuerpo); 404 si el rol no es de la organización o el permiso no está en el catálogo; 409 `LAST_OWNER` si la organización no tiene rol Owner.
 - **Auditoría de tenant:** `role.permission_granted` al conceder y `role.permission_scope_changed` al cambiar el alcance, con el antes y el después, en la misma transacción.
 - **Sin step-up MFA** al delegar un permiso sensible: MFA no existe todavía (E01-03).

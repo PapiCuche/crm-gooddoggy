@@ -122,6 +122,9 @@ def test_without_session_permission_or_a_valid_request_it_changes_nothing(
     no_token.force_login(rbac.ana)
     url = f"/api/v1/o/org-a/roles/{target}/permissions/users.view/"
     assert no_token.put(url, {}, "application/json").json()["code"] == "CSRF_FAILED"
+    lone = b'{"scope": "%sud800"}' % bytes([92])  # un sustituto suelto: no se puede repetir
+    answer = ana.put(url, lone, "application/json", headers={"X-CSRFToken": "t" * 32})
+    assert (answer.status_code, list(answer.json()["fields"])) == (400, ["scope"])
     for other in ("get", "post", "patch", "delete"):  # solo PUT
         assert reply(grant(ana, target, "users.view", method=other)) == DENIED
     assert state(migrator) == before
@@ -131,6 +134,13 @@ def test_without_session_permission_or_a_valid_request_it_changes_nothing(
     assert reached == []  # sin `roles.manage` se deniega antes del servicio y de su bloqueo
     assert reply(grant(ana, target, VIEW, "TEAM")) == DONE
     assert reached == [{"role_id": target, "code": VIEW, "scope": "TEAM"}]
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise ValueError("otro fallo, que no es del alcance")
+
+    monkeypatch.setattr(views, "grant_permission", broken)
+    with pytest.raises(ValueError, match="otro fallo"):  # no se disfraza de error de `scope`
+        grant(ana, target, "users.view")
     for reason, expected in (
         (Denied.MEMBERSHIP, NOT_FOUND),  # lo que el actor perdió mientras esperaba el bloqueo
         (Denied.PERMISSION, DENIED),

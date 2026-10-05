@@ -1331,7 +1331,7 @@ export const getRolesPermissionsGrantUrl = (orgSlug: string, roleId: string, cod
 };
 
 /**
- * Deja el rol con ese permiso y ese alcance: lo concede o cambia el alcance que tenía. Repetirlo no cambia nada. Los miembros del rol lo reciben en su siguiente petición. 400: el alcance no corresponde al permiso. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión (la nueva o la anterior) que el actor no cubre. 404: el rol no es de la organización o el permiso no existe. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+ * Deja el rol con ese permiso y ese alcance: lo concede o cambia el alcance que tenía. Repetirlo no cambia nada. Los miembros del rol lo reciben en su siguiente petición. 400: el alcance no corresponde al permiso. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, una concesión (la nueva o la anterior) que el actor no cubre, o un permiso sensible si el actor no es Owner. 404: el rol no es de la organización o el permiso no existe. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
  */
 export const rolesPermissionsGrant = async (
   orgSlug: string,

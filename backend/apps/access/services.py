@@ -3,8 +3,9 @@
 Crear un rol, conceder un permiso a un rol, y asignar o quitar un rol a una membresía. Cada
 cambio corre en un savepoint que toma el bloqueo del rol Owner de la organización, relee los
 permisos del actor bajo ese bloqueo, comprueba todas las reglas, escribe y audita. Una
-denegación no escribe nada. `is_owner_role` solo identifica al rol Owner para dos
-restricciones (permisos sensibles y último Owner); por sí solo no concede nada.
+denegación no escribe nada. `is_owner_role` solo identifica al rol Owner para tres
+restricciones (permisos sensibles, último Owner y que sus concesiones no se editan); por sí
+solo no concede nada.
 
 `ensure_can_manage_member` aplica las mismas reglas al estado de una membresía, que escribe
 `organizations` (F2-19, ADR-017): comprueba y conserva el bloqueo; no escribe ni audita.
@@ -211,6 +212,10 @@ def create_role(ctx: TenantContext, *, name: str, description: str = "") -> Role
         return role
 
 
+class ScopeMismatch(ValueError):
+    """El alcance pedido no corresponde al permiso: sobra, o falta."""
+
+
 def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str | None) -> None:
     """Deja el rol con `code` y ese alcance: lo concede, o cambia el alcance que tenía (F2-31).
 
@@ -220,7 +225,7 @@ def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str
     """
     wanted = Scope(scope) if scope is not None else None
     if (wanted is not None) != definition(code).supports_scope:
-        raise ValueError(f"{code}: el alcance no corresponde a este permiso")
+        raise ScopeMismatch(f"{code}: el alcance no corresponde a este permiso")
     with _change(ctx, "roles.manage") as actor:
         role = Role.objects.using(actor.alias).get(pk=role_id)
         if actor.holds(role):  # cambiar las concesiones de un rol propio es modificarse a uno mismo

@@ -30,6 +30,7 @@ from apps.access.services import (
     DESCRIPTION_MAX,
     NAME_MAX,
     RoleNameTaken,
+    ScopeMismatch,
     assign_role,
     create_role,
     grant_permission,
@@ -312,6 +313,7 @@ class GrantScopeSerializer(serializers.Serializer[Any]):
         allow_null=True,
         default=None,
         help_text="Alcance de la concesión. Se omite, o es nulo, en un permiso sin alcance.",
+        error_messages={"invalid_choice": "No es un alcance válido."},  # sin repetir lo recibido
     )
 
 
@@ -331,9 +333,10 @@ class RolePermissionView(APIView):
         description="Deja el rol con ese permiso y ese alcance: lo concede o cambia el alcance "
         "que tenía. Repetirlo no cambia nada. Los miembros del rol lo reciben en su siguiente "
         "petición. 400: el alcance no corresponde al permiso. 403: sin `roles.manage`, un rol "
-        "que el actor tiene asignado, el rol Owner, o una concesión (la nueva o la anterior) "
-        "que el actor no cubre. 404: el rol no es de la organización o el permiso no existe. "
-        "409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.",
+        "que el actor tiene asignado, el rol Owner, una concesión (la nueva o la anterior) que "
+        "el actor no cubre, o un permiso sensible si el actor no es Owner. 404: el rol no es "
+        "de la organización o el permiso no existe. 409 `LAST_OWNER`: la organización no "
+        "tiene rol Owner y no admite ningún cambio.",
     )
     def put(self, request: Request, role_id: UUID, code: str, **kwargs: Any) -> Response:
         wanted = GrantScopeSerializer(data=request.data)
@@ -345,7 +348,7 @@ class RolePermissionView(APIView):
                 grant_permission(tenant, role_id=role_id, code=code, **wanted.validated_data)
         except UnknownPermission:
             raise NotFound from None
-        except ValueError:
+        except ScopeMismatch:
             message = "El alcance no corresponde a este permiso."
             raise serializers.ValidationError({"scope": message}) from None
         return Response(status=204)
