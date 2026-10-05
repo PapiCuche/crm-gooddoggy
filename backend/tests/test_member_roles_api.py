@@ -10,12 +10,13 @@ import pytest
 from django.test import Client
 
 from apps.access.api import views
+from apps.access.catalog import BY_CODE
 from apps.access.models import MembershipRole, RolePermission
 from apps.access.selectors import AccessDenied, Denied
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
-from tests.test_anti_escalation import audit, state
+from tests.test_anti_escalation import EDIT, audit, state
 from tests.test_authorization import VIEW, give
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, me, reply, signed
@@ -43,7 +44,8 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
     seller, ana, eva = rbac.roles["seller"], signed(rbac.ana), signed(rbac.eva)
     before = state(migrator)
     assert codes(eva) == []
-    assert reply(change(ana, rbac.m_eva, seller.pk)) == DONE
+    done = change(ana, rbac.m_eva, seller.pk)
+    assert reply(done) == DONE and "Content-Type" not in done.headers  # sin cuerpo
     assert codes(eva) == ["organization.view"]  # en su siguiente petición
     assert reply(change(ana, rbac.m_eva, seller.pk)) == DONE  # repetirlo no cambia nada
     assert state(migrator) == (before[0], before[1] + 1, before[2] + 1)
@@ -97,6 +99,18 @@ def test_without_session_permission_or_membership_it_changes_and_reveals_nothing
         assert reply(change(ana, rbac.m_eva, target)) == expected
 
 
+def test_the_route_itself_requires_users_manage(rbac: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    rest = [code for code in BY_CODE if code not in ("users.manage", VIEW, EDIT)]
+    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # todo el catálogo menos `users.manage`
+    reached: list[Any] = []
+    for name in ("assign_role", "remove_role"):
+        monkeypatch.setattr(views, name, lambda *args, **kwargs: reached.append(kwargs))
+    eva = signed(rbac.eva)
+    for method in ("put", "delete"):
+        assert reply(change(eva, rbac.m_luis, rbac.target.pk, method)) == DENIED
+    assert reached == []  # se deniega antes del servicio y de su bloqueo
+
+
 def test_the_route_cannot_skip_the_rules_of_the_services(
     rbac: Any, migrator: psycopg.Connection[Any]
 ) -> None:
@@ -142,3 +156,8 @@ def test_the_last_active_owner_keeps_the_owner_role(
     with tenant_scope(ctx(rbac.a)):
         MembershipRole.objects.create(membership_id=rbac.m_eva, role=owner)  # otra Owner activa
     assert reply(change(luis, rbac.membership, owner.pk, "delete")) == DONE
+    # Una organización sin rol Owner no admite ningún cambio: tampoco asignar.
+    carla = make_user(email="carla@example.com")
+    orphan = give(rbac.b, join(rbac.b, carla).pk, {"users.manage": None}).pk
+    stuck = change(signed(carla), join(rbac.b, make_user()).pk, orphan, org="org-b")
+    assert (stuck.status_code, stuck.json()["code"]) == (409, "LAST_OWNER")

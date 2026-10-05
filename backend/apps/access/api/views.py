@@ -211,7 +211,8 @@ class MemberRoleView(APIView):
         responses={204: None, **errors(401, 403, 404, 409)},
         description="Asigna el rol al miembro. Repetirlo no cambia nada. 403: sin "
         "`users.manage`, uno mismo, o un rol que el actor no cubre. 404: el miembro o el rol "
-        "no son de la organización.",
+        "no son de la organización. 409 `LAST_OWNER`: la organización no tiene rol Owner y "
+        "no admite ningún cambio.",
     )
     def put(self, request: Request, membership_id: UUID, role_id: UUID, **kwargs: Any) -> Response:
         return self._change(assign_role, membership_id, role_id)
@@ -222,7 +223,7 @@ class MemberRoleView(APIView):
         responses={204: None, **errors(401, 403, 404, 409)},
         description="Quita el rol al miembro. 403: como al asignarlo. 404: el miembro no "
         "tiene ese rol, o no son de la organización. 409 `LAST_OWNER`: sería el último Owner "
-        "activo.",
+        "activo, o la organización no tiene rol Owner.",
     )
     def delete(
         self, request: Request, membership_id: UUID, role_id: UUID, **kwargs: Any

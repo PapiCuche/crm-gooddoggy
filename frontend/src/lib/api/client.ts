@@ -798,7 +798,7 @@ export const getMembersRolesAssignUrl = (orgSlug: string, membershipId: string, 
 };
 
 /**
- * Asigna el rol al miembro. Repetirlo no cambia nada. 403: sin `users.manage`, uno mismo, o un rol que el actor no cubre. 404: el miembro o el rol no son de la organización.
+ * Asigna el rol al miembro. Repetirlo no cambia nada. 403: sin `users.manage`, uno mismo, o un rol que el actor no cubre. 404: el miembro o el rol no son de la organización. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
  */
 export const membersRolesAssign = async (
   orgSlug: string,
@@ -886,7 +886,7 @@ export const getMembersRolesRemoveUrl = (orgSlug: string, membershipId: string, 
 };
 
 /**
- * Quita el rol al miembro. 403: como al asignarlo. 404: el miembro no tiene ese rol, o no son de la organización. 409 `LAST_OWNER`: sería el último Owner activo.
+ * Quita el rol al miembro. 403: como al asignarlo. 404: el miembro no tiene ese rol, o no son de la organización. 409 `LAST_OWNER`: sería el último Owner activo, o la organización no tiene rol Owner.
  */
 export const membersRolesRemove = async (
   orgSlug: string,

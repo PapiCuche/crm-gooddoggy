@@ -338,7 +338,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Qué no incluye:** contraseña, marcas de plataforma ni las otras organizaciones del usuario. La tabla `users` es global: el listado sale de `organization_memberships` (RLS con FORCE) y solo une los usuarios de esas filas.
 - **Roles:** nombre y código, para mostrar. Nada decide por ellos. Se ven con `users.view`, sin `roles.view`: quién tiene qué rol es dato del directorio; lo que concede cada rol no sale aquí.
 - **Paginación:** por cursor, en orden de alta (`?limit=`, `?cursor=`; ver «Listados»). Dos consultas por página, sean cuantos sean los miembros: las membresías con su usuario y los roles de esa página.
-- **Solo lectura.** Suspender y reactivar está en la sección siguiente; invitar y cambiar roles son otros work items (E01-06, E01-08).
+- **Solo lectura.** Suspender y reactivar, y asignar o quitar roles, están en las secciones siguientes; invitar es otro work item (E01-06).
 - `apps.access` lee las membresías con `apps.get_model`, como el motor de autorización: los módulos de L2 no se importan entre sí. Los selectores `memberships` y `roles_by_membership` filtran por organización, no por permiso: `users.view` lo exige la vista (`HasPermission` y `ScopeFilter`), y otra vista que los use declara el suyo.
 
 ## Directorio de roles (F2-22, ADR-016)
@@ -365,7 +365,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Qué incluye:** todos los roles de la organización, de plantilla (`is_system`) o propios. `permissions` son sus concesiones tal como están guardadas, ordenadas por código (orden de Python, como en `…/me/`, no el de la intercalación de la base); `scope` es `null` si el permiso no admite alcance. Una concesión de un código que el catálogo ya no tiene se ve aquí, aunque el motor de autorización la ignore. `members` cuenta las membresías que tienen el rol, en cualquier estado.
 - **Qué no incluye:** la marca de rol Owner (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
 - **Paginación:** por cursor, en orden de creación (ver «Listados»). Tres consultas por página, sean cuantos sean los roles: los roles, sus concesiones y sus miembros.
-- **Solo lectura.** Crear o editar roles y asignarlos por API son otros work items (E01-08).
+- **Solo lectura.** Asignarlos a un miembro está en «Roles de un miembro»; crear o editar roles es otro work item (E01-08).
 - **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
 
 ## Roles de un miembro (F2-25, ADR-003 §5)
@@ -375,7 +375,9 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Reglas:** las de `access.services.assign_role` y `remove_role` (ver «Cambios de RBAC sin escalada»). Nadie cambia sus propios roles; el actor cubre todas las concesiones del rol, con alcance igual o superior; un permiso sensible solo lo delega un Owner; quitar exige lo mismo que asignar; siempre queda un Owner activo. La ruta no añade ni quita ninguna.
 - **Efecto:** inmediato. Los permisos se leen en cada petición: el miembro los tiene, o deja de tenerlos, en la siguiente.
 - **Repetir:** asignar un rol que ya tiene responde 204 y no escribe. Quitar un rol que no tiene responde 404.
-- **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un rol que el actor no cubre; no dice cuál); 404 si el miembro o el rol no son de la organización; 409 `LAST_OWNER` al quitar el rol Owner al último Owner activo.
+- **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un rol que el actor no cubre; no dice cuál); 404 si el miembro o el rol no son de la organización; 409 `LAST_OWNER` al quitar el rol Owner al último Owner activo y, en las dos operaciones, si la organización no tiene rol Owner (OBS-F2-05C-4). Para quien tiene `users.manage`, un 403 significa que el miembro y el rol existen, y al quitar, que el miembro lo tiene.
+- **Estado del miembro:** no se mira. Se puede asignar o quitar un rol a una membresía invitada, suspendida o dada de baja. Reactivar vuelve a exigir cubrir sus roles (ADR-017 §2); la aceptación de invitaciones (E01-06) debe decidir lo mismo.
+- **Pendiente:** el step-up MFA que ADR-003 §5 exige para delegar un permiso sensible llega con MFA (E01-03) y se aplicará a esta ruta.
 - **Auditoría de tenant:** `membership.role_assigned` y `membership.role_removed`, que escriben los servicios en la misma transacción.
 - `access.permissions.rbac_errors()` da a esas negativas la forma del contrato; lo usa también la suspensión de miembros.
 

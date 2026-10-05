@@ -235,7 +235,8 @@ paths:
       operationId: members_roles_assign
       description: 'Asigna el rol al miembro. Repetirlo no cambia nada. 403: sin `users.manage`,
         uno mismo, o un rol que el actor no cubre. 404: el miembro o el rol no son
-        de la organización.'
+        de la organización. 409 `LAST_OWNER`: la organización no tiene rol Owner y
+        no admite ningún cambio.'
       parameters:
       - in: path
         name: membership_id
@@ -289,7 +290,7 @@ paths:
       operationId: members_roles_remove
       description: 'Quita el rol al miembro. 403: como al asignarlo. 404: el miembro
         no tiene ese rol, o no son de la organización. 409 `LAST_OWNER`: sería el
-        último Owner activo.'
+        último Owner activo, o la organización no tiene rol Owner.'
       parameters:
       - in: path
         name: membership_id
