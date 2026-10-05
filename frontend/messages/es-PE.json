@@ -171,7 +171,7 @@
       "title": "Editar {role}",
       "submit": "Guardar",
       "busy": "Guardando…",
-      "denied": "No puedes cambiar este rol: hace falta tener todos sus permisos y, si alguno es sensible, ser Owner.",
+      "denied": "No puedes cambiar este rol: hace falta tener todos sus permisos y, si alguno es sensible, ser Owner. Tampoco se cambia un rol que tienes asignado.",
       "done": "Rol «{name}» guardado.",
       "stale": "El rol {role} ya no existe o había cambiado. Revisa la lista."
     },

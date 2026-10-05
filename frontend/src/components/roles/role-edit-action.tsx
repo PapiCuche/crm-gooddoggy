@@ -9,6 +9,8 @@ import { TextField } from "@/components/ui/text-field";
 import { type rolesList, useRolesUpdate } from "@/lib/api/client";
 import type { Role } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
+import { ApiError } from "@/lib/http";
+import { cn } from "@/lib/utils";
 
 type Pages = InfiniteData<Awaited<ReturnType<typeof rolesList>>>;
 
@@ -54,15 +56,23 @@ export function RoleEditAction({
         const read = queryClient.getQueryState(listKey);
         const rereading = !!read && read.fetchStatus !== "idle" && !read.fetchMeta?.fetchMore;
         await queryClient.cancelQueries({ queryKey: listKey });
-        if (saved.id !== role.id) return void queryClient.invalidateQueries({ queryKey: listKey });
-        // La tarjeta enseña lo que guardó la API; no se piden otra vez las páginas de la lista.
+        if (saved.id !== role.id) {
+          // No es el rol que se pidió: no se da por guardado, y se explica como un fallo nuestro.
+          void queryClient.invalidateQueries({ queryKey: listKey });
+          throw new ApiError(500, "INTERNAL_ERROR");
+        }
+        // La tarjeta enseña el nombre y la descripción que guardó la API; lo demás de la fila pudo
+        // cambiarlo otra escritura de esta pantalla después de esa respuesta, y no se pisa.
+        const own = { name: saved.name, description: saved.description };
         queryClient.setQueryData<Pages>(listKey, (data) =>
           data
             ? {
                 ...data,
                 pages: data.pages.map((page) => ({
                   ...page,
-                  results: page.results.map((row) => (row.id === saved.id ? saved : row)),
+                  results: page.results.map((row) =>
+                    row.id === saved.id ? { ...row, ...own } : row,
+                  ),
                 })),
               }
             : data,
@@ -75,7 +85,8 @@ export function RoleEditAction({
         // El rol ya no existe: lo explica la lista, que se vuelve a pedir.
         if (error.status !== 404) return;
         const active = document.activeElement;
-        const here = active === document.body || !!root.current?.contains(active);
+        // La tarjeta entera desaparece: también si el foco estaba en «Permisos», a su lado.
+        const here = active === document.body || !!root.current?.closest("li")?.contains(active);
         onStale(t("stale", { role: role.name }), here);
         setEditing(null);
       },
@@ -161,7 +172,8 @@ export function RoleEditAction({
   return (
     <div
       ref={root}
-      className="flex flex-col items-start gap-2"
+      // Abierta ocupa su fila: la acción vecina de la tarjeta pasa a otra línea.
+      className={cn("flex flex-col items-start gap-2", open && "w-full")}
       // Enter mantenido repite la pulsación: reabriría el formulario o reenviaría sin parar.
       onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
     >

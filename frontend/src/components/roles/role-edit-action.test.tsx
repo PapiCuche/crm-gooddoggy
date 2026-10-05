@@ -108,6 +108,7 @@ describe("RoleEditAction", () => {
     expect(field(form, "Nombre")).toHaveFocus();
     expect(field(form, "Nombre")).toHaveValue("Caja");
     expect(field(form, "Nombre")).toHaveAttribute("maxlength", "100");
+    expect(field(form, "Nombre")).toHaveAccessibleDescription(/No puede leerse igual/);
     expect(field(form, "Descripción (opcional)")).toHaveValue("Cobra en tienda");
     expect(field(form, "Descripción (opcional)")).toHaveAttribute("maxlength", "255");
     fill(form, "A medias");
@@ -138,6 +139,7 @@ describe("RoleEditAction", () => {
       "true",
     );
     expect(form).toHaveAttribute("aria-busy", "true");
+    expect(within(form).getByText("Cancelar")).toHaveAttribute("aria-disabled", "true");
     release();
     await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
     expect(calls(api, "PATCH")).toHaveLength(1);
@@ -165,13 +167,18 @@ describe("RoleEditAction", () => {
     renderApp(ui());
     const form = await opened();
     fill(form, "   ");
-    within(form).getByRole("button", { name: "Guardar" }).focus();
+    field(form, "Descripción (opcional)").focus(); // Enter desde el otro campo
     send(form);
     expect(within(form).getByRole("alert")).toHaveTextContent("Escribe un nombre para el rol.");
     expect(field(form, "Nombre")).toHaveFocus();
     expect(calls(api, "PATCH")).toHaveLength(0);
     fireEvent.input(field(form, "Nombre"), { target: { value: "X" } }); // al corregir, se retira
     expect(within(form).queryByRole("alert")).not.toBeInTheDocument();
+    fill(form, " ");
+    send(form);
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger()); // y lo que faltaba no se arrastra a la siguiente apertura
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -233,6 +240,9 @@ describe("RoleEditAction", () => {
       expect(form).not.toHaveTextContent("texto de la API");
       expect(field(form, "Nombre")).not.toHaveAttribute("aria-invalid");
       expect(field(form, "Nombre")).toHaveValue("Caja Fuerte");
+      fireEvent.input(field(form, "Descripción (opcional)"), { target: { value: "Otra" } });
+      // Al corregir, el error se retira.
+      await waitFor(() => expect(within(form).queryByRole("alert")).not.toBeInTheDocument());
       send(form);
       await waitFor(() => expect(calls(api, "PATCH")).toHaveLength(2));
     },
@@ -247,11 +257,15 @@ describe("RoleEditAction", () => {
     send(form);
     expect(await within(form).findByRole("alert")).toHaveTextContent("No hay conexión");
     expect(calls(api, "PATCH")).toHaveLength(1);
+    // Sin tocar nada se envían igualmente los dos campos.
+    expect(body(calls(api, "PATCH")[0])).toEqual({ name: "Caja", description: "Cobra en tienda" });
   });
 
   it.each([
     ["en el formulario", true],
     ["en otra parte", false],
+    ["en ninguna parte", null], // un clic que no enfoca el botón (Safari)
+    ["en el panel de permisos de la misma tarjeta", "card"], // que desaparece con ella
   ])(
     "un 404 cierra el formulario, vuelve a pedir la lista y lo explica fuera (foco %s)",
     async (_where, inside) => {
@@ -264,17 +278,22 @@ describe("RoleEditAction", () => {
       const form = await opened();
       rows = [roles[0]!, roles[2]!]; // otra persona ya lo borró
       const elsewhere = trigger("Vendedor");
-      if (inside) within(form).getByRole("button", { name: "Guardar" }).focus();
-      else elsewhere.focus();
+      if (inside === true) within(form).getByRole("button", { name: "Guardar" }).focus();
+      else if (inside === null) (document.activeElement as HTMLElement).blur();
+      else if (inside === "card") {
+        fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+        within(card("Caja")).getByRole("button", { name: "Cerrar" }).focus();
+      } else elsewhere.focus();
       send(form);
-      await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
+      await waitFor(() => expect(calls(api, "GET")).toHaveLength(inside === "card" ? 3 : 2));
       await waitFor(() =>
         expect(screen.queryByText("Caja", { selector: ".font-medium" })).not.toBeInTheDocument(),
       );
       expect(screen.getByRole("alert")).toHaveTextContent(
         "El rol Caja ya no existe o había cambiado. Revisa la lista.",
       );
-      expect(inside ? screen.getByRole("heading", { level: 1 }) : elsewhere).toHaveFocus();
+      const heading = screen.getByRole("heading", { level: 1 });
+      expect(inside === false ? elsewhere : heading).toHaveFocus();
       fireEvent.click(trigger("Vendedor")); // al abrir otro, el aviso ya no aplica
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     },
@@ -309,17 +328,85 @@ describe("RoleEditAction", () => {
     expect(screen.queryByText("Caja", { selector: ".font-medium" })).not.toBeInTheDocument();
   });
 
+  it("con «Cargar más» en vuelo: se cancela, no pisa lo guardado y nada se vuelve a pedir", async () => {
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [roles[0]!], next: "abc" } },
+      [`${LIST}?cursor=abc`]: { status: 200, body: { results: [caja], next: "def" } },
+      [`${LIST}?cursor=def`]: list([roles[2]!]),
+      [EDIT("r2")]: { status: 200, body: { ...caja, name: "Caja Fuerte" } },
+    });
+    renderApp(ui());
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+    await screen.findByText("Caja");
+    const form = await opened();
+    fill(form, "Caja Fuerte");
+    const more = screen.getByRole("button", { name: "Cargar más" });
+    const release = hold(api); // la página 3 sale con la lista de antes de guardar
+    fireEvent.click(more);
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(3));
+    send(form);
+    more.focus(); // el usuario ya está en otra parte: al cerrarse el formulario no se le quita el foco
+    await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
+    release();
+    await tick();
+    expect(card("Caja Fuerte")).toBeVisible(); // en la página 2, y lo que llega tarde no lo pisa
+    expect(screen.queryByText("Caja", { selector: ".font-medium" })).not.toBeInTheDocument();
+    expect(more).toHaveAttribute("aria-disabled", "false"); // hay que pulsarlo otra vez
+    expect(calls(api, "GET")).toHaveLength(3); // un «Cargar más» cancelado no se repite
+    expect(more).toHaveFocus();
+  });
+
+  it("una respuesta tardía no pisa lo que «Permisos» cambió mientras tanto en la tarjeta", async () => {
+    const catalog = { status: 200, body: { results: [{ code: "users.view" }] } };
+    const api = mockApi({
+      [LIST]: list(),
+      "GET /api/v1/o/acme/permissions/": catalog,
+      "PUT /api/v1/o/acme/roles/r2/permissions/users.view/": { status: 204 },
+      [EDIT("r2")]: { status: 200, body: { ...caja, name: "Caja Fuerte" } }, // lo de antes de conceder
+    });
+    renderApp(ui());
+    const form = await opened();
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Caja" }));
+    const grant = await screen.findByRole("button", { name: "Conceder Ver miembros a Caja" });
+    fill(form, "Caja Fuerte");
+    const release = hold(api); // la respuesta de guardar tarda más que la de conceder
+    send(form);
+    await tick();
+    fireEvent.click(grant);
+    await screen.findByRole("button", { name: "Retirar Ver miembros a Caja" });
+    release();
+    await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
+    const granted = within(card("Caja Fuerte")).getByRole("list", { name: /^Permisos de/ });
+    expect(granted).toHaveTextContent("Ver rolesVer miembros");
+  });
+
+  it("si la API responde con otro rol, no se da por guardado: se dice y la lista se vuelve a pedir", async () => {
+    const other = { ...roles[2]!, name: "Zeta" };
+    const api = mockApi({ [LIST]: list(), [EDIT("r2")]: { status: 200, body: other } });
+    renderApp(ui());
+    const form = await opened();
+    send(form);
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Algo salió mal");
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
+    expect(card("Caja")).toBeVisible();
+    expect(screen.queryByText("Zeta")).not.toBeInTheDocument();
+  });
+
   it("lo que se edita queda fijado al abrir, aunque la lista cambie debajo", async () => {
     let rows = roles;
     mockApi({ [LIST]: () => list(rows) });
     const view = renderApp(ui());
     const form = await opened();
-    rows = [roles[0]!, { ...caja, name: "Caja B", description: "Otra" }, roles[2]!];
+    const empty = await opened("Vendedor"); // sin descripción: un campo vacío tampoco sigue a la lista
+    const other = { name: "Caja B", description: "Otra" };
+    rows = [roles[0]!, { ...caja, ...other }, { ...roles[2]!, description: "Otra" }];
     void view.client.refetchQueries();
     await screen.findByText("Caja B", { selector: "span.font-medium" }); // la tarjeta sigue a la lista
     expect(screen.getByRole("form", { name: "Editar Caja" })).toBe(form); // el formulario, no
     expect(field(form, "Nombre")).toHaveValue("Caja");
     expect(field(form, "Descripción (opcional)")).toHaveValue("Cobra en tienda");
+    expect(within(form).getByText("Editar Caja")).toBeVisible();
+    expect(field(empty, "Descripción (opcional)")).toHaveValue("");
   });
 
   it("sin sesión va al login una vez y el formulario sigue ocupado, sin error", async () => {
@@ -368,8 +455,12 @@ describe("RoleEditAction", () => {
     expect(calls(api, "PATCH")).toHaveLength(1);
     const submit = within(form).getByRole("button", { name: "Guardar" });
     expect(fireEvent.keyDown(submit, { key: "Enter", repeat: true })).toBe(false);
+    // Borrar o escribir con la tecla mantenida sí.
+    expect(fireEvent.keyDown(field(form, "Nombre"), { key: "Backspace", repeat: true })).toBe(true);
     fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
     expect(fireEvent.keyDown(trigger(), { key: "Enter", repeat: true })).toBe(false);
     expect(fireEvent.keyDown(trigger(), { key: "Enter" })).toBe(true); // el primero sí
+    fireEvent.click(trigger()); // al reabrir tras un fallo, el error no se arrastra
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
