@@ -142,7 +142,7 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 - **Por rol:** nombre, si es de plantilla o propio, descripción si la tiene, número de miembros y sus permisos, cada uno con su alcance si lo admite.
 - **Nombres de los permisos:** salen de `catalog.*` en `messages/es-PE.json` (`catalog.users.manage` para `users.manage`); los alcances, de `roles.scope.*`. Son textos planos, sin formato ICU. Un permiso o un alcance que esos textos no conocen se enseña con su código: no se oculta. El código llega de la API, así que el texto se busca por propiedades propias y no como una ruta de mensajes.
 - **Navegación:** la entrada «Roles» pide el permiso `roles.view`; `users.view` no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Solo lectura.** Nada decide por el nombre o el código de un rol. Crear o editar roles y asignarlos son otros work items (E01-08).
+- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; editar sus permisos, renombrarlo y borrarlo son otros work items (E01-08).
 
 ### Crear un rol (F2-35)
 
