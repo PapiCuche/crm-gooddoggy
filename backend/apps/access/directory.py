@@ -1,5 +1,5 @@
 """Lectores de presentación de `access`: lo que una pantalla de administración enseña de los
-roles (F2-22). Nunca deciden: la autorización sale de `selectors`, que no lee nada de esto.
+roles (F2-22). Nunca deciden: la autorización sale de `selectors`, que no decide con nada de esto.
 
 Como los selectores, solo valen dentro del `tenant_scope` del contexto; RLS filtra las filas.
 Quién puede verlas lo decide el permiso de la vista (`HasPermission` y `ScopeFilter`).
@@ -24,13 +24,12 @@ def roles(ectx: ExecutionContext) -> QuerySet[Role]:
 
 def grants_by_role(ectx: ExecutionContext, role_ids: Iterable[UUID]) -> dict[UUID, list[Any]]:
     """Concesiones de varios roles en una consulta, tal como están guardadas: también las de un
-    código que el catálogo ya no tiene (el motor las ignora; aquí se ven)."""
+    código que el catálogo ya no tiene (el motor las ignora; aquí se ven). Por código, en el
+    orden de Python y no en el de la intercalación de la base, como `…/me/`."""
     bound(ectx)
     rows = RolePermission.objects.using(require_scope(ectx.tenant)).filter(role_id__in=role_ids)
     found: dict[UUID, list[Any]] = {}
-    for role_id, code, scope in rows.order_by("permission_id").values_list(
-        "role_id", "permission_id", "scope"
-    ):
+    for role_id, code, scope in sorted(rows.values_list("role_id", "permission_id", "scope")):
         found.setdefault(role_id, []).append({"code": code, "scope": scope})
     return found
 

@@ -38,6 +38,11 @@ def test_it_lists_every_role_with_what_it_grants_and_how_many_hold_it(
         Role.objects.filter(pk=custom.pk).update(name="Lectura", description="Solo mira")
         MembershipRole.objects.create(membership_id=rbac.m_luis, role=custom)
         made = list(Role.objects.order_by("id").values_list("code", flat=True))
+    others = [join(rbac.a, make_user(), s) for s in ("INVITED", "SUSPENDED", "DEACTIVATED")]
+    others.append(join(rbac.a, make_user(is_active=False)))  # miembros que hoy no pueden entrar
+    with tenant_scope(ctx(rbac.a)):
+        for other in others:
+            MembershipRole.objects.create(membership_id=other.pk, role=custom)
     give(rbac.b, join(rbac.b, make_user()).pk, {"users.view": None}, code="de-b")  # otra: no sale
     monkeypatch.delitem(BY_CODE, EDIT)  # un código que el catálogo ya no tiene: se sigue viendo
     body = roles(signed(rbac.ana)).json()
@@ -54,12 +59,22 @@ def test_it_lists_every_role_with_what_it_grants_and_how_many_hold_it(
             {"code": EDIT, "scope": "OWN"},
             {"code": VIEW, "scope": "BRANCH"},
         ],
-        "members": 2,
+        "members": 6,  # en cualquier estado, y con la cuenta desactivada
     }
     owner = by_code["owner"]
     assert (owner["is_system"], owner["members"]) == (True, 1)
     assert [grant["code"] for grant in owner["permissions"]] == sorted(p.code for p in PERMISSIONS)
-    assert (by_code["target"]["permissions"], by_code["target"]["members"]) == ([], 0)
+    assert by_code["target"] == {  # sin descripción, sin concesiones y sin miembros
+        "id": str(rbac.target.pk),
+        "code": "target",
+        "name": "Rol destino",
+        "description": "",
+        "is_system": False,
+        "permissions": [],
+        "members": 0,
+    }
+    system = {code: by_code[code]["is_system"] for code in made}  # de plantilla, no «es Owner»
+    assert [code for code in made if system[code]] == ["owner", "admin", "supervisor", "seller"]
     assert "is_owner_role" not in str(body) and "de-b" not in str(body)  # ni la marca de Owner
 
 

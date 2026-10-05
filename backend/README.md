@@ -362,11 +362,11 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 }
 ```
 
-- **Qué incluye:** todos los roles de la organización, de plantilla (`is_system`) o propios. `permissions` son sus concesiones tal como están guardadas, por código; `scope` es `null` si el permiso no admite alcance. Una concesión de un código que el catálogo ya no tiene se ve aquí, aunque el motor de autorización la ignore. `members` cuenta las membresías que tienen el rol, en cualquier estado.
+- **Qué incluye:** todos los roles de la organización, de plantilla (`is_system`) o propios. `permissions` son sus concesiones tal como están guardadas, ordenadas por código (orden de Python, como en `…/me/`, no el de la intercalación de la base); `scope` es `null` si el permiso no admite alcance. Una concesión de un código que el catálogo ya no tiene se ve aquí, aunque el motor de autorización la ignore. `members` cuenta las membresías que tienen el rol, en cualquier estado.
 - **Qué no incluye:** la marca de rol Owner (no autoriza nada), ni roles o concesiones de otra organización (RLS con FORCE en `roles`, `role_permissions` y `membership_roles`).
 - **Paginación:** por cursor, en orden de creación (ver «Listados»). Tres consultas por página, sean cuantos sean los roles: los roles, sus concesiones y sus miembros.
 - **Solo lectura.** Crear o editar roles y asignarlos por API son otros work items (E01-08).
-- **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no lee nombres, códigos ni marcas de rol. Filtran por organización, no por permiso: `roles.view` lo exige la vista.
+- **Módulos:** los lectores están en `apps.access.directory`, aparte del motor (`selectors`), que no decide por nombres, códigos ni marcas de rol (sus lectores `role_names` y `roles_by_membership` solo muestran código y nombre). Filtran por organización, no por permiso: `roles.view` lo exige la vista.
 
 ## Suspender y reactivar a un miembro (F2-19, ADR-017)
 
