@@ -11,7 +11,15 @@ import { apiErrorKey } from "@/lib/api-errors";
 
 // Crear un rol propio (F2-35), con `POST /api/v1/o/{slug}/roles/` (F2-29). El rol nace vacío.
 // Quién puede crearlo lo decide la API: la pantalla ofrece el formulario y explica la respuesta.
-export function RoleCreate({ slug, listKey }: { slug: string; listKey: QueryKey }) {
+export function RoleCreate({
+  slug,
+  listKey,
+  onAsk,
+}: {
+  slug: string;
+  listKey: QueryKey;
+  onAsk: () => void; // se abre el formulario: el aviso anterior de la lista ya no aplica
+}) {
   const t = useTranslations("roles.create");
   const errors = useTranslations("errors.api");
   const queryClient = useQueryClient();
@@ -81,7 +89,10 @@ export function RoleCreate({ slug, listKey }: { slug: string; listKey: QueryKey 
   function show(next: boolean) {
     create.reset();
     setMissing(false);
-    if (next) setDone(null);
+    if (next) {
+      setDone(null);
+      onAsk();
+    }
     setOpen(next);
   }
 

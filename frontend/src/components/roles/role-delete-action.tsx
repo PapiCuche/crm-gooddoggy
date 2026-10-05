@@ -73,6 +73,8 @@ export function RoleDeleteAction({
         if (rereading) void queryClient.invalidateQueries({ queryKey: listKey });
       },
       onError: (error) => {
+        // La tarjeta podía decir «Sin miembros»: el recuento se vuelve a pedir; el error sigue aquí.
+        if (error.code === "ROLE_IN_USE") void queryClient.invalidateQueries({ queryKey: listKey });
         // El rol ya no existe: lo explica la lista, que se vuelve a pedir.
         if (error.status !== 404) return;
         onGone(t("stale", { role: asking ?? role.name }), { stale: true, here: here() });

@@ -62,7 +62,7 @@ export function RolesList() {
       listKey={listKey}
       notice={
         <>
-          {canManage ? <RoleCreate slug={organization.slug} listKey={listKey} /> : null}
+          {canManage ? <RoleCreate slug={organization.slug} listKey={listKey} onAsk={ask} /> : null}
           {notice ? (
             <p role="alert" className="text-danger">
               {notice}

@@ -1,6 +1,7 @@
 import { onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { useLayoutEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Providers } from "@/app/providers";
@@ -89,9 +90,11 @@ describe("RoleDeleteAction", () => {
     const view = renderApp(ui(tenant("roles.view")));
     await screen.findByRole("list", { name: "Roles" });
     expect(screen.queryByRole("button", { name: /Borrar el rol/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("status")).toHaveLength(1); // solo el recuento: sin aviso de borrado
     view.unmount();
     renderApp(ui());
     await screen.findByRole("list", { name: "Roles" });
+    expect(document.body).toHaveFocus(); // al montar, ninguna acción toma el foco
     const offered = screen.getAllByRole("button", { name: /Borrar el rol/ });
     expect(offered.map((button) => button.getAttribute("aria-label"))).toEqual([
       "Borrar el rol Caja", // ni el Owner, ni una plantilla, ni uno propio
@@ -107,12 +110,17 @@ describe("RoleDeleteAction", () => {
     expect(trigger()).toHaveFocus();
     await tick();
     expect(calls(api, "DELETE")).toHaveLength(0);
+    const create = screen.getByRole("button", { name: "Crear rol" });
+    create.focus(); // un navegador que no enfoca el botón pulsado: el foco sigue donde estaba
+    fireEvent.click(trigger("Bodega"));
+    expect(create).toHaveFocus();
   });
 
   it("borra con un solo envío, quita la tarjeta sin volver a pedir la lista y lo anuncia en la lista", async () => {
     const api = mockApi({ [LIST]: list(), [DELETE("r2")]: done });
     renderApp(ui());
     const group = await asked();
+    const live = screen.getAllByRole("status"); // el aviso ya está montado, vacío
     const release = hold(api);
     fireEvent.click(confirm(group));
     fireEvent.click(confirm(group)); // mientras se envía: una sola petición
@@ -120,6 +128,10 @@ describe("RoleDeleteAction", () => {
     await tick();
     const busy = within(group).getByRole("button", { name: "Borrando…" });
     expect(busy).toHaveAttribute("aria-disabled", "true");
+    expect(within(group).getByRole("button", { name: "Cancelar" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(names()).toContain("Caja"); // hasta que la API responde, sigue ahí
     release();
     await waitFor(() => expect(names()).toEqual(["Owner", "Vendedor", "Mío", "Bodega"]));
@@ -127,6 +139,8 @@ describe("RoleDeleteAction", () => {
     expect(String(calls(api, "DELETE")[0]![0])).toBe("/api/v1/o/acme/roles/r2/"); // por su id
     expect(calls(api, "GET")).toHaveLength(1); // la lista no se vuelve a pedir
     expect(screen.getByText("Rol «Caja» borrado.")).toHaveAttribute("role", "status");
+    expect(live).toContain(screen.getByText("Rol «Caja» borrado."));
+    expect(screen.getByText("Rol «Caja» borrado.")).not.toHaveClass("sr-only"); // se ve
     expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(); // la tarjeta ya no está
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(trigger("Bodega")); // otra acción: el anuncio anterior ya no aplica
@@ -139,6 +153,8 @@ describe("RoleDeleteAction", () => {
     [409, { code: "ROLE_IS_SYSTEM" }, "Un rol de plantilla no se borra."],
     [409, { code: "LAST_OWNER" }, "Debe quedar al menos un Owner activo"],
     [500, { code: "INTERNAL_ERROR" }, "Algo salió mal de nuestro lado"],
+    [400, { code: "VALIDATION_ERROR" }, "Algo salió mal de nuestro lado"], // no hay campos
+    [409, { code: "CODIGO_NUEVO" }, "Algo salió mal de nuestro lado"], // sin texto propio
   ])(
     "un %s se explica en la tarjeta, por su código, y el mismo botón reintenta",
     async (status, body, text) => {
@@ -206,6 +222,7 @@ describe("RoleDeleteAction", () => {
     void view.client.refetchQueries();
     await screen.findByText("Caja B", { selector: "span.font-medium" }); // la tarjeta sigue a la lista
     expect(screen.getByRole("group", { name: "Borrar el rol Caja" })).toBe(group); // la pregunta, no
+    expect(group).toHaveAccessibleDescription(/^¿Borrar el rol Caja\?/);
     // Una relectura en vuelo, que responderá con el rol todavía en la lista.
     let releaseRead = () => {};
     api.mockImplementationOnce(async () => {
@@ -223,6 +240,8 @@ describe("RoleDeleteAction", () => {
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(4)); // y la lectura se repite
     await tick();
     expect(names()).toEqual(["Owner", "Vendedor", "Mío", "Bodega"]);
+    fireEvent.click(screen.getByRole("button", { name: "Editar el rol Bodega" }));
+    expect(screen.queryByText(/borrado/)).not.toBeInTheDocument(); // «Editar» también lo quita
   });
 
   it("sin sesión va al login una vez y la confirmación sigue ocupada, sin error", async () => {
@@ -273,6 +292,7 @@ describe("RoleDeleteAction", () => {
     fireEvent.click(within(group).getByRole("button", { name: "Cancelar" }));
     expect(fireEvent.keyDown(trigger(), { key: "Enter", repeat: true })).toBe(false);
     expect(fireEvent.keyDown(trigger(), { key: "Enter" })).toBe(true); // el primero sí
+    expect(fireEvent.keyDown(trigger(), { key: "Tab", repeat: true })).toBe(true); // otra tecla sí
   });
 
   it("un 404 cierra la confirmación aunque el rol siga en la lista que llega", async () => {
@@ -307,5 +327,135 @@ describe("RoleDeleteAction", () => {
     await waitFor(() => expect(names()).not.toContain("Caja"));
     expect(calls(api, "DELETE")).toHaveLength(1);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cambiar los permisos de Bodega" }));
+    expect(screen.queryByText(/borrado/)).not.toBeInTheDocument(); // «Permisos» también lo quita
+  });
+
+  it("con «Cargar más» en vuelo: se cancela, el rol de otra página se va y nada se vuelve a pedir", async () => {
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [roles[0]!], next: "abc" } },
+      [`${LIST}?cursor=abc`]: { status: 200, body: { results: [roles[1]!], next: "def" } },
+      [`${LIST}?cursor=def`]: list([roles[4]!]),
+      [DELETE("r2")]: done,
+    });
+    renderApp(ui());
+    fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+    await screen.findByText("Caja");
+    const group = await asked();
+    const more = screen.getByRole("button", { name: "Cargar más" });
+    const release = hold(api); // la página 3 sale con la lista de antes de borrar
+    fireEvent.click(more);
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(3));
+    fireEvent.click(confirm(group));
+    await waitFor(() => expect(names()).toEqual(["Owner"])); // estaba en la página 2
+    release(); // llega tarde: no devuelve la tarjeta
+    await tick();
+    expect(names()).toEqual(["Owner"]);
+    expect(more).toHaveAttribute("aria-disabled", "false"); // hay que pulsarlo otra vez
+    expect(calls(api, "GET")).toHaveLength(3); // un «Cargar más» cancelado no se repite
+    fireEvent.click(screen.getByRole("button", { name: "Crear rol" }));
+    expect(screen.queryByText(/borrado/)).not.toBeInTheDocument(); // crear otro: ya no aplica
+  });
+
+  it.each([
+    ["en otra tarjeta", "Borrar el rol Bodega", false],
+    ["en «Editar» de la misma tarjeta", "Editar el rol Caja", true],
+    ["en ninguna parte", null, true],
+  ])(
+    "al borrar con el foco %s, solo va al título si se queda sin sitio",
+    async (_where, at, moves) => {
+      const api = mockApi({ [LIST]: list(), [DELETE("r2")]: done });
+      renderApp(ui());
+      const group = await asked();
+      const release = hold(api);
+      fireEvent.click(confirm(group));
+      await tick();
+      const other = at ? screen.getByRole("button", { name: at }) : null;
+      if (other) other.focus();
+      else (document.activeElement as HTMLElement).blur();
+      release();
+      await waitFor(() => expect(names()).not.toContain("Caja"));
+      expect(moves ? screen.getByRole("heading", { level: 1 }) : other).toHaveFocus();
+    },
+  );
+
+  it("el último resultado sustituye al anterior: desfasado y borrado no se ven juntos", async () => {
+    const all = [...roles, role("r6", "Ventas")];
+    let rows = all;
+    const api = mockApi({
+      [LIST]: () => list(rows),
+      [DELETE("r2")]: done,
+      [DELETE("r5")]: { status: 404, body: { code: "NOT_FOUND" } },
+      [DELETE("r6")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    const view = renderApp(ui());
+    const open = [await asked(), await asked("Bodega"), await asked("Ventas")]; // tres a la vez
+    rows = all.map((row) => (row.id === "r5" ? { ...row, name: "Bodega B" } : row));
+    void view.client.refetchQueries();
+    await screen.findByText("Bodega B"); // la tarjeta sigue a la lista; el aviso, a lo confirmado
+    fireEvent.click(confirm(open[1]!));
+    expect(await screen.findByRole("alert")).toHaveTextContent("El rol Bodega ya no existía."); // el que se confirmó
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(3));
+    rows = rows.filter((row) => row.id !== "r2");
+    fireEvent.click(confirm(open[0]!));
+    expect(await screen.findByText("Rol «Caja» borrado.")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(confirm(open[2]!));
+    expect(await screen.findByRole("alert")).toHaveTextContent("El rol Ventas ya no existía.");
+    expect(screen.queryByText(/borrado/)).not.toBeInTheDocument();
+  });
+
+  it("si la lista repetida aún trae el rol tras el 204, otra pulsación no lo borra dos veces", async () => {
+    const api = mockApi({ [LIST]: list(), [DELETE("r2")]: done });
+    const view = renderApp(ui());
+    const group = await asked();
+    hold(api); // una relectura en vuelo: al borrar se cancela y se repite
+    void view.client.refetchQueries();
+    await tick();
+    fireEvent.click(confirm(group));
+    // La repetida responde enseguida y con el rol: la tarjeta no llega a desmontarse.
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(3));
+    await tick();
+    fireEvent.click(within(group).getAllByRole("button")[1]!);
+    await tick();
+    expect(calls(api, "DELETE")).toHaveLength(1);
+  });
+
+  it("un rol con miembros que la tarjeta no enseñaba: se explica y el recuento se vuelve a pedir", async () => {
+    let rows = roles;
+    const busy = { status: 409, body: { code: "ROLE_IN_USE" } };
+    const api = mockApi({ [LIST]: () => list(rows), [DELETE("r2")]: busy });
+    renderApp(ui());
+    const group = await asked();
+    rows = roles.map((row) => (row.id === "r2" ? { ...row, members: 1 } : row)); // se lo asignaron
+    fireEvent.click(confirm(group));
+    expect(await within(group).findByRole("alert")).toHaveTextContent("Este rol tiene miembros");
+    expect(await within(group.closest("li")!).findByText("1 miembro")).toBeVisible();
+    expect(calls(api, "GET")).toHaveLength(2);
+    expect(within(group).getByRole("alert")).toBeVisible(); // la confirmación y su error siguen
+  });
+
+  it("un render ajeno justo antes de pulsar no deja la marca a merced de un efecto pasivo", async () => {
+    const api = mockApi({ [LIST]: list(), [DELETE("r2")]: done });
+    let again = () => {};
+    let press = () => {};
+    // Pulsa al pintarse un render que no viene de un evento: antes de sus efectos pasivos.
+    function Shell() {
+      const [turn, setTurn] = useState(0);
+      useLayoutEffect(() => {
+        again = () => setTurn(1);
+        if (turn) press();
+      });
+      return ui(); // un contexto nuevo en cada render: la lista y sus acciones se vuelven a pintar
+    }
+    renderApp(<Shell />);
+    const button = confirm(await asked());
+    hold(api); // la escritura no llega a responder
+    press = () => button.click();
+    act(again);
+    await waitFor(() => expect(calls(api, "DELETE")).toHaveLength(1));
+    fireEvent.click(button); // otra pulsación con la escritura en vuelo
+    await tick();
+    expect(calls(api, "DELETE")).toHaveLength(1);
   });
 });
