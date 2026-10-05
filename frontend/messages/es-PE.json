@@ -197,6 +197,23 @@
       "denied": "No tienes permiso para cambiar sucursales.",
       "done": "Sucursal «{name}» guardada.",
       "stale": "La sucursal {branch} ya no existe. Revisa la lista."
+    },
+    "status": {
+      "deactivate": "Desactivar",
+      "activate": "Reactivar",
+      "deactivateLabel": "Desactivar la sucursal {branch}",
+      "activateLabel": "Reactivar la sucursal {branch}",
+      "deactivateAsk": "¿Desactivar la sucursal {branch}? Seguirá en la lista como inactiva y podrás reactivarla.",
+      "activateAsk": "¿Reactivar la sucursal {branch}? Volverá a figurar como activa.",
+      "deactivateConfirm": "Sí, desactivar",
+      "activateConfirm": "Sí, reactivar",
+      "deactivateBusy": "Desactivando…",
+      "activateBusy": "Reactivando…",
+      "deactivateDone": "La sucursal {branch} quedó inactiva.",
+      "activateDone": "La sucursal {branch} quedó activa.",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para cambiar sucursales.",
+      "stale": "La sucursal {branch} ya no existe. Revisa la lista."
     }
   },
   "roles": {

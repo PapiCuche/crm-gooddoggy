@@ -11,17 +11,18 @@ import { cn } from "@/lib/utils";
 
 import { BranchCreate } from "./branch-create";
 import { BranchEditAction } from "./branch-edit-action";
+import { BranchStatusAction } from "./branch-status-action";
 
 // Sucursales (F2-46): lo que devuelve `GET /api/v1/o/{slug}/branches/`, página a página. La
 // lista, sus estados y su foco son los de `CursorList`. Quién puede verlas lo decide la API.
 export function BranchesList() {
   const t = useTranslations();
   const { organization, permissions } = useTenant();
-  // Comodidad: crear y editar se ofrecen a quien la API dijo que tiene `branches.manage`.
+  // Comodidad: las escrituras se ofrecen a quien la API dijo que tiene `branches.manage`.
   const canManage = permissions.some((grant) => grant.code === "branches.manage");
   const listKey = [...getBranchesListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
-  // Una edición respondió que la pantalla ya no refleja a la API (F2-49). El aviso vive aquí:
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-49, F2-51). El aviso vive aquí:
   // el formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
   function stale(text: string, here: boolean) {
@@ -90,6 +91,13 @@ export function BranchesList() {
             {canManage ? (
               <div className="flex flex-wrap items-start gap-2 sm:col-span-3">
                 <BranchEditAction
+                  slug={organization.slug}
+                  branch={branch}
+                  listKey={listKey}
+                  onAsk={ask}
+                  onStale={stale}
+                />
+                <BranchStatusAction
                   slug={organization.slug}
                   branch={branch}
                   listKey={listKey}
