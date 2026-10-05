@@ -142,7 +142,7 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 - **Por rol:** nombre, si es de plantilla o propio, descripción si la tiene, número de miembros y sus permisos, cada uno con su alcance si lo admite.
 - **Nombres de los permisos:** salen de `catalog.*` en `messages/es-PE.json` (`catalog.users.manage` para `users.manage`); los alcances, de `roles.scope.*`. Son textos planos, sin formato ICU. Un permiso o un alcance que esos textos no conocen se enseña con su código: no se oculta. El código llega de la API, así que el texto se busca por propiedades propias y no como una ruta de mensajes.
 - **Navegación:** la entrada «Roles» pide el permiso `roles.view`; `users.view` no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; renombrarlo, en «Editar un rol»; conceder y retirar sus permisos, en «Permisos de un rol»; borrarlo es otro work item (E01-08).
+- **Lo que se ve es lectura.** Nada decide por el nombre o el código de un rol. Crear un rol está en «Crear un rol»; renombrarlo, en «Editar un rol»; conceder y retirar sus permisos, en «Permisos de un rol»; borrarlo, en «Borrar un rol».
 
 ### Crear un rol (F2-35)
 
@@ -168,6 +168,18 @@ Cada rol editable ofrece «Editar», que abre un formulario con su nombre y su d
 - **Pantalla desfasada (404):** el rol ya no existe. El formulario se cierra, la lista se vuelve a pedir y lo explica un aviso de la lista; el foco va al título si seguía en la tarjeta del rol (el formulario o su panel «Permisos») o en ninguna parte.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 - **Límites conocidos:** se envían los dos campos con lo fijado al abrir: el que no se toca pisa lo que otra persona hubiera cambiado en él mientras tanto. Si una relectura de la lista trae el rol como no editable con el formulario abierto, el formulario se desmonta sin aviso: lo escrito se pierde, el foco se queda sin destino y un envío que estuviera en vuelo cambia la tarjeta pero no se anuncia.
+
+### Borrar un rol (F2-40)
+
+Cada rol editable que no es de plantilla ofrece «Borrar», con `DELETE /api/v1/o/{slug}/roles/{id}/` (F2-38). Componente: `components/roles/role-delete-action.tsx`. No se puede deshacer: pide confirmación en la tarjeta, como «Suspender» en la pantalla de miembros.
+
+- **A quién se ofrece:** a quien tiene `roles.manage` según el contexto de la API, en los roles que la API marca `editable` y que no son de plantilla (`is_system`: la API no borra una plantilla). Un rol con miembros también la ofrece: la API responde que no y la tarjeta lo explica. Es comodidad: la API exige además cubrir todos los permisos del rol.
+- **Confirmación:** en la propia tarjeta, con la consecuencia, asociada al grupo (`aria-describedby`). Nada se envía sin confirmar. Al abrirla el foco va a «Cancelar». El rol que se nombra queda fijado al abrir.
+- **Un envío:** la misma marca síncrona de las demás escrituras; tras el éxito la confirmación sigue ocupada hasta que la tarjeta desaparece. Sin red falla y se dice.
+- **Éxito:** se cancela la lectura de la lista que estuviera en vuelo y la tarjeta se quita de la lista ya cargada. Como la tarjeta ya no está, el resultado lo anuncia la lista (`role="status"`, visible) y el foco va al título si seguía en la tarjeta o en ninguna parte.
+- **Errores, por `code`, en la tarjeta:** `PERMISSION_DENIED` (con un texto propio), `ROLE_IN_USE`, `ROLE_IS_SYSTEM`, `LAST_OWNER`, red o fallo del servidor. El mismo botón reintenta.
+- **Pantalla desfasada (404):** el rol ya no existía. La confirmación se cierra, la lista se vuelve a pedir y lo explica un aviso de la lista (`role="alert"`).
+- **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
 
 ### Permisos de un rol (F2-36)
 

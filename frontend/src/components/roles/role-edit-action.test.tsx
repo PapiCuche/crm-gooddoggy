@@ -463,4 +463,37 @@ describe("RoleEditAction", () => {
     fireEvent.click(trigger()); // al reabrir tras un fallo, el error no se arrastra
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("un 404 cierra el formulario aunque el rol siga en la lista que llega", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [EDIT("r2")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    renderApp(ui());
+    const form = await opened();
+    send(form);
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("El rol Caja ya no existe");
+    expect(trigger()).toBeVisible(); // la tarjeta sigue: la API de la lista aún lo trae
+  });
+
+  it.each([
+    ["en ninguna parte", null, "Nombre"],
+    ["en la descripción", "Descripción (opcional)", "Descripción (opcional)"],
+  ])(
+    "tras un error del nombre, con el foco %s, el foco solo va al nombre si no estaba en otro campo",
+    async (_where, at, ends) => {
+      mockApi({ [LIST]: list(), [EDIT("r2")]: { status: 409, body: { code: "ROLE_NAME_TAKEN" } } });
+      renderApp(ui());
+      const form = await opened();
+      fill(form, "Owner");
+      send(form);
+      if (at) field(form, at).focus();
+      else (document.activeElement as HTMLElement).blur();
+      await within(form).findByRole("alert");
+      await tick();
+      expect(field(form, ends)).toHaveFocus();
+    },
+  );
 });
