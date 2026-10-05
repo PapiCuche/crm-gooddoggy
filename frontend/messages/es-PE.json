@@ -291,6 +291,9 @@
       "manage": "Administrar miembros",
       "invite": "Invitar miembros"
     },
+    "teams": {
+      "view": "Ver equipos"
+    },
     "roles": {
       "view": "Ver roles",
       "manage": "Administrar roles"

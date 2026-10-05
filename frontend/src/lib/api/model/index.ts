@@ -7,6 +7,7 @@
  */
 
 export * from "./activeOrSuspendedEnum";
+export * from "./assignmentStrategyEnum";
 export * from "./branch";
 export * from "./branchCreateRequest";
 export * from "./branchesListParams";
@@ -28,6 +29,7 @@ export * from "./organizationSummary";
 export * from "./paginatedBranchList";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
+export * from "./paginatedTeamList";
 export * from "./patchedBranchUpdateRequest";
 export * from "./patchedRoleUpdateRequest";
 export * from "./permission";
@@ -40,4 +42,6 @@ export * from "./rolesListParams";
 export * from "./scopesEnum";
 export * from "./selfContext";
 export * from "./session";
+export * from "./team";
+export * from "./teamsListParams";
 export * from "./user";

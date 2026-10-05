@@ -1,5 +1,5 @@
 """Organizaciones (platform-owned, sin RLS de tenant; ADR-001 §2), sus membresías y sus
-sucursales (tenant-owned)."""
+sucursales y equipos (tenant-owned)."""
 
 from django.conf import settings
 from django.db import models
@@ -105,3 +105,57 @@ class Branch(TenantModel):
 
     def __str__(self) -> str:
         return self.code
+
+
+class Team(TenantModel):
+    """Equipo de la organización: Ventas, Soporte… (tenant-owned; modelo de datos §E.2).
+
+    `slug` es su clave estable. La BD solo admite minúsculas ASCII, cifras y guiones entre
+    ellas. Los integrantes (`team_members`) llegan en otro work item.
+    """
+
+    class Strategy(models.TextChoices):
+        MANUAL = "MANUAL"
+        ROUND_ROBIN = "ROUND_ROBIN"
+        LOAD_BALANCED = "LOAD_BALANCED"
+        SKILL_BASED = "SKILL_BASED"
+        AI_RULES = "AI_RULES"
+
+    id = uuid7_primary_key()
+    slug = models.CharField(max_length=50)
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=255, blank=True)
+    # Cómo se reparten las conversaciones del equipo. Nada la aplica hasta el Inbox (Fase 6).
+    assignment_strategy = models.CharField(
+        max_length=16, choices=Strategy.choices, default=Strategy.MANUAL
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "teams"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "slug"], name="teams_org_slug_uq"),
+            models.UniqueConstraint(  # destino de las FK compuestas `team_id` que vendrán
+                fields=["organization_id", "id"], name="teams_org_id_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(slug__regex=r"^[a-z0-9]+(-[a-z0-9]+)*$"), name="teams_slug_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    assignment_strategy__in=[
+                        "MANUAL",
+                        "ROUND_ROBIN",
+                        "LOAD_BALANCED",
+                        "SKILL_BASED",
+                        "AI_RULES",
+                    ]
+                ),
+                name="teams_assignment_strategy_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.slug

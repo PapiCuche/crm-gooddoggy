@@ -1,5 +1,5 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 a F2-45)."""
+de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50)."""
 
 from typing import Any
 from uuid import UUID
@@ -22,8 +22,8 @@ from apps.organizations.branches import (
     create_branch,
     update_branch,
 )
-from apps.organizations.models import Branch
-from apps.organizations.selectors import branches, organizations_for_user
+from apps.organizations.models import Branch, Team
+from apps.organizations.selectors import branches, organizations_for_user, teams
 from core.api.errors import ApiError
 from core.api.permissions import Authenticated
 from core.api.schema import errors
@@ -177,3 +177,33 @@ class BranchView(APIView):
         except Branch.DoesNotExist:
             raise NotFound from None
         return Response(BranchSerializer(branch).data)
+
+
+class TeamSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    slug = serializers.CharField(help_text="Clave estable del equipo, única en la organización.")
+    name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    assignment_strategy = serializers.ChoiceField(
+        choices=Team.Strategy.choices,
+        help_text="Cómo se repartirán sus conversaciones. Todavía no la aplica nada.",
+    )
+    is_active = serializers.BooleanField()
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="teams_list",
+        tags=["teams"],
+        responses={200: TeamSerializer(many=True), **errors(400, 401, 403, 404)},
+    )
+)
+class TeamsView(generics.ListAPIView):
+    """Los equipos de la organización, activos e inactivos. Paginado por orden de creación
+    (ADR-016)."""
+
+    required_permissions = {"GET": "teams.view"}
+    serializer_class = TeamSerializer
+
+    def get_queryset(self) -> QuerySet[Team]:
+        return teams()

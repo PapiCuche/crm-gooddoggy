@@ -497,6 +497,33 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
 
+## Equipos (F2-50, E01-09)
+
+`GET /api/v1/o/{slug}/teams/` lista los equipos de la organización. Exige `teams.view` (sin él, 403; sin membresía activa, 404).
+
+```json
+{
+  "results": [
+    {
+      "id": "…",
+      "slug": "ventas",
+      "name": "Ventas",
+      "description": "Atiende a clientes nuevos",
+      "assignment_strategy": "MANUAL",
+      "is_active": true
+    }
+  ],
+  "next": null
+}
+```
+
+- **Qué incluye:** todos, activos e inactivos. `description` llega como texto vacío si no hay, nunca `null`.
+- **Paginación:** por cursor, en orden de creación (`?limit=`, `?cursor=`; ver «Listados»). Una consulta por página.
+- **Tabla `teams`:** tenant-owned, con RLS forzado y la política `tenant_isolation`. `slug` es único por organización y la base de datos solo admite minúsculas ASCII, cifras y guiones entre ellas (`ventas`, `soporte-2`), hasta 50 caracteres. `assignment_strategy` es uno de `MANUAL`, `ROUND_ROBIN`, `LOAD_BALANCED`, `SKILL_BASED` o `AI_RULES` (lo impone un `CHECK`); el modelo pone `MANUAL` por defecto. Nada aplica todavía la estrategia: es dato para el Inbox.
+- **`teams.view`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018), y las plantillas «Administrador» y «Supervisor» en las organizaciones nuevas.
+- **Solo lectura.** Crear y editar un equipo, sus integrantes y el permiso `teams.manage` son los siguientes work items. Hasta entonces la tabla solo se llena desde código.
+- El selector `organizations.selectors.teams` filtra por organización, no por permiso: el permiso lo exige la vista.
+
 ## Cambios de RBAC sin escalada (F2-05C, ADR-003 §5)
 
 `apps.access.services` tiene los únicos servicios que cambian el RBAC de una organización. Asignar y quitar un rol tienen ruta HTTP desde F2-25 («Roles de un miembro»); crear un rol, desde F2-29 («Crear un rol»); conceder un permiso a un rol y retirarlo, desde F2-31 y F2-33 («Permisos de un rol»).

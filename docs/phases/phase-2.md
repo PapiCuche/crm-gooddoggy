@@ -182,6 +182,19 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 
 Se registran como `OBS-F2-<nn>-<n>`.
 
+### OBS-F2-50-1 — Equipos: qué decidió el programa y qué falta
+E01-09 sigue con los equipos (F2-50, #158). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
+- **Módulo.** La tabla `teams`, el selector y la ruta de lectura están en `apps.organizations`, como las sucursales (OBS-F2-43-1) y como agrupa el modelo de datos (§E.2).
+- **Quién los lee.** Quien tiene `teams.view` (03 §H): no sensible y sin alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018). Las plantillas «Administrador» y «Supervisor» lo llevan solo en las organizaciones nuevas; «Vendedor», no. La matriz de 03 §H no tiene fila para `teams.view`: se sigue el mínimo privilegio de OBS-F2-04-5.
+- **`slug`.** Minúsculas ASCII, cifras y guiones entre ellas, hasta 50, impuesto con un `CHECK`. Como el código de una sucursal, no evita parecidos dentro de ASCII (`ventas-0` y `ventas-o`).
+- **Estrategia de asignación.** La columna existe con sus cinco valores y `MANUAL` por defecto, pero nada la aplica hasta el Inbox (Fase 6).
+
+Lo que `teams` no lleva todavía:
+- `business_hours_schedule_id`: no existen los horarios (E01-10).
+- `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado; un equipo se desactivará con `is_active`.
+- Las escrituras por API y el permiso `teams.manage`. La matriz de 03 §H da a «Supervisor» la gestión de sus propios equipos: `teams.manage` necesita alcance (`TEAM`), y eso exige decidir antes dónde vive su administración, porque `organizations` no importa `access` (ADR-017). Va en el siguiente work item, con su decisión escrita.
+- Los integrantes (`team_members`) y `ExecutionContext.team_ids` (OBS-F2-05A-2): el alcance `TEAM` sigue equivaliendo a `OWN`.
+
 ### OBS-F2-44-1 — Escrituras de sucursales: reglas que decidió el programa
 F2-44 (#146) añade `POST …/branches/` y F2-45 (#148), `PATCH …/branches/{id}/`, con las mismas reglas. Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
 - **Permiso.** `branches.manage`, como define 03 §H: no sensible y sin alcance. Quien lo tiene administra todas las sucursales de la organización.
@@ -438,6 +451,7 @@ La sincronización del catálogo borra un código retirado solo si nadie lo tien
 La matriz de [03 §H](../fase-0/03-tenancy-rbac-inbox-ia.md) no tiene filas para `organization.view`, `users.view`, `users.invite` ni `roles.view`. F2-04 asume mínimo privilegio: Owner, todo el catálogo; Administrador, `organization.view`, `users.view`, `users.manage`, `users.invite` y `roles.view`; Supervisor, `organization.view` y `users.view`; Vendedor, `organization.view`. Las plantillas Soporte, Marketing y Consulta se añadirán cuando el catálogo las distinga.
 - Pendiente de confirmación del PO.
 - Desde F2-44 (#146), Administrador lleva además `branches.manage` en las organizaciones nuevas (OBS-F2-44-1).
+- Desde F2-50 (#158), Administrador y Supervisor llevan además `teams.view` en las organizaciones nuevas (OBS-F2-50-1).
 
 ### OBS-F2-04-6 — Sin borrado lógico y un alcance por concesión
 Los roles no llevan `deleted_at` (convención [SD]): no hay flujo de borrado hasta E01-08. Un rol tiene un solo alcance por permiso; combinar `TEAM` y `BRANCH` sobre el mismo permiso requiere dos roles, y los permisos efectivos (F2-05A) unen los alcances de todos los roles.
