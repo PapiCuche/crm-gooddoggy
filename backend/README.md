@@ -497,7 +497,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
 
-## Equipos (F2-50 a F2-53, E01-09)
+## Equipos (F2-50, F2-52 y F2-53, E01-09)
 
 `GET /api/v1/o/{slug}/teams/` lista los equipos de la organización. Exige `teams.view` (sin él, 403; sin membresía activa, 404).
 
@@ -526,7 +526,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - **Textos:** el nombre es obligatorio, una línea imprimible de hasta 100 con alguna letra o cifra; la descripción, una línea de hasta 255. Se guardan en forma NFC, sin espacios exteriores ni repetidos. Son las mismas reglas que en sucursales (`apps.organizations.text`).
   - **`assignment_strategy`:** uno de los cinco valores exactos; sin él, `MANUAL`.
   - Un campo que no sirve responde 400 `VALIDATION_ERROR` con su nombre en `fields`.
-  - **Auditoría de tenant:** `team.created`, con lo que se guardó (sin los campos vacíos). La etiqueta de la entidad es el `slug`.
+  - **Auditoría de tenant:** `team.created`, con lo que se guardó (sin los campos vacíos). La etiqueta de la entidad es el `slug`. Como toda la auditoría, pasa por el redactor (ADR-011): un texto con forma de secreto queda como `[REDACTED]` en la fila, también un `slug` con un tramo `sk-` seguido de 16 caracteres o más (`sk-soporte-ventas-norte`).
 - **`teams.manage`** está en el catálogo como lo lista 03 §H: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas; «Supervisor» no (D-F2-12, en la fase).
 - El comando (`apps.organizations.teams.create_team`) no comprueba permisos, como los de sucursales: el mismo contrato de import-linter solo deja importarlo a la API del módulo.
 - **Editar un equipo y gestionar sus integrantes por API** son los siguientes work items. Hasta entonces `team_members` solo se llena desde código.

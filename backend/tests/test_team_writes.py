@@ -191,6 +191,10 @@ def test_the_command_validates_for_callers_that_do_not_come_by_http(
         sales = create_team(tenant, slug=" Ventas ", name=" Café  de  Lima ")
         assert (sales.slug, sales.name, sales.is_active) == ("ventas", "Café de Lima", True)
         assert sales.assignment_strategy == "MANUAL"
+        # justo en cada límite, con cifras y varios guiones; en forma NFKC «ﬁ» serían dos letras
+        slug, name, about = "a-1-" + "b" * 46, "9" * 100, "ﬁ" * 255
+        edge = create_team(tenant, slug=slug, name=name, description=about)
+        assert (edge.slug, edge.name, edge.description) == (slug, name, about)
         for bad in (
             {"slug": "soporte"},  # sin nombre
             {"name": "Soporte"},  # sin slug
@@ -200,8 +204,9 @@ def test_the_command_validates_for_callers_that_do_not_come_by_http(
             {"slug": "soporte", "name": "Soporte", "is_active": False},
             {"slug": "soporte", "name": "Soporte", "organization_id": world.b},
             {"slug": "soporte", "name": "Soporte", "assignment_strategy": "RANDOM"},
+            {"slug": "soporte", "name": "Soporte", "assignment_strategy": "manual"},
         ):
             with pytest.raises(ValueError):
                 create_team(tenant, **bad)
-        assert Team.objects.count() == 1
+        assert Team.objects.count() == 2
     assert audit(migrator)[0][3]["name"] == [None, "Café de Lima"]  # lo que se guardó
