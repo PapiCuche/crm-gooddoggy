@@ -44,6 +44,8 @@ import type {
   RolesListParams,
   SelfContext,
   Session,
+  Team,
+  TeamCreateRequest,
   TeamsListParams,
 } from "./model";
 
@@ -2210,7 +2212,7 @@ export const getTeamsListUrl = (orgSlug: string, params?: TeamsListParams) => {
 
 /**
  * Los equipos de la organización, activos e inactivos. Paginado por orden de creación
- * (ADR-016).
+ * (ADR-016). `POST` crea uno (F2-53).
  */
 export const teamsList = async (
   orgSlug: string,
@@ -2331,3 +2333,105 @@ export function useTeamsList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getTeamsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/teams/`;
+};
+
+/**
+ * Crea un equipo activo, sin integrantes. `assignment_strategy` es `MANUAL` si no se envía. 409 `TEAM_SLUG_TAKEN`: ya hay en la organización un equipo con ese `slug`.
+ */
+export const teamsCreate = async (
+  orgSlug: string,
+  teamCreateRequest: TeamCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Team> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Team>(getTeamsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(teamCreateRequest),
+  });
+};
+
+export const getTeamsCreateMutationKey = () => ["teamsCreate"] as const;
+
+export const getTeamsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof teamsCreate>>,
+    TError,
+    TeamsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof teamsCreate>>,
+  TError,
+  TeamsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTeamsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof teamsCreate>>,
+    TeamsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return teamsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TeamsCreateMutationResult = NonNullable<Awaited<ReturnType<typeof teamsCreate>>>;
+export type TeamsCreateMutationBody = TeamCreateRequest;
+export type TeamsCreateMutationError = ErrorType<Error>;
+export type TeamsCreateMutationVariables = { orgSlug: string; data: TeamCreateRequest };
+
+export const useTeamsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof teamsCreate>>,
+      TError,
+      TeamsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof teamsCreate>>,
+  TError,
+  TeamsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getTeamsCreateMutationOptions(options), queryClient);
+};

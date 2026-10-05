@@ -43,5 +43,6 @@ export * from "./scopesEnum";
 export * from "./selfContext";
 export * from "./session";
 export * from "./team";
+export * from "./teamCreateRequest";
 export * from "./teamsListParams";
 export * from "./user";

@@ -6,7 +6,6 @@ Validan lo que guardan, también para quien no llega por HTTP, y auditan cada ca
 """
 
 import re
-import unicodedata
 import zoneinfo
 from collections.abc import Callable
 from functools import cache, partial
@@ -17,6 +16,7 @@ from django.db import IntegrityError, transaction
 
 from apps.audit.services import Entity, record
 from apps.organizations.models import Branch
+from apps.organizations.text import line, name
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
@@ -33,20 +33,6 @@ class BranchCodeTaken(Exception):
     """Ya hay una sucursal con ese código en la organización."""
 
 
-def _line(value: str, limit: int) -> str:
-    """Una línea de texto como se guarda: forma NFC, sin espacios exteriores y con los
-    interiores reducidos a uno. `ValueError` si lleva saltos de línea, controles o caracteres
-    que no se ven, o si pasa de `limit`."""
-    spaced = "".join(" " if unicodedata.category(char) == "Zs" else char for char in value)
-    text = unicodedata.normalize("NFC", spaced)
-    if not text.strip().isprintable():  # antes de limpiar: un salto de línea no es un espacio
-        raise ValueError("solo texto imprimible, en una línea")
-    text = " ".join(text.split())
-    if len(text) > limit:
-        raise ValueError(f"hasta {limit} caracteres")
-    return text
-
-
 def branch_code(value: str) -> str:
     """El código como se guarda: en mayúsculas. Solo ASCII: `upper()` convertiría otras letras
     en letras ASCII (una «ı» sin punto en «I») y dos códigos distintos acabarían iguales."""
@@ -57,10 +43,7 @@ def branch_code(value: str) -> str:
 
 
 def branch_name(value: str) -> str:
-    name = _line(value, NAME_MAX)
-    if not any(char.isalnum() for char in name):
-        raise ValueError("nombre obligatorio, con alguna letra o cifra")
-    return name
+    return name(value, NAME_MAX)
 
 
 @cache
@@ -79,7 +62,7 @@ def branch_timezone(value: str) -> str:
 CLEAN: dict[str, Callable[[Any], Any]] = {
     "code": branch_code,
     "name": branch_name,
-    **{field: partial(_line, limit=limit) for field, limit in TEXT_MAX.items()},
+    **{field: partial(line, limit=limit) for field, limit in TEXT_MAX.items()},
     "timezone": branch_timezone,
 }
 CREATE = frozenset(CLEAN)

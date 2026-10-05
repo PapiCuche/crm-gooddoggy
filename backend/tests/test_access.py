@@ -140,8 +140,8 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
 ) -> None:
     """ADR-018: un permiso nuevo llega, tras el `migrate`, al rol Owner de cada organización, y
     queda en la auditoría de cada una."""
-    new = (  # uno sensible y sin alcance; otro con alcance
-        PermissionDef("teams.manage", "users", True),
+    new = (  # ninguno existe en el catálogo: uno sensible y sin alcance; otro con alcance
+        PermissionDef("vaults.manage", "users", True),
         PermissionDef("leads.view", "x", False, True),
     )
     grants = "SELECT role_id, permission_code, scope FROM role_permissions"
@@ -203,21 +203,26 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
         as_migrator(lambda: call_command("migrate", verbosity=0))
         added = set(migrator.execute(grants).fetchall()) - before
         assert added == {  # solo los roles Owner, y solo lo que les faltaba
-            (a.roles["owner"].pk, "teams.manage", None),
+            (a.roles["owner"].pk, "vaults.manage", None),
             (a.roles["owner"].pk, "leads.view", "ORGANIZATION"),  # todo el alcance
-            (b.roles["owner"].pk, "teams.manage", None),  # el `TEAM` que ya tenía no se toca
+            (b.roles["owner"].pk, "vaults.manage", None),  # el `TEAM` que ya tenía no se toca
         }
         assert before <= set(migrator.execute(grants).fetchall())  # nada se quita ni cambia
         system = ("SYSTEM", None)  # sin usuario: nadie de la organización lo hizo
         owner_a, owner_b = (a.roles["owner"].pk, "Otro"), (b.roles["owner"].pk, "Owner")
         assert set(migrator.execute(trail).fetchall()) == {  # cada organización ve las suyas
-            (a.org, *system, *owner_a, "teams.manage", None, "catalog"),
+            (a.org, *system, *owner_a, "vaults.manage", None, "catalog"),
             (a.org, *system, *owner_a, "leads.view", "ORGANIZATION", "catalog"),
-            (b.org, *system, *owner_b, "teams.manage", None, "catalog"),
+            (b.org, *system, *owner_b, "vaults.manage", None, "catalog"),
         }
         was = "SELECT changes->'permission'->>0, changes->'scope'->>0 FROM audit_logs"
         assert set(migrator.execute(was).fetchall()) == {(None, None)}  # antes no había nada
-        whole = {"codes": 2, "grants": 3, "permissions": ["leads.view", "teams.manage"], "roles": 2}
+        whole = {
+            "codes": 2,
+            "grants": 3,
+            "permissions": ["leads.view", "vaults.manage"],
+            "roles": 2,
+        }
         assert migrator.execute(summary).fetchall() == [("SYSTEM", None, whole)]
         done = ("access.owner_roles.extended", "SUCCESS", "3", None)
         assert migrator.execute(runs).fetchall() == [started, failed, started, done]
@@ -228,14 +233,14 @@ def test_the_owner_role_follows_the_catalog_and_no_other_role_does(
         assert len(migrator.execute(trail).fetchall()) == 3
         migrator.execute(  # si a un rol Owner le faltan, la función dice cuántas añadió
             "DELETE FROM role_permissions WHERE role_id = %s AND permission_code = ANY(%s)",
-            [a.roles["owner"].pk, ["teams.manage", "leads.view"]],
+            [a.roles["owner"].pk, ["vaults.manage", "leads.view"]],
         )
         assert as_migrator(lambda: extend_owner_roles("default")) == 2  # concesiones, no roles
         assert set(migrator.execute(grants).fetchall()) == before | added
         assert len(migrator.execute(summary).fetchall()) == 2
         assert len(migrator.execute(trail).fetchall()) == 5
     finally:
-        for code in ("teams.manage", "leads.view", "old.kept"):
+        for code in ("vaults.manage", "leads.view", "old.kept"):
             migrator.execute("DELETE FROM role_permissions WHERE permission_code = %s", [code])
             migrator.execute("DELETE FROM permissions WHERE code = %s", [code])
 

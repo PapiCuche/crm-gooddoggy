@@ -309,7 +309,8 @@
       "invite": "Invitar miembros"
     },
     "teams": {
-      "view": "Ver equipos"
+      "view": "Ver equipos",
+      "manage": "Administrar equipos"
     },
     "roles": {
       "view": "Ver roles",

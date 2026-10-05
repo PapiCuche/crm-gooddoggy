@@ -123,9 +123,9 @@ protected_modules = ["apps.organizations.services"]
 allowed_importers = ["apps.members"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos de sucursales: solo la API de organizations los importa (F2-44)"
+name = "Comandos de sucursales y equipos: solo la API de organizations los importa (F2-44, F2-53)"
 type = "protected"
-protected_modules = ["apps.organizations.branches"]
+protected_modules = ["apps.organizations.branches", "apps.organizations.teams"]
 allowed_importers = ["apps.organizations.api"]
 
 [[tool.importlinter.contracts]]

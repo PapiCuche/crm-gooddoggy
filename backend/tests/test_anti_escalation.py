@@ -53,6 +53,7 @@ ADMIN_REST = (
     "users.view",
     "users.invite",
     "teams.view",
+    "teams.manage",
     "roles.view",
 )
 STATE = (

@@ -96,6 +96,7 @@ describe("RolesList", () => {
           "users.view",
           "branches.manage",
           "teams.view",
+          "teams.manage",
         ].map((code) => ({
           code,
           scope: null,
@@ -122,6 +123,7 @@ describe("RolesList", () => {
       ["Ver miembros"],
       ["Administrar sucursales"],
       ["Ver equipos"],
+      ["Administrar equipos"],
       ...odd.map((code) => [code]),
       ["x.y", "REGION"],
     ]);

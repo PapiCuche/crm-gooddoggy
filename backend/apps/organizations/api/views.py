@@ -1,5 +1,5 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50)."""
+de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50 y F2-53)."""
 
 from typing import Any
 from uuid import UUID
@@ -12,6 +12,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.organizations import teams as team_commands
 from apps.organizations.branches import (
     CLEAN,
     CODE_MAX,
@@ -191,19 +192,67 @@ class TeamSerializer(serializers.Serializer[Any]):
     is_active = serializers.BooleanField()
 
 
+class TeamCreateSerializer(serializers.Serializer[Any]):
+    slug = serializers.CharField(
+        max_length=team_commands.SLUG_MAX,
+        help_text="Se guarda en minúsculas y no cambia después.",
+    )
+    name = serializers.CharField(max_length=team_commands.NAME_MAX)
+    description = serializers.CharField(
+        max_length=team_commands.DESCRIPTION_MAX, required=False, allow_blank=True
+    )
+    assignment_strategy = serializers.ChoiceField(choices=Team.Strategy.choices, required=False)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        """El mismo criterio que el comando, como un 400 por campo."""
+        problems = {}
+        for field, value in attrs.items():
+            try:
+                attrs[field] = team_commands.CLEAN[field](value)
+            except ValueError as error:
+                text = f"{error}."
+                problems[field] = [text[:1].upper() + text[1:]]
+        if problems:
+            raise serializers.ValidationError(problems)
+        return attrs
+
+
+SLUG_TAKEN = "Ya existe un equipo con ese slug en la organización."
+
+
 @extend_schema_view(
     get=extend_schema(
         operation_id="teams_list",
         tags=["teams"],
         responses={200: TeamSerializer(many=True), **errors(400, 401, 403, 404)},
-    )
+    ),
+    post=extend_schema(
+        operation_id="teams_create",
+        tags=["teams"],
+        request=TeamCreateSerializer,
+        responses={201: TeamSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Crea un equipo activo, sin integrantes. `assignment_strategy` es `MANUAL` "
+        "si no se envía. 409 `TEAM_SLUG_TAKEN`: ya hay en la organización un equipo con ese "
+        "`slug`.",
+    ),
 )
 class TeamsView(generics.ListAPIView):
     """Los equipos de la organización, activos e inactivos. Paginado por orden de creación
-    (ADR-016)."""
+    (ADR-016). `POST` crea uno (F2-53)."""
 
-    required_permissions = {"GET": "teams.view"}
+    required_permissions = {"GET": "teams.view", "POST": "teams.manage"}
     serializer_class = TeamSerializer
 
     def get_queryset(self) -> QuerySet[Team]:
         return teams()
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = TeamCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            team = team_commands.create_team(tenant, **wanted.validated_data)
+        except team_commands.TeamSlugTaken:
+            raise ApiError("TEAM_SLUG_TAKEN", 409, SLUG_TAKEN) from None
+        return Response(TeamSerializer(team).data, status=201)
