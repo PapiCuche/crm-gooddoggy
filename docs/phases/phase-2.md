@@ -44,6 +44,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-20 | [#97](https://github.com/PapiCuche/crm-gooddoggy/issues/97) Revoke the user's sessions when a membership is suspended | `feature/f2-session-revocation` | #95 | backend |
 | F2-21 | [#99](https://github.com/PapiCuche/crm-gooddoggy/issues/99) Suspend and reactivate a member from the members screen | `feature/f2-member-status-actions` | #95, #97 | frontend |
 | F2-22 | [#101](https://github.com/PapiCuche/crm-gooddoggy/issues/101) Roles directory API | `feature/f2-roles-directory-api` | #85, #89 | backend + API |
+| F2-23 | [#103](https://github.com/PapiCuche/crm-gooddoggy/issues/103) Roles screen | `feature/f2-roles-screen` | #101, #104 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `refactor/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

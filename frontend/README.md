@@ -104,7 +104,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 
 ### Lista por cursor compartida (F2-24)
 
-`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `notice` es un aviso de la pantalla encima de la lista; el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. Hoy la usa la pantalla de miembros; las siguientes listas de gestión se construyen sobre ella.
+`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `notice` es un aviso de la pantalla encima de la lista; el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. La usan las pantallas de miembros y de roles; las siguientes listas de gestión se construyen sobre ella.
 
 ### Suspender y reactivar (F2-21)
 
@@ -118,6 +118,16 @@ Cada fila ofrece «Suspender» (miembro activo) o «Reactivar» (miembro suspend
 - **Errores que conservan la acción** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en la fila, por código, y el mismo botón reintenta.
 - **Pantalla desfasada** (`INVALID_TRANSITION`, `NOT_FOUND`): la lista se vuelve a pedir, y la acción, o la fila entera, puede desaparecer. Por eso el aviso («El estado de … ya había cambiado») vive en la lista (`role="alert"`), no en la fila, y el foco va al título si seguía en esa acción (o en ninguna parte). Si la nueva lectura falla, el aviso se queda y la lista no cambia. El aviso se quita al abrir otra confirmación.
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+## Roles (F2-23)
+
+`/o/[orgSlug]/roles` muestra los roles de la organización: lo que devuelve `GET /api/v1/o/{slug}/roles/` (F2-22), con el cliente generado.
+
+- **Componente:** `components/roles/roles-list.tsx`, sobre la lista por cursor compartida (ver «Miembros»): su paginación, sus estados y su foco son los mismos.
+- **Por rol:** nombre, si es de plantilla o propio, descripción si la tiene, número de miembros y sus permisos, cada uno con su alcance si lo admite.
+- **Nombres de los permisos:** salen de `catalog.*` en `messages/es-PE.json` (`catalog.users.manage` para `users.manage`). Un permiso que esos textos no conocen se enseña con su código: no se oculta. Los alcances, de `roles.scope.*`.
+- **Navegación:** la entrada «Roles» pide el permiso `roles.view`; `users.view` no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
+- **Solo lectura.** Nada decide por el nombre o el código de un rol. Crear o editar roles y asignarlos son otros work items (E01-08).
 
 ## Seguridad del navegador (F2-07)
 

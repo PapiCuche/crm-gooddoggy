@@ -19,7 +19,8 @@
     "closeMenu": "Cerrar menú",
     "nav": {
       "home": "Inicio",
-      "members": "Miembros"
+      "members": "Miembros",
+      "roles": "Roles"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -118,6 +119,45 @@
       "cancel": "Cancelar",
       "denied": "No tienes permiso para cambiar a este miembro.",
       "stale": "El estado de {name} ya había cambiado. Revisa la lista."
+    }
+  },
+  "roles": {
+    "eyebrow": "Good Doggy / Roles",
+    "title": "Roles",
+    "intro": "Los roles de {organization}: qué permite cada uno y cuántos miembros lo tienen.",
+    "system": "De plantilla",
+    "custom": "Propio",
+    "members": "{count, plural, =0 {Sin miembros} one {# miembro} other {# miembros}}",
+    "permissions": "Permisos de {role}",
+    "noPermission": "Sin permisos",
+    "scope": {
+      "OWN": "Lo propio",
+      "TEAM": "Su equipo",
+      "BRANCH": "Su sucursal",
+      "ORGANIZATION": "Toda la organización"
+    },
+    "count": "{count, plural, one {# rol en la lista} other {# roles en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando roles…",
+    "denied": "No tienes permiso para ver los roles de esta organización."
+  },
+  "catalog": {
+    "organization": {
+      "view": "Ver la organización",
+      "manage": "Administrar la organización"
+    },
+    "users": {
+      "view": "Ver miembros",
+      "manage": "Administrar miembros",
+      "invite": "Invitar miembros"
+    },
+    "roles": {
+      "view": "Ver roles",
+      "manage": "Administrar roles"
+    },
+    "audit": {
+      "view": "Ver la auditoría"
     }
   }
 }
