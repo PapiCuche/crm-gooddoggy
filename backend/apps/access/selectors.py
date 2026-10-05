@@ -178,12 +178,13 @@ def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
 
 
 def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:
-    """Roles de varias membresías en una consulta, para mostrar. Nunca para decidir. No comprueba
+    """Roles de varias membresías en una consulta, con su id, para mostrar y para nombrarlos
+    en la ruta que los asigna o quita (F2-25). Nunca para decidir. No comprueba
     ningún permiso: quien llama pasa membresías que ya filtró (`ScopeFilter`)."""
     bound(ectx)
     roles = Role.objects.using(require_scope(ectx.tenant))
     held = roles.filter(assignments__membership_id__in=members).order_by("name", "code")
     found: dict[UUID, list[Any]] = {}
-    for row in held.values("code", "name", member=F("assignments__membership_id")):
+    for row in held.values("id", "code", "name", member=F("assignments__membership_id")):
         found.setdefault(row.pop("member"), []).append(row)
     return found

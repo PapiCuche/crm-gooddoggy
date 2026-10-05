@@ -27,8 +27,8 @@ const member = (id: string, extra: Partial<Member> = {}): Member => ({
 const ana = member("ana", {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   roles: [
-    { code: "owner", name: "Owner" },
-    { code: "sales", name: "Ventas" },
+    { id: "r1", code: "owner", name: "Owner" },
+    { id: "r2", code: "sales", name: "Ventas" },
   ],
 });
 const ui = (

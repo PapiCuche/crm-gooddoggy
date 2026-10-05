@@ -46,6 +46,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-22 | [#101](https://github.com/PapiCuche/crm-gooddoggy/issues/101) Roles directory API | `feature/f2-roles-directory-api` | #85, #89 | backend + API |
 | F2-23 | [#103](https://github.com/PapiCuche/crm-gooddoggy/issues/103) Roles screen | `feature/f2-roles-screen` | #101, #104 | frontend |
 | F2-25 | [#108](https://github.com/PapiCuche/crm-gooddoggy/issues/108) Assign and remove a member's role (API) | `feature/f2-member-roles-api` | #89, #101 | backend + API |
+| F2-26 | [#110](https://github.com/PapiCuche/crm-gooddoggy/issues/110) Role ids in the members directory | `feature/f2-member-role-ids` | #89, #108 | backend + API |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

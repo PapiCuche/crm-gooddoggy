@@ -47,9 +47,12 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
     done = change(ana, rbac.m_eva, seller.pk)
     assert reply(done) == DONE and "Content-Type" not in done.headers  # sin cuerpo
     assert codes(eva) == ["organization.view"]  # en su siguiente petición
+    listed = ana.get("/api/v1/o/org-a/members/").json()["results"]
+    held = {row["id"]: row["roles"] for row in listed}[str(rbac.m_eva)]
+    assert held == [{"id": str(seller.pk), "code": "seller", "name": "Vendedor"}]  # el mismo id
     assert reply(change(ana, rbac.m_eva, seller.pk)) == DONE  # repetirlo no cambia nada
     assert state(migrator) == (before[0], before[1] + 1, before[2] + 1)
-    assert reply(change(ana, rbac.m_eva, seller.pk, "delete")) == DONE
+    assert reply(change(ana, rbac.m_eva, held[0]["id"], "delete")) == DONE  # el del directorio
     assert codes(eva) == []
     assert reply(change(ana, rbac.m_eva, seller.pk, "delete")) == NOT_FOUND  # ya no lo tiene
     assert state(migrator) == (before[0], before[1], before[2] + 2)

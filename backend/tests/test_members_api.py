@@ -31,11 +31,11 @@ def members(client: Client, org: str = "org-a", **query: Any) -> Any:
 
 def test_it_lists_every_member_of_the_organization_with_status_and_roles(world: Any) -> None:
     User.objects.filter(pk=world.ana.pk).update(first_name="Ana", last_name="López")
-    give(world.a, world.membership, VIEW_USERS, code="lectora")
+    lectora = give(world.a, world.membership, VIEW_USERS, code="lectora")
     luis, marta = make_user(email="luis@example.com"), make_user(email="marta@example.com")
     suspended, invited = join(world.a, luis, "SUSPENDED"), join(world.a, marta, "INVITED")
-    give(world.a, suspended.pk, {}, code="b")
-    give(world.a, suspended.pk, {}, code="a")
+    role_b = give(world.a, suspended.pk, {}, code="b")
+    role_a = give(world.a, suspended.pk, {}, code="a")
     join(world.b, make_user(email="otra@example.com"))  # otra organización: no aparece
     join(world.b, luis)  # ni su membresía en B
     body = members(signed(world.ana)).json()
@@ -55,10 +55,13 @@ def test_it_lists_every_member_of_the_organization_with_status_and_roles(world: 
             "first_name": "Ana",
             "last_name": "López",
         },
-        "roles": [{"code": "lectora", "name": "Rol propio"}],
+        "roles": [{"id": str(lectora.pk), "code": "lectora", "name": "Rol propio"}],
     }  # ni contraseña, ni marcas de plataforma, ni sus otras organizaciones
     assert (second["status"], second["user"]["email"]) == ("SUSPENDED", "luis@example.com")
-    assert [role["code"] for role in second["roles"]] == ["a", "b"]  # todos sus roles
+    assert second["roles"] == [
+        {"id": str(role_a.pk), "code": "a", "name": "Rol propio"},
+        {"id": str(role_b.pk), "code": "b", "name": "Rol propio"},
+    ]  # todos sus roles, cada uno con su propio id
     assert (third["status"], third["roles"]) == ("INVITED", [])
 
 
@@ -109,6 +112,9 @@ def test_it_pages_by_cursor_without_a_query_per_member(world: Any) -> None:
         member = join(world.a, make_user(email=f"m{index}@example.com"))
         give(world.a, member.pk, {})
     assert queries() == few  # miembros y roles: una consulta cada uno, sean cuantos sean
+    with acting(world.a, world.ana) as ectx, CaptureQueriesContext(connection) as read:
+        assert len(roles_by_membership(ectx, [world.membership])) == 1
+    assert len(read) == 1  # los roles de la página, con su id, en una sola consulta
     first = members(client, limit=3).json()
     assert len(first["results"]) == 3 and first["next"]
     rest = members(client, limit=200, cursor=first["next"]).json()
