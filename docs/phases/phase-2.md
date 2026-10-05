@@ -54,6 +54,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-31 | [#120](https://github.com/PapiCuche/crm-gooddoggy/issues/120) Grant a permission to a role (API) | `feature/f2-role-permission-grant-api` | #101, #116 | backend + API |
 | F2-32 | [#122](https://github.com/PapiCuche/crm-gooddoggy/issues/122) A lone surrogate in a JSON body answers 400, not 500 | `fix/f2-lone-surrogate-body` | #118 | backend |
 | F2-33 | [#124](https://github.com/PapiCuche/crm-gooddoggy/issues/124) Revoke a permission from a role (API) | `feature/f2-role-permission-revoke-api` | #120 | backend + API |
+| F2-34 | [#126](https://github.com/PapiCuche/crm-gooddoggy/issues/126) Permission catalog and editable flag for role editing (API) | `feature/f2-role-editing-read-api` | #101, #124 | backend + API |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

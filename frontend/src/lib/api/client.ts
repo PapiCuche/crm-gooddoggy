@@ -31,6 +31,7 @@ import type {
   OrganizationSummary,
   PaginatedMemberList,
   PaginatedRoleList,
+  PermissionCatalog,
   Role,
   RoleCreateRequest,
   RolesListParams,
@@ -1083,6 +1084,127 @@ export const useMembersSetStatus = <TError = ErrorType<Error>, TContext = unknow
 > => {
   return useMutation(getMembersSetStatusMutationOptions(options), queryClient);
 };
+
+export const getPermissionsListUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/permissions/`;
+};
+
+/**
+ * Los permisos que se pueden conceder a un rol, ordenados por código.
+ */
+export const permissionsList = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PermissionCatalog> => {
+  return apiFetch<PermissionCatalog>(getPermissionsListUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPermissionsListQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/permissions/`] as const;
+};
+
+export const getPermissionsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof permissionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof permissionsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPermissionsListQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof permissionsList>>> = ({ signal }) =>
+    permissionsList(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof permissionsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PermissionsListQueryResult = NonNullable<Awaited<ReturnType<typeof permissionsList>>>;
+export type PermissionsListQueryError = ErrorType<Error>;
+
+export function usePermissionsList<
+  TData = Awaited<ReturnType<typeof permissionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof permissionsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof permissionsList>>,
+          TError,
+          Awaited<ReturnType<typeof permissionsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePermissionsList<
+  TData = Awaited<ReturnType<typeof permissionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof permissionsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof permissionsList>>,
+          TError,
+          Awaited<ReturnType<typeof permissionsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePermissionsList<
+  TData = Awaited<ReturnType<typeof permissionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof permissionsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePermissionsList<
+  TData = Awaited<ReturnType<typeof permissionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof permissionsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPermissionsListQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
   const normalizedParams = new URLSearchParams();

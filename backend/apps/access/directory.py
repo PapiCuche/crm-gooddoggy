@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Count, QuerySet
+from django.db.models import Count, Q, QuerySet
 
 from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.selectors import ExecutionContext, bound
@@ -39,3 +39,13 @@ def members_by_role(ectx: ExecutionContext, role_ids: Iterable[UUID]) -> dict[UU
     bound(ectx)
     held = MembershipRole.objects.using(require_scope(ectx.tenant)).filter(role_id__in=role_ids)
     return dict(held.values_list("role_id").annotate(Count("id")))
+
+
+def locked_roles(ectx: ExecutionContext, role_ids: Iterable[UUID]) -> set[UUID]:
+    """De esos roles, los que quien pregunta no puede editar sea cual sea el permiso: el rol
+    Owner y los que tiene asignados (F2-34). Para que la pantalla no ofrezca lo que la API va a
+    rechazar; las reglas las aplica cada escritura de `access.services`. Una consulta."""
+    bound(ectx)
+    found = Role.objects.using(require_scope(ectx.tenant)).filter(pk__in=role_ids)
+    own = Q(assignments__membership_id=ectx.membership_id)
+    return set(found.filter(Q(is_owner_role=True) | own).values_list("pk", flat=True))

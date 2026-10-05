@@ -3,6 +3,7 @@ miembros (`…/members/`, F2-16) y de roles (`…/roles/`, F2-22) y los roles de
 (`…/members/{id}/roles/{role_id}/`, F2-25)."""
 
 from collections.abc import Callable
+from operator import attrgetter
 from typing import Any
 from uuid import UUID
 
@@ -16,7 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.access import directory
-from apps.access.catalog import Scope
+from apps.access.catalog import BY_CODE, Scope
 from apps.access.models import Role
 from apps.access.permissions import IsMember, rbac_errors, request_context
 from apps.access.selectors import (
@@ -174,6 +175,11 @@ class RoleSerializer(serializers.Serializer[Any]):
     is_system = serializers.BooleanField(help_text="Nació de una plantilla del producto.")
     permissions = RoleGrantSerializer(many=True)
     members = serializers.IntegerField(help_text="Membresías con este rol, en cualquier estado.")
+    editable = serializers.BooleanField(
+        help_text="Falso para el rol Owner y para un rol que tiene asignado quien pregunta: la "
+        "API rechaza cualquier cambio de sus concesiones. Es una ayuda para la interfaz, no una "
+        "autorización: cada escritura aplica sus reglas."
+    )
 
 
 class RoleCreateSerializer(serializers.Serializer[Any]):
@@ -237,6 +243,7 @@ class RolesView(generics.ListAPIView):
             "is_system": role.is_system,
             "permissions": [],
             "members": 0,
+            "editable": True,  # recién creado: ni es el rol Owner ni lo tiene nadie
         }
         return Response(RoleSerializer(row).data, status=201)
 
@@ -251,6 +258,7 @@ class RolesView(generics.ListAPIView):
         page = self.paginate_queryset(self.filter_queryset(self.get_queryset()))
         ids = [role.pk for role in page]
         grants, members = directory.grants_by_role(ectx, ids), directory.members_by_role(ectx, ids)
+        locked = directory.locked_roles(ectx, ids)
         rows = [
             {
                 "id": role.pk,
@@ -260,10 +268,49 @@ class RolesView(generics.ListAPIView):
                 "is_system": role.is_system,
                 "permissions": grants.get(role.pk, []),
                 "members": members.get(role.pk, 0),
+                "editable": role.pk not in locked,
             }
             for role in page
         ]
         return self.get_paginated_response(RoleSerializer(rows, many=True).data)
+
+
+class PermissionSerializer(serializers.Serializer[Any]):
+    code = serializers.CharField()
+    module = serializers.CharField(help_text="Módulo del producto al que pertenece.")
+    is_sensitive = serializers.BooleanField(help_text="Solo lo delega y lo retira un Owner.")
+    supports_scope = serializers.BooleanField(
+        help_text="Si se concede con un alcance (`OWN`, `TEAM`, `BRANCH`, `ORGANIZATION`)."
+    )
+
+
+class PermissionCatalogSerializer(serializers.Serializer[Any]):
+    results = PermissionSerializer(many=True)
+
+
+class PermissionsView(APIView):
+    """El catálogo de permisos del producto, el mismo para todas las organizaciones. Sale del
+    código (`access.catalog`), no de la base: es una lista cerrada y no se pagina."""
+
+    required_permissions = {"GET": "roles.view"}
+
+    @extend_schema(
+        operation_id="permissions_list",
+        tags=["roles"],
+        responses={200: PermissionCatalogSerializer, **errors(401, 403, 404)},
+        description="Los permisos que se pueden conceder a un rol, ordenados por código.",
+    )
+    def get(self, request: Request, **kwargs: Any) -> Response:
+        rows = [
+            {
+                "code": permission.code,
+                "module": permission.module,
+                "is_sensitive": permission.is_sensitive,
+                "supports_scope": permission.supports_scope,
+            }
+            for permission in sorted(BY_CODE.values(), key=attrgetter("code"))
+        ]
+        return Response(PermissionCatalogSerializer({"results": rows}).data)
 
 
 class MemberRoleView(APIView):

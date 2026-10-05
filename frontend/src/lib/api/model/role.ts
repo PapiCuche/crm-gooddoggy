@@ -17,4 +17,6 @@ export interface Role {
   permissions: RoleGrant[];
   /** Membresías con este rol, en cualquier estado. */
   members: number;
+  /** Falso para el rol Owner y para un rol que tiene asignado quien pregunta: la API rechaza cualquier cambio de sus concesiones. Es una ayuda para la interfaz, no una autorización: cada escritura aplica sus reglas. */
+  editable: boolean;
 }
