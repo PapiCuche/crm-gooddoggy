@@ -122,9 +122,9 @@ def test_without_session_permission_or_a_valid_request_it_changes_nothing(
     no_token.force_login(rbac.ana)
     url = f"/api/v1/o/org-a/roles/{target}/permissions/users.view/"
     assert no_token.put(url, {}, "application/json").json()["code"] == "CSRF_FAILED"
-    lone = b'{"scope": "%sud800"}' % bytes([92])  # un sustituto suelto: no se puede repetir
+    lone = b'{"scope": "%sud800"}' % bytes([92])  # un sustituto suelto: no es texto (F2-32)
     answer = ana.put(url, lone, "application/json", headers={"X-CSRFToken": "t" * 32})
-    assert (answer.status_code, list(answer.json()["fields"])) == (400, ["scope"])
+    assert reply(answer) == (400, b'{"code":"PARSE_ERROR"}')
     for other in ("get", "post", "patch", "delete"):  # solo PUT
         assert reply(grant(ana, target, "users.view", method=other)) == DENIED
     assert state(migrator) == before

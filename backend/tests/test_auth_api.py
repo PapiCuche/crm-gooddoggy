@@ -217,6 +217,31 @@ def test_a_body_nested_too_deep_is_a_parse_error(
     assert not caplog.records  # nada que el servidor tenga que mirar
 
 
+def test_a_string_that_is_not_text_is_a_parse_error(
+    ana: User, browser: Client, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Medio carácter (un sustituto Unicode sin su pareja) no se puede guardar ni devolver."""
+    u = bytes([92]) + b"u"  # el escape JSON, sin escribirlo aquí
+
+    def post(body: bytes) -> Any:
+        token = {"X-CSRFToken": browser.cookies["csrftoken"].value}
+        return browser.generic("POST", LOGIN, body % {b"u": u}, "application/json", headers=token)
+
+    caplog.set_level(logging.ERROR, logger="django.request")
+    for body in (
+        b'{"email":"a%(u)sd800@example.com","password":"x"}',  # en un valor
+        b'{"email":"a@example.com","password":"x","%(u)sdfff":1}',  # en una clave
+        b'{"email":"a@example.com","password":"x","extra":[{"a":["%(u)sd800"]}]}',  # anidado
+        b'{"email":"a@example.com","password":"%(u)sdc36%(u)sd83d"}',  # la pareja, al revés
+        b'{"email":"a@example.com","password":"%(u)sdc80"}',  # el que usa `surrogateescape`
+        b'["%(u)sd800"]',  # y un cuerpo que no es un objeto
+    ):
+        assert reply(post(body)) == (400, b'{"code":"PARSE_ERROR"}'), body
+    pair = b'{"email":"ana@example.com","password":"%(u)sd83d%(u)sdc36"}'  # un emoji: es texto
+    assert reply(post(pair)) == INVALID
+    assert not caplog.records and Session.objects.count() == 0
+
+
 @pytest.mark.parametrize("error", [OSError, RuntimeError])
 def test_only_the_overflow_becomes_an_unreadable_body(error: type[Exception]) -> None:
     class Unreadable(io.BytesIO):

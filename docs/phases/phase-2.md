@@ -52,6 +52,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-29 | [#116](https://github.com/PapiCuche/crm-gooddoggy/issues/116) Create a custom role (API) | `feature/f2-role-create-api` | #101, #108 | backend + API |
 | F2-30 | [#118](https://github.com/PapiCuche/crm-gooddoggy/issues/118) Deeply nested JSON bodies answer 400, not 500 | `fix/f2-nested-json-body` | — | backend |
 | F2-31 | [#120](https://github.com/PapiCuche/crm-gooddoggy/issues/120) Grant a permission to a role (API) | `feature/f2-role-permission-grant-api` | #101, #116 | backend + API |
+| F2-32 | [#122](https://github.com/PapiCuche/crm-gooddoggy/issues/122) A lone surrogate in a JSON body answers 400, not 500 | `fix/f2-lone-surrogate-body` | #118 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
