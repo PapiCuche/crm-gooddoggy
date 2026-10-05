@@ -6,10 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 
-/**
- * Lo que se envía cambia; lo que no, se queda como está.
- */
 export interface BranchCreateRequest {
+  /**
+   * Se guarda en mayúsculas y no cambia después.
+   * @minLength 1
+   * @maxLength 20
+   */
+  code: string;
   /**
    * @minLength 1
    * @maxLength 100
@@ -29,10 +32,4 @@ export interface BranchCreateRequest {
    * @maxLength 64
    */
   timezone?: string;
-  /**
-   * Se guarda en mayúsculas y no cambia después.
-   * @minLength 1
-   * @maxLength 20
-   */
-  code: string;
 }

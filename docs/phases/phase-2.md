@@ -64,7 +64,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-41 | [#140](https://github.com/PapiCuche/crm-gooddoggy/issues/140) The Owner role follows the permission catalog (ADR-018) | `feature/f2-owner-role-follows-catalog` | #120 | backend |
 | F2-42 | [#142](https://github.com/PapiCuche/crm-gooddoggy/issues/142) The roles directory test no longer fails on a random id | `fix/f2-roles-test-random-id` | #126 | backend |
 | F2-43 | [#144](https://github.com/PapiCuche/crm-gooddoggy/issues/144) Branches: table and directory by API | `feature/f2-branches-directory` | — | backend |
-| F2-44 | [#146](https://github.com/PapiCuche/crm-gooddoggy/issues/146) Branches: create and edit by API | `feature/f2-branches-write-api` | #144 | backend |
+| F2-44 | [#146](https://github.com/PapiCuche/crm-gooddoggy/issues/146) Branches: create by API | `feature/f2-branches-write-api` | #144 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -178,11 +178,11 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 Se registran como `OBS-F2-<nn>-<n>`.
 
 ### OBS-F2-44-1 — Escrituras de sucursales: reglas que decidió el programa
-F2-44 (#146) añade `POST …/branches/` y `PATCH …/branches/{id}/`. Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
+F2-44 (#146) añade `POST …/branches/`; `PATCH …/branches/{id}/` va en el work item siguiente, con las mismas reglas. Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
 - **Permiso.** `branches.manage`, como define 03 §H: no sensible y sin alcance. Quien lo tiene administra todas las sucursales de la organización.
 - **Quién lo recibe.** El rol Owner de cada organización, en el paso de migración (ADR-018). La plantilla «Administrador» lo lleva solo en las organizaciones nuevas: los roles «Administrador» que ya existen no cambian, y un Owner se lo concede desde la pantalla de roles.
-- **El código no cambia** después de crear la sucursal: es como la nombran las personas y lo que usarán otros documentos. Un `code` en el cuerpo de `PATCH` se ignora, como cualquier campo desconocido.
-- **Sin borrado.** Una sucursal se desactiva con `is_active`. Desactivar no tiene reglas todavía: nada depende de una sucursal (ni membresías, ni almacenes, ni pedidos). Cuando dependan, desactivar tendrá que decidir qué pasa con ellos.
+- **El código no cambiará** después de crear la sucursal: es como la nombran las personas y lo que usarán otros documentos. La edición no lo admitirá.
+- **Sin borrado.** Una sucursal se desactivará con `is_active`. Nada depende todavía de una sucursal (ni membresías, ni almacenes, ni pedidos); cuando dependan, desactivar tendrá que decidir qué pasa con ellos.
 - **Dónde viven los comandos.** En `apps.organizations.branches`. No comprueban permisos, porque `organizations` no importa `access`; por eso no son API pública y un contrato de import-linter solo deja importarlos a `apps.organizations.api`, cuyas vistas declaran `branches.manage`. Quien necesite crear sucursales desde otro módulo (una importación, una automatización) tendrá que pasar por un comando que sí compruebe el permiso.
 - **Textos.** Una línea imprimible por campo; el nombre lleva alguna letra o cifra. El teléfono es texto libre de hasta 32 caracteres: no se valida su forma.
 
@@ -195,7 +195,7 @@ E01-09 empieza por las sucursales (F2-43, #144). Decisiones del programa autóno
 
 ### OBS-F2-43-2 — Lo que `branches` no lleva todavía
 - `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado, como en roles. Una sucursal se desactiva con `is_active`. Cuando exista el borrado, `UNIQUE (organization_id, code)` pasa a ser un índice parcial.
-- ✅ F2-44 (#146): las escrituras por API y el permiso `branches.manage`.
+- ✅ F2-44 (#146): crear por API y el permiso `branches.manage`. Editar y desactivar: siguiente work item; hasta entonces `is_active` solo cambia desde código.
 - `organization_memberships.default_branch_id` y `ExecutionContext.branch_ids` (OBS-F2-05A-2): el alcance `BRANCH` sigue equivaliendo a `OWN`.
 
 ### OBS-F2-06-1 — La contraseña inicial del Owner la escribe el operador

@@ -1,8 +1,8 @@
-"""Comandos de sucursales (F2-44, E01-09): crear una y cambiar sus datos.
+"""Comandos de sucursales (F2-44, E01-09): crear una.
 
 No comprueban permisos: `organizations` no importa `access`. Por eso no son API pública: solo
 los importa la API del módulo, que declara `branches.manage` (contrato de import-linter).
-Validan lo que guardan, también para quien no llega por HTTP, y auditan cada cambio.
+Validan lo que guardan, también para quien no llega por HTTP, y auditan.
 """
 
 import re
@@ -11,7 +11,6 @@ import zoneinfo
 from collections.abc import Callable
 from functools import cache, partial
 from typing import Any
-from uuid import UUID
 
 from django.db import IntegrityError, transaction
 
@@ -73,24 +72,17 @@ def branch_timezone(value: str) -> str:
     return value
 
 
-def _flag(value: Any) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError("verdadero o falso")
-    return value
-
-
 CLEAN: dict[str, Callable[[Any], Any]] = {
     "code": branch_code,
     "name": branch_name,
     **{field: partial(_line, limit=limit) for field, limit in TEXT_MAX.items()},
     "timezone": branch_timezone,
-    "is_active": _flag,
 }
 
 
-def cleaned(fields: dict[str, Any], allowed: frozenset[str]) -> dict[str, Any]:
+def cleaned(fields: dict[str, Any]) -> dict[str, Any]:
     """Cada campo como se guarda. `ValueError` con el nombre del primero que no sirve."""
-    if unknown := set(fields) - allowed:
+    if unknown := set(fields) - set(CLEAN):
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     result = {}
     for field, value in fields.items():
@@ -101,17 +93,13 @@ def cleaned(fields: dict[str, Any], allowed: frozenset[str]) -> dict[str, Any]:
     return result
 
 
-CREATE = frozenset(CLEAN) - {"is_active"}
-UPDATE = frozenset(CLEAN) - {"code"}  # el código no cambia: es como se nombra la sucursal
-
-
 def create_branch(ctx: TenantContext, **fields: Any) -> Branch:
     """Crea una sucursal activa en la organización de `ctx` y lo audita. `code` y `name` son
     obligatorios. Lanza `BranchCodeTaken` si el código ya existe, sin escribir nada."""
     alias = require_scope(ctx)
     if missing := {"code", "name"} - set(fields):
         raise ValueError(f"campos obligatorios: {sorted(missing)}")
-    values = {"timezone": DEFAULT_TIMEZONE, **cleaned(fields, CREATE)}
+    values = {"timezone": DEFAULT_TIMEZONE, **cleaned(fields)}
     try:
         with transaction.atomic(using=alias):  # savepoint: la sucursal y su auditoría, o nada
             branch: Branch = Branch.objects.using(alias).create(**values)
@@ -121,26 +109,4 @@ def create_branch(ctx: TenantContext, **fields: Any) -> Branch:
         if "branches_org_code_uq" not in str(error):
             raise
         raise BranchCodeTaken(values["code"]) from None
-    return branch
-
-
-def update_branch(ctx: TenantContext, *, branch_id: UUID, **fields: Any) -> Branch:
-    """Cambia lo que se envía de una sucursal de la organización de `ctx` y lo audita con el
-    antes y el después. Si nada cambia, no escribe ni audita. Una sucursal de otra organización
-    no existe: `DoesNotExist`."""
-    alias = require_scope(ctx)
-    values = cleaned(fields, UPDATE)
-    with transaction.atomic(using=alias):
-        rows = Branch.objects.using(alias).select_for_update(no_key=True)
-        branch: Branch = rows.get(pk=branch_id)
-        changes = {
-            field: [getattr(branch, field), value]
-            for field, value in values.items()
-            if getattr(branch, field) != value
-        }
-        if changes:
-            for field, (_, value) in changes.items():
-                setattr(branch, field, value)
-            branch.save(using=alias, update_fields=[*changes, "updated_at"])
-            record(ctx, "branch.updated", Entity("branch", branch.pk, branch.code), changes)
     return branch

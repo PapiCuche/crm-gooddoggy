@@ -6,5 +6,4 @@ from apps.organizations.api import views
 
 urlpatterns = [
     path("branches/", views.BranchesView.as_view(), name="branches"),
-    path("branches/<uuid:branch_id>/", views.BranchView.as_view(), name="branch"),
 ]

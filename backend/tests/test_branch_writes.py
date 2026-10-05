@@ -1,15 +1,14 @@
-"""F2-44: `POST …/branches/` y `PATCH …/branches/{id}/`, crear y editar una sucursal, y el
-permiso `branches.manage`. Middleware, sesión, motor de autorización y PostgreSQL con `crm_app`."""
+"""F2-44: `POST …/branches/`, crear una sucursal, y el permiso `branches.manage`. Middleware,
+sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
 from typing import Any
-from uuid import uuid4
 
 import psycopg
 import pytest
 from django.test import Client
 
 from apps.access.catalog import BY_CODE, ROLE_TEMPLATES
-from apps.organizations.branches import BranchCodeTaken, create_branch, update_branch
+from apps.organizations.branches import BranchCodeTaken, create_branch
 from apps.organizations.models import Branch
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
@@ -34,10 +33,6 @@ def send(client: Client, method: str, path: str, body: Any) -> Any:
 
 def create(client: Client, body: Any, org: str = "org-a") -> Any:
     return send(client, "post", URL.format(org), body)
-
-
-def update(client: Client, branch_id: Any, body: Any, org: str = "org-a") -> Any:
-    return send(client, "patch", f"{URL.format(org)}{branch_id}/", body)
 
 
 @pytest.fixture
@@ -151,66 +146,30 @@ def test_a_field_that_does_not_fit_is_a_400_that_names_it(
     assert migrator.execute(ROWS).fetchone() == (0, 0)
 
 
-def test_it_changes_only_what_is_sent_and_audits_the_difference(
-    world: Any, ana: Client, migrator: psycopg.Connection[Any]
-) -> None:
-    lima = branch(world.a, "LIM", name="Lima", city="Lima", phone="555")
-    edited = update(ana, lima.pk, {"name": " Lima  Centro ", "phone": "", "city": "Lima"})
-    assert edited.status_code == 200
-    assert edited.json() == {
-        "id": str(lima.pk),
-        "code": "LIM",
-        "name": "Lima Centro",
-        "address": "",
-        "district": "",
-        "city": "Lima",
-        "phone": "",
-        "timezone": "America/Lima",
-        "is_active": True,
-    }
-    changes = {"name": ["Lima", "Lima Centro"], "phone": ["555", ""]}  # `city` no cambió
-    assert audit(migrator)[-1] == ("branch.updated", "branch", lima.pk, changes, {}, world.ana.pk)
-    before = migrator.execute(ROWS).fetchone()
-    for same in ({}, {"name": "Lima Centro"}, {"code": "OTRO", "organization_id": str(world.b)}):
-        assert update(ana, lima.pk, same).json() == edited.json()  # el código no se cambia
-    assert migrator.execute(ROWS).fetchone() == before  # sin cambios, ni escribe ni audita
-    off = update(ana, lima.pk, {"is_active": False, "timezone": "UTC"}).json()
-    assert (off["is_active"], off["timezone"]) == (False, "UTC")
-    assert audit(migrator)[-1][3] == {
-        "is_active": [True, False],
-        "timezone": ["America/Lima", "UTC"],
-    }
-    assert update(ana, lima.pk, {"is_active": True}).json()["is_active"] is True
-    for bad in ({"name": ""}, {"timezone": "Marte/Olympus"}, {"is_active": "quizá"}):
-        refused = update(ana, lima.pk, bad)
-        assert (refused.status_code, list(refused.json()["fields"])) == (400, list(bad))
-
-
-def test_only_who_manages_branches_writes_and_only_in_their_organization(
+def test_only_who_manages_branches_creates_and_only_in_their_organization(
     world: Any, migrator: psycopg.Connection[Any]
 ) -> None:
-    mine, theirs = branch(world.a, "LIM"), branch(world.b, "AQP")
+    branch(world.b, "AQP")
     before = migrator.execute(ROWS).fetchone()
-    new, change = {"code": "CUZ", "name": "Cusco"}, {"name": "Tocada"}
-    assert create(Client(), new).status_code == update(Client(), mine.pk, change).status_code == 401
+    new = {"code": "CUZ", "name": "Cusco"}
+    assert create(Client(), new).status_code == 401
     client = signed(world.ana)
+    assert reply(create(client, new)) == DENIED  # miembro sin roles
     give(world.a, world.membership, {"organization.view": None})  # leer no es administrar
-    assert reply(create(client, new)) == reply(update(client, mine.pk, change)) == DENIED
-    assert reply(update(client, uuid4(), change)) == DENIED  # sin permiso no se sabe si existe
-    give(world.a, world.membership, {"branches.manage": None})
-    for missing in (theirs.pk, uuid4()):  # la de otra organización no existe
-        assert reply(update(client, missing, change)) == NOT_FOUND
-    for org in ("org-b", "no-existe"):
+    assert reply(create(client, new)) == DENIED
+    for org in ("org-b", "no-existe"):  # sin membresía, la organización no existe
         assert reply(create(client, new, org)) == NOT_FOUND
-        assert reply(update(client, theirs.pk, change, org)) == NOT_FOUND
-    for method in ("put", "delete", "post"):  # sobre una sucursal solo hay `PATCH`
-        assert reply(send(client, method, f"{URL.format('org-a')}{mine.pk}/", {})) == DENIED
     assert migrator.execute(ROWS).fetchone() == before
+    give(world.a, world.membership, {"branches.manage": None})
+    assert create(client, new).status_code == 201
+    assert reply(create(client, new, "org-b")) == NOT_FOUND  # el permiso es de su organización
+    for method in ("put", "patch", "delete"):  # sobre la colección, solo leer y crear
+        assert reply(send(client, method, URL.format("org-a"), {})) == DENIED
     with tenant_scope(ctx(world.b)):
-        assert Branch.objects.get().name == "AQP"
+        assert [row.code for row in Branch.objects.all()] == ["AQP"]
 
 
-def test_the_commands_validate_for_callers_that_do_not_come_by_http(world: Any) -> None:
+def test_the_command_validates_for_callers_that_do_not_come_by_http(world: Any) -> None:
     with tenant_scope(ctx(world.a)) as tenant:
         lima = create_branch(tenant, code="lim", name=" Lima ")
         assert (lima.code, lima.name, lima.is_active) == ("LIM", "Lima", True)
@@ -223,9 +182,4 @@ def test_the_commands_validate_for_callers_that_do_not_come_by_http(world: Any) 
         ):
             with pytest.raises(ValueError):
                 create_branch(tenant, **bad)
-        for bad in ({"code": "OTRO"}, {"is_active": 1}, {"name": "\n"}, {"id": uuid4()}):
-            with pytest.raises(ValueError, match=next(iter(bad))):
-                update_branch(tenant, branch_id=lima.pk, **bad)
         assert Branch.objects.count() == 1
-    with pytest.raises(Branch.DoesNotExist), tenant_scope(ctx(world.b)) as other:
-        update_branch(other, branch_id=lima.pk, name="Ajena")

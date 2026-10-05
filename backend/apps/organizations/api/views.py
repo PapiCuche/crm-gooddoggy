@@ -2,12 +2,10 @@
 de tenant (`…/branches/`, F2-43 y F2-44)."""
 
 from typing import Any
-from uuid import UUID
 
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
-from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,7 +18,6 @@ from apps.organizations.branches import (
     TIMEZONE_MAX,
     BranchCodeTaken,
     create_branch,
-    update_branch,
 )
 from apps.organizations.models import Branch
 from apps.organizations.selectors import branches, organizations_for_user
@@ -63,10 +60,11 @@ class BranchSerializer(serializers.Serializer[Any]):
     is_active = serializers.BooleanField()
 
 
-class BranchUpdateSerializer(serializers.Serializer[Any]):
-    """Lo que se envía cambia; lo que no, se queda como está."""
-
-    name = serializers.CharField(max_length=NAME_MAX, required=False)
+class BranchCreateSerializer(serializers.Serializer[Any]):
+    code = serializers.CharField(
+        max_length=CODE_MAX, help_text="Se guarda en mayúsculas y no cambia después."
+    )
+    name = serializers.CharField(max_length=NAME_MAX)
     address = serializers.CharField(
         max_length=TEXT_MAX["address"], required=False, allow_blank=True
     )
@@ -78,10 +76,9 @@ class BranchUpdateSerializer(serializers.Serializer[Any]):
     timezone = serializers.CharField(
         max_length=TIMEZONE_MAX, required=False, help_text="Zona horaria, por su nombre IANA."
     )
-    is_active = serializers.BooleanField(required=False)
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
-        """El mismo criterio que los comandos, como un 400 por campo."""
+        """El mismo criterio que el comando, como un 400 por campo."""
         problems = {}
         for field, value in attrs.items():
             try:
@@ -92,14 +89,6 @@ class BranchUpdateSerializer(serializers.Serializer[Any]):
         if problems:
             raise serializers.ValidationError(problems)
         return attrs
-
-
-class BranchCreateSerializer(BranchUpdateSerializer):
-    code = serializers.CharField(
-        max_length=CODE_MAX, help_text="Se guarda en mayúsculas y no cambia después."
-    )
-    name = serializers.CharField(max_length=NAME_MAX)
-    is_active = None  # nace activa
 
 
 TAKEN = "Ya existe una sucursal con ese código en la organización."
@@ -140,28 +129,3 @@ class BranchesView(generics.ListAPIView):
         except BranchCodeTaken:
             raise ApiError("BRANCH_CODE_TAKEN", 409, TAKEN) from None
         return Response(BranchSerializer(branch).data, status=201)
-
-
-class BranchView(APIView):
-    """Una sucursal: `PATCH` cambia sus datos o la desactiva (`is_active`). No hay borrado."""
-
-    required_permissions = {"PATCH": "branches.manage"}
-
-    @extend_schema(
-        operation_id="branches_update",
-        tags=["branches"],
-        request=BranchUpdateSerializer,
-        responses={200: BranchSerializer, **errors(400, 401, 403, 404)},
-        description="Cambia lo que se envía; lo demás se queda como está, y el código no "
-        "cambia. 404: la sucursal no es de la organización.",
-    )
-    def patch(self, request: Request, branch_id: UUID, **kwargs: Any) -> Response:
-        wanted = BranchUpdateSerializer(data=request.data)
-        wanted.is_valid(raise_exception=True)
-        tenant = context.current()
-        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
-        try:
-            branch = update_branch(tenant, branch_id=branch_id, **wanted.validated_data)
-        except Branch.DoesNotExist:
-            raise NotFound from None
-        return Response(BranchSerializer(branch).data)
