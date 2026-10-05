@@ -8,11 +8,15 @@ import { branchesList, getBranchesListQueryKey } from "@/lib/api/client";
 import type { Branch } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
+import { BranchCreate } from "./branch-create";
+
 // Sucursales (F2-46): lo que devuelve `GET /api/v1/o/{slug}/branches/`, página a página. La
 // lista, sus estados y su foco son los de `CursorList`. Quién puede verlas lo decide la API.
 export function BranchesList() {
   const t = useTranslations();
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Comodidad: «Crear sucursal» se ofrece a quien la API dijo que tiene `branches.manage`.
+  const canManage = permissions.some((grant) => grant.code === "branches.manage");
   const listKey = [...getBranchesListQueryKey(organization.slug), "pages"];
 
   return (
@@ -23,6 +27,7 @@ export function BranchesList() {
       fetchPage={(cursor, signal) =>
         branchesList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
+      notice={canManage ? <BranchCreate slug={organization.slug} listKey={listKey} /> : null}
       empty={<p className="text-muted">{t("branches.empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] sm:items-start"
     >
