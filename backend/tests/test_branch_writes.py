@@ -1,14 +1,23 @@
 """F2-44: `POST …/branches/`, crear una sucursal, y el permiso `branches.manage`. Middleware,
 sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
+import zoneinfo
+from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
+from django.db import IntegrityError
 from django.test import Client
 
 from apps.access.catalog import BY_CODE, ROLE_TEMPLATES
-from apps.organizations.branches import BranchCodeTaken, create_branch
+from apps.organizations import branches
+from apps.organizations.branches import (
+    BranchCodeTaken,
+    _timezones,
+    branch_timezone,
+    create_branch,
+)
 from apps.organizations.models import Branch
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
@@ -84,7 +93,7 @@ def test_it_creates_an_active_branch_and_audits_it(
     label = "SELECT entity_label FROM audit_logs WHERE action = 'branch.created'"
     assert migrator.execute(label).fetchall() == [("LIM-01",)]
     assert ana.get(URL.format("org-a")).json()["results"] == [made.json()]
-    short = create(ana, {"code": "AQP", "name": "Arequipa"}).json()
+    short = create(ana, {"code": "AQP", "name": "Arequipa", "address": ""}).json()
     assert (short["timezone"], short["address"], short["phone"]) == ("America/Lima", "", "")
     assert set(audit(migrator)[-1][3]) == {"code", "name", "timezone"}  # lo vacío no se anota
 
@@ -100,10 +109,24 @@ def test_a_repeated_code_is_refused_and_writes_nothing(
         assert (taken.status_code, taken.json()["code"]) == (409, "BRANCH_CODE_TAKEN")
     assert migrator.execute(ROWS).fetchone() == before
     assert create(ana, {"code": "AQP", "name": "Arequipa"}).status_code == 201
-    with pytest.raises(BranchCodeTaken), tenant_scope(ctx(world.a)) as tenant:
-        create_branch(tenant, code="AQP", name="Otra")
-    with tenant_scope(ctx(world.a)) as tenant:  # el fallo no rompió la transacción de fuera
+    with tenant_scope(ctx(world.a)) as tenant:
+        with pytest.raises(BranchCodeTaken):
+            create_branch(tenant, code="AQP", name="Otra")
+        # el fallo no rompió la transacción de fuera: es esta misma
         assert create_branch(tenant, code="CUZ", name="Cusco").code == "CUZ"
+
+
+def test_without_its_audit_row_there_is_no_branch_and_another_error_is_not_a_taken_code(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unaudited(*args: Any, **kwargs: Any) -> None:
+        raise IntegrityError("otra restricción")
+
+    monkeypatch.setattr(branches, "record", unaudited)
+    with tenant_scope(ctx(world.a)) as tenant:
+        with pytest.raises(IntegrityError, match="otra"):
+            create_branch(tenant, code="LIM", name="Lima")
+        assert Branch.objects.count() == 0  # el savepoint se llevó la sucursal
 
 
 @pytest.mark.parametrize(
@@ -113,6 +136,8 @@ def test_a_repeated_code_is_refused_and_writes_nothing(
         ("code", "LIM 1"),
         ("code", "LIM--1"),
         ("code", "-LIM"),
+        ("code", "LIM-"),
+        ("code", "LIM_1"),
         ("code", "LÍM"),
         ("code", "l\u0131m"),  # una «ı» sin punto: `upper()` la haría «I»
         ("code", "stra\u00dfe"),  # «ß»: `upper()` la haría «SS»
@@ -124,6 +149,7 @@ def test_a_repeated_code_is_refused_and_writes_nothing(
         ("name", "Dos\nlíneas"),
         ("name", "Oculto\u200b"),
         ("name", "N" * 101),
+        ("name", "\ufb2c" * 40),  # 40 letras que en forma NFC son 120
         ("name", None),
         ("address", "Calle\t1"),
         ("address", "A" * 256),
@@ -135,6 +161,7 @@ def test_a_repeated_code_is_refused_and_writes_nothing(
         ("timezone", "america/lima"),
         ("timezone", "../../etc/passwd"),
         ("timezone", "America/ Lima"),
+        ("timezone", "Factory"),  # viene en tzdata y no es una zona
     ],
 )
 def test_a_field_that_does_not_fit_is_a_400_that_names_it(
@@ -169,17 +196,38 @@ def test_only_who_manages_branches_creates_and_only_in_their_organization(
         assert [row.code for row in Branch.objects.all()] == ["AQP"]
 
 
-def test_the_command_validates_for_callers_that_do_not_come_by_http(world: Any) -> None:
+def test_the_command_validates_for_callers_that_do_not_come_by_http(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
     with tenant_scope(ctx(world.a)) as tenant:
-        lima = create_branch(tenant, code="lim", name=" Lima ")
-        assert (lima.code, lima.name, lima.is_active) == ("LIM", "Lima", True)
+        lima = create_branch(tenant, code=" lim ", name=" Cafe\u0301\u00a0 de  Lima ")
+        assert (lima.code, lima.name, lima.is_active) == ("LIM", "Caf\u00e9 de Lima", True)
         for bad in (
             {"code": "CUZ"},  # sin nombre
             {"name": "Cusco"},  # sin código
             {"code": "CUZ", "name": "Cusco", "is_active": False},
             {"code": "CUZ", "name": "Cusco", "organization_id": world.b},
             {"code": "CUZ", "name": "Cusco", "timezone": "Lima"},
+            {"code": "C" * 21, "name": "Cusco"},
+            {"code": 7, "name": "Cusco"},  # lo que no es texto tampoco es otro error
+            {"code": "CUZ", "name": None},
+            {"code": "CUZ", "name": "Cusco", "timezone": ["UTC"]},
         ):
             with pytest.raises(ValueError):
                 create_branch(tenant, **bad)
         assert Branch.objects.count() == 1
+    assert audit(migrator)[0][3]["name"] == [None, "Caf\u00e9 de Lima"]  # lo que se guardó
+
+
+def test_a_file_among_the_zones_that_is_not_a_zone_is_refused(tmp_path: Path) -> None:
+    """Debian enlaza `localtime`, la hora del servidor, en la carpeta de las zonas."""
+    (tmp_path / "localtime").write_bytes(b"TZif")
+    zoneinfo.reset_tzpath(to=[str(tmp_path)])
+    _timezones.cache_clear()
+    try:
+        for name in ("localtime", "Factory"):
+            with pytest.raises(ValueError, match="desconocida"):
+                branch_timezone(name)
+    finally:
+        zoneinfo.reset_tzpath()
+        _timezones.cache_clear()

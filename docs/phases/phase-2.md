@@ -432,6 +432,7 @@ La sincronización del catálogo borra un código retirado solo si nadie lo tien
 ### OBS-F2-04-5 — Concesiones de las plantillas
 La matriz de [03 §H](../fase-0/03-tenancy-rbac-inbox-ia.md) no tiene filas para `organization.view`, `users.view`, `users.invite` ni `roles.view`. F2-04 asume mínimo privilegio: Owner, todo el catálogo; Administrador, `organization.view`, `users.view`, `users.manage`, `users.invite` y `roles.view`; Supervisor, `organization.view` y `users.view`; Vendedor, `organization.view`. Las plantillas Soporte, Marketing y Consulta se añadirán cuando el catálogo las distinga.
 - Pendiente de confirmación del PO.
+- Desde F2-44 (#146), Administrador lleva además `branches.manage` en las organizaciones nuevas (OBS-F2-44-1).
 
 ### OBS-F2-04-6 — Sin borrado lógico y un alcance por concesión
 Los roles no llevan `deleted_at` (convención [SD]): no hay flujo de borrado hasta E01-08. Un rol tiene un solo alcance por permiso; combinar `TEAM` y `BRANCH` sobre el mismo permiso requiere dos roles, y los permisos efectivos (F2-05A) unen los alcances de todos los roles.

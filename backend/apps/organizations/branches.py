@@ -23,6 +23,9 @@ CODE = re.compile(r"[A-Z0-9]+(-[A-Z0-9]+)*")  # la misma forma que impone la tab
 CODE_MAX, NAME_MAX, TIMEZONE_MAX = 20, 100, 64
 TEXT_MAX = {"address": 255, "district": 100, "city": 100, "phone": 32}
 DEFAULT_TIMEZONE = "America/Lima"
+# Están entre las zonas y no lo son: «Factory» es la marca de «sin configurar» y `localtime`,
+# el enlace de Debian a la hora del servidor.
+NOT_ZONES = frozenset({"Factory", "localtime"})
 
 
 class BranchCodeTaken(Exception):
@@ -61,7 +64,7 @@ def branch_name(value: str) -> str:
 
 @cache
 def _timezones() -> frozenset[str]:
-    return frozenset(zoneinfo.available_timezones())
+    return frozenset(zoneinfo.available_timezones()) - NOT_ZONES
 
 
 def branch_timezone(value: str) -> str:
@@ -87,6 +90,8 @@ def cleaned(fields: dict[str, Any]) -> dict[str, Any]:
     result = {}
     for field, value in fields.items():
         try:
+            if not isinstance(value, str):
+                raise ValueError("tiene que ser texto")
             result[field] = CLEAN[field](value)
         except ValueError as error:
             raise ValueError(f"{field}: {error}") from None
