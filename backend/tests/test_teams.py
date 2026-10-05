@@ -167,6 +167,7 @@ def test_the_database_rejects_a_repeated_slug_and_a_missing_organization(
     team(world.b, "ventas")  # el slug es único por organización, no global
     with pytest.raises(IntegrityError), tenant_scope(ctx(world.a)):
         Team.objects.create(slug="ventas", name="otro")
+    migrator.execute(INSERT, [world.a, "a" * 50, "MANUAL"])  # hasta 50 caracteres
     with pytest.raises(psycopg.errors.StringDataRightTruncation):
         migrator.execute(INSERT, [world.a, "a" * 51, "MANUAL"])
     with pytest.raises(psycopg.errors.ForeignKeyViolation):

@@ -170,6 +170,8 @@ SPECTACULAR_SETTINGS = {
         "MembershipStatusEnum": MEMBERSHIP_STATUSES,
         "ActiveOrSuspendedEnum": ["ACTIVE", "SUSPENDED"],  # los dos que la API cambia (F2-19)
         "ScopesEnum": "apps.access.catalog.Scope",  # un alcance: `scopes` (F2-11), `scope` (F2-22)
+        # `Team.Strategy` (F2-50): otra lista con el mismo nombre de campo no le cambia el nombre.
+        "AssignmentStrategyEnum": "apps.organizations.models.Team.Strategy",
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.

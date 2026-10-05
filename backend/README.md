@@ -132,7 +132,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 - `execution_context(ctx)`: membresía activa del usuario y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
 - `has_permission`, `can(ectx, code, obj)`, `require(...)` y `scoped(ectx, code, queryset)`: permiso, alcance sobre un objeto y filtro de listado. Todo dentro del `tenant_scope` del propio contexto.
 - `apps.access.scopes.register(Modelo, FieldScopes(...))`: cada modelo declara una vez sus columnas de propietario, equipo y sucursal, por el nombre de la columna (`assigned_user_id`, no `assigned_user`); de ahí salen el filtro y la verificación por objeto.
-- Todavía no hay equipos, y las sucursales (F2-43) aún no se enlazan a las membresías: `TEAM` y `BRANCH` equivalen a `OWN` (OBS-F2-05A-2).
+- Los equipos (F2-50) aún no tienen integrantes, y las sucursales (F2-43) aún no se enlazan a las membresías: `TEAM` y `BRANCH` equivalen a `OWN` (OBS-F2-05A-2).
 - El `ExecutionContext` es una foto de su transacción: usarlo en otro `tenant_scope` posterior falla; hay que recalcularlo.
 - Falla cerrado: un código de permiso inexistente lanza `UnknownPermission`; un modelo sin política lanza `ScopePolicyMissing`, también para quien tiene `ORGANIZATION`.
 

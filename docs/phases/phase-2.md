@@ -70,6 +70,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-47 | [#152](https://github.com/PapiCuche/crm-gooddoggy/issues/152) Create a branch from the branches screen | `feature/f2-branch-create-ui` | #146, #150 | frontend |
 | F2-48 | [#154](https://github.com/PapiCuche/crm-gooddoggy/issues/154) Shared fields form for write screens | `chore/f2-fields-form` | #152 | frontend |
 | F2-49 | [#156](https://github.com/PapiCuche/crm-gooddoggy/issues/156) Edit a branch from the branches screen | `feature/f2-branch-edit-ui` | #148, #154 | frontend |
+| F2-50 | [#158](https://github.com/PapiCuche/crm-gooddoggy/issues/158) Teams: table and directory by API | `feature/f2-teams-directory` | #144 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -416,7 +417,7 @@ La auditoría rechaza un decorador alrededor de `as_view()` (uno que responda an
 `execution_context` lee la membresía y sus concesiones una vez, dentro del `tenant_scope` de la petición. Revocar un rol surte efecto en la siguiente petición, no a mitad de una (coherente con ADR-003 §5). Sin caché. La foto queda ligada a su transacción: usarla en un `tenant_scope` posterior falla con `TenantContextError`, aunque el contexto sea igual. En DRF (F2-05B) la foto se guarda en la petición HTTP, así que la comparten todos los envoltorios `Request` que DRF crea para ella (por ejemplo al describir la vista en un OPTIONS).
 
 ### OBS-F2-05A-2 — TEAM y BRANCH equivalen a OWN hasta E01-09
-No existe la tabla de equipos, y la de sucursales (F2-43) aún no se enlaza a las membresías (OBS-F2-43-2). `ExecutionContext.team_ids` y `branch_ids` están vacíos, así que esos alcances nunca dan más que OWN. E01-09 debe rellenarlos en `execution_context` sin añadir una consulta por rol.
+La tabla de equipos (F2-50) aún no tiene integrantes (OBS-F2-50-1), y la de sucursales (F2-43) aún no se enlaza a las membresías (OBS-F2-43-2). `ExecutionContext.team_ids` y `branch_ids` están vacíos, así que esos alcances nunca dan más que OWN. E01-09 debe rellenarlos en `execution_context` sin añadir una consulta por rol.
 
 ### OBS-F2-05A-3 — La transacción de la petición se confirma aunque la vista falle
 ✅ Resuelta en F2-12 (#59): `TenantResolutionMiddleware` deshace la transacción de la petición cuando la respuesta es 400 o superior. Un servicio sigue comprobando antes de escribir, pero un error ya no deja escrituras a medias. Lo que sigue describe el estado anterior.
