@@ -45,8 +45,12 @@ export function TeamMemberRole({
   const name = fullName(member.user) || member.user.email;
   // Para saber a quién: dos personas pueden llamarse igual, y el correo las distingue.
   const exact = fullName(member.user) ? `${name} (${member.user.email})` : name;
+  // El panel ya enseña otra cosa que al enviar: lo guardado deja de valer, también si el papel
+  // vuelve al de antes por otro camino (una respuesta atrasada de un panel anterior).
+  if (saved && saved.from !== member.team_role) setSaved(null);
   const role = saved?.from === member.team_role ? saved.to : member.team_role;
-  const target = OTHER[role];
+  // Solo las claves propias: un código como `constructor` no es un papel conocido.
+  const target = Object.hasOwn(OTHER, role) ? OTHER[role] : undefined;
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
   const change = useTeamMembersPut({
     mutation: {
@@ -57,13 +61,17 @@ export function TeamMemberRole({
         const read = queryClient.getQueryState(membersKey);
         const rereading = !!read && read.fetchStatus !== "idle";
         await queryClient.cancelQueries({ queryKey: membersKey });
+        // La fila ya no está en el panel: se quitó con este envío en vuelo. `PUT` incorpora si
+        // hace falta, así que solo la API sabe si la persona sigue fuera: se vuelve a pedir.
+        const rows = queryClient.getQueryData<TeamMember[]>(membersKey);
+        const left = !!rows && !rows.some((row) => row.id === member.id);
         // La fila, como la respondió la API: su papel y lo demás, que es lo más reciente que hay.
         queryClient.setQueryData<TeamMember[]>(membersKey, (rows) =>
           rows?.map((row) => (row.id === member.id ? answer : row)),
         );
         setSaved({ from: member.team_role, to: answer.team_role });
         setDone(answer.team_role);
-        if (rereading) void queryClient.invalidateQueries({ queryKey: membersKey });
+        if (rereading || left) void queryClient.invalidateQueries({ queryKey: membersKey });
       },
       onError: (error) => {
         if (error.status === 404) onGone(t("stale", { name, team: team.name }));
@@ -88,6 +96,7 @@ export function TeamMemberRole({
         className="border-border min-h-11 border sm:min-h-9"
         aria-label={t(`to${target}Label`, { name: exact, team: team.name })}
         aria-disabled={busy}
+        aria-busy={busy}
         // Al terminar, este botón pasa a la acción contraria: el segundo clic de un doble clic
         // no debe deshacer lo recién hecho.
         onClick={(event) => {

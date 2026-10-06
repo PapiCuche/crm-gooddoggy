@@ -210,8 +210,8 @@ function Members({
 
 // Quién forma un equipo (F2-64), con `GET …/teams/{id}/members/` (F2-55). Nada se pide hasta
 // abrir el panel y cada apertura vuelve a preguntar. Quién puede verlo lo decide la API, que
-// exige ver equipos y ver personas. Sus escrituras son incorporar (F2-65, `TeamMemberAdd`) y
-// quitar (F2-66, `TeamMemberRemove`).
+// exige ver equipos y ver personas. Sus escrituras son incorporar (F2-65, `TeamMemberAdd`),
+// quitar (F2-66, `TeamMemberRemove`) y cambiar el papel (F2-67, `TeamMemberRole`).
 export function TeamMembersPanel({
   slug,
   team,
@@ -221,7 +221,7 @@ export function TeamMembersPanel({
 }: {
   slug: string;
   team: Team;
-  manages: boolean; // comodidad: quien administra equipos puede además incorporar y quitar
+  manages: boolean; // comodidad: quien administra equipos puede además escribir sus integrantes
   onAsk: () => void; // se abre el panel: el aviso anterior de la lista ya no aplica
   onStale: (notice: string, here: boolean) => void; // `here`: el foco seguía en esta tarjeta
 }) {

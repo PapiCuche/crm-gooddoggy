@@ -134,6 +134,18 @@ describe("TeamMemberRole", () => {
     expect(calls(api, "PUT")).toHaveLength(0);
   });
 
+  it.each(["constructor", "toString", "__proto__"])(
+    "un papel «%s» es desconocido: no se ofrece cambio",
+    async (code) => {
+      const strange = { ...luis, team_role: code };
+      mockApi(routes({ [MEMBERS]: page([ana, strange]) }));
+      renderApp(ui());
+      const panel = await panelOf();
+      expect(shown(panel, "Luis Paz")).toEqual(["Luis Paz", "luis@acme.pe", code]);
+      expect(within(row(panel, "Luis Paz")).getByRole("button")).toHaveTextContent("Quitar");
+    },
+  );
+
   it("envía una vez, la fila enseña el papel que respondió la API sin volver a pedir el panel y se anuncia", async () => {
     const api = mockApi(routes({ [ROLE("m2")]: answer(luis, "SUPERVISOR") }));
     renderApp(ui());
@@ -164,7 +176,9 @@ describe("TeamMemberRole", () => {
       JSON.stringify({ team_role: "SUPERVISOR" }), // y nada más
     ]);
     expect(shown(panel, "Luis Paz")).toEqual(["Luis Paz", "luis@acme.pe", "Supervisor"]);
-    expect(said(panel, "Luis Paz")).toBe("Luis Paz ahora es supervisor del equipo Ventas.");
+    expect(said(panel, "Luis Paz")).toBe(
+      "Luis Paz ahora tiene el papel de supervisor en el equipo Ventas.",
+    );
     expect(within(panel).getByRole("button", { name: DOWN })).toHaveFocus(); // el mismo botón
     expect(shown(panel, "Marta Ríos")).toEqual(["Marta Ríos", "marta@acme.pe", "Supervisor"]);
     expect(asked(api, "/api/v1/o/acme/teams/t2/members/?")).toBe(1); // el panel no se vuelve a pedir
@@ -178,7 +192,7 @@ describe("TeamMemberRole", () => {
     renderApp(ui());
     const panel = await panelOf();
     press(panel, UP);
-    await waitFor(() => expect(said(panel, "Luis Paz")).toMatch(/ahora es integrante/));
+    await waitFor(() => expect(said(panel, "Luis Paz")).toMatch(/papel de integrante/));
     expect(shown(panel, "Luis Paz")).toEqual([
       "Luis Paz",
       "luis@acme.pe",
@@ -191,7 +205,9 @@ describe("TeamMemberRole", () => {
     reply = answer(luis, "MEMBER");
     press(panel, DOWN);
     await within(panel).findByRole("button", { name: UP });
-    expect(said(panel, "Luis Paz")).toBe("Luis Paz ahora es integrante del equipo Ventas.");
+    expect(said(panel, "Luis Paz")).toBe(
+      "Luis Paz ahora tiene el papel de integrante en el equipo Ventas.",
+    );
     expect(calls(api, "PUT").map(([, init]) => (init as RequestInit).body)).toEqual([
       '{"team_role":"SUPERVISOR"}',
       '{"team_role":"SUPERVISOR"}',
@@ -269,6 +285,65 @@ describe("TeamMemberRole", () => {
     await waitFor(() => expect(lists()).toHaveLength(2)); // la lista de equipos, otra vez
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     expect(calls(api, "PUT")).toHaveLength(1);
+  });
+
+  it("si la fila se quita con el cambio en vuelo, el panel se vuelve a pedir: `PUT` pudo reincorporarla", async () => {
+    let members = [ana, luis];
+    const api = mockApi(
+      routes({
+        [MEMBERS]: () => page(members),
+        ["DELETE /api/v1/o/acme/teams/t2/members/m2/"]: { status: 204, body: undefined },
+        [ROLE("m2")]: { status: 201, body: { ...luis, team_role: "SUPERVISOR" } },
+      }),
+    );
+    renderApp(ui());
+    const panel = await panelOf();
+    press(panel, "Quitar a Luis Paz (luis@acme.pe) del equipo Ventas");
+    const removed = hold(api);
+    fireEvent.click(within(panel).getByRole("button", { name: "Sí, quitar" }));
+    await tick();
+    const changed = hold(api);
+    press(panel, UP); // la fila sigue ahí mientras se quita
+    await tick();
+    removed(); // la API quitó primero…
+    await within(panel).findByText("Luis Paz ya no está en el equipo Ventas.");
+    expect(within(panel).queryByText("Luis Paz")).not.toBeInTheDocument();
+    members = [ana, { ...luis, team_role: "SUPERVISOR" }]; // …y el `PUT` lo incorporó de nuevo (201)
+    changed();
+    await waitFor(() =>
+      expect(shown(panel, "Luis Paz")).toEqual(["Luis Paz", "luis@acme.pe", "Supervisor"]),
+    );
+    expect(panel).not.toHaveTextContent("ya no está en el equipo"); // dejó de ser verdad
+    expect(within(panel).getByText("2 integrantes")).toBeVisible();
+    expect(asked(api, "/api/v1/o/acme/teams/t2/members/?")).toBe(2);
+    expect(calls(api, "PUT")).toHaveLength(1);
+  });
+
+  it("si una respuesta atrasada de un panel anterior devuelve el papel de antes, el botón sigue a la fila", async () => {
+    let members = [ana, { ...luis, team_role: "SUPERVISOR" as const }];
+    let reply = answer(luis, "MEMBER");
+    const api = mockApi(routes({ [MEMBERS]: () => page(members), [ROLE("m2")]: () => reply }));
+    renderApp(ui());
+    const panel = await panelOf();
+    const late = hold(api); // la API lo aplica, pero su respuesta se atrasa
+    press(panel, DOWN);
+    await tick();
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
+    await tick();
+    members = [ana, luis];
+    fireEvent.click(screen.getByRole("button", { name: OPEN }));
+    const again = screen.getByRole("group", { name: PANEL });
+    reply = answer(luis, "SUPERVISOR");
+    await within(again).findByRole("button", { name: UP });
+    press(again, UP);
+    await within(again).findByRole("button", { name: DOWN });
+    reply = answer(luis, "MEMBER");
+    late(); // la respuesta del primer envío, sobre la fila
+    await waitFor(() => expect(shown(again, "Luis Paz")).toContain("Integrante"));
+    await tick();
+    // La fila dice «Integrante»: el botón no ofrece hacerlo integrante.
+    expect(within(again).getByRole("button", { name: UP })).toBeInTheDocument();
+    expect(within(again).queryByRole("button", { name: DOWN })).not.toBeInTheDocument();
   });
 
   it("si el panel se cierra y se reabre con el envío en vuelo, una lectura atrasada no devuelve el papel de antes", async () => {

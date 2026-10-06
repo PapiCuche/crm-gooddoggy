@@ -349,6 +349,8 @@ En el panel de integrantes, cada fila ofrece «Hacer supervisor» o «Hacer inte
 - **Errores, por `code`:** sin permiso, red y fallo del servidor, en la fila; el mismo botón reintenta. Sin sesión (401), `Providers` lleva al login.
 - **Pantalla desfasada (404):** el equipo o la persona ya no están al alcance. El panel se cierra, la lista de equipos se vuelve a pedir y lo explica el aviso de la lista.
 - **`PUT` incorpora si hace falta:** si otra persona quitó al integrante mientras el panel estaba abierto, cambiarle el papel lo vuelve a incorporar, con ese papel. La API no tiene una ruta que solo cambie.
+- **Si la fila se quita con el cambio en vuelo** («Quitar» en la misma fila), `PUT` puede llegar a la API después del borrado y volver a incorporar a la persona. Por eso, si al llegar su respuesta la fila ya no está en el panel, los integrantes se vuelven a pedir: solo la API sabe si la persona sigue fuera, y el anuncio de «Quitar» se retira si volvió a entrar.
+- **Si se cierra el panel con un cambio en vuelo**, la escritura sigue su curso; al reabrir, el panel pregunta de nuevo, y una lectura que salió antes de la respuesta no devuelve el papel de antes: se cancela y se vuelve a pedir. Si la lectura ya había llegado, la fila reabierta cambia al llegar la respuesta, sin anuncio. Si falla, solo un 404 avisa (en la lista, como siempre; si el panel se había reabierto, lo cierra); cualquier otro fallo no se dice.
 - **El papel no concede nada todavía:** ser supervisor de un equipo no da permisos sobre él (D-F2-12, abierta).
 
 ## Seguridad del navegador (F2-07)
