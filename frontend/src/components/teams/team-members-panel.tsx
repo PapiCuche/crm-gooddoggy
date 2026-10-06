@@ -18,7 +18,7 @@ import messages from "../../../messages/es-PE.json";
 const ROLES: Record<string, string> = messages.teams.members.role;
 const STATUSES: Record<string, string> = messages.members.status;
 const named = (names: Record<string, string>, code: string) =>
-  Object.hasOwn(names, code) ? names[code] : code;
+  Object.hasOwn(names, code) ? (names[code] ?? code) : code;
 
 // Todos los integrantes del equipo: el panel los enseña juntos, así que sigue el cursor.
 async function allMembers(slug: string, teamId: string, signal: AbortSignal) {
@@ -60,7 +60,8 @@ function Members({
       try {
         return await allMembers(slug, team.id, signal);
       } catch (error) {
-        if (error instanceof ApiError && error.status === 404) onGone();
+        // Una respuesta que llega con el panel ya cerrado no avisa de nada.
+        if (error instanceof ApiError && error.status === 404 && !signal.aborted) onGone();
         throw error;
       }
     },
@@ -75,9 +76,11 @@ function Members({
     setRetrying(true);
     const result = await members.refetch();
     setRetrying(false);
-    // El botón se va al llegar la lista: el foco, a «Cerrar», si seguía aquí o en ninguna parte.
+    // El botón se va al llegar la lista o una negativa: el foco, a «Cerrar», si seguía aquí o
+    // en ninguna parte.
     const active = document.activeElement;
-    if (result.isSuccess && (active === document.body || active === retryButton.current)) {
+    const left = result.isSuccess || result.error?.code === "PERMISSION_DENIED";
+    if (left && (active === document.body || active === retryButton.current)) {
       focusClose();
     }
   }
@@ -107,7 +110,7 @@ function Members({
                   <span>{named(ROLES, member.team_role)}</span>
                   {/* El estado en la organización, solo si no es el habitual. */}
                   {member.status === "ACTIVE" ? null : (
-                    <span>{named(STATUSES, member.status)}</span>
+                    <span>{t("status", { status: named(STATUSES, member.status) })}</span>
                   )}
                 </p>
               </li>

@@ -285,7 +285,7 @@ Cada tarjeta ofrece «Editar», que abre un formulario en la propia tarjeta y en
 - **La forma de asignar no se edita desde la pantalla.** Nada la aplica hasta el Inbox (Fase 6), y la pantalla no ofrece un ajuste sin efecto. La API ya admite cambiarla.
 - **Lo que se edita queda fijado al abrir:** si la lista cambia debajo, el formulario sigue enseñando lo que el usuario abrió. Los dos campos viajan siempre, con lo que había al abrir: si otra persona cambió la descripción mientras tanto y aquí solo se cambia el nombre, se guarda la descripción de antes.
 - **Éxito:** el formulario se cierra y la tarjeta enseña el nombre y la descripción que guardó la API, sin volver a pedir la lista; lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
-- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica («No se pudo guardar el equipo…: ya no está disponible»). No dice que el equipo se borró: no hay borrado de equipos, y la API responde igual si lo que dejó de estar al alcance es la organización o la membresía. Abrir «Editar», «Desactivar» o «Reactivar» (F2-63) o «Crear equipo» retira ese aviso; cancelar otro formulario, no.
+- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica («No se pudo guardar el equipo…: ya no está disponible»). No dice que el equipo se borró: no hay borrado de equipos, y la API responde igual si lo que dejó de estar al alcance es la organización o la membresía. Abrir «Editar», «Desactivar» o «Reactivar» (F2-63), «Integrantes» (F2-64) o «Crear equipo» retira ese aviso; cancelar otro formulario, no.
 - **«Editar» se distingue por equipo:** su nombre accesible lleva el nombre y el identificador («Editar el equipo Ventas (ventas)»), porque dos equipos pueden llamarse igual.
 
 ### Desactivar y reactivar un equipo (F2-63)
@@ -307,11 +307,11 @@ Cada tarjeta ofrece «Integrantes», que abre un panel en la propia tarjeta con 
 - **A quién se ofrece:** a quien tiene `teams.view` y `users.view` según el contexto de la API, los dos que exige la ruta: enseña personas. No hace falta `teams.manage`. Es comodidad: la API decide, y un 403 se explica en el panel, sin reintento.
 - **Nada se pide hasta abrir el panel**, y cada apertura vuelve a preguntar: la lectura vive en un componente que solo existe con el panel abierto, así que al cerrarlo se cancela y se olvida, y al reabrir no se enseñan los integrantes de la vez anterior.
 - **Se piden todas las páginas** (de 200 en 200) antes de enseñar nada. Un cursor que la API repite es un fallo, no una lista sin fin.
-- **Por integrante:** nombre y correo (solo el correo si no tiene nombre), su papel en el equipo («Integrante» o «Supervisor») y el estado de su membresía en la organización si no es «Activo». Un papel o un estado que esta versión no conozca se enseña con su código. Debajo, cuántos son; un equipo sin integrantes lo dice.
+- **Por integrante:** nombre y correo (solo el correo si no tiene nombre), su papel en el equipo («Integrante» o «Supervisor») y el estado de su membresía en la organización si no es «Activo» («Membresía: Suspendido»). Un papel o un estado que esta versión no conozca se enseña con su código. Debajo, cuántos son; un equipo sin integrantes lo dice.
 - **Lo que no enseña:** si el integrante participa en la asignación automática (`is_active`). Nada la aplica todavía (Inbox, Fase 6).
 - **Errores:** un fallo del servidor o de red se explica con «Reintentar», después del reintento automático de toda lectura. Sin sesión (401), `Providers` lleva al login.
 - **Pantalla desfasada (404):** el panel se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista, con su texto («No se pudieron ver los integrantes del equipo…»). Se retira como los de «Editar» y «Desactivar».
-- **Foco:** al abrir, a «Cerrar»; al cerrar, a «Integrantes»; nunca se le quita a quien ya está en otra parte. El nombre accesible lleva el nombre y el identificador del equipo.
+- **Foco:** al abrir, a «Cerrar»; al cerrar, a «Integrantes»; si «Reintentar» desaparece porque llegó la lista o una negativa, a «Cerrar»; con un 404, al título si seguía en la tarjeta; nunca se le quita a quien ya está en otra parte. El nombre accesible lleva el nombre y el identificador del equipo.
 
 ## Seguridad del navegador (F2-07)
 

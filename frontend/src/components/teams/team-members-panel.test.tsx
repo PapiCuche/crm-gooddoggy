@@ -137,8 +137,8 @@ describe("TeamMembersPanel", () => {
     expect(rows(panel)).toEqual([
       ["Luis Paz", "luis@acme.pe", "Supervisor"],
       ["sin-nombre@acme.pe", "Integrante"],
-      ["Eva", "eva@acme.pe", "Integrante", "Suspendido"], // el estado en la organización
-      ["raro@acme.pe", "LEAD", "Invitado"], // un papel que esta versión no conoce: su código
+      ["Eva", "eva@acme.pe", "Integrante", "Membresía: Suspendido"], // el de la organización
+      ["raro@acme.pe", "LEAD", "Membresía: Invitado"], // un papel que esta versión no conoce: su código
     ]);
     expect(within(panel).getByRole("status")).toHaveTextContent("4 integrantes");
     expect(panel).toHaveTextContent("Integrantes de Ventas");
@@ -146,7 +146,7 @@ describe("TeamMembersPanel", () => {
       expect(within(panel).getByText(text)).toHaveClass("wrap-anywhere"); // largo: se parte
     expect(asked(api)).toEqual(["/api/v1/o/acme/teams/t2/members/?limit=200"]); // el `id`
     expect(asked(api, "t1")).toEqual([]); // solo el equipo que se abrió
-    expect(panel.closest("div.w-full")).not.toBeNull(); // abierto ocupa su fila
+    expect(panel.parentElement).toHaveClass("w-full"); // abierto ocupa su fila
     expect(
       within(panel)
         .queryAllByRole("button")
@@ -190,6 +190,7 @@ describe("TeamMembersPanel", () => {
     expect(within(panel).queryByRole("list")).not.toBeInTheDocument(); // ni una lista vacía
     const close = within(panel).getByRole("button", { name: "Cerrar" });
     expect(fireEvent.keyDown(close, { key: "Enter", repeat: true })).toBe(false); // mantenido
+    expect(fireEvent.keyDown(close, { key: "Tab", repeat: true })).toBe(true); // solo Enter
     close.focus();
     fireEvent.click(close);
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
@@ -234,6 +235,47 @@ describe("TeamMembersPanel", () => {
     expect(within(panel).getByRole("button", { name: "Cerrar" })).toHaveFocus();
     expect(asked(api)).toHaveLength(3); // el fallo, su reintento automático y el del botón
     expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("si el reintento responde sin permiso o 404, el foco no se queda en ninguna parte", async () => {
+    let reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    mockApi({ [LIST]: list(), [MEMBERS("t2")]: () => reply, [MEMBERS("t1")]: () => reply });
+    renderApp(ui());
+    const panel = await opened();
+    const retry = await within(panel).findByRole("button", { name: "Reintentar" });
+    retry.focus();
+    reply = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    fireEvent.click(retry);
+    await within(panel).findByText(/No tienes permiso/);
+    expect(within(panel).getByRole("button", { name: "Cerrar" })).toHaveFocus(); // el botón se fue
+    reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    const other = await opened("Soporte", "soporte");
+    const again = await within(other).findByRole("button", { name: "Reintentar" });
+    again.focus(); // en la tarjeta del equipo que deja de estar
+    reply = { status: 404, body: { code: "NOT_FOUND" } };
+    fireEvent.click(again);
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+  });
+
+  it("cerrar a media lectura la cancela, y una respuesta tardía ni avisa ni mueve el foco", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [MEMBERS("t2")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    renderApp(ui());
+    const release = hold(api);
+    const panel = await opened();
+    await tick();
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
+    const sent = api.mock.calls.find(([url]) => String(url).includes("/members/"));
+    expect(sent?.[1]?.signal?.aborted).toBe(true); // la cancelación llega a `fetch`
+    release(); // el doble de `fetch` responde aunque se cancele
+    await tick();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(api.mock.calls.filter(([url]) => String(url) === "/api/v1/o/acme/teams/")).toHaveLength(
+      1,
+    );
+    expect(trigger()).toHaveFocus();
   });
 
   it("sin el permiso lo explica, sin reintento; sin red lo dice", async () => {
@@ -340,7 +382,7 @@ describe("TeamMembersPanel", () => {
     await within(sales).findByRole("list");
     await within(support).findByRole("list");
     expect(rows(sales)).toEqual([
-      ["<b>{team}</b>", "{count}@acme.pe", "constructor", "{x, plural}"],
+      ["<b>{team}</b>", "{count}@acme.pe", "constructor", "Membresía: {x, plural}"],
     ]);
     expect(rows(support)).toEqual([["Luis Paz", "luis@acme.pe", "Supervisor"]]);
     expect(card("Ventas")).toContainElement(sales);
