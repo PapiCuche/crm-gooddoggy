@@ -28,6 +28,8 @@ import type {
   Error,
   GrantScopeRequest,
   LoginRequest,
+  MemberBranch,
+  MemberBranchChangeRequest,
   MemberStatus,
   MemberStatusChangeRequest,
   MembersListParams,
@@ -1160,6 +1162,118 @@ export function useMembersList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getMembersSetBranchUrl = (orgSlug: string, membershipId: string) => {
+  return `/api/v1/o/${orgSlug}/members/${membershipId}/branch/`;
+};
+
+/**
+ * Asigna a un miembro su sucursal, la cambia o se la quita (`null`). Su sucursal es lo que
+ * alcanza una concesión con alcance `BRANCH`: las reglas son las de suspenderlo. Repetir la
+ * petición no cambia nada. 400: `branch_id` no es una sucursal de la organización. 403: sin
+ * `users.manage`, uno mismo, o un miembro con un rol que el actor no podría asignar.
+ */
+export const membersSetBranch = async (
+  orgSlug: string,
+  membershipId: string,
+  memberBranchChangeRequest: MemberBranchChangeRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MemberBranch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<MemberBranch>(getMembersSetBranchUrl(orgSlug, membershipId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(memberBranchChangeRequest),
+  });
+};
+
+export const getMembersSetBranchMutationKey = () => ["membersSetBranch"] as const;
+
+export const getMembersSetBranchMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof membersSetBranch>>,
+    TError,
+    MembersSetBranchMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof membersSetBranch>>,
+  TError,
+  MembersSetBranchMutationVariables,
+  TContext
+> => {
+  const mutationKey = getMembersSetBranchMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof membersSetBranch>>,
+    MembersSetBranchMutationVariables
+  > = (props) => {
+    const { orgSlug, membershipId, data } = props ?? {};
+
+    return membersSetBranch(orgSlug, membershipId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type MembersSetBranchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof membersSetBranch>>
+>;
+export type MembersSetBranchMutationBody = MemberBranchChangeRequest;
+export type MembersSetBranchMutationError = ErrorType<Error>;
+export type MembersSetBranchMutationVariables = {
+  orgSlug: string;
+  membershipId: string;
+  data: MemberBranchChangeRequest;
+};
+
+export const useMembersSetBranch = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof membersSetBranch>>,
+      TError,
+      MembersSetBranchMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof membersSetBranch>>,
+  TError,
+  MembersSetBranchMutationVariables,
+  TContext
+> => {
+  return useMutation(getMembersSetBranchMutationOptions(options), queryClient);
+};
 
 export const getMembersRolesAssignUrl = (orgSlug: string, membershipId: string, roleId: string) => {
   return `/api/v1/o/${orgSlug}/members/${membershipId}/roles/${roleId}/`;

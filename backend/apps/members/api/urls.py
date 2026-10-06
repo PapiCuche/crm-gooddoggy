@@ -8,4 +8,9 @@ urlpatterns = [
         views.MemberStatusView.as_view(),
         name="member-status",
     ),
+    path(
+        "members/<uuid:membership_id>/branch/",
+        views.MemberBranchView.as_view(),
+        name="member-branch",
+    ),
 ]

@@ -1,4 +1,5 @@
-"""Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19)."""
+"""Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19), y su
+sucursal (F2-69)."""
 
 from typing import Any
 from uuid import UUID
@@ -10,8 +11,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.access.permissions import rbac_errors
-from apps.members.services import ACTIVE, SUSPENDED, set_member_status
-from apps.organizations.services import InvalidTransition
+from apps.members.services import ACTIVE, SUSPENDED, set_member_branch, set_member_status
+from apps.organizations.services import InvalidTransition, UnknownBranch
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -53,3 +54,56 @@ class MemberStatusView(APIView):
             message = "Solo se suspende a un miembro activo y se reactiva a uno suspendido."
             raise ApiError("INVALID_TRANSITION", 409, message) from None
         return Response(MemberStatusSerializer({"id": membership_id, "status": status}).data)
+
+
+class MemberBranchChangeSerializer(serializers.Serializer[Any]):
+    branch_id = serializers.UUIDField(
+        allow_null=True,
+        help_text="La sucursal de la organización, o `null` para dejarlo sin ninguna.",
+    )
+
+
+class MemberBranchRefSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    code = serializers.CharField()
+    name = serializers.CharField()
+
+
+class MemberBranchSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField(help_text="Identificador de la membresía.")
+    default_branch = MemberBranchRefSerializer(allow_null=True)
+
+
+UNKNOWN_BRANCH = "No es una sucursal de esta organización."
+
+
+class MemberBranchView(APIView):
+    """Asigna a un miembro su sucursal, la cambia o se la quita (`null`). Su sucursal es lo que
+    alcanza una concesión con alcance `BRANCH`: las reglas son las de suspenderlo. Repetir la
+    petición no cambia nada. 400: `branch_id` no es una sucursal de la organización. 403: sin
+    `users.manage`, uno mismo, o un miembro con un rol que el actor no podría asignar."""
+
+    required_permissions = {"PUT": "users.manage"}
+
+    @extend_schema(
+        operation_id="members_set_branch",
+        tags=["members"],
+        request=MemberBranchChangeSerializer,
+        responses={200: MemberBranchSerializer, **errors(400, 401, 403, 404, 409)},
+    )
+    def put(self, request: Request, membership_id: UUID, **kwargs: Any) -> Response:
+        wanted = MemberBranchChangeSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                branch = set_member_branch(
+                    tenant,
+                    membership_id=membership_id,
+                    branch_id=wanted.validated_data["branch_id"],
+                )
+        except UnknownBranch:
+            raise serializers.ValidationError({"branch_id": [UNKNOWN_BRANCH]}) from None
+        row = {"id": membership_id, "default_branch": branch._asdict() if branch else None}
+        return Response(MemberBranchSerializer(row).data)
