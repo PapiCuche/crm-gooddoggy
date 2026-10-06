@@ -184,6 +184,16 @@
       "descriptionInvalid": "Esa descripción no sirve. Usa texto en una línea, de hasta 255 caracteres.",
       "denied": "No tienes permiso para crear equipos.",
       "done": "Equipo «{name}» creado, sin integrantes. Va al final de la lista."
+    },
+    "edit": {
+      "trigger": "Editar",
+      "triggerLabel": "Editar el equipo {team} ({slug})",
+      "title": "Editar {team}",
+      "submit": "Guardar",
+      "busy": "Guardando…",
+      "denied": "No tienes permiso para cambiar equipos.",
+      "done": "Equipo «{name}» guardado.",
+      "stale": "No se pudo guardar el equipo {team}: ya no está disponible. Revisa la lista."
     }
   },
   "branches": {
