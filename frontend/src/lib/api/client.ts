@@ -2811,3 +2811,91 @@ export const useTeamMembersPut = <TError = ErrorType<Error>, TContext = unknown>
 > => {
   return useMutation(getTeamMembersPutMutationOptions(options), queryClient);
 };
+
+export const getTeamMembersRemoveUrl = (orgSlug: string, teamId: string, membershipId: string) => {
+  return `/api/v1/o/${orgSlug}/teams/${teamId}/members/${membershipId}/`;
+};
+
+/**
+ * Quita a la membresía del equipo. 403: sin los dos permisos, o la membresía es la de quien hace la petición. 404: el equipo o la membresía no son de la organización, o la membresía no está en el equipo (también al repetir la petición).
+ */
+export const teamMembersRemove = async (
+  orgSlug: string,
+  teamId: string,
+  membershipId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getTeamMembersRemoveUrl(orgSlug, teamId, membershipId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getTeamMembersRemoveMutationKey = () => ["teamMembersRemove"] as const;
+
+export const getTeamMembersRemoveMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof teamMembersRemove>>,
+    TError,
+    TeamMembersRemoveMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof teamMembersRemove>>,
+  TError,
+  TeamMembersRemoveMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTeamMembersRemoveMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof teamMembersRemove>>,
+    TeamMembersRemoveMutationVariables
+  > = (props) => {
+    const { orgSlug, teamId, membershipId } = props ?? {};
+
+    return teamMembersRemove(orgSlug, teamId, membershipId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TeamMembersRemoveMutationResult = NonNullable<
+  Awaited<ReturnType<typeof teamMembersRemove>>
+>;
+
+export type TeamMembersRemoveMutationError = ErrorType<Error>;
+export type TeamMembersRemoveMutationVariables = {
+  orgSlug: string;
+  teamId: string;
+  membershipId: string;
+};
+
+export const useTeamMembersRemove = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof teamMembersRemove>>,
+      TError,
+      TeamMembersRemoveMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof teamMembersRemove>>,
+  TError,
+  TeamMembersRemoveMutationVariables,
+  TContext
+> => {
+  return useMutation(getTeamMembersRemoveMutationOptions(options), queryClient);
+};

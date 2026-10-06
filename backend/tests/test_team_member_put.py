@@ -60,7 +60,7 @@ def stored(org: UUID) -> list[tuple[Any, ...]]:
 def test_it_adds_a_member_and_audits_it(
     world: Any, ana: Client, luis: OrganizationMembership, migrator: psycopg.Connection[Any]
 ) -> None:
-    sales, support = team(world.a, "ventas"), team(world.a, "soporte")
+    sales, support = team(world.a, "ventas", name="Equipo comercial"), team(world.a, "soporte")
     assert own_teams(world.a, luis.user) == frozenset()
     body = {"organization_id": str(world.b), "team_id": str(support.pk), "status": "SUSPENDED"}
     added = put(ana, sales.pk, luis.pk, body)  # nada de eso se elige aquí
@@ -82,7 +82,7 @@ def test_it_adds_a_member_and_audits_it(
     who = {"membership_id": str(luis.pk)}
     assert audit(migrator) == [("team.member_added", "team", sales.pk, changes, who, world.ana.pk)]
     label = "SELECT entity_label FROM audit_logs"
-    assert migrator.execute(label).fetchall() == [("ventas",)]
+    assert migrator.execute(label).fetchall() == [("ventas",)]  # el `slug`, no el nombre
     assert own_teams(world.a, luis.user) == {sales.pk}  # el motor ya lo cuenta como suyo
     give(world.a, world.membership, {"teams.view": None})  # leerlos pide su propio permiso
     listed = ana.get(f"/api/v1/o/org-a/teams/{sales.pk}/members/").json()
@@ -247,7 +247,7 @@ def test_only_who_manages_teams_and_sees_members_writes_and_only_in_their_organi
         assert reply(put(client, theirs.pk, foreign.pk, {}, org)) == NOT_FOUND
         assert reply(put(client, mine.pk, luis.pk, {}, org)) == NOT_FOUND
     url = f"/api/v1/o/org-a/teams/{mine.pk}/members/{luis.pk}/"
-    for method in ("post", "patch", "delete", "get"):  # sobre un integrante solo hay `PUT`
+    for method in ("post", "patch", "get"):  # sobre un integrante, `PUT` y `DELETE` (F2-59)
         assert reply(send(client, method, url, {})) == DENIED
     assert client.put(url, {}, "application/json").status_code == 403  # sin token CSRF
     assert migrator.execute(ROWS).fetchone() == (0, 0)

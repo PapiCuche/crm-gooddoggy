@@ -498,7 +498,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
 
-## Equipos (F2-50, F2-52 a F2-55 y F2-58, E01-09)
+## Equipos (F2-50, F2-52 a F2-55, F2-58 y F2-59, E01-09)
 
 `GET /api/v1/o/{slug}/teams/` lista los equipos de la organización. Exige `teams.view` (sin él, 403; sin membresía activa, 404).
 
@@ -529,7 +529,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - Un campo que no sirve responde 400 `VALIDATION_ERROR` con su nombre en `fields`.
   - **Auditoría de tenant:** `team.created`, con lo que se guardó (sin los campos vacíos). La etiqueta de la entidad es el `slug`. Como toda la auditoría, pasa por el redactor (ADR-011): un texto con forma de secreto queda como `[REDACTED]` en la fila, también un `slug` con un tramo `sk-` seguido de 16 caracteres o más (`sk-soporte-ventas-norte`).
 - **`teams.manage`** está en el catálogo como lo lista 03 §H: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas; «Supervisor» no (D-F2-12, en la fase).
-- Los comandos (`create_team` y `update_team`, en `apps.organizations.teams`) no comprueban permisos, como los de sucursales: el mismo contrato de import-linter solo deja importarlos a la API del módulo.
+- Los comandos (`create_team`, `update_team`, `put_team_member` y `remove_team_member`, en `apps.organizations.teams`) no comprueban permisos, como los de sucursales: el mismo contrato de import-linter solo deja importarlos a la API del módulo.
 - **Editar (F2-54):** `PATCH /api/v1/o/{slug}/teams/{team_id}/` con cualquiera de `name`, `description`, `assignment_strategy` e `is_active` cambia lo que se envía y responde 200 con el equipo. Exige `teams.manage`. Valen las reglas de texto y de estrategia de crear. Desactivar es `{"is_active": false}`, y reactivar, `true`: solo los booleanos de JSON. 404 si el equipo no es de la organización.
   - **El `slug` no cambia:** un `slug` en el cuerpo se ignora, como cualquier campo desconocido.
   - **Sin cambios, no escribe.** Enviar lo que ya hay (o un cuerpo vacío) responde 200 y no deja fila de auditoría.
@@ -541,7 +541,13 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - **A quién:** cualquier membresía de la organización, en cualquier estado, y también en un equipo inactivo. 404 si el equipo o la membresía no son de la organización.
   - **Auditoría de tenant:** `team.member_added` y `team.member_updated` sobre el equipo, con el antes y el después y la membresía en `metadata.membership_id`.
   - **Lo que no comprueba:** qué gana el miembro incorporado. Quien tiene `teams.manage` y `users.view` decide a quién alcanza el alcance `TEAM` de cada equipo, también sin tener el permiso que el miembro gana: dos personas con esos permisos pueden incorporarse la una a la otra. Hoy no cambia ninguna respuesta, porque ningún permiso del catálogo admite alcance; es la decisión abierta D-F2-13.
-  - Quitar a un integrante: siguiente work item.
+- **Quitar a un miembro de un equipo (F2-59):** `DELETE /api/v1/o/{slug}/teams/{team_id}/members/{membership_id}/`. Responde 204, sin cuerpo.
+  - **Permisos:** `teams.manage` **y** `users.view`, los mismos que para incorporar. No exige `teams.view`: quien tiene esos dos sabe si una membresía está en un equipo (204 o 404; con `PUT`, 201 o 200) aunque no pueda listar sus integrantes.
+  - **Nadie se quita a sí mismo:** 403, exista o no el equipo, igual que nadie se incorpora.
+  - **404:** el equipo o la membresía no son de la organización, o la membresía no está en el equipo. Repetir la petición también responde 404.
+  - **No toca nada más:** ni la membresía, ni sus roles, ni sus otros equipos. La membresía puede volver al equipo con `PUT`, y entra como nueva.
+  - **Auditoría de tenant:** `team.member_removed` sobre el equipo, con el papel y el `is_active` que tenía y la membresía en `metadata.membership_id`.
+  - Toma el mismo bloqueo del equipo que `PUT`: quitar e incorporar a la vez se ponen en cola.
 - **Integrantes de un equipo (F2-55):** `GET /api/v1/o/{slug}/teams/{team_id}/members/` lista quién pertenece al equipo. Exige `teams.view` **y** `users.view` (F2-56): enseña un equipo y a personas. 404 si el equipo no es de la organización.
 
   ```json
@@ -563,8 +569,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - Se listan todos los integrantes: también con la membresía suspendida o invitada, y con la cuenta desactivada.
   - **Enseña personas, así que exige también `users.view`:** el nombre, el correo y el estado de la membresía son los mismos datos del directorio de miembros, y se protegen igual. A quien le falta uno de los dos permisos, 403, exista o no el equipo. No salen roles, permisos, contraseñas ni las otras organizaciones del usuario.
   - **Paginación:** por cursor, en orden de incorporación al equipo. Dos consultas para la lista (si el equipo existe, y sus integrantes con su membresía y su usuario), sean cuantos sean.
-- **Quitar integrantes por API** es el siguiente work item. Hasta entonces una pertenencia solo se quita desde código.
-- **Integrantes (`team_members`, F2-52):** qué membresías pertenecen a cada equipo, con su papel en él (`team_role`: `MEMBER` o `SUPERVISOR`) y si participan en la asignación automática (`is_active`). Tenant-owned, con RLS forzado. Las FK al equipo y a la membresía son compuestas con `organization_id`: la base de datos no deja enlazar un equipo de una organización con una membresía de otra. Un par equipo-membresía es único. Un equipo con integrantes no se borra, ni una membresía con equipos: antes hay que quitarlos. Los lee la ruta de F2-55 y los escribe la de F2-58; todavía no hay ruta que los quite.
+- **Integrantes (`team_members`, F2-52):** qué membresías pertenecen a cada equipo, con su papel en él (`team_role`: `MEMBER` o `SUPERVISOR`) y si participan en la asignación automática (`is_active`). Tenant-owned, con RLS forzado. Las FK al equipo y a la membresía son compuestas con `organization_id`: la base de datos no deja enlazar un equipo de una organización con una membresía de otra. Un par equipo-membresía es único. Un equipo con integrantes no se borra, ni una membresía con equipos: antes hay que quitarlos. Los lee la ruta de F2-55, los escribe la de F2-58 y los quita la de F2-59.
 - **Equipos propios en el motor de autorización:** `ExecutionContext.team_ids` son los equipos de la membresía de quien pide; se leen en la misma consulta que la membresía. Cuentan todos, también un equipo inactivo y una pertenencia con `is_active` en falso: esos dos datos hablan de la asignación, no de lo que alguien puede ver. `team_role` tampoco cambia el alcance. Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia todavía.
 - El selector `organizations.selectors.teams` filtra por organización, no por permiso: el permiso lo exige la vista.
 

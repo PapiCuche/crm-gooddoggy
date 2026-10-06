@@ -1306,6 +1306,55 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    delete:
+      operationId: team_members_remove
+      description: 'Quita a la membresía del equipo. 403: sin los dos permisos, o
+        la membresía es la de quien hace la petición. 404: el equipo o la membresía
+        no son de la organización, o la membresía no está en el equipo (también al
+        repetir la petición).'
+      parameters:
+      - in: path
+        name: membership_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: team_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - teams
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:

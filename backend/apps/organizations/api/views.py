@@ -1,5 +1,5 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50 y F2-53 a F2-55)."""
+de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50, F2-53 a F2-55, F2-58 y F2-59)."""
 
 from typing import Any
 from uuid import UUID
@@ -349,11 +349,14 @@ class TeamMemberPutSerializer(serializers.Serializer[Any]):
 
 
 class TeamMemberView(APIView):
-    """Un integrante de un equipo: `PUT` deja a esa membresía en el equipo (F2-58). Cambia a
-    quién alcanza una concesión con alcance `TEAM` y responde con una persona: exige
-    `teams.manage` y `users.view`."""
+    """Un integrante de un equipo: `PUT` deja a esa membresía en el equipo (F2-58) y `DELETE` la
+    quita (F2-59). Cambian a quién alcanza una concesión con alcance `TEAM` y tratan con una
+    persona: exigen `teams.manage` y `users.view`."""
 
-    required_permissions = {"PUT": ("teams.manage", "users.view")}
+    required_permissions = {
+        "PUT": ("teams.manage", "users.view"),
+        "DELETE": ("teams.manage", "users.view"),
+    }
 
     @extend_schema(
         operation_id="team_members_put",
@@ -383,3 +386,24 @@ class TeamMemberView(APIView):
         except team_commands.OwnTeamMembership:
             raise PermissionDenied from None
         return Response(TeamMemberSerializer(member).data, status=201 if new else 200)
+
+    @extend_schema(
+        operation_id="team_members_remove",
+        tags=["teams"],
+        responses={204: None, **errors(401, 403, 404)},
+        description="Quita a la membresía del equipo. 403: sin los dos permisos, o la membresía "
+        "es la de quien hace la petición. 404: el equipo o la membresía no son de la "
+        "organización, o la membresía no está en el equipo (también al repetir la petición).",
+    )
+    def delete(
+        self, request: Request, team_id: UUID, membership_id: UUID, **kwargs: Any
+    ) -> Response:
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            team_commands.remove_team_member(tenant, team_id=team_id, membership_id=membership_id)
+        except ObjectDoesNotExist:
+            raise NotFound from None
+        except team_commands.OwnTeamMembership:
+            raise PermissionDenied from None
+        return Response(status=204)
