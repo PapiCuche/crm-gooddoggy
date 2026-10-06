@@ -1,5 +1,5 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50 y F2-53 a F2-55)."""
+de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50, F2-53 a F2-55, F2-58 y F2-59)."""
 
 from typing import Any
 from uuid import UUID

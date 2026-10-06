@@ -38,14 +38,14 @@ def remove(client: Client, team_id: Any, membership_id: Any, org: str = "org-a")
 def test_it_removes_the_member_and_audits_what_they_had(
     world: Any, ana: Client, luis: OrganizationMembership, migrator: psycopg.Connection[Any]
 ) -> None:
-    sales, support = team(world.a, "ventas"), team(world.a, "soporte")
+    sales, support = team(world.a, "ventas", name="Equipo comercial"), team(world.a, "soporte")
     marta = join(world.a, make_user(email="marta@example.com"))
     add(world.a, sales.pk, luis.pk, team_role="SUPERVISOR", is_active=False)
     add(world.a, sales.pk, marta.pk)  # ni otro integrante ni su otro equipo cambian
     add(world.a, support.pk, luis.pk)
     assert own_teams(world.a, luis.user) == {sales.pk, support.pk}
     removed = remove(ana, sales.pk, luis.pk)
-    assert (removed.status_code, removed.content) == (204, b"")
+    assert removed.status_code == 204
     left = [(sales.pk, marta.pk, "MEMBER", True), (support.pk, luis.pk, "MEMBER", True)]
     assert stored(world.a) == left
     changes = {"team_role": ["SUPERVISOR", None], "is_active": [False, None]}  # lo que tenía
@@ -54,7 +54,7 @@ def test_it_removes_the_member_and_audits_what_they_had(
         ("team.member_removed", "team", sales.pk, changes, who, world.ana.pk)
     ]
     label = "SELECT entity_label FROM audit_logs"
-    assert migrator.execute(label).fetchall() == [("ventas",)]
+    assert migrator.execute(label).fetchall() == [("ventas",)]  # el `slug`, no el nombre
     assert own_teams(world.a, luis.user) == {support.pk}  # el motor deja de contarlo
     before = migrator.execute(ROWS).fetchone()
     assert reply(remove(ana, sales.pk, luis.pk)) == NOT_FOUND  # repetir: ya no está

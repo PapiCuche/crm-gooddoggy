@@ -529,7 +529,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - Un campo que no sirve responde 400 `VALIDATION_ERROR` con su nombre en `fields`.
   - **Auditoría de tenant:** `team.created`, con lo que se guardó (sin los campos vacíos). La etiqueta de la entidad es el `slug`. Como toda la auditoría, pasa por el redactor (ADR-011): un texto con forma de secreto queda como `[REDACTED]` en la fila, también un `slug` con un tramo `sk-` seguido de 16 caracteres o más (`sk-soporte-ventas-norte`).
 - **`teams.manage`** está en el catálogo como lo lista 03 §H: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas; «Supervisor» no (D-F2-12, en la fase).
-- Los comandos (`create_team` y `update_team`, en `apps.organizations.teams`) no comprueban permisos, como los de sucursales: el mismo contrato de import-linter solo deja importarlos a la API del módulo.
+- Los comandos (`create_team`, `update_team`, `put_team_member` y `remove_team_member`, en `apps.organizations.teams`) no comprueban permisos, como los de sucursales: el mismo contrato de import-linter solo deja importarlos a la API del módulo.
 - **Editar (F2-54):** `PATCH /api/v1/o/{slug}/teams/{team_id}/` con cualquiera de `name`, `description`, `assignment_strategy` e `is_active` cambia lo que se envía y responde 200 con el equipo. Exige `teams.manage`. Valen las reglas de texto y de estrategia de crear. Desactivar es `{"is_active": false}`, y reactivar, `true`: solo los booleanos de JSON. 404 si el equipo no es de la organización.
   - **El `slug` no cambia:** un `slug` en el cuerpo se ignora, como cualquier campo desconocido.
   - **Sin cambios, no escribe.** Enviar lo que ya hay (o un cuerpo vacío) responde 200 y no deja fila de auditoría.
@@ -542,7 +542,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - **Auditoría de tenant:** `team.member_added` y `team.member_updated` sobre el equipo, con el antes y el después y la membresía en `metadata.membership_id`.
   - **Lo que no comprueba:** qué gana el miembro incorporado. Quien tiene `teams.manage` y `users.view` decide a quién alcanza el alcance `TEAM` de cada equipo, también sin tener el permiso que el miembro gana: dos personas con esos permisos pueden incorporarse la una a la otra. Hoy no cambia ninguna respuesta, porque ningún permiso del catálogo admite alcance; es la decisión abierta D-F2-13.
 - **Quitar a un miembro de un equipo (F2-59):** `DELETE /api/v1/o/{slug}/teams/{team_id}/members/{membership_id}/`. Responde 204, sin cuerpo.
-  - **Permisos:** `teams.manage` **y** `users.view`, los mismos que para incorporar.
+  - **Permisos:** `teams.manage` **y** `users.view`, los mismos que para incorporar. No exige `teams.view`: quien tiene esos dos sabe si una membresía está en un equipo (204 o 404; con `PUT`, 201 o 200) aunque no pueda listar sus integrantes.
   - **Nadie se quita a sí mismo:** 403, exista o no el equipo, igual que nadie se incorpora.
   - **404:** el equipo o la membresía no son de la organización, o la membresía no está en el equipo. Repetir la petición también responde 404.
   - **No toca nada más:** ni la membresía, ni sus roles, ni sus otros equipos. La membresía puede volver al equipo con `PUT`, y entra como nueva.
