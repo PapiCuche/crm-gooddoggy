@@ -1,12 +1,13 @@
 """F2-54: `PATCH /api/v1/o/{slug}/teams/{id}/`, editar y desactivar un equipo. Middleware,
 sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
+import threading
 from typing import Any
 from uuid import uuid4
 
 import psycopg
 import pytest
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.test import Client
 
 from apps.organizations import teams
@@ -16,7 +17,7 @@ from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context, test_team_writes
 from tests.test_anti_escalation import audit, race
 from tests.test_authorization import give
-from tests.test_memberships import ctx
+from tests.test_memberships import ctx, raw
 from tests.test_self_context import NOT_FOUND, reply, signed
 from tests.test_team_writes import DENIED, ROWS, URL, send
 from tests.test_teams import team
@@ -101,6 +102,35 @@ def test_two_edits_at_once_queue_and_each_audits_what_it_found(
     assert len(audit(migrator)) == 3  # el segundo ya lo encontró activo: ni escribe ni audita
 
 
+def test_an_edit_in_flight_does_not_block_adding_a_member(world: Any) -> None:
+    """`FOR NO KEY UPDATE`: la FK de `team_members` solo pide `KEY SHARE` sobre el equipo."""
+    sales = team(world.a, "ventas")
+    held, release = threading.Event(), threading.Event()
+
+    def edit() -> None:
+        try:
+            with tenant_scope(ctx(world.a, world.ana)) as tenant:
+                update_team(tenant, team_id=sales.pk, name="Retenido")
+                held.set()  # ya escribió y aún no ha confirmado: conserva el bloqueo
+                release.wait(timeout=10)
+        finally:
+            held.set()
+            connection.close()
+
+    editing = threading.Thread(target=edit)
+    editing.start()
+    try:
+        assert held.wait(timeout=10)
+        with tenant_scope(ctx(world.a)):
+            raw("SET LOCAL lock_timeout = '2s'")
+            TeamMember.objects.create(team=sales, membership_id=world.membership)  # no espera
+    finally:
+        release.set()
+        editing.join(timeout=10)
+    with tenant_scope(ctx(world.a)):
+        assert (Team.objects.get().name, TeamMember.objects.count()) == ("Retenido", 1)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -130,7 +160,8 @@ def test_a_field_that_does_not_fit_is_a_400_that_names_it(
     assert list(refused.json()["fields"]) == [field]
     assert migrator.execute(ROWS).fetchone() == (1, 0)  # tampoco el campo que sí servía
     with tenant_scope(ctx(world.a)):
-        assert (Team.objects.get().name, Team.objects.get().is_active) == ("Ventas", True)
+        kept = Team.objects.get()
+        assert (kept.name, kept.description, kept.is_active) == ("Ventas", "", True)
 
 
 def test_only_who_manages_teams_edits_and_only_in_their_organization(

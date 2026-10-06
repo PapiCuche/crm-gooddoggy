@@ -197,7 +197,7 @@ E01-09 sigue con los equipos (F2-50, #158). Decisiones del programa autónomo (A
 
 Lo que `teams` no lleva todavía:
 - `business_hours_schedule_id`: no existen los horarios (E01-10).
-- `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado; un equipo se desactivará con `is_active`.
+- `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado; un equipo se desactiva con `is_active` (F2-54).
 - ✅ F2-53 (#164): crear por API y el permiso `teams.manage`, **sin alcance, como lo lista el catálogo de 03 §H**. Una versión anterior de esta nota daba por hecho que necesitaba alcance `TEAM`: era una inferencia de la matriz, no lo que dice el catálogo, y queda como decisión abierta D-F2-12. ✅ F2-54 (#166): editar, desactivar y reactivar; el `slug` no cambia, y desactivar un equipo no toca a sus integrantes ni su alcance. Gestionar los integrantes por API: siguiente work item.
 - ✅ F2-52 (#162): los integrantes (`team_members`) y `ExecutionContext.team_ids`. Decisiones de ese work item, a confirmar: para el alcance `TEAM` cuentan todos los equipos a los que pertenece la membresía, también los inactivos y con cualquier `team_role`; `last_assigned_at` y `skills` (modelo de datos §E.2) no se crean hasta que exista la asignación automática (Inbox, Fase 6); un equipo con integrantes no se borra, ni con el ORM (`PROTECT`) ni con SQL directo (la FK no borra en cascada): antes hay que quitarlos; lo mismo una membresía con equipos.
 
