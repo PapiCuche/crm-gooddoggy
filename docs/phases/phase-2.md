@@ -190,8 +190,9 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 Se registran como `OBS-F2-<nn>-<n>`.
 
 ### OBS-F2-57-1 — Un aviso nuevo puede poner en rojo `make check` sin que cambie el código
-El 2026-10-06 `pnpm audit --prod --audit-level=high` empezó a fallar en `main` por GHSA-68fv-2mgg-jv7q (CVE-2026-93749, `source-map-js` < 1.2.2, transitiva de `postcss` y `@tailwindcss/postcss`). Bloqueaba el gate y el CI de frontend de cualquier PR. F2-57 (#170) sube la transitiva a 1.2.2 en el lockfile, dentro del rango que ya pedían sus dependientes y sin `overrides`.
+El 2026-10-06 se detectó que `pnpm audit --prod --audit-level=high` fallaba en `main` por GHSA-68fv-2mgg-jv7q (CVE-2026-93749, `source-map-js` < 1.2.2). El aviso es del 2026-09-18, pero GitHub lo revisó el 2026-10-05 por la noche (UTC), y desde entonces lo reportan las herramientas. Bloqueaba el gate y el CI de frontend de cualquier PR. `source-map-js` es transitiva de `postcss` (por `next`, el único camino de producción, y por `@tailwindcss/postcss` y `vite`), de `@tailwindcss/node` y de `css-tree` (por `jsdom`). F2-57 (#170) la sube a 1.2.2 en el lockfile, dentro del rango `^1.2.1` que piden los cuatro y sin `overrides`.
 - Es el comportamiento buscado (ADR-012 §4: un parche de seguridad alto, lo antes posible), pero un aviso así detiene todo el trabajo hasta que se atiende: va primero, en su propio work item.
+- Queda un aviso alto que este gate no ve: `braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm), solo en dependencias de desarrollo (por `micromatch`) y sin versión corregida publicada. `pnpm audit` se ejecuta con `--prod`, así que no bloquea; revisar cuando exista el parche.
 
 ### OBS-F2-50-1 — Equipos: qué decidió el programa y qué falta
 E01-09 sigue con los equipos (F2-50, #158). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
