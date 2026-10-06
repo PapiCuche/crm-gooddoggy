@@ -12,21 +12,24 @@ import { cn } from "@/lib/utils";
 import messages from "../../../messages/es-PE.json";
 import { TeamCreate } from "./team-create";
 import { TeamEditAction } from "./team-edit-action";
+import { TeamMembersPanel } from "./team-members-panel";
 import { TeamStatusAction } from "./team-status-action";
 
 // Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
 const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
-// Equipos (F2-60 a F2-63): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
+// Equipos (F2-60 a F2-64): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
 export function TeamsList() {
   const t = useTranslations();
   const { organization, permissions } = useTenant();
   // Comodidad: las escrituras se ofrecen a quien la API dijo que tiene `teams.manage`.
   const canManage = permissions.some((grant) => grant.code === "teams.manage");
+  // Y los integrantes, a quien además de ver equipos ve a las personas, como exige la API.
+  const seesPeople = permissions.some((grant) => grant.code === "users.view");
   const listKey = [...getTeamsListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
-  // Una acción respondió que la pantalla ya no refleja a la API (F2-62, F2-63). El aviso vive
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-62 a F2-64). El aviso vive
   // aquí: el formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
   function stale(text: string, here: boolean) {
@@ -89,22 +92,34 @@ export function TeamsList() {
           >
             {t(team.is_active ? "teams.active" : "teams.inactive")}
           </p>
-          {canManage ? (
+          {canManage || seesPeople ? (
             <div className="flex flex-wrap items-start gap-2 sm:col-span-3">
-              <TeamEditAction
-                slug={organization.slug}
-                team={team}
-                listKey={listKey}
-                onAsk={ask}
-                onStale={stale}
-              />
-              <TeamStatusAction
-                slug={organization.slug}
-                team={team}
-                listKey={listKey}
-                onAsk={ask}
-                onStale={stale}
-              />
+              {canManage ? (
+                <>
+                  <TeamEditAction
+                    slug={organization.slug}
+                    team={team}
+                    listKey={listKey}
+                    onAsk={ask}
+                    onStale={stale}
+                  />
+                  <TeamStatusAction
+                    slug={organization.slug}
+                    team={team}
+                    listKey={listKey}
+                    onAsk={ask}
+                    onStale={stale}
+                  />
+                </>
+              ) : null}
+              {seesPeople ? (
+                <TeamMembersPanel
+                  slug={organization.slug}
+                  team={team}
+                  onAsk={ask}
+                  onStale={stale}
+                />
+              ) : null}
             </div>
           ) : null}
         </>
