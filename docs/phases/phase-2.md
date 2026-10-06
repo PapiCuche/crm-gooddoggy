@@ -75,6 +75,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-52 | [#162](https://github.com/PapiCuche/crm-gooddoggy/issues/162) Team members: table and own teams in the authorization engine | `feature/f2-team-members-model` | #158 | backend |
 | F2-53 | [#164](https://github.com/PapiCuche/crm-gooddoggy/issues/164) Teams: create by API | `feature/f2-teams-create-api` | #158 | backend |
 | F2-54 | [#166](https://github.com/PapiCuche/crm-gooddoggy/issues/166) Teams: edit and deactivate by API | `feature/f2-teams-update-api` | #164 | backend |
+| F2-57 | [#170](https://github.com/PapiCuche/crm-gooddoggy/issues/170) Frontend: source-map-js 1.2.2 (GHSA-68fv-2mgg-jv7q) | `fix/f2-source-map-js-advisory` | — | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -187,6 +188,10 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 ## Observaciones vivas (de revisiones)
 
 Se registran como `OBS-F2-<nn>-<n>`.
+
+### OBS-F2-57-1 — Un aviso nuevo puede poner en rojo `make check` sin que cambie el código
+El 2026-10-06 `pnpm audit --prod --audit-level=high` empezó a fallar en `main` por GHSA-68fv-2mgg-jv7q (CVE-2026-93749, `source-map-js` < 1.2.2, transitiva de `postcss` y `@tailwindcss/postcss`). Bloqueaba el gate y el CI de frontend de cualquier PR. F2-57 (#170) sube la transitiva a 1.2.2 en el lockfile, dentro del rango que ya pedían sus dependientes y sin `overrides`.
+- Es el comportamiento buscado (ADR-012 §4: un parche de seguridad alto, lo antes posible), pero un aviso así detiene todo el trabajo hasta que se atiende: va primero, en su propio work item.
 
 ### OBS-F2-50-1 — Equipos: qué decidió el programa y qué falta
 E01-09 sigue con los equipos (F2-50, #158). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
