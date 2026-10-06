@@ -224,6 +224,17 @@
         "MEMBER": "Integrante",
         "SUPERVISOR": "Supervisor"
       },
+      "setRole": {
+        "toSUPERVISOR": "Hacer supervisor",
+        "toMEMBER": "Hacer integrante",
+        "toSUPERVISORLabel": "Hacer supervisor a {name} en el equipo {team}",
+        "toMEMBERLabel": "Hacer integrante a {name} en el equipo {team}",
+        "busy": "Guardando…",
+        "doneSUPERVISOR": "{name} ahora es supervisor del equipo {team}.",
+        "doneMEMBER": "{name} ahora es integrante del equipo {team}.",
+        "denied": "No tienes permiso para cambiar los integrantes de los equipos.",
+        "stale": "No se pudo cambiar el papel de {name} en el equipo {team}: el equipo o la persona ya no están disponibles. Revisa la lista."
+      },
       "status": "Membresía: {status}",
       "denied": "No tienes permiso para ver los integrantes de los equipos.",
       "stale": "No se pudieron ver los integrantes del equipo {team}: ya no está disponible. Revisa la lista.",

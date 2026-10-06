@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import messages from "../../../messages/es-PE.json";
 import { TeamMemberAdd } from "./team-member-add";
 import { TeamMemberRemove } from "./team-member-remove";
+import { TeamMemberRole } from "./team-member-role";
 
 // Los papeles y los estados con nombre propio. Uno que esta versión no conozca se enseña con
 // su código: solo cuentan las claves propias del catálogo.
@@ -124,7 +125,16 @@ function Members({
                     <span>{t("status", { status: named(STATUSES, member.status) })}</span>
                   )}
                 </p>
-                {/* Nadie se quita a sí mismo: la API no lo deja, y aquí no se ofrece. */}
+                {/* Nadie cambia su propia pertenencia: la API no lo deja, y aquí no se ofrece. */}
+                {manages && member.id !== own ? (
+                  <TeamMemberRole
+                    slug={slug}
+                    team={team}
+                    member={member}
+                    membersKey={membersKey}
+                    onGone={onGone}
+                  />
+                ) : null}
                 {manages && member.id !== own ? (
                   <TeamMemberRemove
                     slug={slug}
