@@ -1235,6 +1235,77 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/teams/{team_id}/members/{membership_id}/:
+    put:
+      operationId: team_members_put
+      description: 'Incorpora a la membresía al equipo (201; `MEMBER` y activa si
+        no se envían) o, si ya estaba, cambia lo que se envía (200). Repetir la petición
+        no escribe nada. 403: sin los dos permisos, o la membresía es la de quien
+        hace la petición. 404: el equipo o la membresía no son de la organización.'
+      parameters:
+      - in: path
+        name: membership_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: team_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - teams
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamMemberPutRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMember'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMember'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:
@@ -1864,6 +1935,14 @@ components:
       - status
       - team_role
       - user
+    TeamMemberPutRequest:
+      type: object
+      description: Lo que se envía cambia; lo que no, se queda como está.
+      properties:
+        team_role:
+          $ref: '#/components/schemas/TeamRoleEnum'
+        is_active:
+          type: boolean
     TeamMemberUser:
       type: object
       properties:
