@@ -161,7 +161,8 @@ describe("TeamEditAction", () => {
     renderApp(ui());
     const form = await opened();
     // El anuncio ya está montado, vacío: un lector de pantalla lo oye cuando cambia.
-    const live = within(card("Ventas")).getByRole("status");
+    // La región de «Editar»: la primera de la tarjeta; la segunda es la del estado (F2-63).
+    const live = within(card("Ventas")).getAllByRole("status")[0]!;
     expect(live).toBeEmptyDOMElement();
     fill(form, { name: "  Ventas   Lima ", description: "  " });
     const release = hold(api);

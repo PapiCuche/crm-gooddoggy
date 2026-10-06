@@ -12,11 +12,12 @@ import { cn } from "@/lib/utils";
 import messages from "../../../messages/es-PE.json";
 import { TeamCreate } from "./team-create";
 import { TeamEditAction } from "./team-edit-action";
+import { TeamStatusAction } from "./team-status-action";
 
 // Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
 const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
-// Equipos (F2-60 a F2-62): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
+// Equipos (F2-60 a F2-63): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
 export function TeamsList() {
   const t = useTranslations();
@@ -25,8 +26,8 @@ export function TeamsList() {
   const canManage = permissions.some((grant) => grant.code === "teams.manage");
   const listKey = [...getTeamsListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
-  // Una acción respondió que la pantalla ya no refleja a la API (F2-62). El aviso vive aquí: el
-  // formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-62, F2-63). El aviso vive
+  // aquí: el formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
   function stale(text: string, here: boolean) {
     setNotice(text);
@@ -91,6 +92,13 @@ export function TeamsList() {
           {canManage ? (
             <div className="flex flex-wrap items-start gap-2 sm:col-span-3">
               <TeamEditAction
+                slug={organization.slug}
+                team={team}
+                listKey={listKey}
+                onAsk={ask}
+                onStale={stale}
+              />
+              <TeamStatusAction
                 slug={organization.slug}
                 team={team}
                 listKey={listKey}

@@ -194,6 +194,23 @@
       "denied": "No tienes permiso para cambiar equipos.",
       "done": "Equipo «{name}» guardado.",
       "stale": "No se pudo guardar el equipo {team}: ya no está disponible. Revisa la lista."
+    },
+    "status": {
+      "deactivate": "Desactivar",
+      "activate": "Reactivar",
+      "deactivateLabel": "Desactivar el equipo {team} ({slug})",
+      "activateLabel": "Reactivar el equipo {team} ({slug})",
+      "deactivateAsk": "¿Desactivar el equipo {team}? Seguirá en la lista como inactivo, con sus integrantes, y podrás reactivarlo.",
+      "activateAsk": "¿Reactivar el equipo {team}? Volverá a figurar como activo.",
+      "deactivateConfirm": "Sí, desactivar",
+      "activateConfirm": "Sí, reactivar",
+      "deactivateBusy": "Desactivando…",
+      "activateBusy": "Reactivando…",
+      "deactivateDone": "El equipo {team} quedó inactivo.",
+      "activateDone": "El equipo {team} quedó activo.",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para cambiar equipos.",
+      "stale": "No se pudo cambiar el equipo {team}: ya no está disponible. Revisa la lista."
     }
   },
   "branches": {
