@@ -1166,6 +1166,75 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/teams/{team_id}/members/:
+    get:
+      operationId: team_members_list
+      description: |-
+        Quién pertenece a un equipo, con su papel en él. Paginado por orden de incorporación
+        (ADR-016). Enseña un equipo y personas: exige `teams.view` y `users.view` (F2-56). 404: el
+        equipo no es de la organización.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: team_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - teams
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTeamMemberList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:
@@ -1490,6 +1559,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedTeamMemberList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamMember'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PatchedBranchUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está. El código
@@ -1749,6 +1832,63 @@ components:
       required:
       - name
       - slug
+    TeamMember:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 'Identificador de la membresía: el mismo del directorio de
+            miembros.'
+        status:
+          allOf:
+          - $ref: '#/components/schemas/MembershipStatusEnum'
+          description: |-
+            Estado de la membresía en la organización, no en el equipo.
+
+            * `INVITED` - INVITED
+            * `ACTIVE` - ACTIVE
+            * `SUSPENDED` - SUSPENDED
+            * `DEACTIVATED` - DEACTIVATED
+        team_role:
+          $ref: '#/components/schemas/TeamRoleEnum'
+        is_active:
+          type: boolean
+          description: Participa en la asignación automática del equipo. Todavía no
+            la aplica nada.
+        user:
+          $ref: '#/components/schemas/TeamMemberUser'
+      required:
+      - id
+      - is_active
+      - status
+      - team_role
+      - user
+    TeamMemberUser:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+      required:
+      - email
+      - first_name
+      - id
+      - last_name
+    TeamRoleEnum:
+      enum:
+      - MEMBER
+      - SUPERVISOR
+      type: string
+      description: |-
+        * `MEMBER` - Member
+        * `SUPERVISOR` - Supervisor
     User:
       type: object
       properties:
