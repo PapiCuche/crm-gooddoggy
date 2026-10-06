@@ -9,15 +9,18 @@ import type { AssignmentStrategyEnum, Team } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import messages from "../../../messages/es-PE.json";
+import { TeamCreate } from "./team-create";
 
 // Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
 const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
-// Equipos (F2-60): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
+// Equipos (F2-60, F2-61): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
 export function TeamsList() {
   const t = useTranslations();
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Comodidad: «Crear equipo» se ofrece a quien la API dijo que tiene `teams.manage`.
+  const canManage = permissions.some((grant) => grant.code === "teams.manage");
   const listKey = [...getTeamsListQueryKey(organization.slug), "pages"];
 
   return (
@@ -28,6 +31,7 @@ export function TeamsList() {
       fetchPage={(cursor, signal) =>
         teamsList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
+      notice={canManage ? <TeamCreate slug={organization.slug} listKey={listKey} /> : null}
       empty={<p className="text-muted">{t("teams.empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] sm:items-start"
     >

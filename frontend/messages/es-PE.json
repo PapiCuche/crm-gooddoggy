@@ -164,7 +164,27 @@
     "more": "Cargar más",
     "loadingMore": "Cargando más…",
     "loading": "Cargando equipos…",
-    "denied": "No tienes permiso para ver los equipos de esta organización."
+    "denied": "No tienes permiso para ver los equipos de esta organización.",
+    "create": {
+      "open": "Crear equipo",
+      "title": "Nuevo equipo",
+      "slug": "Identificador",
+      "slugHint": "Letras sin acento, cifras y guiones, hasta 50. Se guarda en minúsculas y no cambia después.",
+      "name": "Nombre",
+      "description": "Descripción (opcional)",
+      "strategyNote": "La asignación será manual.",
+      "submit": "Crear",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "slugRequired": "Escribe un identificador para el equipo.",
+      "nameRequired": "Escribe un nombre para el equipo.",
+      "slugTaken": "Ya hay un equipo con ese identificador. Elige otro.",
+      "slugInvalid": "Ese identificador no sirve. Usa letras sin acento, cifras y guiones entre ellas, hasta 50.",
+      "nameInvalid": "Ese nombre no sirve. Usa texto legible en una línea, de hasta 100 caracteres.",
+      "descriptionInvalid": "Esa descripción no sirve. Usa texto en una línea, de hasta 255 caracteres.",
+      "denied": "No tienes permiso para crear equipos.",
+      "done": "Equipo «{name}» creado, sin integrantes. Va al final de la lista."
+    }
   },
   "branches": {
     "eyebrow": "Good Doggy / Sucursales",

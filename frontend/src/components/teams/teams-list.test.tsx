@@ -73,7 +73,7 @@ describe("TeamsList", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Equipos");
     expect(screen.getByText("Los equipos de trabajo de Acme SAC.")).toBeVisible();
     expect(screen.queryByText("Esta organización todavía no tiene equipos.")).toBeNull();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument(); // solo lectura, una página
+    expect(screen.queryByRole("button")).not.toBeInTheDocument(); // sin `teams.manage`, una página
   });
 
   it("nombra cada forma de asignar, y enseña con su código la que no conoce", async () => {
