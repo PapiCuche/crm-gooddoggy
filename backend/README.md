@@ -132,7 +132,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 - `execution_context(ctx)`: membresía activa del usuario, sus equipos (`team_ids`, F2-52), su sucursal (`branch_ids`, F2-68: vacío si no tiene) y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
 - `has_permission`, `can(ectx, code, obj)`, `require(...)` y `scoped(ectx, code, queryset)`: permiso, alcance sobre un objeto y filtro de listado. Todo dentro del `tenant_scope` del propio contexto.
 - `apps.access.scopes.register(Modelo, FieldScopes(...))`: cada modelo declara una vez sus columnas de propietario, equipo y sucursal, por el nombre de la columna (`assigned_user_id`, no `assigned_user`); de ahí salen el filtro y la verificación por objeto.
-- `TEAM` alcanza los recursos de los equipos a los que pertenece la membresía (`team_members`, F2-52), además de lo propio. `BRANCH` alcanza los recursos de la sucursal de la membresía (`organization_memberships.default_branch_id`, F2-68), además de lo propio; sin sucursal, equivale a `OWN`. Ninguna ruta asigna todavía esa sucursal.
+- `TEAM` alcanza los recursos de los equipos a los que pertenece la membresía (`team_members`, F2-52), además de lo propio. `BRANCH` alcanza los recursos de la sucursal de la membresía (`organization_memberships.default_branch_id`, F2-68), además de lo propio; sin sucursal, equivale a `OWN`. La asigna `PUT …/members/{id}/branch/` (F2-69).
 - El `ExecutionContext` es una foto de su transacción: usarlo en otro `tenant_scope` posterior falla; hay que recalcularlo.
 - Falla cerrado: un código de permiso inexistente lanza `UnknownPermission`; un modelo sin política lanza `ScopePolicyMissing`, también para quien tiene `ORGANIZATION`.
 
@@ -340,7 +340,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Qué no incluye:** contraseña, marcas de plataforma ni las otras organizaciones del usuario. La tabla `users` es global: el listado sale de `organization_memberships` (RLS con FORCE) y solo une los usuarios de esas filas.
 - **Roles:** identificador, código y nombre. El código y el nombre, para mostrar; el identificador es el que piden las rutas que asignan o quitan el rol («Roles de un miembro»). Nada decide por ellos. Se ven con `users.view`, sin `roles.view`: quién tiene qué rol es dato del directorio; lo que concede cada rol no sale aquí.
 - **Paginación:** por cursor, en orden de alta (`?limit=`, `?cursor=`; ver «Listados»). Dos consultas por página, sean cuantos sean los miembros: las membresías con su usuario y los roles de esa página.
-- **Solo lectura.** Suspender y reactivar, y asignar o quitar roles, están en las secciones siguientes; invitar es otro work item (E01-06).
+- **Solo lectura.** Suspender y reactivar, asignar o quitar roles y asignar la sucursal están en las secciones siguientes; el directorio no enseña todavía la sucursal de cada miembro; invitar es otro work item (E01-06).
 - `apps.access` lee las membresías con `apps.get_model`, como el motor de autorización: los módulos de L2 no se importan entre sí. Los selectores `memberships` y `roles_by_membership` filtran por organización, no por permiso: `users.view` lo exige la vista (`HasPermission` y `ScopeFilter`), y otra vista que los use declara el suyo.
 
 ## Directorio de roles (F2-22, ADR-016)
@@ -456,6 +456,19 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Auditoría de tenant:** `membership.suspended` y `membership.reactivated`, con el actor y el antes y el después, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización), después a `organizations.services.set_membership_status` (escritura y auditoría) y, al suspender, a `accounts.services.revoke_sessions`. `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
 
+## La sucursal de un miembro (F2-69, ADR-017)
+
+`PUT /api/v1/o/{slug}/members/{id}/branch/` con `{"branch_id": "<uuid>"}` deja a la membresía con esa sucursal; con `{"branch_id": null}`, sin ninguna. Responde `{"id": "…", "default_branch": {"id", "code", "name"} | null}`. Exige el permiso `users.manage`.
+
+- **Efecto:** la sucursal de una membresía es lo que alcanza una concesión con alcance `BRANCH` (`ExecutionContext.branch_ids`, F2-68), desde la siguiente petición del miembro. Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia todavía.
+- **Reglas, las de suspender:** nadie cambia la suya; el actor debe cubrir todas las concesiones de todos los roles del miembro. Quitar la sucursal exige lo mismo que ponerla. No hace falta ser Owner para un miembro que el actor cubre.
+- **Lo que no comprueba:** de qué sucursal es cada concesión `BRANCH`. Quien tiene un permiso con alcance `BRANCH`, en su sucursal o sin tener ninguna, cubre el del miembro y puede llevarlo a cualquier otra, también a una que él no alcanza. Hoy no cambia ninguna respuesta, porque ningún permiso del catálogo admite alcance; es la parte abierta de D-F2-13.
+- **La sucursal** tiene que ser de la organización: se busca dentro del tenant antes de escribir. No se mira si está activa ni el estado de la membresía.
+- **Repetir** la petición responde 200 con lo mismo y no escribe ni audita.
+- **Errores:** 400 `VALIDATION_ERROR` en `branch_id` si falta, no es un UUID o `null`, o no es una sucursal de la organización (una de otra organización responde igual que una que no existe); 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un miembro que el actor no cubre; no dice cuál); 404 si la membresía no es de la organización, sea cual sea la sucursal; 409 `LAST_OWNER` si la organización no tiene rol Owner. Sin el permiso, 403 antes de mirar nada.
+- **Auditoría de tenant:** `membership.branch_changed`, con el actor, el antes y el después (`default_branch`) y el código de la sucursal nueva en `metadata.branch`, en la misma transacción que el cambio.
+- **Módulos:** `apps.members.services.set_member_branch` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización) y después a `organizations.services.set_membership_branch` (escritura y auditoría), que devuelve la sucursal como `BranchRef`: `members` no importa los modelos de `organizations`.
+
 ## Sucursales (F2-43 a F2-45 y F2-68, E01-09)
 
 `GET /api/v1/o/{slug}/branches/` lista las sucursales de la organización. Exige `organization.view` (sin él, 403; sin membresía activa, 404).
@@ -497,7 +510,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - **`branches.manage`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas.
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más.
-- **Sucursal de una membresía (F2-68):** `organization_memberships.default_branch_id`, opcional. La FK es compuesta con `organization_id`: la base de datos no deja dar a una membresía la sucursal de otra organización. Una sucursal con membresías no se borra, ni con el ORM (`PROTECT`) ni con SQL directo. De ahí sale `ExecutionContext.branch_ids`, leído en la misma consulta que la membresía: una sola sucursal, que cuenta también si está inactiva (`is_active` habla de la operación, no de lo que alguien puede ver). Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia. Asignarla por API: siguiente work item.
+- **Sucursal de una membresía (F2-68):** `organization_memberships.default_branch_id`, opcional. La FK es compuesta con `organization_id`: la base de datos no deja dar a una membresía la sucursal de otra organización. Una sucursal con membresías no se borra, ni con el ORM (`PROTECT`) ni con SQL directo. De ahí sale `ExecutionContext.branch_ids`, leído en la misma consulta que la membresía: una sola sucursal, que cuenta también si está inactiva (`is_active` habla de la operación, no de lo que alguien puede ver). Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia. La asigna `PUT …/members/{id}/branch/` (F2-69, «La sucursal de un miembro»).
 
 ## Equipos (F2-50, F2-52 a F2-55, F2-58 y F2-59, E01-09)
 
