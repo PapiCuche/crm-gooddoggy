@@ -360,8 +360,51 @@ describe("TeamMemberRemove", () => {
     expect(within(panel).queryByText(/se incorporó/)).not.toBeInTheDocument();
     fireEvent.click(within(panel).getByRole("button", { name: add }));
     await waitFor(() => expect(names(panel)).toEqual(["Ana López", "Luis Paz"]));
+    await tick(); // y esta vez se queda: aquel «Quitar» ya se atendió
+    expect(within(panel).getByText("Ya está en el equipo")).toBeVisible();
+    expect(within(panel).getByText(/se incorporó/)).toBeVisible();
     expect(calls(api, "PUT")).toHaveLength(2);
     expect(calls(api, "DELETE")).toHaveLength(1);
+  });
+
+  it("quitar a uno de los que entraron desde la lista no toca a los demás, ni a un tocayo", async () => {
+    const twin = person("m7", "luis.paz@otra.pe", "Luis", "Paz");
+    const directory = [ana, bare, luis, twin].map((member) => ({
+      ...member,
+      joined_at: "",
+      roles: [],
+    }));
+    const put = (member: TeamMember) => [
+      `PUT /api/v1/o/acme/teams/t2/members/${member.id}/`,
+      { status: 201, body: member },
+    ];
+    mockApi(
+      routes({
+        [MEMBERS]: page([ana]),
+        [REMOVE("m2")]: NO_CONTENT,
+        [REMOVE("m6")]: NO_CONTENT,
+        "GET /api/v1/o/acme/members/?limit=200": page(directory),
+        ...Object.fromEntries([bare, luis, twin].map(put)),
+      }),
+    );
+    renderApp(ui());
+    const panel = await panelOf();
+    fireEvent.click(within(panel).getByRole("button", { name: /^Incorporar integrantes/ }));
+    const BARE = "sin-nombre@acme.pe";
+    for (const who of [BARE, "Luis Paz (luis@acme.pe)", "Luis Paz (luis.paz@otra.pe)"]) {
+      const add = `Incorporar a ${who} al equipo Ventas`;
+      fireEvent.click(await within(panel).findByRole("button", { name: add }));
+      await within(panel).findByRole("button", { name: `Quitar a ${who} del equipo Ventas` });
+    }
+    const marks = () => within(panel).queryAllByText("Ya está en el equipo");
+    const said = () => within(panel).queryByText("Luis Paz se incorporó al equipo Ventas.");
+    fireEvent.click(within(ask(panel)).getByRole("button", { name: "Sí, quitar" })); // el primero
+    await waitFor(() => expect(marks()).toHaveLength(2));
+    expect(said()).toBeVisible(); // el anuncio es del segundo Luis Paz, que sigue en el equipo
+    const other = ask(panel, `Quitar a ${BARE} del equipo Ventas`);
+    fireEvent.click(within(other).getByRole("button", { name: "Sí, quitar" }));
+    await waitFor(() => expect(marks()).toHaveLength(1));
+    expect(said()).toBeVisible();
   });
 
   it("una confirmación abierta sigue con su persona y con su foco cuando otra fila deja el panel", async () => {
@@ -418,4 +461,37 @@ describe("TeamMemberRemove", () => {
       expect(calls(api, "DELETE")).toHaveLength(1);
     },
   );
+
+  it("dos «Quitar» atendidos en el mismo render devuelven el botón a los dos", async () => {
+    const directory = [ana, luis, bare].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const api = mockApi(
+      routes({
+        [MEMBERS]: page([ana]),
+        "GET /api/v1/o/acme/members/?limit=200": page(directory),
+        "PUT /api/v1/o/acme/teams/t2/members/m2/": { status: 201, body: luis },
+        "PUT /api/v1/o/acme/teams/t2/members/m6/": { status: 201, body: bare },
+      }),
+    );
+    renderApp(ui());
+    const panel = await panelOf();
+    fireEvent.click(within(panel).getByRole("button", { name: /^Incorporar integrantes/ }));
+    const both = [LUIS, "Quitar a sin-nombre@acme.pe del equipo Ventas"];
+    for (const remove of both) {
+      const add = remove.replace("Quitar", "Incorporar").replace(" del ", " al ");
+      fireEvent.click(await within(panel).findByRole("button", { name: add }));
+      await within(panel).findByRole("button", { name: remove });
+    }
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    api.mockImplementation(() => gate.then(() => new Response(null, { status: 204 })));
+    for (const remove of both) {
+      fireEvent.click(within(ask(panel, remove)).getByRole("button", { name: "Sí, quitar" }));
+    }
+    await tick(); // los dos envíos ya salieron
+    release();
+    await waitFor(() => expect(names(panel)).toEqual(["Ana López"]));
+    expect(within(panel).queryByText("Ya está en el equipo")).not.toBeInTheDocument();
+    expect(within(panel).getAllByRole("button", { name: /^Incorporar a / })).toHaveLength(2);
+    expect(calls(api, "DELETE")).toHaveLength(2);
+  });
 });
