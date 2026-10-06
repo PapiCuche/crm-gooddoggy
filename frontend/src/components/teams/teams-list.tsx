@@ -18,7 +18,7 @@ import { TeamStatusAction } from "./team-status-action";
 // Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
 const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
-// Equipos (F2-60 a F2-64): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
+// Equipos (F2-60 a F2-65): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
 export function TeamsList() {
   const t = useTranslations();
@@ -29,7 +29,7 @@ export function TeamsList() {
   const seesPeople = permissions.some((grant) => grant.code === "users.view");
   const listKey = [...getTeamsListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
-  // Una acción respondió que la pantalla ya no refleja a la API (F2-62 a F2-64). El aviso vive
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-62 a F2-65). El aviso vive
   // aquí: el formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
   function stale(text: string, here: boolean) {
@@ -116,6 +116,7 @@ export function TeamsList() {
                 <TeamMembersPanel
                   slug={organization.slug}
                   team={team}
+                  manages={canManage}
                   onAsk={ask}
                   onStale={stale}
                 />
