@@ -38,6 +38,7 @@ const member = (id: string, roles: Role[] = [], status: Member["status"] = "ACTI
   id,
   status,
   joined_at: "2026-10-04T15:49:34Z",
+  default_branch: null,
   user: { id: `u-${id}`, email: `${id}@acme.pe`, first_name: "", last_name: "" },
   roles: roles.map(({ id: roleId, code, name }) => ({ id: roleId, code, name })),
 });

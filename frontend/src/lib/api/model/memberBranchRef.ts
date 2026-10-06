@@ -6,6 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
+/**
+ * La sucursal de un miembro: lo justo para nombrarla. La comparte `apps.members` (F2-69).
+ */
 export interface MemberBranchRef {
   id: string;
   code: string;

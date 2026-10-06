@@ -20,6 +20,7 @@ const member = (id: string, extra: Partial<Member> = {}): Member => ({
   id,
   status: "ACTIVE",
   joined_at: "2026-10-04T15:49:34Z",
+  default_branch: null,
   user: { id: `u-${id}`, email: `${id}@acme.pe`, first_name: "", last_name: "" },
   roles: [],
   ...extra,

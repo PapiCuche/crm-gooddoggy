@@ -184,12 +184,13 @@ def organization_of(ectx: ExecutionContext) -> dict[str, object]:
 
 
 def memberships(ectx: ExecutionContext) -> QuerySet[Any]:
-    """Las membresías de la organización, con su usuario. Las filtra RLS; quién puede verlas lo
-    decide el permiso de la vista (`ScopeFilter`)."""
+    """Las membresías de la organización, con su usuario y su sucursal (F2-70) en la misma
+    consulta. Las filtra RLS; quién puede verlas lo decide el permiso de la vista
+    (`ScopeFilter`)."""
     bound(ectx)
     rows = apps.get_model("organizations", "OrganizationMembership")._default_manager
-    found: QuerySet[Any] = rows.using(require_scope(ectx.tenant)).select_related("user")
-    return found
+    found: QuerySet[Any] = rows.using(require_scope(ectx.tenant))
+    return found.select_related("user", "default_branch")
 
 
 def roles_by_membership(ectx: ExecutionContext, members: Iterable[UUID]) -> dict[UUID, list[Any]]:

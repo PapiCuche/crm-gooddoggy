@@ -10,6 +10,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.access.api.views import MemberBranchRefSerializer
 from apps.access.permissions import rbac_errors
 from apps.members.services import ACTIVE, SUSPENDED, set_member_branch, set_member_status
 from apps.organizations.services import InvalidTransition, UnknownBranch
@@ -61,12 +62,6 @@ class MemberBranchChangeSerializer(serializers.Serializer[Any]):
         allow_null=True,
         help_text="La sucursal de la organización, o `null` para dejarlo sin ninguna.",
     )
-
-
-class MemberBranchRefSerializer(serializers.Serializer[Any]):
-    id = serializers.UUIDField()
-    code = serializers.CharField()
-    name = serializers.CharField()
 
 
 class MemberBranchSerializer(serializers.Serializer[Any]):
