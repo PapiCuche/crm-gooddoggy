@@ -1171,7 +1171,8 @@ export const getMembersSetBranchUrl = (orgSlug: string, membershipId: string) =>
  * Asigna a un miembro su sucursal, la cambia o se la quita (`null`). Su sucursal es lo que
  * alcanza una concesión con alcance `BRANCH`: las reglas son las de suspenderlo. Repetir la
  * petición no cambia nada. 400: `branch_id` no es una sucursal de la organización. 403: sin
- * `users.manage`, uno mismo, o un miembro con un rol que el actor no podría asignar.
+ * `users.manage`, uno mismo, o un miembro con un rol que el actor no podría asignar. 409
+ * `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
  */
 export const membersSetBranch = async (
   orgSlug: string,

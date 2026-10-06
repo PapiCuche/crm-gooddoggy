@@ -7,8 +7,9 @@ y audita. Una denegación no escribe nada. `is_owner_role` solo identifica al ro
 tres restricciones (permisos sensibles, último Owner y que sus concesiones no se editan); por
 sí solo no concede nada.
 
-`ensure_can_manage_member` aplica las mismas reglas al estado de una membresía, que escribe
-`organizations` (F2-19, ADR-017): comprueba y conserva el bloqueo; no escribe ni audita.
+`ensure_can_manage_member` aplica las mismas reglas al estado de una membresía y a su sucursal,
+que escribe `organizations` (F2-19, F2-69, ADR-017): comprueba y conserva el bloqueo; no escribe
+ni audita.
 """
 
 from collections.abc import Iterable, Iterator
@@ -129,7 +130,8 @@ def ensure_owner_remains(ctx: TenantContext, *, without_membership_id: UUID) -> 
 
 
 def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving: bool) -> None:
-    """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017). Para `apps.members`.
+    """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017) y para cambiar su
+    sucursal (F2-69, con `leaving=False`). Para `apps.members`.
 
     Permiso `users.manage`; nadie cambia la suya; el actor cubre todas las concesiones de todos
     los roles del miembro, como para quitárselos (PO-1); y si `leaving` y el miembro es un Owner

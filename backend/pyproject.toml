@@ -117,7 +117,7 @@ protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.o
 allowed_importers = ["apps.provisioning"]
 
 [[tool.importlinter.contracts]]
-name = "Estado de una membresía: solo members llama a organizations.services (ADR-017)"
+name = "Estado y sucursal de una membresía: solo members llama a organizations.services (ADR-017)"
 type = "protected"
 protected_modules = ["apps.organizations.services"]
 allowed_importers = ["apps.members"]

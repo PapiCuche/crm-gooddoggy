@@ -79,6 +79,8 @@ def set_membership_branch(
     tampoco: `DoesNotExist`. No mira el estado de la membresía ni si la sucursal está activa.
     """
     alias = require_scope(ctx)
+    if branch_id is not None:
+        branch_id = UUID(str(branch_id))  # también si llega como texto: «ya la tiene» compara UUID
     with transaction.atomic(using=alias):  # savepoint: el cambio y su auditoría, o ninguno
         rows = OrganizationMembership.objects.using(alias).select_for_update(no_key=True)
         membership = rows.get(pk=membership_id)

@@ -11,6 +11,7 @@ from django.db import IntegrityError
 from django.test import Client
 
 from apps.access.catalog import BY_CODE
+from apps.access.models import RolePermission
 from apps.access.selectors import AccessDenied, Denied
 from apps.members.api import views
 from apps.members.services import set_member_branch
@@ -33,6 +34,7 @@ real_stack = test_self_context.real_stack
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DENIED = (403, b'{"code":"PERMISSION_DENIED"}')
 BRANCH = "SELECT default_branch_id FROM organization_memberships WHERE id = %s"
+STAMP = "SELECT updated_at FROM organization_memberships WHERE id = %s"
 
 
 def place(client: Client, member: Any, branch_id: Any, org: str = "org-a") -> Any:
@@ -44,6 +46,10 @@ def place(client: Client, member: Any, branch_id: Any, org: str = "org-a") -> An
 
 def branch_of(migrator: psycopg.Connection[Any], member: UUID) -> Any:
     return migrator.execute(BRANCH, [member]).fetchone()[0]  # type: ignore[index]
+
+
+def stamp_of(migrator: psycopg.Connection[Any], member: UUID) -> Any:
+    return migrator.execute(STAMP, [member]).fetchone()[0]  # type: ignore[index]
 
 
 def test_it_assigns_changes_and_clears_the_branch_and_audits_each_change(
@@ -225,3 +231,71 @@ def test_the_services_check_what_they_store_without_http(
     with tenant_scope(ctx(rbac.a)) as system:  # sin actor (el sistema): el servicio del módulo
         left = set_membership_branch(system, membership_id=rbac.m_eva, branch_id=mine.pk)
     assert left == (mine.pk, "LIM", "LIM") and branch_of(migrator, rbac.m_eva) == mine.pk
+    settled: Any = state(migrator)
+    with tenant_scope(ctx(rbac.a)) as system:  # el mismo id como texto: ya la tiene, no escribe
+        text: Any = str(mine.pk).upper()
+        assert set_membership_branch(system, membership_id=rbac.m_eva, branch_id=text) == left
+    assert state(migrator) == settled
+
+
+def test_the_rules_come_before_the_branch_and_do_not_count_owners(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """Quien no puede cambiar a ese miembro recibe 403 exista o no la sucursal: las reglas van
+    antes que la escritura (ADR-017 §1), y nadie aprende así qué sucursales hay."""
+    lima, theirs = branch(rbac.a, "LIM"), branch(rbac.b, "LIM")
+    wide = join(rbac.a, make_user()).pk
+    give(rbac.a, wide, {VIEW: "ORGANIZATION"})  # más alcance que luis: no lo cubre
+    before, luis = state(migrator), signed(rbac.luis)
+    for member, reason in ((wide, Denied.ESCALATION), (rbac.m_luis, Denied.SELF)):
+        for unknown in (theirs.pk, uuid4()):
+            wanted = {"membership_id": member, "branch_id": unknown}
+            assert refused(rbac.a, rbac.luis, set_member_branch, **wanted) is reason
+            assert reply(place(luis, member, unknown)) == DENIED
+    assert state(migrator) == before and branch_of(migrator, wide) is None
+    # Cambiar la sucursal no es dejar de ser Owner: no cuenta los que quedan. Con un rol Owner
+    # sin permisos sensibles, quien no es Owner cubre a la única Owner y le pone sucursal.
+    with tenant_scope(ctx(rbac.a)):
+        owner = RolePermission.objects.filter(role=rbac.roles["owner"])
+        owner.exclude(permission_id="users.view").delete()
+    give(rbac.a, rbac.m_luis, {"users.view": None})
+    assert place(luis, rbac.membership, lima.pk).status_code == 200
+    # Sin rol Owner la organización no admite ningún cambio: 409, y 403 sin el permiso.
+    migrator.execute("UPDATE roles SET is_owner_role = false WHERE is_owner_role")
+    before = state(migrator)
+    last = place(luis, rbac.m_eva, lima.pk)
+    assert (last.status_code, last.json()["code"]) == (409, "LAST_OWNER")
+    assert reply(place(signed(rbac.eva), rbac.m_luis, lima.pk)) == DENIED
+    assert state(migrator) == before and branch_of(migrator, rbac.m_eva) is None
+
+
+def test_the_module_service_locks_the_membership_and_writes_with_its_audit_or_not_at_all(
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lima, cusco = branch(rbac.a, "LIM"), branch(rbac.a, "CUZ")
+
+    def placing(branch_id: UUID) -> Any:
+        return lambda t: set_membership_branch(t, membership_id=rbac.m_eva, branch_id=branch_id)
+
+    # Sin las reglas de `access` no hay bloqueo de RBAC: lo que pone en fila es el de la fila.
+    changes: dict[str, Any] = {"one": (None, placing(lima.pk)), "two": (None, placing(cusco.pk))}
+    assert race(rbac.a, changes, hold="one") == {"one": "ok", "two": "ok"}
+    assert [row[3] for row in audit(migrator)[-2:]] == [
+        {"default_branch": [None, str(lima.pk)]},
+        {"default_branch": [str(lima.pk), str(cusco.pk)]},
+    ]
+
+    def unaudited(*args: Any, **kwargs: Any) -> None:
+        raise IntegrityError("sin auditoría")
+
+    before, stamp = state(migrator), stamp_of(migrator, rbac.m_eva)
+    with tenant_scope(ctx(rbac.a)) as system, monkeypatch.context() as patch:
+        patch.setattr(organizations, "record", unaudited)
+        with pytest.raises(IntegrityError, match="sin auditoría"):  # su propio savepoint
+            set_membership_branch(system, membership_id=rbac.m_eva, branch_id=lima.pk)
+        set_membership_branch(system, membership_id=rbac.m_eva, branch_id=cusco.pk)  # no escribe
+    assert state(migrator) == before and branch_of(migrator, rbac.m_eva) == cusco.pk
+    assert stamp_of(migrator, rbac.m_eva) == stamp
+    with tenant_scope(ctx(rbac.a)) as system:
+        set_membership_branch(system, membership_id=rbac.m_eva, branch_id=None)
+    assert stamp_of(migrator, rbac.m_eva) > stamp  # el cambio mueve `updated_at`

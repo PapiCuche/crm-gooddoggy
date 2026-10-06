@@ -244,7 +244,7 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **Solo viaja `is_active`.** Tras el éxito la tarjeta enseña el estado que respondió la API (solo el estado: los demás datos pudo cambiarlos «Editar» mientras tanto), sin volver a pedir la lista, y se anuncia (`role="status"`). Una lectura en vuelo se cancela para que no pise el cambio.
 - **Si otro lo hizo antes** con la confirmación abierta, la confirmación se cierra y se anuncia el estado: no hay nada que confirmar.
 - **Errores, por `code`, en la tarjeta:** sin permiso, red y fallo del servidor; el mismo botón reintenta. Un 404 es pantalla desfasada: la confirmación se cierra, lo explica el aviso de la lista y el foco va al título si seguía en la tarjeta.
-- **Desactivar no tiene más efecto todavía:** nada depende de una sucursal (ni membresías, ni almacenes, ni pedidos).
+- **Desactivar no tiene más efecto todavía:** una sucursal inactiva sigue siendo la sucursal de los miembros que la tienen asignada (F2-68, F2-69); ni almacenes ni pedidos dependen todavía de una sucursal.
 
 ### Formulario de campos compartido (F2-48)
 
