@@ -255,7 +255,7 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **La marca de envío vive en el formulario** y se suelta en un efecto de maquetación cuando la escritura ya no está en curso. Un render solo del formulario (por ejemplo, al retirar un aviso de «falta» justo antes de enviar) trae la escritura tal como era antes de enviar y no la suelta: se compara con la que había al enviar. Por eso `write` debe ser el resultado de `useMutation` del render de la pantalla, no un objeto guardado, y `send` debe iniciar esa escritura antes de volver (`mutate`, sin esperar a nada): si no la inicia, el formulario deja de responder —también «Cancelar»— hasta el siguiente render de la pantalla; si la inicia más tarde, un render de la pantalla entre medias suelta la marca y otra pulsación sería otra escritura.
 - **El formulario se monta al abrir y se desmonta al cerrar:** los avisos y lo escrito no sobreviven a un cierre.
 
-## Equipos (F2-60 a F2-62)
+## Equipos (F2-60 a F2-63)
 
 `/o/[orgSlug]/equipos` muestra los equipos de la organización: lo que devuelve `GET /api/v1/o/{slug}/teams/` (F2-50), con el cliente generado.
 
@@ -264,7 +264,7 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **Asignación:** cada estrategia de la API tiene su nombre en `messages/es-PE.json` (`teams.strategy.*`). Una que esta versión no conozca se enseña con su código, no como un error. Solo cuentan las claves propias del catálogo de textos, como con los códigos de error de la API. Si el contrato gana una estrategia y el catálogo no, el frontend no compila. Todavía no la aplica nada (Inbox, Fase 6): la pantalla solo la enseña.
 - **Sin equipos:** la pantalla lo dice en lugar de enseñar una lista vacía.
 - **Navegación:** la entrada «Equipos» pide el permiso `teams.view`, el que exige la API para leerlos; `teams.manage` o `users.view` solos no bastan. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Lo que falta.** Desactivar un equipo y ver o cambiar sus integrantes desde la pantalla son los siguientes work items; la API ya lo permite (F2-54, F2-55, F2-58 y F2-59).
+- **Lo que falta.** Ver y cambiar los integrantes de un equipo desde la pantalla es el siguiente work item; la API ya lo permite (F2-55, F2-58 y F2-59).
 
 ### Crear un equipo (F2-61)
 
@@ -287,6 +287,18 @@ Cada tarjeta ofrece «Editar», que abre un formulario en la propia tarjeta y en
 - **Éxito:** el formulario se cierra y la tarjeta enseña el nombre y la descripción que guardó la API, sin volver a pedir la lista; lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
 - **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica («No se pudo guardar el equipo…: ya no está disponible»). No dice que el equipo se borró: no hay borrado de equipos, y la API responde igual si lo que dejó de estar al alcance es la organización o la membresía. Abrir «Editar» o «Crear equipo» retira ese aviso; cancelar otro formulario, no.
 - **«Editar» se distingue por equipo:** su nombre accesible lleva el nombre y el identificador («Editar el equipo Ventas (ventas)»), porque dos equipos pueden llamarse igual.
+
+### Desactivar y reactivar un equipo (F2-63)
+
+Cada tarjeta ofrece «Desactivar» o «Reactivar», lo contrario de su estado, que envía `PATCH /api/v1/o/{slug}/teams/{team_id}/` con `is_active` (F2-54). Componente: `components/teams/team-status-action.tsx`, un port de «Desactivar y reactivar una sucursal»: el camino de escritura, el foco, lo que pasa con la lista y los errores son los mismos.
+
+- **A quién se ofrece:** a quien tiene `teams.manage` según el contexto de la API. Es comodidad: la API decide, y un 403 se explica en la confirmación.
+- **Pide confirmación en la tarjeta** y dice la consecuencia: el equipo sigue en la lista como inactivo, con sus integrantes, y se puede reactivar. El foco va a «Cancelar», la opción que no cambia nada. Nada se envía sin confirmar.
+- **Lo que hace desactivar hoy:** cambia el estado que enseña la lista, y nada más. Los integrantes siguen en el equipo y cuenta igual para el alcance `TEAM` (F2-52).
+- **Lo que se confirma queda fijado al abrir.** Si otra persona hizo el mismo cambio con la confirmación abierta, esta se cierra y lo anuncia.
+- **Éxito:** la tarjeta enseña el estado que respondió la API, sin volver a pedir la lista; solo el estado, lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
+- **Se distingue por equipo:** el nombre accesible lleva el nombre y el identificador («Desactivar el equipo Ventas (ventas)»).
+- **Pantalla desfasada (404):** la confirmación se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista, el mismo de «Editar».
 
 ## Seguridad del navegador (F2-07)
 
