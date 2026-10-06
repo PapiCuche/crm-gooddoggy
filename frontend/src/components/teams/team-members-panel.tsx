@@ -171,9 +171,9 @@ function Members({
   );
 }
 
-// Quién forma un equipo (F2-64), con `GET …/teams/{id}/members/` (F2-55). Solo lectura: nada se
-// pide hasta abrir el panel y cada apertura vuelve a preguntar. Quién puede verlo lo decide la
-// API, que exige ver equipos y ver personas.
+// Quién forma un equipo (F2-64), con `GET …/teams/{id}/members/` (F2-55). Nada se pide hasta
+// abrir el panel y cada apertura vuelve a preguntar. Quién puede verlo lo decide la API, que
+// exige ver equipos y ver personas. La única escritura es incorporar (F2-65, `TeamMemberAdd`).
 export function TeamMembersPanel({
   slug,
   team,

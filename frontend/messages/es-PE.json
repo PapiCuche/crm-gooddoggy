@@ -237,6 +237,7 @@
         "selfNote": "No apareces en la lista: nadie se incorpora a sí mismo a un equipo.",
         "add": "Incorporar",
         "addBusy": "Incorporando…",
+        "joined": "Ya está en el equipo",
         "addLabel": "Incorporar a {name} al equipo {team}",
         "added": "{name} se incorporó al equipo {team}.",
         "denied": "No tienes permiso para cambiar los integrantes de los equipos.",

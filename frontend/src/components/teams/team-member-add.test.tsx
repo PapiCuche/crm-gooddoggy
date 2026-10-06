@@ -60,6 +60,7 @@ const marta = person("m3", "marta@acme.pe", "Marta", "Ríos");
 const eva = person("m4", "eva@acme.pe", "Eva", "", "SUSPENDED");
 const gone = person("m5", "baja@acme.pe", "Baja", "", "DEACTIVATED");
 const bare = person("m6", "sin-nombre@acme.pe");
+const twin = person("m7", "marta.rios@otra.pe", "Marta", "Ríos"); // se llama como Marta
 const page = (results: unknown[], next: string | null = null) => ({
   status: 200,
   body: { results, next },
@@ -114,7 +115,9 @@ const offered = (group: HTMLElement) =>
     .queryAllByRole("button", { name: /^Incorporar a / })
     .map((button) => button.getAttribute("aria-label"));
 const adder = (group: HTMLElement, name: string) =>
-  within(group).getByRole("button", { name: `Incorporar a ${name} al equipo Ventas` });
+  within(group).getByRole("button", {
+    name: new RegExp(`^Incorporar a ${name}( \\(.+\\))? al equipo Ventas$`), // con su correo
+  });
 const team = (panel: HTMLElement) =>
   within(within(panel).getByRole("list", { name: "Integrantes de Ventas" }))
     .getAllByRole("listitem")
@@ -149,7 +152,7 @@ describe("TeamMemberAdd", () => {
     const api = mockApi(
       routes({
         [PEOPLE]: page([ana, luis, marta], "abc"),
-        [`${PEOPLE}&cursor=abc`]: page([eva, gone, bare]),
+        [`${PEOPLE}&cursor=abc`]: page([eva, gone, bare, twin]),
       }),
     );
     renderApp(ui());
@@ -162,12 +165,14 @@ describe("TeamMemberAdd", () => {
     const done = within(group).getByRole("button", { name: "Listo" });
     await waitFor(() => expect(done).toHaveFocus()); // «Incorporar integrante» se fue
     release();
-    await waitFor(() => expect(offered(group)).toHaveLength(3));
+    await waitFor(() => expect(offered(group)).toHaveLength(4));
     expect(offered(group)).toEqual([
-      "Incorporar a Marta Ríos al equipo Ventas",
-      "Incorporar a Eva al equipo Ventas", // suspendida: la API la admite
+      "Incorporar a Marta Ríos (marta@acme.pe) al equipo Ventas",
+      "Incorporar a Eva (eva@acme.pe) al equipo Ventas", // suspendida: la API la admite
       "Incorporar a sin-nombre@acme.pe al equipo Ventas", // sin nombre: su correo
+      "Incorporar a Marta Ríos (marta.rios@otra.pe) al equipo Ventas", // tocaya: otro correo
     ]);
+    expect(within(group).getByText("marta.rios@otra.pe")).toBeVisible(); // también a la vista
     expect(group).toHaveTextContent(
       "No apareces en la lista: nadie se incorpora a sí mismo a un equipo.",
     );
@@ -195,6 +200,10 @@ describe("TeamMemberAdd", () => {
     expect(adder(group, "Eva")).toHaveAttribute("aria-disabled", "true");
     release();
     await waitFor(() => expect(offered(group)).toHaveLength(2)); // ya no es candidata
+    // Su fila se queda, sin botón: la persona siguiente no sube bajo el puntero.
+    const rows = within(group).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("Marta Ríosmarta@acme.peYa está en el equipo");
+    expect(within(rows[0]!).queryByRole("button")).not.toBeInTheDocument();
     expect(calls(api, "PUT")).toHaveLength(1);
     const [url, init] = calls(api, "PUT")[0]!;
     expect([String(url), (init as RequestInit).body]).toEqual([
@@ -212,6 +221,55 @@ describe("TeamMemberAdd", () => {
     expect(asked(api, "/api/v1/o/acme/teams/t2/members/?")).toBe(1); // el panel no se vuelve a pedir
     fireEvent.click(adder(group, "Eva")); // otra: el anuncio anterior se retira al enviar
     expect(live).toHaveTextContent("");
+  });
+
+  it("si el panel se cierra y se reabre con el envío en vuelo, la respuesta no lo deja cargando", async () => {
+    let members = [inTeam(luis)];
+    const api = mockApi(
+      routes({
+        [MEMBERS]: () => page(members),
+        [ADD("m3")]: { status: 201, body: inTeam(marta) },
+      }),
+    );
+    renderApp(ui());
+    const { panel, group } = await picker();
+    const answer = hold(api);
+    fireEvent.click(adder(group, "Marta Ríos"));
+    await waitFor(() => expect(adder(group, "Marta Ríos")).toHaveTextContent("Incorporando…"));
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
+    await tick(); // la lectura del panel cerrado ya se olvidó
+    const read = hold(api); // la del panel reabierto, que sale antes de que responda el envío
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ver los integrantes del equipo Ventas (ventas)" }),
+    );
+    await tick();
+    members = [inTeam(luis), inTeam(marta)]; // lo que la API dirá a partir de ahora
+    answer();
+    await tick();
+    read(); // llega tarde y con la lista de antes: ya no cuenta
+    const again = screen.getByRole("group", { name: "Integrantes del equipo Ventas (ventas)" });
+    expect(await within(again).findByText("2 integrantes")).toBeVisible();
+    expect(calls(api, "PUT")).toHaveLength(1);
+  });
+
+  it("la fila del recién incorporado se va en el mismo render que deja pulsar otra vez", async () => {
+    const api = mockApi(routes({ [ADD("m3")]: { status: 201, body: inTeam(marta) } }));
+    renderApp(ui());
+    const { group } = await picker();
+    const release = hold(api);
+    fireEvent.click(adder(group, "Marta Ríos"));
+    await waitFor(() => expect(adder(group, "Marta Ríos")).toHaveTextContent("Incorporando…"));
+    // Un dedo impaciente: pulsa de nuevo en cuanto la pantalla enseña el botón libre.
+    const watch = new MutationObserver(() => {
+      const again = within(group).queryByRole("button", { name: /^Incorporar a Marta Ríos/ });
+      if (again?.getAttribute("aria-disabled") === "false") fireEvent.click(again);
+    });
+    watch.observe(group, { subtree: true, childList: true, attributes: true, characterData: true });
+    release();
+    await waitFor(() => expect(offered(group)).toHaveLength(2));
+    await tick();
+    watch.disconnect();
+    expect(calls(api, "PUT")).toHaveLength(1);
   });
 
   it.each([
@@ -297,7 +355,7 @@ describe("TeamMemberAdd", () => {
     );
     renderApp(ui());
     const { panel, group } = await picker();
-    expect(offered(group)).toEqual(["Incorporar a Marta Ríos al equipo Ventas"]);
+    expect(offered(group)).toEqual(["Incorporar a Marta Ríos (marta@acme.pe) al equipo Ventas"]);
     expect(group).not.toHaveTextContent("No apareces en la lista"); // ya está: no hace falta
     const done = within(group).getByRole("button", { name: "Listo" });
     done.focus();
@@ -323,9 +381,15 @@ describe("TeamMemberAdd", () => {
     const group = screen.getByRole("group", { name: "Incorporar a Ventas" });
     expect(await within(group).findByRole("alert")).toHaveTextContent("Algo salió mal");
     expect(offered(group)).toEqual([]);
+    const retry = within(group).getByRole("button", { name: "Reintentar" });
+    retry.focus(); // como una pulsación real: el botón desaparece mientras se vuelve a pedir
+    fireEvent.click(retry); // y vuelve a fallar
+    await waitFor(() => expect(retry).not.toBeInTheDocument());
+    await within(group).findByRole("alert");
+    expect(within(group).getByRole("button", { name: "Listo" })).toHaveFocus(); // no se pierde
     reply = page([ana, luis, marta]);
     fireEvent.click(within(group).getByRole("button", { name: "Reintentar" }));
     await waitFor(() => expect(offered(group)).toHaveLength(1));
-    expect(asked(api, "/api/v1/o/acme/members/")).toBe(3); // el fallo, su reintento y el del botón
+    expect(asked(api, "/api/v1/o/acme/members/")).toBe(5); // dos fallos con su reintento y el bueno
   });
 });

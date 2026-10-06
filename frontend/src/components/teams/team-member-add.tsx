@@ -27,8 +27,11 @@ async function allPeople(slug: string, signal: AbortSignal): Promise<Member[]> {
   return found;
 }
 
-const display = (user: Member["user"]) =>
-  `${user.first_name} ${user.last_name}`.trim() || user.email;
+const fullName = (user: Member["user"]) => `${user.first_name} ${user.last_name}`.trim();
+const display = (user: Member["user"]) => fullName(user) || user.email;
+// Para elegir a quién: dos personas pueden llamarse igual, y el correo las distingue.
+const exact = (user: Member["user"]) =>
+  fullName(user) ? `${fullName(user)} (${user.email})` : user.email;
 
 // La lista de candidatos. Solo existe mientras está abierta: al cerrarla, su lectura se cancela
 // y se olvida, y la siguiente apertura vuelve a preguntar.
@@ -53,6 +56,9 @@ function Candidates({
   const queryClient = useQueryClient();
   const done = useRef<HTMLButtonElement>(null);
   const [added, setAdded] = useState<string | null>(null);
+  // Quien ya entró desde esta lista: su fila se va en el mismo render que suelta la marca; el
+  // panel, de donde sale `present`, se entera una tarea después.
+  const [joined, setJoined] = useState<readonly string[]>([]);
   // Una escritura cada vez, y enviada una sola vez (el estado de la mutación llega a la
   // pantalla una tarea después de la pulsación).
   const sending = useRef(false);
@@ -69,12 +75,18 @@ function Candidates({
     mutation: {
       networkMode: "always",
       onSuccess: async (saved) => {
+        // El panel pudo cerrarse y reabrirse mientras se enviaba: su lectura en vuelo traería la
+        // lista de antes. Se cancela y, como no deja datos donde escribir, se vuelve a pedir.
+        const read = queryClient.getQueryState(membersKey);
+        const rereading = !!read && read.fetchStatus !== "idle";
         await queryClient.cancelQueries({ queryKey: membersKey });
         // El integrante nuevo, con lo que respondió la API, al final: es el último en entrar.
         queryClient.setQueryData<TeamMember[]>(membersKey, (rows) =>
           rows ? [...rows.filter((row) => row.id !== saved.id), saved] : rows,
         );
+        setJoined((ids) => [...ids, saved.id]);
         setAdded(display(saved.user));
+        if (rereading) void queryClient.invalidateQueries({ queryKey: membersKey });
       },
       onError: (error, { membershipId }) => {
         if (error.status !== 404) return;
@@ -93,14 +105,17 @@ function Candidates({
   });
 
   // Quien ya está, quien tiene la membresía dada de baja y uno mismo no se ofrecen: la API no
-  // deja que nadie se incorpore a sí mismo.
+  // deja que nadie se incorpore a sí mismo. Quien entra desde esta lista conserva su fila, sin
+  // botón, hasta cerrarla: así la persona siguiente no sube bajo el puntero.
   const candidates = people.data?.filter(
-    (person) => !present.has(person.id) && person.id !== own && person.status !== "DEACTIVATED",
+    (person) =>
+      joined.includes(person.id) ||
+      (!present.has(person.id) && person.id !== own && person.status !== "DEACTIVATED"),
   );
-  const left = candidates?.length;
+  const left = candidates?.filter((person) => !joined.includes(person.id)).length;
   useEffect(() => {
-    // La fila del recién incorporado desaparece con su botón: el foco, a «Listo», si se quedó
-    // en ninguna parte. También al abrir.
+    // El botón del recién incorporado desaparece: el foco, a «Listo», si se quedó en ninguna
+    // parte. También al abrir.
     if (document.activeElement === document.body) done.current?.focus();
   }, [left]);
 
@@ -130,34 +145,43 @@ function Candidates({
               const mine = busy && add.variables?.membershipId === person.id;
               return (
                 <li key={person.id} className="flex items-center justify-between gap-3">
-                  <span className="min-w-0 text-sm wrap-anywhere">{display(person.user)}</span>
-                  {/* `aria-disabled` y no `disabled`: conserva el foco mientras se envía. */}
-                  <Button
-                    variant="ghost"
-                    className="border-border min-h-11 shrink-0 border sm:min-h-9"
-                    aria-label={t("addLabel", { name: display(person.user), team: team.name })}
-                    aria-disabled={busy}
-                    aria-busy={mine}
-                    // El segundo clic de un doble clic caería sobre la fila siguiente.
-                    onClick={(event) => {
-                      if (event.detail > 1 || sending.current) return;
-                      sending.current = true;
-                      setAdded(null);
-                      add.mutate({
-                        orgSlug: slug,
-                        teamId: team.id,
-                        membershipId: person.id,
-                        data: {},
-                      });
-                    }}
-                  >
-                    {t(mine ? "addBusy" : "add")}
-                  </Button>
+                  <span className="flex min-w-0 flex-col text-sm leading-snug wrap-anywhere">
+                    {display(person.user)}
+                    {fullName(person.user) ? (
+                      <span className="text-muted">{person.user.email}</span>
+                    ) : null}
+                  </span>
+                  {joined.includes(person.id) ? (
+                    <span className="text-muted shrink-0 text-sm">{t("joined")}</span>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="border-border min-h-11 shrink-0 border sm:min-h-9"
+                      aria-label={t("addLabel", { name: exact(person.user), team: team.name })}
+                      aria-disabled={busy}
+                      aria-busy={mine}
+                      // `aria-disabled` y no `disabled`: conserva el foco mientras se envía. El
+                      // segundo clic de un doble clic no debe contar como otra pulsación.
+                      onClick={(event) => {
+                        if (event.detail > 1 || sending.current) return;
+                        sending.current = true;
+                        setAdded(null);
+                        add.mutate({
+                          orgSlug: slug,
+                          teamId: team.id,
+                          membershipId: person.id,
+                          data: {},
+                        });
+                      }}
+                    >
+                      {t(mine ? "addBusy" : "add")}
+                    </Button>
+                  )}
                 </li>
               );
             })}
           </ul>
-          {candidates.length === 0 ? <p className="text-muted text-sm">{t("none")}</p> : null}
+          {left === 0 ? <p className="text-muted text-sm">{t("none")}</p> : null}
           {present.has(own) ? null : <p className="text-muted text-sm">{t("selfNote")}</p>}
         </>
       ) : error ? (
@@ -168,8 +192,11 @@ function Candidates({
           <Button
             variant="primary"
             className="min-h-11 sm:min-h-9"
-            aria-disabled={people.isFetching}
-            onClick={() => people.isFetching || void people.refetch()}
+            // Al volver a pedir, este botón desaparece: el foco pasa antes a «Listo», que se queda.
+            onClick={() => {
+              done.current?.focus();
+              void people.refetch();
+            }}
           >
             {errors("retry")}
           </Button>

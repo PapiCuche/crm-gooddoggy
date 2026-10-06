@@ -29,7 +29,7 @@ export function TeamsList() {
   const seesPeople = permissions.some((grant) => grant.code === "users.view");
   const listKey = [...getTeamsListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
-  // Una acción respondió que la pantalla ya no refleja a la API (F2-62 a F2-64). El aviso vive
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-62 a F2-65). El aviso vive
   // aquí: el formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
   const [notice, setNotice] = useState<string | null>(null);
   function stale(text: string, here: boolean) {
