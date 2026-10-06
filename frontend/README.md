@@ -81,7 +81,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 `/o/[orgSlug]` no pinta nada del workspace hasta que la API responde a `GET /api/v1/o/{slug}/me/`, en cada entrada: la respuesta no se guarda entre visitas (`gcTime: 0`). La URL solo selecciona: quién es el usuario ahí y qué puede hacer lo dice la API.
 
 - **Guardia (`TenantGate`):** con la respuesta, monta el shell y deja el contexto en `useTenant()`. Sin sesión (401), `Providers` lleva a `/login` con vuelta a la misma ruta. Organización inexistente o sin membresía (404): la misma página de «no encontrada» que cualquier dirección que no existe. Cualquier otro error al entrar (organización suspendida, red, servidor): una tarjeta con el mensaje de su `code`, reintentar, cambiar de organización y cerrar sesión. Reintentar muestra el aviso de carga y, al terminar, deja el foco en el botón (si vuelve a fallar) o en el workspace (si abre). Con el workspace ya abierto, el contexto se vuelve a pedir al volver a la pestaña o al recuperar la red, si la última respuesta tiene más de 30 segundos: un 401, un 403 o un 404 lo cierran, y sigue cerrado hasta que la API vuelve a responder bien; un fallo pasajero (red, servidor) no cierra el workspace ni lo reabre tras una negativa. Con la tarjeta de error en pantalla, ni volver a la pestaña ni recuperar la red piden nada: lo hace «Reintentar». Si el navegador sabe que no hay red, la petición espera en el aviso de carga y sigue sola al volver la conexión.
-- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio», «Miembros» (`users.view`), «Roles» (`roles.view`) y «Sucursales» (`organization.view`). Cada fase añade los suyos.
+- **Navegación por permisos:** `NAVIGATION` (`navigation.ts`) lista las entradas del menú y el permiso del catálogo que da sentido a cada una; `visibleItems` deja las que el usuario puede abrir. Solo se listan módulos que existen: hoy, «Inicio», «Miembros» (`users.view`), «Roles» (`roles.view`), «Sucursales» (`organization.view`) y «Equipos» (`teams.view`). Cada fase añade los suyos.
 - **Es comodidad, no seguridad:** ocultar una entrada no protege nada. La API comprueba el permiso en cada petición, y una pantalla debe tratar el 403 aunque su entrada estuviera visible.
 - **Roles:** se muestran como etiquetas. Nada en la interfaz decide por el nombre o el código de un rol.
 - **Cambiar de organización:** enlace a `/o?elegir`.
@@ -204,7 +204,7 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 
 - **Componente:** `components/branches/branches-list.tsx`, sobre la lista por cursor compartida (ver «Miembros»): su paginación, sus estados y su foco son los mismos.
 - **Por sucursal:** nombre, código, dirección (calle, distrito y ciudad: lo que haya, en una línea; «Sin dirección» si no hay nada), teléfono si lo tiene, zona horaria y si está activa. Se listan también las inactivas.
-- **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»), que solo usa esta pantalla: una organización siempre tiene miembros y roles.
+- **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»); lo usan esta pantalla y la de equipos: una organización siempre tiene miembros y roles.
 - **Navegación:** la entrada «Sucursales» pide el permiso `organization.view`, el que exige la API para leerlas; `branches.manage` solo no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
 - **Escrituras:** crear una sucursal está en «Crear una sucursal» y corregir sus datos, en «Editar una sucursal»; desactivarla y reactivarla, en «Desactivar y reactivar una sucursal». No hay borrado.
 - **Aviso de la lista:** una acción que descubre que la sucursal ya no existe lo explica aquí, encima de la lista (`role="alert"`), y la lista se vuelve a pedir. Abrir «Crear sucursal», «Editar» o una confirmación lo retira.
@@ -254,6 +254,17 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **Lo que pone la pantalla:** la escritura (el resultado de `useMutation`), qué hacer con lo escrito (`send`, que recibe los valores sin espacios exteriores), los campos con sus textos ya resueltos (etiqueta, límite, ayuda, aviso de obligatorio y de no válido) y, si hace falta, su valor inicial y el `id` de una lista de sugerencias, el error propio de un campo que no es un 400 (`taken`: un código repetido), y el texto de «sin permiso». Abrir y cerrar, el botón que abre, el anuncio del resultado, lo que pasa con la lista y la guarda del Enter mantenido siguen en la pantalla.
 - **La marca de envío vive en el formulario** y se suelta en un efecto de maquetación cuando la escritura ya no está en curso. Un render solo del formulario (por ejemplo, al retirar un aviso de «falta» justo antes de enviar) trae la escritura tal como era antes de enviar y no la suelta: se compara con la que había al enviar. Por eso `write` debe ser el resultado de `useMutation` del render de la pantalla, no un objeto guardado, y `send` debe iniciar esa escritura antes de volver (`mutate`, sin esperar a nada): si no la inicia, el formulario deja de responder —también «Cancelar»— hasta el siguiente render de la pantalla; si la inicia más tarde, un render de la pantalla entre medias suelta la marca y otra pulsación sería otra escritura.
 - **El formulario se monta al abrir y se desmonta al cerrar:** los avisos y lo escrito no sobreviven a un cierre.
+
+## Equipos (F2-60)
+
+`/o/[orgSlug]/equipos` muestra los equipos de la organización: lo que devuelve `GET /api/v1/o/{slug}/teams/` (F2-50), con el cliente generado.
+
+- **Componente:** `components/teams/teams-list.tsx`, sobre la lista por cursor compartida (ver «Miembros»): su paginación, sus estados y su foco son los mismos.
+- **Por equipo:** nombre, `slug`, descripción («Sin descripción» si no tiene o son solo espacios), cómo se asignan sus conversaciones y si está activo. Se listan también los inactivos.
+- **Asignación:** cada estrategia de la API tiene su nombre en `messages/es-PE.json` (`teams.strategy.*`). Una que esta versión no conozca se enseña con su código, no como un error. Todavía no la aplica nada (Inbox, Fase 6): la pantalla solo la enseña.
+- **Sin equipos:** la pantalla lo dice en lugar de enseñar una lista vacía.
+- **Navegación:** la entrada «Equipos» pide el permiso `teams.view`, el que exige la API para leerlos; `teams.manage` o `users.view` solos no bastan. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
+- **Solo lectura.** Crear, editar y desactivar un equipo y ver o cambiar sus integrantes desde la pantalla son los siguientes work items; la API ya lo permite (F2-53 a F2-55, F2-58 y F2-59).
 
 ## Seguridad del navegador (F2-07)
 
