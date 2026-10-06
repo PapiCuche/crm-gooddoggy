@@ -159,6 +159,7 @@ describe("TeamMemberRole", () => {
     fireEvent.click(button); // ocupado: la segunda pulsación no cuenta
     await waitFor(() => expect(button).toHaveTextContent("Guardando…"));
     expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAttribute("aria-busy", "true");
     // Un dedo impaciente: pulsa de nuevo en cuanto la pantalla enseña ese botón libre.
     const watch = new MutationObserver(() => {
       const again = within(panel).queryByRole("button", { name: UP });
@@ -180,6 +181,7 @@ describe("TeamMemberRole", () => {
       "Luis Paz ahora tiene el papel de supervisor en el equipo Ventas.",
     );
     expect(within(panel).getByRole("button", { name: DOWN })).toHaveFocus(); // el mismo botón
+    expect(button).toHaveAttribute("aria-busy", "false");
     expect(shown(panel, "Marta Ríos")).toEqual(["Marta Ríos", "marta@acme.pe", "Supervisor"]);
     expect(asked(api, "/api/v1/o/acme/teams/t2/members/?")).toBe(1); // el panel no se vuelve a pedir
     expect(within(panel).getByText("4 integrantes")).toBeVisible();
@@ -268,6 +270,7 @@ describe("TeamMemberRole", () => {
     expect(calls(api, "PUT")).toHaveLength(2); // el que no salió y el 401
     expect(within(panel).queryByRole("alert")).not.toBeInTheDocument();
     expect(button).toHaveTextContent("Guardando…");
+    expect(button).toHaveAttribute("aria-busy", "true"); // sigue ocupado, también para quien no ve
     expect(assign).toHaveBeenCalledTimes(1);
   });
 
@@ -318,6 +321,65 @@ describe("TeamMemberRole", () => {
     expect(asked(api, "/api/v1/o/acme/teams/t2/members/?")).toBe(2);
     expect(calls(api, "PUT")).toHaveLength(1);
   });
+
+  it.each([
+    ["se quita y después se cambia", true],
+    ["se cambia y después se quita", false],
+  ])(
+    "si el cambio responde antes que el borrado (%s), el panel también se vuelve a pedir",
+    async (_order, removeFirst) => {
+      let members = [ana, luis];
+      const api = mockApi(
+        routes({
+          [MEMBERS]: () => page(members),
+          ["DELETE /api/v1/o/acme/teams/t2/members/m2/"]: { status: 204, body: undefined },
+          [ROLE("m2")]: { status: 201, body: { ...luis, team_role: "SUPERVISOR" } },
+        }),
+      );
+      renderApp(ui());
+      const panel = await panelOf();
+      const send = {
+        remove: () => {
+          press(panel, "Quitar a Luis Paz (luis@acme.pe) del equipo Ventas");
+          const release = hold(api);
+          fireEvent.click(within(panel).getByRole("button", { name: "Sí, quitar" }));
+          return release;
+        },
+        change: () => {
+          const release = hold(api);
+          press(panel, UP);
+          return release;
+        },
+      };
+      const first = (removeFirst ? send.remove : send.change)();
+      await tick();
+      const second = (removeFirst ? send.change : send.remove)();
+      await tick();
+      const [removed, changed] = removeFirst ? [first, second] : [second, first];
+      // La API quitó primero y `PUT` volvió a incorporar (201), pero su respuesta llega antes.
+      members = [ana, { ...luis, team_role: "SUPERVISOR" }];
+      changed();
+      await waitFor(() => expect(shown(panel, "Luis Paz")).toContain("Supervisor"));
+      const reread = hold(api); // la lectura que sigue tarda lo que tarda la red
+      removed();
+      await within(panel).findByText("Luis Paz ya no está en el equipo Ventas.");
+      expect(asked(api, "/api/v1/o/acme/teams/t2/members/?")).toBe(2);
+      reread();
+      await waitFor(() =>
+        expect(shown(panel, "Luis Paz")).toEqual(["Luis Paz", "luis@acme.pe", "Supervisor"]),
+      );
+      expect(panel).not.toHaveTextContent("ya no está en el equipo"); // no sería verdad
+      expect(within(panel).getByText("2 integrantes")).toBeVisible();
+      // La fila que volvió ofrece otra vez sus dos acciones.
+      expect(
+        within(row(panel, "Luis Paz"))
+          .getAllByRole("button")
+          .map((button) => button.textContent),
+      ).toEqual(["Hacer integrante", "Quitar"]);
+      expect(calls(api, "PUT")).toHaveLength(1);
+      expect(calls(api, "DELETE")).toHaveLength(1);
+    },
+  );
 
   it("si una respuesta atrasada de un panel anterior devuelve el papel de antes, el botón sigue a la fila", async () => {
     let members = [ana, { ...luis, team_role: "SUPERVISOR" as const }];
