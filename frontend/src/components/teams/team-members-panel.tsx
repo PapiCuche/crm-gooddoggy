@@ -12,6 +12,7 @@ import { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import messages from "../../../messages/es-PE.json";
+import { TeamMemberAdd } from "./team-member-add";
 
 // Los papeles y los estados con nombre propio. Uno que esta versión no conozca se enseña con
 // su código: solo cuentan las claves propias del catálogo.
@@ -44,18 +45,21 @@ const fullName = (user: TeamMember["user"]) => `${user.first_name} ${user.last_n
 function Members({
   slug,
   team,
+  manages,
   onGone,
   focusClose,
 }: {
   slug: string;
   team: Team;
-  onGone: () => void; // la API respondió 404: el equipo ya no está al alcance
+  manages: boolean;
+  onGone: (notice?: string) => void; // 404: el equipo ya no está al alcance; con su aviso o sin él
   focusClose: () => void;
 }) {
   const t = useTranslations("teams.members");
   const errors = useTranslations("errors");
+  const membersKey = [...getTeamMembersListQueryKey(slug, team.id), "all"];
   const members = useQuery<TeamMember[], ApiError>({
-    queryKey: [...getTeamMembersListQueryKey(slug, team.id), "all"],
+    queryKey: membersKey,
     queryFn: async ({ signal }) => {
       try {
         return await allMembers(slug, team.id, signal);
@@ -120,6 +124,15 @@ function Members({
         <p role="status" className="text-muted text-sm">
           {t("count", { count: members.data.length })}
         </p>
+        {manages ? (
+          <TeamMemberAdd
+            slug={slug}
+            team={team}
+            present={new Set(members.data.map((member) => member.id))}
+            membersKey={membersKey}
+            onGone={onGone}
+          />
+        ) : null}
       </>
     );
   }
@@ -164,11 +177,13 @@ function Members({
 export function TeamMembersPanel({
   slug,
   team,
+  manages,
   onAsk,
   onStale,
 }: {
   slug: string;
   team: Team;
+  manages: boolean; // comodidad: quien administra equipos puede además incorporar (F2-65)
   onAsk: () => void; // se abre el panel: el aviso anterior de la lista ya no aplica
   onStale: (notice: string, here: boolean) => void; // `here`: el foco seguía en esta tarjeta
 }) {
@@ -189,12 +204,12 @@ export function TeamMembersPanel({
     opened.current = open;
   }, [open]);
 
-  function gone() {
+  function gone(notice?: string) {
     // El equipo ya no está al alcance: lo explica la lista, que se vuelve a pedir.
     const active = document.activeElement;
     // La tarjeta entera puede desaparecer: también si el foco estaba en otra acción suya.
     const here = active === document.body || !!root.current?.closest("li")?.contains(active);
-    onStale(t("stale", { team: team.name }), here);
+    onStale(notice ?? t("stale", { team: team.name }), here);
     setOpen(false);
   }
 
@@ -227,6 +242,7 @@ export function TeamMembersPanel({
           <Members
             slug={slug}
             team={team}
+            manages={manages}
             onGone={gone}
             focusClose={() => close.current?.focus()}
           />

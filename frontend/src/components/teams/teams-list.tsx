@@ -18,7 +18,7 @@ import { TeamStatusAction } from "./team-status-action";
 // Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
 const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
-// Equipos (F2-60 a F2-64): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
+// Equipos (F2-60 a F2-65): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
 export function TeamsList() {
   const t = useTranslations();
@@ -116,6 +116,7 @@ export function TeamsList() {
                 <TeamMembersPanel
                   slug={organization.slug}
                   team={team}
+                  manages={canManage}
                   onAsk={ask}
                   onStale={stale}
                 />
