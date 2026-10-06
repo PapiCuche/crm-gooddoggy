@@ -115,6 +115,7 @@ describe("TeamStatusAction", () => {
       "¿Desactivar el equipo Ventas? Seguirá en la lista como inactivo, con sus integrantes, y podrás reactivarlo.",
     );
     expect(group).toHaveAccessibleDescription(/como inactivo, con sus integrantes/);
+    expect(group.parentElement).toHaveClass("w-full"); // abierta ocupa su fila, bajo «Editar»
     const cancel = within(group).getByRole("button", { name: "Cancelar" });
     expect(cancel).toHaveFocus(); // la opción que no cambia nada
     expect(fireEvent.keyDown(cancel, { key: "Enter", repeat: true })).toBe(false); // mantenido

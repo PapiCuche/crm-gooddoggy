@@ -129,7 +129,7 @@ export function TeamStatusAction({
   return (
     <div
       ref={root}
-      // Abierta ocupa su fila: «Editar», a su lado, pasa a otra línea.
+      // Abierta ocupa su fila, debajo de «Editar».
       className={cn("flex flex-col items-start gap-2", open && "w-full")}
       // Enter mantenido repite la pulsación: reabriría la confirmación o reenviaría sin parar.
       onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}

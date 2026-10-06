@@ -285,7 +285,7 @@ Cada tarjeta ofrece «Editar», que abre un formulario en la propia tarjeta y en
 - **La forma de asignar no se edita desde la pantalla.** Nada la aplica hasta el Inbox (Fase 6), y la pantalla no ofrece un ajuste sin efecto. La API ya admite cambiarla.
 - **Lo que se edita queda fijado al abrir:** si la lista cambia debajo, el formulario sigue enseñando lo que el usuario abrió. Los dos campos viajan siempre, con lo que había al abrir: si otra persona cambió la descripción mientras tanto y aquí solo se cambia el nombre, se guarda la descripción de antes.
 - **Éxito:** el formulario se cierra y la tarjeta enseña el nombre y la descripción que guardó la API, sin volver a pedir la lista; lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
-- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica («No se pudo guardar el equipo…: ya no está disponible»). No dice que el equipo se borró: no hay borrado de equipos, y la API responde igual si lo que dejó de estar al alcance es la organización o la membresía. Abrir «Editar» o «Crear equipo» retira ese aviso; cancelar otro formulario, no.
+- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica («No se pudo guardar el equipo…: ya no está disponible»). No dice que el equipo se borró: no hay borrado de equipos, y la API responde igual si lo que dejó de estar al alcance es la organización o la membresía. Abrir «Editar», «Desactivar» o «Reactivar» (F2-63) o «Crear equipo» retira ese aviso; cancelar otro formulario, no.
 - **«Editar» se distingue por equipo:** su nombre accesible lleva el nombre y el identificador («Editar el equipo Ventas (ventas)»), porque dos equipos pueden llamarse igual.
 
 ### Desactivar y reactivar un equipo (F2-63)
@@ -294,11 +294,11 @@ Cada tarjeta ofrece «Desactivar» o «Reactivar», lo contrario de su estado, q
 
 - **A quién se ofrece:** a quien tiene `teams.manage` según el contexto de la API. Es comodidad: la API decide, y un 403 se explica en la confirmación.
 - **Pide confirmación en la tarjeta** y dice la consecuencia: el equipo sigue en la lista como inactivo, con sus integrantes, y se puede reactivar. El foco va a «Cancelar», la opción que no cambia nada. Nada se envía sin confirmar.
-- **Lo que hace desactivar hoy:** cambia el estado que enseña la lista, y nada más. Los integrantes siguen en el equipo y cuenta igual para el alcance `TEAM` (F2-52).
+- **Lo que hace desactivar hoy:** cambia el estado que enseña la lista y deja su fila de auditoría (`team.updated`), y nada más. Los integrantes siguen en el equipo y cuenta igual para el alcance `TEAM` (F2-52).
 - **Lo que se confirma queda fijado al abrir.** Si otra persona hizo el mismo cambio con la confirmación abierta, esta se cierra y lo anuncia.
 - **Éxito:** la tarjeta enseña el estado que respondió la API, sin volver a pedir la lista; solo el estado, lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
 - **Se distingue por equipo:** el nombre accesible lleva el nombre y el identificador («Desactivar el equipo Ventas (ventas)»).
-- **Pantalla desfasada (404):** la confirmación se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista, el mismo de «Editar».
+- **Pantalla desfasada (404):** la confirmación se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista, en el sitio del de «Editar» y con su texto («No se pudo cambiar el equipo…: ya no está disponible»). Se retira igual que aquel.
 
 ## Seguridad del navegador (F2-07)
 
