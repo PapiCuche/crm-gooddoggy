@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
+import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
 import { getTeamMembersListQueryKey, teamMembersList } from "@/lib/api/client";
 import type { Team, TeamMember } from "@/lib/api/model";
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 
 import messages from "../../../messages/es-PE.json";
 import { TeamMemberAdd } from "./team-member-add";
+import { TeamMemberRemove } from "./team-member-remove";
 
 // Los papeles y los estados con nombre propio. Uno que esta versión no conozca se enseña con
 // su código: solo cuentan las claves propias del catálogo.
@@ -57,6 +59,9 @@ function Members({
 }) {
   const t = useTranslations("teams.members");
   const errors = useTranslations("errors");
+  const { membership_id: own } = useTenant();
+  // A quién se acaba de quitar desde aquí: su fila ya no está para decirlo.
+  const [removed, setRemoved] = useState<string | null>(null);
   const membersKey = [...getTeamMembersListQueryKey(slug, team.id), "all"];
   const members = useQuery<TeamMember[], ApiError>({
     queryKey: membersKey,
@@ -117,6 +122,18 @@ function Members({
                     <span>{t("status", { status: named(STATUSES, member.status) })}</span>
                   )}
                 </p>
+                {/* Nadie se quita a sí mismo: la API no lo deja, y aquí no se ofrece. */}
+                {manages && member.id !== own ? (
+                  <TeamMemberRemove
+                    slug={slug}
+                    team={team}
+                    member={member}
+                    membersKey={membersKey}
+                    onRemoved={setRemoved}
+                    onGone={onGone}
+                    focusClose={focusClose}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -124,6 +141,13 @@ function Members({
         <p role="status" className="text-muted text-sm">
           {t("count", { count: members.data.length })}
         </p>
+        {/* Montado desde que se abre el panel de quien administra: un lector de pantalla
+            anuncia el resultado cuando cambia. */}
+        {manages ? (
+          <p role="status" className={removed ? "text-sm wrap-anywhere" : "sr-only"}>
+            {removed ? t("remove.done", { name: removed, team: team.name }) : ""}
+          </p>
+        ) : null}
         {manages ? (
           <TeamMemberAdd
             slug={slug}

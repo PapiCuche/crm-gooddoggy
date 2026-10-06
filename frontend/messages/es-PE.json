@@ -227,6 +227,17 @@
       "status": "Membresía: {status}",
       "denied": "No tienes permiso para ver los integrantes de los equipos.",
       "stale": "No se pudieron ver los integrantes del equipo {team}: ya no está disponible. Revisa la lista.",
+      "remove": {
+        "trigger": "Quitar",
+        "label": "Quitar a {name} del equipo {team}",
+        "ask": "¿Quitar a {name} del equipo {team}? Seguirá siendo miembro de la organización.",
+        "confirm": "Sí, quitar",
+        "busy": "Quitando…",
+        "cancel": "Cancelar",
+        "done": "{name} ya no está en el equipo {team}.",
+        "denied": "No tienes permiso para cambiar los integrantes de los equipos.",
+        "stale": "No se pudo quitar a {name} del equipo {team}: ya no estaba en él, o el equipo ya no está disponible. Revisa la lista."
+      },
       "add": {
         "open": "Incorporar integrante",
         "openLabel": "Incorporar integrantes al equipo {team} ({slug})",
