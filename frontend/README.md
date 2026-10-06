@@ -271,9 +271,9 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 Encima de la lista, «Crear equipo» abre un formulario y envía `POST /api/v1/o/{slug}/teams/` (F2-53). Componente: `components/teams/team-create.tsx`, sobre el formulario de campos compartido (ver «Sucursales»): el camino de escritura, el foco y los errores son los de «Crear una sucursal».
 
 - **A quién se ofrece:** a quien tiene `teams.manage` según el contexto de la API y además ve la lista (`teams.view`): el formulario vive sobre ella, también cuando no hay ningún equipo. Es comodidad: la API decide, y un 403 se explica en el formulario.
-- **Campos:** identificador (el `slug`) y nombre, obligatorios; descripción, opcional. Cada uno con el límite de la API. La forma de asignar no se pide: la API pone la manual y el formulario lo dice.
+- **Campos:** identificador (el `slug`: letras de la a a la z, cifras y guiones entre ellas; la API no admite ñ ni tildes) y nombre, obligatorios; descripción, opcional. Cada uno con el límite de la API. La forma de asignar no se pide: la API pone la manual y el formulario lo dice.
 - **Lo que valida la pantalla:** que haya identificador y nombre, y las longitudes máximas. Lo demás lo decide la API: se envía lo escrito sin sus espacios exteriores (el identificador, tal como se escribió: la API lo pasa a minúsculas) y se anuncia el nombre que la API guardó.
-- **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El equipo nuevo va al final y nace sin integrantes.
+- **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El equipo nuevo va al final y nace sin integrantes. Si esa relectura falla, el aviso se queda y la lista no cambia, como en sucursales.
 - **Errores, por `code`:** el identificador repetido (`TEAM_SLUG_TAKEN`) y cada campo que la API no acepta se explican junto a su campo. Sin permiso, red o fallo del servidor, en el formulario. Sin sesión (401), `Providers` lleva al login.
 
 ## Seguridad del navegador (F2-07)

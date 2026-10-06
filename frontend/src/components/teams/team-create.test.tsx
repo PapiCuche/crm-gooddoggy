@@ -88,7 +88,13 @@ afterEach(() => {
 describe("TeamCreate", () => {
   it("solo se ofrece con el permiso, y abrir o cancelar no envía nada", async () => {
     const api = mockApi({ [LIST]: list(team("ventas", "Ventas")) });
-    const view = renderApp(ui(tenant("teams.view", "users.view", "branches.manage")));
+    // Ni con el rol Owner: cuenta el permiso que dio la API, nunca el nombre o el código de un rol.
+    const view = renderApp(
+      ui({
+        ...tenant("teams.view", "users.view", "branches.manage"),
+        roles: [{ code: "owner", name: "Owner" }],
+      }),
+    );
     await screen.findByRole("list", { name: "Equipos" });
     expect(screen.queryByRole("button", { name: "Crear equipo" })).not.toBeInTheDocument();
     view.unmount();
@@ -227,6 +233,37 @@ describe("TeamCreate", () => {
     send(form);
     await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
     expect(calls(api, "POST")).toHaveLength(3);
+  });
+
+  it("un identificador que la API no acepta se explica junto a él, con el foco en él", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [CREATE]: {
+        status: 400,
+        body: {
+          code: "VALIDATION_ERROR",
+          fields: { slug: [{ code: "invalid", message: "texto de la API" }] },
+        },
+      },
+    });
+    renderApp(ui());
+    const form = await opened();
+    // El límite que dice la ayuda es el del campo.
+    const limit = field(form, "slug").getAttribute("maxlength");
+    expect(field(form, "slug")).toHaveAccessibleDescription(new RegExp(`hasta ${limit}\\.`));
+    fill(form, { slug: "Diseño Web", name: "Diseño web" });
+    send(form);
+    await waitFor(() =>
+      expect(field(form, "slug")).toHaveAccessibleDescription(
+        "Ese identificador no sirve. Usa letras de la a a la z (sin ñ ni tildes), cifras y guiones entre ellas, hasta 50.",
+      ),
+    );
+    expect(field(form, "slug")).toHaveFocus();
+    expect(field(form, "slug")).toHaveValue("Diseño Web"); // lo escrito no se pierde ni se «arregla»
+    expect(field(form, "name")).not.toHaveAttribute("aria-invalid");
+    expect(within(form).getAllByRole("alert")).toHaveLength(1); // sin un error general además
+    expect(form).not.toHaveTextContent("texto de la API");
+    expect(body(calls(api, "POST")[0]).slug).toBe("Diseño Web"); // qué sirve lo decide la API
   });
 
   it("cada campo que la API no acepta lo dice junto a él, y el foco va al primero", async () => {
@@ -375,6 +412,31 @@ describe("TeamCreate", () => {
     fireEvent.click(submit); // otra pulsación con la escritura en vuelo
     await tick();
     expect(calls(api, "POST")).toHaveLength(1);
+  });
+
+  it("un render ajeno justo después de pulsar no suelta la marca: la escritura ya salió", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [CREATE]: { status: 201, body: team("ventas", "Ventas") },
+    });
+    let again = () => {};
+    function Shell() {
+      const [turn, setTurn] = useState(0);
+      again = () => setTurn(turn + 1);
+      return <div data-turn={turn}>{ui(tenant("teams.view", "teams.manage"))}</div>;
+    }
+    renderApp(<Shell />);
+    const form = await opened();
+    fill(form, { slug: "ventas", name: "Ventas" });
+    hold(api); // la escritura no llega a responder
+    const submit = within(form).getByRole("button", { name: "Crear" });
+    send(form);
+    act(() => again()); // la pantalla se vuelve a pintar en la misma tarea que la pulsación
+    await tick();
+    fireEvent.click(submit); // otra pulsación con la escritura en vuelo
+    fireEvent.submit(form);
+    await tick();
+    expect(calls(api, "POST")).toHaveLength(1); // `send` la inició antes de volver
   });
 
   it("el foco no se mueve solo cuando el usuario ya está en otra parte", async () => {

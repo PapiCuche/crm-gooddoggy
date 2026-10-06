@@ -16,7 +16,7 @@ const tenant: SelfContext = {
   permissions: [{ code: "teams.view", scopes: [] }],
 };
 const team = (slug: string, extra: Partial<Team> = {}): Team => ({
-  id: `id-${slug}`, // distinto del `slug`: lo que se enseña es el `slug`, no el identificador
+  id: `id-${slug}`, // distinto del `slug`: lo que se enseña es el `slug`, no el `id`
   slug,
   name: slug,
   description: "",
