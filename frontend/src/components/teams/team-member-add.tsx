@@ -39,6 +39,7 @@ function Candidates({
   slug,
   team,
   present,
+  out,
   membersKey,
   onGone,
   onDone,
@@ -46,6 +47,7 @@ function Candidates({
   slug: string;
   team: Team;
   present: ReadonlySet<string>; // las membresías que ya están en el equipo
+  out: { id: string; name: string } | null; // a quién se acaba de quitar en el panel (F2-66)
   membersKey: QueryKey; // la lectura del panel: el integrante nuevo entra en ella
   onGone: (notice: string) => void; // 404: el equipo o la persona ya no están al alcance
   onDone: () => void;
@@ -55,10 +57,22 @@ function Candidates({
   const { membership_id: own } = useTenant();
   const queryClient = useQueryClient();
   const done = useRef<HTMLButtonElement>(null);
-  const [added, setAdded] = useState<string | null>(null);
+  const [added, setAdded] = useState<{ id: string; name: string } | null>(null);
   // Quien ya entró desde esta lista: su botón se va en el mismo render que suelta la marca; el
   // panel, de donde sale `present`, se entera una tarea después.
   const [joined, setJoined] = useState<readonly string[]>([]);
+  // Quien entró desde esta lista y después se quitó en el panel vuelve a ser candidato: su fila
+  // recupera el botón, y el anuncio de que entró se retira.
+  const [seen, setSeen] = useState(out);
+  if (out !== seen) {
+    setSeen(out);
+    // Por lo que enseña el panel y no solo por `out`: dos respuestas en un mismo render dejan una.
+    const stay = joined.filter((id) => present.has(id));
+    if (out && stay.length < joined.length) {
+      setJoined(stay);
+      if (added && !stay.includes(added.id)) setAdded(null); // por `id`: hay tocayos
+    }
+  }
   // Una escritura cada vez, y enviada una sola vez (el estado de la mutación llega a la
   // pantalla una tarea después de la pulsación).
   const sending = useRef(false);
@@ -85,7 +99,7 @@ function Candidates({
           rows ? [...rows.filter((row) => row.id !== saved.id), saved] : rows,
         );
         setJoined((ids) => [...ids, membershipId]); // la fila que se pulsó
-        setAdded(display(saved.user));
+        setAdded({ id: membershipId, name: display(saved.user) });
         if (rereading) void queryClient.invalidateQueries({ queryKey: membersKey });
       },
       onError: (error, { membershipId }) => {
@@ -106,7 +120,8 @@ function Candidates({
 
   // Quien ya está, quien tiene la membresía dada de baja y uno mismo no se ofrecen: la API no
   // deja que nadie se incorpore a sí mismo. Quien entra desde esta lista conserva su fila, sin
-  // botón, hasta cerrarla: así la persona siguiente no sube bajo el puntero.
+  // botón, hasta cerrarla o hasta que se le quite en el panel: así la persona siguiente no sube
+  // bajo el puntero.
   const candidates = people.data?.filter(
     (person) =>
       joined.includes(person.id) ||
@@ -221,7 +236,7 @@ function Candidates({
       ) : null}
       {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}
       <p role="status" className={added ? "text-sm wrap-anywhere" : "sr-only"}>
-        {added ? t("added", { name: added, team: team.name }) : ""}
+        {added ? t("added", { name: added.name, team: team.name }) : ""}
       </p>
     </div>
   );
@@ -234,12 +249,14 @@ export function TeamMemberAdd({
   slug,
   team,
   present,
+  out,
   membersKey,
   onGone,
 }: {
   slug: string;
   team: Team;
   present: ReadonlySet<string>;
+  out: { id: string; name: string } | null;
   membersKey: QueryKey;
   onGone: (notice: string) => void;
 }) {
@@ -261,6 +278,7 @@ export function TeamMemberAdd({
       slug={slug}
       team={team}
       present={present}
+      out={out}
       membersKey={membersKey}
       onGone={onGone}
       onDone={() => setOpen(false)}
