@@ -20,6 +20,7 @@ export * from "./member";
 export * from "./memberBranch";
 export * from "./memberBranchChangeRequest";
 export * from "./memberBranchRef";
+export * from "./memberDefaultBranch";
 export * from "./memberOrganization";
 export * from "./memberRole";
 export * from "./membershipStatusEnum";

@@ -6,7 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface MemberBranchRef {
+export interface MemberDefaultBranch {
   id: string;
   code: string;
   name: string;

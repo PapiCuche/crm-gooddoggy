@@ -105,7 +105,8 @@ def test_each_member_comes_with_their_branch_or_without_one(world: Any) -> None:
     lima = branch(world.a, "LIM", name="Centro de Lima")
     closed = branch(world.a, "CUZ", name="Cusco", is_active=False)
     luis, marta = make_user(email="luis@example.com"), make_user(email="marta@example.com")
-    in_lima, in_closed = join(world.a, luis), join(world.a, marta)
+    # Marta, suspendida: la sucursal sale en cualquier estado de la membresía, como la fila.
+    in_lima, in_closed = join(world.a, luis), join(world.a, marta, "SUSPENDED")
     elsewhere = branch(world.b, "LIM", name="La de B")
     with tenant_scope(ctx(world.b)):  # la misma persona, con otra sucursal en otra organización
         OrganizationMembership.objects.create(user=luis, default_branch=elsewhere)

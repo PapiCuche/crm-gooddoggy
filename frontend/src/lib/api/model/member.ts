@@ -5,7 +5,7 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
-import type { MemberBranchRef } from "./memberBranchRef";
+import type { MemberDefaultBranch } from "./memberDefaultBranch";
 import type { MemberRole } from "./memberRole";
 import type { MembershipStatusEnum } from "./membershipStatusEnum";
 import type { MemberUser } from "./memberUser";
@@ -17,7 +17,7 @@ export interface Member {
   joined_at: string;
   user: MemberUser;
   /** Su sucursal, o `null`. La cambia `PUT …/members/{id}/branch/` (F2-69). */
-  default_branch: MemberBranchRef | null;
+  default_branch: MemberDefaultBranch | null;
   /** No autorizan nada. `id` nombra el rol en las rutas que lo asignan o quitan. */
   roles: MemberRole[];
 }

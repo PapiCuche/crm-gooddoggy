@@ -1587,7 +1587,7 @@ components:
           $ref: '#/components/schemas/MemberUser'
         default_branch:
           allOf:
-          - $ref: '#/components/schemas/MemberBranchRef'
+          - $ref: '#/components/schemas/MemberDefaultBranch'
           nullable: true
           description: Su sucursal, o `null`. La cambia `PUT …/members/{id}/branch/`
             (F2-69).
@@ -1630,8 +1630,20 @@ components:
       - branch_id
     MemberBranchRef:
       type: object
-      description: 'La sucursal de un miembro: lo justo para nombrarla. La comparte
-        `apps.members` (F2-69).'
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+      required:
+      - code
+      - id
+      - name
+    MemberDefaultBranch:
+      type: object
       properties:
         id:
           type: string

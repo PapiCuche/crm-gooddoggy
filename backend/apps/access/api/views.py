@@ -116,9 +116,9 @@ class MemberRoleSerializer(RoleNameSerializer):
     id = serializers.UUIDField(help_text="El que piden las rutas que asignan o quitan el rol.")
 
 
-class MemberBranchRefSerializer(serializers.Serializer[Any]):
-    """La sucursal de un miembro: lo justo para nombrarla. La comparte `apps.members` (F2-69)."""
-
+# La misma forma que responde `PUT …/members/{id}/branch/` (F2-69), con otro nombre de
+# componente: el `api` de un módulo es privado y `apps.members` no importa este.
+class MemberDefaultBranchSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     code = serializers.CharField()
     name = serializers.CharField()
@@ -129,7 +129,7 @@ class MemberSerializer(serializers.Serializer[Any]):
     status = serializers.ChoiceField(choices=settings.MEMBERSHIP_STATUSES)
     joined_at = serializers.DateTimeField()
     user = MemberUserSerializer()
-    default_branch = MemberBranchRefSerializer(
+    default_branch = MemberDefaultBranchSerializer(
         allow_null=True,
         help_text="Su sucursal, o `null`. La cambia `PUT …/members/{id}/branch/` (F2-69).",
     )
