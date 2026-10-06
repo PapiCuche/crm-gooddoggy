@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { useTeamMembersRemove } from "@/lib/api/client";
+import { getTeamMembersPutMutationKey, useTeamMembersRemove } from "@/lib/api/client";
 import type { Team, TeamMember } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
@@ -48,6 +48,19 @@ export function TeamMemberRemove({
   // Una escritura se envía una vez: el estado de la mutación llega a la pantalla una tarea
   // después de la pulsación, y dos pulsaciones seguidas no deben ser dos peticiones.
   const sending = useRef(false);
+  // Las escrituras `PUT` de esta fila (`TeamMemberRole`) que ya respondieron. Una que responda
+  // con el borrado en vuelo pudo llegar a la API después de él y volver a incorporar a la persona.
+  const settled = () =>
+    queryClient.getMutationCache().findAll({
+      mutationKey: getTeamMembersPutMutationKey(),
+      predicate: ({ state }) => {
+        const sent = state.variables as { teamId?: string; membershipId?: string } | undefined;
+        return (
+          state.status !== "pending" && sent?.teamId === team.id && sent.membershipId === member.id
+        );
+      },
+    });
+  const before = useRef<ReturnType<typeof settled>>([]);
   const name = fullName(member.user) || member.user.email;
   // Para saber a quién: dos personas pueden llamarse igual, y el correo las distingue.
   const exact = fullName(member.user) ? `${name} (${member.user.email})` : name;
@@ -69,7 +82,9 @@ export function TeamMemberRemove({
         if (active === document.body || root.current?.contains(active)) focusClose();
         setRemoved(true);
         onRemoved({ id: member.id, name });
-        if (rereading) void queryClient.invalidateQueries({ queryKey: membersKey });
+        // Un cambio de papel respondió entretanto: solo la API sabe si la persona sigue fuera.
+        const crossed = settled().some((write) => !before.current.includes(write));
+        if (rereading || crossed) void queryClient.invalidateQueries({ queryKey: membersKey });
       },
       onError: (error) => {
         if (error.status === 404) onGone(t("stale", { name, team: team.name }));
@@ -134,6 +149,7 @@ export function TeamMemberRemove({
               onClick={() => {
                 if (sending.current) return;
                 sending.current = true;
+                before.current = settled();
                 onRemoved(null);
                 remove.mutate({ orgSlug: slug, teamId: team.id, membershipId: member.id });
               }}

@@ -87,6 +87,10 @@ function ask(panel: HTMLElement, name = LUIS) {
   fireEvent.click(button);
   return within(panel).getByRole("group", { name });
 }
+// La región del panel que anuncia a quién se quitó: la segunda suya, tras el recuento. Las
+// filas tienen las suyas (F2-67).
+const announcement = (panel: HTMLElement) =>
+  panel.querySelectorAll<HTMLElement>(':scope > p[role="status"]')[1]!;
 const names = (panel: HTMLElement) =>
   within(within(panel).getByRole("list", { name: "Integrantes de Ventas" }))
     .getAllByRole("listitem")
@@ -145,7 +149,7 @@ describe("TeamMemberRemove", () => {
     const api = mockApi(routes({ [REMOVE("m2")]: NO_CONTENT }));
     renderApp(ui());
     const panel = await panelOf();
-    const live = within(panel).getAllByRole("status")[1]!; // montada antes de tener texto
+    const live = announcement(panel); // montada antes de tener texto
     expect(live).toHaveTextContent("");
     const group = ask(panel);
     const release = hold(api);
@@ -316,7 +320,7 @@ describe("TeamMemberRemove", () => {
     );
     renderApp(ui());
     const panel = await panelOf();
-    const live = within(panel).getAllByRole("status")[1]!;
+    const live = announcement(panel);
     const done = "Luis Paz ya no está en el equipo Ventas.";
     fireEvent.click(within(ask(panel)).getByRole("button", { name: "Sí, quitar" }));
     await waitFor(() => expect(live).toHaveTextContent(done));

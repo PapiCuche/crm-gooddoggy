@@ -255,7 +255,7 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **La marca de envío vive en el formulario** y se suelta en un efecto de maquetación cuando la escritura ya no está en curso. Un render solo del formulario (por ejemplo, al retirar un aviso de «falta» justo antes de enviar) trae la escritura tal como era antes de enviar y no la suelta: se compara con la que había al enviar. Por eso `write` debe ser el resultado de `useMutation` del render de la pantalla, no un objeto guardado, y `send` debe iniciar esa escritura antes de volver (`mutate`, sin esperar a nada): si no la inicia, el formulario deja de responder —también «Cancelar»— hasta el siguiente render de la pantalla; si la inicia más tarde, un render de la pantalla entre medias suelta la marca y otra pulsación sería otra escritura.
 - **El formulario se monta al abrir y se desmonta al cerrar:** los avisos y lo escrito no sobreviven a un cierre.
 
-## Equipos (F2-60 a F2-66)
+## Equipos (F2-60 a F2-67)
 
 `/o/[orgSlug]/equipos` muestra los equipos de la organización: lo que devuelve `GET /api/v1/o/{slug}/teams/` (F2-50), con el cliente generado.
 
@@ -264,7 +264,7 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **Asignación:** cada estrategia de la API tiene su nombre en `messages/es-PE.json` (`teams.strategy.*`). Una que esta versión no conozca se enseña con su código, no como un error. Solo cuentan las claves propias del catálogo de textos, como con los códigos de error de la API. Si el contrato gana una estrategia y el catálogo no, el frontend no compila. Todavía no la aplica nada (Inbox, Fase 6): la pantalla solo la enseña.
 - **Sin equipos:** la pantalla lo dice en lugar de enseñar una lista vacía.
 - **Navegación:** la entrada «Equipos» pide el permiso `teams.view`, el que exige la API para leerlos; `teams.manage` o `users.view` solos no bastan. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Lo que falta.** Cambiar el papel de un integrante desde la pantalla es el siguiente work item; la API ya lo permite (F2-58).
+- **Lo que la pantalla no hace** (la API sí): cambiar la forma de asignar de un equipo y el `is_active` de un integrante. Nada los aplica hasta el Inbox (Fase 6).
 
 ### Crear un equipo (F2-61)
 
@@ -302,7 +302,7 @@ Cada tarjeta ofrece «Desactivar» o «Reactivar», lo contrario de su estado, q
 
 ### Integrantes de un equipo (F2-64)
 
-Cada tarjeta ofrece «Integrantes», que abre un panel en la propia tarjeta con lo que devuelve `GET /api/v1/o/{slug}/teams/{team_id}/members/` (F2-55). Componente: `components/teams/team-members-panel.tsx`. El panel es de lectura; quien administra equipos tiene además «Incorporar integrante» y «Quitar» (abajo).
+Cada tarjeta ofrece «Integrantes», que abre un panel en la propia tarjeta con lo que devuelve `GET /api/v1/o/{slug}/teams/{team_id}/members/` (F2-55). Componente: `components/teams/team-members-panel.tsx`. El panel es de lectura; quien administra equipos tiene además «Incorporar integrante», «Hacer supervisor» / «Hacer integrante» y «Quitar» (abajo).
 
 - **A quién se ofrece:** a quien tiene `teams.view` y `users.view` según el contexto de la API, los dos que exige la ruta: enseña personas. No hace falta `teams.manage`. Es comodidad: la API decide, y un 403 se explica en el panel, sin reintento.
 - **Nada se pide hasta abrir el panel**, y cada apertura vuelve a preguntar: la lectura vive en un componente que solo existe con el panel abierto, así que al cerrarlo se cancela y se olvida, y al reabrir no se enseñan los integrantes de la vez anterior.
@@ -337,6 +337,21 @@ En el panel de integrantes, cada fila ofrece «Quitar», que pide confirmación 
 - **Errores, por `code`:** sin permiso, red y fallo del servidor, en la fila; el mismo botón reintenta. Sin sesión (401), `Providers` lleva al login.
 - **Pantalla desfasada (404):** la persona ya no estaba en el equipo, o el equipo ya no está al alcance. El panel se cierra, la lista de equipos se vuelve a pedir y lo explica el aviso de la lista, con la persona y el equipo.
 - **Si se cierra el panel con un borrado en vuelo**, la escritura sigue su curso; al reabrir, el panel pregunta de nuevo, y una lectura que salió antes de la respuesta no devuelve a quien se quitó. Si sale bien no se anuncia. Si falla, solo un 404 avisa (en la lista, como siempre; si el panel se había reabierto, lo cierra); cualquier otro fallo no se dice, y el panel reabierto enseña que la persona sigue en el equipo.
+
+### Cambiar el papel de un integrante (F2-67)
+
+En el panel de integrantes, cada fila ofrece «Hacer supervisor» o «Hacer integrante», lo contrario de su papel, que envía `PUT /api/v1/o/{slug}/teams/{team_id}/members/{membership_id}/` con `team_role` (F2-58). Componente: `components/teams/team-member-role.tsx`.
+
+- **A quién se ofrece:** a quien tiene `teams.manage` según el contexto de la API, en cada integrante menos en uno mismo: la API no deja que nadie cambie su propia pertenencia. A quien tiene un papel que esta versión no conoce no se le ofrece cambio. Es comodidad: la API decide, y un 403 se explica en la fila.
+- **Sin confirmación:** el mismo botón lo deshace. Un envío por pulsación; el segundo clic de un doble clic y un Enter mantenido no cuentan, porque al terminar el botón pasa a la acción contraria. Sin red falla y se dice.
+- **A quién:** el nombre accesible lleva el nombre y el correo.
+- **Éxito:** la fila enseña al integrante como lo respondió la API (su papel, y también su estado), sin volver a pedir los integrantes. El botón pasa a la acción contraria en el mismo render que deja pulsar otra vez. El resultado se anuncia en la fila (`role="status"`), con el papel que respondió la API, no el que se pidió.
+- **Errores, por `code`:** sin permiso, red y fallo del servidor, en la fila; el mismo botón reintenta. Sin sesión (401), `Providers` lleva al login.
+- **Pantalla desfasada (404):** el equipo o la persona ya no están al alcance. El panel se cierra, la lista de equipos se vuelve a pedir y lo explica el aviso de la lista.
+- **`PUT` incorpora si hace falta:** si otra persona quitó al integrante mientras el panel estaba abierto, cambiarle el papel lo vuelve a incorporar, con ese papel. La API no tiene una ruta que solo cambie.
+- **Si la fila se quita con el cambio en vuelo** («Quitar» en la misma fila), `PUT` puede llegar a la API después del borrado y volver a incorporar a la persona. Por eso los integrantes se vuelven a pedir cuando llega la última de las dos respuestas: la del cambio, si la fila ya no está en el panel; o la del borrado, si un cambio de esa fila respondió con él en vuelo. Solo la API sabe si la persona sigue fuera, y el anuncio de «Quitar» se retira si volvió a entrar.
+- **Si se cierra el panel con un cambio en vuelo**, la escritura sigue su curso; al reabrir, el panel pregunta de nuevo, y una lectura que salió antes de la respuesta no devuelve el papel de antes: se cancela y se vuelve a pedir. Si la lectura ya había llegado, la fila reabierta cambia al llegar la respuesta, sin anuncio. Si falla, solo un 404 avisa (en la lista, como siempre; si el panel se había reabierto, lo cierra); cualquier otro fallo no se dice.
+- **El papel no concede nada todavía:** ser supervisor de un equipo no da permisos sobre él (D-F2-12, abierta).
 
 ## Seguridad del navegador (F2-07)
 
