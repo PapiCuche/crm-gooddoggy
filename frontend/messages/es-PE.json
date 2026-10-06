@@ -21,7 +21,8 @@
       "home": "Inicio",
       "members": "Miembros",
       "roles": "Roles",
-      "branches": "Sucursales"
+      "branches": "Sucursales",
+      "teams": "Equipos"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -142,6 +143,28 @@
       "denied": "No tienes permiso para asignar ni quitar este rol a este miembro.",
       "stale": "Los roles de {name} o de la organización ya habían cambiado. Revisa la lista."
     }
+  },
+  "teams": {
+    "eyebrow": "Good Doggy / Equipos",
+    "title": "Equipos",
+    "intro": "Los equipos de trabajo de {organization}.",
+    "active": "Activo",
+    "inactive": "Inactivo",
+    "noDescription": "Sin descripción",
+    "assignment": "Asignación: {strategy}",
+    "strategy": {
+      "MANUAL": "Manual",
+      "ROUND_ROBIN": "Por turnos",
+      "LOAD_BALANCED": "Por carga de trabajo",
+      "SKILL_BASED": "Por habilidades",
+      "AI_RULES": "Por reglas de IA"
+    },
+    "empty": "Esta organización todavía no tiene equipos.",
+    "count": "{count, plural, =0 {Sin equipos en la lista} one {# equipo en la lista} other {# equipos en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando equipos…",
+    "denied": "No tienes permiso para ver los equipos de esta organización."
   },
   "branches": {
     "eyebrow": "Good Doggy / Sucursales",

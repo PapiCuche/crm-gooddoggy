@@ -60,7 +60,7 @@ describe("navegación del shell", () => {
     expect(await links([{ code: "branches.manage", scopes: [] }])).toEqual([["/o/acme", null]]);
   });
 
-  it("con `organization.view` lista «Sucursales», al final", async () => {
+  it("con `organization.view` lista «Sucursales», después de «Roles»", async () => {
     const both = [
       { code: "organization.view", scopes: [] },
       { code: "roles.view", scopes: [] },
@@ -71,5 +71,29 @@ describe("navegación del shell", () => {
       ["/o/acme/sucursales", null],
     ]);
     expect(screen.getByRole("link", { name: "Sucursales" })).toBeVisible();
+  });
+
+  it("la entrada «Equipos» pide `teams.view`: administrarlos o ver miembros no basta", async () => {
+    const without = [
+      { code: "teams.manage", scopes: [] },
+      { code: "users.view", scopes: [] },
+    ];
+    expect(await links(without)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/miembros", "page"],
+    ]);
+  });
+
+  it("con `teams.view` lista «Equipos», al final", async () => {
+    const both = [
+      { code: "teams.view", scopes: [] },
+      { code: "organization.view", scopes: [] },
+    ];
+    expect(await links(both)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/sucursales", null],
+      ["/o/acme/equipos", null],
+    ]);
+    expect(screen.getByRole("link", { name: "Equipos" })).toBeVisible();
   });
 });
