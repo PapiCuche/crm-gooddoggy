@@ -286,7 +286,12 @@ describe("TeamMemberRemove", () => {
   });
 
   it("al quitar al último lo dice, y quien salió vuelve a ser candidato para incorporar", async () => {
-    const directory = [ana, luis].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const directory = [ana, luis].map((member) => ({
+      ...member,
+      joined_at: "",
+      default_branch: null,
+      roles: [],
+    }));
     mockApi(
       routes({
         [MEMBERS]: page([luis]),
@@ -308,7 +313,12 @@ describe("TeamMemberRemove", () => {
 
   it("el anuncio se retira al enviar otro y cuando quien salió vuelve a entrar", async () => {
     const twin = person("m7", "luis.paz@otra.pe", "Luis", "Paz"); // se llama igual
-    const directory = [ana, luis, twin].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const directory = [ana, luis, twin].map((member) => ({
+      ...member,
+      joined_at: "",
+      default_branch: null,
+      roles: [],
+    }));
     const api = mockApi(
       routes({
         [MEMBERS]: page([ana, luis, twin]),
@@ -341,7 +351,12 @@ describe("TeamMemberRemove", () => {
   });
 
   it("quien entró desde la lista abierta y luego se quita vuelve a ofrecerse en ella", async () => {
-    const directory = [ana, luis].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const directory = [ana, luis].map((member) => ({
+      ...member,
+      joined_at: "",
+      default_branch: null,
+      roles: [],
+    }));
     const api = mockApi(
       routes({
         [MEMBERS]: page([ana]),
@@ -376,6 +391,7 @@ describe("TeamMemberRemove", () => {
     const directory = [ana, bare, luis, twin].map((member) => ({
       ...member,
       joined_at: "",
+      default_branch: null,
       roles: [],
     }));
     const put = (member: TeamMember) => [
@@ -467,7 +483,12 @@ describe("TeamMemberRemove", () => {
   );
 
   it("dos «Quitar» atendidos en el mismo render devuelven el botón a los dos", async () => {
-    const directory = [ana, luis, bare].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const directory = [ana, luis, bare].map((member) => ({
+      ...member,
+      joined_at: "",
+      default_branch: null,
+      roles: [],
+    }));
     const api = mockApi(
       routes({
         [MEMBERS]: page([ana]),

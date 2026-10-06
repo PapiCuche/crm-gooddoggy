@@ -329,6 +329,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
       "status": "ACTIVE",
       "joined_at": "2026-10-04T15:49:34.123456Z",
       "user": {"id": "…", "email": "ana@acme.pe", "first_name": "Ana", "last_name": "López"},
+      "default_branch": {"id": "…", "code": "LIM-01", "name": "Centro de Lima"},
       "roles": [{"id": "…", "code": "owner", "name": "Owner"}]
     }
   ],
@@ -338,9 +339,10 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 - **Qué incluye:** todas las membresías de la organización, en cualquier estado (`INVITED`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`). `id` es el de la membresía; `joined_at`, su fecha de alta, en UTC (los microsegundos se omiten si son cero). `status` es el estado de la membresía, no el de la cuenta: un usuario con la cuenta global desactivada sigue saliendo con el estado de su membresía (por ejemplo `ACTIVE`) aunque no pueda entrar.
 - **Qué no incluye:** contraseña, marcas de plataforma ni las otras organizaciones del usuario. La tabla `users` es global: el listado sale de `organization_memberships` (RLS con FORCE) y solo une los usuarios de esas filas.
+- **Sucursal (F2-70):** `default_branch` es la sucursal del miembro (identificador, código y nombre), o `null` si no tiene. Llega en la misma consulta que las membresías. Es un dato del miembro, como los nombres de sus roles: se ve con `users.view`, sin `organization.view`; quien no puede listar las sucursales ve así el identificador, el código y el nombre de las que tienen algún miembro (en cualquier estado de la membresía, y también si la sucursal está inactiva), no las demás ni su dirección, teléfono o zona horaria. El identificador es el que pide `PUT …/members/{id}/branch/`: quien tiene además `users.manage` puede llevar a un miembro a una de esas sucursales sin `organization.view`. No dice si la sucursal está activa. La cambia `PUT …/members/{id}/branch/` («La sucursal de un miembro»).
 - **Roles:** identificador, código y nombre. El código y el nombre, para mostrar; el identificador es el que piden las rutas que asignan o quitan el rol («Roles de un miembro»). Nada decide por ellos. Se ven con `users.view`, sin `roles.view`: quién tiene qué rol es dato del directorio; lo que concede cada rol no sale aquí.
-- **Paginación:** por cursor, en orden de alta (`?limit=`, `?cursor=`; ver «Listados»). Dos consultas por página, sean cuantos sean los miembros: las membresías con su usuario y los roles de esa página.
-- **Solo lectura.** Suspender y reactivar, asignar o quitar roles y asignar la sucursal están en las secciones siguientes; el directorio no enseña todavía la sucursal de cada miembro; invitar es otro work item (E01-06).
+- **Paginación:** por cursor, en orden de alta (`?limit=`, `?cursor=`; ver «Listados»). Dos consultas por página, sean cuantos sean los miembros: las membresías con su usuario y su sucursal, y los roles de esa página.
+- **Solo lectura.** Suspender y reactivar, asignar o quitar roles y asignar la sucursal están en las secciones siguientes; invitar es otro work item (E01-06).
 - `apps.access` lee las membresías con `apps.get_model`, como el motor de autorización: los módulos de L2 no se importan entre sí. Los selectores `memberships` y `roles_by_membership` filtran por organización, no por permiso: `users.view` lo exige la vista (`HasPermission` y `ScopeFilter`), y otra vista que los use declara el suyo.
 
 ## Directorio de roles (F2-22, ADR-016)

@@ -350,8 +350,8 @@ paths:
     get:
       operationId: members_list
       description: |-
-        Quién pertenece a la organización, en cualquier estado, y con qué roles. Paginado por
-        orden de alta (ADR-016).
+        Quién pertenece a la organización, en cualquier estado, con qué roles y en qué sucursal.
+        Paginado por orden de alta (ADR-016).
       parameters:
       - name: cursor
         in: query
@@ -1585,6 +1585,12 @@ components:
           format: date-time
         user:
           $ref: '#/components/schemas/MemberUser'
+        default_branch:
+          allOf:
+          - $ref: '#/components/schemas/MemberDefaultBranch'
+          nullable: true
+          description: Su sucursal, o `null`. La cambia `PUT …/members/{id}/branch/`
+            (F2-69).
         roles:
           type: array
           items:
@@ -1592,6 +1598,7 @@ components:
           description: No autorizan nada. `id` nombra el rol en las rutas que lo asignan
             o quitan.
       required:
+      - default_branch
       - id
       - joined_at
       - roles
@@ -1622,6 +1629,20 @@ components:
       required:
       - branch_id
     MemberBranchRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+      required:
+      - code
+      - id
+      - name
+    MemberDefaultBranch:
       type: object
       properties:
         id:

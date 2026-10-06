@@ -44,6 +44,7 @@ const person = (id: string, email: string, first = "", last = "", status = "ACTI
   id,
   status: status as Member["status"],
   joined_at: "2026-01-01T00:00:00Z",
+  default_branch: null,
   user: user(id, email, first, last),
   roles: [],
 });

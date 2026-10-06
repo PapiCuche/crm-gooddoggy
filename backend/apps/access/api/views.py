@@ -116,11 +116,23 @@ class MemberRoleSerializer(RoleNameSerializer):
     id = serializers.UUIDField(help_text="El que piden las rutas que asignan o quitan el rol.")
 
 
+# La misma forma que responde `PUT …/members/{id}/branch/` (F2-69), con otro nombre de
+# componente: el `api` de un módulo es privado y `apps.members` no importa este.
+class MemberDefaultBranchSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    code = serializers.CharField()
+    name = serializers.CharField()
+
+
 class MemberSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField(help_text="Identificador de la membresía.")
     status = serializers.ChoiceField(choices=settings.MEMBERSHIP_STATUSES)
     joined_at = serializers.DateTimeField()
     user = MemberUserSerializer()
+    default_branch = MemberDefaultBranchSerializer(
+        allow_null=True,
+        help_text="Su sucursal, o `null`. La cambia `PUT …/members/{id}/branch/` (F2-69).",
+    )
     roles = MemberRoleSerializer(
         many=True,
         help_text="No autorizan nada. `id` nombra el rol en las rutas que lo asignan o quitan.",
@@ -135,8 +147,8 @@ class MemberSerializer(serializers.Serializer[Any]):
     )
 )
 class MembersView(generics.ListAPIView):
-    """Quién pertenece a la organización, en cualquier estado, y con qué roles. Paginado por
-    orden de alta (ADR-016)."""
+    """Quién pertenece a la organización, en cualquier estado, con qué roles y en qué sucursal.
+    Paginado por orden de alta (ADR-016)."""
 
     required_permissions = {"GET": "users.view"}
     serializer_class = MemberSerializer
@@ -157,6 +169,7 @@ class MembersView(generics.ListAPIView):
                 "status": member.status,
                 "joined_at": member.created_at,
                 "user": member.user,
+                "default_branch": member.default_branch,  # llegó con la membresía (F2-70)
                 "roles": roles.get(member.pk, []),
             }
             for member in page

@@ -11,12 +11,13 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.access.selectors import memberships, roles_by_membership
 from apps.accounts.models import User
-from apps.organizations.models import OrganizationMembership
+from apps.organizations.models import Branch, OrganizationMembership
 from core.tenancy.context import TenantContextError
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_authorization import acting, give
+from tests.test_branches import branch
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, reply, signed
 
@@ -55,6 +56,7 @@ def test_it_lists_every_member_of_the_organization_with_status_and_roles(world: 
             "first_name": "Ana",
             "last_name": "López",
         },
+        "default_branch": None,  # sin sucursal
         "roles": [{"id": str(lectora.pk), "code": "lectora", "name": "Rol propio"}],
     }  # ni contraseña, ni marcas de plataforma, ni sus otras organizaciones
     assert (second["status"], second["user"]["email"]) == ("SUSPENDED", "luis@example.com")
@@ -98,6 +100,36 @@ def test_without_a_session_membership_or_permission_it_reveals_nothing(world: An
         assert reply(denied) == (403, b'{"code":"PERMISSION_DENIED"}')
 
 
+def test_each_member_comes_with_their_branch_or_without_one(world: Any) -> None:
+    give(world.a, world.membership, VIEW_USERS)  # ver miembros basta: no hace falta ver sucursales
+    lima = branch(world.a, "LIM", name="Centro de Lima")
+    closed = branch(world.a, "CUZ", name="Cusco", is_active=False)
+    luis, marta = make_user(email="luis@example.com"), make_user(email="marta@example.com")
+    # Marta, suspendida: la sucursal sale en cualquier estado de la membresía, como la fila.
+    in_lima, in_closed = join(world.a, luis), join(world.a, marta, "SUSPENDED")
+    elsewhere = branch(world.b, "LIM", name="La de B")
+    with tenant_scope(ctx(world.b)):  # la misma persona, con otra sucursal en otra organización
+        OrganizationMembership.objects.create(user=luis, default_branch=elsewhere)
+    with tenant_scope(ctx(world.a)):
+        OrganizationMembership.objects.filter(pk=in_lima.pk).update(default_branch=lima)
+        OrganizationMembership.objects.filter(pk=in_closed.pk).update(default_branch=closed)
+    client = signed(world.ana)
+    listed = {
+        row["user"]["email"]: row["default_branch"] for row in members(client).json()["results"]
+    }
+    assert listed == {
+        "ana@example.com": None,
+        "luis@example.com": {"id": str(lima.pk), "code": "LIM", "name": "Centro de Lima"},
+        # Una inactiva sigue siendo la suya; la respuesta no dice si está activa.
+        "marta@example.com": {"id": str(closed.pk), "code": "CUZ", "name": "Cusco"},
+    }
+    assert "La de B" not in str(members(client).json())
+    with tenant_scope(ctx(world.a)):  # y sigue al cambio: sin sucursal, `null`
+        OrganizationMembership.objects.filter(pk=in_lima.pk).update(default_branch=None)
+        assert Branch.objects.count() == 2
+    assert members(client).json()["results"][1]["default_branch"] is None
+
+
 def test_it_pages_by_cursor_without_a_query_per_member(world: Any) -> None:
     give(world.a, world.membership, VIEW_USERS)
     client = signed(world.ana)
@@ -108,10 +140,18 @@ def test_it_pages_by_cursor_without_a_query_per_member(world: Any) -> None:
         return len(captured)
 
     few = queries()
+    lima = branch(world.a, "LIM")
     for index in range(6):
         member = join(world.a, make_user(email=f"m{index}@example.com"))
         give(world.a, member.pk, {})
+        with tenant_scope(ctx(world.a)):  # la mitad, con sucursal: llega con la membresía
+            OrganizationMembership.objects.filter(pk=member.pk).update(
+                default_branch=lima if index % 2 else None
+            )
     assert queries() == few  # miembros y roles: una consulta cada uno, sean cuantos sean
+    with CaptureQueriesContext(connection) as captured:
+        assert members(client).status_code == 200
+    assert sum('FROM "branches"' in query["sql"] for query in captured) == 0  # ni una aparte
     with acting(world.a, world.ana) as ectx, CaptureQueriesContext(connection) as read:
         assert len(roles_by_membership(ectx, [world.membership])) == 1
     assert len(read) == 1  # los roles de la página, con su id, en una sola consulta

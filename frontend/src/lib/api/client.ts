@@ -1040,8 +1040,8 @@ export const getMembersListUrl = (orgSlug: string, params?: MembersListParams) =
 };
 
 /**
- * Quién pertenece a la organización, en cualquier estado, y con qué roles. Paginado por
- * orden de alta (ADR-016).
+ * Quién pertenece a la organización, en cualquier estado, con qué roles y en qué sucursal.
+ * Paginado por orden de alta (ADR-016).
  */
 export const membersList = async (
   orgSlug: string,

@@ -63,6 +63,7 @@ class MemberBranchChangeSerializer(serializers.Serializer[Any]):
     )
 
 
+# La misma forma que `default_branch` en el directorio de miembros (`apps.access`, F2-70).
 class MemberBranchRefSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     code = serializers.CharField()
