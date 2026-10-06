@@ -1,5 +1,5 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50 y F2-53)."""
+de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50, F2-53 y F2-54)."""
 
 from typing import Any
 from uuid import UUID
@@ -208,13 +208,22 @@ class TeamCreateSerializer(serializers.Serializer[Any]):
         problems = {}
         for field, value in attrs.items():
             try:
-                attrs[field] = team_commands.CLEAN[field](value)
+                if field in team_commands.CLEAN:  # `is_active` ya llega como booleano
+                    attrs[field] = team_commands.CLEAN[field](value)
             except ValueError as error:
                 text = f"{error}."
                 problems[field] = [text[:1].upper() + text[1:]]
         if problems:
             raise serializers.ValidationError(problems)
         return attrs
+
+
+class TeamUpdateSerializer(TeamCreateSerializer):
+    """Lo que se envía cambia; lo que no, se queda como está. El `slug` no se cambia."""
+
+    slug = None
+    name = serializers.CharField(max_length=team_commands.NAME_MAX, required=False)
+    is_active = JsonBooleanField(required=False)
 
 
 SLUG_TAKEN = "Ya existe un equipo con ese slug en la organización."
@@ -256,3 +265,29 @@ class TeamsView(generics.ListAPIView):
         except team_commands.TeamSlugTaken:
             raise ApiError("TEAM_SLUG_TAKEN", 409, SLUG_TAKEN) from None
         return Response(TeamSerializer(team).data, status=201)
+
+
+class TeamView(APIView):
+    """Un equipo: `PATCH` cambia sus datos, lo desactiva o lo reactiva (`is_active`). No hay
+    borrado."""
+
+    required_permissions = {"PATCH": "teams.manage"}
+
+    @extend_schema(
+        operation_id="teams_update",
+        tags=["teams"],
+        request=TeamUpdateSerializer,
+        responses={200: TeamSerializer, **errors(400, 401, 403, 404)},
+        description="Cambia lo que se envía; lo demás se queda como está, y el `slug` no "
+        "cambia. Enviar lo que ya hay no escribe nada. 404: el equipo no es de la organización.",
+    )
+    def patch(self, request: Request, team_id: UUID, **kwargs: Any) -> Response:
+        wanted = TeamUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            team = team_commands.update_team(tenant, team_id=team_id, **wanted.validated_data)
+        except Team.DoesNotExist:
+            raise NotFound from None
+        return Response(TeamSerializer(team).data)
