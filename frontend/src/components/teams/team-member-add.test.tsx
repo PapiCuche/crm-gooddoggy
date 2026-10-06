@@ -246,13 +246,31 @@ describe("TeamMemberAdd", () => {
     members = [inTeam(luis), inTeam(marta)]; // lo que la API dirá a partir de ahora
     answer();
     await tick();
-    read(); // llega tarde y con la lista de antes: ya no cuenta
+    members = [inTeam(luis)]; // la lectura en vuelo salió antes del envío: trae la lista de antes
+    read(); // llega tarde: ya no cuenta
+    await tick();
     const again = screen.getByRole("group", { name: "Integrantes del equipo Ventas (ventas)" });
     expect(await within(again).findByText("2 integrantes")).toBeVisible();
     expect(calls(api, "PUT")).toHaveLength(1);
   });
 
-  it("la fila del recién incorporado se va en el mismo render que deja pulsar otra vez", async () => {
+  it("quien entra conserva su fila hasta cerrar la lista; al incorporar al último, se dice", async () => {
+    const entra = (who: Member) => ({ status: 201, body: inTeam(who) });
+    mockApi(
+      routes({ [PEOPLE]: page([marta, eva]), [ADD("m3")]: entra(marta), [ADD("m4")]: entra(eva) }),
+    );
+    renderApp(ui());
+    const { group } = await picker();
+    fireEvent.click(adder(group, "Marta Ríos"));
+    await waitFor(() => expect(offered(group)).toHaveLength(1));
+    expect(group).not.toHaveTextContent("No queda nadie"); // queda Eva
+    fireEvent.click(adder(group, "Eva"));
+    await waitFor(() => expect(offered(group)).toEqual([]));
+    expect(within(group).getAllByText("Ya está en el equipo")).toHaveLength(2); // las dos filas
+    expect(within(group).getByText("No queda nadie por incorporar.")).toBeVisible();
+  });
+
+  it("el botón del recién incorporado se va en el mismo render que deja pulsar otra vez", async () => {
     const api = mockApi(routes({ [ADD("m3")]: { status: 201, body: inTeam(marta) } }));
     renderApp(ui());
     const { group } = await picker();

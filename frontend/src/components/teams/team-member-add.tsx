@@ -56,7 +56,7 @@ function Candidates({
   const queryClient = useQueryClient();
   const done = useRef<HTMLButtonElement>(null);
   const [added, setAdded] = useState<string | null>(null);
-  // Quien ya entró desde esta lista: su fila se va en el mismo render que suelta la marca; el
+  // Quien ya entró desde esta lista: su botón se va en el mismo render que suelta la marca; el
   // panel, de donde sale `present`, se entera una tarea después.
   const [joined, setJoined] = useState<readonly string[]>([]);
   // Una escritura cada vez, y enviada una sola vez (el estado de la mutación llega a la
@@ -74,7 +74,7 @@ function Candidates({
   const add = useTeamMembersPut({
     mutation: {
       networkMode: "always",
-      onSuccess: async (saved) => {
+      onSuccess: async (saved, { membershipId }) => {
         // El panel pudo cerrarse y reabrirse mientras se enviaba: su lectura en vuelo traería la
         // lista de antes. Se cancela y, como no deja datos donde escribir, se vuelve a pedir.
         const read = queryClient.getQueryState(membersKey);
@@ -84,7 +84,7 @@ function Candidates({
         queryClient.setQueryData<TeamMember[]>(membersKey, (rows) =>
           rows ? [...rows.filter((row) => row.id !== saved.id), saved] : rows,
         );
-        setJoined((ids) => [...ids, saved.id]);
+        setJoined((ids) => [...ids, membershipId]); // la fila que se pulsó
         setAdded(display(saved.user));
         if (rereading) void queryClient.invalidateQueries({ queryKey: membersKey });
       },
@@ -144,7 +144,10 @@ function Candidates({
             {candidates.map((person) => {
               const mine = busy && add.variables?.membershipId === person.id;
               return (
-                <li key={person.id} className="flex items-center justify-between gap-3">
+                <li
+                  key={person.id} // la altura del botón, también cuando ya no lo tiene
+                  className="flex min-h-11 items-center justify-between gap-3 sm:min-h-9"
+                >
                   <span className="flex min-w-0 flex-col text-sm leading-snug wrap-anywhere">
                     {display(person.user)}
                     {fullName(person.user) ? (
