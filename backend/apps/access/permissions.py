@@ -1,8 +1,9 @@
 """El motor de autorización en DRF (ADR-003 §5, frontera B2). Denegación por defecto.
 
 `HasPermission` y `ScopeFilter` son los valores por defecto de DRF (`config.settings.base`).
-Una vista de tenant declara el permiso de cada método en `required_permissions`; vista sin
-declaración, método sin declarar o petición sin contexto de tenant: denegado.
+Una vista de tenant declara el permiso de cada método en `required_permissions` (un código, o
+una tupla de códigos si los exige todos); vista sin declaración, método sin declarar, declaración
+que no se entiende o petición sin contexto de tenant: denegado.
 
 El contexto es el que resolvió el middleware (`core.tenancy.context`), nunca `request.user`
 ni datos del cliente. Las vistas de plataforma son las rutas fuera de `/api/v1/o/<slug>/`:
@@ -33,12 +34,17 @@ from core.api.errors import ApiError
 from core.tenancy import context
 
 
-def required_code(request: Any, view: Any) -> str | None:
-    """Permiso que la vista declara para este método (HEAD usa el de GET); `None`: denegar."""
+def required_codes(request: Any, view: Any) -> tuple[str, ...]:
+    """Permisos que la vista declara para este método (HEAD usa los de GET): un código, o una
+    tupla si exige varios a la vez (F2-56). Vacío: denegar. Una lista, una tupla vacía o un
+    valor que no es texto no declaran nada."""
     declared = getattr(view, "required_permissions", None)
     method = "GET" if request.method == "HEAD" else request.method
-    code = declared.get(method) if isinstance(declared, Mapping) else None
-    return code if isinstance(code, str) else None
+    wanted = declared.get(method) if isinstance(declared, Mapping) else None
+    codes = (wanted,) if isinstance(wanted, str) else wanted
+    if isinstance(codes, tuple) and all(isinstance(code, str) for code in codes):
+        return codes
+    return ()
 
 
 def request_context(request: Any) -> ExecutionContext | None:
@@ -63,14 +69,16 @@ def request_context(request: Any) -> ExecutionContext | None:
 
 class HasPermission(BasePermission):
     def has_permission(self, request: Any, view: Any) -> bool:
-        ectx, code = request_context(request), required_code(request, view)
-        return ectx is not None and code is not None and has_permission(ectx, code)
+        ectx, codes = request_context(request), required_codes(request, view)
+        if ectx is None or not codes:
+            return False
+        return all(has_permission(ectx, code) for code in codes)  # todos, no alguno
 
     def has_object_permission(self, request: Any, view: Any, obj: Model) -> bool:
-        ectx, code = request_context(request), required_code(request, view)
-        if ectx is None or code is None:
+        ectx, codes = request_context(request), required_codes(request, view)
+        if ectx is None or not codes:
             return False
-        if not can(ectx, code, obj):
+        if not all(can(ectx, code, obj) for code in codes):
             raise NotFound  # nunca 403; red de seguridad: la vista debe consultar con scoped()
         return True
 
@@ -91,10 +99,12 @@ class ScopeFilter(BaseFilterBackend):
     """Listados y `get_object()`: solo las filas dentro del alcance, filtradas en SQL."""
 
     def filter_queryset(self, request: Any, queryset: QuerySet[Any], view: Any) -> QuerySet[Any]:
-        ectx, code = request_context(request), required_code(request, view)
-        if ectx is None or code is None:
+        ectx, codes = request_context(request), required_codes(request, view)
+        if ectx is None or not codes:
             return queryset.none()
-        return scoped(ectx, code, queryset)
+        for code in codes:  # las filas que todos los permisos dejan ver
+            queryset = scoped(ectx, code, queryset)
+        return queryset
 
 
 @contextmanager

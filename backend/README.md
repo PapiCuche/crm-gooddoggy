@@ -152,6 +152,7 @@ class ContactDetail(generics.RetrieveUpdateAPIView):
         return Contact.objects.all()
 ```
 
+- **Varios permisos a la vez (F2-56):** un método puede declarar una tupla, `{"GET": ("teams.view", "users.view")}`, y entonces los exige todos: a quien le falta uno, 403; sobre un objeto y en un listado se aplica el alcance de cada uno, así que se ve lo que todos dejan ver. No existe «uno de varios». Una tupla vacía, una lista o un valor que no es texto no declaran nada: el método se deniega.
 - Vista sin `required_permissions` o método sin declarar: 403. HEAD usa el permiso de GET. Pedir con `Accept` un formato que la API no sirve da 406 `NOT_ACCEPTABLE`.
 - `ScopeFilter` aplica `scoped()` al queryset de listados y de `get_object()`: se filtra en SQL. Solo actúa donde la vista llama a `filter_queryset()`: una vista que consulte por su cuenta debe pasar su queryset por `scoped()`.
 - Cada método usa su permiso y, sobre un objeto que ya existe, su alcance. Crear (POST) solo comprueba el permiso, y el filtro mira la fila antes de escribirla, no los valores que llegan (OBS-F2-05B-5). Un método de escritura responde con el objeto, así que poder escribirlo implica leer esa respuesta.
