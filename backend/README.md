@@ -88,8 +88,8 @@ Variables de producción: `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `FORWARDE
 
 `apps.organizations.OrganizationMembership` (tabla `organization_memberships`, **tenant-owned**) une un usuario global con una organización. Un usuario puede tener cero, una o varias.
 
-- **Campos:** `id`, `organization_id`, `user`, `status` (`INVITED`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`), `created_at`, `updated_at`. Solo `ACTIVE` da acceso. **No lleva rol:** los roles se asignarán a la membresía (F2-04).
-- **Constraints en BD:** `UNIQUE (organization_id, user_id)`, `CHECK` de `status`, FK a `organizations` y FK a `users`.
+- **Campos:** `id`, `organization_id`, `user`, `status` (`INVITED`, `ACTIVE`, `SUSPENDED`, `DEACTIVATED`), `default_branch` (su sucursal, opcional; F2-68, ver «Sucursales»), `created_at`, `updated_at`. Solo `ACTIVE` da acceso. **No lleva rol:** los roles se asignarán a la membresía (F2-04).
+- **Constraints en BD:** `UNIQUE (organization_id, user_id)`, `CHECK` de `status`, FK a `organizations`, FK a `users` y FK compuesta `(organization_id, default_branch_id)` a `branches` (F2-68).
 - **RLS con FORCE, sin `tenant_isolation`:** cuatro políticas, una por comando. Con tenant activo, `SELECT` solo ve ese tenant. Sin tenant, dentro de `user_scope(user)`, el usuario ve solo sus propias membresías y no puede escribir. Sin contexto no se ve nada. Así se resuelve "¿es miembro?" sin haber entrado todavía al tenant y sin BYPASSRLS.
 - **Resolvedor:** `TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"`. Usuario activo con membresía `ACTIVE` → tenant resuelto. Cualquier otro caso (sin membresía, membresía no activa, usuario inactivo, staff de plataforma sin membresía) → el mismo 404 que una organización inexistente.
 - **Selectores** (`apps.organizations.selectors`): `active_membership` y `organizations_for_user`. El manager `OrganizationMembership.for_user` solo se usa dentro de `user_scope`; con tenant activo se usa `objects`.
@@ -129,7 +129,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 
 `apps.access.selectors` decide si una membresía puede hacer algo. Solo cuentan permisos y alcances: nunca el código o el nombre de un rol, ni `is_platform_staff`.
 
-- `execution_context(ctx)`: membresía activa del usuario, sus equipos (`team_ids`, F2-52) y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
+- `execution_context(ctx)`: membresía activa del usuario, sus equipos (`team_ids`, F2-52), su sucursal (`branch_ids`, F2-68: vacío si no tiene) y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
 - `has_permission`, `can(ectx, code, obj)`, `require(...)` y `scoped(ectx, code, queryset)`: permiso, alcance sobre un objeto y filtro de listado. Todo dentro del `tenant_scope` del propio contexto.
 - `apps.access.scopes.register(Modelo, FieldScopes(...))`: cada modelo declara una vez sus columnas de propietario, equipo y sucursal, por el nombre de la columna (`assigned_user_id`, no `assigned_user`); de ahí salen el filtro y la verificación por objeto.
 - `TEAM` alcanza los recursos de los equipos a los que pertenece la membresía (`team_members`, F2-52), además de lo propio. `BRANCH` alcanza los recursos de la sucursal de la membresía (`organization_memberships.default_branch_id`, F2-68), además de lo propio; sin sucursal, equivale a `OWN`. Ninguna ruta asigna todavía esa sucursal.
@@ -456,7 +456,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Auditoría de tenant:** `membership.suspended` y `membership.reactivated`, con el actor y el antes y el después, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_status` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización), después a `organizations.services.set_membership_status` (escritura y auditoría) y, al suspender, a `accounts.services.revoke_sessions`. `organizations.services` no comprueba permisos: solo lo importa `apps.members` (contrato de import-linter).
 
-## Sucursales (F2-43 a F2-45, E01-09)
+## Sucursales (F2-43 a F2-45 y F2-68, E01-09)
 
 `GET /api/v1/o/{slug}/branches/` lista las sucursales de la organización. Exige `organization.view` (sin él, 403; sin membresía activa, 404).
 

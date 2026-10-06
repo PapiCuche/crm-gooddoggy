@@ -10,7 +10,7 @@ from django.db import IntegrityError, connection
 from django.db.models import ProtectedError
 from django.test.utils import CaptureQueriesContext
 
-from apps.access.selectors import execution_context, scoped
+from apps.access.selectors import can, execution_context, scoped
 from apps.organizations.models import Branch, OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
@@ -53,9 +53,9 @@ def test_the_context_carries_the_branch_of_the_membership(world: Any) -> None:
     with tenant_scope(ctx(world.a)):
         Branch.objects.filter(pk=lima.pk).update(is_active=False)
     assert own_branches(world.a, world.ana) == {lima.pk}  # cuenta también inactiva
+    assert own_teams(world.a, world.ana) == frozenset()  # y la sucursal no cuenta como equipo
     place(world.a, world.membership, None)
     assert own_branches(world.a, world.ana) == frozenset()
-    assert own_teams(world.a, world.ana) == frozenset()  # y los equipos, aparte
 
 
 def test_the_branch_comes_in_the_same_two_queries(world: Any) -> None:
@@ -97,6 +97,35 @@ def test_branch_scope_now_reaches_the_resources_of_my_branch(
     assert seen() == {"de otra"}  # una sola sucursal: al cambiar, deja de ver la anterior
     place(world.a, world.membership, None)
     assert seen() == set()
+
+
+def test_only_a_branch_grant_reaches_the_branch_and_only_a_team_grant_the_team(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """Con sucursal y equipo reales en el contexto, `OWN` sigue dando solo lo propio."""
+    mine, sales = branch(world.a, "LIM"), team(world.a, "ventas")
+    insert = "INSERT INTO tenancy_app_widget (id, organization_id, name, assigned_user_id, "
+    insert += "branch_id, team_id) VALUES (%s, %s, %s, %s, %s, %s)"
+    rows = (("propio", world.ana.pk, None, None), ("de mi sucursal", None, mine.pk, None))
+    for name, user_id, branch_id, team_id in (*rows, ("de mi equipo", None, None, sales.pk)):
+        migrator.execute(insert, [uuid4(), world.a, name, user_id, branch_id, team_id])
+    place(world.a, world.membership, mine.pk)
+    add(world.a, sales.pk, world.membership)
+    tenant = ctx(world.a, world.ana)
+
+    def seen() -> set[str]:
+        with tenant_scope(tenant):
+            ectx = execution_context(tenant)
+            found = set(scoped(ectx, VIEW, Widget.objects.all()).values_list("name", flat=True))
+            assert found == {w.name for w in Widget.objects.all() if can(ectx, VIEW, w)}
+            return found
+
+    give(world.a, world.membership, {VIEW: "OWN"})
+    assert seen() == {"propio"}  # ni su sucursal ni su equipo: eso lo dan `BRANCH` y `TEAM`
+    give(world.a, world.membership, {VIEW: "TEAM"})
+    assert seen() == {"propio", "de mi equipo"}  # `TEAM` no da la sucursal
+    give(world.a, world.membership, {VIEW: "BRANCH"})
+    assert seen() == {"propio", "de mi equipo", "de mi sucursal"}  # unión de los tres roles
 
 
 def test_rls_and_the_composite_key_keep_the_branch_inside_the_organization(
