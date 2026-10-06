@@ -187,13 +187,13 @@
     },
     "edit": {
       "trigger": "Editar",
-      "triggerLabel": "Editar el equipo {team}",
+      "triggerLabel": "Editar el equipo {team} ({slug})",
       "title": "Editar {team}",
       "submit": "Guardar",
       "busy": "Guardando…",
       "denied": "No tienes permiso para cambiar equipos.",
       "done": "Equipo «{name}» guardado.",
-      "stale": "El equipo {team} ya no existe. Revisa la lista."
+      "stale": "No se pudo guardar el equipo {team}: ya no está disponible. Revisa la lista."
     }
   },
   "branches": {

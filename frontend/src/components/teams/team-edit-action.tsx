@@ -87,7 +87,8 @@ export function TeamEditAction({
         if (rereading) void queryClient.invalidateQueries({ queryKey: listKey });
       },
       onError: (error) => {
-        // El equipo ya no existe: lo explica la lista, que se vuelve a pedir.
+        // El equipo ya no está al alcance (o la organización, o la membresía): lo explica la
+        // lista, que se vuelve a pedir.
         if (error.status !== 404) return;
         const active = document.activeElement;
         // La tarjeta entera desaparece: también si el foco estaba en ella o en otra acción suya.
@@ -153,7 +154,8 @@ export function TeamEditAction({
           ref={trigger}
           variant="ghost"
           className="border-border min-h-11 border sm:min-h-9"
-          aria-label={t("triggerLabel", { team: team.name })}
+          // Con el identificador: el nombre de un equipo puede repetirse en la organización.
+          aria-label={t("triggerLabel", { team: team.name, slug: team.slug })}
           onClick={() => show(true)}
         >
           {t("trigger")}

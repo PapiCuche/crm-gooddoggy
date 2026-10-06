@@ -283,9 +283,10 @@ Cada tarjeta ofrece «Editar», que abre un formulario en la propia tarjeta y en
 - **A quién se ofrece:** a quien tiene `teams.manage` según el contexto de la API, en todos los equipos, también los inactivos. Es comodidad: la API decide, y un 403 se explica en el formulario.
 - **Campos:** nombre, obligatorio, y descripción, opcional, con los límites de la API. El identificador no cambia y no se enseña como campo.
 - **La forma de asignar no se edita desde la pantalla.** Nada la aplica hasta el Inbox (Fase 6), y la pantalla no ofrece un ajuste sin efecto. La API ya admite cambiarla.
-- **Lo que se edita queda fijado al abrir:** si la lista cambia debajo, el formulario sigue enseñando lo que el usuario abrió.
+- **Lo que se edita queda fijado al abrir:** si la lista cambia debajo, el formulario sigue enseñando lo que el usuario abrió. Los dos campos viajan siempre, con lo que había al abrir: si otra persona cambió la descripción mientras tanto y aquí solo se cambia el nombre, se guarda la descripción de antes.
 - **Éxito:** el formulario se cierra y la tarjeta enseña el nombre y la descripción que guardó la API, sin volver a pedir la lista; lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
-- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica. Abrir «Editar» o «Crear equipo» retira ese aviso.
+- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica («No se pudo guardar el equipo…: ya no está disponible»). No dice que el equipo se borró: no hay borrado de equipos, y la API responde igual si lo que dejó de estar al alcance es la organización o la membresía. Abrir «Editar» o «Crear equipo» retira ese aviso; cancelar otro formulario, no.
+- **«Editar» se distingue por equipo:** su nombre accesible lleva el nombre y el identificador («Editar el equipo Ventas (ventas)»), porque dos equipos pueden llamarse igual.
 
 ## Seguridad del navegador (F2-07)
 

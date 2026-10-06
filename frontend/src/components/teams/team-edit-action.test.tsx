@@ -55,8 +55,9 @@ const calls = (api: ReturnType<typeof mockApi>, method: string) =>
   api.mock.calls.filter(([, init]) => (init?.method ?? "GET") === method);
 const body = (call?: unknown[]) => JSON.parse(String((call?.[1] as RequestInit).body));
 const tick = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 5)));
+// El nombre accesible lleva además el identificador: «Editar el equipo Ventas (ventas)».
 const trigger = (name = "Ventas") =>
-  screen.getByRole("button", { name: `Editar el equipo ${name}` });
+  screen.getByRole("button", { name: new RegExp(`^Editar el equipo ${name} \\(`) });
 const field = (form: HTMLElement, name: Field) => within(form).getByLabelText(LABELS[name]);
 // Deja en espera la siguiente respuesta de la API hasta que se llama a lo que devuelve.
 function hold(api: ReturnType<typeof mockApi>) {
@@ -131,6 +132,21 @@ describe("TeamEditAction", () => {
     expect(field(screen.getByRole("form"), "name")).toHaveValue("Ventas");
   });
 
+  it("dos equipos con el mismo nombre: cada «Editar» se distingue por el identificador", async () => {
+    mockApi({
+      [LIST]: list([team("t1", "ventas", "Ventas"), team("t2", "ventas-norte", "Ventas")]),
+    });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Equipos" });
+    const names = screen
+      .getAllByRole("button", { name: /^Editar el equipo/ })
+      .map((button) => button.getAttribute("aria-label"));
+    expect(names).toEqual([
+      "Editar el equipo Ventas (ventas)",
+      "Editar el equipo Ventas (ventas-norte)",
+    ]);
+  });
+
   it("guarda con un solo envío, cambia la tarjeta sin volver a pedir la lista y lo anuncia", async () => {
     // La respuesta trae además cosas que este formulario no edita: no llegan a la tarjeta.
     const saved = {
@@ -144,6 +160,9 @@ describe("TeamEditAction", () => {
     const api = mockApi({ [LIST]: list(), [EDIT("t2")]: { status: 200, body: saved } });
     renderApp(ui());
     const form = await opened();
+    // El anuncio ya está montado, vacío: un lector de pantalla lo oye cuando cambia.
+    const live = within(card("Ventas")).getByRole("status");
+    expect(live).toBeEmptyDOMElement();
     fill(form, { name: "  Ventas   Lima ", description: "  " });
     const release = hold(api);
     send(form);
@@ -170,7 +189,7 @@ describe("TeamEditAction", () => {
       "Activo",
     ]);
     const done = within(card("Ventas Lima")).getByText("Equipo «Ventas Lima» guardado.");
-    expect(done).toHaveAttribute("role", "status");
+    expect(done).toBe(live);
     expect(done.textContent).toBe("Equipo «Ventas Lima» guardado."); // el nombre guardado
     await waitFor(() => expect(trigger("Ventas Lima")).toHaveFocus());
     expect(calls(api, "GET")).toHaveLength(1); // la lista no se vuelve a pedir
@@ -352,7 +371,9 @@ describe("TeamEditAction", () => {
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     const notice = await screen.findByRole("alert");
-    expect(notice).toHaveTextContent("El equipo Ventas ya no existe. Revisa la lista.");
+    expect(notice).toHaveTextContent(
+      "No se pudo guardar el equipo Ventas: ya no está disponible. Revisa la lista.",
+    );
     await waitFor(() =>
       expect(
         screen.queryByText("Ventas", { selector: "span.font-medium" }),
@@ -374,13 +395,60 @@ describe("TeamEditAction", () => {
     const create = screen.getByRole("button", { name: "Crear equipo" });
     create.focus(); // el usuario ya está en otra parte
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
-    expect(await screen.findByRole("alert")).toHaveTextContent("El equipo Ventas ya no existe");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo guardar el equipo Ventas: ya no está disponible",
+    );
     await tick();
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(trigger()).toBeVisible(); // la tarjeta sigue: la lista aún la trae
     expect(create).toHaveFocus();
     fireEvent.click(create); // abrir «Crear equipo» también retira el aviso
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("un 404 con el foco en ninguna parte lo lleva al título", async () => {
+    let rows = teams;
+    const api = mockApi({
+      [LIST]: () => list(rows),
+      [EDIT("t2")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    renderApp(ui());
+    const form = await opened();
+    rows = [teams[0]!, teams[2]!]; // ya no está: no queda un «Editar» al que volver
+    (document.activeElement as HTMLElement).blur(); // como un clic que no da el foco al botón
+    expect(document.body).toHaveFocus();
+    fireEvent.submit(form);
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+    await tick();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("el aviso de la lista solo lo retira abrir: cancelar otro formulario lo deja", async () => {
+    const api = mockApi({
+      [LIST]: list(),
+      [EDIT("t2")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    renderApp(ui());
+    await screen.findByRole("list", { name: "Equipos" });
+    fireEvent.click(screen.getByRole("button", { name: "Crear equipo" }));
+    fireEvent.click(trigger("Soporte"));
+    const form = await opened();
+    send(form);
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo guardar el equipo Ventas: ya no está disponible",
+    );
+    const cancel = (name: string) =>
+      fireEvent.click(
+        within(screen.getByRole("form", { name })).getByRole("button", { name: "Cancelar" }),
+      );
+    cancel("Editar Soporte");
+    cancel("Nuevo equipo");
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No se pudo guardar el equipo Ventas: ya no está disponible",
+    );
   });
 
   it("Enter mantenido no vuelve a pulsar: ni reabre el formulario ni reenvía", async () => {
