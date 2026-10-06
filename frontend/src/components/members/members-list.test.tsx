@@ -79,6 +79,28 @@ describe("MembersList", () => {
     expect(screen.getByText(/pertenecen a Acme SAC/)).toBeVisible();
   });
 
+  it("enseña la sucursal de cada miembro tal como llega, o que no tiene", async () => {
+    const branch = { id: "b-9", code: "LIM-01", name: "Lima Centro" };
+    const luis = member("luis", { default_branch: branch });
+    const api = mockApi({ [LIST]: { status: 200, body: { results: [ana, luis], next: null } } });
+    screenOf();
+    await screen.findByRole("list", { name: "Miembros" });
+    const [first, second] = rows().filter(
+      (row) => row.parentElement?.getAttribute("aria-label") !== "Roles",
+    ) as [HTMLElement, HTMLElement];
+    expect(within(first).getByText("Sin sucursal")).toBeVisible();
+    expect(first).not.toHaveTextContent("Sucursal:");
+    const shown = within(second).getByText("Sucursal: Lima Centro (LIM-01)"); // nombre y código
+    expect(shown).toHaveClass("wrap-anywhere"); // un nombre largo se parte, no se recorta
+    expect(second).not.toHaveTextContent("Sin sucursal");
+    expect(second).not.toHaveTextContent("b-9"); // el identificador no se enseña
+    expect(within(second).getByRole("list", { name: "Roles" })).not.toContainElement(shown);
+    expect(api).toHaveBeenCalledTimes(1); // llega con el directorio: ninguna petición más
+    expect(
+      screen.getByText(/pertenecen a Acme SAC, con su estado, sus roles y su sucursal/),
+    ).toBeVisible();
+  });
+
   it("carga la página siguiente con el cursor y deja el foco en lo que llegó", async () => {
     const api = mockApi({
       [LIST]: { status: 200, body: { results: [ana], next: "abc+/=" } },
