@@ -211,6 +211,22 @@
       "cancel": "Cancelar",
       "denied": "No tienes permiso para cambiar equipos.",
       "stale": "No se pudo cambiar el equipo {team}: ya no está disponible. Revisa la lista."
+    },
+    "members": {
+      "trigger": "Integrantes",
+      "triggerLabel": "Ver los integrantes del equipo {team} ({slug})",
+      "panel": "Integrantes de {team}",
+      "panelLabel": "Integrantes del equipo {team} ({slug})",
+      "close": "Cerrar",
+      "loading": "Cargando integrantes…",
+      "count": "{count, plural, =0 {Este equipo todavía no tiene integrantes.} one {# integrante} other {# integrantes}}",
+      "role": {
+        "MEMBER": "Integrante",
+        "SUPERVISOR": "Supervisor"
+      },
+      "status": "Membresía: {status}",
+      "denied": "No tienes permiso para ver los integrantes de los equipos.",
+      "stale": "No se pudieron ver los integrantes del equipo {team}: ya no está disponible. Revisa la lista."
     }
   },
   "branches": {
