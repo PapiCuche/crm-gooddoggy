@@ -3,7 +3,7 @@
 Los de plataforma se ejecutan sin tenant activo. Las membresías se leen dentro de
 `user_scope`: la política SELECT de `organization_memberships` solo deja ver las del propio
 usuario (ADR-002 §3.2).
-`branches` y `teams` son de tenant: se leen dentro de un `tenant_scope`.
+`branches`, `teams` y `team_members` son de tenant: se leen dentro de un `tenant_scope`.
 """
 
 from dataclasses import dataclass
@@ -12,7 +12,13 @@ from uuid import UUID
 
 from django.db.models import QuerySet
 
-from apps.organizations.models import Branch, Organization, OrganizationMembership, Team
+from apps.organizations.models import (
+    Branch,
+    Organization,
+    OrganizationMembership,
+    Team,
+    TeamMember,
+)
 from core.tenancy.resolution import ACCESSIBLE_STATUSES, OrganizationRef
 from core.tenancy.scope import user_scope
 
@@ -81,3 +87,11 @@ def teams() -> QuerySet[Team]:
     """Equipos de la organización del `tenant_scope` activo, activos e inactivos. Filtra por
     organización, no por permiso: el permiso lo exige quien los sirve (`HasPermission`)."""
     return Team.objects.all()
+
+
+def team_members(team_id: UUID) -> QuerySet[TeamMember]:
+    """Integrantes de un equipo de la organización del `tenant_scope` activo, cada uno con su
+    membresía y su usuario ya cargados (una consulta). Filtra por organización, no por permiso;
+    un equipo de otra organización no tiene filas aquí."""
+    rows = TeamMember.objects.filter(team_id=team_id)
+    return rows.select_related("membership", "membership__user")

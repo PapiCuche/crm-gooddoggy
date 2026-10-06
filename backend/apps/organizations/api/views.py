@@ -1,9 +1,10 @@
 """Rutas de `organizations`: las de plataforma (`/api/v1/me/…`, sin tenant; ADR-014 §4) y las
-de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50, F2-53 y F2-54)."""
+de tenant (`…/branches/`, F2-43 a F2-45, y `…/teams/`, F2-50 y F2-53 a F2-55)."""
 
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
@@ -23,8 +24,8 @@ from apps.organizations.branches import (
     create_branch,
     update_branch,
 )
-from apps.organizations.models import Branch, Team
-from apps.organizations.selectors import branches, organizations_for_user, teams
+from apps.organizations.models import Branch, Team, TeamMember
+from apps.organizations.selectors import branches, organizations_for_user, team_members, teams
 from core.api.errors import ApiError
 from core.api.permissions import Authenticated
 from core.api.schema import errors
@@ -291,3 +292,48 @@ class TeamView(APIView):
         except Team.DoesNotExist:
             raise NotFound from None
         return Response(TeamSerializer(team).data)
+
+
+class TeamMemberUserSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    email = serializers.CharField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+
+
+class TeamMemberSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField(
+        source="membership_id",
+        help_text="Identificador de la membresía: el mismo del directorio de miembros.",
+    )
+    status = serializers.ChoiceField(
+        source="membership.status",
+        choices=settings.MEMBERSHIP_STATUSES,
+        help_text="Estado de la membresía en la organización, no en el equipo.",
+    )
+    team_role = serializers.ChoiceField(choices=TeamMember.Role.choices)
+    is_active = serializers.BooleanField(
+        help_text="Participa en la asignación automática del equipo. Todavía no la aplica nada."
+    )
+    user = TeamMemberUserSerializer(source="membership.user")
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="team_members_list",
+        tags=["teams"],
+        responses={200: TeamMemberSerializer(many=True), **errors(400, 401, 403, 404)},
+    )
+)
+class TeamMembersView(generics.ListAPIView):
+    """Quién pertenece a un equipo, con su papel en él. Paginado por orden de incorporación
+    (ADR-016). 404: el equipo no es de la organización."""
+
+    required_permissions = {"GET": "teams.view"}
+    serializer_class = TeamMemberSerializer
+
+    def get_queryset(self) -> QuerySet[TeamMember]:
+        team_id: UUID = self.kwargs["team_id"]
+        if not teams().filter(pk=team_id).exists():
+            raise NotFound
+        return team_members(team_id)

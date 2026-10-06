@@ -9,4 +9,5 @@ urlpatterns = [
     path("branches/<uuid:branch_id>/", views.BranchView.as_view(), name="branch"),
     path("teams/", views.TeamsView.as_view(), name="teams"),
     path("teams/<uuid:team_id>/", views.TeamView.as_view(), name="team"),
+    path("teams/<uuid:team_id>/members/", views.TeamMembersView.as_view(), name="team-members"),
 ]

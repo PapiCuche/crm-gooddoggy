@@ -172,6 +172,7 @@ SPECTACULAR_SETTINGS = {
         "ScopesEnum": "apps.access.catalog.Scope",  # un alcance: `scopes` (F2-11), `scope` (F2-22)
         # `Team.Strategy` (F2-50): otra lista con el mismo nombre de campo no le cambia el nombre.
         "AssignmentStrategyEnum": "apps.organizations.models.Team.Strategy",
+        "TeamRoleEnum": "apps.organizations.models.TeamMember.Role",  # F2-55, por lo mismo
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
