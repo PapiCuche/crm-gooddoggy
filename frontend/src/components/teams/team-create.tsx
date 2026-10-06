@@ -19,7 +19,15 @@ const FIELDS = [
 // integrantes y con la forma de asignar que pone la API. Quién puede crearlo lo decide la API:
 // la pantalla ofrece el formulario y explica la respuesta. El camino de envío es el de
 // `FieldsForm`.
-export function TeamCreate({ slug, listKey }: { slug: string; listKey: QueryKey }) {
+export function TeamCreate({
+  slug,
+  listKey,
+  onAsk,
+}: {
+  slug: string;
+  listKey: QueryKey;
+  onAsk: () => void; // se abre el formulario: el aviso anterior de la lista ya no aplica
+}) {
   const t = useTranslations("teams.create");
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -51,7 +59,10 @@ export function TeamCreate({ slug, listKey }: { slug: string; listKey: QueryKey 
 
   function show(next: boolean) {
     create.reset();
-    if (next) setDone(null);
+    if (next) {
+      setDone(null);
+      onAsk();
+    }
     setOpen(next);
   }
 

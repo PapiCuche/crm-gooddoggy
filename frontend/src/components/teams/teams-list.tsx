@@ -1,37 +1,59 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { CursorList } from "@/components/lists/cursor-list";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import { getTeamsListQueryKey, teamsList } from "@/lib/api/client";
 import type { AssignmentStrategyEnum, Team } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import messages from "../../../messages/es-PE.json";
 import { TeamCreate } from "./team-create";
+import { TeamEditAction } from "./team-edit-action";
 
 // Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
 const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
-// Equipos (F2-60, F2-61): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
+// Equipos (F2-60 a F2-62): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
 export function TeamsList() {
   const t = useTranslations();
   const { organization, permissions } = useTenant();
-  // Comodidad: «Crear equipo» se ofrece a quien la API dijo que tiene `teams.manage`.
+  // Comodidad: las escrituras se ofrecen a quien la API dijo que tiene `teams.manage`.
   const canManage = permissions.some((grant) => grant.code === "teams.manage");
   const listKey = [...getTeamsListQueryKey(organization.slug), "pages"];
+  const list = useRef<CursorListHandle>(null);
+  // Una acción respondió que la pantalla ya no refleja a la API (F2-62). El aviso vive aquí: el
+  // formulario, o la tarjeta entera, puede desaparecer cuando llega la lista nueva.
+  const [notice, setNotice] = useState<string | null>(null);
+  function stale(text: string, here: boolean) {
+    setNotice(text);
+    list.current?.refetch();
+    if (here) list.current?.focusHeading();
+  }
+  const ask = () => setNotice(null);
 
   return (
     <CursorList<Team>
+      ref={list}
       section="teams"
       organization={organization.name}
       listKey={listKey}
       fetchPage={(cursor, signal) =>
         teamsList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
-      notice={canManage ? <TeamCreate slug={organization.slug} listKey={listKey} /> : null}
+      notice={
+        <>
+          {canManage ? <TeamCreate slug={organization.slug} listKey={listKey} onAsk={ask} /> : null}
+          {notice ? (
+            <p role="alert" className="text-danger">
+              {notice}
+            </p>
+          ) : null}
+        </>
+      }
       empty={<p className="text-muted">{t("teams.empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] sm:items-start"
     >
@@ -66,6 +88,17 @@ export function TeamsList() {
           >
             {t(team.is_active ? "teams.active" : "teams.inactive")}
           </p>
+          {canManage ? (
+            <div className="flex flex-wrap items-start gap-2 sm:col-span-3">
+              <TeamEditAction
+                slug={organization.slug}
+                team={team}
+                listKey={listKey}
+                onAsk={ask}
+                onStale={stale}
+              />
+            </div>
+          ) : null}
         </>
       )}
     </CursorList>

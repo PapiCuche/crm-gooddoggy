@@ -248,14 +248,14 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 
 ### Formulario de campos compartido (F2-48)
 
-`components/forms/fields-form.tsx` (`FieldsForm`) tiene el camino de envío de un formulario de campos de texto, el que describen «Crear un rol» y «Crear una sucursal». Hoy lo usan «Crear sucursal», «Editar sucursal» y «Crear equipo»; los formularios de roles conservan su copia.
+`components/forms/fields-form.tsx` (`FieldsForm`) tiene el camino de envío de un formulario de campos de texto, el que describen «Crear un rol» y «Crear una sucursal». Hoy lo usan «Crear sucursal», «Editar sucursal», «Crear equipo» y «Editar equipo»; los formularios de roles conservan su copia.
 
 - **Lo que hace:** pinta los campos, «Cancelar» y el botón de envío; comprueba los obligatorios; envía una vez por pulsación; explica los errores de la API por `code` (los de un campo, junto a él; los demás, en el formulario; un 401, ocupado y sin error); y mueve el foco al primer campo al abrir y al primer campo con error si el foco seguía en el botón o en ninguna parte.
 - **Lo que pone la pantalla:** la escritura (el resultado de `useMutation`), qué hacer con lo escrito (`send`, que recibe los valores sin espacios exteriores), los campos con sus textos ya resueltos (etiqueta, límite, ayuda, aviso de obligatorio y de no válido) y, si hace falta, su valor inicial y el `id` de una lista de sugerencias, el error propio de un campo que no es un 400 (`taken`: un código repetido), y el texto de «sin permiso». Abrir y cerrar, el botón que abre, el anuncio del resultado, lo que pasa con la lista y la guarda del Enter mantenido siguen en la pantalla.
 - **La marca de envío vive en el formulario** y se suelta en un efecto de maquetación cuando la escritura ya no está en curso. Un render solo del formulario (por ejemplo, al retirar un aviso de «falta» justo antes de enviar) trae la escritura tal como era antes de enviar y no la suelta: se compara con la que había al enviar. Por eso `write` debe ser el resultado de `useMutation` del render de la pantalla, no un objeto guardado, y `send` debe iniciar esa escritura antes de volver (`mutate`, sin esperar a nada): si no la inicia, el formulario deja de responder —también «Cancelar»— hasta el siguiente render de la pantalla; si la inicia más tarde, un render de la pantalla entre medias suelta la marca y otra pulsación sería otra escritura.
 - **El formulario se monta al abrir y se desmonta al cerrar:** los avisos y lo escrito no sobreviven a un cierre.
 
-## Equipos (F2-60, F2-61)
+## Equipos (F2-60 a F2-62)
 
 `/o/[orgSlug]/equipos` muestra los equipos de la organización: lo que devuelve `GET /api/v1/o/{slug}/teams/` (F2-50), con el cliente generado.
 
@@ -264,7 +264,7 @@ Junto a «Editar», cada tarjeta ofrece «Desactivar» si la sucursal está acti
 - **Asignación:** cada estrategia de la API tiene su nombre en `messages/es-PE.json` (`teams.strategy.*`). Una que esta versión no conozca se enseña con su código, no como un error. Solo cuentan las claves propias del catálogo de textos, como con los códigos de error de la API. Si el contrato gana una estrategia y el catálogo no, el frontend no compila. Todavía no la aplica nada (Inbox, Fase 6): la pantalla solo la enseña.
 - **Sin equipos:** la pantalla lo dice en lugar de enseñar una lista vacía.
 - **Navegación:** la entrada «Equipos» pide el permiso `teams.view`, el que exige la API para leerlos; `teams.manage` o `users.view` solos no bastan. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
-- **Lo que falta.** Editar y desactivar un equipo y ver o cambiar sus integrantes desde la pantalla son los siguientes work items; la API ya lo permite (F2-54, F2-55, F2-58 y F2-59).
+- **Lo que falta.** Desactivar un equipo y ver o cambiar sus integrantes desde la pantalla son los siguientes work items; la API ya lo permite (F2-54, F2-55, F2-58 y F2-59).
 
 ### Crear un equipo (F2-61)
 
@@ -275,6 +275,17 @@ Encima de la lista, «Crear equipo» abre un formulario y envía `POST /api/v1/o
 - **Lo que valida la pantalla:** que haya identificador y nombre, y las longitudes máximas. Lo demás lo decide la API: se envía lo escrito sin sus espacios exteriores (el identificador, tal como se escribió: la API lo pasa a minúsculas) y se anuncia el nombre que la API guardó.
 - **Éxito:** el formulario se cierra, el resultado se anuncia (`role="status"`, visible) y la lista en pantalla se vuelve a pedir. El equipo nuevo va al final y nace sin integrantes. Si esa relectura falla, el aviso se queda y la lista no cambia, como en sucursales.
 - **Errores, por `code`:** el identificador repetido (`TEAM_SLUG_TAKEN`) y cada campo que la API no acepta se explican junto a su campo. Sin permiso, red o fallo del servidor, en el formulario. Sin sesión (401), `Providers` lleva al login.
+
+### Editar un equipo (F2-62)
+
+Cada tarjeta ofrece «Editar», que abre un formulario en la propia tarjeta y envía `PATCH /api/v1/o/{slug}/teams/{team_id}/` (F2-54). Componente: `components/teams/team-edit-action.tsx`, sobre el formulario de campos compartido: el camino de escritura, el foco, lo que pasa con la lista y los errores son los de «Editar una sucursal».
+
+- **A quién se ofrece:** a quien tiene `teams.manage` según el contexto de la API, en todos los equipos, también los inactivos. Es comodidad: la API decide, y un 403 se explica en el formulario.
+- **Campos:** nombre, obligatorio, y descripción, opcional, con los límites de la API. El identificador no cambia y no se enseña como campo.
+- **La forma de asignar no se edita desde la pantalla.** Nada la aplica hasta el Inbox (Fase 6), y la pantalla no ofrece un ajuste sin efecto. La API ya admite cambiarla.
+- **Lo que se edita queda fijado al abrir:** si la lista cambia debajo, el formulario sigue enseñando lo que el usuario abrió.
+- **Éxito:** el formulario se cierra y la tarjeta enseña el nombre y la descripción que guardó la API, sin volver a pedir la lista; lo demás de la fila no se toca. El resultado se anuncia (`role="status"`).
+- **Pantalla desfasada (404):** el formulario se cierra, la lista se vuelve a pedir y un aviso de la lista lo explica. Abrir «Editar» o «Crear equipo» retira ese aviso.
 
 ## Seguridad del navegador (F2-07)
 
