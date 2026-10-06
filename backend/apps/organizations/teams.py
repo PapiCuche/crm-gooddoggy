@@ -1,5 +1,5 @@
-"""Comandos de equipos (F2-53, F2-54 y F2-58, E01-09): crear uno, cambiar sus datos y poner en
-él a un miembro.
+"""Comandos de equipos (F2-53, F2-54, F2-58 y F2-59, E01-09): crear uno, cambiar sus datos, y
+poner en él a un miembro o quitarlo.
 
 Como los de sucursales, no comprueban permisos (`organizations` no importa `access`) y por eso
 no son API pública: solo los importa la API del módulo, que declara `teams.manage` (contrato
@@ -127,6 +127,24 @@ def update_team(ctx: TenantContext, *, team_id: UUID, **fields: Any) -> Team:
     return team
 
 
+def _other(ctx: TenantContext, alias: str, membership_id: UUID) -> OrganizationMembership:
+    """La membresía, con su usuario cargado, si no es la de quien actúa (`OwnTeamMembership`)."""
+    people = OrganizationMembership.objects.using(alias).select_related("user")
+    membership: OrganizationMembership = people.get(pk=membership_id)
+    # «Uno mismo» es quien actúa, llegue como usuario de la sesión o como actor de una tarea.
+    actor = {UUID(str(who)) for who in (ctx.user_id, ctx.actor_id) if who is not None}
+    if membership.user_id in actor:  # antes de mirar el equipo, como con los roles
+        raise OwnTeamMembership
+    return membership
+
+
+def _locked(alias: str, team_id: UUID) -> Team:
+    """El equipo, con su fila bloqueada: pone en cola a quien escribe sus integrantes, y cada
+    uno parte de lo que dejó el anterior. Que un par no se repita lo impone la tabla."""
+    team: Team = Team.objects.using(alias).select_for_update(no_key=True).get(pk=team_id)
+    return team
+
+
 def put_team_member(
     ctx: TenantContext, *, team_id: UUID, membership_id: UUID, **fields: Any
 ) -> tuple[TeamMember, bool]:
@@ -139,15 +157,8 @@ def put_team_member(
     alias = require_scope(ctx)
     values = cleaned(fields, MEMBER)
     with transaction.atomic(using=alias):  # savepoint: el cambio y su auditoría, o nada
-        people = OrganizationMembership.objects.using(alias).select_related("user")
-        membership: OrganizationMembership = people.get(pk=membership_id)
-        # «Uno mismo» es quien actúa, llegue como usuario de la sesión o como actor de una tarea.
-        actor = {UUID(str(who)) for who in (ctx.user_id, ctx.actor_id) if who is not None}
-        if membership.user_id in actor:  # antes de mirar el equipo, como con los roles
-            raise OwnTeamMembership
-        # El bloqueo del equipo pone en cola a quien escribe sus integrantes: cada uno parte de
-        # lo que dejó el anterior. Que el par no se repita lo impone la tabla.
-        team: Team = Team.objects.using(alias).select_for_update(no_key=True).get(pk=team_id)
+        membership = _other(ctx, alias, membership_id)
+        team = _locked(alias, team_id)
         rows = TeamMember.objects.using(alias)
         member = rows.filter(team=team, membership=membership).first()
         if new := member is None:
@@ -167,3 +178,19 @@ def put_team_member(
             record(ctx, action, entity, changes, {"membership_id": str(membership.pk)})
     member.membership = membership
     return member, new
+
+
+def remove_team_member(ctx: TenantContext, *, team_id: UUID, membership_id: UUID) -> None:
+    """Quita a una membresía de un equipo de la organización de `ctx` y lo audita con lo que
+    tenía. Si el equipo o la membresía no son de la organización, o la membresía no está en el
+    equipo (también al repetir la llamada), `DoesNotExist`. Nadie se quita a sí mismo
+    (`OwnTeamMembership`), igual que nadie se incorpora."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):  # savepoint: el borrado y su auditoría, o nada
+        membership = _other(ctx, alias, membership_id)
+        team = _locked(alias, team_id)
+        member: TeamMember = TeamMember.objects.using(alias).get(team=team, membership=membership)
+        changes = {"team_role": [member.team_role, None], "is_active": [member.is_active, None]}
+        member.delete(using=alias)
+        entity = Entity("team", team.pk, team.slug)
+        record(ctx, "team.member_removed", entity, changes, {"membership_id": str(membership.pk)})

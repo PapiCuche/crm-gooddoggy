@@ -247,7 +247,7 @@ def test_only_who_manages_teams_and_sees_members_writes_and_only_in_their_organi
         assert reply(put(client, theirs.pk, foreign.pk, {}, org)) == NOT_FOUND
         assert reply(put(client, mine.pk, luis.pk, {}, org)) == NOT_FOUND
     url = f"/api/v1/o/org-a/teams/{mine.pk}/members/{luis.pk}/"
-    for method in ("post", "patch", "delete", "get"):  # sobre un integrante solo hay `PUT`
+    for method in ("post", "patch", "get"):  # sobre un integrante, `PUT` y `DELETE` (F2-59)
         assert reply(send(client, method, url, {})) == DENIED
     assert client.put(url, {}, "application/json").status_code == 403  # sin token CSRF
     assert migrator.execute(ROWS).fetchone() == (0, 0)
