@@ -120,7 +120,15 @@ def test_database_rejects_duplicates_bad_status_and_dangling_references(
 def test_membership_has_no_role_and_user_stays_global() -> None:
     """Los roles irán en `membership_roles` (F2-04): ni la membresía ni el usuario llevan uno."""
     fields = {field.name for field in Membership._meta.get_fields()}
-    assert fields == {"id", "organization_id", "user", "status", "created_at", "updated_at"}
+    assert fields == {
+        "id",
+        "organization_id",
+        "user",
+        "status",
+        "default_branch",  # su sucursal (F2-68): un dato de la membresía, no un rol
+        "created_at",
+        "updated_at",
+    }
     assert not any(field.is_relation for field in User._meta.get_fields())
 
 
