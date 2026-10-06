@@ -5,10 +5,11 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -338,3 +339,47 @@ class TeamMembersView(generics.ListAPIView):
         if not teams().filter(pk=team_id).exists():
             raise NotFound
         return team_members(team_id)
+
+
+class TeamMemberPutSerializer(serializers.Serializer[Any]):
+    """Lo que se envía cambia; lo que no, se queda como está."""
+
+    team_role = serializers.ChoiceField(choices=TeamMember.Role.choices, required=False)
+    is_active = JsonBooleanField(required=False)
+
+
+class TeamMemberView(APIView):
+    """Un integrante de un equipo: `PUT` deja a esa membresía en el equipo (F2-58). Cambia a
+    quién alcanza una concesión con alcance `TEAM` y responde con una persona: exige
+    `teams.manage` y `users.view`."""
+
+    required_permissions = {"PUT": ("teams.manage", "users.view")}
+
+    @extend_schema(
+        operation_id="team_members_put",
+        tags=["teams"],
+        request=TeamMemberPutSerializer,
+        responses={
+            200: TeamMemberSerializer,
+            201: TeamMemberSerializer,
+            **errors(400, 401, 403, 404),
+        },
+        description="Incorpora a la membresía al equipo (201; `MEMBER` y activa si no se "
+        "envían) o, si ya estaba, cambia lo que se envía (200). Repetir la petición no escribe "
+        "nada. 403: sin los dos permisos, o la membresía es la de quien hace la petición. 404: "
+        "el equipo o la membresía no son de la organización.",
+    )
+    def put(self, request: Request, team_id: UUID, membership_id: UUID, **kwargs: Any) -> Response:
+        wanted = TeamMemberPutSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            member, new = team_commands.put_team_member(
+                tenant, team_id=team_id, membership_id=membership_id, **wanted.validated_data
+            )
+        except ObjectDoesNotExist:
+            raise NotFound from None
+        except team_commands.OwnTeamMembership:
+            raise PermissionDenied from None
+        return Response(TeamMemberSerializer(member).data, status=201 if new else 200)

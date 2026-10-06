@@ -48,6 +48,8 @@ import type {
   Session,
   Team,
   TeamCreateRequest,
+  TeamMember,
+  TeamMemberPutRequest,
   TeamMembersListParams,
   TeamsListParams,
 } from "./model";
@@ -2700,3 +2702,112 @@ export function useTeamMembersList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getTeamMembersPutUrl = (orgSlug: string, teamId: string, membershipId: string) => {
+  return `/api/v1/o/${orgSlug}/teams/${teamId}/members/${membershipId}/`;
+};
+
+/**
+ * Incorpora a la membresía al equipo (201; `MEMBER` y activa si no se envían) o, si ya estaba, cambia lo que se envía (200). Repetir la petición no escribe nada. 403: sin los dos permisos, o la membresía es la de quien hace la petición. 404: el equipo o la membresía no son de la organización.
+ */
+export const teamMembersPut = async (
+  orgSlug: string,
+  teamId: string,
+  membershipId: string,
+  teamMemberPutRequest?: TeamMemberPutRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<TeamMember> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<TeamMember>(getTeamMembersPutUrl(orgSlug, teamId, membershipId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(teamMemberPutRequest),
+  });
+};
+
+export const getTeamMembersPutMutationKey = () => ["teamMembersPut"] as const;
+
+export const getTeamMembersPutMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof teamMembersPut>>,
+    TError,
+    TeamMembersPutMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof teamMembersPut>>,
+  TError,
+  TeamMembersPutMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTeamMembersPutMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof teamMembersPut>>,
+    TeamMembersPutMutationVariables
+  > = (props) => {
+    const { orgSlug, teamId, membershipId, data } = props ?? {};
+
+    return teamMembersPut(orgSlug, teamId, membershipId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TeamMembersPutMutationResult = NonNullable<Awaited<ReturnType<typeof teamMembersPut>>>;
+export type TeamMembersPutMutationBody = TeamMemberPutRequest | undefined;
+export type TeamMembersPutMutationError = ErrorType<Error>;
+export type TeamMembersPutMutationVariables = {
+  orgSlug: string;
+  teamId: string;
+  membershipId: string;
+  data?: TeamMemberPutRequest;
+};
+
+export const useTeamMembersPut = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof teamMembersPut>>,
+      TError,
+      TeamMembersPutMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof teamMembersPut>>,
+  TError,
+  TeamMembersPutMutationVariables,
+  TContext
+> => {
+  return useMutation(getTeamMembersPutMutationOptions(options), queryClient);
+};

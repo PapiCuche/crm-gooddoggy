@@ -47,6 +47,7 @@ export * from "./session";
 export * from "./team";
 export * from "./teamCreateRequest";
 export * from "./teamMember";
+export * from "./teamMemberPutRequest";
 export * from "./teamMembersListParams";
 export * from "./teamMemberUser";
 export * from "./teamRoleEnum";

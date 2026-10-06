@@ -498,7 +498,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
 - No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
 
-## Equipos (F2-50 y F2-52 a F2-55, E01-09)
+## Equipos (F2-50, F2-52 a F2-55 y F2-58, E01-09)
 
 `GET /api/v1/o/{slug}/teams/` lista los equipos de la organización. Exige `teams.view` (sin él, 403; sin membresía activa, 404).
 
@@ -535,6 +535,13 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - **Sin cambios, no escribe.** Enviar lo que ya hay (o un cuerpo vacío) responde 200 y no deja fila de auditoría.
   - **Auditoría de tenant:** `team.updated`, con el antes y el después de lo que cambió.
   - **Desactivar un equipo no toca a sus integrantes** ni lo que ven: siguen contando para el alcance `TEAM` (F2-52). No hay borrado.
+- **Poner a un miembro en un equipo (F2-58):** `PUT /api/v1/o/{slug}/teams/{team_id}/members/{membership_id}/` con cualquiera de `team_role` e `is_active`. Si la membresía no estaba en el equipo, la incorpora (201; `MEMBER` y activa si no se envían); si ya estaba, cambia lo que se envía (200). Responde con el integrante en la forma del listado. Repetir la petición no escribe ni audita.
+  - **Permisos:** `teams.manage` **y** `users.view` (F2-56): la respuesta enseña a una persona.
+  - **Nadie cambia su propia pertenencia:** 403, ni para entrar ni para cambiar su papel. Entrar en un equipo amplía lo que deja ver una concesión con alcance `TEAM`.
+  - **A quién:** cualquier membresía de la organización, en cualquier estado, y también en un equipo inactivo. 404 si el equipo o la membresía no son de la organización.
+  - **Auditoría de tenant:** `team.member_added` y `team.member_updated` sobre el equipo, con el antes y el después y la membresía en `metadata.membership_id`.
+  - **Lo que no comprueba:** qué gana el miembro incorporado. Quien tiene `teams.manage` decide a quién alcanza el alcance `TEAM` de cada equipo (D-F2-12).
+  - Quitar a un integrante: siguiente work item.
 - **Integrantes de un equipo (F2-55):** `GET /api/v1/o/{slug}/teams/{team_id}/members/` lista quién pertenece al equipo. Exige `teams.view` **y** `users.view` (F2-56): enseña un equipo y a personas. 404 si el equipo no es de la organización.
 
   ```json

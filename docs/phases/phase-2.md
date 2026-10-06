@@ -78,6 +78,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-55 | [#168](https://github.com/PapiCuche/crm-gooddoggy/issues/168) Team members: directory by API | `feature/f2-team-members-directory` | #162, #169 | backend |
 | F2-56 | [#169](https://github.com/PapiCuche/crm-gooddoggy/issues/169) A route may require several permissions | `feature/f2-several-permissions-per-route` | — | backend |
 | F2-57 | [#170](https://github.com/PapiCuche/crm-gooddoggy/issues/170) Frontend: source-map-js 1.2.2 (GHSA-68fv-2mgg-jv7q) | `fix/f2-source-map-js-advisory` | — | frontend |
+| F2-58 | [#174](https://github.com/PapiCuche/crm-gooddoggy/issues/174) Team member: add or update by API | `feature/f2-team-member-put-api` | #168 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -202,6 +203,15 @@ El 2026-10-06 se detectó que `pnpm audit --prod --audit-level=high` fallaba en 
 - Es el comportamiento buscado (ADR-012 §4: un parche de seguridad alto, lo antes posible), pero un aviso así detiene todo el trabajo hasta que se atiende: va primero, en su propio work item.
 - Queda un aviso alto que este gate no ve: `braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm), solo en dependencias de desarrollo (por `micromatch`) y sin versión corregida publicada. `pnpm audit` se ejecuta con `--prod`, así que no bloquea; revisar cuando exista el parche.
 
+### OBS-F2-58-1 — Integrantes por API: reglas que decidió el programa
+F2-58 (#174) añade `PUT …/teams/{team_id}/members/{membership_id}/`. Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
+- **Permisos.** `teams.manage` y `users.view` a la vez: la ruta cambia un equipo y responde con una persona, como la lectura de F2-55.
+- **Nadie cambia su propia pertenencia a un equipo.** Entrar en un equipo amplía lo que deja ver una concesión con alcance `TEAM`, y la regla sigue a «nadie modifica sus propios roles» (ADR-003 §5). **Consecuencia:** en una organización con una sola persona que administra los equipos, esa persona no puede incorporarse a ninguno; hace falta otra con `teams.manage` y `users.view`. Si el mantenedor prefiere permitirlo, el cambio es quitar una comprobación.
+- **Sin regla contra la escalada sobre terceros.** Incorporar a otro miembro a un equipo amplía el alcance `TEAM` de ese miembro, y la ruta no mide qué gana: quien tiene `teams.manage` decide a quién alcanza cada equipo. Medirlo exigiría leer las concesiones desde `organizations`, que no importa `access` (ADR-017), y forma parte de D-F2-12.
+- **Cualquier membresía, en cualquier estado.** También invitada, suspendida o dada de baja, y también en un equipo inactivo: el directorio del equipo enseña el estado, y la asignación automática (Inbox, Fase 6) tendrá que mirar el estado de todos modos.
+- **`PUT` no reemplaza:** lo que no se envía se queda como está, igual que en `PATCH` de equipos y sucursales. Así cambiar el papel no reactiva por accidente una pertenencia pausada.
+- **Auditoría.** La fila es del equipo (`entity_type = team`), con la membresía en `metadata.membership_id`: no guarda el correo ni el nombre.
+
 ### OBS-F2-50-1 — Equipos: qué decidió el programa y qué falta
 E01-09 sigue con los equipos (F2-50, #158). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
 - **Módulo.** La tabla `teams`, el selector y la ruta de lectura están en `apps.organizations`, como las sucursales (OBS-F2-43-1) y como agrupa el modelo de datos (§E.2).
@@ -212,7 +222,7 @@ E01-09 sigue con los equipos (F2-50, #158). Decisiones del programa autónomo (A
 Lo que `teams` no lleva todavía:
 - `business_hours_schedule_id`: no existen los horarios (E01-10).
 - `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado; un equipo se desactiva con `is_active` (F2-54).
-- ✅ F2-53 (#164): crear por API y el permiso `teams.manage`, **sin alcance, como lo lista el catálogo de 03 §H**. Una versión anterior de esta nota daba por hecho que necesitaba alcance `TEAM`: era una inferencia de la matriz, no lo que dice el catálogo, y queda como decisión abierta D-F2-12. ✅ F2-54 (#166): editar, desactivar y reactivar; el `slug` no cambia, y desactivar un equipo no toca a sus integrantes ni su alcance. ✅ F2-55 (#168): leer los integrantes de un equipo por API. La ruta exige `teams.view` y `users.view` a la vez (F2-56): enseña el nombre, el correo y el estado de la membresía de los integrantes, los mismos datos del directorio de miembros. La primera versión los enseñaba con `teams.view` solo; la revisión señaló que no era la opción más conservadora (ADR-015 §5) y se cambió antes de publicarla. Añadir, cambiar y quitar integrantes por API: siguientes work items.
+- ✅ F2-53 (#164): crear por API y el permiso `teams.manage`, **sin alcance, como lo lista el catálogo de 03 §H**. Una versión anterior de esta nota daba por hecho que necesitaba alcance `TEAM`: era una inferencia de la matriz, no lo que dice el catálogo, y queda como decisión abierta D-F2-12. ✅ F2-54 (#166): editar, desactivar y reactivar; el `slug` no cambia, y desactivar un equipo no toca a sus integrantes ni su alcance. ✅ F2-55 (#168): leer los integrantes de un equipo por API. La ruta exige `teams.view` y `users.view` a la vez (F2-56): enseña el nombre, el correo y el estado de la membresía de los integrantes, los mismos datos del directorio de miembros. La primera versión los enseñaba con `teams.view` solo; la revisión señaló que no era la opción más conservadora (ADR-015 §5) y se cambió antes de publicarla. ✅ F2-58 (#174): incorporar a un miembro y cambiar su papel por API (OBS-F2-58-1). Quitar integrantes por API: siguiente work item.
 - ✅ F2-52 (#162): los integrantes (`team_members`) y `ExecutionContext.team_ids`. Decisiones de ese work item, a confirmar: para el alcance `TEAM` cuentan todos los equipos a los que pertenece la membresía, también los inactivos y con cualquier `team_role`; `last_assigned_at` y `skills` (modelo de datos §E.2) no se crean hasta que exista la asignación automática (Inbox, Fase 6); un equipo con integrantes no se borra, ni con el ORM (`PROTECT`) ni con SQL directo (la FK no borra en cascada): antes hay que quitarlos; lo mismo una membresía con equipos.
 
 ### OBS-F2-44-1 — Escrituras de sucursales: reglas que decidió el programa
