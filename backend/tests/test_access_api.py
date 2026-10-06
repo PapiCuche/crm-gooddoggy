@@ -35,6 +35,7 @@ import config.urls
 from apps.access.catalog import BY_CODE, PermissionDef
 from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.permissions import HasPermission, IsMember, ScopeFilter
+from apps.access.selectors import UnknownPermission
 from apps.access.services import clone_role_templates
 from apps.accounts.models import User
 from apps.organizations.models import OrganizationMembership
@@ -101,6 +102,22 @@ class Members(APIView):
 
     def get(self, request: Any, **kwargs: Any) -> Response:
         return Response({"ok": True})
+
+
+class Both(WidgetList):
+    """Dos permisos a la vez (F2-56): uno con alcance y otro sin él."""
+
+    required_permissions: Any = {"GET": (VIEW, "users.view")}
+
+
+class BothScoped(WidgetView, generics.RetrieveUpdateAPIView):
+    """Dos permisos con alcance en la lectura; uno solo, como tupla o como texto, al escribir."""
+
+    required_permissions: Any = {"GET": (VIEW, MANAGE), "PUT": (MANAGE,), "PATCH": MANAGE}
+
+
+class BothScopedList(WidgetList):
+    required_permissions: Any = {"GET": (VIEW, MANAGE)}
 
 
 class Open(Members):
@@ -214,6 +231,9 @@ secure = [
     path(TENANT + "widgets/<uuid:pk>/", WidgetDetail.as_view()),
     path(TENANT + "widgets/<uuid:pk>/described/", Described.as_view()),
     path(TENANT + "members/", Members.as_view()),
+    path(TENANT + "both/", Both.as_view()),
+    path(TENANT + "both-scoped/", BothScopedList.as_view()),
+    path(TENANT + "widgets/<uuid:pk>/both/", BothScoped.as_view()),
     path(TENANT + "documented/", Documented.as_view()),
     path(TENANT + "self/", member_view()),
     path("api/platform/open/", Open.as_view()),
@@ -251,6 +271,18 @@ FLAWED: list[tuple[Any, str]] = [  # ruta y motivo que debe dar la auditoría
     (path(TENANT + "kw-sub/", Members.as_view(permission_classes=[Lax])), "sin HasPermission"),
     (path(TENANT + "kw-bare/", Members.as_view(permission_classes=HasPermission)), "sin Has"),
     (path(TENANT + "kw-list/", Members.as_view(required_permissions={"GET": [VIEW]})), "catálogo"),
+    *(  # una tupla exige todos sus códigos (F2-56): vacía, con un código de más o con otra cosa
+        (path(TENANT + f"kw-tuple-{n}/", Members.as_view(required_permissions={"GET": bad})), why)
+        for n, (bad, why) in enumerate(
+            [
+                ((), "catálogo"),
+                ((VIEW, "users.vew"), "'users.vew'"),
+                (("users.vew", VIEW), "'users.vew'"),  # cada posición, no solo la última
+                ((VIEW, ("users.view",)), "catálogo"),
+                ((VIEW, None), "catálogo"),
+            ]
+        )
+    ),
     (path(TENANT + "kw-unfiltered/", WidgetList.as_view(filter_backends=[])), "sin ScopeFilter"),
     *(  # cada gancho de DRF por separado: ninguno se redefine, tampoco por ruta
         (path(TENANT + f"kw-{hook}/", Members.as_view(**{hook: list})), f"redefine {hook}")
@@ -415,7 +447,11 @@ def insecure(
         elif missing := implemented(callback) - set(declared):
             found[route] = f"métodos sin permiso: {sorted(missing)}"
         elif unknown := [
-            c for c in declared.values() if not isinstance(c, str) or c not in BY_CODE
+            code
+            for wanted in declared.values()
+            # un código, o una tupla no vacía de códigos (F2-56); lo demás no declara nada
+            for code in (wanted if isinstance(wanted, tuple) and wanted else (wanted,))
+            if not isinstance(code, str) or code not in BY_CODE
         ]:
             found[route] = f"permisos fuera del catálogo: {sorted(map(repr, unknown))}"
         elif not issubclass(cls, generics.GenericAPIView):
@@ -606,6 +642,72 @@ def test_member_without_the_permission_is_403(api: Any, migrator: psycopg.Connec
         for pk in (api.mine, api.theirs, uuid4()):  # exista o no: la misma respuesta
             assert send(api.client, method, detail(pk))[0] == 403
     assert names(migrator) == ["mine", "theirs", "widget A", "widget B"]
+
+
+def test_several_permissions_are_all_required(api: Any, migrator: psycopg.Connection[Any]) -> None:
+    both, scoped_list = url("both/"), url("both-scoped/")
+    give(api.a, api.membership, {VIEW: "ORGANIZATION"})
+    assert api.client.get(both).status_code == 403  # tiene uno de los dos
+    assert api.client.head(both).status_code == 403  # HEAD: los permisos de GET
+    assert api.client.get(scoped_list).status_code == 403
+    assert api.client.get(detail(api.mine, "both/")).status_code == 403
+    assert api.client.get(detail(uuid4(), "both/")).status_code == 403  # exista o no
+    give(api.a, api.membership, {"users.view": None})
+    listed = api.client.get(both).json()["results"]
+    assert sorted(row["name"] for row in listed) == ["mine", "theirs", "widget A"]  # con los dos
+    give(api.a, api.membership, {MANAGE: "OWN"})  # el segundo permiso, con menos alcance
+    with CaptureQueriesContext(connection) as queries:
+        listed = api.client.get(scoped_list).json()["results"]
+    assert [row["name"] for row in listed] == ["mine"]  # lo que dejan ver los dos, no uno
+    widgets = [query["sql"] for query in queries if "tenancy_app_widget" in query["sql"]]
+    assert len(widgets) == 1 and '"assigned_user_id" IN' in widgets[0]  # se filtra en SQL
+    assert api.client.get(detail(api.mine, "both/")).status_code == 200
+    hidden = {  # la ve con `view`, pero no con `manage`: como si no existiera
+        send(api.client, "GET", detail(pk, "both/")) for pk in (api.theirs, uuid4())
+    }
+    assert len(hidden) == 1 and hidden.pop()[0] == 404
+    for method in ("PUT", "PATCH"):  # una tupla de uno y un texto valen lo mismo
+        assert send(api.client, method, detail(api.mine, "both/"))[0] == 200
+        assert send(api.client, method, detail(api.theirs, "both/"))[0] == 404
+    assert send(api.client, "DELETE", detail(api.mine, "both/"))[0] == 403  # sin declarar
+    assert names(migrator) == ["cambiado", "theirs", "widget A", "widget B"]
+
+
+def test_every_code_of_a_tuple_counts_whatever_its_position(api: Any) -> None:
+    give(api.a, api.membership, {VIEW: "OWN", MANAGE: "ORGANIZATION"})  # sin `users.view`
+    get, check = SimpleNamespace(method="GET"), HasPermission()
+    mine = Widget(organization_id=api.a, assigned_user_id=api.ana.pk)
+    theirs = Widget(organization_id=api.a, assigned_user_id=uuid4())
+    with tenant_scope(ctx(api.a, api.ana)):
+        for wanted in ((VIEW, MANAGE), (MANAGE, VIEW)):  # el de menos alcance, delante o detrás
+            view = SimpleNamespace(required_permissions={"GET": wanted})
+            assert check.has_permission(get, view) and check.has_object_permission(get, view, mine)
+            with pytest.raises(NotFound):  # la barrera por objeto, sin el filtro delante
+                check.has_object_permission(get, view, theirs)
+            rows = ScopeFilter().filter_queryset(get, Widget.objects.all(), view)
+            assert [row.name for row in rows] == ["mine"], wanted
+        for wanted in ((VIEW, "users.view"), ("users.view", VIEW)):  # le falta uno, donde esté
+            view = SimpleNamespace(required_permissions={"GET": wanted})
+            assert not check.has_permission(get, view), wanted
+
+
+def test_a_declaration_the_engine_does_not_understand_denies(api: Any) -> None:
+    give(api.a, api.membership, {VIEW: "ORGANIZATION", MANAGE: "ORGANIZATION", "users.view": None})
+    get, mine = SimpleNamespace(method="GET"), Widget(organization_id=api.a)
+    with tenant_scope(ctx(api.a, api.ana)):
+        for wanted in ((), [VIEW], (VIEW, None), (VIEW, [MANAGE]), {VIEW}, None, 7, (VIEW, 7)):
+            view = SimpleNamespace(required_permissions={"GET": wanted})
+            assert not HasPermission().has_permission(get, view), wanted
+            assert not HasPermission().has_object_permission(get, view, mine), wanted
+            none = ScopeFilter().filter_queryset(get, Widget.objects.all(), view)
+            assert none.query.is_empty(), wanted
+        for valid in (VIEW, (VIEW,), (VIEW, MANAGE), (VIEW, "users.view")):  # y estas, sí
+            view = SimpleNamespace(required_permissions={"GET": valid})
+            assert HasPermission().has_permission(get, view), valid
+        for typo in ((VIEW, "users.vew"), ("organization.view", "users.vew")):  # lo tenga o no
+            unknown = SimpleNamespace(required_permissions={"GET": typo})
+            with pytest.raises(UnknownPermission):  # un código que no existe no es una concesión
+                HasPermission().has_permission(get, unknown)
 
 
 def test_view_or_method_without_declaration_is_denied(
