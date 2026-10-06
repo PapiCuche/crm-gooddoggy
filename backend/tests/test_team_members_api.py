@@ -10,6 +10,7 @@ from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.models import User
+from apps.organizations.models import Team
 from apps.organizations.selectors import team_members as stored
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
@@ -22,7 +23,7 @@ from tests.test_teams import team
 
 world, real_stack = test_authorization.world, test_self_context.real_stack
 pytestmark = pytest.mark.usefixtures("tenant_db")
-VIEW: dict[str, str | None] = {"teams.view": None}
+VIEW: dict[str, str | None] = {"teams.view": None, "users.view": None}  # los dos (F2-56)
 DENIED = (403, b'{"code":"PERMISSION_DENIED"}')
 
 
@@ -90,6 +91,8 @@ def test_it_lists_who_belongs_to_the_team_with_their_role_in_it(world: Any) -> N
         assert alien not in str(body)
     for hidden in ("password", "is_staff", "is_platform_staff", "roles", "permissions"):
         assert hidden not in str(body)  # ni contraseña, ni marcas de plataforma, ni roles
+    with tenant_scope(ctx(world.a)):  # un equipo inactivo conserva a sus integrantes
+        Team.objects.filter(pk=support.pk).update(is_active=False)
     assert members(signed(world.ana), support.pk).json()["results"][0]["id"] == str(invited.pk)
 
 
@@ -99,10 +102,15 @@ def test_only_a_member_with_the_permission_reads_them_and_nobody_writes(world: A
     add(world.b, theirs.pk, join(world.b, make_user()).pk)
     assert members(Client(), mine.pk).status_code == 401
     client = signed(world.ana)
+    assert reply(members(client, mine.pk)) == DENIED  # miembro sin roles
     give(world.a, world.membership, {"users.view": None, "organization.view": None})
     assert reply(members(client, mine.pk)) == DENIED  # ver miembros no es ver equipos
     assert reply(members(client, uuid4())) == DENIED  # sin permiso no se sabe si existe
-    give(world.a, world.membership, VIEW)
+    luis = make_user(email="luis@example.com")
+    give(world.a, join(world.a, luis).pk, {"teams.view": None, "organization.view": None})
+    for team_id in (mine.pk, uuid4()):  # ni ver equipos es ver a las personas que los forman
+        assert reply(members(signed(luis), team_id)) == DENIED
+    give(world.a, world.membership, {"teams.view": None})  # con los dos, sí
     assert members(client, mine.pk).status_code == 200
     for missing in (theirs.pk, uuid4()):  # el equipo de otra organización no existe
         assert reply(members(client, missing)) == NOT_FOUND

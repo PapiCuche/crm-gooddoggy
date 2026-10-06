@@ -535,7 +535,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
   - **Sin cambios, no escribe.** Enviar lo que ya hay (o un cuerpo vacío) responde 200 y no deja fila de auditoría.
   - **Auditoría de tenant:** `team.updated`, con el antes y el después de lo que cambió.
   - **Desactivar un equipo no toca a sus integrantes** ni lo que ven: siguen contando para el alcance `TEAM` (F2-52). No hay borrado.
-- **Integrantes de un equipo (F2-55):** `GET /api/v1/o/{slug}/teams/{team_id}/members/` lista quién pertenece al equipo. Exige `teams.view`; 404 si el equipo no es de la organización.
+- **Integrantes de un equipo (F2-55):** `GET /api/v1/o/{slug}/teams/{team_id}/members/` lista quién pertenece al equipo. Exige `teams.view` **y** `users.view` (F2-56): enseña un equipo y a personas. 404 si el equipo no es de la organización.
 
   ```json
   {
@@ -554,10 +554,10 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 
   - `id` es el de la membresía, el mismo del directorio de miembros. `status` es el estado de esa membresía en la organización; `team_role` e `is_active` son del equipo.
   - Se listan todos los integrantes: también con la membresía suspendida o invitada, y con la cuenta desactivada.
-  - **Enseña personas con `teams.view`**, sin exigir `users.view`: ver un equipo incluye ver quién lo forma. No salen roles, permisos, contraseñas ni las otras organizaciones del usuario.
+  - **Enseña personas, así que exige también `users.view`:** el nombre, el correo y el estado de la membresía son los mismos datos del directorio de miembros, y se protegen igual. A quien le falta uno de los dos permisos, 403, exista o no el equipo. No salen roles, permisos, contraseñas ni las otras organizaciones del usuario.
   - **Paginación:** por cursor, en orden de incorporación al equipo. Dos consultas para la lista (si el equipo existe, y sus integrantes con su membresía y su usuario), sean cuantos sean.
 - **Añadir, cambiar y quitar integrantes por API** son los siguientes work items. Hasta entonces `team_members` solo se llena desde código.
-- **Integrantes (`team_members`, F2-52):** qué membresías pertenecen a cada equipo, con su papel en él (`team_role`: `MEMBER` o `SUPERVISOR`) y si participan en la asignación automática (`is_active`). Tenant-owned, con RLS forzado. Las FK al equipo y a la membresía son compuestas con `organization_id`: la base de datos no deja enlazar un equipo de una organización con una membresía de otra. Un par equipo-membresía es único. Un equipo con integrantes no se borra, ni una membresía con equipos: antes hay que quitarlos. Todavía no hay ruta que los lea ni los escriba.
+- **Integrantes (`team_members`, F2-52):** qué membresías pertenecen a cada equipo, con su papel en él (`team_role`: `MEMBER` o `SUPERVISOR`) y si participan en la asignación automática (`is_active`). Tenant-owned, con RLS forzado. Las FK al equipo y a la membresía son compuestas con `organization_id`: la base de datos no deja enlazar un equipo de una organización con una membresía de otra. Un par equipo-membresía es único. Un equipo con integrantes no se borra, ni una membresía con equipos: antes hay que quitarlos. Los lee la ruta de F2-55; todavía no hay ruta que los escriba.
 - **Equipos propios en el motor de autorización:** `ExecutionContext.team_ids` son los equipos de la membresía de quien pide; se leen en la misma consulta que la membresía. Cuentan todos, también un equipo inactivo y una pertenencia con `is_active` en falso: esos dos datos hablan de la asignación, no de lo que alguien puede ver. `team_role` tampoco cambia el alcance. Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia todavía.
 - El selector `organizations.selectors.teams` filtra por organización, no por permiso: el permiso lo exige la vista.
 

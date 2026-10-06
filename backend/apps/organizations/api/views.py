@@ -327,9 +327,10 @@ class TeamMemberSerializer(serializers.Serializer[Any]):
 )
 class TeamMembersView(generics.ListAPIView):
     """Quién pertenece a un equipo, con su papel en él. Paginado por orden de incorporación
-    (ADR-016). 404: el equipo no es de la organización."""
+    (ADR-016). Enseña un equipo y personas: exige los dos permisos (F2-56). 404: el equipo no
+    es de la organización."""
 
-    required_permissions = {"GET": "teams.view"}
+    required_permissions = {"GET": ("teams.view", "users.view")}
     serializer_class = TeamMemberSerializer
 
     def get_queryset(self) -> QuerySet[TeamMember]:
