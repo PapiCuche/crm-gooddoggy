@@ -157,7 +157,7 @@
       "ROUND_ROBIN": "Por turnos",
       "LOAD_BALANCED": "Por carga de trabajo",
       "SKILL_BASED": "Por habilidades",
-      "AI_RULES": "Reglas de IA"
+      "AI_RULES": "Por reglas de IA"
     },
     "empty": "Esta organización todavía no tiene equipos.",
     "count": "{count, plural, =0 {Sin equipos en la lista} one {# equipo en la lista} other {# equipos en la lista}}",

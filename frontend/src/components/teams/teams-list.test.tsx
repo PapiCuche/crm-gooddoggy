@@ -16,7 +16,7 @@ const tenant: SelfContext = {
   permissions: [{ code: "teams.view", scopes: [] }],
 };
 const team = (slug: string, extra: Partial<Team> = {}): Team => ({
-  id: slug,
+  id: `id-${slug}`, // distinto del `slug`: lo que se enseña es el `slug`, no el identificador
   slug,
   name: slug,
   description: "",
@@ -39,7 +39,10 @@ const card = (name: string) =>
   screen.getByText(name, { selector: "span.font-medium" }).closest("li") as HTMLElement;
 const lines = (name: string) => [...card(name).querySelectorAll("p")].map((p) => p.textContent);
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks(); // el espía de `console.error`, también si el test falló
+});
 
 describe("TeamsList", () => {
   it("muestra lo que devuelve la API: nombre, slug, descripción, asignación y estado", async () => {
@@ -81,6 +84,9 @@ describe("TeamsList", () => {
       "SKILL_BASED",
       "AI_RULES",
       "DICE",
+      "constructor", // ni lo que hereda cualquier objeto
+      "MANUAL.length", // ni una ruta dentro de un texto
+      "A.B",
     ];
     const rows = strategies.map((strategy) =>
       team(strategy.toLowerCase(), {
@@ -96,11 +102,13 @@ describe("TeamsList", () => {
       "Asignación: Por turnos",
       "Asignación: Por carga de trabajo",
       "Asignación: Por habilidades",
-      "Asignación: Reglas de IA",
+      "Asignación: Por reglas de IA",
       "Asignación: DICE", // la API se adelantó a esta versión: su código, no un error
+      "Asignación: constructor",
+      "Asignación: MANUAL.length",
+      "Asignación: A.B",
     ]);
     expect(errors).not.toHaveBeenCalled(); // ningún texto sin resolver
-    errors.mockRestore();
   });
 
   it("un texto de la API con llaves o etiquetas se enseña tal cual", async () => {
@@ -117,7 +125,6 @@ describe("TeamsList", () => {
     ]);
     expect(screen.getByRole("status")).toHaveTextContent("1 equipo en la lista");
     expect(errors).not.toHaveBeenCalled();
-    errors.mockRestore();
   });
 
   it("una organización sin equipos lo dice, sin error", async () => {

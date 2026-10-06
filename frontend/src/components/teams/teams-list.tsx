@@ -5,8 +5,13 @@ import { useTranslations } from "next-intl";
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList } from "@/components/lists/cursor-list";
 import { getTeamsListQueryKey, teamsList } from "@/lib/api/client";
-import type { Team } from "@/lib/api/model";
+import type { AssignmentStrategyEnum, Team } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
+
+import messages from "../../../messages/es-PE.json";
+
+// Las estrategias con nombre propio. Si el contrato gana una y el catálogo no, no compila.
+const STRATEGIES: Record<AssignmentStrategyEnum, string> = messages.teams.strategy;
 
 // Equipos (F2-60): lo que devuelve `GET /api/v1/o/{slug}/teams/`, página a página. La lista,
 // sus estados y su foco son los de `CursorList`. Quién puede verlos lo decide la API.
@@ -40,8 +45,10 @@ export function TeamsList() {
             )}
             <p className="text-muted wrap-anywhere">
               {t("teams.assignment", {
-                // Una estrategia que esta versión no conoce se enseña con su código.
-                strategy: t.has(`teams.strategy.${team.assignment_strategy}`)
+                // Una estrategia que esta versión no conoce se enseña con su código. Solo cuentan
+                // las claves propias del catálogo, como en `apiErrorKey`: `t.has` también da por
+                // buena `constructor` o `MANUAL.length`, y entonces se vería la clave.
+                strategy: Object.hasOwn(STRATEGIES, team.assignment_strategy)
                   ? t(`teams.strategy.${team.assignment_strategy}`)
                   : team.assignment_strategy,
               })}
