@@ -60,7 +60,7 @@ class ExecutionContext:
     membership_id: UUID
     permissions: Mapping[str, frozenset[Scope | None]]  # {None} si el permiso no admite alcance
     team_ids: frozenset[UUID] = frozenset()  # los equipos de la membresía (F2-52)
-    branch_ids: frozenset[UUID] = frozenset()  # E01-09
+    branch_ids: frozenset[UUID] = frozenset()  # la sucursal de la membresía (F2-68)
 
 
 def definition(code: str) -> PermissionDef:
@@ -84,7 +84,7 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
         memberships.using(alias)
         .filter(user_id=ctx.user_id)
         .annotate(teams=teams)
-        .values_list("pk", "status", "user__is_active", "teams")
+        .values_list("pk", "status", "user__is_active", "teams", "default_branch_id")
         .first()
     )
     if row is None or row[1] != ACTIVE or not row[2]:
@@ -97,7 +97,13 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
             effective.setdefault(code, set()).add(Scope(scope) if scope else None)
     frozen = {code: frozenset(scopes) for code, scopes in effective.items()}
     return ExecutionContext(
-        ctx, scope_token(ctx), row[0], MappingProxyType(frozen), team_ids=frozenset(row[3])
+        ctx,
+        scope_token(ctx),
+        row[0],
+        MappingProxyType(frozen),
+        team_ids=frozenset(row[3]),
+        # La sucursal de la membresía (F2-68), en esa misma consulta. Cuenta también inactiva.
+        branch_ids=frozenset({row[4]} if row[4] else ()),
     )
 
 

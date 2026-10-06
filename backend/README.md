@@ -132,7 +132,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 - `execution_context(ctx)`: membresía activa del usuario, sus equipos (`team_ids`, F2-52) y sus permisos efectivos (unión de los alcances de todos sus roles), en dos consultas. Sin membresía activa lanza `AccessDenied`.
 - `has_permission`, `can(ectx, code, obj)`, `require(...)` y `scoped(ectx, code, queryset)`: permiso, alcance sobre un objeto y filtro de listado. Todo dentro del `tenant_scope` del propio contexto.
 - `apps.access.scopes.register(Modelo, FieldScopes(...))`: cada modelo declara una vez sus columnas de propietario, equipo y sucursal, por el nombre de la columna (`assigned_user_id`, no `assigned_user`); de ahí salen el filtro y la verificación por objeto.
-- `TEAM` alcanza los recursos de los equipos a los que pertenece la membresía (`team_members`, F2-52), además de lo propio. Las sucursales (F2-43) aún no se enlazan a las membresías: `BRANCH` equivale a `OWN` (OBS-F2-05A-2).
+- `TEAM` alcanza los recursos de los equipos a los que pertenece la membresía (`team_members`, F2-52), además de lo propio. `BRANCH` alcanza los recursos de la sucursal de la membresía (`organization_memberships.default_branch_id`, F2-68), además de lo propio; sin sucursal, equivale a `OWN`. Ninguna ruta asigna todavía esa sucursal.
 - El `ExecutionContext` es una foto de su transacción: usarlo en otro `tenant_scope` posterior falla; hay que recalcularlo.
 - Falla cerrado: un código de permiso inexistente lanza `UnknownPermission`; un modelo sin política lanza `ScopePolicyMissing`, también para quien tiene `ORGANIZATION`.
 
@@ -496,7 +496,8 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - **Auditoría de tenant:** `branch.created`, con lo que se guardó (sin los campos vacíos), y `branch.updated`, con el antes y el después de lo que cambió. La etiqueta de la entidad es el código.
 - **`branches.manage`** está en el catálogo: no es sensible ni lleva alcance. Lo recibe el rol Owner de cada organización al migrar (ADR-018) y la plantilla «Administrador» en las organizaciones nuevas.
 - Los comandos (`create_branch` y `update_branch`, en `apps.organizations.branches`) no comprueban permisos: solo los importa la API del módulo, que declara el permiso (contrato de import-linter).
-- No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más: nada depende de ella.
+- No hay borrado. Desactivar una sucursal no tiene todavía ningún efecto más.
+- **Sucursal de una membresía (F2-68):** `organization_memberships.default_branch_id`, opcional. La FK es compuesta con `organization_id`: la base de datos no deja dar a una membresía la sucursal de otra organización. Una sucursal con membresías no se borra, ni con el ORM (`PROTECT`) ni con SQL directo. De ahí sale `ExecutionContext.branch_ids`, leído en la misma consulta que la membresía: una sola sucursal, que cuenta también si está inactiva (`is_active` habla de la operación, no de lo que alguien puede ver). Hoy ningún permiso del catálogo admite alcance, así que ninguna respuesta cambia. Asignarla por API: siguiente work item.
 
 ## Equipos (F2-50, F2-52 a F2-55, F2-58 y F2-59, E01-09)
 

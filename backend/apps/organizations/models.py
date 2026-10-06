@@ -42,6 +42,18 @@ class OrganizationMembership(TenantModel):
     id = uuid7_primary_key()
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    # La sucursal propia (modelo de datos §E.1): lo que alcanza una concesión con alcance
+    # `BRANCH` (`ExecutionContext.branch_ids`). La FK es compuesta con `organization_id`
+    # (migración): por eso la de Django no crea constraint ni índice propios.
+    default_branch = models.ForeignKey(
+        "Branch",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -62,6 +74,11 @@ class OrganizationMembership(TenantModel):
                 condition=models.Q(status__in=["INVITED", "ACTIVE", "SUSPENDED", "DEACTIVATED"]),
                 name="organization_memberships_status_ck",
             ),
+        ]
+        indexes = [  # lado referenciante de la FK a la sucursal y «miembros de una sucursal»
+            models.Index(
+                fields=["organization_id", "default_branch"], name="org_memberships_branch_idx"
+            )
         ]
 
     def __str__(self) -> str:

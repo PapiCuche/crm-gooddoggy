@@ -88,6 +88,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-65 | [#188](https://github.com/PapiCuche/crm-gooddoggy/issues/188) Teams screen: add a member to a team | `feature/f2-team-member-add-ui` | #186 | frontend |
 | F2-66 | [#190](https://github.com/PapiCuche/crm-gooddoggy/issues/190) Teams screen: remove a member from a team | `feature/f2-team-member-remove-ui` | #188 | frontend |
 | F2-67 | [#192](https://github.com/PapiCuche/crm-gooddoggy/issues/192) Teams screen: change a member's role in a team | `feature/f2-team-member-role-ui` | #190 | frontend |
+| F2-68 | [#194](https://github.com/PapiCuche/crm-gooddoggy/issues/194) Membership default branch and branch_ids in the engine | `feature/f2-membership-default-branch` | #144 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -255,7 +256,7 @@ E01-09 empieza por las sucursales (F2-43, #144). Decisiones del programa autóno
 ### OBS-F2-43-2 — Lo que `branches` no lleva todavía
 - `deleted_at` y `deleted_by_user_id` (convención [SD]): no hay flujo de borrado, como en roles. Una sucursal se desactiva con `is_active`. Cuando exista el borrado, `UNIQUE (organization_id, code)` pasa a ser un índice parcial.
 - ✅ F2-44 (#146): crear por API y el permiso `branches.manage`. ✅ F2-45 (#148): editar, desactivar y reactivar.
-- `organization_memberships.default_branch_id` y `ExecutionContext.branch_ids` (OBS-F2-05A-2): el alcance `BRANCH` sigue equivaliendo a `OWN`.
+- ✅ F2-68 (#194): `organization_memberships.default_branch_id` y `ExecutionContext.branch_ids` (OBS-F2-05A-2). Falta una ruta que asigne la sucursal a un miembro.
 
 ### OBS-F2-06-1 — La contraseña inicial del Owner la escribe el operador
 No hay envío de correo (D-F2-5): ni invitación ni restablecimiento. El comando de alta pide la contraseña del Owner nuevo al operador y no la muestra ni la registra. El producto no puede obligar todavía a cambiarla en el primer acceso.
@@ -457,7 +458,7 @@ La auditoría rechaza un decorador alrededor de `as_view()` (uno que responda an
 `execution_context` lee la membresía y sus concesiones una vez, dentro del `tenant_scope` de la petición. Revocar un rol surte efecto en la siguiente petición, no a mitad de una (coherente con ADR-003 §5). Sin caché. La foto queda ligada a su transacción: usarla en un `tenant_scope` posterior falla con `TenantContextError`, aunque el contexto sea igual. En DRF (F2-05B) la foto se guarda en la petición HTTP, así que la comparten todos los envoltorios `Request` que DRF crea para ella (por ejemplo al describir la vista en un OPTIONS).
 
 ### OBS-F2-05A-2 — BRANCH equivale a OWN hasta que la membresía tenga sucursal
-✅ `TEAM`, resuelto en F2-52 (#162): `execution_context` rellena `ExecutionContext.team_ids` con los equipos de la membresía (`team_members`), en la misma consulta que la membresía y sin una consulta por rol. Queda `BRANCH`: la tabla de sucursales (F2-43) aún no se enlaza a las membresías (OBS-F2-43-2), `branch_ids` está vacío y ese alcance nunca da más que OWN.
+✅ `TEAM`, resuelto en F2-52 (#162): `execution_context` rellena `ExecutionContext.team_ids` con los equipos de la membresía (`team_members`), en la misma consulta que la membresía y sin una consulta por rol. ✅ `BRANCH`, resuelto en F2-68 (#194): la membresía lleva su sucursal (`default_branch_id`, modelo de datos §E.1) y `execution_context` la pone en `ExecutionContext.branch_ids`, en esa misma consulta. Decisiones del programa (ADR-015 §5), a confirmar: **una sola sucursal por membresía**, como dice el modelo de datos (quien deba ver varias necesita el alcance `ORGANIZATION`); **cuenta también una sucursal inactiva**, igual que los equipos inactivos; **una sucursal con membresías no se borra** (hoy no hay borrado de sucursales). Sin sucursal asignada, `BRANCH` sigue equivaliendo a `OWN`, y ninguna ruta la asigna todavía. Como con `TEAM`, ningún permiso del catálogo admite alcance: asignar una sucursal amplía lo que alcanzaría una concesión `BRANCH`, y la regla sobre qué debe cubrir quien la asigna es la misma pregunta de D-F2-13.
 
 ### OBS-F2-05A-3 — La transacción de la petición se confirma aunque la vista falle
 ✅ Resuelta en F2-12 (#59): `TenantResolutionMiddleware` deshace la transacción de la petición cuando la respuesta es 400 o superior. Un servicio sigue comprobando antes de escribir, pero un error ya no deja escrituras a medias. Lo que sigue describe el estado anterior.
