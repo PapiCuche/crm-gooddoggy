@@ -249,7 +249,9 @@ describe("TeamMemberRemove", () => {
       "No se pudo quitar a Luis Paz del equipo Ventas: ya no estaba en él, o el equipo ya no está disponible. Revisa la lista.",
     );
     expect(screen.queryByRole("group")).not.toBeInTheDocument(); // ni la confirmación ni el panel
-    await waitFor(() => expect(asked(api, "/api/v1/o/acme/teams/")).toBeGreaterThanOrEqual(3));
+    // La lista, no el panel ni el envío, que empiezan igual.
+    const lists = () => api.mock.calls.filter(([url]) => String(url) === LIST.slice(4)).length;
+    await waitFor(() => expect(lists()).toBe(2));
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     expect(calls(api, "DELETE")).toHaveLength(1);
   });
@@ -299,4 +301,121 @@ describe("TeamMemberRemove", () => {
     const add = "Incorporar a Luis Paz (luis@acme.pe) al equipo Ventas";
     expect(await within(panel).findByRole("button", { name: add })).toBeVisible();
   });
+
+  it("el anuncio se retira al enviar otro y cuando quien salió vuelve a entrar", async () => {
+    const twin = person("m7", "luis.paz@otra.pe", "Luis", "Paz"); // se llama igual
+    const directory = [ana, luis, twin].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const api = mockApi(
+      routes({
+        [MEMBERS]: page([ana, luis, twin]),
+        [REMOVE("m2")]: NO_CONTENT,
+        [REMOVE("m7")]: NO_CONTENT,
+        "GET /api/v1/o/acme/members/?limit=200": page(directory),
+        "PUT /api/v1/o/acme/teams/t2/members/m7/": { status: 201, body: twin },
+      }),
+    );
+    renderApp(ui());
+    const panel = await panelOf();
+    const live = within(panel).getAllByRole("status")[1]!;
+    const done = "Luis Paz ya no está en el equipo Ventas.";
+    fireEvent.click(within(ask(panel)).getByRole("button", { name: "Sí, quitar" }));
+    await waitFor(() => expect(live).toHaveTextContent(done));
+    const release = hold(api);
+    const other = ask(panel, "Quitar a Luis Paz (luis.paz@otra.pe) del equipo Ventas");
+    fireEvent.click(within(other).getByRole("button", { name: "Sí, quitar" }));
+    expect(live).toHaveTextContent(""); // el mismo texto otra vez no se anunciaría: antes se retira
+    expect(live).toHaveClass("sr-only");
+    await tick(); // el envío ya salió
+    release();
+    await waitFor(() => expect(live).toHaveTextContent(done));
+    fireEvent.click(within(panel).getByRole("button", { name: /^Incorporar integrantes/ }));
+    const add = "Incorporar a Luis Paz (luis.paz@otra.pe) al equipo Ventas";
+    fireEvent.click(await within(panel).findByRole("button", { name: add }));
+    await waitFor(() => expect(names(panel)).toEqual(["Ana López", "Luis Paz"]));
+    expect(live).toHaveTextContent(""); // volvió: decir que ya no está sería falso
+    expect(within(panel).queryByText(done)).not.toBeInTheDocument();
+  });
+
+  it("quien entró desde la lista abierta y luego se quita vuelve a ofrecerse en ella", async () => {
+    const directory = [ana, luis].map((member) => ({ ...member, joined_at: "", roles: [] }));
+    const api = mockApi(
+      routes({
+        [MEMBERS]: page([ana]),
+        [REMOVE("m2")]: NO_CONTENT,
+        "GET /api/v1/o/acme/members/?limit=200": page(directory),
+        "PUT /api/v1/o/acme/teams/t2/members/m2/": { status: 201, body: luis },
+      }),
+    );
+    renderApp(ui());
+    const panel = await panelOf();
+    fireEvent.click(within(panel).getByRole("button", { name: /^Incorporar integrantes/ }));
+    const add = "Incorporar a Luis Paz (luis@acme.pe) al equipo Ventas";
+    fireEvent.click(await within(panel).findByRole("button", { name: add }));
+    expect(await within(panel).findByText("Ya está en el equipo")).toBeVisible();
+    await waitFor(() => expect(names(panel)).toEqual(["Ana López", "Luis Paz"]));
+    fireEvent.click(within(ask(panel)).getByRole("button", { name: "Sí, quitar" }));
+    await waitFor(() => expect(names(panel)).toEqual(["Ana López"]));
+    expect(await within(panel).findByRole("button", { name: add })).toBeVisible();
+    expect(within(panel).queryByText("Ya está en el equipo")).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/se incorporó/)).not.toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: add }));
+    await waitFor(() => expect(names(panel)).toEqual(["Ana López", "Luis Paz"]));
+    expect(calls(api, "PUT")).toHaveLength(2);
+    expect(calls(api, "DELETE")).toHaveLength(1);
+  });
+
+  it("una confirmación abierta sigue con su persona y con su foco cuando otra fila deja el panel", async () => {
+    const carla = person("m3", "carla@acme.pe", "Carla", "Ríos");
+    const api = mockApi(
+      routes({
+        [MEMBERS]: page([ana, luis, bare, carla]),
+        [REMOVE("m2")]: NO_CONTENT,
+        [REMOVE("m3")]: NO_CONTENT,
+      }),
+    );
+    renderApp(ui());
+    const panel = await panelOf();
+    const kept = ask(panel, "Quitar a Carla Ríos (carla@acme.pe) del equipo Ventas");
+    const release = hold(api);
+    fireEvent.click(within(ask(panel)).getByRole("button", { name: "Sí, quitar" }));
+    await tick();
+    const cancel = within(kept).getByRole("button", { name: "Cancelar" });
+    cancel.focus(); // el usuario ya está en otra fila
+    release();
+    const rest = ["Ana López", "sin-nombre@acme.pe"];
+    await waitFor(() => expect(names(panel)).toEqual([...rest, "Carla Ríos"]));
+    expect(cancel).toHaveFocus(); // no se le quita
+    expect(within(panel).getAllByRole("group")).toEqual([kept]); // la suya, abierta
+    fireEvent.click(within(kept).getByRole("button", { name: "Sí, quitar" }));
+    cancel.blur(); // el foco, en ninguna parte: hay navegadores donde un clic no lo da
+    await waitFor(() => expect(names(panel)).toEqual(rest));
+    expect(within(panel).getByRole("button", { name: "Cerrar" })).toHaveFocus();
+    expect(calls(api, "DELETE").map(([url]) => String(url))).toEqual([
+      "/api/v1/o/acme/teams/t2/members/m2/",
+      "/api/v1/o/acme/teams/t2/members/m3/",
+    ]);
+  });
+
+  it.each([
+    [404, "NOT_FOUND", 1],
+    [500, "INTERNAL_ERROR", 0],
+  ])(
+    "con el panel ya cerrado, de un fallo tardío solo avisa el 404, en la lista (%i %s)",
+    async (status, code, notices) => {
+      const api = mockApi(routes({ [REMOVE("m2")]: { status, body: { code } } }));
+      renderApp(ui());
+      const panel = await panelOf();
+      const answer = hold(api);
+      fireEvent.click(within(ask(panel)).getByRole("button", { name: "Sí, quitar" }));
+      await waitFor(() => expect(within(panel).getByText("Quitando…")).toBeVisible());
+      fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
+      answer();
+      await tick();
+      await tick();
+      const alerts = screen.queryAllByRole("alert");
+      expect(alerts).toHaveLength(notices);
+      for (const alert of alerts) expect(alert).toHaveTextContent(/^No se pudo quitar a Luis Paz/);
+      expect(calls(api, "DELETE")).toHaveLength(1);
+    },
+  );
 });

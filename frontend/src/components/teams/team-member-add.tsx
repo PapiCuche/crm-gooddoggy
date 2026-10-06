@@ -39,6 +39,7 @@ function Candidates({
   slug,
   team,
   present,
+  out,
   membersKey,
   onGone,
   onDone,
@@ -46,6 +47,7 @@ function Candidates({
   slug: string;
   team: Team;
   present: ReadonlySet<string>; // las membresías que ya están en el equipo
+  out: { id: string; name: string } | null; // a quién se acaba de quitar en el panel (F2-66)
   membersKey: QueryKey; // la lectura del panel: el integrante nuevo entra en ella
   onGone: (notice: string) => void; // 404: el equipo o la persona ya no están al alcance
   onDone: () => void;
@@ -59,6 +61,16 @@ function Candidates({
   // Quien ya entró desde esta lista: su botón se va en el mismo render que suelta la marca; el
   // panel, de donde sale `present`, se entera una tarea después.
   const [joined, setJoined] = useState<readonly string[]>([]);
+  // Quien entró desde esta lista y después se quitó en el panel vuelve a ser candidato: su fila
+  // recupera el botón, y el anuncio de que entró se retira.
+  const [seen, setSeen] = useState(out);
+  if (out !== seen) {
+    setSeen(out);
+    if (out && joined.includes(out.id)) {
+      setJoined(joined.filter((id) => id !== out.id));
+      if (added === out.name) setAdded(null);
+    }
+  }
   // Una escritura cada vez, y enviada una sola vez (el estado de la mutación llega a la
   // pantalla una tarea después de la pulsación).
   const sending = useRef(false);
@@ -234,12 +246,14 @@ export function TeamMemberAdd({
   slug,
   team,
   present,
+  out,
   membersKey,
   onGone,
 }: {
   slug: string;
   team: Team;
   present: ReadonlySet<string>;
+  out: { id: string; name: string } | null;
   membersKey: QueryKey;
   onGone: (notice: string) => void;
 }) {
@@ -261,6 +275,7 @@ export function TeamMemberAdd({
       slug={slug}
       team={team}
       present={present}
+      out={out}
       membersKey={membersKey}
       onGone={onGone}
       onDone={() => setOpen(false)}

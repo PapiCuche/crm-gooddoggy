@@ -29,7 +29,8 @@ export function TeamMemberRemove({
   team: Team;
   member: TeamMember;
   membersKey: QueryKey; // la lectura del panel: la fila sale de ella
-  onRemoved: (name: string) => void; // lo anuncia el panel: esta fila desaparece
+  // Lo anuncia el panel: esta fila desaparece. `null` al enviar: el anuncio anterior se retira.
+  onRemoved: (who: { id: string; name: string } | null) => void;
   onGone: (notice: string) => void; // 404: ya no estaba en el equipo, o el equipo no está al alcance
   focusClose: () => void;
 }) {
@@ -67,7 +68,7 @@ export function TeamMemberRemove({
         const active = document.activeElement;
         if (active === document.body || root.current?.contains(active)) focusClose();
         setRemoved(true);
-        onRemoved(name);
+        onRemoved({ id: member.id, name });
         if (rereading) void queryClient.invalidateQueries({ queryKey: membersKey });
       },
       onError: (error) => {
@@ -133,6 +134,7 @@ export function TeamMemberRemove({
               onClick={() => {
                 if (sending.current) return;
                 sending.current = true;
+                onRemoved(null);
                 remove.mutate({ orgSlug: slug, teamId: team.id, membershipId: member.id });
               }}
             >

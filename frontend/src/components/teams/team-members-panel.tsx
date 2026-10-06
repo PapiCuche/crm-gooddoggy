@@ -60,8 +60,9 @@ function Members({
   const t = useTranslations("teams.members");
   const errors = useTranslations("errors");
   const { membership_id: own } = useTenant();
-  // A quién se acaba de quitar desde aquí: su fila ya no está para decirlo.
-  const [removed, setRemoved] = useState<string | null>(null);
+  // A quién se acaba de quitar desde aquí: su fila ya no está para decirlo. Con su `id`: si
+  // vuelve a entrar («Incorporar»), el anuncio dejaría de ser verdad y se retira.
+  const [removed, setRemoved] = useState<{ id: string; name: string } | null>(null);
   const membersKey = [...getTeamMembersListQueryKey(slug, team.id), "all"];
   const members = useQuery<TeamMember[], ApiError>({
     queryKey: membersKey,
@@ -98,6 +99,7 @@ function Members({
   // los dos casos se enseña un error aquí.
   const error = members.error && ![401, 404].includes(members.error.status) ? members.error : null;
   if (members.data && !retrying) {
+    const left = removed && !members.data.some((member) => member.id === removed.id);
     return (
       <>
         {members.data.length > 0 ? (
@@ -141,11 +143,11 @@ function Members({
         <p role="status" className="text-muted text-sm">
           {t("count", { count: members.data.length })}
         </p>
-        {/* Montado desde que se abre el panel de quien administra: un lector de pantalla
-            anuncia el resultado cuando cambia. */}
+        {/* Montado desde que llega la lista de quien administra, antes de tener texto: un
+            lector de pantalla anuncia el resultado cuando cambia. */}
         {manages ? (
-          <p role="status" className={removed ? "text-sm wrap-anywhere" : "sr-only"}>
-            {removed ? t("remove.done", { name: removed, team: team.name }) : ""}
+          <p role="status" className={left ? "text-sm wrap-anywhere" : "sr-only"}>
+            {left ? t("remove.done", { name: removed.name, team: team.name }) : ""}
           </p>
         ) : null}
         {manages ? (
@@ -153,6 +155,7 @@ function Members({
             slug={slug}
             team={team}
             present={new Set(members.data.map((member) => member.id))}
+            out={removed}
             membersKey={membersKey}
             onGone={onGone}
           />
@@ -197,7 +200,8 @@ function Members({
 
 // Quién forma un equipo (F2-64), con `GET …/teams/{id}/members/` (F2-55). Nada se pide hasta
 // abrir el panel y cada apertura vuelve a preguntar. Quién puede verlo lo decide la API, que
-// exige ver equipos y ver personas. La única escritura es incorporar (F2-65, `TeamMemberAdd`).
+// exige ver equipos y ver personas. Sus escrituras son incorporar (F2-65, `TeamMemberAdd`) y
+// quitar (F2-66, `TeamMemberRemove`).
 export function TeamMembersPanel({
   slug,
   team,
@@ -207,7 +211,7 @@ export function TeamMembersPanel({
 }: {
   slug: string;
   team: Team;
-  manages: boolean; // comodidad: quien administra equipos puede además incorporar (F2-65)
+  manages: boolean; // comodidad: quien administra equipos puede además incorporar y quitar
   onAsk: () => void; // se abre el panel: el aviso anterior de la lista ya no aplica
   onStale: (notice: string, here: boolean) => void; // `here`: el foco seguía en esta tarjeta
 }) {
