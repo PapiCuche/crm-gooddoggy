@@ -1,22 +1,27 @@
 """F2-58: `PUT /api/v1/o/{slug}/teams/{id}/members/{membership_id}/`, poner a un miembro en un
 equipo. Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
+import threading
 from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.db import IntegrityError, connection
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 
+from apps.access.catalog import PERMISSIONS
+from apps.organizations import teams
 from apps.organizations.models import OrganizationMembership, Team, TeamMember
-from apps.organizations.teams import OwnTeamMembership, put_team_member
-from core.tenancy.context import TenantContextError
+from apps.organizations.teams import OwnTeamMembership, create_team, put_team_member, update_team
+from core.tenancy.context import ActorType, TenantContext, TenantContextError
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
 from tests.factories import make_user
 from tests.test_anti_escalation import audit, race
 from tests.test_authorization import give
-from tests.test_memberships import ctx, join
+from tests.test_memberships import ctx, join, raw
 from tests.test_self_context import NOT_FOUND, reply, signed
 from tests.test_team_members import add, own_teams
 from tests.test_team_writes import DENIED, send
@@ -27,6 +32,7 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 MANAGE: dict[str, str | None] = {"teams.manage": None, "users.view": None}  # los dos (F2-56)
 ROWS = "SELECT (SELECT count(*) FROM team_members), (SELECT count(*) FROM audit_logs)"
 STAMPS = "SELECT id, xmin::text, updated_at FROM team_members ORDER BY id"  # cambian al escribir
+TOUCHED = "SELECT updated_at FROM team_members WHERE team_id = %s AND membership_id = %s"
 
 
 def put(client: Client, team_id: Any, membership_id: Any, body: Any, org: str = "org-a") -> Any:
@@ -111,8 +117,10 @@ def test_on_a_member_it_changes_only_what_is_sent_and_repeating_writes_nothing(
         assert (again.status_code, again.json()) == (200, first.json())  # ya estaba: 200
     assert migrator.execute(ROWS).fetchone() == before  # sin cambios, ni escribe ni audita
     assert migrator.execute(STAMPS).fetchall() == stamps  # ni un `UPDATE`: las mismas filas
+    touched = migrator.execute(TOUCHED, [sales.pk, luis.pk]).fetchall()
     promoted = put(ana, sales.pk, luis.pk, {"team_role": "SUPERVISOR"})
     assert (promoted.status_code, promoted.json()["team_role"]) == (200, "SUPERVISOR")
+    assert migrator.execute(TOUCHED, [sales.pk, luis.pk]).fetchall() > touched  # y lo fecha
     assert promoted.json()["is_active"] is True  # lo que no se envía se queda como está
     who = {"membership_id": str(luis.pk)}
     assert audit(migrator)[-1] == (
@@ -188,14 +196,22 @@ def test_nobody_changes_their_own_place_in_a_team(
     add(world.a, joined.pk, world.membership)
     for team_id in (sales.pk, joined.pk):  # ni entrar ni cambiar su papel donde ya está
         assert reply(put(ana, team_id, world.membership, {"team_role": "SUPERVISOR"})) == DENIED
+    for same in ({}, {"team_role": "MEMBER", "is_active": True}):  # ni repetir lo que ya hay
+        assert reply(put(ana, joined.pk, world.membership, same)) == DENIED
+    assert reply(put(ana, uuid4(), world.membership, {})) == DENIED  # antes de mirar el equipo
     assert stored(world.a) == [(joined.pk, world.membership, "MEMBER", True)]
     assert migrator.execute(ROWS).fetchone() == (1, 0)
     assert own_teams(world.a, world.ana) == {joined.pk}
     with tenant_scope(ctx(world.a, world.ana)) as tenant, pytest.raises(OwnTeamMembership):
         put_team_member(tenant, team_id=sales.pk, membership_id=world.membership)
-    with tenant_scope(
-        ctx(world.a)
-    ) as tenant:  # sin actor (una tarea del sistema) no hay «uno mismo»
+    as_task = TenantContext(world.a, "test", None, ActorType.AI_AGENT, world.ana.pk)
+    text: Any = str(world.ana.pk).upper()  # un contexto mal construido no se salta la regla
+    as_text = TenantContext(world.a, "test", text)
+    for same_person in (as_task, as_text):  # también si llega como actor, o como texto
+        with tenant_scope(same_person) as tenant, pytest.raises(OwnTeamMembership):
+            put_team_member(tenant, team_id=sales.pk, membership_id=world.membership)
+    assert stored(world.a) == [(joined.pk, world.membership, "MEMBER", True)]
+    with tenant_scope(ctx(world.a)) as tenant:  # sin actor (el sistema) no hay «uno mismo»
         _, new = put_team_member(tenant, team_id=sales.pk, membership_id=world.membership)
     assert new and own_teams(world.a, world.ana) == {sales.pk, joined.pk}
 
@@ -282,10 +298,72 @@ def test_the_command_checks_what_it_stores_without_http(
         for missing in ((uuid4(), luis.pk), (sales.pk, uuid4())):
             with pytest.raises((Team.DoesNotExist, OrganizationMembership.DoesNotExist)):
                 put_team_member(tenant, team_id=missing[0], membership_id=missing[1])
+        with pytest.raises(ValueError, match="team_role"):  # ni lo de un integrante, del equipo
+            update_team(tenant, team_id=sales.pk, team_role="SUPERVISOR")
+        with pytest.raises(ValueError, match="team_role"):
+            create_team(tenant, slug="otro", name="Otro", team_role="SUPERVISOR")
     with pytest.raises(TenantContextError):  # fuera de un `tenant_scope` no escribe
         put_team_member(ctx(world.a), team_id=sales.pk, membership_id=luis.pk)
     assert migrator.execute(ROWS).fetchone() == (0, 0)
     with tenant_scope(ctx(world.a, world.ana)) as tenant:
-        member, new = put_team_member(tenant, team_id=sales.pk, membership_id=luis.pk)
-        assert new and member.membership.user.email == "luis@example.com"  # ya cargados
-        assert not put_team_member(tenant, team_id=sales.pk, membership_id=luis.pk)[1]
+        for first in (True, False):
+            member, new = put_team_member(tenant, team_id=sales.pk, membership_id=luis.pk)
+            with CaptureQueriesContext(connection) as queries:
+                assert member.membership.user.email == "luis@example.com"
+            assert new is first and not queries  # ya cargados: leerlos no consulta
+
+
+def test_the_change_and_its_audit_row_go_together_or_not_at_all(
+    world: Any, luis: OrganizationMembership, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sales = team(world.a, "ventas")
+    marta = join(world.a, make_user(email="marta@example.com"))
+    add(world.a, sales.pk, marta.pk)
+
+    def unaudited(*args: Any, **kwargs: Any) -> None:
+        raise IntegrityError("sin auditoría")
+
+    monkeypatch.setattr(teams, "record", unaudited)
+    with tenant_scope(ctx(world.a, world.ana)) as tenant:
+        for member, fields in ((luis.pk, {}), (marta.pk, {"team_role": "SUPERVISOR"})):
+            with pytest.raises(IntegrityError, match="sin auditoría"):
+                put_team_member(tenant, team_id=sales.pk, membership_id=member, **fields)
+        kept = list(TeamMember.objects.values_list("membership_id", "team_role"))
+        assert kept == [(marta.pk, "MEMBER")]  # el savepoint deshizo el alta y el cambio
+
+
+def test_a_write_in_flight_does_not_block_other_rows_that_point_at_the_team(
+    world: Any, luis: OrganizationMembership
+) -> None:
+    """`FOR NO KEY UPDATE`: quien inserta una fila con FK al equipo solo pide `KEY SHARE`."""
+    sales = team(world.a, "ventas")
+    held, release = threading.Event(), threading.Event()
+
+    def write() -> None:
+        try:
+            with tenant_scope(ctx(world.a, world.ana)) as tenant:
+                put_team_member(tenant, team_id=sales.pk, membership_id=luis.pk)
+                held.set()  # ya escribió y aún no ha confirmado: conserva el bloqueo
+                release.wait(timeout=10)
+        finally:
+            held.set()
+            connection.close()
+
+    writing = threading.Thread(target=write)
+    writing.start()
+    try:
+        assert held.wait(timeout=10)
+        with tenant_scope(ctx(world.a)):
+            raw("SET LOCAL lock_timeout = '2s'")
+            TeamMember.objects.create(team=sales, membership_id=world.membership)  # no espera
+    finally:
+        release.set()
+        writing.join(timeout=10)
+    assert len(stored(world.a)) == 2
+
+
+def test_no_catalog_permission_has_a_scope_while_d_f2_13_is_open() -> None:
+    """Incorporar a alguien a un equipo amplía su alcance `TEAM` y esta ruta no mide qué gana
+    (D-F2-13). Mientras ningún permiso admita alcance, no cambia ninguna respuesta. Quien
+    añada el primero tiene que cerrar antes esa decisión."""
+    assert [permission.code for permission in PERMISSIONS if permission.supports_scope] == []

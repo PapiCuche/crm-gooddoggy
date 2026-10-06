@@ -139,12 +139,15 @@ def put_team_member(
     alias = require_scope(ctx)
     values = cleaned(fields, MEMBER)
     with transaction.atomic(using=alias):  # savepoint: el cambio y su auditoría, o nada
-        # El bloqueo del equipo pone en cola a quien escribe sus integrantes: sin duplicados.
-        team: Team = Team.objects.using(alias).select_for_update(no_key=True).get(pk=team_id)
         people = OrganizationMembership.objects.using(alias).select_related("user")
         membership: OrganizationMembership = people.get(pk=membership_id)
-        if membership.user_id == ctx.user_id:
+        # «Uno mismo» es quien actúa, llegue como usuario de la sesión o como actor de una tarea.
+        actor = {UUID(str(who)) for who in (ctx.user_id, ctx.actor_id) if who is not None}
+        if membership.user_id in actor:  # antes de mirar el equipo, como con los roles
             raise OwnTeamMembership
+        # El bloqueo del equipo pone en cola a quien escribe sus integrantes: cada uno parte de
+        # lo que dejó el anterior. Que el par no se repita lo impone la tabla.
+        team: Team = Team.objects.using(alias).select_for_update(no_key=True).get(pk=team_id)
         rows = TeamMember.objects.using(alias)
         member = rows.filter(team=team, membership=membership).first()
         if new := member is None:
