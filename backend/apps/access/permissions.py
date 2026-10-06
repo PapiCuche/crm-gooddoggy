@@ -72,7 +72,8 @@ class HasPermission(BasePermission):
         ectx, codes = request_context(request), required_codes(request, view)
         if ectx is None or not codes:
             return False
-        return all(has_permission(ectx, code) for code in codes)  # todos, no alguno
+        held = [has_permission(ectx, code) for code in codes]  # un código desconocido falla
+        return all(held)  # todos, no alguno
 
     def has_object_permission(self, request: Any, view: Any, obj: Model) -> bool:
         ectx, codes = request_context(request), required_codes(request, view)

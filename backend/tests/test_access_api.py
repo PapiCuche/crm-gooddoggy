@@ -277,6 +277,7 @@ FLAWED: list[tuple[Any, str]] = [  # ruta y motivo que debe dar la auditoría
             [
                 ((), "catálogo"),
                 ((VIEW, "users.vew"), "'users.vew'"),
+                (("users.vew", VIEW), "'users.vew'"),  # cada posición, no solo la última
                 ((VIEW, ("users.view",)), "catálogo"),
                 ((VIEW, None), "catálogo"),
             ]
@@ -672,6 +673,24 @@ def test_several_permissions_are_all_required(api: Any, migrator: psycopg.Connec
     assert names(migrator) == ["cambiado", "theirs", "widget A", "widget B"]
 
 
+def test_every_code_of_a_tuple_counts_whatever_its_position(api: Any) -> None:
+    give(api.a, api.membership, {VIEW: "OWN", MANAGE: "ORGANIZATION"})  # sin `users.view`
+    get, check = SimpleNamespace(method="GET"), HasPermission()
+    mine = Widget(organization_id=api.a, assigned_user_id=api.ana.pk)
+    theirs = Widget(organization_id=api.a, assigned_user_id=uuid4())
+    with tenant_scope(ctx(api.a, api.ana)):
+        for wanted in ((VIEW, MANAGE), (MANAGE, VIEW)):  # el de menos alcance, delante o detrás
+            view = SimpleNamespace(required_permissions={"GET": wanted})
+            assert check.has_permission(get, view) and check.has_object_permission(get, view, mine)
+            with pytest.raises(NotFound):  # la barrera por objeto, sin el filtro delante
+                check.has_object_permission(get, view, theirs)
+            rows = ScopeFilter().filter_queryset(get, Widget.objects.all(), view)
+            assert [row.name for row in rows] == ["mine"], wanted
+        for wanted in ((VIEW, "users.view"), ("users.view", VIEW)):  # le falta uno, donde esté
+            view = SimpleNamespace(required_permissions={"GET": wanted})
+            assert not check.has_permission(get, view), wanted
+
+
 def test_a_declaration_the_engine_does_not_understand_denies(api: Any) -> None:
     give(api.a, api.membership, {VIEW: "ORGANIZATION", MANAGE: "ORGANIZATION", "users.view": None})
     get, mine = SimpleNamespace(method="GET"), Widget(organization_id=api.a)
@@ -685,9 +704,10 @@ def test_a_declaration_the_engine_does_not_understand_denies(api: Any) -> None:
         for valid in (VIEW, (VIEW,), (VIEW, MANAGE), (VIEW, "users.view")):  # y estas, sí
             view = SimpleNamespace(required_permissions={"GET": valid})
             assert HasPermission().has_permission(get, view), valid
-        unknown = SimpleNamespace(required_permissions={"GET": (VIEW, "users.vew")})
-        with pytest.raises(UnknownPermission):  # un código que no existe no es una concesión
-            HasPermission().has_permission(get, unknown)
+        for typo in ((VIEW, "users.vew"), ("organization.view", "users.vew")):  # lo tenga o no
+            unknown = SimpleNamespace(required_permissions={"GET": typo})
+            with pytest.raises(UnknownPermission):  # un código que no existe no es una concesión
+                HasPermission().has_permission(get, unknown)
 
 
 def test_view_or_method_without_declaration_is_denied(
