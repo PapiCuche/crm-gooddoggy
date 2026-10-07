@@ -275,6 +275,8 @@ def test_each_filter_keeps_only_its_rows_and_they_all_apply_together(world: Any)
         ("entity_id", "٠١٩٠b0c0-0000-7000-8000-000000000001"),  # dígitos que no son ASCII
         ("entity_id", "urn:uuid:0190b0c0-0000-7000-8000-000000000001"),  # solo la forma canónica
         ("entity_id", "0190b0c0000070008000000000000001"),
+        ("actor_id", "0190b0c0-0000-7000-8000-000000000001-"),  # ni nada detrás del UUID
+        ("entity_id", "0190b0c0-0000-7000-8000-000000000001}"),
         ("actor_type", "user"),  # los valores exactos de la tabla
         ("actor_type", "ROBOT"),
         ("actor_type", ""),
