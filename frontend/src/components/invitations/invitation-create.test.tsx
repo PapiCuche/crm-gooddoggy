@@ -92,7 +92,8 @@ describe("InvitationCreate", () => {
       expect(screen.queryByRole("button", { name: "Invitar" })).toBeNull();
       view.unmount();
     }
-    const api = mockApi({ [LIST]: list(), [ROLES]: three });
+    let now = three;
+    const api = mockApi({ [LIST]: list(), [ROLES]: () => now });
     screenOf();
     const form = await opened(); // también sin ninguna invitación
     expect(email(form)).toHaveFocus();
@@ -111,8 +112,13 @@ describe("InvitationCreate", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("form")).toBeNull();
     await waitFor(() => expect(trigger()).toHaveFocus());
-    fireEvent.click(trigger()); // otra vez: sin lo elegido antes
-    expect(box(screen.getByRole("form"), "Caja")).not.toBeChecked();
+    now = directory(role("1", "Vendedor"), role("2", "Caja")); // entretanto se borró «Owner»
+    fireEvent.click(trigger()); // otra vez: sin lo elegido antes, y el directorio se vuelve a pedir
+    const again = screen.getByRole("form");
+    expect(box(again, "Caja")).not.toBeChecked();
+    await waitFor(() =>
+      expect(within(again).queryByRole("checkbox", { name: "Owner" })).toBeNull(),
+    );
     expect(calls(api, "POST")).toHaveLength(0);
   });
 
@@ -134,6 +140,7 @@ describe("InvitationCreate", () => {
     fireEvent.submit(form); // Enter y un segundo clic mientras se envía: una sola invitación
     send(form);
     fireEvent.click(box(form, "Caja")); // y lo elegido ya no cambia
+    expect(box(form, "Caja")).not.toBeChecked();
     await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
     expect(calls(api, "POST")).toHaveLength(1);
     // Sin espacios exteriores; la forma del correo la decide la API. Los roles, por
@@ -186,7 +193,11 @@ describe("InvitationCreate", () => {
       "Ese correo no sirve. Escribe una sola dirección, sin tildes ni espacios.",
     ],
     [refusal(409, "ALREADY_MEMBER"), "email", "Ese correo ya es miembro de la organización."],
-    [refusal(409, "INVITATION_PENDING"), "email", "Ese correo ya tiene una invitación pendiente."],
+    [
+      refusal(409, "INVITATION_PENDING"),
+      "email",
+      "Ese correo ya tiene una invitación, pendiente o caducada.",
+    ],
     [
       refusal(400, "VALIDATION_ERROR", { role_ids: [{ code: "invalid" }] }),
       "form",
@@ -195,7 +206,7 @@ describe("InvitationCreate", () => {
     [
       refusal(409, "INVITATION_LIMIT"),
       "form",
-      "La organización ya tiene 50 invitaciones pendientes. No se pueden crear más hasta que alguna se acepte o se revoque.",
+      "La organización ya tiene 50 invitaciones pendientes o caducadas: es el máximo.",
     ],
     [
       refusal(429, "RATE_LIMITED"),
@@ -239,11 +250,16 @@ describe("InvitationCreate", () => {
     send(form);
     await waitFor(() => expect(calls(api, "POST")).toHaveLength(2)); // y se puede reintentar
     expect(body(calls(api, "POST")[1]).role_ids).toEqual(["rol-2", "rol-1"]);
+    await waitFor(() => expect(alerts(form)).toEqual([text])); // la misma respuesta
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger()); // y abrir de nuevo no trae el error de antes
+    expect(alerts(screen.getByRole("form"))).toEqual([]);
   });
 
   it("si el directorio de roles no llega, lo dice y no deja invitar a ciegas", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const api = mockApi({ [LIST]: list(), [ROLES]: { status: 500 } });
+    let fails = true;
+    const api = mockApi({ [LIST]: list(), [ROLES]: () => (fails ? { status: 500 } : three) });
     const answer = api.getMockImplementation()!;
     let release = () => {};
     api.mockImplementation(async (...request) => {
@@ -269,6 +285,21 @@ describe("InvitationCreate", () => {
     send(form);
     expect(alerts(form)).toContain("Elige al menos un rol.");
     expect(calls(api, "POST")).toHaveLength(0);
+    // Cerrar y abrir vuelve a pedir el directorio, como dice el aviso; y sin los avisos de antes.
+    fails = false;
+    api.mockImplementation(answer);
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger());
+    const again = screen.getByRole("form");
+    expect(await within(again).findAllByRole("checkbox")).toHaveLength(3);
+    expect(alerts(again)).toEqual([]);
+    fails = true; // un fallo posterior no quita las casillas ya leídas: dependen del dato
+    const asked = calls(api, "GET").length;
+    fireEvent.click(within(again).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(trigger());
+    await waitFor(() => expect(calls(api, "GET")).toHaveLength(asked + 2)); // con su reintento
+    await tick();
+    expect(within(screen.getByRole("form")).getAllByRole("checkbox")).toHaveLength(3);
   });
 
   it("Enter mantenido no vuelve a pulsar: ni reabre el formulario ni reenvía", async () => {
@@ -287,5 +318,24 @@ describe("InvitationCreate", () => {
     expect(screen.queryByRole("form")).toBeNull();
     expect(screen.getByText(/^Invitación a x@cliente.pe registrada/)).toBeVisible();
     expect(calls(api, "POST")).toHaveLength(1);
+  });
+
+  it("un rol que desaparece del directorio con el formulario abierto ni cuenta ni se envía", async () => {
+    let now = three;
+    const made = { status: 201, body: invitation("x@cliente.pe", ["rol-1"]) };
+    const api = mockApi({ [LIST]: list(), [ROLES]: () => now, [CREATE]: made });
+    const view = screenOf();
+    const form = await opened();
+    fill(form, "x@cliente.pe", "Caja");
+    now = directory(role("1", "Vendedor"), role("3", "Owner")); // entretanto se borró «Caja»
+    await act(() => view.client.invalidateQueries());
+    await waitFor(() => expect(within(form).queryByRole("checkbox", { name: "Caja" })).toBeNull());
+    expect(email(form)).toHaveValue("x@cliente.pe"); // el formulario sigue, con lo escrito
+    send(form);
+    expect(alerts(form)).toEqual(["Elige al menos un rol."]); // lo que ya no se ve no cuenta
+    fireEvent.click(box(form, "Vendedor"));
+    send(form);
+    await waitFor(() => expect(calls(api, "POST")).toHaveLength(1));
+    expect(body(calls(api, "POST")[0]).role_ids).toEqual(["rol-1"]); // solo lo que se ve elegido
   });
 });

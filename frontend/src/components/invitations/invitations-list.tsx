@@ -71,6 +71,8 @@ export function InvitationsList() {
             listKey={listKey}
             roles={roles.data}
             rolesFailed={roles.isError}
+            // Cada apertura vuelve a preguntar: el directorio pudo fallar, o un rol, borrarse.
+            onAsk={() => void roles.refetch({ cancelRefetch: false })}
           />
         ) : null
       }

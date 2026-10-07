@@ -21,11 +21,13 @@ export function InvitationCreate({
   listKey,
   roles,
   rolesFailed,
+  onAsk,
 }: {
   slug: string;
   listKey: QueryKey;
   roles: readonly Role[] | undefined; // el directorio que ya lee la lista; sin él no hay qué elegir
   rolesFailed: boolean;
+  onAsk: () => void; // se abre el formulario: el directorio de roles se vuelve a pedir
 }) {
   const t = useTranslations("invitations.create");
   const queryClient = useQueryClient();
@@ -34,6 +36,9 @@ export function InvitationCreate({
   // Los roles elegidos, por identificador. No llegan al DOM: las casillas no llevan `value`.
   const [chosen, setChosen] = useState<readonly string[]>([]);
   const [refused, setRefused] = useState<"rolesRequired" | "rolesTooMany" | null>(null);
+  // Lo elegido que sigue en el directorio. Un rol borrado con el formulario abierto deja de
+  // verse: tampoco cuenta ni se envía.
+  const picked = chosen.filter((id) => roles?.some((role) => role.id === id));
   const trigger = useRef<HTMLButtonElement>(null);
   const firstRole = useRef<HTMLInputElement>(null);
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
@@ -66,6 +71,7 @@ export function InvitationCreate({
       setDone(null);
       setChosen([]);
       setRefused(null);
+      onAsk();
     }
     setOpen(next);
   }
@@ -78,7 +84,7 @@ export function InvitationCreate({
   }
   function ready(): boolean {
     const problem =
-      chosen.length === 0 ? "rolesRequired" : chosen.length > MAX_ROLES ? "rolesTooMany" : null;
+      picked.length === 0 ? "rolesRequired" : picked.length > MAX_ROLES ? "rolesTooMany" : null;
     setRefused(problem);
     if (problem) firstRole.current?.focus();
     return problem === null;
@@ -116,9 +122,7 @@ export function InvitationCreate({
           ]}
           write={invite}
           check={ready}
-          send={({ email }) =>
-            invite.mutate({ orgSlug: slug, data: { email, role_ids: [...chosen] } })
-          }
+          send={({ email }) => invite.mutate({ orgSlug: slug, data: { email, role_ids: picked } })}
           taken={explained}
           denied={t("denied")}
           labels={{ submit: t("submit"), busy: t("busy"), cancel: t("cancel") }}

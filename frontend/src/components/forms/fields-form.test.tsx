@@ -133,11 +133,10 @@ describe("FieldsForm", () => {
     expect(within(form).getByRole("alert")).toHaveTextContent("No cabe");
     ready = false;
     send(form);
-    await tick();
     expect(write).toHaveBeenCalledTimes(1); // no se envió
     expect(within(form).queryByRole("alert")).toBeNull(); // y el error de antes no se queda
     ready = true;
-    send(form);
+    send(form); // en la misma tarea: ni el error ni el reintento esperan a la pantalla
     await tick();
     expect(write).toHaveBeenCalledTimes(2); // la marca no quedó puesta
     fireEvent.input(within(form).getByLabelText("Código"), { target: { value: "" } });
