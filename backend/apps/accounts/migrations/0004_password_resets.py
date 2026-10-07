@@ -1,4 +1,4 @@
-"""F2-86 (ADR-021): `password_resets`, los enlaces de recuperación de contraseña enviados.
+"""F2-86 (ADR-021): `password_resets`, los enlaces de recuperación de contraseña emitidos.
 Platform-owned (ADR-001 §2): sin `organization_id` ni política de tenant."""
 
 import django.db.models.deletion
