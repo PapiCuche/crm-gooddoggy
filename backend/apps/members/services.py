@@ -1,5 +1,6 @@
 """Administración de miembros (F2-19, E01-07, ADR-017): suspender y reactivar una membresía,
-asignarle una sucursal (F2-69) e invitar a alguien a la organización (F2-80, ADR-020).
+asignarle una sucursal (F2-69), invitar a alguien a la organización (F2-80, ADR-020) y
+revocar una invitación (F2-82).
 
 Orquesta `access` (las reglas de RBAC), `organizations` (la membresía) y `accounts` (las
 sesiones), que no se importan entre sí. Primero las reglas, que toman el bloqueo de RBAC de la
@@ -13,13 +14,19 @@ from uuid import UUID
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from apps.access.services import ensure_can_invite, ensure_can_manage_member
+from apps.access.services import (
+    ensure_can_invite,
+    ensure_can_manage_member,
+    ensure_can_revoke_invitation,
+)
 from apps.accounts.emails import canonical_email
 from apps.accounts.services import revoke_sessions
+from apps.organizations import services as organizations
 from apps.organizations.services import (
     BranchRef,
     InvitationRef,
     create_invitation,
+    invitation_role_ids,
     set_membership_branch,
     set_membership_status,
 )
@@ -85,3 +92,20 @@ def invite(ctx: TenantContext, *, email: str, role_ids: Collection[UUID]) -> Inv
     with transaction.atomic(using=alias):
         ensure_can_invite(ctx, role_ids=role_ids)
         return create_invitation(ctx, email=address, role_ids=role_ids)
+
+
+def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationRef:
+    """Revoca una invitación pendiente (ADR-020). Devuelve la invitación como queda.
+
+    Las reglas son las de invitar con los roles que la invitación daría. Primero los permisos
+    y el bloqueo de RBAC, después se lee la invitación, ya sin nadie que la cambie, y entonces
+    se comprueba que el actor cubre sus roles. Lanza `AccessDenied`, `DoesNotExist` (no es de
+    esta organización) o `InvalidTransition` (aceptada, o anotada como caducada). Si lanza, no
+    escribe.
+    """
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        ensure_can_revoke_invitation(ctx, role_ids=())
+        roles = invitation_role_ids(ctx, invitation_id=invitation_id)
+        ensure_can_revoke_invitation(ctx, role_ids=roles)
+        return organizations.revoke_invitation(ctx, invitation_id=invitation_id)

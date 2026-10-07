@@ -474,7 +474,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
-`user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo) y F2-81 la que las lista. Enviar, revocar y aceptar son los siguientes, y enviar y aceptar esperan a D-F2-14.
+`user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.
 
 - **Tenant-owned**, con RLS forzado y FK a su organización. Modelo `apps.organizations.models.UserInvitation`; lectura `organizations.selectors.invitations()`, que filtra por organización y no por permiso.
 - **Campos:** `email` (el correo invitado), `role_ids` (los roles que tendrá, por identificador), `token_hash` (el SHA-256 del enlace de un solo uso; vacío hasta que se envía), `expires_at`, `status` (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`), `invited_by` (la cuenta que invitó; columna `invited_by_user_id`), `sent_at`, `send_count` (cuántas veces se envió su correo), `accepted_at`, `created_at`, `updated_at`.
@@ -494,7 +494,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Roles:** de 1 a 20, sin repetir, todos de la organización. Un rol de otra organización es un 400 en `role_ids`, igual que uno que no existe. Si además hay un rol que el actor no cubre, responde el 403.
 - **Correo:** se guarda en la forma canónica de las cuentas (D-F2-3: sin espacio exterior, en minúsculas, el dominio en IDNA) y solo si `core.mail` lo entregaría (`core.mail.deliverable`): una sola dirección en ASCII, sin comillas, nombre ni palabras codificadas. Lo demás es un 400 en `email`. La respuesta devuelve el correo tal como quedó guardado.
 - **409 `ALREADY_MEMBER`:** el correo ya tiene membresía en la organización, activa, suspendida o dada de baja. Una invitación no toca una membresía que existe (ADR-020 §4). Es información de la propia organización; la ruta no dice si un correo tiene cuenta en la plataforma: uno con cuenta y uno sin ella reciben la misma respuesta.
-- **409 `INVITATION_PENDING`:** el correo ya tiene una invitación pendiente, también si caducó. Renovar una invitación es un envío (ADR-020 §3) y llega con él; hasta entonces una pendiente caducada ocupa su correo hasta que se revoque.
+- **409 `INVITATION_PENDING`:** el correo ya tiene una invitación pendiente, también si caducó. Renovar una invitación es un envío (ADR-020 §3) y llega con él; hasta entonces una pendiente caducada ocupa su correo hasta que se revoque («Revocar una invitación»).
 - **Topes** (constantes de `organizations.services`): 50 pendientes por organización, caducadas incluidas (409 `INVITATION_LIMIT`), y 100 invitaciones creadas en 24 horas, cuenten o no como pendientes (429 `RATE_LIMITED`, sin `Retry-After`). Se cuentan sobre la tabla después de tomar el bloqueo de RBAC: dos invitaciones a la vez no los cuentan a la vez.
 - **Auditoría:** `membership.invited` sobre la entidad `invitation`, con el correo y los roles en `changes`. El correo queda en claro (ADR-020 §6) y lo lee quien tenga `audit.view`. Excepción: la auditoría pasa por el redactor compartido (`core.redaction`), que tapa lo que tiene forma de secreto también dentro de una dirección (`token=abc@x.pe` queda `token=[REDACTED]`; `sk-…` de 16 caracteres o más, `[REDACTED]@x.pe`). La fila de la invitación y la respuesta conservan la dirección entera: se llega a ella por `entity_id`.
 - **Orden de las respuestas:** 401; 403 por permisos, antes de mirar el cuerpo; 400 por la forma del cuerpo y por el correo; 403 por un rol que no se cubre; 400 por un rol que no es de la organización; 409 y 429. Una organización sin rol Owner responde 409 `LAST_OWNER` a quien tiene los dos permisos, como en el resto de cambios bajo el bloqueo de RBAC.
@@ -522,6 +522,18 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Lo que no sale:** el hash del enlace, `sent_at`, `send_count` y `accepted_at`.
 - **Una consulta por página**, sean cuantas sean las filas. Sin filtros todavía.
 - La vista es la misma que invita (`apps.members.api.views.InvitationsView`) y lee con `organizations.selectors.invitations()`.
+
+## Revocar una invitación (F2-82, ADR-020)
+
+`PUT /api/v1/o/{slug}/invitations/{id}/status/` con `{"status": "REVOKED"}` revoca una invitación pendiente, caducada o no. Exige `users.invite` **y** `users.manage`. Responde 200 con la fila de la invitación, como en el listado. `REVOKED` es el único estado que la API pone.
+
+- **Efecto:** la invitación pasa a `REVOKED` y pierde el hash de su enlace, si lo tenía: un enlace revocado no queda guardado. Su correo se puede invitar otra vez y deja de contar para el tope de pendientes; sigue contando para el de 100 en 24 horas, que cuenta las creadas. La fila no se borra.
+- **Repetir la petición no cambia nada:** una ya revocada responde 200 con la misma fila, sin escribir ni auditar.
+- **409 `INVALID_TRANSITION`:** la invitación ya se aceptó, o está anotada como `EXPIRED` en la tabla (nada lo escribe hoy). Una pendiente que caducó sigue siendo pendiente en la tabla y sí se revoca.
+- **Reglas, bajo el bloqueo de RBAC de la organización** (`access.services.ensure_can_revoke_invitation`): las de invitar con los roles que la invitación daría. Quien revoca cubre cada concesión de cada uno de esos roles, como para quitárselos a un miembro, y un permiso sensible solo lo cubre un Owner. Si no, 403 sin motivo. Un rol que ya no existe no concede nada y no se mira.
+- **Orden de las respuestas:** 401; 403 por permisos, antes de mirar el cuerpo; 400 si `status` no es `REVOKED`; 404 si la invitación no es de la organización; 403 por un rol que no se cubre; 409 `INVALID_TRANSITION`. Quien tiene los dos permisos distingue así una invitación que existe de una que no: son las que ya puede listar. Una organización sin rol Owner responde 409 `LAST_OWNER` a quien tiene los dos permisos, exista o no la invitación, como en el resto de cambios bajo el bloqueo de RBAC.
+- **Auditoría:** `membership.invitation_revoked` sobre la entidad `invitation`, con el cambio de estado. El correo está en la fila `membership.invited` de la misma entidad.
+- **Dónde vive:** `apps.members.services.revoke_invitation` toma primero el bloqueo y comprueba los permisos, después lee los roles de la invitación (`organizations.services.invitation_role_ids`), comprueba que el actor los cubre y llama a `organizations.services.revoke_invitation`, que bloquea la fila, escribe y audita.
 
 ## Sucursales (F2-43 a F2-45 y F2-68, E01-09)
 
