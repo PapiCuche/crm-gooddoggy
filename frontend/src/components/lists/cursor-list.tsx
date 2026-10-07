@@ -25,7 +25,7 @@ type Section = {
 
 // Pantalla de un listado de tenant paginado por cursor (ADR-016): título, lista, «Cargar más» y
 // los estados de carga, error, sin permiso y sin sesión. La comparten las pantallas de gestión
-// (miembros, roles, sucursales, equipos). Quién puede ver la lista lo decide la API: aquí un 403 solo
+// (miembros, roles, sucursales, equipos, auditoría). Quién puede ver la lista lo decide la API: aquí un 403 solo
 // se explica.
 // Los textos salen del espacio `section` de los mensajes.
 export function CursorList<Row extends { id: string }>({

@@ -22,7 +22,8 @@
       "members": "Miembros",
       "roles": "Roles",
       "branches": "Sucursales",
-      "teams": "Equipos"
+      "teams": "Equipos",
+      "audit": "Auditoría"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -31,6 +32,71 @@
     "loggingOut": "Cerrando sesión…",
     "unavailableEyebrow": "Good Doggy / Workspace",
     "unavailableTitle": "No pudimos abrir este espacio."
+  },
+  "audit": {
+    "eyebrow": "Good Doggy / Auditoría",
+    "title": "Auditoría",
+    "intro": "Lo que se hizo en {organization}, de lo más reciente a lo más antiguo.",
+    "empty": "Todavía no hay nada en la auditoría de esta organización.",
+    "count": "{count, plural, =0 {Sin registros en la lista} one {# registro en la lista} other {# registros en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando la auditoría…",
+    "denied": "No tienes permiso para ver la auditoría de esta organización.",
+    "entity": "{type}",
+    "entityNamed": "{type}: {label}",
+    "by": "Por: {actor}",
+    "byNamed": "Por: {actor} ({label})",
+    "actor": {
+      "USER": "una persona",
+      "AI_AGENT": "un agente de IA",
+      "SYSTEM": "el sistema",
+      "INTEGRATION": "una integración",
+      "PLATFORM_STAFF": "personal de la plataforma"
+    },
+    "result": {
+      "SUCCESS": "Correcto",
+      "DENIED": "Denegado",
+      "FAILED": "Falló"
+    },
+    "entities": {
+      "organization": "Organización",
+      "membership": "Membresía",
+      "role": "Rol",
+      "branch": "Sucursal",
+      "team": "Equipo"
+    },
+    "actions": {
+      "organization": {
+        "created": "Organización creada"
+      },
+      "membership": {
+        "role_assigned": "Rol asignado a un miembro",
+        "role_removed": "Rol quitado a un miembro",
+        "suspended": "Miembro suspendido",
+        "reactivated": "Miembro reactivado",
+        "branch_changed": "Sucursal de un miembro cambiada"
+      },
+      "role": {
+        "created": "Rol creado",
+        "updated": "Rol editado",
+        "deleted": "Rol borrado",
+        "permission_granted": "Permiso concedido a un rol",
+        "permission_revoked": "Permiso retirado a un rol",
+        "permission_scope_changed": "Alcance de un permiso cambiado"
+      },
+      "branch": {
+        "created": "Sucursal creada",
+        "updated": "Sucursal editada"
+      },
+      "team": {
+        "created": "Equipo creado",
+        "updated": "Equipo editado",
+        "member_added": "Integrante incorporado a un equipo",
+        "member_updated": "Integrante de un equipo cambiado",
+        "member_removed": "Integrante quitado de un equipo"
+      }
+    }
   },
   "errors": {
     "notFoundTitle": "Página no encontrada",
