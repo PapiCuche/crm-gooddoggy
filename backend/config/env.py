@@ -5,6 +5,7 @@ Sin dependencias externas: si falta un valor crítico, el proceso no arranca
 """
 
 import os
+import re
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -12,6 +13,11 @@ from django.core.exceptions import ImproperlyConfigured
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
+# Esquema, host (un nombre en ASCII o una IPv6 entre corchetes) y puerto. Nada más: un espacio,
+# una barra invertida o un carácter de control los lee cada navegador a su manera.
+_ORIGIN = re.compile(
+    r"https?://([A-Za-z0-9][A-Za-z0-9._-]{0,252}|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?"
+)
 
 
 def required(name: str) -> str:
@@ -54,15 +60,8 @@ def origin(name: str) -> str:
     if not value:
         return ""
     try:
-        parts = urlsplit(value)
-        valid = (
-            parts.scheme in ("http", "https")
-            and bool(parts.hostname)
-            and value == f"{parts.scheme}://{parts.netloc}"
-            and "@" not in parts.netloc
-            and parts.port != 0
-        )
-    except ValueError:  # un puerto que no es un número
+        valid = bool(_ORIGIN.fullmatch(value)) and urlsplit(value).port != 0
+    except ValueError:  # un puerto fuera de rango, o una dirección entre corchetes que no es IPv6
         valid = False
     if not valid:  # solo se nombra la variable: el valor puede llevar credenciales
         raise ImproperlyConfigured(f"{name} debe ser un origen http(s) sin ruta ni credenciales")

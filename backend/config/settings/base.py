@@ -135,6 +135,8 @@ LOGGING = {
         # encender. Queda `http.request.completed`.
         "uvicorn.access": {"handlers": [], "propagate": False},
         "celery.app.trace": {"level": "WARNING"},  # "succeeded: <repr(resultado)>"
+        # Su línea DEBUG («TaskPool: Apply») vuelca los argumentos de cada tarea: nunca se emite.
+        "celery.pool": {"level": "INFO"},
     },
 }
 # API (F1-08A): DRF solo JSON. Contrato OpenAPI con drf-spectacular, versionado en

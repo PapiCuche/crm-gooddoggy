@@ -1,6 +1,7 @@
 """F2-87: emitir y enviar el enlace de recuperación de contraseña (ADR-021 §3 y §4). La tarea
 `accounts.send_password_reset`, sin ruta todavía. PostgreSQL con el rol `crm_app`."""
 
+import hashlib
 import json
 import logging
 import re
@@ -13,7 +14,7 @@ import psycopg
 import pytest
 from django.core import mail as outbox
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.accounts import recovery
@@ -62,9 +63,10 @@ def test_it_issues_a_link_keeps_only_its_hash_and_mails_it_to_the_account(
     (sent,) = outbox.outbox
     assert (sent.to, sent.subject) == ([EMAIL], "Restablece tu contraseña de Good Doggy CRM")
     (secret,) = LINK.findall(str(sent.body))  # un solo enlace, con el secreto en el fragmento
-    assert (row.user_id, row.token_hash, row.used_at) == (ana.pk, recovery.token_hash(secret), None)
-    assert re.fullmatch(r"[0-9a-f]{64}", row.token_hash) and row.token_hash != secret
-    assert timedelta(minutes=59, seconds=59) < row.expires_at - before <= timedelta(minutes=61)
+    digest = hashlib.sha256(secret.encode()).hexdigest()  # el SHA-256, no lo que diga el código
+    assert (row.user_id, row.token_hash, row.used_at) == (ana.pk, digest, None)
+    assert recovery.token_hash(secret) == digest != secret and row.created_at >= before
+    assert timedelta(minutes=59, seconds=55) < row.expires_at - row.created_at <= timedelta(hours=1)
     assert "60 minutos y una sola vez" in sent.body and "Si no fuiste tú" in sent.body
     logged = " ".join(json_formatter().format(record) for record in caplog.records)
     assert json.loads(json_formatter().format(caplog.records[-1]))["purpose"] == "password_reset"
@@ -158,12 +160,16 @@ def test_a_failed_delivery_keeps_the_issued_link_and_fails_without_retrying(
 
     monkeypatch.setattr("django.core.mail.backends.locmem.EmailBackend.send_messages", refuse)
     with caplog.at_level(logging.DEBUG), pytest.raises(MailError) as error:
+        # Con el log en DEBUG, el pool de Celery volcaría los argumentos: la dirección.
+        assert not logging.getLogger("celery.pool").isEnabledFor(logging.DEBUG)
         send_password_reset.run(EMAIL)
     assert EMAIL not in str(error.value) + " ".join(
         json_formatter().format(r) for r in caplog.records
     )
     assert len(rows()) == 1  # emitido: cuenta, se entregue o no (ADR-021 §3)
     assert recovery.issue_link(EMAIL) is False  # y otro intento enseguida no sale
+    with transaction.atomic(), pytest.raises(RuntimeError, match="durable"):
+        recovery.issue_link(EMAIL)  # la fila se confirma antes del correo: nunca dentro de otra
     assert (send_password_reset.max_retries, send_password_reset.ignore_result) == (0, True)
     assert not send_password_reset.acks_late and not getattr(
         send_password_reset, "autoretry_for", ()
@@ -182,5 +188,5 @@ def test_without_the_public_origin_nothing_is_issued_and_the_task_is_platform_on
             send_password_reset.run(email)
     assert rows() == [] and outbox.outbox == []
     settings.APP_ORIGIN = ORIGIN
-    send_password_reset.run(EMAIL)
+    assert send_password_reset.run(EMAIL) is None  # la tarea no dice si emitió
     assert len(rows()) == 1 and len(outbox.outbox) == 1

@@ -53,7 +53,7 @@ def issue_link(email: str) -> bool:
     """
     if not settings.APP_ORIGIN:
         raise ImproperlyConfigured("APP_ORIGIN es obligatorio para emitir un enlace")
-    with transaction.atomic():
+    with transaction.atomic(durable=True):  # dentro de otra transacción no se confirmaría
         accounts = User.objects.select_for_update(no_key=True)
         user = accounts.filter(email=email, is_active=True, is_platform_staff=False).first()
         if user is None or not mail.deliverable(user.email):

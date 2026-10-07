@@ -205,6 +205,13 @@ def test_production_refuses_an_unsafe_mail_server(
         "https://",
         "app.example.com",
         "ftp://app.example.com",
+        "https://app.example.com:",
+        "https://app .example.com",
+        "https://app.example.com\\crm",  # un navegador lee la barra invertida como una ruta
+        "https://app.example.com\x7f",
+        "https://app\u2028.example.com",
+        "https://áé.example.com",  # un dominio internacionalizado se escribe en su forma IDNA
+        "https://" + "a" * 254,
     ],
 )
 def test_production_with_mail_needs_an_https_origin_for_its_links(
@@ -222,8 +229,11 @@ def test_the_origin_is_optional_without_mail_and_kept_as_given(
     assert load_production(monkeypatch).APP_ORIGIN == ""  # type: ignore[attr-defined]
     local = load_production(monkeypatch, APP_ORIGIN=" http://localhost:8080 ")
     assert local.APP_ORIGIN == "http://localhost:8080"  # type: ignore[attr-defined]
-    full = load_production(monkeypatch, **{**MAIL_ENV, "APP_ORIGIN": "https://crm.example.pe:8443"})
-    assert full.APP_ORIGIN == "https://crm.example.pe:8443"  # type: ignore[attr-defined]
+    with pytest.raises(ImproperlyConfigured, match="APP_ORIGIN"):  # solo http o https
+        load_production(monkeypatch, APP_ORIGIN="ftp://localhost:8080")
+    for given in ("https://crm.example.pe:8443", "https://[2001:db8::1]:8443"):
+        full = load_production(monkeypatch, **{**MAIL_ENV, "APP_ORIGIN": given})
+        assert full.APP_ORIGIN == given  # type: ignore[attr-defined]
 
 
 def load_migrate(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> object:
