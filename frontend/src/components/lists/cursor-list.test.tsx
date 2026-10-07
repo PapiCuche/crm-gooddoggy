@@ -135,7 +135,7 @@ describe("CursorList", () => {
     expect(await screen.findByRole("list", { name: "Miembros" })).toBeEmptyDOMElement();
   });
 
-  it("`controls` sigue montado al cargar, con filas, con un error y al cambiar de lista; no con una negativa", async () => {
+  it("`controls` sigue montado, con su foco, al cargar, con filas, con un error, con una negativa y al cambiar de lista", async () => {
     let reply: { status: number; body: unknown } = page(["a"]);
     const api = mockApi({ [LIST]: () => reply });
     function Lists() {
@@ -180,17 +180,12 @@ describe("CursorList", () => {
     reply = { status: 403, body: { code: "PERMISSION_DENIED" } };
     another();
     expect(await screen.findByText(/No tienes permiso/)).toBeVisible();
-    expect(control).not.toBeInTheDocument(); // sin permiso no hay nada que filtrar
-    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(); // estaba en el control: al título
+    expect(control).toBeInTheDocument(); // tampoco con una negativa: el foco no se queda sin sitio
+    expect(control).toHaveFocus();
     reply = page(["a"]);
-    another(); // la lista vuelve, y con ella el control
-    (await screen.findByRole("textbox", { name: "filtro" })).focus();
-    reply = { status: 403, body: { code: "PERMISSION_DENIED" } };
-    another();
-    const elsewhere = screen.getByRole("button", { name: "otra lista" });
-    elsewhere.focus(); // quien ya se fue a otra parte se queda donde está
-    expect(await screen.findByText(/No tienes permiso/)).toBeVisible();
-    expect(elsewhere).toHaveFocus();
+    another(); // la lista vuelve
+    await screen.findByText("fila a");
+    expect(control).toHaveFocus();
     expect(api.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });

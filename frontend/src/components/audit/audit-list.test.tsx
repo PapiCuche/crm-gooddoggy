@@ -339,11 +339,14 @@ describe("AuditList", () => {
       choose("Quién", "USER");
       expect(await screen.findByRole("button", { name: "Reintentar" })).toBeVisible();
       expect(select("Quién")).toHaveValue("USER"); // los filtros siguen ahí para cambiarlos
+      select("Entidad").focus();
       choose("Entidad", "branch");
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "No tienes permiso para ver la auditoría de esta organización.",
       );
-      expect(screen.queryByRole("group", { name: "Filtros" })).not.toBeInTheDocument();
+      // Con la negativa los filtros siguen montados: el foco no se queda sin sitio.
+      expect(screen.getByRole("group", { name: "Filtros" })).toBeVisible();
+      expect(select("Entidad")).toHaveFocus();
     });
   });
 });
