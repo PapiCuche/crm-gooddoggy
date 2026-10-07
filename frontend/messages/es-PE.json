@@ -291,6 +291,18 @@
       "busy": "Invitando…",
       "cancel": "Cancelar",
       "done": "Invitación a {email} registrada. Todavía no se envía ningún correo."
+    },
+    "revoke": {
+      "open": "Revocar",
+      "label": "Revocar la invitación de {email}",
+      "ask": "¿Revocar la invitación de {email}? Dejará de poder aceptarse y ese correo se podrá invitar otra vez. No se puede deshacer.",
+      "confirm": "Sí, revocar",
+      "busy": "Revocando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para revocar esta invitación.",
+      "done": "La invitación de {email} quedó revocada. Ese correo se puede invitar otra vez.",
+      "stale": "La invitación de {email} ya no está disponible. Revisa la lista.",
+      "settled": "La invitación de {email} ya no estaba pendiente. Revisa la lista."
     }
   },
   "teams": {

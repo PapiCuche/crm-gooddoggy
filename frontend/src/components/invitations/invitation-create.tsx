@@ -22,12 +22,14 @@ export function InvitationCreate({
   roles,
   rolesFailed,
   onAsk,
+  onDone,
 }: {
   slug: string;
   listKey: QueryKey;
   roles: readonly Role[] | undefined; // el directorio que ya lee la lista; sin él no hay qué elegir
   rolesFailed: boolean;
   onAsk: () => void; // se abre el formulario: el directorio de roles se vuelve a pedir
+  onDone: () => void; // quedó registrada: lo que «Revocar» dijo de ese correo ya no aplica
 }) {
   const t = useTranslations("invitations.create");
   const queryClient = useQueryClient();
@@ -48,6 +50,7 @@ export function InvitationCreate({
       onSuccess: (made) => {
         setDone(made.email); // el correo que guardó la API, no el que se escribió
         setOpen(false);
+        onDone();
         // La invitación nueva va al principio de la lista, que puede tener más páginas: se
         // vuelve a pedir lo que hay en pantalla en vez de añadir una fila a mano.
         void queryClient.invalidateQueries({ queryKey: listKey });
