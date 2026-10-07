@@ -1,4 +1,4 @@
-"""F2-79: la tabla `user_invitations` (ADR-020). Solo la base y el modelo: sin rutas todavía.
+"""F2-79: la tabla `user_invitations` (ADR-020). Solo la base y el modelo: la ruta, en F2-80.
 PostgreSQL con el rol `crm_app`; las restricciones se prueban con el migrador."""
 
 from datetime import UTC, datetime, timedelta
@@ -69,7 +69,8 @@ def test_rls_hides_and_refuses_the_invitations_of_another_organization(world: An
         assert list(stored()) == [mine]
         assert not UserInvitation._base_manager.filter(pk=theirs.pk).exists()
         assert raw("UPDATE user_invitations SET status = 'REVOKED'") == [(1,)]
-        assert raw("DELETE FROM user_invitations WHERE id = %s", [theirs.pk]) == [(0,)]
+        update = "UPDATE user_invitations SET email = 'x@x.pe' WHERE id = %s"
+        assert raw(update, [theirs.pk]) == [(0,)]  # borrar ya no puede nadie del runtime (F2-80)
     with tenant_scope(ctx(world.b)):
         assert stored().get().status == "PENDING"  # intacta
     with pytest.raises(ProgrammingError, match="row-level security"), tenant_scope(ctx(world.a)):

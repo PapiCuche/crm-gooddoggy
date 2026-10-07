@@ -48,7 +48,24 @@ class Message:
 def _checked(message: Message) -> None:
     if not PURPOSE.fullmatch(message.purpose):
         raise ValueError("purpose: un identificador en minúsculas de hasta 32 caracteres")
-    to = message.to
+    _address(message.to)
+    subject = message.subject
+    if not subject.strip() or len(subject) > SUBJECT_MAX or _BREAKS.search(subject):
+        raise ValueError(f"subject: una línea de 1 a {SUBJECT_MAX} caracteres")
+    if not message.body.strip() or len(message.body) > BODY_MAX or _BODY_BAD.search(message.body):
+        raise ValueError(f"body: texto de 1 a {BODY_MAX} caracteres")
+
+
+def deliverable(to: str) -> bool:
+    """¿`send` aceptaría esta dirección? Para quien la guarda antes de escribirle (ADR-020 §1)."""
+    try:
+        _address(to)
+    except ValueError:
+        return False
+    return True
+
+
+def _address(to: str) -> None:
     if _BREAKS.search(to) or any(mark in to for mark in ",;<> \t") or to != to.strip():
         raise ValueError("to: una sola dirección, sin nombre ni separadores")
     # Lo validado es lo que sale: el transporte quita las comillas (`"a"@x` sale `a@x`), descifra
@@ -62,11 +79,6 @@ def _checked(message: Message) -> None:
         valid = False
     if not valid:
         raise ValueError("to: no es una dirección de correo")
-    subject = message.subject
-    if not subject.strip() or len(subject) > SUBJECT_MAX or _BREAKS.search(subject):
-        raise ValueError(f"subject: una línea de 1 a {SUBJECT_MAX} caracteres")
-    if not message.body.strip() or len(message.body) > BODY_MAX or _BODY_BAD.search(message.body):
-        raise ValueError(f"body: texto de 1 a {BODY_MAX} caracteres")
 
 
 def send(message: Message) -> None:
