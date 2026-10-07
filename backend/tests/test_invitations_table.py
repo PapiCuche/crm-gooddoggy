@@ -14,15 +14,16 @@ from apps.organizations.selectors import invitations as stored
 from core.tenancy.context import TenantContextError, TenantContextMissing
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
-from tests.test_memberships import ctx, raw
+from tests.test_memberships import ctx, join, raw
 
 world = test_authorization.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
 SOON = datetime.now(UTC) + timedelta(days=7)
 HASH = "ab" * 32
 INSERT = (
-    "INSERT INTO user_invitations (organization_id, email, role_ids, expires_at, invited_by_id,"
-    " status, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, 'PENDING', now(), now())"
+    "INSERT INTO user_invitations (organization_id, email, role_ids, expires_at,"
+    " invited_by_user_id, status, created_at, updated_at)"
+    " VALUES (%s, %s, %s, %s, %s, 'PENDING', now(), now())"
 )
 
 
@@ -51,11 +52,13 @@ def test_it_keeps_what_an_invitation_is_and_starts_pending_without_a_link(world:
         None,
         None,
     )
+    assert row.send_count == 0
     assert row.created_at is not None and row.updated_at is not None
     assert str(row) == str(made.pk)  # nunca el correo
 
 
 def test_rls_hides_and_refuses_the_invitations_of_another_organization(world: Any) -> None:
+    join(world.b, world.ana)  # quien invita es miembro de la organización que invita
     mine = invite(world.a, "a@cliente.pe", world.ana)
     theirs = invite(world.b, "b@cliente.pe", world.ana)
     assert raw("SELECT count(*) FROM user_invitations") == [(0,)]  # sin tenant, nada
@@ -79,6 +82,7 @@ def test_rls_hides_and_refuses_the_invitations_of_another_organization(world: An
 
 def test_only_one_pending_invitation_per_email_and_organization(world: Any) -> None:
     first = invite(world.a, "luis@cliente.pe", world.ana)
+    join(world.b, world.ana)
     invite(world.b, "luis@cliente.pe", world.ana)  # otra organización: otra invitación
     invite(world.a, "otra@cliente.pe", world.ana)
     with pytest.raises(IntegrityError, match="user_invitations_pending_uq"):
@@ -105,6 +109,7 @@ def test_only_one_pending_invitation_per_email_and_organization(world: Any) -> N
         " luis@cliente.pe",
         "luis @cliente.pe",
         "luis@cliente.pe\n",
+        "luis\x7f@cliente.pe",  # ni un carácter de control
         "luis",
         "luis@",
         "@cliente.pe",
@@ -134,21 +139,40 @@ def test_the_database_keeps_the_other_rules_of_an_invitation(
     insert()
     insert(email="o'brien+tag_1.x@sub-dominio.cliente.pe")  # lo que sí es una dirección
     insert(roles=[uuid4() for _ in range(20)])
-    for roles in ([], [uuid4() for _ in range(21)]):
+    insert(email=f"{'a' * 249}@x.pe")  # hasta 254 caracteres, como `users.email`
+    with pytest.raises(psycopg.errors.StringDataRightTruncation):
+        insert(email=f"{'a' * 250}@x.pe")
+    nested = [[uuid4() for _ in range(20)] for _ in range(20)]  # 400: `array_length` ve 20
+    for roles in ([], [uuid4() for _ in range(21)], [None], [uuid4(), None], nested):
         with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_roles_ck"):
-            insert(roles=roles)  # al menos un rol, y no más de los que caben
+            insert(roles=roles)  # al menos un rol de verdad, y no más de los que caben
     with pytest.raises(psycopg.errors.ForeignKeyViolation, match="organization_fk"):
         insert(org=uuid4())
-    with pytest.raises(psycopg.errors.ForeignKeyViolation):
-        insert(by=uuid4())  # quien invita es una cuenta que existe
+    for other in ({"by": uuid4()}, {"org": world.b}):  # quien invita es miembro de esta
+        with pytest.raises(psycopg.errors.ForeignKeyViolation, match="invited_by_org_fk"):
+            insert(**other)
     update = "UPDATE user_invitations SET {} WHERE organization_id = %s"
+    for column in ("role_ids", "expires_at", "invited_by_user_id"):  # nada de esto falta
+        with pytest.raises(psycopg.errors.NotNullViolation):
+            migrator.execute(update.format(f"{column} = NULL"), [world.a])
     for value in ("AB" * 32, "ab" * 31, "zz" * 32, "", f"{'ab' * 31}a\n"):  # un SHA-256 en hex
         with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_token_hash_ck"):
             migrator.execute(update.format("token_hash = %s"), [value, world.a])
     with pytest.raises(psycopg.errors.StringDataRightTruncation):  # y no cabe nada más largo
         migrator.execute(update.format("token_hash = %s"), ["ab" * 33, world.a])
-    migrator.execute(update.format("token_hash = %s, sent_at = now()"), [HASH, world.a])
-    for change in ("status = 'ACCEPTED'", "accepted_at = now()"):  # las dos cosas, o ninguna
+    # Un hash es de una sola invitación, de la organización que sea: por él se la encuentra.
+    one = "UPDATE user_invitations SET token_hash = %s, sent_at = now() WHERE id = %s"
+    ids = [row[0] for row in migrator.execute("SELECT id FROM user_invitations").fetchall()]
+    migrator.execute(one, [HASH, ids[0]])
+    with pytest.raises(psycopg.errors.UniqueViolation, match="user_invitations_token_hash_uq"):
+        migrator.execute(one, [HASH, ids[1]])
+    migrator.execute(one, ["cd" * 32, ids[1]])  # otro hash sí; y sin hash, las que sean
+    for count in (-1, 6):  # un correo no se envía más de cinco veces por invitación
+        with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_send_count_ck"):
+            migrator.execute(update.format("send_count = %s"), [count, world.a])
+    migrator.execute(update.format("send_count = 5"), [world.a])
+    revoked = "status = 'REVOKED', accepted_at = now()"
+    for change in ("status = 'ACCEPTED'", "accepted_at = now()", revoked):  # las dos, o ninguna
         with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_accepted_ck"):
             migrator.execute(update.format(change), [world.a])
     with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_status_ck"):

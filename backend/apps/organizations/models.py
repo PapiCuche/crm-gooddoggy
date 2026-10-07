@@ -4,6 +4,7 @@ sucursales, equipos e integrantes de cada equipo (tenant-owned)."""
 from django.conf import settings
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.db.models.lookups import Exact, IsNull
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -233,8 +234,16 @@ class TeamMember(TenantModel):
 
 
 INVITATION_MAX_ROLES = 20  # los roles que caben en una invitación (ADR-020 §2)
+INVITATION_MAX_SENDS = 5  # los correos que se envían por una invitación (ADR-020 §3)
 # El correo invitado: ASCII visible, sin mayúsculas ni espacios, con una sola `@`.
 INVITATION_EMAIL = r"^[\x21-\x3f\x5b-\x7e]+@[\x21-\x3f\x5b-\x7e]+$"
+
+
+def _roles(function: str, *args: models.Value) -> models.Func:
+    """Una función de PostgreSQL sobre `role_ids`, para su restricción."""
+    return models.Func(
+        models.F("role_ids"), *args, function=function, output_field=models.IntegerField()
+    )
 
 
 class UserInvitation(TenantModel):
@@ -244,9 +253,10 @@ class UserInvitation(TenantModel):
     minúsculas y en ASCII (lo que `core.mail` puede entregar). `role_ids` son los roles que
     tendrá, por identificador: se vuelven a comprobar al aceptar. Del enlace de un solo uso
     solo se guarda el SHA-256 (`token_hash`), que pone la tarea que envía el correo; antes de
-    enviarse no hay enlace. Una organización tiene como mucho una invitación pendiente por
-    correo. `EXPIRED` no lo escribe ningún proceso: una pendiente con `expires_at` pasado no
-    se puede aceptar.
+    enviarse no hay enlace, y por ese hash, único, se encuentra la invitación de un enlace.
+    Una organización tiene como mucho una invitación pendiente por correo, y cada invitación
+    se envía un número acotado de veces. `EXPIRED` no lo escribe ningún proceso: una pendiente
+    con `expires_at` pasado no se puede aceptar.
     """
 
     class Status(models.TextChoices):
@@ -261,10 +271,19 @@ class UserInvitation(TenantModel):
     token_hash = models.CharField(max_length=64, null=True)  # noqa: DJ001 — NULL = sin enviar
     expires_at = models.DateTimeField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    # Quien invita es miembro de esta organización (ADR-001 §3): la FK es compuesta con
+    # `organization_id` hacia las membresías (migración), y la de Django no crea la suya.
     invited_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+"
+        settings.AUTH_USER_MODEL,
+        models.PROTECT,
+        related_name="+",
+        db_column="invited_by_user_id",
+        db_constraint=False,
+        db_index=False,
     )
     sent_at = models.DateTimeField(null=True)
+    # Cuántas veces se envió su correo: el tope lo pone la base (ADR-020 §3).
+    send_count = models.SmallIntegerField(default=0, db_default=0)
     accepted_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -288,8 +307,10 @@ class UserInvitation(TenantModel):
                 condition=models.Q(email__regex=INVITATION_EMAIL),
                 name="user_invitations_email_ck",
             ),
-            models.CheckConstraint(
-                condition=models.Q(role_ids__len__gte=1, role_ids__len__lte=INVITATION_MAX_ROLES),
+            models.CheckConstraint(  # de 1 a 20 roles: una sola dimensión y ninguno nulo
+                condition=models.Q(role_ids__len__gte=1, role_ids__len__lte=INVITATION_MAX_ROLES)
+                & models.Q(Exact(_roles("array_ndims"), 1))
+                & models.Q(IsNull(_roles("array_position", models.Value(None)), True)),
                 name="user_invitations_roles_ck",
             ),
             models.CheckConstraint(  # un SHA-256 en hexadecimal, o todavía sin enlace
@@ -297,11 +318,25 @@ class UserInvitation(TenantModel):
                 | models.Q(token_hash__regex=r"^[0-9a-f]{64}$"),  # noqa: S106 — un patrón
                 name="user_invitations_token_hash_ck",
             ),
+            models.UniqueConstraint(  # por el hash se busca la invitación de un enlace (§3)
+                fields=["token_hash"],
+                condition=models.Q(token_hash__isnull=False),
+                name="user_invitations_token_hash_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(send_count__gte=0, send_count__lte=INVITATION_MAX_SENDS),
+                name="user_invitations_send_count_ck",
+            ),
             models.CheckConstraint(  # aceptada si y solo si tiene fecha de aceptación
                 condition=models.Q(status="ACCEPTED", accepted_at__isnull=False)
                 | (~models.Q(status="ACCEPTED") & models.Q(accepted_at__isnull=True)),
                 name="user_invitations_accepted_ck",
             ),
+        ]
+        indexes = [  # lado referenciante de la FK a la membresía de quien invita
+            models.Index(
+                fields=["organization_id", "invited_by"], name="user_invitations_inviter_idx"
+            )
         ]
 
     def __str__(self) -> str:
