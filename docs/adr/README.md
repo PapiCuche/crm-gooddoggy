@@ -25,6 +25,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-017](ADR-017-member-administration-module.md) | Administración de miembros en un módulo de orquestación (`apps.members`); reglas para suspender y reactivar | Accepted | 2026-10-04 |
 | [ADR-018](ADR-018-owner-role-follows-catalog.md) | El rol Owner sigue al catálogo de permisos: lo impone el job de migraciones | Accepted | 2026-10-05 |
 | [ADR-019](ADR-019-outbound-email.md) | Correo saliente por un único módulo (`core.mail`), SMTP por entorno y sin proveedor fijado; se envía desde tareas y los enlaces de un solo uso no se guardan | Accepted | 2026-10-07 |
+| [ADR-020](ADR-020-invitations.md) | Invitaciones a una organización: sin cuenta ni membresía hasta aceptar, enlace de un solo uso guardado como hash, anti-escalada al invitar, y aceptar no inicia sesión | Accepted | 2026-10-07 |
 
 ## Plantilla
 

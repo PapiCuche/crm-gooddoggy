@@ -99,6 +99,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-76 | [#210](https://github.com/PapiCuche/crm-gooddoggy/issues/210) Audit screen: filters by action, entity and actor type | `feature/f2-audit-filters-ui` | #208 | frontend |
 | F2-77 | [#212](https://github.com/PapiCuche/crm-gooddoggy/issues/212) Audit screen: who did it, by name, and filter by person | `feature/f2-audit-actor-name-ui` | #210 | frontend |
 | F2-78 | [#214](https://github.com/PapiCuche/crm-gooddoggy/issues/214) Outbound email: core.mail and ADR-019 | `feature/f2-outbound-mail` | — | backend |
+| F2-79 | [#216](https://github.com/PapiCuche/crm-gooddoggy/issues/216) Invitations: rules (ADR-020) and the user_invitations table | `feature/f2-invitations-table` | #214 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -136,7 +137,7 @@ Se planifican como work items al cerrar el bloque inicial. Cada historia es una 
 
 | Historia | Contenido | Condición previa |
 |---|---|---|
-| E01-06 | Invitaciones | Abstracción de envío de correo |
+| E01-06 | Invitaciones. En curso desde F2-79 (#216): reglas en [ADR-020](../adr/ADR-020-invitations.md), escrito por el programa, y la tabla `user_invitations`. Decisiones de ese ADR a confirmar por el mantenedor: no hay cuenta ni membresía hasta aceptar (el estado `INVITED` de una membresía queda sin usar); el enlace caduca a los 7 días; como mucho 50 invitaciones pendientes por organización; una cuenta existente debe iniciar sesión para aceptar; aceptar no inicia sesión; equipos y sucursal no viajan en la invitación | Envío de correo: resuelto en F2-78 (ADR-019) |
 | E01-07 | Activar, desactivar y revocar sesiones | F2-03A |
 | E01-08 | API y pantallas de roles | F2-05B y F2-05C |
 | E01-09 | Sucursales y equipos | F2-05A |

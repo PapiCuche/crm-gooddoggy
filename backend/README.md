@@ -472,6 +472,17 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Auditoría de tenant:** `membership.branch_changed`, con el actor, el antes y el después (`default_branch`) y el código de la sucursal nueva en `metadata.branch`, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_branch` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización) y después a `organizations.services.set_membership_branch` (escritura y auditoría), que devuelve la sucursal como `BranchRef`: `members` no importa los modelos de `organizations`.
 
+## Invitaciones: la tabla (F2-79, ADR-020)
+
+`user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); este work item deja la tabla y el modelo. Todavía no hay ninguna ruta: invitar, enviar, listar, revocar y aceptar son los siguientes.
+
+- **Tenant-owned**, con RLS forzado y FK a su organización. Modelo `apps.organizations.models.UserInvitation`; lectura `organizations.selectors.invitations()`, que filtra por organización y no por permiso.
+- **Campos:** `email` (el correo invitado), `role_ids` (los roles que tendrá, por identificador), `token_hash` (el SHA-256 del enlace de un solo uso; vacío hasta que se envía), `expires_at`, `status` (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`), `invited_by` (la cuenta que invitó), `sent_at`, `accepted_at`, `created_at`, `updated_at`.
+- **No hay cuenta ni membresía hasta que se acepta** (ADR-020 §1): la tabla no enlaza con `users` ni con `organization_memberships` por el correo.
+- **Restricciones en la base:** una sola invitación pendiente por correo y organización (`user_invitations_pending_uq`, índice único parcial); el correo en ASCII visible, sin mayúsculas ni espacios y con una sola `@` (`user_invitations_email_ck`); de 1 a 20 roles (`user_invitations_roles_ck`); el hash con forma de SHA-256 en hexadecimal o ausente (`user_invitations_token_hash_ck`); aceptada si y solo si tiene `accepted_at` (`user_invitations_accepted_ck`); estados conocidos (`user_invitations_status_ck`).
+- **Lo que la base no comprueba:** que `role_ids` sean roles de la organización (es una lista, no una FK: se comprueban al invitar y otra vez al aceptar), que no se repitan, ni que el correo sea entregable más allá de su forma (`core.mail` rechaza además comillas y palabras codificadas).
+- **`EXPIRED` no lo escribe ningún proceso:** una invitación pendiente con `expires_at` pasado no se podrá aceptar; el estado existe para quien quiera anotarlo.
+
 ## Sucursales (F2-43 a F2-45 y F2-68, E01-09)
 
 `GET /api/v1/o/{slug}/branches/` lista las sucursales de la organización. Exige `organization.view` (sin él, 403; sin membresía activa, 404).
