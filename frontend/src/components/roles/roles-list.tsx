@@ -7,23 +7,12 @@ import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import { getRolesListQueryKey, rolesList } from "@/lib/api/client";
 import type { Role } from "@/lib/api/model";
+import { text } from "@/lib/message-text";
 
 import { RoleCreate } from "./role-create";
 import { RoleDeleteAction } from "./role-delete-action";
 import { RoleEditAction } from "./role-edit-action";
 import { RolePermissionsAction } from "./role-permissions-action";
-
-// El texto de `messages` para `code` (`users.manage` es `messages.users.manage`), si existe y es
-// un texto. El código viene de la API: se busca por propiedades propias, paso a paso, y no como
-// una ruta de mensajes, que resolvería también `users` (un objeto) o `users.constructor.name`.
-function text(messages: unknown, code: string): string | null {
-  let node = messages;
-  for (const part of code.split(".")) {
-    if (typeof node !== "object" || node === null || !Object.hasOwn(node, part)) return null;
-    node = (node as Record<string, unknown>)[part];
-  }
-  return typeof node === "string" ? node : null;
-}
 
 // Directorio de roles (F2-23): lo que devuelve `GET /api/v1/o/{slug}/roles/`. Nada decide aquí
 // por el nombre o el código de un rol, y qué puede ver o hacer cada quien lo decide la API.

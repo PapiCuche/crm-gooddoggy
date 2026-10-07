@@ -31,7 +31,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("navegación del shell", () => {
   it("no lista una entrada cuyo permiso el usuario no tiene", async () => {
-    expect(await links([{ code: "audit.view", scopes: [] }])).toEqual([["/o/acme", null]]);
+    expect(await links([{ code: "users.invite", scopes: [] }])).toEqual([["/o/acme", null]]);
   });
 
   it("la lista con el permiso, y marca solo la entrada de la ruta actual", async () => {
@@ -95,5 +95,22 @@ describe("navegación del shell", () => {
       ["/o/acme/equipos", null],
     ]);
     expect(screen.getByRole("link", { name: "Equipos" })).toBeVisible();
+  });
+
+  it("la entrada «Auditoría» pide `audit.view` y va al final", async () => {
+    expect(await links([{ code: "roles.manage", scopes: [] }])).toEqual([["/o/acme", null]]);
+  });
+
+  it("con `audit.view` lista «Auditoría», después de «Equipos»", async () => {
+    const both = [
+      { code: "audit.view", scopes: [] },
+      { code: "teams.view", scopes: [] },
+    ];
+    expect(await links(both)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/equipos", null],
+      ["/o/acme/auditoria", null],
+    ]);
+    expect(screen.getByRole("link", { name: "Auditoría" })).toBeVisible();
   });
 });

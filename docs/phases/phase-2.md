@@ -95,6 +95,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-72 | [#202](https://github.com/PapiCuche/crm-gooddoggy/issues/202) Members screen: assign a member's branch | `feature/f2-member-branch-ui` | #200 | frontend |
 | F2-73 | [#204](https://github.com/PapiCuche/crm-gooddoggy/issues/204) Audit log: read API | `feature/f2-audit-read-api` | — | backend |
 | F2-74 | [#206](https://github.com/PapiCuche/crm-gooddoggy/issues/206) Audit log: filters by actor, action and entity | `feature/f2-audit-filters-api` | #204 | backend |
+| F2-75 | [#208](https://github.com/PapiCuche/crm-gooddoggy/issues/208) Audit screen: read-only list | `feature/f2-audit-screen` | #206 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -208,6 +209,9 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 ## Observaciones vivas (de revisiones)
 
 Se registran como `OBS-F2-<nn>-<n>`.
+
+### OBS-F2-75-1 — Auditoría, pantalla: enseña menos de lo que la API devuelve
+F2-75 (#208) añade la pantalla «Auditoría» como lista de solo lectura. Decisión del programa (ADR-015 §5), a confirmar: **no enseña `changes` ni `metadata`** hasta que el mantenedor responda a OBS-F2-73-1; tampoco identificadores, y no busca el nombre de la persona que actuó (sí enseña `actor_label` si la fila la trae; hoy ninguna acción la anota). No es una barrera: la API los devuelve a quien tiene `audit.view`. La pantalla nombra en español las acciones y los tipos de entidad que hoy se escriben; lo que no tiene nombre se ve con su código.
 
 ### OBS-F2-74-1 — Auditoría, filtros: la forma que fija la primera ruta con filtros
 ADR-016 deja los filtros «para cuando una pantalla los necesite». F2-74 (#206) añade los de la auditoría (`actor_type`, `actor_id`, `action`, `entity_type`, `entity_id`) y con ellos una forma, decisión del programa (ADR-015 §5) a confirmar:
