@@ -16,7 +16,15 @@ const tick = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 
 
 // Una pantalla mínima con lo que «Crear sucursal» no ejercita: el formulario sigue abierto
 // tras guardar, y el error propio es de un campo que no es el primero (o no hay ninguno).
-function Screen({ write, own }: { write: (values: Values) => Promise<unknown>; own?: boolean }) {
+function Screen({
+  write,
+  own,
+  check,
+}: {
+  write: (values: Values) => Promise<unknown>;
+  own?: boolean;
+  check?: () => boolean;
+}) {
   const save = useMutation<unknown, ApiError, Values>({ mutationFn: write, networkMode: "always" });
   return (
     <FieldsForm
@@ -28,17 +36,24 @@ function Screen({ write, own }: { write: (values: Values) => Promise<unknown>; o
       send={(values) => save.mutate(values)}
       taken={
         own
-          ? (error) => (error.code === "NAME_TAKEN" ? { field: "name", text: "Repetido" } : null)
+          ? (error) =>
+              error.code === "NAME_TAKEN"
+                ? { field: "name", text: "Repetido" }
+                : error.code === "FULL"
+                  ? { text: "No cabe" } // sin campo: es del formulario
+                  : null
           : undefined
       }
+      check={check}
+      note={<input type="checkbox" aria-label="Extra" />}
       denied="Sin permiso"
       labels={{ submit: "Guardar", busy: "Guardando…", cancel: "Cancelar" }}
       onCancel={() => {}}
     />
   );
 }
-function opened(write: (values: Values) => Promise<unknown>, own = false) {
-  const view = renderApp(<Screen write={write} own={own} />);
+function opened(write: (values: Values) => Promise<unknown>, own = false, check?: () => boolean) {
+  const view = renderApp(<Screen write={write} own={own} check={check} />);
   const form = screen.getByRole("form", { name: "Datos" });
   fireEvent.input(within(form).getByLabelText("Código"), { target: { value: " a " } });
   return { form, view };
@@ -95,5 +110,39 @@ describe("FieldsForm", () => {
     await tick();
     expect(within(form).getByRole("alert")).toHaveTextContent("Falta");
     expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("un error propio sin campo va al formulario, y un control de `note` lo retira", async () => {
+    const write = vi.fn(() => Promise.reject(new ApiError(409, "FULL")));
+    const { form } = opened(write, true);
+    send(form);
+    await tick();
+    expect(within(form).getByRole("alert")).toHaveTextContent("No cabe"); // no el genérico
+    expect(within(form).getByLabelText("Código")).not.toHaveAttribute("aria-invalid");
+    fireEvent.click(within(form).getByRole("checkbox", { name: "Extra" }));
+    await tick();
+    expect(within(form).queryByRole("alert")).toBeNull();
+  });
+
+  it("`check` decide si se envía, y si no, retira el error de la respuesta anterior", async () => {
+    let ready = true;
+    const write = vi.fn(() => Promise.reject(new ApiError(409, "FULL")));
+    const { form } = opened(write, true, () => ready);
+    send(form);
+    await tick();
+    expect(within(form).getByRole("alert")).toHaveTextContent("No cabe");
+    ready = false;
+    send(form);
+    await tick();
+    expect(write).toHaveBeenCalledTimes(1); // no se envió
+    expect(within(form).queryByRole("alert")).toBeNull(); // y el error de antes no se queda
+    ready = true;
+    send(form);
+    await tick();
+    expect(write).toHaveBeenCalledTimes(2); // la marca no quedó puesta
+    fireEvent.input(within(form).getByLabelText("Código"), { target: { value: "" } });
+    send(form);
+    expect(within(form).getByRole("alert")).toHaveTextContent("Falta"); // los campos, antes
+    expect(write).toHaveBeenCalledTimes(2);
   });
 });

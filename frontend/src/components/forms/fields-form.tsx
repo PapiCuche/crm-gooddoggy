@@ -41,6 +41,7 @@ export function FieldsForm<Name extends string>({
   fields,
   write,
   send,
+  check,
   taken,
   denied,
   labels,
@@ -54,7 +55,11 @@ export function FieldsForm<Name extends string>({
   write: Write;
   // Recibe lo escrito, sin espacios exteriores, e inicia la escritura antes de volver.
   send: (values: Record<Name, string>) => void;
-  taken?: (error: ApiError) => { field: Name; text: string } | null; // un error propio de un campo
+  // Lo que la pantalla exige además de los campos de texto (algo elegido en `note`): si no se
+  // cumple, no se envía, y la pantalla lo dice junto a su control.
+  check?: () => boolean;
+  // Un error propio de esta escritura: de un campo, o del formulario entero si no nombra campo.
+  taken?: (error: ApiError) => { field?: Name; text: string } | null;
   denied: string;
   labels: { submit: string; busy: string; cancel: string };
   note?: ReactNode; // bajo los campos
@@ -93,7 +98,8 @@ export function FieldsForm<Name extends string>({
   const firstBad = fields.find((field) => fieldError(field))?.name;
   let formError: string | null = null;
   if (error && !firstBad) {
-    if (error.code === "PERMISSION_DENIED") formError = denied;
+    if (own && !own.field) formError = own.text;
+    else if (error.code === "PERMISSION_DENIED") formError = denied;
     // Un 400 sin campo conocido no es algo que el usuario pueda corregir: es un fallo nuestro.
     else
       formError = errors(error.code === "VALIDATION_ERROR" ? "INTERNAL_ERROR" : apiErrorKey(error));
@@ -128,6 +134,11 @@ export function FieldsForm<Name extends string>({
       return;
     }
     if (missing.length > 0) setMissing([]); // un aviso anterior no tapa la respuesta de la API
+    if (check && !check()) {
+      write.reset(); // el error anterior tampoco: ya no es lo que impide enviar
+      setDropped(write);
+      return;
+    }
     sending.current = true;
     sentWith.current = write;
     send(values);
@@ -142,7 +153,15 @@ export function FieldsForm<Name extends string>({
   }
 
   return (
-    <form noValidate onSubmit={submit} aria-label={title} aria-busy={busy} className={className}>
+    <form
+      noValidate
+      onSubmit={submit}
+      // Cualquier control del formulario, también los que la pantalla pone en `note`.
+      onInput={edited}
+      aria-label={title}
+      aria-busy={busy}
+      className={className}
+    >
       {heading}
       {fields.map((field) => (
         <TextField
@@ -159,7 +178,6 @@ export function FieldsForm<Name extends string>({
           maxLength={field.max}
           hint={field.hint}
           error={fieldError(field)}
-          onInput={edited}
         />
       ))}
       {note}

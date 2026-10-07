@@ -18,6 +18,7 @@ import { text } from "@/lib/message-text";
 import { cn } from "@/lib/utils";
 
 import messages from "../../../messages/es-PE.json";
+import { InvitationCreate } from "./invitation-create";
 
 // Los estados son un enum del contrato: si gana uno y el catálogo no, no compila. Uno que esta
 // versión no conoce (una API más nueva), o que ni es un texto, se enseña como llega.
@@ -29,7 +30,7 @@ const tone = (code: unknown) => text(TONE, String(code)) ?? "text-muted";
 
 // Invitaciones (F2-83): lo que devuelve `GET /api/v1/o/{slug}/invitations/`, de la más reciente
 // a la más antigua. La lista, sus estados y su foco son los de `CursorList`. Quién puede verlas
-// lo decide la API. Solo lectura: invitar y revocar son work items siguientes.
+// lo decide la API. Encima, «Invitar» (F2-84); revocar es el work item siguiente.
 export function InvitationsList() {
   const t = useTranslations("invitations");
   const format = useFormatter();
@@ -47,6 +48,11 @@ export function InvitationsList() {
     enabled: seesRoles,
     gcTime: 0, // como la lista: al salir no queda en memoria
   });
+  // Comodidad: «Invitar» se ofrece a quien la API dijo que puede invitar y además ve los roles
+  // entre los que elegir.
+  const has = (code: string) => permissions.some((grant) => grant.code === code);
+  const invites = seesRoles && has("users.invite") && has("users.manage");
+  const listKey = [...getInvitationsListQueryKey(organization.slug), "pages"];
   const names = seesRoles && roles.data ? new Map(roles.data.map((r) => [r.id, r.name])) : null;
   const day = (when: string) => format.dateTime(new Date(when), { dateStyle: "medium" });
 
@@ -54,9 +60,19 @@ export function InvitationsList() {
     <CursorList<Invitation>
       section="invitations"
       organization={organization.name}
-      listKey={[...getInvitationsListQueryKey(organization.slug), "pages"]}
+      listKey={listKey}
       fetchPage={(cursor, signal) =>
         invitationsList(organization.slug, cursor ? { cursor } : undefined, { signal })
+      }
+      notice={
+        invites ? (
+          <InvitationCreate
+            slug={organization.slug}
+            listKey={listKey}
+            roles={roles.data}
+            rolesFailed={roles.isError}
+          />
+        ) : null
       }
       empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)] sm:items-start"

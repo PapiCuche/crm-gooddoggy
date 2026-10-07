@@ -268,6 +268,29 @@
       "ACCEPTED": "Aceptada",
       "REVOKED": "Revocada",
       "EXPIRED": "Caducada"
+    },
+    "create": {
+      "open": "Invitar",
+      "title": "Nueva invitación",
+      "email": "Correo de la persona",
+      "emailRequired": "Escribe el correo de la persona.",
+      "emailInvalid": "Ese correo no sirve. Escribe una sola dirección, sin tildes ni espacios.",
+      "roles": "Roles que tendrá al aceptar",
+      "rolesLoading": "Cargando los roles…",
+      "rolesFailed": "No pudimos cargar los roles. Cierra el formulario e inténtalo de nuevo.",
+      "rolesRequired": "Elige al menos un rol.",
+      "rolesTooMany": "Elige como mucho 20 roles.",
+      "rolesInvalid": "Alguno de los roles elegidos ya no existe en la organización. Cierra el formulario y vuelve a abrirlo.",
+      "member": "Ese correo ya es miembro de la organización.",
+      "pending": "Ese correo ya tiene una invitación pendiente.",
+      "limit": "La organización ya tiene 50 invitaciones pendientes. No se pueden crear más hasta que alguna se acepte o se revoque.",
+      "daily": "La organización ya creó 100 invitaciones en las últimas 24 horas. Inténtalo más tarde.",
+      "denied": "No tienes permiso para invitar con esos roles.",
+      "notSent": "Por ahora la invitación solo queda registrada: el correo con el enlace todavía no se envía.",
+      "submit": "Invitar",
+      "busy": "Invitando…",
+      "cancel": "Cancelar",
+      "done": "Invitación a {email} registrada. Todavía no se envía ningún correo."
     }
   },
   "teams": {
