@@ -29,6 +29,7 @@ TENANT_TABLES = ("membership_roles", "role_permissions", "roles", *TENANT_TABLES
 TENANT_TABLES += ("branches",)  # F2-43
 # F2-52: delante, porque referencia a los equipos y a las membresías.
 TENANT_TABLES = ("team_members", *TENANT_TABLES, "teams")  # F2-50, F2-52
+TENANT_TABLES = ("user_invitations", *TENANT_TABLES)  # F2-79: delante, referencia a membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

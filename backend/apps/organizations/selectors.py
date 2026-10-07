@@ -18,6 +18,7 @@ from apps.organizations.models import (
     OrganizationMembership,
     Team,
     TeamMember,
+    UserInvitation,
 )
 from core.tenancy.resolution import ACCESSIBLE_STATUSES, OrganizationRef
 from core.tenancy.scope import user_scope
@@ -87,6 +88,12 @@ def teams() -> QuerySet[Team]:
     """Equipos de la organización del `tenant_scope` activo, activos e inactivos. Filtra por
     organización, no por permiso: el permiso lo exige quien los sirve (`HasPermission`)."""
     return Team.objects.all()
+
+
+def invitations() -> QuerySet[UserInvitation]:
+    """Invitaciones de la organización del `tenant_scope` activo, en cualquier estado
+    (ADR-020). Filtra por organización, no por permiso: el permiso lo exige quien las sirve."""
+    return UserInvitation.objects.all()
 
 
 def team_members(team_id: UUID) -> QuerySet[TeamMember]:
