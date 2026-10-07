@@ -44,6 +44,10 @@ describe("CursorList", () => {
     renderApp(ui);
     expect(screen.getByText("Good Doggy / Miembros")).toBeVisible();
     expect(screen.getByText(/pertenecen a Acme SAC/)).toBeVisible();
+    // Sin `controls` no hay nada entre el título y la lista: ni un envoltorio vacío.
+    expect(screen.getByRole("status").previousElementSibling).toContainElement(
+      screen.getByRole("heading", { level: 1 }),
+    );
     await screen.findByRole("list", { name: "Miembros" });
     for (const row of rows()) {
       expect(row).toHaveClass("fila-propia", "bg-surface"); // las clases de la pantalla y las suyas
