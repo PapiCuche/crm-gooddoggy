@@ -55,6 +55,20 @@ def test_the_hash_is_unique_and_two_accounts_keep_their_own_links() -> None:
         PasswordReset.objects.create(user=luis, token_hash=HASH, expires_at=SOON)
 
 
+def test_the_index_and_the_runtime_privileges_are_the_documented_ones() -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = 'password_resets_user_idx'"
+        )
+        (index,) = cursor.fetchone()  # contar los de una cuenta y encontrar el último
+        assert index.endswith("USING btree (user_id, created_at DESC)")
+        cursor.execute(
+            "SELECT privilege_type FROM information_schema.role_table_grants"
+            " WHERE table_name = 'password_resets' AND grantee = current_user"
+        )  # `DELETE` se conserva para la purga; nada más que DML
+        assert {row[0] for row in cursor.fetchall()} == {"SELECT", "INSERT", "UPDATE", "DELETE"}
+
+
 @pytest.mark.parametrize(
     "token_hash",
     ["", "ab" * 31, "ab" * 31 + "a", "AB" * 32, "g" * 64, " " + "ab" * 31 + "a", "ab" * 31 + "a\n"],

@@ -116,11 +116,12 @@ class LoginThrottle(models.Model):
 
 
 class PasswordReset(models.Model):
-    """Un enlace de recuperación de contraseña enviado (F2-86, ADR-021): platform-owned.
+    """Un enlace de recuperación de contraseña emitido (F2-86, ADR-021): platform-owned.
 
     La cuenta, el SHA-256 del enlace (`token_hash`; el enlace no se guarda nunca), cuándo se
-    envió (`created_at`), cuándo caduca y cuándo se usó. La fila la crea la tarea que envía el
-    correo, que es quien genera el enlace (ADR-019 §4). Los topes por cuenta se cuentan aquí.
+    emitió (`created_at`), cuándo caduca y cuándo se usó. La fila la crea, antes de entregar el
+    correo, la tarea que lo envía, que es quien genera el enlace (ADR-019 §4). Los topes por
+    cuenta se cuentan aquí, se haya entregado el correo o no (ADR-021 §3).
     """
 
     id = uuid7_primary_key()

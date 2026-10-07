@@ -21,7 +21,7 @@ Este ADR fija las reglas de toda la serie. Cada work item implementa una parte.
 
 Pedir el enlace y cambiar la contraseña con él. Las dos rutas son de plataforma y de acceso anónimo (ADR-014 §4): quien las usa no tiene sesión. Las dos exigen CSRF, como toda mutación (ADR-014 §2).
 
-El estado vive en `password_resets`, una tabla platform-owned de `apps.accounts` (ADR-001 §2: sin `organization_id` ni política de tenant, como `users` y `login_throttles`). Una fila es un enlace enviado: la cuenta, el SHA-256 del enlace, cuándo se envió, cuándo caduca y cuándo se usó. Nunca el enlace.
+El estado vive en `password_resets`, una tabla platform-owned de `apps.accounts` (ADR-001 §2: sin `organization_id` ni política de tenant, como `users` y `login_throttles`). Una fila es un enlace emitido, se haya entregado o no (§3): la cuenta, el SHA-256 del enlace, cuándo se emitió, cuándo caduca y cuándo se usó. Nunca el enlace.
 
 ### 2. Pedir el enlace
 
@@ -31,11 +31,15 @@ Los intentos se limitan antes de hacer nada más, por dirección de red y por id
 
 La tarea recibe el correo en su forma canónica (D-F2-3). Ese correo pasa por el broker hasta que la tarea lo consume: no es un secreto, pero es un dato personal; no se guarda como resultado de la tarea ni se escribe en el log.
 
+**Esto se aparta de ADR-019 §3 y lo enmienda para este flujo.** ADR-019 §3 pide que quien necesita un correo registre el hecho en su transacción (una fila propia o un evento del outbox) y que la tarea lo envíe después del commit. Aquí no hay ninguna de las dos cosas: `outbox_events` es de tenant y este flujo no tiene organización, y una fila por petición guardaría correos de personas que no son usuarias (ver las alternativas). La petición encola la tarea directamente, después de dejar su fila de auditoría. Lo que se pierde es la garantía transaccional: si el broker no acepta la tarea, la petición falla, con el mismo error para cualquier correo; y si el worker muere con la tarea en curso, ese enlace no sale y la persona vuelve a pedirlo. El resto de ADR-019 se cumple sin cambios.
+
 ### 3. Quién recibe correo, y cuántos
 
 La tarea busca la cuenta. **No envía nada, y no deja rastro que la respuesta enseñe**, si el correo no tiene cuenta, si la cuenta está desactivada o si es de personal de plataforma (§6).
 
-Una cuenta recibe como mucho 5 enlaces en 24 horas, con al menos 2 minutos entre dos. Se cuentan sobre la tabla; pasado el tope, la tarea no envía. Así nadie llena el buzón de otra persona desde muchas direcciones de red. Un reintento de la tarea tras un fallo de entrega genera un enlace nuevo (ADR-019 §4) y cuenta como uno más.
+Una cuenta recibe como mucho 5 enlaces en 24 horas, con al menos 2 minutos entre dos. Se cuentan sobre la tabla; pasado el tope, la tarea no envía. Así nadie llena el buzón de otra persona desde muchas direcciones de red. La tarea cuenta y escribe con la fila de la cuenta bloqueada: dos peticiones simultáneas para la misma cuenta no pasan el tope ni dejan dos enlaces a menos de 2 minutos.
+
+La fila se escribe antes de entregar el correo (ADR-019 §4), así que **cuenta todo enlace emitido, se haya entregado o no**: un fallo de entrega no dice si el servidor llegó a aceptar el mensaje, y la tabla no distingue un caso del otro. Por eso la tarea no reintenta por su cuenta; esa es su política (ADR-019 §3). Con reintentos, una sola petición durante una caída del servidor de correo gastaría varios de los 5 enlaces del día sin que llegue ninguno, y un reintento a menos de 2 minutos del intento fallido no saldría. Si la entrega falla, la persona vuelve a pedirlo, y ese enlace cuenta como uno más.
 
 Al enviar un enlace, los anteriores de esa cuenta que aún valían dejan de valer: **solo vale el último**.
 
@@ -62,7 +66,7 @@ Al cambiarla, en una transacción y con la fila del enlace bloqueada: la contras
 ### 6. Quién queda fuera
 
 - **Una cuenta desactivada** no recupera su contraseña: reactivarla es de quien administra.
-- **El personal de plataforma** no usa este flujo. Su acceso tiene más alcance que el de cualquier organización, y un buzón comprometido no debe bastar para tomarlo: su contraseña la restablece un operador, con su procedimiento.
+- **El personal de plataforma** no usa este flujo, tampoco si además es miembro de una organización. Hoy la marca `is_platform_staff` no da acceso a ningún tenant ni abre ninguna ruta, pero es la cuenta que tendrá el alcance de plataforma (la impersonación, E01-12), y un buzón comprometido no debe bastar para tomarla: su contraseña la restablece un operador. Ese procedimiento no está escrito todavía. Lo que hay es el comando `changepassword` de Django, que aplica los validadores pero no deja fila en la auditoría de plataforma: escribirlo, con su auditoría, queda pendiente.
 
 En los dos casos la petición recibe la misma respuesta que cualquier otra.
 
@@ -70,12 +74,12 @@ En los dos casos la petición recibe la misma respuesta que cualquier otra.
 
 En la auditoría de plataforma (ADR-013), con las acciones del catálogo:
 
-- `auth.password.reset_requested`, por cada petición admitida: actor anónimo y la huella del identificador presentado. No dice si la cuenta existe, porque la ruta no lo mira. Se confirma por sí misma, como un acceso fallido.
+- `auth.password.reset_requested`, por cada petición admitida: actor anónimo y la huella del identificador presentado. No dice si la cuenta existe, porque la ruta no lo mira. Se escribe y se confirma antes de encolar la tarea, y **falla cerrado** (ADR-013 §5): si la fila no se puede escribir, no se encola nada y la petición falla, con el mismo error para cualquier correo. No es la fila de un rechazo, como la de un acceso fallido: una petición admitida hace que salga un enlace, y eso no ocurre sin su registro.
 - `auth.password.changed`, al cambiar la contraseña: la cuenta como entidad afectada y el método (`reset_link`), en la misma transacción que el cambio (falla cerrado). El actor es anónimo: quien presenta un enlace no tiene sesión.
 
-Un intento con un enlace que no vale deja `auth.password.changed` con resultado denegado y sin cuenta. Nunca se guarda el secreto, su hash ni ninguna contraseña.
+Un intento con un enlace que no vale deja `auth.password.changed` con resultado denegado y un motivo interno en `metadata`, que la respuesta nunca enseña (como el de `auth.login.failed`, ADR-013 §5). Si el secreto corresponde a una fila de la tabla (un enlace usado, caducado o sustituido por otro, o de una cuenta que ya no puede usarlo), la cuenta va como entidad afectada, igual que en un acceso fallido a una cuenta que existe (ADR-013 §4); si no corresponde a ninguna, la fila no lleva cuenta. Se escribe fuera de la transacción del cambio y se confirma por sí misma (ADR-013 §5): un rechazo que deshace su transacción no se lleva la fila, y si la fila no se puede escribir la respuesta es el mismo rechazo. Nunca se guarda el secreto, su hash ni ninguna contraseña.
 
-Que a una cuenta se le envió un enlace queda en `password_resets`, que no se lee desde la aplicación.
+Que a una cuenta se le emitió un enlace queda solo en `password_resets`, y ninguna ruta la enseña. Esa tabla no es un registro de auditoría: la leen y la escriben la tarea (§3) y la ruta que cambia la contraseña (§5), el runtime puede modificar y borrar sus filas, y se purgarán. La auditoría de plataforma guarda la petición (con la huella del identificador y la dirección de red) y el cambio (con la cuenta), no el envío. Si hace falta poder decir después a qué cuenta se le envió un enlace, eso se decide antes de purgar la tabla.
 
 ### 8. Dónde vive
 
@@ -102,10 +106,12 @@ Son constantes del código: 60 minutos de vida, 5 enlaces por cuenta en 24 horas
 - Quien pide un enlace para un correo sin cuenta no recibe nada y la pantalla no se lo dice: la pantalla explica que el correo llega «si la cuenta existe».
 - Cambiar la contraseña cierra todas las sesiones de la cuenta, también en otras organizaciones.
 - El control de la cuenta pasa a depender del buzón: quien lee el correo de una persona puede tomar su cuenta, salvo que tenga MFA (E01-03).
-- Mientras producción no tenga servidor de correo (ADR-019 §6), la tarea falla y nadie recibe el enlace; la respuesta de la ruta no cambia.
-- La entrega no está garantizada (ADR-019): un enlace puede no llegar, y la persona vuelve a pedirlo, dentro de sus topes.
+- Mientras producción no tenga servidor de correo (ADR-019 §6), la tarea falla y nadie recibe el enlace; la respuesta de la ruta no cambia. Cada petición para una cuenta que puede recuperarse gasta aun así uno de sus 5 enlaces del día (§3).
+- La entrega no está garantizada (ADR-019) y la tarea no reintenta (§3): un enlace puede no llegar, y la persona vuelve a pedirlo, dentro de sus topes. Un enlace que no llegó también deja sin valor al anterior (§3, ADR-019).
 - Las filas de `password_resets` no se borran en esta serie; purgarlas es un trabajo de mantenimiento posterior.
 - No hay todavía aviso por correo de que la contraseña cambió.
+- **Quien conoce el correo de una persona puede estorbar su recuperación, sin tocar su acceso.** Con 5 peticiones al día, desde las direcciones de red que quiera, hace que reciba 5 correos y gasta sus 5 enlaces: ese día la persona no puede pedir otro cuando lo necesita, y si el límite por identificador de §2 está en su tope, su petición recibe el mismo 429. Es lo que D-F2-9 evitó en el acceso (un contador por cuenta que rechaza); aquí se acepta porque sin tope por cuenta el buzón ajeno no tiene defensa. Lo acota que cada enlace que provoca el atacante llega al buzón de la dueña y le sirve durante sus 60 minutos, que a quien ya tiene sesión o recuerda su contraseña solo le llegan los correos, y que queda el operador.
+- «Solo vale el último» deja que otra petición, pasados 2 minutos, invalide el enlace que la persona está usando: su cambio se rechaza y tiene que abrir el correo más reciente, que también llega a su buzón. Ocurre como mucho las veces que deja el tope. Un correo anterior que llega después que uno posterior tampoco vale.
 
 ## Security implications
 

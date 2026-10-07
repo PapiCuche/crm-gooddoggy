@@ -474,12 +474,12 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Recuperación de contraseña: la tabla (F2-86, ADR-021)
 
-`password_resets` guarda los enlaces de recuperación de contraseña enviados. Las reglas de toda la serie (E01-02) están en [ADR-021](../docs/adr/ADR-021-password-recovery.md); este work item deja la tabla y el modelo. Todavía no hay ninguna ruta ni tarea: pedir el enlace, enviarlo y cambiar la contraseña son los siguientes.
+`password_resets` guarda los enlaces de recuperación de contraseña emitidos. Las reglas de toda la serie (E01-02) están en [ADR-021](../docs/adr/ADR-021-password-recovery.md); este work item deja la tabla y el modelo. Todavía no hay ninguna ruta ni tarea: pedir el enlace, enviarlo y cambiar la contraseña son los siguientes.
 
 - **Platform-owned** (ADR-001 §2): sin `organization_id` ni política de tenant, como `users` y `login_throttles`. El runtime la lee y la escribe sin contexto de tenant. Modelo `apps.accounts.models.PasswordReset`.
-- **Campos:** `user` (la cuenta), `token_hash` (el SHA-256 del enlace; el enlace no se guarda nunca), `created_at` (cuándo se envió), `expires_at` y `used_at`. Una fila es un enlace enviado: la creará la tarea que envía el correo, que es quien genera el enlace (ADR-019 §4).
+- **Campos:** `user` (la cuenta), `token_hash` (el SHA-256 del enlace; el enlace no se guarda nunca), `created_at` (cuándo se emitió), `expires_at` y `used_at`. Una fila es un enlace emitido, se haya entregado o no: la creará, antes de entregar el correo, la tarea que lo envía, que es quien genera el enlace (ADR-019 §4, ADR-021 §3).
 - **Restricciones en la base:** el hash con forma de SHA-256 en hexadecimal y en minúsculas (`password_resets_token_hash_ck`) y único en la tabla; la caducidad, posterior al envío (`password_resets_expires_ck`); el uso, si lo hay, no anterior al envío (`password_resets_used_ck`); FK a la cuenta, que no se borra mientras tenga enlaces (`PROTECT` en el ORM y FK en la base). Índice `password_resets_user_idx (user_id, created_at DESC)`, para contar los enlaces de una cuenta y encontrar el último.
-- **Lo que la base no comprueba:** que solo valga el último enlace de una cuenta, cuántos se envían, ni que un enlace usado no se vuelva a usar. Eso lo hará el código de los work items siguientes, con la fila bloqueada.
+- **Lo que la base no comprueba:** que solo valga el último enlace de una cuenta, cuántos se envían, ni que un enlace usado no se vuelva a usar. Eso lo hará el código de los work items siguientes: con la cuenta bloqueada al emitir un enlace (ADR-021 §3) y con la fila del enlace bloqueada al usarlo (§5).
 - **`crm_app` conserva `DELETE`:** la serie no borra filas, pero purgarlas será una tarea de mantenimiento del runtime, como la de los contadores de acceso.
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
