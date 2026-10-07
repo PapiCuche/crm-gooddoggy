@@ -147,9 +147,9 @@ Cada tarjeta ofrece «Sucursal», que abre un panel con un selector: «Sin sucur
 - **Errores, por `code`, en el panel:** sin permiso (con un texto propio), `LAST_OWNER`, red o fallo del servidor; «Guardar» reintenta. Un 400 se explica como fallo del servidor: las opciones salen de la API y las sucursales no se borran. Sin sesión (401), `Providers` lleva al login. Un 404 es pantalla desfasada: el panel se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista. Si falla la lectura de las sucursales, se explica con «Reintentar».
 - **Foco:** al abrir, a «Cancelar», que no cambia nada; al cerrar, a «Sucursal», salvo con un 404: entonces va al título de la lista, si seguía en la acción o en ninguna parte.
 
-## Invitaciones (F2-83, F2-84)
+## Invitaciones (F2-83 a F2-85)
 
-`/o/[orgSlug]/invitaciones` muestra las invitaciones de la organización: lo que devuelve `GET /api/v1/o/{slug}/invitations/` (F2-81), de la más reciente a la más antigua, con el cliente generado. Componente: `components/invitations/invitations-list.tsx`, sobre la lista compartida. Encima de la lista está «Invitar» (F2-84, abajo); revocar desde la pantalla es el work item siguiente, y todavía ninguna invitación se envía ni se puede aceptar (D-F2-14).
+`/o/[orgSlug]/invitaciones` muestra las invitaciones de la organización: lo que devuelve `GET /api/v1/o/{slug}/invitations/` (F2-81), de la más reciente a la más antigua, con el cliente generado. Componente: `components/invitations/invitations-list.tsx`, sobre la lista compartida. Encima de la lista está «Invitar» (F2-84) y cada fila pendiente o caducada ofrece «Revocar» (F2-85), los dos abajo. Todavía ninguna invitación se envía ni se puede aceptar (D-F2-14).
 
 - **Cada fila:** el correo invitado y cuándo se invitó; sus roles; su estado («Pendiente», «Caducada», «Revocada», «Aceptada») y, si está pendiente o caducada, su fecha de caducidad. Las fechas, en la zona de la aplicación. El estado es el que la API enseña: una pendiente cuya fecha pasó ya llega como caducada; la pantalla no lo recalcula mientras sigue abierta.
 - **Roles por su nombre:** la invitación solo trae identificadores. A quien tiene `roles.view` según el contexto de la API se le pide el directorio de roles entero (`lib/all-pages.ts`) y se empareja aquí, en el orden de la invitación; un identificador que ya no está en el directorio se enseña como «Un rol que ya no existe». A quien no lo tiene no se le pide, y la fila dice cuántos roles son. Si el directorio falla o tarda, la lista funciona igual, con el recuento: no es su error.
@@ -170,6 +170,17 @@ Cada tarjeta ofrece «Sucursal», que abre un panel con un selector: «Sin sucur
 - **Errores, por `code`:** junto al correo, que no sirve (400 en `email`), que ya es miembro (`ALREADY_MEMBER`) o que ya tiene una invitación, pendiente o caducada (`INVITATION_PENDING`). En el formulario: un rol elegido ya no existe (400 en `role_ids`), sin permiso para invitar con esos roles (403), 50 pendientes o caducadas (`INVITATION_LIMIT`), 100 en 24 horas (`RATE_LIMITED`, con su propio texto y no el del acceso) y los demás. Cambiar el correo o lo elegido retira el error anterior.
 - **No da a entender que se envió un correo:** el formulario y el anuncio dicen que la invitación queda registrada y que el correo todavía no se envía.
 - **Al crearla:** el formulario se cierra, el anuncio lleva el correo tal como lo guardó la API, el foco vuelve a «Invitar» y la lista se vuelve a pedir (la invitación nueva va al principio).
+
+### Revocar (F2-85)
+
+Cada fila pendiente o caducada ofrece «Revocar», que pide confirmación en la propia fila y envía `PUT /api/v1/o/{slug}/invitations/{id}/status/` con `{"status": "REVOKED"}` (F2-82). Componente: `components/invitations/invitation-revoke-action.tsx`, hermana de «Desactivar» en sucursales.
+
+- **A quién se ofrece:** a quien tiene `users.invite` y `users.manage` según el contexto de la API, en las filas que la lista enseña como «Pendiente» o «Caducada». Es comodidad: si esa persona puede revocar esa invitación (cubre sus roles) lo decide la API.
+- **La confirmación** dice la consecuencia (deja de poder aceptarse, el correo se puede invitar otra vez, no se deshace) y abre con el foco en «Cancelar». El nombre accesible del botón lleva el correo.
+- **Al revocar:** una petición por pulsación. La fila pasa al estado que respondió la API sin volver a pedir la lista, y deja de ofrecer la acción. Como sus controles desaparecen, el resultado lo anuncia la lista (una región `status` siempre montada, encima) y el foco va al título si seguía en la fila.
+- **Errores, por `code`:** sin permiso para esa invitación (403), en la confirmación, que sigue abierta. Si ya no estaba pendiente (409 `INVALID_TRANSITION`) o ya no está al alcance (404), la confirmación se cierra, la lista se vuelve a pedir y lo explica un aviso de la lista. Abrir otra confirmación o «Invitar» retira el aviso y el anuncio.
+- **Si la fila deja de estar pendiente con la confirmación abierta** (otra persona la revocó y la lista se volvió a pedir), la confirmación desaparece sin error y el foco va al título.
+- **Lecturas en vuelo:** como en sucursales, una lectura que salió antes de la escritura se cancela para que no devuelva la fila a «Pendiente», y si era la lista entera se repite.
 
 ## Roles (F2-23)
 
