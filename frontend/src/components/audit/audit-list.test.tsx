@@ -174,6 +174,7 @@ describe("AuditList", () => {
       "No tienes permiso para ver la auditoría de esta organización.",
     );
     expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+    expect(document.body).toHaveFocus(); // nadie estaba en los filtros: el foco no se mueve
   });
 
   it("carga la página siguiente con el cursor", async () => {
@@ -225,6 +226,7 @@ describe("AuditList", () => {
         ["organization.created", "Organización creada"],
         ["membership.role_assigned", "Rol asignado a un miembro"],
       ]);
+      for (const [code] of options("Acción").slice(1)) expect(code).toMatch(/^[a-z]+\.[a-z_]+$/);
       expect(options("Entidad")).toEqual([
         ["", "Todas"],
         ["organization", "Organización"],
@@ -272,6 +274,7 @@ describe("AuditList", () => {
       await waitFor(() => expect(rows().map((row) => lines(row)[0])).toEqual(["Rol creado"]));
       expect(action).toHaveFocus();
       choose("Entidad", "role");
+      expect(select("Entidad")).toHaveValue("role"); // cada selector enseña lo suyo
       choose("Quién", "SYSTEM"); // combinados: se envían todos
       expect(await screen.findByText("Ningún registro coincide con estos filtros.")).toBeVisible(); // distinto de una auditoría vacía
       expect(screen.queryByText(/Todavía no hay nada/)).not.toBeInTheDocument();
@@ -291,14 +294,15 @@ describe("AuditList", () => {
     it("«Quitar filtros» los quita todos y deja el foco en el primer selector", async () => {
       const api = mockApi({
         [LIST]: page(entry("a1")),
-        [`${LIST}?entity_type=team`]: page(),
-        [`${LIST}?entity_type=team&actor_type=USER`]: page(),
+        [`${LIST}?action=team.created&entity_type=team&actor_type=USER`]: page(),
       });
       screenOf();
       await screen.findByRole("list", { name: "Auditoría" });
+      choose("Acción", "team.created");
       choose("Entidad", "team");
       choose("Quién", "USER");
       const clear = await screen.findByRole("button", { name: "Quitar filtros" });
+      expect(clear).toHaveClass("min-h-11");
       await screen.findByText("Ningún registro coincide con estos filtros.");
       clear.focus();
       fireEvent.click(clear);

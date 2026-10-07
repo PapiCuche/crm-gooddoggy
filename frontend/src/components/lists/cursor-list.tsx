@@ -82,6 +82,15 @@ export function CursorList<Row extends { id: string }>({
   const [denied, setDenied] = useState(false);
   if (status === 403 && !denied) setDenied(true);
   if (denied && list.isSuccess) setDenied(false);
+  // Una negativa quita los controles: si el foco estaba en uno (en el pintado anterior) y se
+  // quedó sin sitio, va al título, como al reintentar o al cargar más.
+  const controlsBox = useRef<HTMLDivElement>(null);
+  const inControls = useRef(false);
+  useEffect(() => {
+    if (denied && inControls.current && document.activeElement === document.body)
+      heading.current?.focus();
+    inControls.current = controlsBox.current?.contains(document.activeElement) ?? false;
+  });
   // «Cargar más»: ocupado desde la pulsación hasta la respuesta, también si espera a la red.
   const [more, setMore] = useState<"idle" | "busy" | "arrived">("idle");
   const pages = list.data?.pages ?? [];
@@ -204,7 +213,11 @@ export function CursorList<Row extends { id: string }>({
         </h1>
         <p className="text-muted">{t(`${section}.intro`, { organization })}</p>
       </div>
-      {denied ? null : controls}
+      {denied || !controls ? null : (
+        <div ref={controlsBox} className="contents">
+          {controls}
+        </div>
+      )}
       {body}
     </section>
   );

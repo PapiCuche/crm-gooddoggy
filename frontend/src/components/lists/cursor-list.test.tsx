@@ -181,6 +181,16 @@ describe("CursorList", () => {
     another();
     expect(await screen.findByText(/No tienes permiso/)).toBeVisible();
     expect(control).not.toBeInTheDocument(); // sin permiso no hay nada que filtrar
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(); // estaba en el control: al título
+    reply = page(["a"]);
+    another(); // la lista vuelve, y con ella el control
+    (await screen.findByRole("textbox", { name: "filtro" })).focus();
+    reply = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    another();
+    const elsewhere = screen.getByRole("button", { name: "otra lista" });
+    elsewhere.focus(); // quien ya se fue a otra parte se queda donde está
+    expect(await screen.findByText(/No tienes permiso/)).toBeVisible();
+    expect(elsewhere).toHaveFocus();
     expect(api.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });
