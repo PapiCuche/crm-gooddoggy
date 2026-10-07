@@ -151,8 +151,10 @@ def test_the_database_keeps_the_other_rules_of_an_invitation(
     for other in ({"by": uuid4()}, {"org": world.b}):  # quien invita es miembro de esta
         with pytest.raises(psycopg.errors.ForeignKeyViolation, match="invited_by_org_fk"):
             insert(**other)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation, match="invited_by_org_fk"):
+        migrator.execute("DELETE FROM organization_memberships WHERE user_id = %s", [user])
     update = "UPDATE user_invitations SET {} WHERE organization_id = %s"
-    for column in ("role_ids", "expires_at", "invited_by_user_id"):  # nada de esto falta
+    for column in ("role_ids", "expires_at", "invited_by_user_id", "send_count"):  # ni falta
         with pytest.raises(psycopg.errors.NotNullViolation):
             migrator.execute(update.format(f"{column} = NULL"), [world.a])
     for value in ("AB" * 32, "ab" * 31, "zz" * 32, "", f"{'ab' * 31}a\n"):  # un SHA-256 en hex
@@ -167,6 +169,10 @@ def test_the_database_keeps_the_other_rules_of_an_invitation(
     with pytest.raises(psycopg.errors.UniqueViolation, match="user_invitations_token_hash_uq"):
         migrator.execute(one, [HASH, ids[1]])
     migrator.execute(one, ["cd" * 32, ids[1]])  # otro hash sí; y sin hash, las que sean
+    join(world.b, world.ana)
+    insert(org=world.b)
+    with pytest.raises(psycopg.errors.UniqueViolation, match="user_invitations_token_hash_uq"):
+        migrator.execute(update.format("token_hash = %s"), [HASH, world.b])  # ni en otra
     for count in (-1, 6):  # un correo no se envía más de cinco veces por invitación
         with pytest.raises(psycopg.errors.CheckViolation, match="user_invitations_send_count_ck"):
             migrator.execute(update.format("send_count = %s"), [count, world.a])
