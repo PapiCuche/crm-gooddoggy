@@ -33,7 +33,7 @@ _SWITCH = {
 
 
 class InvalidTransition(Exception):
-    """La membresía no está en un estado desde el que se pueda suspender o reactivar."""
+    """La membresía, o la invitación, no está en un estado desde el que se pueda cambiar."""
 
 
 class UnknownBranch(Exception):
@@ -197,6 +197,46 @@ def create_invitation(
     return InvitationRef(
         invitation.pk,
         email,
+        invitation.role_ids,
+        invitation.status,
+        invitation.expires_at,
+        invitation.invited_by_id,
+        invitation.created_at,
+    )
+
+
+def invitation_role_ids(ctx: TenantContext, *, invitation_id: UUID) -> list[UUID]:
+    """Los roles que daría una invitación de la organización de `ctx`. La de otra organización
+    no existe: `DoesNotExist`."""
+    rows = UserInvitation.objects.using(require_scope(ctx))
+    roles: list[UUID] = rows.values_list("role_ids", flat=True).get(pk=invitation_id)
+    return roles
+
+
+def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationRef:
+    """Revoca una invitación pendiente, caducada o no, de la organización de `ctx`, borra el
+    hash de su enlace y lo audita (ADR-020). Devuelve la invitación como queda. Una ya revocada
+    se devuelve tal cual: repetirlo no escribe nada.
+
+    Una aceptada o anotada como caducada no se revoca: `InvalidTransition`. La de otra
+    organización no existe: `DoesNotExist`. No se borra ninguna fila: revocar es un estado.
+    """
+    alias = require_scope(ctx)
+    status = UserInvitation.Status
+    with transaction.atomic(using=alias):  # savepoint: el cambio y su auditoría, o ninguno
+        rows = UserInvitation.objects.using(alias).select_for_update(no_key=True)
+        invitation = rows.get(pk=invitation_id)
+        if invitation.status == status.PENDING:
+            invitation.status, invitation.token_hash = status.REVOKED, None
+            invitation.save(using=alias, update_fields=["status", "token_hash", "updated_at"])
+            changes = {"status": [status.PENDING.value, status.REVOKED.value]}
+            entity = Entity("invitation", invitation.pk)
+            record(ctx, "membership.invitation_revoked", entity, changes)
+        elif invitation.status != status.REVOKED:
+            raise InvalidTransition(invitation.status)
+    return InvitationRef(
+        invitation.pk,
+        invitation.email,
         invitation.role_ids,
         invitation.status,
         invitation.expires_at,

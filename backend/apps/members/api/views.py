@@ -1,5 +1,6 @@
 """Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19), su
-sucursal (F2-69) y las invitaciones a la organización: invitar (F2-80) y listarlas (F2-81)."""
+sucursal (F2-69) y las invitaciones a la organización: invitar (F2-80), listarlas (F2-81) y
+revocar una (F2-82)."""
 
 from typing import Any
 from uuid import UUID
@@ -18,6 +19,7 @@ from apps.members.services import (
     SUSPENDED,
     InvalidEmail,
     invite,
+    revoke_invitation,
     set_member_branch,
     set_member_status,
 )
@@ -95,6 +97,7 @@ class MemberBranchSerializer(serializers.Serializer[Any]):
     default_branch = MemberBranchRefSerializer(allow_null=True)
 
 
+REVOKED = "REVOKED"
 UNKNOWN_BRANCH = "No es una sucursal de esta organización."
 
 
@@ -224,3 +227,35 @@ class InvitationsView(generics.ListAPIView[Any]):
         except tuple(_REFUSED) as refused:
             raise ApiError(*_REFUSED[type(refused)]) from None
         return Response(InvitationSerializer(invitation).data, status=201)
+
+
+class InvitationStatusChangeSerializer(serializers.Serializer[Any]):
+    status = serializers.ChoiceField(choices=[REVOKED])
+
+
+class InvitationStatusView(APIView):
+    """Revoca (`REVOKED`) una invitación pendiente, caducada o no: deja de poder aceptarse y su
+    correo se puede invitar otra vez. Repetir la petición no cambia nada. 403: sin
+    `users.invite` y `users.manage`, o con un rol en la invitación que el actor no podría
+    asignar. 404: la invitación no es de la organización. 409 `INVALID_TRANSITION`: ya se
+    aceptó. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio."""
+
+    required_permissions = {"PUT": ("users.invite", "users.manage")}
+
+    @extend_schema(
+        operation_id="invitations_set_status",
+        tags=["members"],
+        request=InvitationStatusChangeSerializer,
+        responses={200: InvitationSerializer, **errors(400, 401, 403, 404, 409)},
+    )
+    def put(self, request: Request, invitation_id: UUID, **kwargs: Any) -> Response:
+        InvitationStatusChangeSerializer(data=request.data).is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                invitation = revoke_invitation(tenant, invitation_id=invitation_id)
+        except InvalidTransition:
+            message = "Solo se revoca una invitación pendiente."
+            raise ApiError("INVALID_TRANSITION", 409, message) from None
+        return Response(InvitationSerializer(invitation).data)

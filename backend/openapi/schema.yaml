@@ -544,6 +544,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/invitations/{invitation_id}/status/:
+    put:
+      operationId: invitations_set_status
+      description: |-
+        Revoca (`REVOKED`) una invitación pendiente, caducada o no: deja de poder aceptarse y su
+        correo se puede invitar otra vez. Repetir la petición no cambia nada. 403: sin
+        `users.invite` y `users.manage`, o con un rol en la invitación que el actor no podría
+        asignar. 404: la invitación no es de la organización. 409 `INVALID_TRANSITION`: ya se
+        aceptó. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+      parameters:
+      - in: path
+        name: invitation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - members
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationStatusChangeRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/me/:
     get:
       operationId: me_context
@@ -1918,6 +1986,13 @@ components:
       - invited_by
       - role_ids
       - status
+    InvitationStatusChangeRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/RevokedEnum'
+      required:
+      - status
     InvitationStatusEnum:
       enum:
       - PENDING
@@ -2319,6 +2394,11 @@ components:
             $ref: '#/components/schemas/Permission'
       required:
       - results
+    RevokedEnum:
+      enum:
+      - REVOKED
+      type: string
+      description: '* `REVOKED` - REVOKED'
     Role:
       type: object
       properties:

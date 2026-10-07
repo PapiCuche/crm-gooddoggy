@@ -29,6 +29,7 @@ import type {
   Error,
   GrantScopeRequest,
   Invitation,
+  InvitationStatusChangeRequest,
   InvitationsListParams,
   InviteRequest,
   LoginRequest,
@@ -1294,6 +1295,119 @@ export const useInvitationsCreate = <TError = ErrorType<Error>, TContext = unkno
   TContext
 > => {
   return useMutation(getInvitationsCreateMutationOptions(options), queryClient);
+};
+
+export const getInvitationsSetStatusUrl = (orgSlug: string, invitationId: string) => {
+  return `/api/v1/o/${orgSlug}/invitations/${invitationId}/status/`;
+};
+
+/**
+ * Revoca (`REVOKED`) una invitación pendiente, caducada o no: deja de poder aceptarse y su
+ * correo se puede invitar otra vez. Repetir la petición no cambia nada. 403: sin
+ * `users.invite` y `users.manage`, o con un rol en la invitación que el actor no podría
+ * asignar. 404: la invitación no es de la organización. 409 `INVALID_TRANSITION`: ya se
+ * aceptó. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+ */
+export const invitationsSetStatus = async (
+  orgSlug: string,
+  invitationId: string,
+  invitationStatusChangeRequest: InvitationStatusChangeRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Invitation> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Invitation>(getInvitationsSetStatusUrl(orgSlug, invitationId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(invitationStatusChangeRequest),
+  });
+};
+
+export const getInvitationsSetStatusMutationKey = () => ["invitationsSetStatus"] as const;
+
+export const getInvitationsSetStatusMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsSetStatus>>,
+    TError,
+    InvitationsSetStatusMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsSetStatus>>,
+  TError,
+  InvitationsSetStatusMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsSetStatusMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsSetStatus>>,
+    InvitationsSetStatusMutationVariables
+  > = (props) => {
+    const { orgSlug, invitationId, data } = props ?? {};
+
+    return invitationsSetStatus(orgSlug, invitationId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsSetStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsSetStatus>>
+>;
+export type InvitationsSetStatusMutationBody = InvitationStatusChangeRequest;
+export type InvitationsSetStatusMutationError = ErrorType<Error>;
+export type InvitationsSetStatusMutationVariables = {
+  orgSlug: string;
+  invitationId: string;
+  data: InvitationStatusChangeRequest;
+};
+
+export const useInvitationsSetStatus = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsSetStatus>>,
+      TError,
+      InvitationsSetStatusMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsSetStatus>>,
+  TError,
+  InvitationsSetStatusMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsSetStatusMutationOptions(options), queryClient);
 };
 
 export const getMeContextUrl = (orgSlug: string) => {

@@ -169,13 +169,31 @@ def ensure_can_invite(ctx: TenantContext, *, role_ids: Collection[UUID]) -> None
     escribe la invitación a continuación, en ese mismo scope, y los topes que cuenta sobre la
     tabla quedan en serie. Una denegación lo libera y no escribe nada.
     """
+    with _inviting(ctx, role_ids) as (actor, wanted):
+        if Role.objects.using(actor.alias).filter(pk__in=wanted).count() != len(wanted):
+            raise UnknownRole
+
+
+def ensure_can_revoke_invitation(ctx: TenantContext, *, role_ids: Collection[UUID]) -> None:
+    """Reglas para revocar una invitación que daría esos roles (F2-82). Para `apps.members`.
+
+    Las de invitar: los dos permisos, y el actor cubre todas las concesiones de esos roles,
+    como para quitárselos a un miembro. Un rol que ya no existe no concede nada: no se mira.
+    Con `role_ids` vacío solo comprueba los permisos y toma el bloqueo, que conserva igual que
+    `ensure_can_invite`: quien llama lee la invitación después, y nadie la cambia entretanto.
+    """
+    with _inviting(ctx, role_ids):
+        pass
+
+
+@contextmanager
+def _inviting(ctx: TenantContext, role_ids: Collection[UUID]) -> Iterator[tuple[_Actor, set[UUID]]]:
     wanted = {UUID(str(role_id)) for role_id in role_ids}
     with _change(ctx, "users.manage") as actor:
         require(actor.ectx, "users.invite")
         grants = RolePermission.objects.using(actor.alias).filter(role_id__in=wanted)
         actor.must_cover(grants.values_list("permission_id", "scope"))
-        if Role.objects.using(actor.alias).filter(pk__in=wanted).count() != len(wanted):
-            raise UnknownRole
+        yield actor, wanted
 
 
 def _member(alias: str, membership_id: UUID) -> str:
