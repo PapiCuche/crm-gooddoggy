@@ -30,6 +30,10 @@ x-runtime: &runtime
     STORAGE_BUCKET: ${STORAGE_BUCKET:-crm-local}
     STORAGE_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID:?definir en infra/env/.env}
     STORAGE_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY:?definir en infra/env/.env}
+    # Correo local (ADR-019): Mailpit, sin cifrado ni credenciales, dentro de la red del stack.
+    EMAIL_HOST: mailpit
+    EMAIL_PORT: "1025"
+    MAIL_FROM: no-reply@crm.local
   depends_on:
     migrate:
       condition: service_completed_successfully
