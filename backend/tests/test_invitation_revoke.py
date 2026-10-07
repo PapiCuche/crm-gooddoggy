@@ -108,8 +108,8 @@ def test_it_needs_both_permissions_and_covering_what_the_invitation_would_give(
         for invitation in (made["plana"], theirs, uuid4()):  # y no aprende cuáles existen
             assert reply(revoke(client, invitation)) == DENIED
             assert reply(revoke(client, invitation, "nada")) == DENIED  # ni se valida antes
-        asked = {"invitation_id": made["plana"]}  # el servicio los relee, sin la ruta
-        assert denied(rbac.a, user, revoke_invitation, **asked) is Denied.PERMISSION
+            asked = {"invitation_id": invitation}  # el servicio los relee antes de buscarla
+            assert denied(rbac.a, user, revoke_invitation, **asked) is Denied.PERMISSION
     give(rbac.a, rbac.m_luis, {"users.invite": None})  # ahora luis tiene los dos
     for name in ("ancha", "sensible", "owner"):  # lo que no podría dar, tampoco lo retira
         assert reply(revoke(luis, made[name])) == DENIED, name

@@ -100,7 +100,8 @@ def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationR
     Las reglas son las de invitar con los roles que la invitación daría. Primero los permisos
     y el bloqueo de RBAC, después se lee la invitación, ya sin nadie que la cambie, y entonces
     se comprueba que el actor cubre sus roles. Lanza `AccessDenied`, `DoesNotExist` (no es de
-    esta organización) o `InvalidTransition` (aceptada). Si lanza, no escribe.
+    esta organización) o `InvalidTransition` (aceptada, o anotada como caducada). Si lanza, no
+    escribe.
     """
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):

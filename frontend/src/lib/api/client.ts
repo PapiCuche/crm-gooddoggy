@@ -1306,7 +1306,8 @@ export const getInvitationsSetStatusUrl = (orgSlug: string, invitationId: string
  * correo se puede invitar otra vez. Repetir la petición no cambia nada. 403: sin
  * `users.invite` y `users.manage`, o con un rol en la invitación que el actor no podría
  * asignar. 404: la invitación no es de la organización. 409 `INVALID_TRANSITION`: ya se
- * aceptó. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
+ * aceptó, o está anotada como caducada. 409 `LAST_OWNER`: la organización no tiene rol
+ * Owner y no admite ningún cambio.
  */
 export const invitationsSetStatus = async (
   orgSlug: string,
