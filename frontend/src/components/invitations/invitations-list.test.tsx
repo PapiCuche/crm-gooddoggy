@@ -97,7 +97,7 @@ describe("InvitationsList", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Invitaciones");
     expect(screen.getByText(/Las personas invitadas a Acme SAC/)).toBeVisible();
     expect(urls(api)).toEqual(["/api/v1/o/acme/invitations/", "/api/v1/o/acme/roles/?limit=200"]);
-    expect(screen.queryByRole("button")).toBeNull(); // solo lectura
+    expect(screen.queryByRole("button")).toBeNull(); // sin los permisos de invitar, nada que pulsar
   });
 
   it("sin `roles.view` no pide el directorio de roles y dice cuántos son", async () => {
