@@ -189,6 +189,9 @@ STORAGE_ADDRESSING_STYLE = env.optional("STORAGE_ADDRESSING_STYLE", "path")
 # HTTP saliente (security-boundaries B9): allowlist exacta de hosts; vacía = nada permitido.
 HTTP_ALLOWED_HOSTS: list[str] = env.csv_list("HTTP_ALLOWED_HOSTS")
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
+# El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
+# `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.
+EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
 # Sin EMAIL_HOST no se envía nada: `core.mail.send` falla con un error de configuración.
 MAIL_BACKEND = env.optional("MAIL_BACKEND", "smtp")  # smtp | memory (tests)
 EMAIL_HOST = env.optional("EMAIL_HOST", "")

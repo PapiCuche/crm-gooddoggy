@@ -3,9 +3,8 @@ y SMTP por entorno. Se llama desde una tarea, nunca dentro de una petición; qui
 enlace de un solo uso lo genera en esa tarea, y aquí no se guarda ni se registra el mensaje.
 """
 
-import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from smtplib import SMTPException
 
 from django.conf import settings
@@ -13,9 +12,11 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.mail import EmailMessage, get_connection
 from django.core.validators import validate_email
 
-from core.redaction import mask_emails
+from core.observability.logging import get_logger
+from core.redaction import EMAIL_MASK
 
-logger = logging.getLogger(__name__)
+# structlog, con los campos por nombre: el `extra` de `logging` no llega a la salida JSON.
+logger = get_logger(__name__)
 
 BACKENDS = {
     "smtp": "django.core.mail.backends.smtp.EmailBackend",
@@ -24,27 +25,36 @@ BACKENDS = {
 PURPOSE = re.compile(r"[a-z][a-z0-9_]{0,31}")
 SUBJECT_MAX, BODY_MAX = 150, 20_000
 # Lo que separa cabeceras o direcciones: nada de esto cabe en un asunto ni en una dirección.
-_BREAKS = re.compile(r"[\r\n\x00\x0b\x0c\x1c-\x1e\x85  ]")
+# Tampoco un sustituto suelto: no se puede codificar y fallaría con la conexión ya abierta.
+_BREAKS = re.compile(r"[\r\n\x00\x0b\x0c\x1c-\x1e\x85\u2028\u2029\ud800-\udfff]")
+_BODY_BAD = re.compile(r"[\x00\ud800-\udfff]")
 
 
 class MailError(Exception):
     """El servidor de correo no aceptó el mensaje. La tarea que lo envía decide si reintenta."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Message:
-    to: str  # una sola dirección
-    subject: str
-    body: str  # texto plano
+    """Por nombre, no por posición: un cuerpo puesto donde va el propósito acabaría en un error.
+    Su `repr` solo enseña el propósito: lo demás no debe llegar a un log ni a una traza."""
+
+    to: str = field(repr=False)  # una sola dirección
+    subject: str = field(repr=False)
+    body: str = field(repr=False)  # texto plano
     purpose: str  # etiqueta para el log: "invitation", "password_reset"
 
 
 def _checked(message: Message) -> None:
     if not PURPOSE.fullmatch(message.purpose):
-        raise ValueError(f"purpose inválido: {message.purpose!r}")
+        raise ValueError("purpose: un identificador en minúsculas de hasta 32 caracteres")
     to = message.to
     if _BREAKS.search(to) or any(mark in to for mark in ",;<> \t") or to != to.strip():
         raise ValueError("to: una sola dirección, sin nombre ni separadores")
+    # Lo validado es lo que sale: el transporte quita las comillas (`"a"@x` sale `a@x`), descifra
+    # las palabras codificadas (`=?utf-8?b?YW5h?=@x` sale `ana@x`) y pasa el dominio por IDNA.
+    if not to.isascii() or '"' in to or "=?" in to:
+        raise ValueError("to: en ASCII, sin comillas ni palabras codificadas")
     try:
         validate_email(to)
     except ValidationError:
@@ -52,7 +62,7 @@ def _checked(message: Message) -> None:
     subject = message.subject
     if not subject.strip() or len(subject) > SUBJECT_MAX or _BREAKS.search(subject):
         raise ValueError(f"subject: una línea de 1 a {SUBJECT_MAX} caracteres")
-    if not message.body.strip() or len(message.body) > BODY_MAX or "\x00" in message.body:
+    if not message.body.strip() or len(message.body) > BODY_MAX or _BODY_BAD.search(message.body):
         raise ValueError(f"body: texto de 1 a {BODY_MAX} caracteres")
 
 
@@ -67,7 +77,6 @@ def send(message: Message) -> None:
         settings.MAIL_BACKEND == "smtp" and not settings.EMAIL_HOST
     ):
         raise ImproperlyConfigured("El correo saliente no está configurado (EMAIL_HOST, MAIL_FROM)")
-    to = mask_emails(message.to)
     email = EmailMessage(
         subject=message.subject,
         body=message.body,
@@ -75,13 +84,13 @@ def send(message: Message) -> None:
         to=[message.to],
         connection=get_connection(backend=backend, fail_silently=False),
     )
+    failure = ""
     try:
         email.send(fail_silently=False)
     except (SMTPException, OSError) as error:
-        # El texto del error puede repetir la dirección: se registra solo su tipo.
-        logger.warning(
-            "mail.failed",
-            extra={"purpose": message.purpose, "to": to, "error": type(error).__name__},
-        )
-        raise MailError(type(error).__name__) from None
-    logger.info("mail.sent", extra={"purpose": message.purpose, "to": to})
+        failure = type(error).__name__  # su texto puede repetir la dirección: solo el tipo
+    if failure:  # fuera del `except`: `MailError` no lleva el original ni como `__context__`
+        logger.warning("mail.failed", purpose=message.purpose, to=EMAIL_MASK, error=failure)
+        raise MailError(failure)
+    # La marca, no `mask_emails`: su patrón deja a la vista direcciones válidas (`{a}=b@x.pe`).
+    logger.info("mail.sent", purpose=message.purpose, to=EMAIL_MASK)

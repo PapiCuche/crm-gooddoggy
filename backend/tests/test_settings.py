@@ -156,6 +156,9 @@ def test_production_mail_is_optional_but_never_half_configured(
     bare = load_production(monkeypatch)
     assert (bare.EMAIL_HOST, bare.MAIL_BACKEND, bare.EMAIL_TIMEOUT) == ("", "smtp", 10)  # type: ignore[attr-defined]
     full = load_production(monkeypatch, **MAIL_ENV, EMAIL_PORT="2525")
+    # Lo que no pasa por `core.mail` (el aviso a ADMINS de Django) no envía nada, ni con servidor.
+    dummy = "django.core.mail.backends.dummy.EmailBackend"
+    assert (getattr(bare, "EMAIL_BACKEND"), getattr(full, "EMAIL_BACKEND")) == (dummy, dummy)
     assert (full.EMAIL_HOST, full.EMAIL_PORT) == ("smtp.example.com", 2525)  # type: ignore[attr-defined]
     assert (full.EMAIL_USE_TLS, full.EMAIL_USE_SSL) == (True, False)  # type: ignore[attr-defined]
     assert full.DEFAULT_FROM_EMAIL == "no-reply@example.com"  # type: ignore[attr-defined]

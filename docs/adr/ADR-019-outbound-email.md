@@ -19,7 +19,7 @@ Todo el correo saliente pasa por `core.mail.send(Message)`. Ningún otro módulo
 
 `Message` lleva un destinatario, un asunto, un cuerpo de texto plano y un propósito (`invitation`, `password_reset`…), que es una etiqueta para el log y las métricas. No hay HTML, adjuntos, copias ni varios destinatarios: se añaden con el primer correo que los necesite.
 
-`send` valida antes de construir nada: una sola dirección con forma de dirección, sin saltos de línea ni separadores en la dirección ni en el asunto, y un propósito con forma de identificador. Lo que no cumple es un error del llamador (`ValueError`), no un intento de entrega.
+`send` valida antes de construir nada: una sola dirección con forma de dirección, sin saltos de línea ni separadores en la dirección ni en el asunto, y un propósito con forma de identificador. La dirección llega en ASCII y tal como va a salir: sin comillas ni palabras codificadas (`=?…?=`), que el transporte reescribiría después de validar (`"ana"@x.pe` y `=?utf-8?b?YW5h?=@x.pe` saldrían como `ana@x.pe`), y con un dominio internacionalizado ya en su forma IDNA, la canónica de D-F2-3. Lo que no cumple es un error del llamador (`ValueError`), no un intento de entrega, y su texto no repite lo recibido.
 
 ### 2. SMTP, sin proveedor fijado
 
@@ -41,7 +41,7 @@ Por eso `core.mail` recibe el mensaje ya compuesto y no ofrece una cola propia: 
 
 ### 5. Qué queda escrito
 
-El log de aplicación registra cada envío y cada fallo con el propósito y la dirección enmascarada (`core.redaction.mask_emails`). Nunca el asunto ni el cuerpo. El texto de la excepción de SMTP tampoco se registra: puede repetir la dirección; se registra su tipo. La auditoría del hecho de negocio (se invitó a alguien) es de quien lo origina, no de este módulo.
+El log de aplicación registra cada envío y cada fallo con el propósito y, en el lugar de la dirección, la marca `[EMAIL]` de `core.redaction`. No se usa `mask_emails`: su patrón es para texto libre y deja a la vista direcciones válidas como `{a}=b@x.pe`. Los campos van por nombre con el logger de `core.observability`; el `extra` de `logging` no llega a la salida JSON. Nunca el asunto ni el cuerpo. El texto de la excepción de SMTP tampoco se registra: puede repetir la dirección; se registra su tipo, y `MailError` no conserva la excepción original, tampoco como `__context__`. La auditoría del hecho de negocio (se invitó a alguien) es de quien lo origina, no de este módulo.
 
 ### 6. Producción
 
