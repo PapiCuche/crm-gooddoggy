@@ -43,6 +43,17 @@
     "loadingMore": "Cargando más…",
     "loading": "Cargando la auditoría…",
     "denied": "No tienes permiso para ver la auditoría de esta organización.",
+    "filters": {
+      "title": "Filtros",
+      "action": "Acción",
+      "allActions": "Todas",
+      "entity": "Entidad",
+      "allEntities": "Todas",
+      "actor": "Quién",
+      "anyActor": "Cualquiera",
+      "clear": "Quitar filtros",
+      "none": "Ningún registro coincide con estos filtros."
+    },
     "entity": "{type}",
     "entityNamed": "{type}: {label}",
     "by": "Por: {actor}",

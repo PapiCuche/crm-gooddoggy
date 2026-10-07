@@ -105,7 +105,7 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 
 ### Lista por cursor compartida (F2-24)
 
-`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `notice` es un aviso de la pantalla encima de la lista; `empty`, lo que la pantalla quiere enseñar en lugar de una lista sin filas (sin él se pinta la lista vacía; el aviso, el recuento y «Cargar más» no cambian); el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. La usan las pantallas de miembros, de roles, de sucursales, de equipos y de auditoría; las siguientes listas de gestión se construyen sobre ella.
+`components/lists/cursor-list.tsx` (`CursorList`) tiene lo que una pantalla de gestión necesita para listar por cursor: título, lista, «Cargar más» y los estados de carga, error con reintento, sin permiso (403) y sin sesión (401), con el comportamiento y el foco descritos arriba. La pantalla aporta la clave de la consulta, la función que pide una página, el contenido de cada fila y sus textos (`section`: el espacio de mensajes con `eyebrow`, `title`, `intro`, `loading`, `denied`, `count`, `more` y `loadingMore`). También recibe el nombre de la organización (para `intro`, que lleva `{organization}`; `count` lleva `{count}`) y, si quiere, clases para la fila (`rowClassName`). Una sección a la que le falte alguno de esos textos no compila. `controls` son los controles de la pantalla (filtros), entre el título y la lista: no se desmontan cuando la lista se vuelve a pedir, falla o cambia de clave, así que conservan el foco, y no se pintan con un 403 (F2-76); `notice` es un aviso de la pantalla encima de la lista, que solo se pinta con la lista ya cargada; `empty`, lo que la pantalla quiere enseñar en lugar de una lista sin filas (sin él se pinta la lista vacía; el aviso, el recuento y «Cargar más» no cambian); el `ref` le permite volver a pedir la lista y llevar el foco al título mientras la pantalla está montada. La usan las pantallas de miembros, de roles, de sucursales, de equipos y de auditoría; las siguientes listas de gestión se construyen sobre ella.
 
 ### Suspender y reactivar (F2-21)
 
@@ -366,7 +366,7 @@ En el panel de integrantes, cada fila ofrece «Hacer supervisor» o «Hacer inte
 - **Si se cierra el panel con un cambio en vuelo**, la escritura sigue su curso; al reabrir, el panel pregunta de nuevo, y una lectura que salió antes de la respuesta no devuelve el papel de antes: se cancela y se vuelve a pedir. Si la lectura ya había llegado, la fila reabierta cambia al llegar la respuesta, sin anuncio. Si falla, solo un 404 avisa (en la lista, como siempre; si el panel se había reabierto, lo cierra); cualquier otro fallo no se dice.
 - **El papel no concede nada todavía:** ser supervisor de un equipo no da permisos sobre él (D-F2-12, abierta).
 
-## Auditoría (F2-75)
+## Auditoría (F2-75 y F2-76)
 
 `/o/[orgSlug]/auditoria` muestra lo que se hizo en la organización, de lo más reciente a lo más antiguo: lo que devuelve `GET /api/v1/o/{slug}/audit/` (F2-73), con el cliente generado. Solo lectura.
 
@@ -377,7 +377,11 @@ En el panel de integrantes, cada fila ofrece «Hacer supervisor» o «Hacer inte
 - **Una acción nueva en el backend** se ve con su código hasta que se añade su nombre al catálogo.
 - **Sin filas:** la pantalla lo dice en lugar de enseñar una lista vacía.
 - **Navegación:** la entrada «Auditoría», la última, pide `audit.view`. Es comodidad: quien abre la URL sin el permiso ve el mensaje de «sin permiso» porque la API responde 403.
-- Los filtros, el nombre del actor y el detalle de cada cambio son otros work items.
+- **Filtros (F2-76):** tres selectores sobre la lista, «Acción», «Entidad» y «Quién», con «Todas» o «Cualquiera» y lo que la pantalla sabe nombrar (19 acciones, 5 tipos de entidad, 5 tipos de actor). Se aplican al elegir y combinados: envían `action`, `entity_type` y `actor_type` a la API (F2-74). Un selector sin elegir no se envía: la API responde 400 a un filtro vacío. Cada combinación es su propia lista (los filtros van en la clave de la consulta) y se pide de nuevo; «Cargar más» lleva los mismos filtros.
+- **Los selectores no se desmontan** mientras la lista filtrada carga, falla o no encuentra nada, y el que se acaba de usar conserva el foco: van en el hueco `controls` de la lista compartida. Con un 403 desaparecen, como la lista.
+- **Sin resultados con filtros:** «Ningún registro coincide con estos filtros.», distinto del aviso de una auditoría vacía. «Quitar filtros» aparece cuando hay alguno puesto, los quita todos y deja el foco en el primer selector.
+- **Lo que los filtros no hacen:** no filtran por una persona ni por una entidad concreta (`actor_id`, `entity_id`), ni por una acción o un tipo sin nombre en el catálogo; no hay fecha, resultado ni texto libre; no se guardan en la URL ni entre visitas.
+- El nombre del actor y el detalle de cada cambio son otros work items.
 
 ## Seguridad del navegador (F2-07)
 

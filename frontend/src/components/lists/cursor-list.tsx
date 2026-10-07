@@ -33,6 +33,7 @@ export function CursorList<Row extends { id: string }>({
   organization,
   listKey,
   fetchPage,
+  controls,
   notice,
   empty,
   rowClassName,
@@ -43,6 +44,9 @@ export function CursorList<Row extends { id: string }>({
   organization: string;
   listKey: QueryKey;
   fetchPage: (cursor: string | undefined, signal: AbortSignal) => Promise<Page<Row>>;
+  // Controles de la pantalla (filtros), entre el título y la lista. No se desmontan cuando la
+  // lista se vuelve a pedir, falla o cambia de clave: conservan el foco. Sin permiso, no se pintan.
+  controls?: ReactNode;
   notice?: ReactNode; // aviso de la pantalla, encima de la lista
   empty?: ReactNode; // lo que se ve en lugar de una lista sin filas
   rowClassName?: string;
@@ -200,6 +204,7 @@ export function CursorList<Row extends { id: string }>({
         </h1>
         <p className="text-muted">{t(`${section}.intro`, { organization })}</p>
       </div>
+      {denied ? null : controls}
       {body}
     </section>
   );
