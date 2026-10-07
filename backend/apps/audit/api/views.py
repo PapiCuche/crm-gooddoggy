@@ -49,11 +49,25 @@ def _shaped(pattern: re.Pattern[str]) -> Callable[[str], None]:
     return check
 
 
+CANONICAL_UUID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.ASCII | re.I)
+
+
+class _WrittenUUID(serializers.UUIDField):
+    """Solo la forma canónica. `uuid.UUID()` lee además `urn:uuid:`, llaves, guiones en cualquier
+    sitio y dígitos no ASCII, y da por bueno `0x` o un espacio con 30 o 31 cifras: filtraría por
+    un UUID que el cliente no escribió."""
+
+    def to_internal_value(self, data: Any) -> Any:
+        if not (isinstance(data, str) and CANONICAL_UUID.fullmatch(data)):
+            self.fail("invalid", value=data)
+        return super().to_internal_value(data)
+
+
 class AuditFilterSerializer(serializers.Serializer[Any]):
     """Los filtros del listado (F2-74): por valor exacto, y se cumplen todos los que se envían."""
 
     actor_type = serializers.ChoiceField(choices=ACTOR_TYPES, required=False)
-    actor_id = serializers.UUIDField(required=False, help_text="Quién lo hizo.")
+    actor_id = _WrittenUUID(required=False, help_text="Quién lo hizo.")
     action = serializers.CharField(
         required=False,
         max_length=100,
@@ -64,7 +78,7 @@ class AuditFilterSerializer(serializers.Serializer[Any]):
     entity_type = serializers.CharField(
         required=False, max_length=50, trim_whitespace=False, validators=[_shaped(TYPE)]
     )
-    entity_id = serializers.UUIDField(required=False, help_text="La historia de una entidad.")
+    entity_id = _WrittenUUID(required=False, help_text="La historia de una entidad.")
 
 
 @extend_schema_view(
