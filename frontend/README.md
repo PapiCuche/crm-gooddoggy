@@ -137,15 +137,15 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 
 ### Asignar la sucursal (F2-72)
 
-Cada tarjeta ofrece «Sucursal», que abre un panel con un selector: «Sin sucursal» y las sucursales de la organización (`GET /api/v1/o/{slug}/branches/`, todas las páginas, pedidas al abrir y de nuevo en cada apertura), con la del miembro elegida. «Guardar» envía `PUT /api/v1/o/{slug}/members/{id}/branch/` con `{"branch_id": "<id>"}` o `null` (F2-69). Componente: `components/members/member-branch-action.tsx`, hermano del panel «Roles»: mismas reglas de envío, foco y errores.
+Cada tarjeta ofrece «Sucursal», que abre un panel con un selector: «Sin sucursal» y las sucursales de la organización (`GET /api/v1/o/{slug}/branches/`, todas las páginas, pedidas al abrir y de nuevo en cada apertura), con la del miembro elegida. «Guardar» envía `PUT /api/v1/o/{slug}/members/{id}/branch/` con `{"branch_id": "<id>"}` o `{"branch_id": null}` (F2-69). Componente: `components/members/member-branch-action.tsx`, hermano del panel «Roles»: mismas reglas de envío, foco y errores.
 
 - **A quién se ofrece:** a quien tiene `users.manage` y `organization.view` (el selector lee las sucursales) según el contexto de la API. Nunca en la fila propia; el estado de la membresía no importa. Es comodidad: las reglas las aplica la API (ADR-017: cubrir los roles del miembro) y un 403 se explica en el panel.
 - **A quién:** el nombre accesible del botón y el título del panel llevan el nombre y el correo, porque dos personas pueden llamarse igual.
-- **Selector:** cada sucursal como «nombre (código)»; una inactiva lo dice y se puede elegir, porque la API la admite. Lo elegido parte de la sucursal que el miembro tenía al abrir y no cambia si la lista cambia debajo; esa sucursal figura siempre entre las opciones. Sin sucursales en la organización, el panel lo dice.
-- **Envío:** una petición por pulsación; «Guardar» sin haber cambiado nada cierra el panel y no envía; mientras se envía, lo elegido no cambia y «Cancelar» no cierra; una tecla mantenida no cuenta; sin red, falla y se dice.
+- **Selector:** cada sucursal como «nombre (código)»; una inactiva lo dice y se puede elegir, porque la API la admite. Lo elegido parte de la sucursal que el miembro tenía al abrir y no cambia si la lista cambia debajo; esa sucursal figura siempre entre las opciones. Al reabrir, también en otra tarjeta, las opciones anteriores siguen en pantalla mientras llegan las nuevas. Sin sucursales en la organización, el panel lo dice.
+- **Envío:** una petición por pulsación; «Guardar» sin haber cambiado nada respecto a la sucursal que el miembro tenía al abrir cierra el panel y no envía, aunque la tarjeta haya cambiado debajo (para pisar ese cambio hay que reabrir); mientras se envía, lo elegido no cambia y «Cancelar» no cierra; una tecla mantenida no cuenta; sin red, falla y se dice.
 - **Éxito:** la tarjeta enseña la sucursal que respondió la API, sin volver a pedir la lista; el panel se cierra, el foco vuelve a «Sucursal» y se anuncia. Una lectura de la lista en vuelo se cancela para que no pise la fila, y se repite si era la lista entera.
 - **Errores, por `code`, en el panel:** sin permiso (con un texto propio), `LAST_OWNER`, red o fallo del servidor; «Guardar» reintenta. Un 400 se explica como fallo del servidor: las opciones salen de la API y las sucursales no se borran. Sin sesión (401), `Providers` lleva al login. Un 404 es pantalla desfasada: el panel se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista. Si falla la lectura de las sucursales, se explica con «Reintentar».
-- **Foco:** al abrir, a «Cancelar», que no cambia nada; al cerrar, a «Sucursal».
+- **Foco:** al abrir, a «Cancelar», que no cambia nada; al cerrar, a «Sucursal», salvo con un 404: entonces va al título de la lista, si seguía en la acción o en ninguna parte.
 
 ## Roles (F2-23)
 

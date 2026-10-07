@@ -1,4 +1,4 @@
-import { onlineManager } from "@tanstack/react-query";
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,6 +96,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   onlineManager.setOnline(true);
+  focusManager.setFocused(undefined);
 });
 
 describe("MemberBranchAction", () => {
@@ -143,7 +144,7 @@ describe("MemberBranchAction", () => {
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
     expect(calls(api, "PUT")).toEqual([]);
     const again = await panel();
-    again.choose("b1");
+    again.choose("b2"); // se pide Cusco y la API responde Lima Centro: vale lo que respondió
     const release = hold(api);
     again.save.focus();
     fireEvent.click(again.save);
@@ -151,8 +152,8 @@ describe("MemberBranchAction", () => {
     await waitFor(() => expect(again.save).toHaveTextContent("Guardando…"));
     for (const control of [again.save, again.cancel, again.select])
       expect(control).toHaveAttribute("aria-disabled", "true");
-    again.choose("b2"); // mientras se envía, lo elegido no cambia
-    expect(again.select).toHaveValue("b1");
+    again.choose(""); // mientras se envía, lo elegido no cambia
+    expect(again.select).toHaveValue("b2");
     fireEvent.click(again.cancel); // ya se envió
     expect(screen.getByRole("group")).toBeInTheDocument();
     expect(again.save).toHaveFocus(); // `aria-disabled`, no `disabled`
@@ -165,11 +166,11 @@ describe("MemberBranchAction", () => {
     expect(status()).toHaveTextContent(
       /^La sucursal de luis@acme.pe ahora es Lima Centro \(C-b1\)\.$/,
     );
-    expect(sent(api)).toEqual([JSON.stringify({ branch_id: "b1" })]);
+    expect(sent(api)).toEqual([JSON.stringify({ branch_id: "b2" })]);
     expect(reads(api, "/members/")).toHaveLength(1);
     expect(shown("eva@acme.pe")).toHaveTextContent(/^Sin sucursal$/); // solo la fila de la respuesta
     reply = saved(null);
-    const third = await panel(); // la fila guardó la sucursal: al reabrir es la elegida
+    const third = await panel(); // la fila guardó la que respondió la API: al reabrir es la elegida
     expect(status()).toHaveTextContent(/^$/); // el anuncio anterior se va al abrir
     expect(third.select).toHaveValue("b1");
     third.choose("");
@@ -318,12 +319,37 @@ describe("MemberBranchAction", () => {
     expect(fireEvent.keyDown(trigger, { key: "Enter", repeat: true })).toBe(false);
   });
 
+  it("un render ajeno justo antes de la pulsación no suelta la marca", async () => {
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [member("ana"), member("luis")], next: "abc" } },
+      [`${LIST}?cursor=abc`]: list([eva()]),
+      [BRANCHES]: all,
+      [PUT]: saved(lima),
+    });
+    renderApp(ui());
+    const { save, choose } = await panel();
+    choose("b1");
+    const more = hold(api); // la página 2 llega en un render que no viene de un evento
+    hold(api); // y la escritura no llega a responder
+    const rows = screen.getByRole("list", { name: "Miembros" });
+    new MutationObserver(() => save.click()).observe(rows, { childList: true }); // pulsa tras ese render
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await tick();
+    more();
+    await waitFor(() => expect(calls(api, "PUT")).toHaveLength(1));
+    fireEvent.click(save); // otra pulsación con la primera en vuelo
+    await tick();
+    expect(calls(api, "PUT")).toHaveLength(1);
+  });
+
   it("las sucursales del selector: todas sus páginas, ninguna, y un fallo que se reintenta", async () => {
     let reply: { status: number; body: unknown } = { status: 500, body: { code: "X" } };
+    let stuck = 0;
     const api = mockApi({
       [LIST]: everyone(),
       [BRANCHES]: () => reply,
       [`${BRANCHES}&cursor=abc`]: { status: 200, body: { results: [cusco], next: null } },
+      [`${BRANCHES}&cursor=zzz`]: () => (++stuck < 9 ? reply : all), // se da a sí misma por siguiente
     });
     renderApp(ui());
     fireEvent.click(await screen.findByRole("button", { name: TRIGGER }));
@@ -337,6 +363,7 @@ describe("MemberBranchAction", () => {
     retry.focus();
     act(() => onlineManager.setOnline(false));
     act(() => onlineManager.setOnline(true)); // vuelve la red: no se repide solo ni se lleva el foco
+    act(() => focusManager.setFocused(true)); // ni al volver a la pestaña
     await tick();
     expect(retry).toHaveFocus();
     const release = hold(api);
@@ -358,9 +385,9 @@ describe("MemberBranchAction", () => {
     api.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     fireEvent.click(screen.getByRole("button", { name: TRIGGER }));
-    await waitFor(() => expect(reads(api, "/branches/").length).toBeGreaterThan(0));
+    await waitFor(() => expect(reads(api, "/branches/")).toHaveLength(4)); // dos intentos, dos páginas
     await tick();
-    expect(reads(api, "/branches/").length).toBeLessThan(4); // no es una lista sin fin
+    expect(reads(api, "/branches/")).toHaveLength(4); // y ahí se detiene: no es una lista sin fin
   });
 
   it("sin red lo dice; sin sesión no enseña un error, va al login una vez y no reenvía", async () => {
@@ -377,13 +404,19 @@ describe("MemberBranchAction", () => {
         <Providers>{ui()}</Providers>
       </NextIntlClientProvider>,
     );
-    const { group, save, cancel, choose } = await panel();
-    choose("b1");
+    const first = await panel();
+    first.choose("b1");
     onlineManager.setOnline(false); // una escritura no espera en cola a que vuelva la red
     api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    fireEvent.click(save);
-    expect(await within(group).findByRole("alert")).toHaveTextContent("No hay conexión");
+    fireEvent.click(first.save);
+    expect(await within(first.group).findByRole("alert")).toHaveTextContent("No hay conexión");
     onlineManager.setOnline(true);
+    fireEvent.click(first.cancel);
+    const { save, cancel, choose } = await panel(); // reabrir empieza sin el error anterior
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // Y vuelve a pedir las sucursales también con el `staleTime` de la aplicación (30 s).
+    await waitFor(() => expect(reads(api, "/branches/")).toHaveLength(2));
+    choose("b1");
     fireEvent.click(save);
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?next=%2Fo%2Facme%2Fmiembros"));
     await tick();
