@@ -22,6 +22,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AuditListParams,
   Branch,
   BranchCreateRequest,
   BranchesListParams,
@@ -34,6 +35,7 @@ import type {
   MemberStatusChangeRequest,
   MembersListParams,
   OrganizationSummary,
+  PaginatedAuditEntryList,
   PaginatedBranchList,
   PaginatedMemberList,
   PaginatedRoleList,
@@ -544,6 +546,147 @@ export function useMeOrganizations<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getMeOrganizationsQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAuditListUrl = (orgSlug: string, params?: AuditListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/audit/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/audit/`;
+};
+
+/**
+ * La auditoría de la organización, de la fila más reciente a la más antigua. Paginada por
+ * cursor (ADR-016). Cada fila llega como se guardó: los valores con aspecto de secreto se
+ * redactaron al escribirla (ADR-011). Solo lectura.
+ */
+export const auditList = async (
+  orgSlug: string,
+  params?: AuditListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedAuditEntryList> => {
+  return apiFetch<PaginatedAuditEntryList>(getAuditListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAuditListQueryKey = (orgSlug: string, params?: AuditListParams) => {
+  return [`/api/v1/o/${orgSlug}/audit/`, ...(params ? [params] : [])] as const;
+};
+
+export const getAuditListQueryOptions = <
+  TData = Awaited<ReturnType<typeof auditList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AuditListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof auditList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAuditListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof auditList>>> = ({ signal }) =>
+    auditList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof auditList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AuditListQueryResult = NonNullable<Awaited<ReturnType<typeof auditList>>>;
+export type AuditListQueryError = ErrorType<Error>;
+
+export function useAuditList<
+  TData = Awaited<ReturnType<typeof auditList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | AuditListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof auditList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof auditList>>,
+          TError,
+          Awaited<ReturnType<typeof auditList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAuditList<
+  TData = Awaited<ReturnType<typeof auditList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AuditListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof auditList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof auditList>>,
+          TError,
+          Awaited<ReturnType<typeof auditList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAuditList<
+  TData = Awaited<ReturnType<typeof auditList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AuditListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof auditList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAuditList<
+  TData = Awaited<ReturnType<typeof auditList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: AuditListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof auditList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAuditListQueryOptions(orgSlug, params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

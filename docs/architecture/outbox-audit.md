@@ -14,6 +14,7 @@ Ambas se escriben **en la transacción del `tenant_scope` activo** (`require_sco
 | `core.redaction.redact()` | Oculta claves sensibles (password/password1, pwd, token, secret, api_key, authorization, cookie…), sin tocar fechas, límites, contadores ni FKs (`*_at`, `*_limit`, `*_count`, `*_id`). Oculta el contenido de mensajes (body, content, text, `*_text`, `*_preview`…). Conserva `*_last_four` con la forma `[antes, después]`. Detecta en cualquier texto claves de OpenAI/Anthropic/Meta, Bearer, `Authorization: Basic`, JWT, URLs con credenciales (también `redis://:clave@`) y parámetros `*_secret=`/`*_token=`/`*_password=`. `entity_label` y `actor_label` también se redactan |
 
 - **Append-only:** `crm_app` solo tiene SELECT e INSERT en `audit_logs` y ningún privilegio directo sobre las particiones.
+- **Lectura (F2-73):** `GET /api/v1/o/{slug}/audit/`, con el permiso `audit.view`, sobre el modelo de solo lectura `apps.audit.models.AuditLog` (`managed = False`). El listado ordena por `id` y usa el índice `audit_logs_org_id_idx (organization_id, id)`.
 - **Particiones:** `audit_ensure_partitions(n)` (propiedad de `crm_migrator`, sin EXECUTE para `crm_app`) crea el mes actual + 12. La llaman la migración y el `post_migrate` de cada job de migraciones. No hay partición DEFAULT: si el horizonte se agota, el INSERT falla (fail-closed). Hay que ejecutar el job de migraciones al menos una vez al año.
 
 ## Contrato de los handlers del outbox
