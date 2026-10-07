@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
+import { MemberBranchAction } from "@/components/members/member-branch-action";
 import { MemberRolesAction } from "@/components/members/member-roles-action";
 import { MemberStatusAction } from "@/components/members/member-status-action";
 import { getMembersListQueryKey, membersList } from "@/lib/api/client";
@@ -25,6 +26,7 @@ export function MembersList() {
   const can = (code: string) => permissions.some((grant) => grant.code === code);
   const manages = can("users.manage");
   const assigns = manages && can("roles.view"); // el panel de roles necesita verlos
+  const places = manages && can("organization.view"); // el de sucursal, las sucursales
   const listKey = [...getMembersListQueryKey(organization.slug), "pages"];
   const list = useRef<CursorListHandle>(null);
   // Una acción respondió que la pantalla ya no refleja a la API (F2-21). El aviso vive aquí:
@@ -118,6 +120,21 @@ export function MembersList() {
               slug={organization.slug}
               member={member}
               name={fullName(member.user) || member.user.email}
+              listKey={listKey}
+              onAsk={() => setNotice(null)}
+              onStale={stale}
+            />
+          ) : null}
+          {places && member.id !== own ? (
+            <MemberBranchAction
+              slug={organization.slug}
+              member={member}
+              // Con el correo: dos personas pueden llamarse igual.
+              name={
+                fullName(member.user)
+                  ? `${fullName(member.user)} (${member.user.email})`
+                  : member.user.email
+              }
               listKey={listKey}
               onAsk={() => setNotice(null)}
               onStale={stale}

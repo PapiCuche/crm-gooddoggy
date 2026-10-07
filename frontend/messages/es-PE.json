@@ -144,6 +144,24 @@
       "empty": "Esta organización no tiene roles.",
       "denied": "No tienes permiso para asignar ni quitar este rol a este miembro.",
       "stale": "Los roles de {name} o de la organización ya habían cambiado. Revisa la lista."
+    },
+    "branchAction": {
+      "trigger": "Sucursal",
+      "triggerLabel": "Cambiar la sucursal de {name}",
+      "panel": "Sucursal de {name}",
+      "none": "Sin sucursal",
+      "option": "{name} ({code})",
+      "optionInactive": "{name} ({code}), inactiva",
+      "empty": "Esta organización no tiene sucursales.",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "cancel": "Cancelar",
+      "loading": "Cargando sucursales…",
+      "retry": "Reintentar",
+      "done": "La sucursal de {name} ahora es {branch} ({code}).",
+      "cleared": "{name} quedó sin sucursal.",
+      "denied": "No tienes permiso para cambiar la sucursal de este miembro.",
+      "stale": "No se pudo cambiar la sucursal de {name}: ya no está disponible. Revisa la lista."
     }
   },
   "teams": {
