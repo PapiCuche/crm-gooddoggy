@@ -82,9 +82,14 @@ describe("MembersList", () => {
   it("enseña la sucursal de cada miembro tal como llega, o que no tiene", async () => {
     const branch = { id: "b-9", code: "LIM-01", name: "Lima Centro" };
     const luis = member("luis", { default_branch: branch });
-    const api = mockApi({ [LIST]: { status: 200, body: { results: [ana, luis], next: null } } });
+    const odd = { id: "b-7", code: "{code}'#", name: "O'Higgins {0} <b>#1</b>" };
+    const rosa = member("rosa", { default_branch: odd });
+    const page = { results: [ana, luis, rosa], next: null };
+    const api = mockApi({ [LIST]: { status: 200, body: page } });
     screenOf();
     await screen.findByRole("list", { name: "Miembros" });
+    // Nombre y código son valores del mensaje, no parte de él: llaves, comillas y etiquetas, tal cual.
+    expect(screen.getByText("Sucursal: O'Higgins {0} <b>#1</b> ({code}'#)")).toBeVisible();
     const [first, second] = rows().filter(
       (row) => row.parentElement?.getAttribute("aria-label") !== "Roles",
     ) as [HTMLElement, HTMLElement];
@@ -94,7 +99,9 @@ describe("MembersList", () => {
     expect(shown).toHaveClass("wrap-anywhere"); // un nombre largo se parte, no se recorta
     expect(second).not.toHaveTextContent("Sin sucursal");
     expect(second).not.toHaveTextContent("b-9"); // el identificador no se enseña
-    expect(within(second).getByRole("list", { name: "Roles" })).not.toContainElement(shown);
+    // Bajo los roles y en su celda: la tarjeta sigue teniendo tres (nombre, roles y estado).
+    expect(shown.previousElementSibling).toBe(within(second).getByRole("list", { name: "Roles" }));
+    expect(second.children).toHaveLength(3);
     expect(api).toHaveBeenCalledTimes(1); // llega con el directorio: ninguna petición más
     expect(
       screen.getByText(/pertenecen a Acme SAC, con su estado, sus roles y su sucursal/),
