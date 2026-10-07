@@ -43,6 +43,24 @@ describe("navegación del shell", () => {
     expect(document.title).toBe("Miembros · Acme SAC · Good Doggy CRM"); // sección y organización
   });
 
+  it("la entrada «Invitaciones» pide `users.invite` y `users.manage` a la vez", async () => {
+    const both = ["roles.view", "users.manage", "users.view", "users.invite"].map((code) => ({
+      code,
+      scopes: [],
+    }));
+    expect(await links(both)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/miembros", "page"],
+      ["/o/acme/invitaciones", null], // después de «Miembros» y antes de «Roles»
+      ["/o/acme/roles", null],
+    ]);
+    expect(screen.getByRole("link", { name: "Invitaciones" })).toBeVisible();
+  });
+
+  it("con uno solo de los dos no hay entrada «Invitaciones»", async () => {
+    expect(await links([{ code: "users.manage", scopes: [] }])).toEqual([["/o/acme", null]]);
+  });
+
   it("la entrada «Roles» pide `roles.view`: ver miembros no basta", async () => {
     const both = [
       { code: "users.view", scopes: [] },

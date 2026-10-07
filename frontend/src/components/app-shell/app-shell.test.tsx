@@ -347,6 +347,7 @@ describe("visibleItems", () => {
     { key: "home" },
     { key: "members", permission: "users.view" },
     { key: "audit", permission: "audit.view" },
+    { key: "invitations", permission: ["users.invite", "users.manage"] }, // varios: todos
   ];
 
   it("solo deja las entradas sin permiso o con uno que el usuario tiene", () => {
@@ -362,6 +363,9 @@ describe("visibleItems", () => {
       "members",
       "audit",
     ]);
+    expect(keys(["users.invite"])).toEqual(["home"]);
+    expect(keys(["users.manage"])).toEqual(["home"]);
+    expect(keys(["users.manage", "users.invite"])).toEqual(["home", "invitations"]);
   });
 });
 
