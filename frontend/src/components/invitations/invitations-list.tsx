@@ -90,10 +90,11 @@ export function InvitationsList() {
                 // Cada apertura vuelve a preguntar: el directorio pudo fallar, o un rol, borrarse.
                 void roles.refetch({ cancelRefetch: false });
               }}
+              onDone={() => setNotice(null)}
             />
           ) : null}
           {notice?.stale ? (
-            <p role="alert" className="text-danger">
+            <p role="alert" className="text-danger wrap-anywhere">
               {notice.text}
             </p>
           ) : null}

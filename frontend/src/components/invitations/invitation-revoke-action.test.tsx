@@ -39,6 +39,7 @@ const all = [
   invitation("tarde", "EXPIRED"),
   invitation("fuera", "REVOKED"),
   invitation("dentro", "ACCEPTED"),
+  invitation("rara", "ON_HOLD"), // un estado que esta versión no conoce: no se ofrece
 ];
 const list = (results: Invitation[] = all) => ({ status: 200, body: { results, next: null } });
 const revoked = (name: string) => ({ status: 200, body: invitation(name, "REVOKED") });
@@ -92,13 +93,13 @@ describe("InvitationRevokeAction", () => {
     for (const codes of [["users.invite"], ["users.manage"], ["roles.view", "users.view"]]) {
       mockApi({ [LIST]: list() });
       const view = renderApp(ui(tenant(...codes)));
-      await screen.findByText("4 invitaciones en la lista");
+      await screen.findByText("5 invitaciones en la lista");
       expect(screen.queryByRole("button", { name: /Revocar/ })).toBeNull();
       view.unmount();
     }
     mockApi({ [LIST]: list() });
     renderApp(ui());
-    await screen.findByText("4 invitaciones en la lista");
+    await screen.findByText("5 invitaciones en la lista");
     const offered = screen.getAllByRole("button", { name: /^Revocar la invitación de/ });
     expect(offered.map((button) => button.getAttribute("aria-label"))).toEqual([
       "Revocar la invitación de lima@cliente.pe",
@@ -177,7 +178,10 @@ describe("InvitationRevokeAction", () => {
     });
     renderApp(ui());
     fireEvent.click(confirm(await ask()));
+    const elsewhere = card("tarde").querySelector("button")!;
+    elsewhere.focus(); // el usuario ya está en otra fila cuando llega la respuesta
     await waitFor(() => expect(shown("lima")).toBe("Aceptada")); // no lo que se pidió
+    expect(elsewhere).toHaveFocus(); // y su foco no se toca
     rows = [all[0]!, invitation("tarde", "REVOKED"), all[2]!, all[3]!];
     fireEvent.click(confirm(await ask("Revocar la invitación de tarde@cliente.pe")));
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2)); // se pregunta a la API
@@ -186,20 +190,45 @@ describe("InvitationRevokeAction", () => {
 
   it("sin permiso para esa invitación lo dice en la confirmación, y se puede reintentar", async () => {
     const api = mockApi({
-      [LIST]: list(),
+      [LIST]: { status: 200, body: { results: all, next: "abc" } },
+      [`${LIST}?cursor=abc`]: list([invitation("tacna")]),
       [STATUS("fila-lima")]: { status: 403, body: { code: "PERMISSION_DENIED" } },
     });
     renderApp(ui());
     const group = await ask();
-    fireEvent.click(confirm(group));
+    const button = confirm(group);
+    const release = hold(api);
+    fireEvent.click(button);
+    await tick();
+    await act(async () => {
+      release();
+      for (let turn = 0; turn < 100; turn++) await null; // llega la negativa; aún no hay render
+      fireEvent.click(button); // una pulsación entre la respuesta y el render no reenvía
+    });
     expect(await within(group).findByRole("alert")).toHaveTextContent(
       "No tienes permiso para revocar esta invitación.",
     );
     expect(shown("lima")).toBe("Pendiente");
+    // Tampoco con la confirmación y su error en pantalla llega un identificador al DOM.
+    expect(new XMLSerializer().serializeToString(document.body)).not.toMatch(/fila-|rol-|cuenta-/);
     await tick();
+    expect(sent(api)).toHaveLength(1);
     fireEvent.click(confirm(group));
     await waitFor(() => expect(sent(api)).toHaveLength(2));
     expect(calls(api, "GET")).toHaveLength(1);
+    await within(group).findByRole("alert");
+    // Un render ajeno (llega la página 2) justo antes de pulsar tampoco suelta la marca.
+    const more = hold(api);
+    hold(api); // esta escritura no llega a responder
+    const rows = screen.getByRole("list", { name: "Invitaciones" });
+    new MutationObserver(() => button.click()).observe(rows, { childList: true }); // tras ese render
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    await tick();
+    more();
+    await waitFor(() => expect(sent(api)).toHaveLength(3));
+    fireEvent.click(button); // otra pulsación, con la escritura en vuelo
+    await tick();
+    expect(sent(api)).toHaveLength(3);
   });
 
   it("sin red lo dice, y volver a abrir empieza sin el error anterior", async () => {
@@ -260,12 +289,16 @@ describe("InvitationRevokeAction", () => {
     const api = mockApi({ [LIST]: () => list(rows), [STATUS("fila-lima")]: answer });
     renderApp(ui());
     const group = await ask();
-    rows = [invitation("lima", "ACCEPTED"), ...all.slice(1)]; // lo que la API tiene de verdad
+    const gone = answer.status === 404; // la fila ya no viene, y el foco seguía en ella
+    rows = gone ? all.slice(1) : [invitation("lima", "ACCEPTED"), ...all.slice(1)];
     fireEvent.click(confirm(group));
-    (document.activeElement as HTMLElement).blur(); // el foco, en ninguna parte
+    if (!gone) (document.activeElement as HTMLElement).blur(); // el foco, en ninguna parte
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
-    await waitFor(() => expect(shown("lima")).toBe("Aceptada"));
+    await waitFor(() =>
+      expect(screen.queryByText(gone ? "lima@cliente.pe" : "Pendiente")).toBeNull(),
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(text);
+    expect(screen.getByRole("alert")).toHaveClass("wrap-anywhere"); // un correo largo no desborda
     expect(screen.queryByRole("group")).toBeNull(); // la confirmación se cerró
     expect(heading()).toHaveFocus(); // el foco no se pierde
     expect(sent(api)).toHaveLength(1);
@@ -303,14 +336,44 @@ describe("InvitationRevokeAction", () => {
     await waitFor(() =>
       expect(within(group).getByRole("button", { name: "Cancelar" })).toHaveFocus(),
     );
+    const elsewhere = card("tarde").querySelector("button")!;
+    elsewhere.focus(); // primero, con el usuario en otra fila: su foco no se toca
     rows = [invitation("lima", "REVOKED"), ...all.slice(1)]; // otro la revocó entretanto
     await refresh(view);
     await waitFor(() => expect(shown("lima")).toBe("Revocada"));
     expect(screen.queryByRole("group")).toBeNull();
     expect(within(card("lima")).queryByRole("button")).toBeNull();
+    expect(elsewhere).toHaveFocus();
+    fireEvent.click(elsewhere); // y con el foco en la confirmación de la fila que cambia
+    rows = [rows[0]!, invitation("tarde", "REVOKED"), ...all.slice(2)];
+    await refresh(view);
     await waitFor(() => expect(heading()).toHaveFocus());
     expect(sent(api)).toHaveLength(0);
     expect(screen.queryByRole("alert")).toBeNull(); // no es un error: la fila ya lo dice
+  });
+
+  it("«Invitar» retira lo que dejó «Revocar»: al abrirse y al registrar otra invitación", async () => {
+    mockApi({
+      [LIST]: list(),
+      "GET /api/v1/o/acme/roles/?limit=200": list([{ id: "rol-ventas", name: "Ventas" } as never]),
+      "POST /api/v1/o/acme/invitations/": { status: 201, body: invitation("lima") },
+      [STATUS("fila-lima")]: revoked("lima"),
+      [STATUS("fila-tarde")]: revoked("tarde"),
+    });
+    renderApp(ui(tenant("users.invite", "users.manage", "roles.view")));
+    fireEvent.click(confirm(await ask("Revocar la invitación de tarde@cliente.pe")));
+    const done = await screen.findByText(/tarde@cliente.pe quedó revocada/);
+    fireEvent.click(screen.getByRole("button", { name: "Invitar" }));
+    expect(done).toHaveTextContent(""); // al abrirse
+    // Con el formulario abierto: el correo está ocupado, se revoca abajo y se invita otra vez.
+    const form = screen.getByRole("form");
+    fireEvent.click(confirm(await ask()));
+    await waitFor(() => expect(done).toHaveTextContent("lima@cliente.pe quedó revocada"));
+    fireEvent.input(within(form).getByRole("textbox"), { target: { value: "lima@cliente.pe" } });
+    fireEvent.click(await within(form).findByRole("checkbox"));
+    fireEvent.click(within(form).getByRole("button", { name: "Invitar" }));
+    await screen.findByText(/Invitación a lima@cliente.pe registrada/);
+    expect(done).toHaveTextContent(""); // ya no dice que ese correo «se puede invitar otra vez»
   });
 
   it("una lectura en vuelo no pisa la fila que acaba de cambiar", async () => {
@@ -360,12 +423,13 @@ describe("InvitationRevokeAction", () => {
   it("Enter mantenido no vuelve a pulsar: ni reabre la confirmación ni reenvía", async () => {
     const api = mockApi({
       [LIST]: list(),
-      [STATUS("fila-lima")]: { status: 403, body: { code: "PERMISSION_DENIED" } },
+      [STATUS("fila-lima")]: { status: 400, body: { code: "VALIDATION_ERROR" } },
     });
     renderApp(ui());
     const group = await ask();
     fireEvent.click(confirm(group));
-    await within(group).findByRole("alert");
+    // Un 400 no trae campos que revisar aquí: se explica como un fallo nuestro.
+    expect(await within(group).findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro");
     expect(fireEvent.keyDown(confirm(group), { key: "Enter", repeat: true })).toBe(false);
     expect(fireEvent.keyDown(confirm(group), { key: "Enter" })).toBe(true); // una pulsación, sí
     expect(sent(api)).toHaveLength(1);
