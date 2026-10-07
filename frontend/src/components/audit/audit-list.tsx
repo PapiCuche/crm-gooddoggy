@@ -179,7 +179,9 @@ export function AuditList() {
               options={ACTOR_OPTIONS}
               onChange={choose("actor_type")}
             />
-            {seesPeople && !people.isError ? (
+            {/* Aparece cuando llega el directorio y ya no se desmonta: si volver a pedirlo falla
+                (al volver a la ventana), sigue lo leído; quitarlo dejaría el foco sin sitio. */}
+            {seesPeople && people.data ? (
               <Choice
                 label={t("filters.person")}
                 all={t("filters.anyPerson")}

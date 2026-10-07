@@ -368,7 +368,7 @@ describe("AuditList", () => {
     const [ana, luis, zoe] = [
       member("ana", "Ana", "López"),
       member("luis", "", ""),
-      member("zoe", "Zoe", "Abad"),
+      member("zoe", "Érika", "Zoe"),
     ];
     const directory = {
       [MEMBERS]: { status: 200, body: { results: [zoe], next: "p2" } },
@@ -392,7 +392,7 @@ describe("AuditList", () => {
           entry("a7", { actor_id: null }),
         ),
       });
-      screenOf(seesPeople);
+      const view = screenOf(seesPeople);
       await waitFor(() =>
         expect(who()).toEqual([
           "Por: una persona (Ana López)",
@@ -414,6 +414,8 @@ describe("AuditList", () => {
       for (const hidden of ["u-ana", "u-luis", "u-zoe", "m-ana", "u-nadie"])
         expect(dom).not.toContain(hidden);
       expect(grid()).toHaveClass("sm:grid-cols-2"); // cuatro selectores: de dos en dos
+      view.unmount(); // al salir, el directorio tampoco queda en memoria
+      await waitFor(() => expect(view.client.getQueryCache().getAll()).toEqual([]));
     });
 
     it("sin `users.view` ni pide el directorio ni ofrece «Persona»", async () => {
@@ -442,15 +444,17 @@ describe("AuditList", () => {
       await waitFor(() => expect(select.options).toHaveLength(4));
       expect([...select.options].map((option) => [option.value, option.text])).toEqual([
         ["", "Cualquiera"],
-        ["ana@acme.pe", "Ana López (ana@acme.pe)"], // por nombre; el valor, el correo
+        ["ana@acme.pe", "Ana López (ana@acme.pe)"], // por su texto; el valor, el correo
+        ["zoe@acme.pe", "Érika Zoe (zoe@acme.pe)"], // ni por correo ni por código: É tras la A
         ["luis@acme.pe", "luis@acme.pe"],
-        ["zoe@acme.pe", "Zoe Abad (zoe@acme.pe)"],
       ]);
       select.focus();
       fireEvent.change(select, { target: { value: "zoe@acme.pe" } });
-      await waitFor(() => expect(who()).toEqual(["Por: una persona (Zoe Abad)"]));
+      await waitFor(() => expect(who()).toEqual(["Por: una persona (Érika Zoe)"]));
       expect(select).toHaveFocus();
       expect(select).toHaveValue("zoe@acme.pe");
+      const dom = new XMLSerializer().serializeToString(document.body); // ni con alguien elegido
+      for (const hidden of ["u-zoe", "m-zoe"]) expect(dom).not.toContain(hidden);
       fireEvent.change(screen.getByRole("combobox", { name: "Quién" }), {
         target: { value: "USER" },
       });
@@ -482,6 +486,32 @@ describe("AuditList", () => {
       expect(who()).toEqual(["Por: una persona"]);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.getAllByRole("combobox")).toHaveLength(3);
+    });
+
+    it("«Persona» llega con el directorio, y un fallo al volver a pedirlo no la quita", async () => {
+      let down = false;
+      const api = mockApi({
+        [MEMBERS]: () =>
+          down
+            ? { status: 500, body: { code: "INTERNAL_ERROR" } }
+            : { status: 200, body: { results: [ana], next: null } },
+        [LIST]: page(entry("a1", { actor_id: "u-ana" })),
+      });
+      const view = screenOf(seesPeople);
+      expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument(); // aún no
+      const select = await screen.findByRole("combobox", { name: "Persona" });
+      await screen.findByText("Por: una persona (Ana López)");
+      select.focus();
+      down = true;
+      fireEvent(window, new Event("visibilitychange")); // al volver a la ventana se pide otra vez
+      const read = () => view.client.getQueryState(["/api/v1/o/acme/members/", "all"]);
+      await waitFor(() => expect(read()?.status).toBe("error"));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(urls(api).filter((url) => url.includes("/members/"))).toHaveLength(3);
+      expect(select).toBeInTheDocument(); // el mismo selector, con su foco y con lo ya leído
+      expect(select).toHaveFocus();
+      expect(who()).toEqual(["Por: una persona (Ana López)"]);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
   });
 });
