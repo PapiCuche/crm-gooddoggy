@@ -1,5 +1,5 @@
 """Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19), su
-sucursal (F2-69) y las invitaciones a la organización (F2-80)."""
+sucursal (F2-69) y las invitaciones a la organización: invitar (F2-80) y listarlas (F2-81)."""
 
 from typing import Any
 from uuid import UUID

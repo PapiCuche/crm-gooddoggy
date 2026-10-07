@@ -511,9 +511,9 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
   "email": "nueva.persona@example.com",
   "role_ids": ["…"],
   "status": "PENDING",
-  "expires_at": "2026-10-14T11:48:47Z",
+  "expires_at": "2026-10-14T11:48:47.253686Z",
   "invited_by": "…",
-  "created_at": "2026-10-07T11:48:47Z"
+  "created_at": "2026-10-07T11:48:47.254339Z"
 }
 ```
 

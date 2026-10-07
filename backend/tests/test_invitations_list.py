@@ -40,6 +40,7 @@ def test_it_lists_every_invitation_of_the_organization_newest_first_and_none_of_
     join(rbac.b, other)
     seed(migrator, rbac.b, other, 3, tag="-b")
     ana, roles = signed(rbac.ana), sorted([str(rbac.target.pk), str(rbac.roles["seller"].pk)])
+    ask(ana, "cero@example.com", roles)  # la más antigua
     made = [ask(ana, f"{name}@example.com", roles).json() for name in ("uno", "dos", "tres")]
     ask(ana, "cuatro@example.com", [rbac.target.pk])
     for mark, (email, status, expires) in enumerate(
@@ -48,6 +49,7 @@ def test_it_lists_every_invitation_of_the_organization_newest_first_and_none_of_
             ("dos@example.com", "REVOKED", "-1 day"),  # lo demás, como está guardado
             ("tres@example.com", "ACCEPTED", "-1 day"),
             ("cuatro@example.com", "PENDING", "1 minute"),
+            ("cero@example.com", "EXPIRED", "1 day"),  # anotada como caducada: sale, y así
         )
     ):
         migrator.execute(MARK, [status, expires, f"{HASH[:-1]}{mark}", status, email])
@@ -59,6 +61,7 @@ def test_it_lists_every_invitation_of_the_organization_newest_first_and_none_of_
         ("tres", "ACCEPTED"),
         ("dos", "REVOKED"),
         ("uno", "EXPIRED"),
+        ("cero", "EXPIRED"),
     ]
     assert rows[1] == {
         "id": made[2]["id"],
