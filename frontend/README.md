@@ -91,16 +91,17 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 
 ## Miembros (F2-17)
 
-`/o/[orgSlug]/miembros` muestra quién pertenece a la organización, con su estado y sus roles: lo que devuelve `GET /api/v1/o/{slug}/members/` (F2-16), con el cliente generado.
+`/o/[orgSlug]/miembros` muestra quién pertenece a la organización, con su estado, sus roles y su sucursal: lo que devuelve `GET /api/v1/o/{slug}/members/` (F2-16), con el cliente generado.
 
-- **Componente:** `components/members/members-list.tsx`, sobre la lista por cursor compartida (abajo). Por miembro: nombre (o el correo si no tiene), correo, roles como etiquetas, estado de la membresía y fecha de alta en la zona horaria de la aplicación. Un nombre o un correo largo se parte en varias líneas; no se recorta.
+- **Componente:** `components/members/members-list.tsx`, sobre la lista por cursor compartida (abajo). Por miembro: nombre (o el correo si no tiene), correo, roles como etiquetas, sucursal, estado de la membresía y fecha de alta en la zona horaria de la aplicación. Un nombre o un correo largo se parte en varias líneas; no se recorta.
 - **Paginación:** por cursor (ADR-016). «Cargar más» pide la página siguiente con el `next` de la anterior y desaparece cuando la API devuelve `null`. Desde la pulsación hasta la respuesta el botón queda ocupado (`aria-disabled`), también si el navegador sabe que no hay red y la petición espera. Al llegar la página el foco pasa a su primera fila, salvo que ya se haya ido a otra parte. Si esa página falla, lo ya cargado sigue en pantalla (salvo con un 403, que cierra la lista), el aviso aparece al lado del botón (no lo mueve) y el mismo botón reintenta; al reintentar el aviso se quita y vuelve si falla otra vez.
 - **Estados:** cargando; error con «Reintentar» (el botón no se desmonta mientras reintenta, y al abrir la lista el foco va al título); y sin permiso (403), con un mensaje propio y sin reintento.
 - **Negativas y sesión:** un 403 cierra la lista aunque ya estuviera en pantalla, y sigue cerrada hasta que la API vuelve a responder bien (un fallo pasajero no la reabre); si llega al reintentar o al cargar más, el foco va al título, salvo que el usuario ya lo haya llevado a otra parte. Sin sesión (401) no se muestra un error, tampoco al cargar más: `Providers` lleva al login. La lista no se guarda entre visitas (`gcTime: 0`): cada entrada pregunta a la API.
 - **Navegación:** la entrada «Miembros» pide el permiso `users.view`. Es comodidad: quien abre la URL sin el permiso ve el mensaje de «sin permiso» porque la API responde 403.
 - **Roles y estado:** se muestran tal como llegan. Nada decide por el nombre o el código de un rol. El estado es el de la membresía, no el de la cuenta.
+- **Sucursal (F2-71):** bajo los roles, «Sucursal: nombre (código)» con el `default_branch` de la fila (F2-70), o «Sin sucursal» si es `null`. Llega con el directorio: no hay otra petición ni otro permiso, y la ve quien ve la lista. La pantalla no dice si esa sucursal está inactiva, porque el directorio no lo trae, y todavía no la asigna: hoy solo se cambia por API (`PUT …/members/{id}/branch/`, F2-69).
 - **Título de la pestaña:** «Miembros · organización · Good Doggy CRM». Lo pone el shell a partir de la entrada de navegación de la ruta.
-- Invitar, dar de baja y cambiar roles son otros work items.
+- Invitar, dar de baja y asignar la sucursal son otros work items.
 
 ### Lista por cursor compartida (F2-24)
 

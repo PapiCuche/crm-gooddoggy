@@ -92,9 +92,11 @@
   "members": {
     "eyebrow": "Good Doggy / Miembros",
     "title": "Miembros",
-    "intro": "Las personas que pertenecen a {organization}, con su estado y sus roles.",
+    "intro": "Las personas que pertenecen a {organization}, con su estado, sus roles y su sucursal.",
     "roles": "Roles",
     "noRole": "Sin rol",
+    "branch": "Sucursal: {name} ({code})",
+    "noBranch": "Sin sucursal",
     "status": {
       "INVITED": "Invitado",
       "ACTIVE": "Activo",

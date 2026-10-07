@@ -64,16 +64,27 @@ export function MembersList() {
               <span className="text-muted text-sm wrap-anywhere">{member.user.email}</span>
             ) : null}
           </p>
-          <ul aria-label={t("members.roles")} className="flex flex-wrap gap-1.5">
-            {member.roles.map((role) => (
-              <li key={role.code} className="bg-background rounded-md px-2 py-0.5 text-sm">
-                {role.name}
-              </li>
-            ))}
-            {member.roles.length === 0 ? (
-              <li className="text-muted text-sm">{t("members.noRole")}</li>
-            ) : null}
-          </ul>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <ul aria-label={t("members.roles")} className="flex flex-wrap gap-1.5">
+              {member.roles.map((role) => (
+                <li key={role.code} className="bg-background rounded-md px-2 py-0.5 text-sm">
+                  {role.name}
+                </li>
+              ))}
+              {member.roles.length === 0 ? (
+                <li className="text-muted text-sm">{t("members.noRole")}</li>
+              ) : null}
+            </ul>
+            {/* La sucursal de la membresía (F2-70): llega con la fila, no se pide aparte. */}
+            <p className="text-muted text-sm wrap-anywhere">
+              {member.default_branch
+                ? t("members.branch", {
+                    name: member.default_branch.name,
+                    code: member.default_branch.code,
+                  })
+                : t("members.noBranch")}
+            </p>
+          </div>
           <p className="flex flex-col text-sm sm:items-end">
             <span
               className={cn(
