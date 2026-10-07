@@ -1,18 +1,27 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
 import { type Ref, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList } from "@/components/lists/cursor-list";
 import { Button } from "@/components/ui/button";
-import { auditList, getAuditListQueryKey } from "@/lib/api/client";
+import { allPages } from "@/lib/all-pages";
+import {
+  auditList,
+  getAuditListQueryKey,
+  getMembersListQueryKey,
+  membersList,
+} from "@/lib/api/client";
 import type {
   AuditActorTypeEnum,
   AuditEntry,
   AuditListParams,
   AuditResultEnum,
+  Member,
 } from "@/lib/api/model";
+import type { ApiError } from "@/lib/http";
 import { text } from "@/lib/message-text";
 import { cn } from "@/lib/utils";
 
@@ -29,8 +38,16 @@ const named = (catalog: unknown, code: unknown) => text(catalog, String(code)) ?
 // nombre se enseña con su código.
 const { actions: ACTIONS, entities: ENTITIES } = messages.audit;
 
-type Filters = { action: string; entity_type: string; actor_type: AuditActorTypeEnum | "" };
-const NONE: Filters = { action: "", entity_type: "", actor_type: "" };
+// `person`: el correo de la persona elegida, que es lo que lleva su opción. Su identificador no
+// llega al DOM: se busca en el directorio al enviar.
+type Filters = {
+  action: string;
+  entity_type: string;
+  actor_type: AuditActorTypeEnum | "";
+  person: string;
+};
+const NONE: Filters = { action: "", entity_type: "", actor_type: "", person: "" };
+const fullName = (user: Member["user"]) => `${user.first_name} ${user.last_name}`.trim();
 type Options = readonly (readonly [code: string, name: string])[];
 // Lo que cada selector ofrece: lo que esta pantalla sabe nombrar, en el orden del catálogo.
 const ACTION_OPTIONS: Options = Object.entries(ACTIONS).flatMap(([module, names]) =>
@@ -89,15 +106,40 @@ function Choice({
 export function AuditList() {
   const t = useTranslations("audit");
   const format = useFormatter();
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Quién es cada persona (F2-77): la auditoría solo trae `actor_id`, la cuenta. A quien la API
+  // dijo que puede ver a los miembros se le pide el directorio y se empareja aquí; a quien no,
+  // ni se le pide. Si falla o tarda, la lista funciona igual, sin nombres: no es su error.
+  const seesPeople = permissions.some((grant) => grant.code === "users.view");
+  const people = useQuery<Member[], ApiError>({
+    queryKey: [...getMembersListQueryKey(organization.slug), "all"],
+    queryFn: ({ signal }) =>
+      allPages((cursor) =>
+        membersList(organization.slug, { limit: 200, ...(cursor ? { cursor } : {}) }, { signal }),
+      ),
+    enabled: seesPeople,
+    gcTime: 0, // como la lista: al salir no queda en memoria
+  });
+  const directory = seesPeople ? (people.data ?? []) : [];
+  const names = new Map(
+    directory.map((member) => [member.user.id, fullName(member.user) || member.user.email]),
+  );
+  const peopleOptions: Options = directory
+    .map(({ user }) => {
+      const name = fullName(user);
+      return [user.email, name ? `${name} (${user.email})` : user.email] as const;
+    })
+    .sort(([, one], [, other]) => one.localeCompare(other, "es"));
   // Filtros (F2-76): lo elegido en cada selector; vacío es «sin filtro» y no se envía (la API
   // responde 400 a un filtro vacío). Los valores salen de las listas de esta pantalla.
   const [chosen, setChosen] = useState<Filters>(NONE);
   const first = useRef<HTMLSelectElement>(null);
+  const person = directory.find(({ user }) => user.email === chosen.person)?.user;
   const filters: AuditListParams = {
     ...(chosen.action ? { action: chosen.action } : {}),
     ...(chosen.entity_type ? { entity_type: chosen.entity_type } : {}),
     ...(chosen.actor_type ? { actor_type: chosen.actor_type } : {}),
+    ...(person ? { actor_id: person.id } : {}),
   };
   const filtered = Object.keys(filters).length > 0;
   const choose = (name: keyof Filters) => (value: string) =>
@@ -114,7 +156,7 @@ export function AuditList() {
       }
       controls={
         <div role="group" aria-label={t("filters.title")} className="flex flex-col gap-3">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className={cn("grid gap-3", seesPeople ? "sm:grid-cols-2" : "sm:grid-cols-3")}>
             <Choice
               ref={first}
               label={t("filters.action")}
@@ -137,6 +179,15 @@ export function AuditList() {
               options={ACTOR_OPTIONS}
               onChange={choose("actor_type")}
             />
+            {seesPeople && !people.isError ? (
+              <Choice
+                label={t("filters.person")}
+                all={t("filters.anyPerson")}
+                value={chosen.person}
+                options={peopleOptions}
+                onChange={choose("person")}
+              />
+            ) : null}
           </div>
           {filtered ? (
             <Button
@@ -157,6 +208,10 @@ export function AuditList() {
     >
       {(entry) => {
         const action = text(ACTIONS, entry.action);
+        // Lo anotado en su momento, si lo hay; si no, la persona del directorio con esa cuenta.
+        const who =
+          entry.actor_label ||
+          (entry.actor_type === "USER" && entry.actor_id ? names.get(entry.actor_id) : undefined);
         return (
           <>
             <p className="flex min-w-0 flex-col leading-snug">
@@ -173,9 +228,9 @@ export function AuditList() {
                 })}
               </p>
               <p className="text-muted wrap-anywhere">
-                {t(entry.actor_label ? "byNamed" : "by", {
+                {t(who ? "byNamed" : "by", {
                   actor: named(ACTORS, entry.actor_type),
-                  label: entry.actor_label ?? "",
+                  label: who ?? "",
                 })}
               </p>
             </div>

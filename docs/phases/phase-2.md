@@ -97,6 +97,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-74 | [#206](https://github.com/PapiCuche/crm-gooddoggy/issues/206) Audit log: filters by actor, action and entity | `feature/f2-audit-filters-api` | #204 | backend |
 | F2-75 | [#208](https://github.com/PapiCuche/crm-gooddoggy/issues/208) Audit screen: read-only list | `feature/f2-audit-screen` | #206 | frontend |
 | F2-76 | [#210](https://github.com/PapiCuche/crm-gooddoggy/issues/210) Audit screen: filters by action, entity and actor type | `feature/f2-audit-filters-ui` | #208 | frontend |
+| F2-77 | [#212](https://github.com/PapiCuche/crm-gooddoggy/issues/212) Audit screen: who did it, by name, and filter by person | `feature/f2-audit-actor-name-ui` | #210 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -212,7 +213,7 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 Se registran como `OBS-F2-<nn>-<n>`.
 
 ### OBS-F2-75-1 — Auditoría, pantalla: enseña menos de lo que la API devuelve
-F2-75 (#208) añade la pantalla «Auditoría» como lista de solo lectura. Decisión del programa (ADR-015 §5), a confirmar: **no enseña `changes` ni `metadata`** hasta que el mantenedor responda a OBS-F2-73-1; tampoco identificadores, y no busca el nombre de la persona que actuó (sí enseña `actor_label` si la fila la trae; hoy ninguna acción la anota). No es una barrera: la API los devuelve a quien tiene `audit.view`. La pantalla nombra en español las acciones y los tipos de entidad que hoy se escriben; lo que no tiene nombre se ve con su código. F2-76 (#210) añade tres filtros en pantalla (acción, tipo de entidad, tipo de actor) sobre los de la API: solo ofrecen lo que la pantalla sabe nombrar, y una acción nueva del backend no se puede filtrar hasta que tiene nombre.
+F2-75 (#208) añade la pantalla «Auditoría» como lista de solo lectura. Decisión del programa (ADR-015 §5), a confirmar: **no enseña `changes` ni `metadata`** hasta que el mantenedor responda a OBS-F2-73-1; tampoco identificadores, y no busca el nombre de la persona que actuó (sí enseña `actor_label` si la fila la trae; hoy ninguna acción la anota). No es una barrera: la API los devuelve a quien tiene `audit.view`. La pantalla nombra en español las acciones y los tipos de entidad que hoy se escriben; lo que no tiene nombre se ve con su código. F2-76 (#210) añade tres filtros en pantalla (acción, tipo de entidad, tipo de actor) sobre los de la API: solo ofrecen lo que la pantalla sabe nombrar, y una acción nueva del backend no se puede filtrar hasta que tiene nombre. F2-77 (#212) nombra a la persona de cada fila y añade el filtro «Persona», solo para quien tiene `users.view` y con el directorio de miembros que ya puede leer: la API de auditoría sigue sin devolver nombres, y quien solo tiene `audit.view` no ve ninguno.
 
 ### OBS-F2-74-1 — Auditoría, filtros: la forma que fija la primera ruta con filtros
 ADR-016 deja los filtros «para cuando una pantalla los necesite». F2-74 (#206) añade los de la auditoría (`actor_type`, `actor_id`, `action`, `entity_type`, `entity_id`) y con ellos una forma, decisión del programa (ADR-015 §5) a confirmar:
