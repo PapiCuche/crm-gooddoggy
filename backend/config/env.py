@@ -37,6 +37,16 @@ def boolean(name: str, default: bool) -> bool:
     raise ImproperlyConfigured(f"{name} debe ser booleano, no {raw!r}")
 
 
+def integer(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip()
+    if not (value.isascii() and value.isdigit() and len(value) < 10):
+        raise ImproperlyConfigured(f"{name} debe ser un entero no negativo, no {raw!r}")
+    return int(value)
+
+
 def csv_list(name: str) -> list[str]:
     return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
 

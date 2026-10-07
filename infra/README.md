@@ -14,7 +14,7 @@ docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d
 | postgres (18) | 5432 | BD `crm`; roles `crm_migrator` (migraciones) y `crm_app` (runtime, sin BYPASSRLS) — ver ADR-002 |
 | redis (8.8.3) | 6379 | Broker de Celery, capa de Channels y caché (en local, una instancia sin expulsión) |
 | garage (v2.4.1) | 3900 (S3) | Emulador S3 local de un nodo (ADR-012 §6). Bucket privado `STORAGE_BUCKET` y clave creados al arrancar. **Solo local y CI** (AGPL-3.0, OBS-F1-01-2) |
-| mailpit (v1.31.3) | 8025 (UI), 1025 (SMTP) | Captura de emails en desarrollo |
+| mailpit (v1.31.3) | 8025 (UI), 1025 (SMTP) | Captura de emails en desarrollo: recibe el correo saliente de las tareas (`EMAIL_HOST=mailpit`, ADR-019); compose da esas variables a todos los servicios del backend |
 | migrate | — | Job efímero: `migrate` como `crm_migrator` (solo `DATABASE_MIGRATOR_URL`) |
 | backend / ws | internos | Django ASGI (HTTP / WebSocket) como `crm_app` |
 | worker / beat | internos | Celery (broker Redis) como `crm_app`; beat publica el outbox cada 1 s |

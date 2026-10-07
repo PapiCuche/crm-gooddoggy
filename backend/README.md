@@ -44,7 +44,7 @@ DATABASE_MIGRATOR_URL=postgres://crm_migrator:…@localhost:5432/crm uv run pyte
 | `config.settings.test` | pytest | BD desde `DATABASE_URL` |
 | `config.settings.production` | Producción | `DEBUG=False` forzado; falla si `DJANGO_ALLOWED_HOSTS` está vacío, si `FORWARDED_ALLOW_IPS` falta o es `*` (ver «Dirección del cliente»), si la clave es insegura (< 50 caracteres o `django-insecure…`) o si el entorno contiene `DATABASE_MIGRATOR_URL`/`CRM_MIGRATOR_PASSWORD` (ADR-002 §1.1; el error nombra la variable, nunca su valor). Tras validar los hosts añade `127.0.0.1`, `localhost` y `[::1]` para las sondas locales. HSTS, cookies seguras, redirección SSL (excepto `/health/`) |
 
-Variables de producción: `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `FORWARDED_ALLOW_IPS`, `DATABASE_URL`, `DJANGO_CSRF_TRUSTED_ORIGINS` (opcional), `DJANGO_LOG_LEVEL` (opcional). En F1-03 `DATABASE_URL` pasa a ser exclusivamente el rol `crm_app` (ADR-002 §1.1).
+Variables de producción: `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `FORWARDED_ALLOW_IPS`, `DATABASE_URL`, `DJANGO_CSRF_TRUSTED_ORIGINS` (opcional), `DJANGO_LOG_LEVEL` (opcional). El correo saliente es opcional: `EMAIL_HOST` y, con él, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS` o `EMAIL_USE_SSL` y `MAIL_FROM` (ver «Correo saliente»). En F1-03 `DATABASE_URL` pasa a ser exclusivamente el rol `crm_app` (ADR-002 §1.1).
 
 ## Roles de BD y tenancy (F1-03, ADR-002)
 
@@ -674,6 +674,22 @@ Todavía no hay lectura desde la aplicación: solo el rol propietario puede cons
 ## Observabilidad (F1-07, ADR-011)
 
 Logs JSON en stdout (structlog + `logging` estándar, redactados con `core.redaction`) con `request_id`, `correlation_id` e IDs de tenant/actor. El `X-Request-ID` es siempre un UUIDv7 generado por la aplicación. La correlación pasa de HTTP a Celery por cabecera. El log de acceso de uvicorn está apagado (lleva la dirección del cliente y la query string; el redactor solo taparía los patrones de secreto): el log de peticiones es `http.request.completed`. Errores: `NoopReporter` sin `SENTRY_DSN`, `SentryReporter` endurecido con él. Diseño: [docs/architecture/observability.md](../docs/architecture/observability.md).
+
+## Correo saliente (F2-78, ADR-019)
+
+`core.mail.send(Message(to=…, subject=…, body=…, purpose=…))` es la única salida de correo: un destinatario, texto plano y SMTP configurado por entorno, sin proveedor fijado ([ADR-019](../docs/adr/ADR-019-outbound-email.md)). Todavía ningún flujo lo llama: las invitaciones y la recuperación de contraseña son work items siguientes.
+
+- **Solo `core.mail` importa `django.core.mail` o `smtplib`.** Un test lo comprueba sobre `core`, `apps` y `config` (import-linter no distingue submódulos de un paquete externo).
+- **Se llama desde una tarea, nunca dentro de una petición.** Es síncrono, no encola ni reintenta: un fallo de entrega lanza `MailError` y la tarea decide. La conexión tiene un máximo de 10 segundos (`EMAIL_TIMEOUT`).
+- **Un enlace de un solo uso se genera en la tarea que lo envía**: no viaja por el outbox ni como argumento de la tarea, y de él solo se guarda el hash (ADR-019 §4).
+- **Qué rechaza antes de intentar nada (`ValueError`):** lo que no es una sola dirección (varias, con nombre, con espacios) o que el transporte reescribiría después de validar (no ASCII, entre comillas o con una palabra codificada `=?…?=`; un dominio internacionalizado llega en su forma IDNA), saltos de línea o separadores de línea Unicode en la dirección o en el asunto, un asunto vacío o de más de 150 caracteres, un cuerpo vacío, con un carácter nulo o de más de 20.000, y un propósito que no sea un identificador en minúsculas de hasta 32 caracteres. El texto del error no repite lo recibido.
+- **Log:** `mail.sent` y `mail.failed`, con `purpose`, la marca `[EMAIL]` en el lugar de la dirección y, en un fallo, el tipo de la excepción. Nunca el asunto, el cuerpo ni el texto del error de SMTP, que puede repetir la dirección. `MailError` tampoco lleva la excepción original, ni como `__context__`.
+- **Configuración:** `MAIL_BACKEND` (`smtp`, o `memory` en tests), `EMAIL_HOST`, `EMAIL_PORT` (587 por defecto), `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS` (STARTTLS), `EMAIL_USE_SSL` (TLS implícito) y `MAIL_FROM`. Sin `EMAIL_HOST` o sin `MAIL_FROM`, `send` lanza `ImproperlyConfigured`: no hay envío silencioso a ninguna parte.
+- **`production`:** arranca sin servidor de correo; con `EMAIL_HOST`, exige cifrado (`EMAIL_USE_TLS` o `EMAIL_USE_SSL`, uno de los dos), `MAIL_FROM` y las dos credenciales, y `MAIL_BACKEND` solo puede ser `smtp`.
+- **Local:** el stack envía a Mailpit (`EMAIL_HOST=mailpit`, puerto 1025, sin cifrado ni credenciales); los correos se ven en `http://localhost:8025`. Los tests usan el backend en memoria de Django.
+- **`Message` se construye por nombre** (`Message(to=…, subject=…, body=…, purpose=…)`) y su `repr` solo enseña el propósito: ni la dirección ni el contenido llegan a una traza por accidente.
+- **El backend de correo por defecto de Django es el que no envía nada** (`EMAIL_BACKEND` = `dummy`): lo que no pase por `core.mail`, como el aviso a `ADMINS` del `AdminEmailHandler` de Django, no abre una conexión SMTP con las credenciales configuradas.
+- **Lo que no hay:** HTML, adjuntos, varios destinatarios, plantillas, límite de envío (lo pone cada flujo), detección de rebotes ni configuración de dominio (SPF, DKIM): dependen del proveedor que elija el despliegue.
 
 ## Object storage y HTTP saliente (F1-08)
 

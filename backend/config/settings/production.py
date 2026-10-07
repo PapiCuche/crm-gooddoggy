@@ -8,7 +8,17 @@ from django.core.exceptions import ImproperlyConfigured
 
 from config import env
 from config.settings.base import *  # noqa: F403
-from config.settings.base import ALLOWED_HOSTS, SECRET_KEY
+from config.settings.base import (
+    ALLOWED_HOSTS,
+    DEFAULT_FROM_EMAIL,
+    EMAIL_HOST,
+    EMAIL_HOST_PASSWORD,
+    EMAIL_HOST_USER,
+    EMAIL_USE_SSL,
+    EMAIL_USE_TLS,
+    MAIL_BACKEND,
+    SECRET_KEY,
+)
 
 # ADR-002 §1.1: la credencial del migrador (BYPASSRLS) es exclusiva del job de migraciones.
 # web/worker/ws/beat se niegan a arrancar si la reciben. Solo se nombra la variable, nunca su valor.
@@ -36,6 +46,21 @@ if _storage.geturl() and (_storage.scheme != "https" or _storage.username or _st
     raise ImproperlyConfigured(
         "STORAGE_ENDPOINT_URL de production debe ser https y sin credenciales"
     )
+
+# ADR-019: sin servidor de correo, enviar falla al intentarlo. Con servidor, va cifrado
+# (STARTTLS o TLS implícito, no los dos), con remitente y con credenciales.
+if EMAIL_HOST and not (
+    EMAIL_USE_TLS != EMAIL_USE_SSL
+    and DEFAULT_FROM_EMAIL
+    and EMAIL_HOST_USER
+    and EMAIL_HOST_PASSWORD
+):
+    raise ImproperlyConfigured(
+        "El correo de production (EMAIL_HOST) exige EMAIL_USE_TLS o EMAIL_USE_SSL (uno de los"
+        " dos), MAIL_FROM, EMAIL_HOST_USER y EMAIL_HOST_PASSWORD"
+    )
+if MAIL_BACKEND != "smtp":
+    raise ImproperlyConfigured("MAIL_BACKEND de production debe ser smtp")
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

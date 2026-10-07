@@ -16,6 +16,22 @@ BASE_ENV: dict[str, str | None] = {
     "CRM_MIGRATOR_PASSWORD": None,
     "UVICORN_FORWARDED_ALLOW_IPS": None,
     "STORAGE_ENDPOINT_URL": None,
+    "MAIL_BACKEND": None,
+    "EMAIL_HOST": None,
+    "EMAIL_PORT": None,
+    "EMAIL_HOST_USER": None,
+    "EMAIL_HOST_PASSWORD": None,
+    "EMAIL_USE_TLS": None,
+    "EMAIL_USE_SSL": None,
+    "MAIL_FROM": None,
+}
+MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
+MAIL_ENV = {
+    "EMAIL_HOST": "smtp.example.com",
+    "EMAIL_HOST_USER": "apikey",
+    "EMAIL_HOST_PASSWORD": MAIL_SECRET,
+    "EMAIL_USE_TLS": "true",
+    "MAIL_FROM": "no-reply@example.com",
 }
 
 
@@ -131,6 +147,45 @@ def test_production_storage_endpoint_requires_tls(
         load_production(monkeypatch, STORAGE_ENDPOINT_URL=valid)
     with pytest.raises(ImproperlyConfigured):
         load_production(monkeypatch, STORAGE_ENDPOINT_URL=endpoint)
+
+
+def test_production_mail_is_optional_but_never_half_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-019 §6: sin servidor arranca (enviar fallará al intentarlo); con servidor, completo."""
+    bare = load_production(monkeypatch)
+    assert (bare.EMAIL_HOST, bare.MAIL_BACKEND, bare.EMAIL_TIMEOUT) == ("", "smtp", 10)  # type: ignore[attr-defined]
+    full = load_production(monkeypatch, **MAIL_ENV, EMAIL_PORT="2525")
+    # Lo que no pasa por `core.mail` (el aviso a ADMINS de Django) no envía nada, ni con servidor.
+    dummy = "django.core.mail.backends.dummy.EmailBackend"
+    assert bare.EMAIL_BACKEND == dummy  # type: ignore[attr-defined]
+    assert full.EMAIL_BACKEND == dummy  # type: ignore[attr-defined]
+    assert (full.EMAIL_HOST, full.EMAIL_PORT) == ("smtp.example.com", 2525)  # type: ignore[attr-defined]
+    assert (full.EMAIL_USE_TLS, full.EMAIL_USE_SSL) == (True, False)  # type: ignore[attr-defined]
+    assert full.DEFAULT_FROM_EMAIL == "no-reply@example.com"  # type: ignore[attr-defined]
+    implicit = {**MAIL_ENV, "EMAIL_USE_TLS": "false", "EMAIL_USE_SSL": "true"}
+    assert load_production(monkeypatch, **implicit).EMAIL_PORT == 587  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"EMAIL_USE_TLS": "false"},  # sin cifrado
+        {"EMAIL_USE_SSL": "true"},  # los dos a la vez
+        {"MAIL_FROM": None},
+        {"EMAIL_HOST_USER": None},
+        {"EMAIL_HOST_PASSWORD": None},
+        {"MAIL_BACKEND": "memory"},
+        {"EMAIL_PORT": "25a"},
+        {"EMAIL_PORT": "-1"},
+    ],
+)
+def test_production_refuses_an_unsafe_mail_server(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, str | None]
+) -> None:
+    with pytest.raises(ImproperlyConfigured) as error:
+        load_production(monkeypatch, **{**MAIL_ENV, **overrides})
+    assert MAIL_SECRET not in str(error.value)  # el error nombra variables, nunca su valor
 
 
 def load_migrate(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> object:

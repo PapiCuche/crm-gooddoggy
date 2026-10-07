@@ -188,6 +188,20 @@ STORAGE_SECRET_ACCESS_KEY = env.optional("STORAGE_SECRET_ACCESS_KEY", "")
 STORAGE_ADDRESSING_STYLE = env.optional("STORAGE_ADDRESSING_STYLE", "path")
 # HTTP saliente (security-boundaries B9): allowlist exacta de hosts; vacía = nada permitido.
 HTTP_ALLOWED_HOSTS: list[str] = env.csv_list("HTTP_ALLOWED_HOSTS")
+# Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
+# El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
+# `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.
+EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
+# Sin EMAIL_HOST no se envía nada: `core.mail.send` falla con un error de configuración.
+MAIL_BACKEND = env.optional("MAIL_BACKEND", "smtp")  # smtp | memory (tests)
+EMAIL_HOST = env.optional("EMAIL_HOST", "")
+EMAIL_PORT = env.integer("EMAIL_PORT", 587)
+EMAIL_HOST_USER = env.optional("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = env.optional("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env.boolean("EMAIL_USE_TLS", False)  # STARTTLS (587)
+EMAIL_USE_SSL = env.boolean("EMAIL_USE_SSL", False)  # TLS implícito (465)
+EMAIL_TIMEOUT = 10  # segundos: una tarea no espera indefinidamente al servidor de correo
+DEFAULT_FROM_EMAIL = env.optional("MAIL_FROM", "")
 # Reporte de errores (ADR-011 §3): sin SENTRY_DSN, NoopReporter (sin red).
 SENTRY_DSN = env.optional("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = env.optional("SENTRY_ENVIRONMENT", "")
