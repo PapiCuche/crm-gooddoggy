@@ -11,6 +11,7 @@ from django.db import ProgrammingError
 from django.test import Client
 
 from apps.access.models import Role
+from apps.access.selectors import Denied
 from apps.members.services import invite
 from apps.organizations.models import UserInvitation
 from apps.organizations.services import TooManyPending, create_invitation
@@ -18,7 +19,7 @@ from core.tenancy.context import TenantContextError
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
-from tests.test_anti_escalation import audit, race, state
+from tests.test_anti_escalation import audit, denied, race, state
 from tests.test_authorization import VIEW, give
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, reply, signed
@@ -90,6 +91,8 @@ def test_it_leaves_a_pending_invitation_without_a_link_and_audits_it(
     )
     assert state(migrator) == (before[0], before[1], before[2] + 1)  # ni roles ni membresías
     assert migrator.execute("SELECT count(*) FROM users").fetchone() == users  # ni una cuenta
+    idn = ask(signed(rbac.ana), "x@BÜCHER.example", [agent.pk]).json()["email"]
+    assert idn == "x@xn--bcher-kva.example"  # el dominio en IDNA: lo que `core.mail` entrega
 
 
 def test_it_needs_both_permissions_and_covering_every_role_it_gives(
@@ -104,12 +107,16 @@ def test_it_needs_both_permissions_and_covering_every_role_it_gives(
     for client in (luis, eva):  # a cada uno le falta uno de los dos, y no se valida nada antes
         for email, roles in (("x@example.com", [rbac.target.pk]), ("no", []), ("x@example.com", 1)):
             assert reply(ask(client, email, roles if roles != 1 else ["no-es-uuid"])) == DENIED
+    for user in (rbac.luis, rbac.eva):  # el servicio relee los dos bajo el bloqueo, sin la ruta
+        asked = {"email": "x@example.com", "role_ids": [rbac.target.pk]}
+        assert denied(rbac.a, user, invite, **asked) is Denied.PERMISSION
     give(rbac.a, rbac.m_luis, {"users.invite": None})  # ahora luis tiene los dos
     for roles in (
         [wide.pk],  # más alcance del que tiene
         [rbac.roles["owner"].pk],
         [manager.pk],  # un permiso sensible lo da solo un Owner, aunque luis lo tenga
         [narrow.pk, wide.pk],  # basta uno que no cubra
+        [narrow.pk, manager.pk],  # sea el más antiguo de los pedidos o el más nuevo
         [wide.pk, uuid4()],  # y lo que no cubre pesa más que lo que no existe
     ):
         assert reply(ask(luis, "x@example.com", roles)) == DENIED, roles
@@ -221,7 +228,7 @@ def test_an_organization_keeps_at_most_fifty_pending_and_makes_a_hundred_a_day(
     limited = ask(ana, "ciento-una@example.com", target)
     assert refused(limited) == (429, "RATE_LIMITED")  # revocadas, pero creadas hoy: cuentan
     migrator.execute(
-        "UPDATE user_invitations SET created_at = now() - interval '25 hours'"
+        "UPDATE user_invitations SET created_at = now() - interval '24 hours 1 minute'"
         " WHERE email LIKE 'cien@%'"
     )
     assert ask(ana, "ciento-una@example.com", target).status_code == 201  # ayer ya no cuenta

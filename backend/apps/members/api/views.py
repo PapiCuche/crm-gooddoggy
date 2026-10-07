@@ -165,7 +165,8 @@ class InvitationsView(APIView):
     aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids`
     vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y
     `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`,
-    `INVITATION_PENDING` o `INVITATION_LIMIT` (50 pendientes). 429: 100 invitaciones en 24 h."""
+    `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no
+    tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h."""
 
     required_permissions = {"POST": ("users.invite", "users.manage")}
 

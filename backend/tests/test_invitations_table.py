@@ -1,4 +1,4 @@
-"""F2-79: la tabla `user_invitations` (ADR-020). Solo la base y el modelo: sin rutas todavía.
+"""F2-79: la tabla `user_invitations` (ADR-020). Solo la base y el modelo: la ruta, en F2-80.
 PostgreSQL con el rol `crm_app`; las restricciones se prueban con el migrador."""
 
 from datetime import UTC, datetime, timedelta
