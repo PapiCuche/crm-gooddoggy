@@ -36,7 +36,7 @@ export function AuditList() {
         auditList(organization.slug, cursor ? { cursor } : undefined, { signal })
       }
       empty={<p className="text-muted">{t("empty")}</p>}
-      rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,3fr)_minmax(0,3fr)_auto] sm:items-start"
+      rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,3fr)_minmax(0,3fr)_minmax(0,2fr)] sm:items-start"
     >
       {(entry) => {
         const action = text(ACTIONS, entry.action);
