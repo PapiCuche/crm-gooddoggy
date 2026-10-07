@@ -103,6 +103,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-80 | [#218](https://github.com/PapiCuche/crm-gooddoggy/issues/218) Invite a person to the organization by API | `feature/f2-invite-api` | #216 | backend |
 | F2-81 | [#220](https://github.com/PapiCuche/crm-gooddoggy/issues/220) List the invitations of the organization by API | `feature/f2-invitations-list` | #218 | backend |
 | F2-82 | [#222](https://github.com/PapiCuche/crm-gooddoggy/issues/222) Revoke a pending invitation by API | `feature/f2-invitation-revoke` | #220 | backend |
+| F2-83 | [#224](https://github.com/PapiCuche/crm-gooddoggy/issues/224) Invitations screen: a read-only list | `feature/f2-invitations-screen` | #222 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

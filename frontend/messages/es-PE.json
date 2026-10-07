@@ -20,6 +20,7 @@
     "nav": {
       "home": "Inicio",
       "members": "Miembros",
+      "invitations": "Invitaciones",
       "roles": "Roles",
       "branches": "Sucursales",
       "teams": "Equipos",
@@ -77,7 +78,8 @@
       "membership": "Membresía",
       "role": "Rol",
       "branch": "Sucursal",
-      "team": "Equipo"
+      "team": "Equipo",
+      "invitation": "Invitación"
     },
     "actions": {
       "organization": {
@@ -88,7 +90,9 @@
         "role_removed": "Rol quitado a un miembro",
         "suspended": "Miembro suspendido",
         "reactivated": "Miembro reactivado",
-        "branch_changed": "Sucursal de un miembro cambiada"
+        "branch_changed": "Sucursal de un miembro cambiada",
+        "invited": "Persona invitada",
+        "invitation_revoked": "Invitación revocada"
       },
       "role": {
         "created": "Rol creado",
@@ -241,6 +245,29 @@
       "cleared": "{name} quedó sin sucursal.",
       "denied": "No tienes permiso para cambiar la sucursal de este miembro.",
       "stale": "No se pudo cambiar la sucursal de {name}: ya no está disponible. Revisa la lista."
+    }
+  },
+  "invitations": {
+    "eyebrow": "Good Doggy / Invitaciones",
+    "title": "Invitaciones",
+    "intro": "Las personas invitadas a {organization} y el estado de cada invitación.",
+    "empty": "Esta organización todavía no ha invitado a nadie.",
+    "count": "{count, plural, =0 {Sin invitaciones en la lista} one {# invitación en la lista} other {# invitaciones en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando invitaciones…",
+    "denied": "No tienes permiso para ver las invitaciones de esta organización.",
+    "invited": "Invitada el {date}",
+    "roles": "Roles",
+    "goneRole": "Un rol que ya no existe",
+    "roleCount": "{count, plural, one {# rol} other {# roles}}",
+    "expires": "Caduca el {date}",
+    "expiry": "Caducidad: {date}",
+    "status": {
+      "PENDING": "Pendiente",
+      "ACCEPTED": "Aceptada",
+      "REVOKED": "Revocada",
+      "EXPIRED": "Caducada"
     }
   },
   "teams": {
