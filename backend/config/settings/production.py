@@ -10,6 +10,7 @@ from config import env
 from config.settings.base import *  # noqa: F403
 from config.settings.base import (
     ALLOWED_HOSTS,
+    APP_ORIGIN,
     DEFAULT_FROM_EMAIL,
     EMAIL_HOST,
     EMAIL_HOST_PASSWORD,
@@ -59,6 +60,9 @@ if EMAIL_HOST and not (
         "El correo de production (EMAIL_HOST) exige EMAIL_USE_TLS o EMAIL_USE_SSL (uno de los"
         " dos), MAIL_FROM, EMAIL_HOST_USER y EMAIL_HOST_PASSWORD"
     )
+# ADR-021 §8: un enlace que cambia una contraseña no viaja por http.
+if EMAIL_HOST and not APP_ORIGIN.startswith("https://"):
+    raise ImproperlyConfigured("Con correo configurado, APP_ORIGIN de production debe ser https")
 if MAIL_BACKEND != "smtp":
     raise ImproperlyConfigured("MAIL_BACKEND de production debe ser smtp")
 

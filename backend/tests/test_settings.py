@@ -24,12 +24,14 @@ BASE_ENV: dict[str, str | None] = {
     "EMAIL_USE_TLS": None,
     "EMAIL_USE_SSL": None,
     "MAIL_FROM": None,
+    "APP_ORIGIN": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
     "EMAIL_HOST": "smtp.example.com",
     "EMAIL_HOST_USER": "apikey",
     "EMAIL_HOST_PASSWORD": MAIL_SECRET,
+    "APP_ORIGIN": "https://app.example.com",
     "EMAIL_USE_TLS": "true",
     "MAIL_FROM": "no-reply@example.com",
 }
@@ -186,6 +188,42 @@ def test_production_refuses_an_unsafe_mail_server(
     with pytest.raises(ImproperlyConfigured) as error:
         load_production(monkeypatch, **{**MAIL_ENV, **overrides})
     assert MAIL_SECRET not in str(error.value)  # el error nombra variables, nunca su valor
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://app.example.com",  # un enlace que cambia una contraseña no viaja por http
+        None,  # ni se compone sin origen
+        "https://app.example.com/",
+        "https://app.example.com/crm",
+        "https://app.example.com?x=1",
+        "https://app.example.com#x",
+        f"https://ana:{MAIL_SECRET}@app.example.com",
+        "https://app.example.com:99999",
+        "https://app.example.com:0",
+        "https://",
+        "app.example.com",
+        "ftp://app.example.com",
+    ],
+)
+def test_production_with_mail_needs_an_https_origin_for_its_links(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    """ADR-021 §8: el origen de los enlaces llega del despliegue, bien formado y por https."""
+    with pytest.raises(ImproperlyConfigured, match="APP_ORIGIN") as error:
+        load_production(monkeypatch, **{**MAIL_ENV, "APP_ORIGIN": value})
+    assert MAIL_SECRET not in str(error.value)  # el error nombra la variable, nunca su valor
+
+
+def test_the_origin_is_optional_without_mail_and_kept_as_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert load_production(monkeypatch).APP_ORIGIN == ""  # type: ignore[attr-defined]
+    local = load_production(monkeypatch, APP_ORIGIN=" http://localhost:8080 ")
+    assert local.APP_ORIGIN == "http://localhost:8080"  # type: ignore[attr-defined]
+    full = load_production(monkeypatch, **{**MAIL_ENV, "APP_ORIGIN": "https://crm.example.pe:8443"})
+    assert full.APP_ORIGIN == "https://crm.example.pe:8443"  # type: ignore[attr-defined]
 
 
 def load_migrate(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> object:

@@ -34,6 +34,8 @@ x-runtime: &runtime
     EMAIL_HOST: mailpit
     EMAIL_PORT: "1025"
     MAIL_FROM: no-reply@crm.local
+    # El origen con el que se componen los enlaces de un correo (ADR-021): el del proxy local.
+    APP_ORIGIN: http://localhost:${PROXY_HOST_PORT:-8080}
   depends_on:
     migrate:
       condition: service_completed_successfully

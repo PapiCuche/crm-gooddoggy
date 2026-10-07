@@ -47,6 +47,28 @@ def integer(name: str, default: int) -> int:
     return int(value)
 
 
+def origin(name: str) -> str:
+    """Un origen web (`https://app.example.com`, con puerto si lo lleva), o vacío si no se da.
+    Sin ruta, consulta, fragmento ni credenciales: con él se componen enlaces."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+        valid = (
+            parts.scheme in ("http", "https")
+            and bool(parts.hostname)
+            and value == f"{parts.scheme}://{parts.netloc}"
+            and "@" not in parts.netloc
+            and parts.port != 0
+        )
+    except ValueError:  # un puerto que no es un número
+        valid = False
+    if not valid:  # solo se nombra la variable: el valor puede llevar credenciales
+        raise ImproperlyConfigured(f"{name} debe ser un origen http(s) sin ruta ni credenciales")
+    return value
+
+
 def csv_list(name: str) -> list[str]:
     return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
 
