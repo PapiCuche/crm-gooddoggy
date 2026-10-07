@@ -4,8 +4,9 @@ sucursal (F2-69) y las invitaciones a la organización (F2-80)."""
 from typing import Any
 from uuid import UUID
 
-from drf_spectacular.utils import extend_schema
-from rest_framework import serializers
+from django.db.models import QuerySet
+from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
+from rest_framework import generics, serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,6 +21,7 @@ from apps.members.services import (
     set_member_branch,
     set_member_status,
 )
+from apps.organizations.selectors import invitations
 from apps.organizations.services import (
     INVITATION_ROLES_MAX,
     INVITATION_STATUSES,
@@ -29,6 +31,7 @@ from apps.organizations.services import (
     TooManyInvitations,
     TooManyPending,
     UnknownBranch,
+    shown_status,
 )
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -147,8 +150,16 @@ class InvitationSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     email = serializers.CharField(help_text="El correo invitado, en la forma en que se guarda.")
     role_ids = serializers.ListField(child=serializers.UUIDField())
-    status = serializers.ChoiceField(choices=INVITATION_STATUSES)
+    status = serializers.SerializerMethodField(
+        help_text="El que se enseña: una pendiente cuya fecha pasó sale como `EXPIRED`."
+    )
     expires_at = serializers.DateTimeField()
+    invited_by = serializers.UUIDField(source="invited_by_id", help_text="La cuenta que invitó.")
+    created_at = serializers.DateTimeField()
+
+    @extend_schema_field(serializers.ChoiceField(choices=INVITATION_STATUSES))
+    def get_status(self, invitation: Any) -> str:
+        return shown_status(invitation.status, invitation.expires_at)
 
 
 # Lo que `create_invitation` rechaza → código, estado y texto de la respuesta.
@@ -160,22 +171,42 @@ _REFUSED = {
 }
 
 
-class InvitationsView(APIView):
-    """Deja creada la invitación de una persona, pendiente y con los roles que tendrá al
-    aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids`
-    vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y
-    `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`,
-    `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no
-    tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h."""
-
-    required_permissions = {"POST": ("users.invite", "users.manage")}
-
-    @extend_schema(
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="invitations_list",
+        tags=["members"],
+        responses={200: InvitationSerializer(many=True), **errors(400, 401, 403, 404)},
+    ),
+    post=extend_schema(
         operation_id="invitations_create",
         tags=["members"],
         request=InviteSerializer,
         responses={201: InvitationSerializer, **errors(400, 401, 403, 404, 409, 429)},
-    )
+        description="Deja creada la invitación de una persona, pendiente y con los roles que "
+        "tendrá al aceptar. Todavía no envía el correo. 400: correo al que no se puede "
+        "escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. "
+        "403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría "
+        "asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 "
+        "pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún "
+        "cambio). 429: 100 invitaciones en 24 h.",
+    ),
+)
+class InvitationsView(generics.ListAPIView[Any]):
+    """Las invitaciones de la organización, en cualquier estado, de la más reciente a la más
+    antigua. Paginado por cursor (ADR-016). Exige lo mismo que invitar. Cada fila lleva
+    identificadores (roles, quien invitó), no nombres, y nunca el enlace ni su hash. `POST`
+    invita (F2-80)."""
+
+    required_permissions = {
+        "GET": ("users.invite", "users.manage"),
+        "POST": ("users.invite", "users.manage"),
+    }
+    serializer_class = InvitationSerializer
+    ordering = "-id"  # UUIDv7: el orden en que se crearon
+
+    def get_queryset(self) -> QuerySet[Any]:
+        return invitations()
+
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = InviteSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
@@ -192,4 +223,4 @@ class InvitationsView(APIView):
             raise serializers.ValidationError({"role_ids": [message]}) from None
         except tuple(_REFUSED) as refused:
             raise ApiError(*_REFUSED[type(refused)]) from None
-        return Response(InvitationSerializer(invitation._asdict()).data, status=201)
+        return Response(InvitationSerializer(invitation).data, status=201)

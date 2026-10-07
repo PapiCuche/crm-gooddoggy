@@ -12,6 +12,10 @@ export interface Invitation {
   /** El correo invitado, en la forma en que se guarda. */
   email: string;
   role_ids: string[];
-  status: InvitationStatusEnum;
+  /** El que se enseña: una pendiente cuya fecha pasó sale como `EXPIRED`. */
+  readonly status: InvitationStatusEnum;
   expires_at: string;
+  /** La cuenta que invitó. */
+  invited_by: string;
+  created_at: string;
 }
