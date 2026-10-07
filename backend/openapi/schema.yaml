@@ -133,14 +133,58 @@ paths:
       description: |-
         La auditoría de la organización, de la fila más reciente a la más antigua. Paginada por
         cursor (ADR-016). Cada fila llega como se guardó: los valores con aspecto de secreto se
-        redactaron al escribirla (ADR-011). Solo lectura.
+        redactaron al escribirla (ADR-011). Solo lectura. Los filtros son por valor exacto y se
+        cumplen todos; la página siguiente se pide con los mismos. 400: un filtro con un valor que
+        ese campo no puede tener, o repetido.
       parameters:
+      - in: query
+        name: action
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description: La acción exacta, por ejemplo `role.created`.
+      - in: query
+        name: actor_id
+        schema:
+          type: string
+          format: uuid
+        description: Quién lo hizo.
+      - in: query
+        name: actor_type
+        schema:
+          enum:
+          - USER
+          - AI_AGENT
+          - SYSTEM
+          - INTEGRATION
+          - PLATFORM_STAFF
+          type: string
+          minLength: 1
+        description: |-
+          * `USER` - USER
+          * `AI_AGENT` - AI_AGENT
+          * `SYSTEM` - SYSTEM
+          * `INTEGRATION` - INTEGRATION
+          * `PLATFORM_STAFF` - PLATFORM_STAFF
       - name: cursor
         in: query
         required: false
         description: El `next` de la página anterior. Sin él, la primera página.
         schema:
           type: string
+      - in: query
+        name: entity_id
+        schema:
+          type: string
+          format: uuid
+        description: La historia de una entidad.
+      - in: query
+        name: entity_type
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 50
       - name: limit
         in: query
         required: false

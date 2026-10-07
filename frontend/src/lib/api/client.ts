@@ -573,7 +573,9 @@ export const getAuditListUrl = (orgSlug: string, params?: AuditListParams) => {
 /**
  * La auditoría de la organización, de la fila más reciente a la más antigua. Paginada por
  * cursor (ADR-016). Cada fila llega como se guardó: los valores con aspecto de secreto se
- * redactaron al escribirla (ADR-011). Solo lectura.
+ * redactaron al escribirla (ADR-011). Solo lectura. Los filtros son por valor exacto y se
+ * cumplen todos; la página siguiente se pide con los mismos. 400: un filtro con un valor que
+ * ese campo no puede tener, o repetido.
  */
 export const auditList = async (
   orgSlug: string,

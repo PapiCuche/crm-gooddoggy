@@ -94,6 +94,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-71 | [#200](https://github.com/PapiCuche/crm-gooddoggy/issues/200) Members screen: each member's branch | `feature/f2-members-branch-ui` | #198 | frontend |
 | F2-72 | [#202](https://github.com/PapiCuche/crm-gooddoggy/issues/202) Members screen: assign a member's branch | `feature/f2-member-branch-ui` | #200 | frontend |
 | F2-73 | [#204](https://github.com/PapiCuche/crm-gooddoggy/issues/204) Audit log: read API | `feature/f2-audit-read-api` | — | backend |
+| F2-74 | [#206](https://github.com/PapiCuche/crm-gooddoggy/issues/206) Audit log: filters by actor, action and entity | `feature/f2-audit-filters-api` | #204 | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
@@ -208,12 +209,19 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 
 Se registran como `OBS-F2-<nn>-<n>`.
 
+### OBS-F2-74-1 — Auditoría, filtros: la forma que fija la primera ruta con filtros
+ADR-016 deja los filtros «para cuando una pantalla los necesite». F2-74 (#206) añade los de la auditoría (`actor_type`, `actor_id`, `action`, `entity_type`, `entity_id`) y con ellos una forma, decisión del programa (ADR-015 §5) a confirmar:
+- **Por valor exacto y todos a la vez.** Sin prefijos (`role.*`), sin varios valores, sin fecha ni resultado. Lo que falte se añade cuando la pantalla lo pida.
+- **Un valor imposible es un 400 en ese filtro**, también vacío o repetido: devolver la lista sin filtrar haría creer que el filtro se aplicó. Un parámetro desconocido se ignora, como en toda la API; una errata en el nombre de un filtro devuelve por tanto la lista sin filtrar.
+- **Dos índices más** en una tabla en la que se inserta con cada cambio auditado: la historia de una entidad y lo que hizo un actor. `action`, `actor_type` y `entity_id` sin `entity_type` recorren el índice del listado; con una auditoría grande y un valor poco frecuente, esa lectura es lenta. Los índices se crean con el mismo bloqueo que el de F2-73 (OBS-F2-73-1).
+- **No cambia qué se lee:** los filtros solo estrechan lo que `audit.view` ya dejaba ver (OBS-F2-73-1).
+
 ### OBS-F2-73-1 — Auditoría, lectura: qué decidió el programa y qué queda por decidir
 E01-13 empieza por la lectura (F2-73, #204). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
 - **Qué se enseña.** Cada fila tal como se guardó, a quien tiene `audit.view`. Ese permiso solo ya deja leer la historia, con los valores anteriores, de los roles y sus concesiones, de los roles, el estado y la sucursal de cada membresía, de las sucursales (dirección y teléfono) y de los equipos: lo que hoy piden `roles.view`, `users.view`, `organization.view` y `teams.view`. De los miembros solo hay identificadores: ni nombres ni correos.
 - **El alta de la organización.** La fila `organization.created` trae en `metadata` al operador de plataforma (`operator`: la etiqueta de OBS-F2-06-3, sin enmascarar aunque tenga forma de correo), su motivo (`reason`, texto libre), `owner_user_id` y `user_created` (si la cuenta del Owner ya existía en la plataforma). Es el registro que ve el Owner (ADR-013 §1), pero hasta F2-73 nadie de la organización podía leerlo. Decidir, antes de la pantalla, si esos campos se enseñan como están.
 - **Datos de otros permisos sensibles.** Cuando la auditoría lleve cambios de costes o de precios (04 §N.2), `audit.view` los enseñaría sin `product_cost.view`. Decidir con el primer módulo que los audite.
-- **Orden.** Por `id`, que genera con su reloj el proceso que escribe; `occurred_at` es el inicio de la transacción en la base. Entre dos peticiones que se solapan, `occurred_at` puede no seguir el orden del listado. Un filtro por fecha (siguiente work item) tendrá que usar `occurred_at`, que además es la clave de partición.
+- **Orden.** Por `id`, que genera con su reloj el proceso que escribe; `occurred_at` es el inicio de la transacción en la base. Entre dos peticiones que se solapan, `occurred_at` puede no seguir el orden del listado. Un filtro por fecha (no está entre los de F2-74) tendrá que usar `occurred_at`, que además es la clave de partición.
 - **`id` no es único en la tabla.** La clave es `(organization_id, occurred_at, id)` y el índice del listado no es único. `record()` lo genera con `new_id()`; dos filas con el mismo `id` (solo con SQL directo) hacen fallar con 500 la página que las separa, y también `get(pk=…)`.
 - **Coste.** El listado no poda particiones: una búsqueda en el índice por partición y por página (13 hoy, 12 más cada año). `changes` y `metadata` no tienen el tope de tamaño de la auditoría de plataforma.
 - **Migración.** `CREATE INDEX` sobre la tabla padre bloquea las inserciones en `audit_logs`, y con ellas cada cambio auditado, hasta que la migración confirma. Hoy la tabla es pequeña. Con una grande: `ON ONLY`, `CONCURRENTLY` por partición y `ATTACH PARTITION`.
