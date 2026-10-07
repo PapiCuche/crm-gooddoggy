@@ -11,7 +11,7 @@ import pytest
 from django.core import mail as outbox
 from django.core.exceptions import ImproperlyConfigured
 
-from core.mail import MailError, Message, send
+from core.mail import MailError, Message, deliverable, send
 from core.observability.logging import json_formatter
 
 TO, SUBJECT, BODY = "ana.lopez@cliente.pe", "Te invitaron a Acme", "Abre el enlace: https://x/y"
@@ -94,6 +94,14 @@ def test_an_invalid_message_is_refused_before_anything_is_sent(changes: dict[str
     assert outbox.outbox == []
     # El error no repite lo que llegó: su texto sí acaba en el log de la tarea que falla.
     assert not any(value in str(error.value) for value in changes.values() if len(value) > 3)
+
+
+def test_deliverable_says_beforehand_what_send_would_do_with_the_address() -> None:
+    assert deliverable(TO) and deliverable("o'brien+x@x.pe")
+    for to in ("", "ana", "ana@", "Ana <ana@x.pe>", "a@x.pe,b@x.pe", '"a b"@x.pe', "añ@x.pe"):
+        assert not deliverable(to), to
+        with pytest.raises(ValueError, match="^to: "):
+            send(Message(to=to, subject=SUBJECT, body=BODY, purpose="invitation"))
 
 
 def test_a_message_is_built_by_name_and_its_repr_shows_only_the_purpose() -> None:

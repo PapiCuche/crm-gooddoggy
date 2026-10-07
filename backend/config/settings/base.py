@@ -176,6 +176,7 @@ SPECTACULAR_SETTINGS = {
         # La auditoría (F2-73): nombres propios, para que otro `result` no se los quede.
         "AuditActorTypeEnum": "apps.audit.models.ACTOR_TYPES",
         "AuditResultEnum": "apps.audit.services.Result",
+        "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.

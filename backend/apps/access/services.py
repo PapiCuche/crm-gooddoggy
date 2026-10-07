@@ -8,11 +8,11 @@ tres restricciones (permisos sensibles, último Owner y que sus concesiones no s
 sí solo no concede nada.
 
 `ensure_can_manage_member` aplica las mismas reglas al estado de una membresía y a su sucursal,
-que escribe `organizations` (F2-19, F2-69, ADR-017): comprueba y conserva el bloqueo; no escribe
-ni audita.
+y `ensure_can_invite` a una invitación (F2-80, ADR-020), que escribe `organizations` (F2-19,
+F2-69, ADR-017): comprueban y conservan el bloqueo; no escriben ni auditan.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -152,6 +152,30 @@ def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving
         holds = assigned.filter(membership_id=membership_id, role=actor.owner).exists()
         if leaving and status == ACTIVE and holds:  # si ya no está activa, no deja de contar
             _owner_remains(actor.alias, actor.owner, membership_id)
+
+
+class UnknownRole(Exception):
+    """Uno de los roles pedidos no es de esta organización."""
+
+
+def ensure_can_invite(ctx: TenantContext, *, role_ids: Collection[UUID]) -> None:
+    """Reglas para invitar a alguien con esos roles (F2-80, ADR-020 §2). Para `apps.members`.
+
+    Permisos `users.invite` y `users.manage`, y el actor cubre todas las concesiones de todos
+    los roles, como para asignarlos: nadie da por invitación lo que no podría dar asignando, y
+    lo sensible, solo un Owner. Un rol de otra organización no existe: `UnknownRole`.
+
+    Si no deniega, el bloqueo del rol Owner dura hasta el final del `tenant_scope`: quien llama
+    escribe la invitación a continuación, en ese mismo scope, y los topes que cuenta sobre la
+    tabla quedan en serie. Una denegación lo libera y no escribe nada.
+    """
+    wanted = {UUID(str(role_id)) for role_id in role_ids}
+    with _change(ctx, "users.manage") as actor:
+        require(actor.ectx, "users.invite")
+        grants = RolePermission.objects.using(actor.alias).filter(role_id__in=wanted)
+        actor.must_cover(grants.values_list("permission_id", "scope"))
+        if Role.objects.using(actor.alias).filter(pk__in=wanted).count() != len(wanted):
+            raise UnknownRole
 
 
 def _member(alias: str, membership_id: UUID) -> str:

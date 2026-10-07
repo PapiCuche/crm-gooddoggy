@@ -1,18 +1,26 @@
-"""Servicios de `organizations`: el estado de una membresía (F2-19, ADR-017) y su sucursal
-(F2-69).
+"""Servicios de `organizations`: el estado de una membresía (F2-19, ADR-017), su sucursal
+(F2-69) y las invitaciones (F2-80, ADR-020).
 
 No comprueban permisos ni las reglas de RBAC: `organizations` no importa `access`. Solo los
-llama `apps.members`, después de `access.services.ensure_can_manage_member` y en el mismo
-`tenant_scope` (contrato de import-linter).
+llama `apps.members`, después de las reglas de `access.services` y en el mismo `tenant_scope`
+(contrato de import-linter).
 """
 
+from collections.abc import Collection
+from datetime import datetime, timedelta
 from typing import NamedTuple
 from uuid import UUID
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.audit.services import Entity, record
-from apps.organizations.models import Branch, OrganizationMembership
+from apps.organizations.models import (
+    INVITATION_MAX_ROLES,
+    Branch,
+    OrganizationMembership,
+    UserInvitation,
+)
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
@@ -30,6 +38,41 @@ class InvalidTransition(Exception):
 
 class UnknownBranch(Exception):
     """La sucursal pedida no es de esta organización."""
+
+
+# ADR-020 §2 y §3: constantes del código.
+INVITATION_LIFETIME = timedelta(days=7)
+INVITATIONS_PENDING_MAX = 50
+INVITATIONS_DAILY_MAX = 100
+# Para quien no importa los modelos del módulo (ADR-017).
+INVITATION_ROLES_MAX = INVITATION_MAX_ROLES
+INVITATION_STATUSES = UserInvitation.Status.choices
+
+
+class AlreadyMember(Exception):
+    """El correo ya tiene membresía en esta organización, en el estado que sea."""
+
+
+class InvitationPending(Exception):
+    """El correo ya tiene una invitación pendiente en esta organización."""
+
+
+class TooManyPending(Exception):
+    """La organización llegó a su tope de invitaciones pendientes."""
+
+
+class TooManyInvitations(Exception):
+    """La organización llegó a su tope de invitaciones creadas en 24 horas."""
+
+
+class InvitationRef(NamedTuple):
+    """Una invitación, para quien no importa los modelos del módulo (ADR-017)."""
+
+    id: UUID
+    email: str
+    role_ids: list[UUID]
+    status: str
+    expires_at: datetime
 
 
 class BranchRef(NamedTuple):
@@ -101,3 +144,46 @@ def set_membership_branch(
             ctx, "membership.branch_changed", Entity("membership", membership.pk), changes, named
         )
     return left
+
+
+def create_invitation(
+    ctx: TenantContext, *, email: str, role_ids: Collection[UUID]
+) -> InvitationRef:
+    """Crea la invitación de `email` a la organización de `ctx` con esos roles, pendiente, sin
+    enlace y con su caducidad, y lo audita (ADR-020). Invita el usuario de `ctx`.
+
+    `email` llega ya en su forma canónica y los roles, ya comprobados: aquí no se miran. Lanza
+    `AlreadyMember`, `InvitationPending`, `TooManyPending` o `TooManyInvitations`, y entonces no
+    escribe. Los topes se cuentan sobre la tabla: quien llama tiene el bloqueo de RBAC de la
+    organización, y dos invitaciones no los cuentan a la vez. Una pendiente caducada cuenta
+    como pendiente, también para su correo: sigue ocupando su sitio hasta que se revoque.
+    """
+    alias = require_scope(ctx)
+    if ctx.user_id is None:
+        raise ValueError("una invitación la crea una persona")
+    with transaction.atomic(using=alias):  # savepoint: la invitación y su auditoría, o ninguna
+        if OrganizationMembership.objects.using(alias).filter(user__email=email).exists():
+            raise AlreadyMember
+        rows = UserInvitation.objects.using(alias)
+        pending = rows.filter(status=UserInvitation.Status.PENDING)
+        if pending.filter(email=email).exists():
+            raise InvitationPending
+        if pending.count() >= INVITATIONS_PENDING_MAX:
+            raise TooManyPending
+        now = timezone.now()
+        if rows.filter(created_at__gt=now - timedelta(hours=24)).count() >= INVITATIONS_DAILY_MAX:
+            raise TooManyInvitations
+        invitation = rows.create(
+            email=email,
+            role_ids=sorted(UUID(str(role_id)) for role_id in role_ids),
+            expires_at=now + INVITATION_LIFETIME,
+            invited_by_id=ctx.user_id,
+        )
+        changes = {
+            "email": [None, email],
+            "role_ids": [None, [str(role_id) for role_id in invitation.role_ids]],
+        }
+        record(ctx, "membership.invited", Entity("invitation", invitation.pk), changes)
+    return InvitationRef(
+        invitation.pk, email, invitation.role_ids, invitation.status, invitation.expires_at
+    )

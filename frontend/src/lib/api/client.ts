@@ -28,6 +28,8 @@ import type {
   BranchesListParams,
   Error,
   GrantScopeRequest,
+  Invitation,
+  InviteRequest,
   LoginRequest,
   MemberBranch,
   MemberBranchChangeRequest,
@@ -1044,6 +1046,114 @@ export const useBranchesUpdate = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getBranchesUpdateMutationOptions(options), queryClient);
+};
+
+export const getInvitationsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/invitations/`;
+};
+
+/**
+ * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al
+ * aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids`
+ * vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y
+ * `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`,
+ * `INVITATION_PENDING` o `INVITATION_LIMIT` (50 pendientes). 429: 100 invitaciones en 24 h.
+ */
+export const invitationsCreate = async (
+  orgSlug: string,
+  inviteRequest: InviteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Invitation> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Invitation>(getInvitationsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(inviteRequest),
+  });
+};
+
+export const getInvitationsCreateMutationKey = () => ["invitationsCreate"] as const;
+
+export const getInvitationsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsCreate>>,
+    TError,
+    InvitationsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsCreate>>,
+  TError,
+  InvitationsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsCreate>>,
+    InvitationsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return invitationsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsCreate>>
+>;
+export type InvitationsCreateMutationBody = InviteRequest;
+export type InvitationsCreateMutationError = ErrorType<Error>;
+export type InvitationsCreateMutationVariables = { orgSlug: string; data: InviteRequest };
+
+export const useInvitationsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsCreate>>,
+      TError,
+      InvitationsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsCreate>>,
+  TError,
+  InvitationsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsCreateMutationOptions(options), queryClient);
 };
 
 export const getMeContextUrl = (orgSlug: string) => {
