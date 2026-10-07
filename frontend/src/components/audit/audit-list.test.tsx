@@ -1,8 +1,9 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { AuditEntry, SelfContext } from "@/lib/api/model";
+import type { AuditEntry, Member, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
 import { AuditList } from "./audit-list";
@@ -31,9 +32,9 @@ const entry = (id: string, extra: Partial<AuditEntry> = {}): AuditEntry => ({
   correlation_id: `corr-${id}`,
   ...extra,
 });
-const screenOf = () =>
+const screenOf = (context = tenant) =>
   renderApp(
-    <TenantProvider value={tenant}>
+    <TenantProvider value={context}>
       <AuditList />
     </TenantProvider>,
   );
@@ -347,6 +348,192 @@ describe("AuditList", () => {
       // Con la negativa los filtros siguen montados: el foco no se queda sin sitio.
       expect(screen.getByRole("group", { name: "Filtros" })).toBeVisible();
       expect(select("Entidad")).toHaveFocus();
+    });
+  });
+
+  describe("quién fue", () => {
+    const MEMBERS = "GET /api/v1/o/acme/members/?limit=200";
+    const seesPeople: SelfContext = {
+      ...tenant,
+      permissions: [...tenant.permissions, { code: "users.view", scopes: [] }],
+    };
+    // La membresía (`m-…`) y la cuenta (`u-…`) con ids distintos: la auditoría guarda la cuenta.
+    const member = (id: string, first_name: string, last_name: string): Member => ({
+      id: `m-${id}`,
+      status: "ACTIVE",
+      joined_at: "2026-10-04T15:49:34Z",
+      default_branch: null,
+      user: { id: `u-${id}`, email: `${id}@acme.pe`, first_name, last_name },
+      roles: [],
+    });
+    const [ana, luis, zoe] = [
+      member("ana", "Ana", "López"),
+      member("luis", "", ""),
+      member("zoe", "Érika", "Zoe"),
+    ];
+    const directory = {
+      [MEMBERS]: { status: 200, body: { results: [zoe], next: "p2" } },
+      [`${MEMBERS}&cursor=p2`]: { status: 200, body: { results: [ana, luis], next: null } },
+    };
+    const urls = (api: ReturnType<typeof mockApi>) => api.mock.calls.map(([url]) => String(url));
+    const page = (...results: AuditEntry[]) => ({ status: 200, body: { results, next: null } });
+    const who = () => rows().map((row) => lines(row)[3]);
+    const grid = () => screen.getByRole("group", { name: "Filtros" }).firstElementChild;
+
+    it("con `users.view` nombra a cada persona con el directorio, todas sus páginas", async () => {
+      const api = mockApi({
+        ...directory,
+        [LIST]: page(
+          entry("a1", { actor_id: "u-ana" }),
+          entry("a2", { actor_id: "u-luis" }), // sin nombre: su correo
+          entry("a3", { actor_id: "u-nadie" }), // ya no está en el directorio
+          entry("a4", { actor_id: "m-ana" }), // el id de la membresía no es el de la cuenta
+          entry("a5", { actor_id: "u-ana", actor_type: "AI_AGENT" }), // solo las personas
+          entry("a6", { actor_id: "u-ana", actor_label: "Ana de entonces" }), // lo anotado gana
+          entry("a7", { actor_id: null }),
+        ),
+      });
+      const view = screenOf(seesPeople);
+      await waitFor(() =>
+        expect(who()).toEqual([
+          "Por: una persona (Ana López)",
+          "Por: una persona (luis@acme.pe)",
+          "Por: una persona",
+          "Por: una persona",
+          "Por: un agente de IA",
+          "Por: una persona (Ana de entonces)",
+          "Por: una persona",
+        ]),
+      );
+      expect(urls(api).sort()).toEqual([
+        "/api/v1/o/acme/audit/",
+        "/api/v1/o/acme/members/?limit=200",
+        "/api/v1/o/acme/members/?limit=200&cursor=p2",
+      ]);
+      // Ningún identificador en el DOM: ni el de la cuenta ni el de la membresía.
+      const dom = new XMLSerializer().serializeToString(document.body);
+      for (const hidden of ["u-ana", "u-luis", "u-zoe", "m-ana", "u-nadie"])
+        expect(dom).not.toContain(hidden);
+      expect(grid()).toHaveClass("sm:grid-cols-2"); // cuatro selectores: de dos en dos
+      view.unmount(); // al salir, el directorio tampoco queda en memoria
+      await waitFor(() => expect(view.client.getQueryCache().getAll()).toEqual([]));
+    });
+
+    it("sin `users.view` ni pide el directorio ni ofrece «Persona»", async () => {
+      const api = mockApi({ ...directory, [LIST]: page(entry("a1", { actor_id: "u-ana" })) });
+      screenOf();
+      await screen.findByRole("list", { name: "Auditoría" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(who()).toEqual(["Por: una persona"]);
+      expect(urls(api)).toEqual(["/api/v1/o/acme/audit/"]);
+      expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("combobox")).toHaveLength(3);
+      expect(grid()).toHaveClass("sm:grid-cols-3");
+    });
+
+    it("si `users.view` desaparece con la pantalla abierta, se van «Persona» y los nombres", async () => {
+      mockApi({ ...directory, [LIST]: page(entry("a1", { actor_id: "u-ana" })) });
+      // El contexto cambia en su sitio: `TenantGate` lo vuelve a pedir al volver a la ventana.
+      function Session() {
+        const [context, setContext] = useState(seesPeople);
+        return (
+          <TenantProvider value={context}>
+            <AuditList />
+            <button onClick={() => setContext(tenant)}>pierde el permiso</button>
+          </TenantProvider>
+        );
+      }
+      renderApp(<Session />);
+      await screen.findByRole("combobox", { name: "Persona" });
+      await screen.findByText("Por: una persona (Ana López)");
+      fireEvent.click(screen.getByRole("button", { name: "pierde el permiso" }));
+      expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument();
+      expect(who()).toEqual(["Por: una persona"]); // lo ya leído tampoco se enseña
+      expect(grid()).toHaveClass("sm:grid-cols-3");
+    });
+
+    it("«Persona» filtra por la cuenta de quien se elige, y se quita con los demás", async () => {
+      const api = mockApi({
+        ...directory,
+        [LIST]: page(entry("a1")),
+        [`${LIST}?actor_id=u-zoe`]: page(entry("a2", { actor_id: "u-zoe" })),
+        [`${LIST}?actor_type=USER&actor_id=u-zoe`]: page(),
+      });
+      screenOf(seesPeople);
+      const select = (await screen.findByRole("combobox", {
+        name: "Persona",
+      })) as HTMLSelectElement;
+      await waitFor(() => expect(select.options).toHaveLength(4));
+      expect([...select.options].map((option) => [option.value, option.text])).toEqual([
+        ["", "Cualquiera"],
+        ["ana@acme.pe", "Ana López (ana@acme.pe)"], // por su texto; el valor, el correo
+        ["zoe@acme.pe", "Érika Zoe (zoe@acme.pe)"], // ni por correo ni por código: É tras la A
+        ["luis@acme.pe", "luis@acme.pe"],
+      ]);
+      select.focus();
+      fireEvent.change(select, { target: { value: "zoe@acme.pe" } });
+      await waitFor(() => expect(who()).toEqual(["Por: una persona (Érika Zoe)"]));
+      expect(select).toHaveFocus();
+      expect(select).toHaveValue("zoe@acme.pe");
+      const dom = new XMLSerializer().serializeToString(document.body); // ni con alguien elegido
+      for (const hidden of ["u-zoe", "m-zoe"]) expect(dom).not.toContain(hidden);
+      fireEvent.change(screen.getByRole("combobox", { name: "Quién" }), {
+        target: { value: "USER" },
+      });
+      await screen.findByText("Ningún registro coincide con estos filtros.");
+      fireEvent.click(screen.getByRole("button", { name: "Quitar filtros" }));
+      await waitFor(() => expect(rows()).toHaveLength(1));
+      expect(select).toHaveValue("");
+      expect(urls(api).filter((url) => url.includes("/audit/"))).toEqual([
+        "/api/v1/o/acme/audit/",
+        "/api/v1/o/acme/audit/?actor_id=u-zoe", // la cuenta, no la membresía ni el correo
+        "/api/v1/o/acme/audit/?actor_type=USER&actor_id=u-zoe",
+        "/api/v1/o/acme/audit/",
+      ]);
+    });
+
+    it("si el directorio falla, la auditoría sigue: sin nombres, sin aviso y sin «Persona»", async () => {
+      const api = mockApi({
+        [MEMBERS]: { status: 500, body: { code: "INTERNAL_ERROR" } },
+        [LIST]: page(entry("a1", { actor_id: "u-ana" })),
+      });
+      screenOf(seesPeople);
+      await screen.findByRole("list", { name: "Auditoría" });
+      await waitFor(() =>
+        expect(urls(api).filter((url) => url.includes("/members/"))).toHaveLength(2),
+      ); // la aplicación reintenta una lectura una vez
+      await waitFor(() =>
+        expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument(),
+      );
+      expect(who()).toEqual(["Por: una persona"]);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getAllByRole("combobox")).toHaveLength(3);
+    });
+
+    it("«Persona» llega con el directorio, y un fallo al volver a pedirlo no la quita", async () => {
+      let down = false;
+      const api = mockApi({
+        [MEMBERS]: () =>
+          down
+            ? { status: 500, body: { code: "INTERNAL_ERROR" } }
+            : { status: 200, body: { results: [ana], next: null } },
+        [LIST]: page(entry("a1", { actor_id: "u-ana" })),
+      });
+      const view = screenOf(seesPeople);
+      expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument(); // aún no
+      const select = await screen.findByRole("combobox", { name: "Persona" });
+      await screen.findByText("Por: una persona (Ana López)");
+      select.focus();
+      down = true;
+      fireEvent(window, new Event("visibilitychange")); // al volver a la ventana se pide otra vez
+      const read = () => view.client.getQueryState(["/api/v1/o/acme/members/", "all"]);
+      await waitFor(() => expect(read()?.status).toBe("error"));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(urls(api).filter((url) => url.includes("/members/"))).toHaveLength(3);
+      expect(select).toBeInTheDocument(); // el mismo selector, con su foco y con lo ya leído
+      expect(select).toHaveFocus();
+      expect(who()).toEqual(["Por: una persona (Ana López)"]);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
   });
 });

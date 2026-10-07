@@ -51,6 +51,8 @@
       "allEntities": "Todas",
       "actor": "Quién",
       "anyActor": "Cualquiera",
+      "person": "Persona",
+      "anyPerson": "Cualquiera",
       "clear": "Quitar filtros",
       "none": "Ningún registro coincide con estos filtros."
     },
