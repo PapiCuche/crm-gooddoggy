@@ -197,6 +197,7 @@ Un slug imposible bajo `/api/v1/o/` responde 404 sin llegar a ninguna vista. El 
 - **Errores:** un `limit` fuera de rango o un `cursor` ilegible o con una forma que la API no emite responden 400 `VALIDATION_ERROR` con el campo en `fields`. El cursor no va firmado: uno bien formado con otro `id` se acepta y solo cambia desde dónde se leen las filas propias.
 - **Orden:** lo declara la vista con `ordering`, nunca el cliente. Por defecto `id` (UUIDv7: orden de creación); la única alternativa es `-id`. El queryset devuelve cada fila una sola vez (ante un `join` a varios, `Exists` o `distinct()`). Con cualquier otro orden, o con filas repetidas, la vista falla al paginar: el cursor de DRF solo guarda la primera columna, y si no es única y no nula repite o pierde filas.
 - **Tenancy:** se pagina después de `ScopeFilter`. El cursor solo dice desde qué posición se lee; uno fabricado o de otra organización no trae filas ajenas.
+- **Filtros:** no hay un mecanismo general. La primera ruta con filtros es la auditoría (F2-74) y fija la forma: un parámetro de consulta con el nombre del campo, por valor exacto, validado con un serializador y declarado en OpenAPI (`parameters=[…]`); un valor inválido es un 400 en ese campo. Los filtros se aplican antes de paginar y el cursor no los guarda.
 - **Una vista de lista nueva** declara su queryset, `required_permissions` y, en OpenAPI, `**errors(400, 401, 403, 404)`. El tipo `Paginated…List` del contrato lo genera drf-spectacular.
 
 ## Sesión, CSRF y rutas de plataforma (F2-13, ADR-014 §2 y §4)
@@ -613,7 +614,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 
 `core.outbox.emit()` y `apps.audit.services.record()` escriben en la transacción del `tenant_scope` activo: un rollback no deja ni evento ni auditoría. `audit_logs` es append-only para `crm_app` y está particionada por mes, y el redactor (`core.redaction`) se aplica siempre. Se lee con `GET …/audit/` (ver «Auditoría de la organización: lectura»). Diseño y decisiones: [docs/architecture/outbox-audit.md](../docs/architecture/outbox-audit.md).
 
-## Auditoría de la organización: lectura (F2-73, E01-13)
+## Auditoría de la organización: lectura (F2-73 y F2-74, E01-13)
 
 `GET /api/v1/o/{slug}/audit/` devuelve las filas de `audit_logs` de la organización, de la más reciente a la más antigua, paginadas por cursor (ADR-016). Exige el permiso `audit.view`, que es sensible: solo lo delega un Owner.
 
@@ -643,13 +644,15 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - **Cada fila llega como se guardó.** `changes` es `{"campo": [antes, después]}` y `metadata`, el contexto que anotó quien la escribió. Los dos pasaron por el redactor al escribirse (`core.redaction`, ADR-011): la ruta no redacta de nuevo ni añade nada.
 - **Quién:** `actor_type` (`USER`, `AI_AGENT`, `SYSTEM`, `INTEGRATION` o `PLATFORM_STAFF`, los que admite la tabla), `actor_id` (el usuario, si es `USER`) y `actor_label` si se anotó. La ruta no trae el nombre ni el correo del actor. Un comando de plataforma escribe como `SYSTEM` y anota en `metadata` quién lo lanzó: `organization.created` trae `operator` (una etiqueta, sin enmascarar aunque tenga forma de correo), `reason`, `owner_user_id` y `user_created` (OBS-F2-73-1 en [phase-2.md](../docs/phases/phase-2.md)).
 - **Orden:** por `id` descendente. Es un UUIDv7 que genera, con su reloj, el proceso que escribe la fila: prácticamente el orden en que se escribieron. `occurred_at` es la hora de la transacción en la base, en UTC, así que dos filas de una misma operación la comparten y, entre peticiones que se solapan, puede no seguir ese orden.
-- **Sin filtros todavía:** por actor, acción o entidad llegan en el siguiente work item.
+- **Filtros (F2-74):** `actor_type`, `actor_id`, `action`, `entity_type` y `entity_id`, en la consulta. Todos opcionales, por valor exacto, y se cumplen todos los que se envían: `?entity_type=role&entity_id=…` es la historia de un rol; `?actor_id=…`, lo que hizo una persona; `?actor_type=SYSTEM`, lo que no tiene `actor_id`. Un filtro que no encuentra nada devuelve una lista vacía, también con un identificador de otra organización. La página siguiente se pide con el `next` y los mismos filtros: el cursor solo guarda la posición.
+- **Un filtro con un valor imposible es un 400**, no una lista vacía ni la lista sin filtrar: un UUID mal escrito (solo vale la forma canónica con guiones, en mayúsculas o minúsculas), un `actor_type` que la tabla no admite, una `action` o un `entity_type` sin la forma que exige `record()` al escribir (`core.outbox.NAME` y `TYPE`; ni mayúsculas ni espacios), un valor vacío o un filtro repetido. Un parámetro que la ruta no conoce se ignora, como en el resto de la API.
+- **Sin filtro por fecha, por resultado ni por texto**, ni varios valores de un mismo filtro.
 - **Lo que no se devuelve:** `ip`, `user_agent`, `request_id` e `impersonated_by_user_id`. Nada los escribe todavía.
 - **Solo lectura.** El modelo `apps.audit.models.AuditLog` no gestiona la tabla (`managed = False`) y se niega a escribir: `save`, `delete` y las escrituras en bloque de su manager (`bulk_create`, `bulk_update`, `update`, `delete`) lanzan `TypeError`. La tabla se sigue escribiendo solo con `apps.audit.services.record()`, y `crm_app` sigue sin `UPDATE` ni `DELETE` sobre ella. `AuditLog._base_manager`, que Django usa por dentro, no lleva esa guarda.
 - **Aislamiento:** RLS filtra la tabla por organización, además del filtro del manager y del de `ScopeFilter`.
-- **Índice:** `audit_logs_org_id_idx (organization_id, id)`, creado en la tabla padre; PostgreSQL lo repite en cada partición, también en las nuevas.
+- **Índices:** `audit_logs_org_id_idx (organization_id, id)` para el listado; `audit_logs_org_entity_idx (organization_id, entity_type, entity_id, id)` para la historia de una entidad y `audit_logs_org_actor_idx (organization_id, actor_id, id)` para lo que hizo un actor (F2-74). Se crean en la tabla padre; PostgreSQL los repite en cada partición, también en las nuevas. Los filtros `action` y `actor_type` solos no tienen índice propio: con un valor frecuente recorren el del listado hasta llenar la página; con uno raro o que no está, PostgreSQL lee todas las filas de la organización (o las particiones enteras) y ordena. `entity_id` sin `entity_type` usa `audit_logs_org_entity_idx` con un *skip scan* (PostgreSQL 18): una búsqueda por cada tipo de entidad.
 - **Leer no deja rastro:** consultar la auditoría no escribe una fila. Tampoco se auditan los accesos denegados (OBS-F2-05A-4).
-- **Errores:** 400 `VALIDATION_ERROR` (`limit` o `cursor`), 401, 403 `PERMISSION_DENIED` sin el permiso y 404 sin membresía.
+- **Errores:** 400 `VALIDATION_ERROR` (`limit`, `cursor` o un filtro), 401, 403 `PERMISSION_DENIED` sin el permiso y 404 sin membresía.
 - **Capas:** `apps.audit` está en L1 y no importa `apps.access`: la vista declara `required_permissions` y las clases por defecto de DRF hacen el resto.
 
 ## Auditoría de plataforma (F2-10, ADR-013)

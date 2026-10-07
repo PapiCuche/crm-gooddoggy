@@ -12,6 +12,7 @@ export * from "./auditActorTypeEnum";
 export * from "./auditEntry";
 export * from "./auditEntryChanges";
 export * from "./auditEntryMetadata";
+export * from "./auditListActorType";
 export * from "./auditListParams";
 export * from "./auditResultEnum";
 export * from "./branch";

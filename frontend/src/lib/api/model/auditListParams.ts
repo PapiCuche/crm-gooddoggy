@@ -5,12 +5,41 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
+import type { AuditListActorType } from "./auditListActorType";
 
 export type AuditListParams = {
+  /**
+   * La acción exacta, por ejemplo `role.created`.
+   * @minLength 1
+   * @maxLength 100
+   */
+  action?: string;
+  /**
+   * Quién lo hizo.
+   */
+  actor_id?: string;
+  /**
+   * * `USER` - USER
+   * * `AI_AGENT` - AI_AGENT
+   * * `SYSTEM` - SYSTEM
+   * * `INTEGRATION` - INTEGRATION
+   * * `PLATFORM_STAFF` - PLATFORM_STAFF
+   * @minLength 1
+   */
+  actor_type?: AuditListActorType;
   /**
    * El `next` de la página anterior. Sin él, la primera página.
    */
   cursor?: string;
+  /**
+   * La historia de una entidad.
+   */
+  entity_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 50
+   */
+  entity_type?: string;
   /**
    * Filas por página.
    * @minimum 1

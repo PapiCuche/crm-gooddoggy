@@ -1,4 +1,5 @@
-"""F2-73: `GET /api/v1/o/{slug}/audit/`, la auditoría de una organización para leer.
+"""F2-73 y F2-74: `GET /api/v1/o/{slug}/audit/`, la auditoría de una organización para leer y
+filtrar.
 Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
 from datetime import datetime
@@ -211,3 +212,123 @@ def test_the_listing_has_its_index_and_knows_every_actor_type_of_the_table(
         )
     seen = [row["actor_type"] for row in audit(signed(world.ana)).json()["results"]]
     assert seen == list(ACTOR_TYPES)[::-1]
+
+
+def seen(client: Client, **query: Any) -> list[str]:
+    return [row["id"] for row in audit(client, **query).json()["results"]]
+
+
+def test_each_filter_keeps_only_its_rows_and_they_all_apply_together(world: Any) -> None:
+    give(world.a, world.membership, VIEW)
+    person, bot, thing, other = uuid4(), uuid4(), uuid4(), uuid4()
+
+    def by(org: UUID, kind: ActorType, actor: UUID | None, action: str, *entity: Any) -> str:
+        tenant = TenantContext(org, "test", None, kind, actor)
+        with tenant_scope(tenant):
+            return str(record(tenant, action, Entity(*entity)))
+
+    longer = by(world.a, ActorType.AI_AGENT, bot, "role.updated_all", "role_grant", other)
+    made = by(world.a, ActorType.USER, person, "role.created", "role", thing)
+    renamed = by(world.a, ActorType.USER, person, "role.updated", "role", thing)
+    by_bot = by(world.a, ActorType.AI_AGENT, bot, "role.updated", "role", other)
+    moved = by(world.a, ActorType.SYSTEM, None, "branch.updated", "branch", thing)
+    by(world.b, ActorType.USER, person, "role.updated", "role", thing)  # lo mismo, en B
+    only_b = uuid4()
+    write(world.b, id=only_b, label="De B")
+    client = signed(world.ana)
+    everything = [moved, by_bot, renamed, made, longer]
+    assert seen(client) == everything
+    assert seen(client, actor_id=person) == [renamed, made]
+    assert seen(client, actor_id=str(person).upper()) == [renamed, made]  # el mismo UUID
+    assert seen(client, actor_type="AI_AGENT") == [by_bot, longer]
+    assert seen(client, actor_type="SYSTEM") == [moved]  # lo que no tiene `actor_id`
+    assert seen(client, action="role.updated") == [by_bot, renamed]  # no `role.updated_all`
+    assert seen(client, entity_type="role") == [by_bot, renamed, made]  # ni `role_grant`
+    assert seen(client, entity_type="role_grant", entity_id=other) == [longer]
+    assert seen(client, entity_id=thing) == [moved, renamed, made]
+    assert seen(client, entity_type="role", entity_id=thing) == [renamed, made]
+    assert seen(client, actor_id=person, action="role.updated") == [renamed]
+    assert seen(client, actor_type="USER", actor_id=bot) == []  # se cumplen todos, no alguno
+    assert seen(client, action="role.deleted") == []  # nada: una lista vacía, no un error
+    assert seen(client, actor_id=uuid4()) == []
+    assert seen(client, entity_id=only_b) == []  # el identificador de otra organización
+    assert seen(client, otro="x", actions="role.created") == everything  # no son filtros
+    first = audit(client, limit=1, entity_type="role").json()
+    assert [row["id"] for row in first["results"]] == [by_bot]
+    assert seen(client, limit=1, entity_type="role", cursor=first["next"]) == [renamed]
+    with CaptureQueriesContext(connection) as captured:
+        audit(client, action="role.updated", actor_id=person)
+    listing = [query["sql"] for query in captured if 'FROM "audit_logs"' in query["sql"]]
+    assert len(listing) == 1  # filtra la base, no la vista
+    assert '"audit_logs"."action" = ' in listing[0] and '"audit_logs"."actor_id" = ' in listing[0]
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("actor_id", "no-es-un-uuid"),
+        ("actor_id", ""),
+        ("entity_id", "123"),
+        ("actor_id", "0x90b0c000007000800000000000000a"),  # `uuid.UUID()` leería 0090b0c0-…
+        ("actor_id", " 190b0c000007000800000000000000a"),  # y aquí, 0190b0c0-…
+        ("entity_id", "190b0c0-0000-7000-8000-000000000001\n"),
+        ("entity_id", "٠١٩٠b0c0-0000-7000-8000-000000000001"),  # dígitos que no son ASCII
+        ("entity_id", "urn:uuid:0190b0c0-0000-7000-8000-000000000001"),  # solo la forma canónica
+        ("entity_id", "0190b0c0000070008000000000000001"),
+        ("actor_id", "0190b0c0-0000-7000-8000-000000000001-"),  # ni nada detrás del UUID
+        ("entity_id", "0190b0c0-0000-7000-8000-000000000001}"),
+        ("actor_type", "user"),  # los valores exactos de la tabla
+        ("actor_type", "ROBOT"),
+        ("actor_type", ""),
+        ("action", "role"),  # sin módulo y acción no es una acción
+        ("action", "Role.Created"),
+        ("action", "role.created "),
+        ("action", " role.created"),
+        ("action", "role.created\n"),
+        ("action", "role.%"),
+        ("action", "a." + "b" * 99),  # 101 caracteres: no cabe en la columna
+        ("action", ""),
+        ("entity_type", "Role"),
+        ("entity_type", "role.x"),
+        ("entity_type", "role "),
+        ("entity_type", "role\n"),
+        ("entity_type", "r" * 51),
+        ("entity_type", ""),
+        ("action", ["role.created", "role.updated"]),  # repetido: no se elige uno
+        ("entity_id", ["0190b0c0-0000-7000-8000-000000000001"] * 2),
+    ],
+)
+def test_a_value_the_field_cannot_hold_is_a_400_on_that_filter(
+    world: Any, name: str, value: Any
+) -> None:
+    give(world.a, world.membership, VIEW)
+    write(world.a)
+    response = audit(signed(world.ana), **{name: value})
+    body = response.json()
+    assert (response.status_code, body["code"]) == (400, "VALIDATION_ERROR")
+    assert list(body["fields"]) == [name]  # ni una lista vacía ni la lista sin filtrar
+
+
+def test_a_filter_is_not_looked_at_before_the_permission(world: Any) -> None:
+    bad: dict[str, Any] = {"action": "Role", "actor_id": "x", "entity_type": ["role", "role"]}
+    assert audit(Client(), **bad).status_code == 401
+    client = signed(world.ana)
+    assert reply(audit(client, **bad)) == DENIED  # sin `audit.view` no hay 400 que lea
+    assert reply(client.head("/api/v1/o/org-a/audit/", bad))[0] == 403
+    assert reply(audit(client, "org-b", **bad)) == NOT_FOUND
+
+
+def test_the_selective_filters_have_their_index_on_every_partition(
+    migrator: psycopg.Connection[Any],
+) -> None:
+    parts = "SELECT count(*) FROM pg_inherits WHERE inhparent = %s::regclass"
+    tables = migrator.execute(parts, ["audit_logs"]).fetchone()
+    for name, columns in (
+        ("audit_logs_org_entity_idx", "(organization_id, entity_type, entity_id, id)"),
+        ("audit_logs_org_actor_idx", "(organization_id, actor_id, id)"),
+    ):
+        index = migrator.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = %s", [name]
+        ).fetchone()
+        assert index is not None and index[0].endswith(f"USING btree {columns}")
+        assert migrator.execute(parts, [name]).fetchone() == tables
