@@ -208,6 +208,17 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 
 Se registran como `OBS-F2-<nn>-<n>`.
 
+### OBS-F2-73-1 — Auditoría, lectura: qué decidió el programa y qué queda por decidir
+E01-13 empieza por la lectura (F2-73, #204). Decisiones del programa autónomo (ADR-015 §5), a confirmar por el mantenedor:
+- **Qué se enseña.** Cada fila tal como se guardó, a quien tiene `audit.view`. Ese permiso solo ya deja leer la historia, con los valores anteriores, de los roles y sus concesiones, de los roles, el estado y la sucursal de cada membresía, de las sucursales (dirección y teléfono) y de los equipos: lo que hoy piden `roles.view`, `users.view`, `organization.view` y `teams.view`. De los miembros solo hay identificadores: ni nombres ni correos.
+- **El alta de la organización.** La fila `organization.created` trae en `metadata` al operador de plataforma (`operator`: la etiqueta de OBS-F2-06-3, sin enmascarar aunque tenga forma de correo), su motivo (`reason`, texto libre), `owner_user_id` y `user_created` (si la cuenta del Owner ya existía en la plataforma). Es el registro que ve el Owner (ADR-013 §1), pero hasta F2-73 nadie de la organización podía leerlo. Decidir, antes de la pantalla, si esos campos se enseñan como están.
+- **Datos de otros permisos sensibles.** Cuando la auditoría lleve cambios de costes o de precios (04 §N.2), `audit.view` los enseñaría sin `product_cost.view`. Decidir con el primer módulo que los audite.
+- **Orden.** Por `id`, que genera con su reloj el proceso que escribe; `occurred_at` es el inicio de la transacción en la base. Entre dos peticiones que se solapan, `occurred_at` puede no seguir el orden del listado. Un filtro por fecha (siguiente work item) tendrá que usar `occurred_at`, que además es la clave de partición.
+- **`id` no es único en la tabla.** La clave es `(organization_id, occurred_at, id)` y el índice del listado no es único. `record()` lo genera con `new_id()`; dos filas con el mismo `id` (solo con SQL directo) hacen fallar con 500 la página que las separa, y también `get(pk=…)`.
+- **Coste.** El listado no poda particiones: una búsqueda en el índice por partición y por página (13 hoy, 12 más cada año). `changes` y `metadata` no tienen el tope de tamaño de la auditoría de plataforma.
+- **Migración.** `CREATE INDEX` sobre la tabla padre bloquea las inserciones en `audit_logs`, y con ellas cada cambio auditado, hasta que la migración confirma. Hoy la tabla es pequeña. Con una grande: `ON ONLY`, `CONCURRENTLY` por partición y `ATTACH PARTITION`.
+- **`AuditLog._base_manager`.** No lleva las guardas: su `bulk_create` inserta sin pasar por el redactor. Nada lo usa.
+
 ### OBS-F2-56-1 — Una ruta puede exigir varios permisos
 Desde F2-56 (#169), `required_permissions` admite por método una tupla de códigos y el motor (`HasPermission`, `ScopeFilter`) los exige todos. Nace de la revisión de F2-55: una ruta que enseña datos de dos clases (un equipo y las personas que lo forman) debe pedir los dos permisos en lugar de elegir uno (ADR-015 §5: la opción más conservadora).
 - No hay implicación entre permisos (ADR-003 §5): exigir dos no hace que uno contenga al otro.
