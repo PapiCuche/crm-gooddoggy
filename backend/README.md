@@ -474,7 +474,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
-`user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, y F2-80 la ruta que invita («Invitar a una persona», abajo). Enviar, listar, revocar y aceptar son los siguientes, y enviar y aceptar esperan a D-F2-14.
+`user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo) y F2-81 la que las lista. Enviar, revocar y aceptar son los siguientes, y enviar y aceptar esperan a D-F2-14.
 
 - **Tenant-owned**, con RLS forzado y FK a su organización. Modelo `apps.organizations.models.UserInvitation`; lectura `organizations.selectors.invitations()`, que filtra por organización y no por permiso.
 - **Campos:** `email` (el correo invitado), `role_ids` (los roles que tendrá, por identificador), `token_hash` (el SHA-256 del enlace de un solo uso; vacío hasta que se envía), `expires_at`, `status` (`PENDING`, `ACCEPTED`, `REVOKED`, `EXPIRED`), `invited_by` (la cuenta que invitó; columna `invited_by_user_id`), `sent_at`, `send_count` (cuántas veces se envió su correo), `accepted_at`, `created_at`, `updated_at`.
@@ -486,7 +486,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Invitar a una persona (F2-80, ADR-020)
 
-`POST /api/v1/o/{slug}/invitations/` con `{"email": "…", "role_ids": ["<uuid>", …]}` deja creada una invitación: pendiente, con los roles que la persona tendrá al aceptar y con caducidad a 7 días. Exige los permisos `users.invite` **y** `users.manage`. Responde 201 con `{"id", "email", "role_ids", "status", "expires_at"}`.
+`POST /api/v1/o/{slug}/invitations/` con `{"email": "…", "role_ids": ["<uuid>", …]}` deja creada una invitación: pendiente, con los roles que la persona tendrá al aceptar y con caducidad a 7 días. Exige los permisos `users.invite` **y** `users.manage`. Responde 201 con la invitación, con la forma de una fila del listado («Listar las invitaciones», abajo).
 
 **Todavía no envía ningún correo, y la invitación no se puede aceptar:** el envío y la aceptación esperan a D-F2-14. Hasta entonces la ruta solo deja la fila y su auditoría.
 
@@ -500,6 +500,28 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Orden de las respuestas:** 401; 403 por permisos, antes de mirar el cuerpo; 400 por la forma del cuerpo y por el correo; 403 por un rol que no se cubre; 400 por un rol que no es de la organización; 409 y 429. Una organización sin rol Owner responde 409 `LAST_OWNER` a quien tiene los dos permisos, como en el resto de cambios bajo el bloqueo de RBAC.
 - **Dónde vive:** `apps.members.services.invite` orquesta `accounts` (la forma del correo), `core.mail` (si es entregable), `access` (las reglas) y `organizations.services.create_invitation` (la fila, los topes y la auditoría), que no comprueba permisos y solo importa `apps.members`.
 - **Lo que no hace:** no genera el enlace ni escribe `token_hash`, `sent_at` o `send_count`; no emite ningún evento para la tarea de envío; no renueva; no lleva equipos ni sucursal. La pantalla de auditoría todavía enseña `membership.invited` por su código.
+
+## Listar las invitaciones (F2-81, ADR-020)
+
+`GET /api/v1/o/{slug}/invitations/` devuelve las invitaciones de la organización, en cualquier estado, de la más reciente a la más antigua, con la paginación por cursor de los demás listados (`?limit=`, `?cursor=`). Exige lo mismo que invitar: `users.invite` **y** `users.manage`. Enseña correos de personas que todavía no son miembros; por eso no basta `users.view`.
+
+```json
+{
+  "id": "…",
+  "email": "nueva.persona@example.com",
+  "role_ids": ["…"],
+  "status": "PENDING",
+  "expires_at": "2026-10-14T11:48:47.253686Z",
+  "invited_by": "…",
+  "created_at": "2026-10-07T11:48:47.254339Z"
+}
+```
+
+- **`status` es el que se enseña** (`organizations.services.shown_status`, ADR-020 §3): una invitación pendiente cuya `expires_at` ya pasó sale como `EXPIRED`, aunque la tabla siga diciendo `PENDING`. Los demás estados salen como están guardados. Para invitar, esa invitación sigue contando como pendiente («Invitar a una persona»).
+- **Identificadores, no nombres:** `role_ids` son los roles guardados, existan todavía o no, e `invited_by` es la cuenta que invitó (el mismo identificador que `actor_id` en la auditoría). Quien quiera nombres los resuelve con el directorio de roles (`roles.view`) y el de miembros (`users.view`), con sus propios permisos.
+- **Lo que no sale:** el hash del enlace, `sent_at`, `send_count` y `accepted_at`.
+- **Una consulta por página**, sean cuantas sean las filas. Sin filtros todavía.
+- La vista es la misma que invita (`apps.members.api.views.InvitationsView`) y lee con `organizations.selectors.invitations()`.
 
 ## Sucursales (F2-43 a F2-45 y F2-68, E01-09)
 

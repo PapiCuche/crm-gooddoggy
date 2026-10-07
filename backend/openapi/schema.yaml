@@ -413,15 +413,78 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
   /api/v1/o/{org_slug}/invitations/:
+    get:
+      operationId: invitations_list
+      description: |-
+        Las invitaciones de la organización, en cualquier estado, de la más reciente a la más
+        antigua. Paginado por cursor (ADR-016). Exige lo mismo que invitar. Cada fila lleva
+        identificadores (roles, quien invitó), no nombres, y nunca el enlace ni su hash. `POST`
+        invita (F2-80).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - members
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedInvitationList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
     post:
       operationId: invitations_create
-      description: |-
-        Deja creada la invitación de una persona, pendiente y con los roles que tendrá al
-        aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids`
-        vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y
-        `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`,
-        `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no
-        tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.
+      description: 'Deja creada la invitación de una persona, pendiente y con los
+        roles que tendrá al aceptar. Todavía no envía el correo. 400: correo al que
+        no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es
+        de la organización. 403: sin `users.invite` y `users.manage`, o con un rol
+        que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`,
+        `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene
+        rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.'
       parameters:
       - in: path
         name: org_slug
@@ -1832,14 +1895,27 @@ components:
             type: string
             format: uuid
         status:
-          $ref: '#/components/schemas/InvitationStatusEnum'
+          allOf:
+          - $ref: '#/components/schemas/InvitationStatusEnum'
+          description: 'El que se enseña: una pendiente cuya fecha pasó sale como
+            `EXPIRED`.'
+          readOnly: true
         expires_at:
           type: string
           format: date-time
+        invited_by:
+          type: string
+          format: uuid
+          description: La cuenta que invitó.
+        created_at:
+          type: string
+          format: date-time
       required:
+      - created_at
       - email
       - expires_at
       - id
+      - invited_by
       - role_ids
       - status
     InvitationStatusEnum:
@@ -1849,11 +1925,6 @@ components:
       - REVOKED
       - EXPIRED
       type: string
-      description: |-
-        * `PENDING` - Pending
-        * `ACCEPTED` - Accepted
-        * `REVOKED` - Revoked
-        * `EXPIRED` - Expired
     InviteRequest:
       type: object
       properties:
@@ -2091,6 +2162,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Branch'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedInvitationList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invitation'
         next:
           type: string
           nullable: true

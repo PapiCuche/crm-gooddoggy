@@ -73,11 +73,14 @@ def test_it_leaves_a_pending_invitation_without_a_link_and_audits_it(
     made, wanted = done.json(), sorted([str(rbac.target.pk), str(agent.pk)])
     expires = datetime.fromisoformat(made.pop("expires_at"))
     assert timedelta(days=7) - timedelta(minutes=1) < expires - datetime.now(UTC) <= timedelta(7)
+    created = datetime.fromisoformat(made.pop("created_at"))
+    assert abs(expires - created - timedelta(days=7)) < timedelta(seconds=1)
     assert made == {
         "id": made["id"],
         "email": "nueva.persona@example.com",  # la forma canónica de las cuentas (D-F2-3)
         "role_ids": wanted,
         "status": "PENDING",
+        "invited_by": str(rbac.ana.pk),
     }
     stored = ("nueva.persona@example.com", wanted, "PENDING", None, 0, None, rbac.ana.pk, rbac.a)
     assert rows(migrator) == [stored]  # sin enlace y sin enviar: eso es de la tarea de envío

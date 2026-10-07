@@ -6,12 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-/**
- * * `PENDING` - Pending
- * * `ACCEPTED` - Accepted
- * * `REVOKED` - Revoked
- * * `EXPIRED` - Expired
- */
 export type InvitationStatusEnum = (typeof InvitationStatusEnum)[keyof typeof InvitationStatusEnum];
 
 export const InvitationStatusEnum = {

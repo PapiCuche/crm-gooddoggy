@@ -73,6 +73,16 @@ class InvitationRef(NamedTuple):
     role_ids: list[UUID]
     status: str
     expires_at: datetime
+    invited_by_id: UUID
+    created_at: datetime
+
+
+def shown_status(status: str, expires_at: datetime) -> str:
+    """El estado que se enseña de una invitación (ADR-020 §3): una pendiente cuya fecha pasó
+    está caducada, aunque ningún proceso lo escriba en la tabla."""
+    if status == UserInvitation.Status.PENDING and expires_at <= timezone.now():
+        return UserInvitation.Status.EXPIRED
+    return status
 
 
 class BranchRef(NamedTuple):
@@ -185,5 +195,11 @@ def create_invitation(
         }
         record(ctx, "membership.invited", Entity("invitation", invitation.pk), changes)
     return InvitationRef(
-        invitation.pk, email, invitation.role_ids, invitation.status, invitation.expires_at
+        invitation.pk,
+        email,
+        invitation.role_ids,
+        invitation.status,
+        invitation.expires_at,
+        invitation.invited_by_id,
+        invitation.created_at,
     )

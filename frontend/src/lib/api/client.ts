@@ -29,6 +29,7 @@ import type {
   Error,
   GrantScopeRequest,
   Invitation,
+  InvitationsListParams,
   InviteRequest,
   LoginRequest,
   MemberBranch,
@@ -39,6 +40,7 @@ import type {
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
+  PaginatedInvitationList,
   PaginatedMemberList,
   PaginatedRoleList,
   PaginatedTeamList,
@@ -1048,17 +1050,154 @@ export const useBranchesUpdate = <TError = ErrorType<Error>, TContext = unknown>
   return useMutation(getBranchesUpdateMutationOptions(options), queryClient);
 };
 
+export const getInvitationsListUrl = (orgSlug: string, params?: InvitationsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/invitations/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/invitations/`;
+};
+
+/**
+ * Las invitaciones de la organización, en cualquier estado, de la más reciente a la más
+ * antigua. Paginado por cursor (ADR-016). Exige lo mismo que invitar. Cada fila lleva
+ * identificadores (roles, quien invitó), no nombres, y nunca el enlace ni su hash. `POST`
+ * invita (F2-80).
+ */
+export const invitationsList = async (
+  orgSlug: string,
+  params?: InvitationsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedInvitationList> => {
+  return apiFetch<PaginatedInvitationList>(getInvitationsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getInvitationsListQueryKey = (orgSlug: string, params?: InvitationsListParams) => {
+  return [`/api/v1/o/${orgSlug}/invitations/`, ...(params ? [params] : [])] as const;
+};
+
+export const getInvitationsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof invitationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InvitationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof invitationsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getInvitationsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof invitationsList>>> = ({ signal }) =>
+    invitationsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof invitationsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type InvitationsListQueryResult = NonNullable<Awaited<ReturnType<typeof invitationsList>>>;
+export type InvitationsListQueryError = ErrorType<Error>;
+
+export function useInvitationsList<
+  TData = Awaited<ReturnType<typeof invitationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | InvitationsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof invitationsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof invitationsList>>,
+          TError,
+          Awaited<ReturnType<typeof invitationsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInvitationsList<
+  TData = Awaited<ReturnType<typeof invitationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InvitationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof invitationsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof invitationsList>>,
+          TError,
+          Awaited<ReturnType<typeof invitationsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInvitationsList<
+  TData = Awaited<ReturnType<typeof invitationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InvitationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof invitationsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useInvitationsList<
+  TData = Awaited<ReturnType<typeof invitationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InvitationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof invitationsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getInvitationsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
 export const getInvitationsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/invitations/`;
 };
 
 /**
- * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al
- * aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids`
- * vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y
- * `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`,
- * `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no
- * tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.
+ * Deja creada la invitación de una persona, pendiente y con los roles que tendrá al aceptar. Todavía no envía el correo. 400: correo al que no se puede escribir, o `role_ids` vacío, con un rol repetido o que no es de la organización. 403: sin `users.invite` y `users.manage`, o con un rol que el actor no podría asignar. 409: `ALREADY_MEMBER`, `INVITATION_PENDING`, `INVITATION_LIMIT` (50 pendientes) o `LAST_OWNER` (la organización no tiene rol Owner y no admite ningún cambio). 429: 100 invitaciones en 24 h.
  */
 export const invitationsCreate = async (
   orgSlug: string,
