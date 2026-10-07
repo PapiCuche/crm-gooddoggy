@@ -135,6 +135,8 @@ LOGGING = {
         # encender. Queda `http.request.completed`.
         "uvicorn.access": {"handlers": [], "propagate": False},
         "celery.app.trace": {"level": "WARNING"},  # "succeeded: <repr(resultado)>"
+        # Su línea DEBUG («TaskPool: Apply») vuelca los argumentos de cada tarea: nunca se emite.
+        "celery.pool": {"level": "INFO"},
     },
 }
 # API (F1-08A): DRF solo JSON. Contrato OpenAPI con drf-spectacular, versionado en
@@ -204,6 +206,9 @@ EMAIL_USE_TLS = env.boolean("EMAIL_USE_TLS", False)  # STARTTLS (587)
 EMAIL_USE_SSL = env.boolean("EMAIL_USE_SSL", False)  # TLS implícito (465)
 EMAIL_TIMEOUT = 10  # segundos: una tarea no espera indefinidamente al servidor de correo
 DEFAULT_FROM_EMAIL = env.optional("MAIL_FROM", "")
+# El origen público de la aplicación (ADR-021 §8): con él se componen los enlaces que van en un
+# correo. Llega del despliegue, nunca de una petición. Sin él no se emite ningún enlace.
+APP_ORIGIN = env.origin("APP_ORIGIN")
 # Reporte de errores (ADR-011 §3): sin SENTRY_DSN, NoopReporter (sin red).
 SENTRY_DSN = env.optional("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = env.optional("SENTRY_ENVIRONMENT", "")

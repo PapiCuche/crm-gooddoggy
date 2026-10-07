@@ -113,6 +113,7 @@ def test_uvicorn_and_celery_trace_loggers_use_the_json_pipeline() -> None:
     assert config["loggers"]["uvicorn"]["handlers"] == ["console"]
     assert config["loggers"]["uvicorn.error"] == {"handlers": [], "propagate": True}
     assert config["loggers"]["celery.app.trace"]["level"] == "WARNING"
+    assert config["loggers"]["celery.pool"]["level"] == "INFO"
 
 
 def test_the_uvicorn_access_log_stays_off() -> None:
