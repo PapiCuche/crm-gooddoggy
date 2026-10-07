@@ -99,9 +99,9 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 - **Negativas y sesión:** un 403 cierra la lista aunque ya estuviera en pantalla, y sigue cerrada hasta que la API vuelve a responder bien (un fallo pasajero no la reabre); si llega al reintentar o al cargar más, el foco va al título, salvo que el usuario ya lo haya llevado a otra parte. Sin sesión (401) no se muestra un error, tampoco al cargar más: `Providers` lleva al login. La lista no se guarda entre visitas (`gcTime: 0`): cada entrada pregunta a la API.
 - **Navegación:** la entrada «Miembros» pide el permiso `users.view`. Es comodidad: quien abre la URL sin el permiso ve el mensaje de «sin permiso» porque la API responde 403.
 - **Roles y estado:** se muestran tal como llegan. Nada decide por el nombre o el código de un rol. El estado es el de la membresía, no el de la cuenta.
-- **Sucursal (F2-71):** bajo los roles, «Sucursal: nombre (código)» con el `default_branch` de la fila (F2-70), o «Sin sucursal» si es `null`. Llega con el directorio: no hay otra petición ni otro permiso, y la ve quien ve la lista. La pantalla no dice si esa sucursal está inactiva, porque el directorio no lo trae, y todavía no la asigna: hoy solo se cambia por API (`PUT …/members/{id}/branch/`, F2-69).
+- **Sucursal (F2-71):** bajo los roles, «Sucursal: nombre (código)» con el `default_branch` de la fila (F2-70), o «Sin sucursal» si es `null`. Llega con el directorio: no hay otra petición ni otro permiso, y la ve quien ve la lista. La pantalla no dice si esa sucursal está inactiva, porque el directorio no lo trae. Se cambia con «Sucursal» (ver «Asignar la sucursal»).
 - **Título de la pestaña:** «Miembros · organización · Good Doggy CRM». Lo pone el shell a partir de la entrada de navegación de la ruta.
-- Invitar, dar de baja y asignar la sucursal son otros work items.
+- Invitar y dar de baja son otros work items.
 
 ### Lista por cursor compartida (F2-24)
 
@@ -134,6 +134,18 @@ Cada fila ofrece «Roles», que abre un panel con los roles de la organización:
 - **Errores que conservan el panel** (`PERMISSION_DENIED`, con un texto propio; `LAST_OWNER`; red; fallo del servidor): se explican en el panel y el mismo botón reintenta.
 - **Pantalla desfasada** (404: el miembro o el rol ya no existen, o ya no tiene ese rol): el panel se cierra, la lista y los roles se vuelven a pedir y lo explica el aviso de la lista, con su propio texto («Los roles de … ya habían cambiado»).
 - **Sin sesión (401):** no se muestra un error; `Providers` lleva al login con vuelta a la pantalla.
+
+### Asignar la sucursal (F2-72)
+
+Cada tarjeta ofrece «Sucursal», que abre un panel con un selector: «Sin sucursal» y las sucursales de la organización (`GET /api/v1/o/{slug}/branches/`, todas las páginas, pedidas al abrir y de nuevo en cada apertura), con la del miembro elegida. «Guardar» envía `PUT /api/v1/o/{slug}/members/{id}/branch/` con `{"branch_id": "<id>"}` o `null` (F2-69). Componente: `components/members/member-branch-action.tsx`, hermano del panel «Roles»: mismas reglas de envío, foco y errores.
+
+- **A quién se ofrece:** a quien tiene `users.manage` y `organization.view` (el selector lee las sucursales) según el contexto de la API. Nunca en la fila propia; el estado de la membresía no importa. Es comodidad: las reglas las aplica la API (ADR-017: cubrir los roles del miembro) y un 403 se explica en el panel.
+- **A quién:** el nombre accesible del botón y el título del panel llevan el nombre y el correo, porque dos personas pueden llamarse igual.
+- **Selector:** cada sucursal como «nombre (código)»; una inactiva lo dice y se puede elegir, porque la API la admite. Lo elegido parte de la sucursal que el miembro tenía al abrir y no cambia si la lista cambia debajo; esa sucursal figura siempre entre las opciones. Sin sucursales en la organización, el panel lo dice.
+- **Envío:** una petición por pulsación; «Guardar» sin haber cambiado nada cierra el panel y no envía; mientras se envía, lo elegido no cambia y «Cancelar» no cierra; una tecla mantenida no cuenta; sin red, falla y se dice.
+- **Éxito:** la tarjeta enseña la sucursal que respondió la API, sin volver a pedir la lista; el panel se cierra, el foco vuelve a «Sucursal» y se anuncia. Una lectura de la lista en vuelo se cancela para que no pise la fila, y se repite si era la lista entera.
+- **Errores, por `code`, en el panel:** sin permiso (con un texto propio), `LAST_OWNER`, red o fallo del servidor; «Guardar» reintenta. Un 400 se explica como fallo del servidor: las opciones salen de la API y las sucursales no se borran. Sin sesión (401), `Providers` lleva al login. Un 404 es pantalla desfasada: el panel se cierra, la lista se vuelve a pedir y lo explica el aviso de la lista. Si falla la lectura de las sucursales, se explica con «Reintentar».
+- **Foco:** al abrir, a «Cancelar», que no cambia nada; al cerrar, a «Sucursal».
 
 ## Roles (F2-23)
 
