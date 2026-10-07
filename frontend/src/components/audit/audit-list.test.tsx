@@ -174,6 +174,7 @@ describe("AuditList", () => {
       "No tienes permiso para ver la auditoría de esta organización.",
     );
     expect(screen.queryByRole("button", { name: "Reintentar" })).not.toBeInTheDocument();
+    expect(document.body).toHaveFocus(); // nadie estaba en los filtros: el foco no se mueve
   });
 
   it("carga la página siguiente con el cursor", async () => {
@@ -193,5 +194,159 @@ describe("AuditList", () => {
     expect(rows().map((row) => lines(row)[0])).toEqual(["Sucursal editada", "Equipo creado"]);
     expect(api).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", { name: "Cargar más" })).not.toBeInTheDocument();
+  });
+
+  describe("filtros", () => {
+    const urls = (api: ReturnType<typeof mockApi>) => api.mock.calls.map(([url]) => String(url));
+    const page = (...results: AuditEntry[]) => ({ status: 200, body: { results, next: null } });
+    const select = (name: string) => screen.getByRole("combobox", { name }) as HTMLSelectElement;
+    const choose = (name: string, value: string) =>
+      fireEvent.change(select(name), { target: { value } });
+    // Deja en espera la siguiente respuesta de la API hasta que se llama a lo que devuelve.
+    function hold(api: ReturnType<typeof mockApi>) {
+      const answer = api.getMockImplementation()!;
+      let release = () => {};
+      api.mockImplementationOnce(async (...request) => {
+        await new Promise<void>((resolve) => (release = resolve));
+        return answer(...request);
+      });
+      return () => release();
+    }
+
+    it("ofrece lo que la pantalla sabe nombrar y no pide nada hasta que se elige", async () => {
+      const api = mockApi({ [LIST]: page(entry("a1")) });
+      screenOf();
+      const group = screen.getByRole("group", { name: "Filtros" }); // ya mientras carga
+      await screen.findByRole("list", { name: "Auditoría" });
+      const options = (name: string) =>
+        [...select(name).options].map((option) => [option.value, option.text]);
+      expect(options("Acción")).toHaveLength(20);
+      expect(options("Acción").slice(0, 3)).toEqual([
+        ["", "Todas"],
+        ["organization.created", "Organización creada"],
+        ["membership.role_assigned", "Rol asignado a un miembro"],
+      ]);
+      for (const [code] of options("Acción").slice(1)) expect(code).toMatch(/^[a-z]+\.[a-z_]+$/);
+      expect(options("Entidad")).toEqual([
+        ["", "Todas"],
+        ["organization", "Organización"],
+        ["membership", "Membresía"],
+        ["role", "Rol"],
+        ["branch", "Sucursal"],
+        ["team", "Equipo"],
+      ]);
+      expect(options("Quién")).toEqual([
+        ["", "Cualquiera"],
+        ["USER", "Una persona"],
+        ["AI_AGENT", "Un agente de IA"],
+        ["SYSTEM", "El sistema"],
+        ["INTEGRATION", "Una integración"],
+        ["PLATFORM_STAFF", "Personal de la plataforma"],
+      ]);
+      for (const name of ["Acción", "Entidad", "Quién"]) {
+        expect(select(name)).toHaveValue("");
+        expect(select(name)).toHaveClass("text-[16px]", "h-11");
+      }
+      expect(within(group).queryByRole("button")).not.toBeInTheDocument(); // nada que quitar
+      expect(urls(api)).toEqual(["/api/v1/o/acme/audit/"]);
+    });
+
+    it("al elegir pide la lista con ese filtro, y el selector conserva el foco mientras llega", async () => {
+      const created = entry("b1", { action: "role.created", entity_type: "role" });
+      const api = mockApi({
+        [LIST]: page(entry("a1")),
+        [`${LIST}?action=role.created`]: page(created),
+        [`${LIST}?action=role.created&entity_type=role&actor_type=SYSTEM`]: page(),
+        [`${LIST}?entity_type=role&actor_type=SYSTEM`]: page(created, entry("a1")),
+      });
+      screenOf();
+      await screen.findByRole("list", { name: "Auditoría" });
+      const release = hold(api);
+      const action = select("Acción");
+      action.focus();
+      choose("Acción", "role.created");
+      expect(screen.getByRole("status")).toHaveTextContent("Cargando la auditoría…");
+      expect(screen.queryByRole("list", { name: "Auditoría" })).not.toBeInTheDocument();
+      expect(action).toBeInTheDocument(); // el mismo selector, sin desmontarse
+      expect(action).toHaveFocus();
+      expect(action).toHaveValue("role.created");
+      release();
+      await waitFor(() => expect(rows().map((row) => lines(row)[0])).toEqual(["Rol creado"]));
+      expect(action).toHaveFocus();
+      choose("Entidad", "role");
+      expect(select("Entidad")).toHaveValue("role"); // cada selector enseña lo suyo
+      choose("Quién", "SYSTEM"); // combinados: se envían todos
+      expect(await screen.findByText("Ningún registro coincide con estos filtros.")).toBeVisible(); // distinto de una auditoría vacía
+      expect(screen.queryByText(/Todavía no hay nada/)).not.toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Filtros" })).toBeVisible();
+      choose("Acción", ""); // «Todas»: ese filtro deja de enviarse
+      await waitFor(() => expect(rows()).toHaveLength(2));
+      expect(urls(api)).toEqual([
+        "/api/v1/o/acme/audit/",
+        "/api/v1/o/acme/audit/?action=role.created",
+        "/api/v1/o/acme/audit/?action=role.created&entity_type=role",
+        "/api/v1/o/acme/audit/?action=role.created&entity_type=role&actor_type=SYSTEM",
+        "/api/v1/o/acme/audit/?entity_type=role&actor_type=SYSTEM",
+      ]);
+      for (const url of urls(api)) expect(url).not.toMatch(/=(&|$)/); // ningún filtro vacío
+    });
+
+    it("«Quitar filtros» los quita todos y deja el foco en el primer selector", async () => {
+      const api = mockApi({
+        [LIST]: page(entry("a1")),
+        [`${LIST}?action=team.created&entity_type=team&actor_type=USER`]: page(),
+      });
+      screenOf();
+      await screen.findByRole("list", { name: "Auditoría" });
+      choose("Acción", "team.created");
+      choose("Entidad", "team");
+      choose("Quién", "USER");
+      const clear = await screen.findByRole("button", { name: "Quitar filtros" });
+      expect(clear).toHaveClass("min-h-11");
+      await screen.findByText("Ningún registro coincide con estos filtros.");
+      clear.focus();
+      fireEvent.click(clear);
+      expect(clear).not.toBeInTheDocument();
+      expect(select("Acción")).toHaveFocus();
+      for (const name of ["Acción", "Entidad", "Quién"]) expect(select(name)).toHaveValue("");
+      await waitFor(() => expect(rows()).toHaveLength(1));
+      expect(urls(api).at(-1)).toBe("/api/v1/o/acme/audit/"); // se vuelve a pedir, sin filtros
+    });
+
+    it("«Cargar más» lleva los mismos filtros, y un fallo o una negativa no esconden de más", async () => {
+      let reply: { status: number; body: unknown } = {
+        status: 200,
+        body: { results: [entry("a1")], next: "abc" },
+      };
+      const api = mockApi({
+        [LIST]: page(entry("a0")),
+        [`${LIST}?actor_type=USER`]: () => reply,
+        [`${LIST}?actor_type=USER&cursor=abc`]: page(entry("a2", { action: "team.created" })),
+        [`${LIST}?entity_type=branch&actor_type=USER`]: {
+          status: 403,
+          body: { code: "PERMISSION_DENIED" },
+        },
+      });
+      screenOf();
+      await screen.findByRole("list", { name: "Auditoría" });
+      choose("Quién", "USER");
+      fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
+      await waitFor(() => expect(rows()).toHaveLength(2));
+      expect(urls(api).at(-1)).toBe("/api/v1/o/acme/audit/?actor_type=USER&cursor=abc");
+      reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+      choose("Quién", ""); // otra lista, y vuelta a esta: ahora falla
+      await waitFor(() => expect(rows().map((row) => lines(row)[1])).toEqual(["branch.updated"]));
+      choose("Quién", "USER");
+      expect(await screen.findByRole("button", { name: "Reintentar" })).toBeVisible();
+      expect(select("Quién")).toHaveValue("USER"); // los filtros siguen ahí para cambiarlos
+      select("Entidad").focus();
+      choose("Entidad", "branch");
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "No tienes permiso para ver la auditoría de esta organización.",
+      );
+      // Con la negativa los filtros siguen montados: el foco no se queda sin sitio.
+      expect(screen.getByRole("group", { name: "Filtros" })).toBeVisible();
+      expect(select("Entidad")).toHaveFocus();
+    });
   });
 });

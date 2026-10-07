@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { createRef } from "react";
+import { createRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiFetch } from "@/lib/http";
@@ -44,6 +44,10 @@ describe("CursorList", () => {
     renderApp(ui);
     expect(screen.getByText("Good Doggy / Miembros")).toBeVisible();
     expect(screen.getByText(/pertenecen a Acme SAC/)).toBeVisible();
+    // Sin `controls` no hay nada entre el título y la lista: ni un envoltorio vacío.
+    expect(screen.getByRole("status").previousElementSibling).toContainElement(
+      screen.getByRole("heading", { level: 1 }),
+    );
     await screen.findByRole("list", { name: "Miembros" });
     for (const row of rows()) {
       expect(row).toHaveClass("fila-propia", "bg-surface"); // las clases de la pantalla y las suyas
@@ -133,5 +137,59 @@ describe("CursorList", () => {
     reply = page([]);
     renderApp(ui); // sin `empty`, la lista vacía de siempre
     expect(await screen.findByRole("list", { name: "Miembros" })).toBeEmptyDOMElement();
+  });
+
+  it("`controls` sigue montado, con su foco, al cargar, con filas, con un error, con una negativa y al cambiar de lista", async () => {
+    let reply: { status: number; body: unknown } = page(["a"]);
+    const api = mockApi({ [LIST]: () => reply });
+    function Lists() {
+      const [key, setKey] = useState(0); // otra clave: otra lista, que se vuelve a pedir
+      return (
+        <>
+          <button type="button" onClick={() => setKey(key + 1)}>
+            otra lista
+          </button>
+          <CursorList<Row>
+            section="members"
+            organization="Acme SAC"
+            listKey={["lista", key]}
+            fetchPage={fetchPage}
+            controls={<input aria-label="filtro" />}
+            notice={<p>aviso de la pantalla</p>}
+          >
+            {(row) => <span>fila {row.id}</span>}
+          </CursorList>
+        </>
+      );
+    }
+    renderApp(<Lists />);
+    const another = () => fireEvent.click(screen.getByRole("button", { name: "otra lista" }));
+    const control = screen.getByRole("textbox", { name: "filtro" }); // ya al cargar
+    expect(screen.queryByText("aviso de la pantalla")).not.toBeInTheDocument(); // el aviso, no
+    control.focus();
+    await screen.findByText("fila a");
+    // Entre el título y lo demás: antes del aviso y de la lista.
+    const order = control.compareDocumentPosition(screen.getByText("aviso de la pantalla"));
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { level: 1 }).compareDocumentPosition(control) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    another(); // se vuelve a pedir, y falla
+    expect(screen.getByRole("status")).toHaveTextContent("Cargando miembros…");
+    expect(control).toBeInTheDocument(); // el mismo nodo: no se desmontó
+    expect(await screen.findByRole("button", { name: "Reintentar" })).toBeVisible();
+    expect(control).toHaveFocus();
+    reply = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    another();
+    expect(await screen.findByText(/No tienes permiso/)).toBeVisible();
+    expect(control).toBeInTheDocument(); // tampoco con una negativa: el foco no se queda sin sitio
+    expect(control).toHaveFocus();
+    reply = page(["a"]);
+    another(); // la lista vuelve
+    await screen.findByText("fila a");
+    expect(control).toHaveFocus();
+    expect(api.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 });
