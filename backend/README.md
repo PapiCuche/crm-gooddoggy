@@ -677,7 +677,7 @@ Logs JSON en stdout (structlog + `logging` estándar, redactados con `core.redac
 
 ## Correo saliente (F2-78, ADR-019)
 
-`core.mail.send(Message(to, subject, body, purpose))` es la única salida de correo: un destinatario, texto plano y SMTP configurado por entorno, sin proveedor fijado ([ADR-019](../docs/adr/ADR-019-outbound-email.md)). Todavía ningún flujo lo llama: las invitaciones y la recuperación de contraseña son work items siguientes.
+`core.mail.send(Message(to=…, subject=…, body=…, purpose=…))` es la única salida de correo: un destinatario, texto plano y SMTP configurado por entorno, sin proveedor fijado ([ADR-019](../docs/adr/ADR-019-outbound-email.md)). Todavía ningún flujo lo llama: las invitaciones y la recuperación de contraseña son work items siguientes.
 
 - **Solo `core.mail` importa `django.core.mail` o `smtplib`.** Un test lo comprueba sobre `core`, `apps` y `config` (import-linter no distingue submódulos de un paquete externo).
 - **Se llama desde una tarea, nunca dentro de una petición.** Es síncrono, no encola ni reintenta: un fallo de entrega lanza `MailError` y la tarea decide. La conexión tiene un máximo de 10 segundos (`EMAIL_TIMEOUT`).

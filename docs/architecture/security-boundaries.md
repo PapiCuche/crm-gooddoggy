@@ -41,7 +41,7 @@
 | B9 | Aplicación → terceros (HTTP saliente) | Llamadas a APIs | Cliente HTTP con allowlist de hosts, bloqueo de IPs privadas (anti-SSRF), timeouts, sin seguir redirects a hosts no permitidos |
 | B10 | Operador → sistema | Comandos, shell, admin | `TenantCommand` / `PlatformCommand` con motivo y auditoría, admin solo para plataforma, impersonación temporal y auditada |
 | B11 | CI/CD → producción | Código, migraciones | PR revisado, CI (gitleaks, auditoría de dependencias, tests de aislamiento), migraciones con `crm_migrator` **solo en el job de migraciones**; web/worker/ws/beat nunca reciben su credencial (ADR-002 §1.1) |
-| B12 | Aplicación → servidor de correo (SMTP saliente) | Correos con enlaces de un solo uso | Único módulo (`core.mail`, ADR-019): servidor fijado por entorno (no hay destino elegido por un usuario), cifrado y credenciales obligatorios en producción, tiempo máximo de conexión, validación contra inyección de cabeceras, dirección enmascarada en el log y nunca el cuerpo |
+| B12 | Aplicación → servidor de correo (SMTP saliente) | Correos con enlaces de un solo uso | Único módulo (`core.mail`, ADR-019): servidor fijado por entorno (no hay destino elegido por un usuario), cifrado y credenciales obligatorios en producción, tiempo máximo de conexión, validación contra inyección de cabeceras, la dirección no se registra (en su lugar, la marca `[EMAIL]`) ni tampoco el cuerpo |
 
 ## 3. Clasificación de datos
 

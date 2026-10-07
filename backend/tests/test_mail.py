@@ -90,6 +90,7 @@ def test_an_invalid_message_is_refused_before_anything_is_sent(changes: dict[str
     with pytest.raises(ValueError) as error:
         send(Message(**fields))
     assert type(error.value) is ValueError  # el de `core.mail`, no uno de Django o del códec
+    assert error.value.__context__ is None  # ni el `ValidationError` de Django, con la dirección
     assert outbox.outbox == []
     # El error no repite lo que llegó: su texto sí acaba en el log de la tarea que falla.
     assert not any(value in str(error.value) for value in changes.values() if len(value) > 3)
@@ -214,7 +215,7 @@ def test_smtp_uses_the_configured_server_with_a_timeout(
 
 
 def test_a_failure_of_the_smtp_backend_is_a_mail_error_too(
-    settings: Any, monkeypatch: pytest.MonkeyPatch
+    settings: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Con el backend real: uno con `fail_silently` daría por enviado lo que no salió."""
 
@@ -223,8 +224,11 @@ def test_a_failure_of_the_smtp_backend_is_a_mail_error_too(
 
     monkeypatch.setattr(smtplib, "SMTP", refuse)
     settings.MAIL_BACKEND, settings.EMAIL_HOST = "smtp", "smtp.example.com"
-    with pytest.raises(MailError, match="ConnectionRefusedError"):
-        send(VALID)
+    odd = Message(to="{a}=b@x.pe", subject=SUBJECT, body=BODY, purpose="invitation")
+    with caplog.at_level(logging.DEBUG), pytest.raises(MailError, match="ConnectionRefusedError"):
+        send(odd)
+    # Tampoco en un fallo queda media dirección: `mask_emails` dejaría `{a}=` a la vista.
+    assert line(caplog)["to"] == "[EMAIL]" and "{a}" not in logged(caplog)
 
 
 def test_outbound_mail_only_through_core_mail() -> None:

@@ -41,7 +41,7 @@ Por eso `core.mail` recibe el mensaje ya compuesto y no ofrece una cola propia: 
 
 ### 5. Qué queda escrito
 
-El log de aplicación registra cada envío y cada fallo con el propósito y, en el lugar de la dirección, la marca `[EMAIL]` de `core.redaction`. No se usa `mask_emails`: su patrón es para texto libre y deja a la vista direcciones válidas como `{a}=b@x.pe`. Los campos van por nombre con el logger de `core.observability`; el `extra` de `logging` no llega a la salida JSON. Nunca el asunto ni el cuerpo. El texto de la excepción de SMTP tampoco se registra: puede repetir la dirección; se registra su tipo, y `MailError` no conserva la excepción original, tampoco como `__context__`. La auditoría del hecho de negocio (se invitó a alguien) es de quien lo origina, no de este módulo.
+El log de aplicación registra cada envío y cada fallo con el propósito y, en el lugar de la dirección, la marca `[EMAIL]` de `core.redaction`. No se usa `mask_emails`: su patrón es para texto libre y deja a la vista direcciones válidas como `ana=@x.pe`, o parte de ellas (`{a}=` en `{a}=b@x.pe`). Los campos van por nombre con el logger de `core.observability`; el `extra` de `logging` no llega a la salida JSON. Nunca el asunto ni el cuerpo. El texto de la excepción de SMTP tampoco se registra: puede repetir la dirección; se registra su tipo, y `MailError` no conserva la excepción original, tampoco como `__context__`. La auditoría del hecho de negocio (se invitó a alguien) es de quien lo origina, no de este módulo.
 
 ### 6. Producción
 

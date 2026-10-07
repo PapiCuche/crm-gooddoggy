@@ -36,8 +36,8 @@ class MailError(Exception):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Message:
-    """Por nombre, no por posición: un cuerpo puesto donde va el propósito acabaría en un error.
-    Su `repr` solo enseña el propósito: lo demás no debe llegar a un log ni a una traza."""
+    """Por nombre, no por posición: un cuerpo puesto donde va el propósito saldría en el `repr`,
+    que solo enseña el propósito: lo demás no debe llegar a un log ni a una traza."""
 
     to: str = field(repr=False)  # una sola dirección
     subject: str = field(repr=False)
@@ -55,10 +55,13 @@ def _checked(message: Message) -> None:
     # las palabras codificadas (`=?utf-8?b?YW5h?=@x` sale `ana@x`) y pasa el dominio por IDNA.
     if not to.isascii() or '"' in to or "=?" in to:
         raise ValueError("to: en ASCII, sin comillas ni palabras codificadas")
+    valid = True
     try:
         validate_email(to)
-    except ValidationError:
-        raise ValueError("to: no es una dirección de correo") from None
+    except ValidationError:  # lleva la dirección en `params`: el error sale fuera, sin contexto
+        valid = False
+    if not valid:
+        raise ValueError("to: no es una dirección de correo")
     subject = message.subject
     if not subject.strip() or len(subject) > SUBJECT_MAX or _BREAKS.search(subject):
         raise ValueError(f"subject: una línea de 1 a {SUBJECT_MAX} caracteres")
@@ -92,5 +95,5 @@ def send(message: Message) -> None:
     if failure:  # fuera del `except`: `MailError` no lleva el original ni como `__context__`
         logger.warning("mail.failed", purpose=message.purpose, to=EMAIL_MASK, error=failure)
         raise MailError(failure)
-    # La marca, no `mask_emails`: su patrón deja a la vista direcciones válidas (`{a}=b@x.pe`).
+    # La marca, no `mask_emails`: su patrón deja a la vista direcciones válidas (`ana=@x.pe`).
     logger.info("mail.sent", purpose=message.purpose, to=EMAIL_MASK)
