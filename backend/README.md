@@ -611,7 +611,46 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 
 ## Outbox y auditoría (F1-06)
 
-`core.outbox.emit()` y `apps.audit.services.record()` escriben en la transacción del `tenant_scope` activo: un rollback no deja ni evento ni auditoría. `audit_logs` es append-only para `crm_app` y está particionada por mes, y el redactor (`core.redaction`) se aplica siempre. Diseño y decisiones: [docs/architecture/outbox-audit.md](../docs/architecture/outbox-audit.md).
+`core.outbox.emit()` y `apps.audit.services.record()` escriben en la transacción del `tenant_scope` activo: un rollback no deja ni evento ni auditoría. `audit_logs` es append-only para `crm_app` y está particionada por mes, y el redactor (`core.redaction`) se aplica siempre. Se lee con `GET …/audit/` (ver «Auditoría de la organización: lectura»). Diseño y decisiones: [docs/architecture/outbox-audit.md](../docs/architecture/outbox-audit.md).
+
+## Auditoría de la organización: lectura (F2-73, E01-13)
+
+`GET /api/v1/o/{slug}/audit/` devuelve las filas de `audit_logs` de la organización, de la más reciente a la más antigua, paginadas por cursor (ADR-016). Exige el permiso `audit.view`, que es sensible: solo lo delega un Owner.
+
+```json
+{
+  "results": [
+    {
+      "id": "…",
+      "occurred_at": "2026-10-07T03:15:04.123456Z",
+      "actor_type": "USER",
+      "actor_id": "…",
+      "actor_label": null,
+      "action": "branch.updated",
+      "entity_type": "branch",
+      "entity_id": "…",
+      "entity_label": "LIM-01",
+      "changes": {"name": ["Centro", "Centro de Lima"]},
+      "metadata": {},
+      "result": "SUCCESS",
+      "correlation_id": null
+    }
+  ],
+  "next": null
+}
+```
+
+- **Cada fila llega como se guardó.** `changes` es `{"campo": [antes, después]}` y `metadata`, el contexto que anotó quien la escribió. Los dos pasaron por el redactor al escribirse (`core.redaction`, ADR-011): la ruta no redacta de nuevo ni añade nada.
+- **Quién:** `actor_type` (`USER`, `AI_AGENT`, `SYSTEM`, `INTEGRATION` o `PLATFORM_STAFF`, los que admite la tabla), `actor_id` (el usuario, si es `USER`) y `actor_label` si se anotó. La ruta no trae el nombre ni el correo del actor.
+- **Orden:** por `id` descendente. Es un UUIDv7 generado al escribir la fila: el orden en que se escribieron. `occurred_at` es la hora de la transacción, en UTC, así que dos filas de una misma operación la comparten.
+- **Sin filtros todavía:** por actor, acción o entidad llegan en el siguiente work item.
+- **Lo que no se devuelve:** `ip`, `user_agent`, `request_id` e `impersonated_by_user_id`. Nada los escribe todavía.
+- **Solo lectura.** El modelo `apps.audit.models.AuditLog` no gestiona la tabla (`managed = False`) y se niega a escribir: `save`, `delete` y las escrituras en bloque de su manager (`bulk_create`, `bulk_update`, `update`, `delete`) lanzan `TypeError`. La tabla se sigue escribiendo solo con `apps.audit.services.record()`, y `crm_app` sigue sin `UPDATE` ni `DELETE` sobre ella. `AuditLog._base_manager`, que Django usa por dentro, no lleva esa guarda.
+- **Aislamiento:** RLS filtra la tabla por organización, además del filtro del manager y del de `ScopeFilter`.
+- **Índice:** `audit_logs_org_id_idx (organization_id, id)`, creado en la tabla padre; PostgreSQL lo repite en cada partición, también en las nuevas.
+- **Leer no deja rastro:** consultar la auditoría no escribe una fila. Tampoco se auditan los accesos denegados (OBS-F2-05A-4).
+- **Errores:** 400 `VALIDATION_ERROR` (`limit` o `cursor`), 401, 403 `PERMISSION_DENIED` sin el permiso y 404 sin membresía.
+- **Capas:** `apps.audit` está en L1 y no importa `apps.access`: la vista declara `required_permissions` y las clases por defecto de DRF hacen el resto.
 
 ## Auditoría de plataforma (F2-10, ADR-013)
 

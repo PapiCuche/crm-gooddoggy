@@ -8,6 +8,12 @@
 
 export * from "./activeOrSuspendedEnum";
 export * from "./assignmentStrategyEnum";
+export * from "./auditActorTypeEnum";
+export * from "./auditEntry";
+export * from "./auditEntryChanges";
+export * from "./auditEntryMetadata";
+export * from "./auditListParams";
+export * from "./auditResultEnum";
 export * from "./branch";
 export * from "./branchCreateRequest";
 export * from "./branchesListParams";
@@ -30,6 +36,7 @@ export * from "./memberStatusChangeRequest";
 export * from "./memberUser";
 export * from "./nullEnum";
 export * from "./organizationSummary";
+export * from "./paginatedAuditEntryList";
 export * from "./paginatedBranchList";
 export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";

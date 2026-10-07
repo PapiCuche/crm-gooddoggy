@@ -32,6 +32,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/auth/logout/",
         "/api/v1/auth/session/",
         "/api/v1/me/organizations/",
+        "/api/v1/o/{org_slug}/audit/",
         "/api/v1/o/{org_slug}/branches/",
         "/api/v1/o/{org_slug}/branches/{branch_id}/",
         "/api/v1/o/{org_slug}/me/",

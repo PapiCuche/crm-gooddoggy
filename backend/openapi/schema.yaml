@@ -127,6 +127,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/audit/:
+    get:
+      operationId: audit_list
+      description: |-
+        La auditoría de la organización, de la fila más reciente a la más antigua. Paginada por
+        cursor (ADR-016). Cada fila llega como se guardó: los valores con aspecto de secreto se
+        redactaron al escribirla (ADR-011). Solo lectura.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - audit
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedAuditEntryList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/branches/:
     get:
       operationId: branches_list
@@ -1447,6 +1510,91 @@ components:
         * `LOAD_BALANCED` - Load Balanced
         * `SKILL_BASED` - Skill Based
         * `AI_RULES` - Ai Rules
+    AuditActorTypeEnum:
+      enum:
+      - USER
+      - AI_AGENT
+      - SYSTEM
+      - INTEGRATION
+      - PLATFORM_STAFF
+      type: string
+      description: |-
+        * `USER` - USER
+        * `AI_AGENT` - AI_AGENT
+        * `SYSTEM` - SYSTEM
+        * `INTEGRATION` - INTEGRATION
+        * `PLATFORM_STAFF` - PLATFORM_STAFF
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        occurred_at:
+          type: string
+          format: date-time
+          description: Cuándo ocurrió, según la base de datos.
+        actor_type:
+          $ref: '#/components/schemas/AuditActorTypeEnum'
+        actor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 'Quién lo hizo: el usuario, si `actor_type` es `USER`.'
+        actor_label:
+          type: string
+          nullable: true
+        action:
+          type: string
+          description: '`modulo.accion`, por ejemplo `branch.updated`.'
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+          format: uuid
+          nullable: true
+        entity_label:
+          type: string
+          nullable: true
+          description: Cómo se llamaba la entidad en ese momento.
+        changes:
+          type: object
+          additionalProperties: {}
+          description: Por campo, `[antes, después]`. Ya redactado.
+        metadata:
+          type: object
+          additionalProperties: {}
+          description: Datos de contexto de la acción. Ya redactado.
+        result:
+          $ref: '#/components/schemas/AuditResultEnum'
+        correlation_id:
+          type: string
+          nullable: true
+          description: Común a las filas de una misma operación.
+      required:
+      - action
+      - actor_id
+      - actor_label
+      - actor_type
+      - changes
+      - correlation_id
+      - entity_id
+      - entity_label
+      - entity_type
+      - id
+      - metadata
+      - occurred_at
+      - result
+    AuditResultEnum:
+      enum:
+      - SUCCESS
+      - DENIED
+      - FAILED
+      type: string
+      description: |-
+        * `SUCCESS` - SUCCESS
+        * `DENIED` - DENIED
+        * `FAILED` - FAILED
     Branch:
       type: object
       properties:
@@ -1750,6 +1898,20 @@ components:
       - id
       - name
       - slug
+    PaginatedAuditEntryList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedBranchList:
       type: object
       required:

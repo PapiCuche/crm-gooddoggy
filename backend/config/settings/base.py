@@ -173,6 +173,9 @@ SPECTACULAR_SETTINGS = {
         # `Team.Strategy` (F2-50): otra lista con el mismo nombre de campo no le cambia el nombre.
         "AssignmentStrategyEnum": "apps.organizations.models.Team.Strategy",
         "TeamRoleEnum": "apps.organizations.models.TeamMember.Role",  # F2-55, por lo mismo
+        # La auditoría (F2-73): nombres propios, para que otro `result` no se los quede.
+        "AuditActorTypeEnum": "apps.audit.models.ACTOR_TYPES",
+        "AuditResultEnum": "apps.audit.services.Result",
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
