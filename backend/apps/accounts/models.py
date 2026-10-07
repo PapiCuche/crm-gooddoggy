@@ -113,3 +113,43 @@ class LoginThrottle(models.Model):
 
     def __str__(self) -> str:
         return self.key.split(":", 1)[0]  # el tipo de clave, nunca la huella ni la IP
+
+
+class PasswordReset(models.Model):
+    """Un enlace de recuperación de contraseña enviado (F2-86, ADR-021): platform-owned.
+
+    La cuenta, el SHA-256 del enlace (`token_hash`; el enlace no se guarda nunca), cuándo se
+    envió (`created_at`), cuándo caduca y cuándo se usó. La fila la crea la tarea que envía el
+    correo, que es quien genera el enlace (ADR-019 §4). Los topes por cuenta se cuentan aquí.
+    """
+
+    id = uuid7_primary_key()
+    # Sin índice propio: `password_resets_user_idx` empieza por la cuenta.
+    user = models.ForeignKey(User, models.PROTECT, related_name="+", db_index=False)
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "password_resets"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(token_hash__regex=r"^[0-9a-f]{64}$"),  # noqa: S106 — forma
+                name="password_resets_token_hash_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("created_at")),
+                name="password_resets_expires_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(used_at__isnull=True)
+                | models.Q(used_at__gte=models.F("created_at")),
+                name="password_resets_used_ck",
+            ),
+        ]
+        # Los enlaces de una cuenta, del más reciente al más antiguo: topes y «solo vale el último».
+        indexes = [models.Index(fields=["user", "-created_at"], name="password_resets_user_idx")]
+
+    def __str__(self) -> str:
+        return str(self.pk)  # nunca la cuenta ni el hash

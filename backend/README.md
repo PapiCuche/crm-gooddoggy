@@ -472,6 +472,16 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Auditoría de tenant:** `membership.branch_changed`, con el actor, el antes y el después (`default_branch`) y el código de la sucursal nueva en `metadata.branch`, en la misma transacción que el cambio.
 - **Módulos:** `apps.members.services.set_member_branch` llama a `access.services.ensure_can_manage_member` (reglas, bajo el bloqueo de RBAC de la organización) y después a `organizations.services.set_membership_branch` (escritura y auditoría), que devuelve la sucursal como `BranchRef`: `members` no importa los modelos de `organizations`.
 
+## Recuperación de contraseña: la tabla (F2-86, ADR-021)
+
+`password_resets` guarda los enlaces de recuperación de contraseña enviados. Las reglas de toda la serie (E01-02) están en [ADR-021](../docs/adr/ADR-021-password-recovery.md); este work item deja la tabla y el modelo. Todavía no hay ninguna ruta ni tarea: pedir el enlace, enviarlo y cambiar la contraseña son los siguientes.
+
+- **Platform-owned** (ADR-001 §2): sin `organization_id` ni política de tenant, como `users` y `login_throttles`. El runtime la lee y la escribe sin contexto de tenant. Modelo `apps.accounts.models.PasswordReset`.
+- **Campos:** `user` (la cuenta), `token_hash` (el SHA-256 del enlace; el enlace no se guarda nunca), `created_at` (cuándo se envió), `expires_at` y `used_at`. Una fila es un enlace enviado: la creará la tarea que envía el correo, que es quien genera el enlace (ADR-019 §4).
+- **Restricciones en la base:** el hash con forma de SHA-256 en hexadecimal y en minúsculas (`password_resets_token_hash_ck`) y único en la tabla; la caducidad, posterior al envío (`password_resets_expires_ck`); el uso, si lo hay, no anterior al envío (`password_resets_used_ck`); FK a la cuenta, que no se borra mientras tenga enlaces (`PROTECT` en el ORM y FK en la base). Índice `password_resets_user_idx (user_id, created_at DESC)`, para contar los enlaces de una cuenta y encontrar el último.
+- **Lo que la base no comprueba:** que solo valga el último enlace de una cuenta, cuántos se envían, ni que un enlace usado no se vuelva a usar. Eso lo hará el código de los work items siguientes, con la fila bloqueada.
+- **`crm_app` conserva `DELETE`:** la serie no borra filas, pero purgarlas será una tarea de mantenimiento del runtime, como la de los contadores de acceso.
+
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
 `user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.

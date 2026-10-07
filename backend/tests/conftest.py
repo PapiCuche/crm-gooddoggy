@@ -99,6 +99,7 @@ def tenant_db(
                 "organizations",
                 "django_session",
                 "login_throttles",
+                "password_resets",  # F2-86: antes que las cuentas, a las que referencia
                 "users",
                 PLATFORM_AUDIT,
             ):
