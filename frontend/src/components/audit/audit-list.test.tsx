@@ -51,7 +51,7 @@ describe("AuditList", () => {
     const renamed = entry("a1", {
       entity_label: "LIM-01",
       actor_label: "Ana López",
-      changes: { name: ["Centro", "Centro de Lima"] },
+      changes: { legal_name: ["Centro", "Centro de Lima"] },
       metadata: { operator: "ops@plataforma.pe", reason: "motivo-privado" },
     });
     const refused = entry("a2", {
@@ -89,10 +89,12 @@ describe("AuditList", () => {
     expect(within(second).getByText("Denegado")).toHaveClass("text-danger");
     const time = first.querySelector("time");
     expect(time).toHaveAttribute("datetime", "2026-10-07T03:15:04.123456Z");
-    const [name, code, entity, actor] = first.querySelectorAll("p > span, div > p");
-    for (const line of [name, code, entity, actor]) expect(line).toHaveClass("wrap-anywhere");
+    const [name, code, entity, actor, result] = first.querySelectorAll("p > span, div > p");
+    for (const line of [name, code, entity, actor, result])
+      expect(line).toHaveClass("wrap-anywhere");
     // Ni los cambios, ni el contexto, ni identificadores (OBS-F2-73-1), tampoco en atributos.
     for (const hidden of [
+      ...Object.keys({ ...renamed.changes, ...renamed.metadata }), // ni los nombres de los campos
       "Centro",
       "ops@plataforma.pe",
       "motivo-privado",
@@ -117,6 +119,8 @@ describe("AuditList", () => {
       entry("a3b", { action: "role.created.0", entity_type: "role.created" }), // ni en un texto
       entry("a4", { action: "branch", entity_type: "entities.role" }), // ni rutas de mensajes
       entry("a5", { actor_type: "ROBOT" as never, result: "__proto__" as never }), // fuera del enum
+      entry("a6", { actor_type: "constructor" as never, result: null as never }), // ni un texto
+      entry("a7", { actor_type: 7 as never, result: "toString" as never }),
     ];
     mockApi({ [LIST]: { status: 200, body: { results, next: null } } });
     screenOf();
@@ -127,10 +131,15 @@ describe("AuditList", () => {
       ["actions.length", "__proto__"],
       ["role.created.0", "role.created"],
       ["branch", "entities.role"],
-      ["Sucursal editada", "branch.updated"],
+      ...Array(3).fill(["Sucursal editada", "branch.updated"]),
     ]);
-    const unknown = lines(rows().at(-1) as HTMLElement).slice(3);
-    expect(unknown).toEqual(["Por: ROBOT", expect.any(String), "__proto__"]);
+    const unknown = rows().slice(-3);
+    expect(unknown.map((row) => lines(row).slice(3))).toEqual([
+      ["Por: ROBOT", expect.any(String), "__proto__"],
+      ["Por: constructor", expect.any(String), "null"],
+      ["Por: 7", expect.any(String), "toString"],
+    ]);
+    expect(screen.getByText("null")).toHaveClass("text-danger"); // no es «Correcto»: resaltado
     expect(error).not.toHaveBeenCalled(); // ningún mensaje que falte
   });
 

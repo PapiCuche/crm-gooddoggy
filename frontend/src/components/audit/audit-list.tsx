@@ -15,6 +15,8 @@ import messages from "../../../messages/es-PE.json";
 // Uno que esta versión no conoce (una API más nueva) se enseña con su código, como una acción.
 const ACTORS: Record<AuditActorTypeEnum, string> = messages.audit.actor;
 const RESULTS: Record<AuditResultEnum, string> = messages.audit.result;
+// Y lo que ni siquiera es un texto (una API que no cumple el contrato), como texto: no rompe.
+const named = (catalog: unknown, code: unknown) => text(catalog, String(code)) ?? String(code);
 // Acciones y tipos de entidad son texto libre de la API: se buscan por propiedades propias
 // (`role.created` es `actions.role.created`), nunca como ruta de mensajes, y lo que no tiene
 // nombre se enseña con su código.
@@ -58,7 +60,7 @@ export function AuditList() {
               </p>
               <p className="text-muted wrap-anywhere">
                 {t(entry.actor_label ? "byNamed" : "by", {
-                  actor: text(ACTORS, entry.actor_type) ?? entry.actor_type,
+                  actor: named(ACTORS, entry.actor_type),
                   label: entry.actor_label ?? "",
                 })}
               </p>
@@ -76,7 +78,7 @@ export function AuditList() {
                   entry.result === "SUCCESS" ? "text-muted" : "text-danger",
                 )}
               >
-                {text(RESULTS, entry.result) ?? entry.result}
+                {named(RESULTS, entry.result)}
               </span>
             </p>
           </>
