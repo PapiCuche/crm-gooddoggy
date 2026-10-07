@@ -211,7 +211,7 @@ El bloque inicial F2-00 … F2-13 no cierra la fase: MFA y la gestión de roles 
 Se registran como `OBS-F2-<nn>-<n>`.
 
 ### OBS-F2-75-1 — Auditoría, pantalla: enseña menos de lo que la API devuelve
-F2-75 (#208) añade la pantalla «Auditoría» como lista de solo lectura. Decisión del programa (ADR-015 §5), a confirmar: **no enseña `changes` ni `metadata`** hasta que el mantenedor responda a OBS-F2-73-1; tampoco identificadores ni el nombre de la persona que actuó. No es una barrera: la API los devuelve a quien tiene `audit.view`. La pantalla nombra en español las acciones y los tipos de entidad que hoy se escriben; lo que no tiene nombre se ve con su código.
+F2-75 (#208) añade la pantalla «Auditoría» como lista de solo lectura. Decisión del programa (ADR-015 §5), a confirmar: **no enseña `changes` ni `metadata`** hasta que el mantenedor responda a OBS-F2-73-1; tampoco identificadores, y no busca el nombre de la persona que actuó (sí enseña `actor_label` si la fila la trae; hoy ninguna acción la anota). No es una barrera: la API los devuelve a quien tiene `audit.view`. La pantalla nombra en español las acciones y los tipos de entidad que hoy se escriben; lo que no tiene nombre se ve con su código.
 
 ### OBS-F2-74-1 — Auditoría, filtros: la forma que fija la primera ruta con filtros
 ADR-016 deja los filtros «para cuando una pantalla los necesite». F2-74 (#206) añade los de la auditoría (`actor_type`, `actor_id`, `action`, `entity_type`, `entity_id`) y con ellos una forma, decisión del programa (ADR-015 §5) a confirmar:

@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import messages from "../../../messages/es-PE.json";
 
 // Tipos de actor y resultados son enums del contrato: si gana uno y el catálogo no, no compila.
+// Uno que esta versión no conoce (una API más nueva) se enseña con su código, como una acción.
 const ACTORS: Record<AuditActorTypeEnum, string> = messages.audit.actor;
 const RESULTS: Record<AuditResultEnum, string> = messages.audit.result;
 // Acciones y tipos de entidad son texto libre de la API: se buscan por propiedades propias
@@ -57,12 +58,12 @@ export function AuditList() {
               </p>
               <p className="text-muted wrap-anywhere">
                 {t(entry.actor_label ? "byNamed" : "by", {
-                  actor: ACTORS[entry.actor_type],
+                  actor: text(ACTORS, entry.actor_type) ?? entry.actor_type,
                   label: entry.actor_label ?? "",
                 })}
               </p>
             </div>
-            <p className="flex flex-col text-sm sm:items-end">
+            <p className="flex flex-col text-sm sm:items-end sm:text-right">
               <time dateTime={entry.occurred_at}>
                 {format.dateTime(new Date(entry.occurred_at), {
                   dateStyle: "medium",
@@ -71,11 +72,11 @@ export function AuditList() {
               </time>
               <span
                 className={cn(
-                  "font-medium",
+                  "font-medium wrap-anywhere",
                   entry.result === "SUCCESS" ? "text-muted" : "text-danger",
                 )}
               >
-                {RESULTS[entry.result]}
+                {text(RESULTS, entry.result) ?? entry.result}
               </span>
             </p>
           </>

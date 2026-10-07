@@ -89,9 +89,9 @@ describe("AuditList", () => {
     expect(within(second).getByText("Denegado")).toHaveClass("text-danger");
     const time = first.querySelector("time");
     expect(time).toHaveAttribute("datetime", "2026-10-07T03:15:04.123456Z");
-    for (const text of ["Sucursal editada", "branch.updated", "Sucursal: LIM-01"])
-      expect(within(first).getByText(text)).toHaveClass("wrap-anywhere"); // largo: se parte
-    // Ni los cambios, ni el contexto, ni identificadores (OBS-F2-73-1).
+    const [name, code, entity, actor] = first.querySelectorAll("p > span, div > p");
+    for (const line of [name, code, entity, actor]) expect(line).toHaveClass("wrap-anywhere");
+    // Ni los cambios, ni el contexto, ni identificadores (OBS-F2-73-1), tampoco en atributos.
     for (const hidden of [
       "Centro",
       "ops@plataforma.pe",
@@ -101,7 +101,7 @@ describe("AuditList", () => {
       "entity-",
       "corr-",
     ])
-      expect(document.body.textContent).not.toContain(hidden);
+      expect(new XMLSerializer().serializeToString(document.body)).not.toContain(hidden);
     expect(screen.getByRole("status")).toHaveTextContent("2 registros en la lista");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Auditoría");
     expect(screen.getByText(/Lo que se hizo en Acme SAC, de lo más reciente/)).toBeVisible();
@@ -114,7 +114,9 @@ describe("AuditList", () => {
       entry("a1", { action: "quote.sent", entity_type: "quote", entity_label: "COT-000123" }),
       entry("a2", { action: "constructor", entity_type: "toString" }), // claves heredadas
       entry("a3", { action: "actions.length", entity_type: "__proto__" }),
+      entry("a3b", { action: "role.created.0", entity_type: "role.created" }), // ni en un texto
       entry("a4", { action: "branch", entity_type: "entities.role" }), // ni rutas de mensajes
+      entry("a5", { actor_type: "ROBOT" as never, result: "__proto__" as never }), // fuera del enum
     ];
     mockApi({ [LIST]: { status: 200, body: { results, next: null } } });
     screenOf();
@@ -123,8 +125,12 @@ describe("AuditList", () => {
       ["quote.sent", "quote: COT-000123"],
       ["constructor", "toString"],
       ["actions.length", "__proto__"],
+      ["role.created.0", "role.created"],
       ["branch", "entities.role"],
+      ["Sucursal editada", "branch.updated"],
     ]);
+    const unknown = lines(rows().at(-1) as HTMLElement).slice(3);
+    expect(unknown).toEqual(["Por: ROBOT", expect.any(String), "__proto__"]);
     expect(error).not.toHaveBeenCalled(); // ningún mensaje que falte
   });
 
@@ -140,6 +146,7 @@ describe("AuditList", () => {
     screenOf();
     await screen.findByRole("list", { name: "Auditoría" });
     expect(lines(rows()[0] as HTMLElement).slice(3)).toEqual([text, expect.any(String), "Falló"]);
+    expect(screen.getByText("Falló")).toHaveClass("text-danger"); // resaltado, como «Denegado»
     expect(screen.getByRole("status")).toHaveTextContent("1 registro en la lista");
   });
 
@@ -150,6 +157,7 @@ describe("AuditList", () => {
       await screen.findByText("Todavía no hay nada en la auditoría de esta organización."),
     ).toBeVisible();
     expect(screen.queryByRole("list", { name: "Auditoría" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Sin registros en la lista");
     view.unmount();
     mockApi({ [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
     screenOf();
