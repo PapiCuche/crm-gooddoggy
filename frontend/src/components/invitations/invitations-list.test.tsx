@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -28,9 +29,9 @@ const invitation = (name: string, extra: Partial<Invitation> = {}): Invitation =
     created_at: "2026-10-07T15:30:00Z",
     ...extra,
   }) as Invitation;
-const role = (id: string, name: string) => ({ id, name, code: id, description: "" });
+const role = (id: string, name: string) => ({ id, name, code: `code-${id}`, description: "" });
 const page = (...rows: Invitation[]) => ({ status: 200, body: { results: rows, next: null } });
-const directory = { results: [role("rol-ventas", "Ventas"), role("rol-caja", "Caja")], next: null };
+const directory = { results: [role("rol-caja", "Caja"), role("rol-ventas", "Ventas")], next: null };
 const screenOf = (...codes: string[]) =>
   renderApp(
     <TenantProvider value={tenant(...codes)}>
@@ -51,7 +52,7 @@ describe("InvitationsList", () => {
   it("muestra lo que devuelve la API: correo, roles por su nombre, estado y fechas", async () => {
     const api = mockApi({
       [LIST]: page(
-        invitation("nueva", { role_ids: ["rol-caja", "rol-ventas"] }),
+        invitation("nueva", { role_ids: ["rol-ventas", "rol-caja"] }),
         invitation("tarde", { status: "EXPIRED", expires_at: "2026-10-01T03:00:00Z" }),
         invitation("fuera", { status: "REVOKED", role_ids: ["rol-borrado", "rol-ventas"] }),
         invitation("dentro", { status: "ACCEPTED", role_ids: ["rol-caja", "rol-caja"] }),
@@ -65,8 +66,8 @@ describe("InvitationsList", () => {
       expect(lines("nueva")).toEqual([
         "nueva@cliente.pe",
         "Invitada el 7 oct. 2026",
-        "Caja", // en el orden de la invitación
-        "Ventas",
+        "Ventas", // en el orden de la invitación: ni el del directorio ni el alfabético
+        "Caja",
         "Pendiente",
         "Caduca el 14 oct. 2026",
       ]),
@@ -81,7 +82,9 @@ describe("InvitationsList", () => {
       "Revocada", // sin fecha de caducidad: ya no importa
     ]);
     expect(lines("dentro").slice(2)).toEqual(["Caja", "Caja", "Aceptada"]); // repetido: dos veces
-    expect(screen.getByText("Pendiente")).not.toHaveClass("text-muted", "text-success");
+    // Uno a uno: `.not.toHaveClass(a, b)` solo falla si lleva las dos.
+    for (const tone of ["text-muted", "text-success"])
+      expect(screen.getByText("Pendiente")).not.toHaveClass(tone);
     expect(screen.getByText("Aceptada")).toHaveClass("text-success");
     for (const status of ["Revocada", "Caducada", "Un rol que ya no existe"])
       expect(screen.getByText(status)).toHaveClass("text-muted");
@@ -120,6 +123,23 @@ describe("InvitationsList", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("si el contexto pierde `roles.view` con la pantalla abierta, vuelve al recuento", async () => {
+    mockApi({ [LIST]: page(invitation("una")), [ROLES]: { status: 200, body: directory } });
+    function Shell() {
+      const [codes, setCodes] = useState(["roles.view"]);
+      return (
+        <TenantProvider value={tenant(...codes)}>
+          <button onClick={() => setCodes([])}>quitar</button>
+          <InvitationsList />
+        </TenantProvider>
+      );
+    }
+    renderApp(<Shell />);
+    await waitFor(() => expect(lines("una")).toContain("Ventas"));
+    fireEvent.click(screen.getByRole("button", { name: "quitar" }));
+    expect(lines("una")).toContain("1 rol"); // lo ya leído sigue en caché, y no se enseña
+  });
+
   it("lee el directorio de roles entero, página a página", async () => {
     const api = mockApi({
       [LIST]: page(invitation("una", { role_ids: ["rol-caja"] })),
@@ -140,10 +160,15 @@ describe("InvitationsList", () => {
   });
 
   it("pide la página siguiente con el cursor, y un estado desconocido se enseña como llega", async () => {
-    const odd = invitation("rara", { status: "ON_HOLD" as Invitation["status"] });
+    const odd = (name: string, status: unknown) =>
+      invitation(name, { status: status as Invitation["status"] });
     const api = mockApi({
       [LIST]: { status: 200, body: { results: [invitation("una")], next: "c2" } },
-      [`${LIST}?cursor=c2`]: page(odd),
+      [`${LIST}?cursor=c2`]: page(
+        odd("rara", "ON_HOLD"),
+        odd("propia", "constructor"),
+        odd("nula", null),
+      ),
     });
     screenOf();
     fireEvent.click(await screen.findByRole("button", { name: "Cargar más" }));
@@ -155,7 +180,11 @@ describe("InvitationsList", () => {
         "ON_HOLD",
       ]),
     );
-    expect(screen.getByText("ON_HOLD")).toHaveClass("text-muted");
+    // Tampoco un nombre que `Object` hereda, ni lo que no es un texto: como llegan, y apagados.
+    expect(lines("propia").at(-1)).toBe("constructor");
+    expect(lines("nula").at(-1)).toBe("null");
+    for (const code of ["ON_HOLD", "constructor", "null"])
+      expect(screen.getByText(code)).toHaveClass("text-muted", "wrap-anywhere"); // y no desborda
     expect(urls(api)).toEqual([
       "/api/v1/o/acme/invitations/",
       "/api/v1/o/acme/invitations/?cursor=c2",

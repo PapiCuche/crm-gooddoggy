@@ -229,7 +229,7 @@ Cada rol editable ofrece «Permisos», que abre un panel con el catálogo (`GET 
 
 - **Componente:** `components/branches/branches-list.tsx`, sobre la lista por cursor compartida (ver «Miembros»): su paginación, sus estados y su foco son los mismos.
 - **Por sucursal:** nombre, código, dirección (calle, distrito y ciudad: lo que haya, en una línea; «Sin dirección» si no hay nada), teléfono si lo tiene, zona horaria y si está activa. Se listan también las inactivas.
-- **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»); lo usan esta pantalla, la de equipos y la de invitaciones: una organización siempre tiene miembros y roles.
+- **Sin sucursales:** la pantalla lo dice en lugar de enseñar una lista vacía. Es el `empty` de la lista compartida (ver «Lista por cursor compartida»); lo usan esta pantalla y las de equipos, de invitaciones y de auditoría: una organización siempre tiene miembros y roles.
 - **Navegación:** la entrada «Sucursales» pide el permiso `organization.view`, el que exige la API para leerlas; `branches.manage` solo no basta. Es comodidad: quien abre la URL sin el permiso ve «sin permiso» porque la API responde 403.
 - **Escrituras:** crear una sucursal está en «Crear una sucursal» y corregir sus datos, en «Editar una sucursal»; desactivarla y reactivarla, en «Desactivar y reactivar una sucursal». No hay borrado.
 - **Aviso de la lista:** una acción que descubre que la sucursal ya no existe lo explica aquí, encima de la lista (`role="alert"`), y la lista se vuelve a pedir. Abrir «Crear sucursal», «Editar» o una confirmación lo retira.

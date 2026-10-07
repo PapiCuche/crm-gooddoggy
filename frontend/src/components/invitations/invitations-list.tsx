@@ -23,7 +23,9 @@ import messages from "../../../messages/es-PE.json";
 // versión no conoce (una API más nueva), o que ni es un texto, se enseña como llega.
 const STATUSES: Record<InvitationStatusEnum, string> = messages.invitations.status;
 const named = (code: unknown) => text(STATUSES, String(code)) ?? String(code);
-const TONE: Partial<Record<string, string>> = { ACCEPTED: "text-success", PENDING: "" };
+// El tono, igual: por propiedades propias. `TONE["constructor"]` no es un texto ni es `undefined`.
+const TONE = { ACCEPTED: "text-success", PENDING: "" };
+const tone = (code: unknown) => text(TONE, String(code)) ?? "text-muted";
 
 // Invitaciones (F2-83): lo que devuelve `GET /api/v1/o/{slug}/invitations/`, de la más reciente
 // a la más antigua. La lista, sus estados y su foco son los de `CursorList`. Quién puede verlas
@@ -87,8 +89,8 @@ export function InvitationsList() {
               {t("roleCount", { count: invitation.role_ids.length })}
             </p>
           )}
-          <p className="flex flex-col text-sm sm:items-end">
-            <span className={cn("font-medium", TONE[invitation.status] ?? "text-muted")}>
+          <p className="flex flex-col text-sm sm:items-end sm:text-right">
+            <span className={cn("font-medium wrap-anywhere", tone(invitation.status))}>
               {named(invitation.status)}
             </span>
             {invitation.status === "PENDING" || invitation.status === "EXPIRED" ? (

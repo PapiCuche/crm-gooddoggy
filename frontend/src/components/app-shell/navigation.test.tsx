@@ -44,14 +44,15 @@ describe("navegación del shell", () => {
   });
 
   it("la entrada «Invitaciones» pide `users.invite` y `users.manage` a la vez", async () => {
-    const both = ["users.manage", "users.view", "users.invite"].map((code) => ({
+    const both = ["roles.view", "users.manage", "users.view", "users.invite"].map((code) => ({
       code,
       scopes: [],
     }));
     expect(await links(both)).toEqual([
       ["/o/acme", null],
       ["/o/acme/miembros", "page"],
-      ["/o/acme/invitaciones", null],
+      ["/o/acme/invitaciones", null], // después de «Miembros» y antes de «Roles»
+      ["/o/acme/roles", null],
     ]);
     expect(screen.getByRole("link", { name: "Invitaciones" })).toBeVisible();
   });
