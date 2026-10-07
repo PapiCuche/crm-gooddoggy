@@ -24,8 +24,9 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-016](ADR-016-api-list-convention.md) | Convención de los listados de la API: paginación por cursor | Accepted | 2026-10-04 |
 | [ADR-017](ADR-017-member-administration-module.md) | Administración de miembros en un módulo de orquestación (`apps.members`); reglas para suspender y reactivar | Accepted | 2026-10-04 |
 | [ADR-018](ADR-018-owner-role-follows-catalog.md) | El rol Owner sigue al catálogo de permisos: lo impone el job de migraciones | Accepted | 2026-10-05 |
-| [ADR-019](ADR-019-outbound-email.md) | Correo saliente por un único módulo (`core.mail`), SMTP por entorno y sin proveedor fijado; se envía desde tareas y los enlaces de un solo uso no se guardan | Accepted | 2026-10-07 |
+| [ADR-019](ADR-019-outbound-email.md) | Correo saliente por un único módulo (`core.mail`), SMTP por entorno y sin proveedor fijado; se envía desde tareas y los enlaces de un solo uso no se guardan | Accepted (enmendado en parte por ADR-021: §3, en la recuperación de contraseña) | 2026-10-07 |
 | [ADR-020](ADR-020-invitations.md) | Invitaciones a una organización: sin cuenta ni membresía hasta aceptar, enlace de un solo uso guardado como hash, anti-escalada al invitar, y aceptar no inicia sesión | Accepted; la excepción a ADR-014 §4 (aceptar), *Proposed* (D-F2-14) | 2026-10-07 |
+| [ADR-021](ADR-021-password-recovery.md) | Recuperación de contraseña: la petición no mira si la cuenta existe, enlace de un solo uso guardado como hash y con 60 minutos de vida, topes por red, identificador y cuenta, y cambiar la contraseña revoca las sesiones y no inicia sesión | Accepted | 2026-10-07 |
 
 ## Plantilla
 
