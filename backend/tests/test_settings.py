@@ -212,6 +212,7 @@ def test_production_refuses_an_unsafe_mail_server(
         "https://app\u2028.example.com",
         "https://áé.example.com",  # un dominio internacionalizado se escribe en su forma IDNA
         "https://" + "a" * 254,
+        "https://[::::]",  # entre corchetes solo cabe una IPv6
     ],
 )
 def test_production_with_mail_needs_an_https_origin_for_its_links(
