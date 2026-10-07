@@ -179,8 +179,9 @@ export function AuditList() {
               options={ACTOR_OPTIONS}
               onChange={choose("actor_type")}
             />
-            {/* Aparece cuando llega el directorio y ya no se desmonta: si volver a pedirlo falla
-                (al volver a la ventana), sigue lo leído; quitarlo dejaría el foco sin sitio. */}
+            {/* Aparece cuando llega el directorio y ya no se desmonta mientras se pueda ver a los
+                miembros: si volver a pedirlo falla (al volver a la ventana), sigue lo leído;
+                quitarlo dejaría el foco sin sitio. */}
             {seesPeople && people.data ? (
               <Choice
                 label={t("filters.person")}

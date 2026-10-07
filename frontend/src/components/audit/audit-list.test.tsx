@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -427,6 +428,27 @@ describe("AuditList", () => {
       expect(urls(api)).toEqual(["/api/v1/o/acme/audit/"]);
       expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument();
       expect(screen.getAllByRole("combobox")).toHaveLength(3);
+      expect(grid()).toHaveClass("sm:grid-cols-3");
+    });
+
+    it("si `users.view` desaparece con la pantalla abierta, se van «Persona» y los nombres", async () => {
+      mockApi({ ...directory, [LIST]: page(entry("a1", { actor_id: "u-ana" })) });
+      // El contexto cambia en su sitio: `TenantGate` lo vuelve a pedir al volver a la ventana.
+      function Session() {
+        const [context, setContext] = useState(seesPeople);
+        return (
+          <TenantProvider value={context}>
+            <AuditList />
+            <button onClick={() => setContext(tenant)}>pierde el permiso</button>
+          </TenantProvider>
+        );
+      }
+      renderApp(<Session />);
+      await screen.findByRole("combobox", { name: "Persona" });
+      await screen.findByText("Por: una persona (Ana López)");
+      fireEvent.click(screen.getByRole("button", { name: "pierde el permiso" }));
+      expect(screen.queryByRole("combobox", { name: "Persona" })).not.toBeInTheDocument();
+      expect(who()).toEqual(["Por: una persona"]); // lo ya leído tampoco se enseña
       expect(grid()).toHaveClass("sm:grid-cols-3");
     });
 
