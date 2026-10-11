@@ -76,11 +76,12 @@ LOGIN_THROTTLE = {
     "pair": (5, 15 * 60, 60, 15 * 60),  # una cuenta desde una dirección
     "ip": (30, 15 * 60, 5 * 60, 60 * 60),  # muchas cuentas desde una dirección
 }
-# Pedir un enlace de recuperación (ADR-021 §2): peticiones admitidas por ventana, en segundos.
-# Los dos rechazan. Son propios de este flujo: no tocan los contadores del acceso.
+# Recuperación de contraseña (ADR-021 §2 y §5): intentos admitidos por ventana, en segundos.
+# Todos rechazan. Son propios de este flujo: no tocan los contadores del acceso.
 PASSWORD_RESET_THROTTLE = {
     "ip": (20, 60 * 60),  # una dirección de red, para cualquier correo
     "identifier": (5, 60 * 60),  # un correo, desde cualquier dirección
+    "change": (10, 15 * 60),  # presentar un enlace, desde una dirección de red (ADR-021 §5)
 }
 ASGI_APPLICATION = "config.asgi.application"
 

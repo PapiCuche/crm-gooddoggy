@@ -3,14 +3,18 @@
 `request_link` es lo que hace la ruta que lo pide: cuenta el intento, lo audita y encola la
 tarea, sin buscar la cuenta. `issue_link` es lo que hace la tarea `accounts.send_password_reset`:
 la única pieza que ve el enlace. Lo genera, guarda su SHA-256 y lo pone en el correo; no lo
-registra ni lo devuelve.
+registra ni lo devuelve. `change_password` es lo que hace la ruta que recibe el enlace de
+vuelta: comprueba que vale y cambia la contraseña de su cuenta.
 """
 
 import hashlib
+import re
 import secrets
 from datetime import timedelta
+from typing import Any
 
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
 from django.http import HttpRequest
@@ -18,8 +22,9 @@ from django.utils import timezone
 
 from apps.accounts import throttle
 from apps.accounts.models import PasswordReset, User
-from apps.accounts.services import client_of
+from apps.accounts.services import client_of, revoke_sessions, unaudited
 from apps.audit import platform
+from apps.audit.services import Entity, Result
 from core import mail
 from core.api.errors import ApiError
 from core.redaction import EMAIL_MASK
@@ -43,9 +48,9 @@ Si no fuiste tú, no hagas nada: tu contraseña no cambia.
 """
 
 
-# El límite de quien pide enlaces (ADR-021 §2): por ventana fija, en la tabla de los contadores
-# de acceso pero con claves propias (`rst:`). Una sentencia que bloquea la fila: dos instancias
-# no se pisan. Devuelve cuántos van en la ventana y los segundos que le quedan.
+# El límite de pedir enlaces y el de presentarlos (ADR-021 §2 y §5): por ventana fija, en la
+# tabla de los contadores de acceso pero con claves propias (`rst:`). Una sentencia que bloquea la
+# fila: dos instancias no se pisan. Devuelve cuántos van en la ventana y los segundos que quedan.
 _SPAN = "%(window)s::int * interval '1 second'"
 _COUNT = f"""
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
@@ -72,20 +77,29 @@ BROKER_WAIT = 3  # segundos que la petición espera a un broker que no contesta
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
 
 
-def _admit(email: str, ip: str | None) -> None:
-    """Cuenta la petición por dirección de red y por identificador, exista o no la cuenta, y la
-    rechaza (429 con `Retry-After`) si alguno pasó su tope. Una petición rechazada no cuenta."""
-    attempt = throttle.keys(email, ip)
+SECRET = re.compile(r"[A-Za-z0-9_-]{43}")  # la forma de `secrets.token_urlsafe(32)`
+INVALID_LINK = "INVALID_RESET_LINK"
+
+
+def _count(counters: dict[str, str]) -> None:
+    """Cuenta el intento en cada clave (`{ámbito: clave}`, en su orden) y lo rechaza (429 con
+    `Retry-After`) si alguna pasó el tope de su ámbito. Un intento rechazado no cuenta."""
     with transaction.atomic(), connection.cursor() as cursor:
-        for scope in ("ip", "identifier"):  # siempre en este orden: sin interbloqueos
+        for scope, key in counters.items():  # siempre en el mismo orden: sin interbloqueos
             limit, window = settings.PASSWORD_RESET_THROTTLE[scope]
-            cursor.execute(_COUNT, {"key": f"rst:{attempt[scope]}", "window": window})
+            cursor.execute(_COUNT, {"key": f"rst:{key}", "window": window})
             asked, wait = cursor.fetchone()
             if asked > limit:
                 transaction.set_rollback(True)
                 error = ApiError("RATE_LIMITED", 429)
                 error.wait = wait  # el manejador de errores lo pasa a la cabecera
                 raise error
+
+
+def _admit(email: str, ip: str | None) -> None:
+    """Cuenta la petición por dirección de red y por identificador, exista o no la cuenta."""
+    attempt = throttle.keys(email, ip)
+    _count({"ip": attempt["ip"], "identifier": attempt["identifier"]})
 
 
 def purge_limits() -> int:
@@ -167,3 +181,73 @@ def issue_link(email: str) -> bool:
     body = BODY.format(link=link, minutes=minutes)
     mail.send(mail.Message(to=user.email, subject=SUBJECT, body=body, purpose="password_reset"))
     return True
+
+
+def _refuse(reason: str, user_id: Any, client: dict[str, Any]) -> ApiError:
+    """El enlace no vale: la misma respuesta sea cual sea la razón (ADR-021 §5). La razón solo
+    queda en la auditoría, con la cuenta si el secreto era de una; si no se puede escribir, la
+    respuesta no cambia (ADR-013 §5)."""
+    try:
+        platform.record(
+            "auth.password.changed",
+            actor_type=platform.Actor.ANONYMOUS,
+            entity=Entity("user", user_id) if user_id else None,
+            metadata={"method": "reset_link", "reason": reason},
+            result=Result.DENIED,
+            **client,
+        )
+    except Exception as error:
+        unaudited(error, "auth.password.changed")
+    return ApiError(INVALID_LINK, 400, "El enlace no vale o ya caducó. Pide uno nuevo.")
+
+
+def change_password(request: HttpRequest, *, token: str, password: str) -> None:
+    """Cambia la contraseña de la cuenta del enlace `token`, si el enlace vale (ADR-021 §5).
+
+    Vale si su hash está en la tabla, es el último emitido para su cuenta, no se usó, no caducó
+    y su cuenta sigue activa y no es de personal de plataforma; si no, `ApiError`
+    `INVALID_RESET_LINK`, igual para todas las razones. Con un enlace que vale, una contraseña
+    que no pasa los validadores lanza su `ValidationError` y no lo gasta. Al cambiarla, en una
+    transacción y con la fila de la cuenta bloqueada antes que la del enlace (el orden de
+    `issue_link`): contraseña, enlace usado, sesiones revocadas y auditoría, o nada. No inicia
+    sesión. Antes de todo, el límite de intentos por dirección de red (`ApiError` 429).
+    """
+    if connection.in_atomic_block:  # la fila de un rechazo se desharía con esa transacción
+        raise RuntimeError("change_password no se llama dentro de una transacción")
+    client = client_of(request)
+    # Su propia clave (`rst:chg:ip:…`): presentar enlaces no gasta el tope de pedirlos.
+    _count({"change": "chg:" + throttle.keys("", client["ip"])["ip"]})
+    if not SECRET.fullmatch(token):
+        raise _refuse("malformed", None, client)
+    found = PasswordReset.objects.filter(token_hash=token_hash(token)).values("pk", "user_id")
+    if not (link_ref := found.first()):
+        raise _refuse("unknown", None, client)
+    with transaction.atomic():
+        user = User.objects.select_for_update(no_key=True).get(pk=link_ref["user_id"])
+        link = PasswordReset.objects.select_for_update().get(pk=link_ref["pk"])
+        newer = PasswordReset.objects.filter(user=user, created_at__gt=link.created_at)
+        if link.used_at is not None:
+            reason = "used"
+        elif link.expires_at <= timezone.now():
+            reason = "expired"
+        elif newer.exists():
+            reason = "superseded"
+        elif not user.is_active or user.is_platform_staff:
+            reason = "account"
+        else:
+            reason = ""
+            validate_password(password, user)  # `ValidationError`: el enlace no se gasta
+            user.set_password(password)
+            user.save(update_fields=["password", "updated_at"])
+            link.used_at = timezone.now()
+            link.save(update_fields=["used_at"])
+            revoke_sessions(user.pk)
+            platform.record(  # en la transacción del cambio: sin esta fila, no hay cambio
+                "auth.password.changed",
+                actor_type=platform.Actor.ANONYMOUS,
+                entity=Entity("user", user.pk),
+                metadata={"method": "reset_link"},
+                **client,
+            )
+    if reason:  # fuera de la transacción: la fila del rechazo se confirma por sí misma
+        raise _refuse(reason, user.pk, client)
