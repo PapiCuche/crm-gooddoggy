@@ -45,7 +45,7 @@ def client_of(request: HttpRequest) -> dict[str, Any]:
     return {"ip": remote or None, "user_agent": request.META.get("HTTP_USER_AGENT")}
 
 
-def _unaudited(error: Exception, action: str) -> None:
+def unaudited(error: Exception, action: str) -> None:
     """ADR-013 §5: un evento de acceso que no se pudo auditar va al log y al reporte de errores,
     solo con el nombre de la acción (nunca el identificador). Nada de esto cambia la respuesta."""
     logger.exception("%s sin auditar", action)
@@ -77,7 +77,7 @@ def _audit_failure(email: str, client: dict[str, Any]) -> None:
             **client,
         )
     except Exception as error:  # nada de la auditoría cambia la respuesta de un acceso rechazado
-        _unaudited(error, "auth.login.failed")
+        unaudited(error, "auth.login.failed")
 
 
 def _rate_limited(seconds: int) -> ApiError:
@@ -103,7 +103,7 @@ def _audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) 
             **client,
         )
     except Exception as error:
-        _unaudited(error, "auth.login.throttled")
+        unaudited(error, "auth.login.throttled")
 
 
 def login(request: HttpRequest, *, email: str, password: str) -> User:
@@ -156,4 +156,4 @@ def logout(request: HttpRequest) -> None:
     try:
         platform.record("auth.logout", actor_type=platform.Actor.USER, actor_id=user_id, **client)
     except Exception as error:
-        _unaudited(error, "auth.logout")
+        unaudited(error, "auth.logout")

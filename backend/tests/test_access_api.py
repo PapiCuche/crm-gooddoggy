@@ -56,7 +56,7 @@ TENANT = "api/v1/o/<slug:org_slug>/"
 PLATFORM = frozenset(  # rutas de plataforma del proyecto: otra frontera (ADR-014 §4)
     {"api/schema/", "api/v1/me/organizations/"}
     | {f"api/v1/auth/{name}/" for name in ("csrf", "login", "logout", "session")}
-    | {"api/v1/auth/password-reset/"}  # F2-88: anónima, como el login
+    | {"api/v1/auth/password-reset/", "api/v1/auth/password-reset/confirm/"}  # F2-88, F2-89
 )
 MEMBER = frozenset({TENANT + "me/"})  # rutas de tenant abiertas a todo miembro activo (F2-11)
 PREFIX = "api/v1/o/"  # las rutas de tenant, como `TENANT_PATH` en el middleware

@@ -81,6 +81,7 @@ LOGIN_THROTTLE = {
 PASSWORD_RESET_THROTTLE = {
     "ip": (20, 60 * 60),  # una dirección de red, para cualquier correo
     "identifier": (5, 60 * 60),  # un correo, desde cualquier dirección
+    "change": (10, 15 * 60),  # presentar un enlace, desde una dirección de red (ADR-021 §5)
 }
 ASGI_APPLICATION = "config.asgi.application"
 

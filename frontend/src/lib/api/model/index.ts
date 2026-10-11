@@ -49,6 +49,7 @@ export * from "./paginatedMemberList";
 export * from "./paginatedRoleList";
 export * from "./paginatedTeamList";
 export * from "./paginatedTeamMemberList";
+export * from "./passwordResetConfirmRequest";
 export * from "./passwordResetRequestRequest";
 export * from "./patchedBranchUpdateRequest";
 export * from "./patchedRoleUpdateRequest";

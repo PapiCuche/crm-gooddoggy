@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.middleware.csrf import get_token
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers
+from rest_framework.fields import get_error_detail
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +14,7 @@ from rest_framework.views import APIView
 from apps.accounts import recovery, services
 from apps.accounts.api.serializers import (
     LoginSerializer,
+    PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     SessionSerializer,
 )
@@ -76,6 +78,31 @@ class PasswordResetRequestView(APIView):
             message = "No es una dirección de correo."
             raise serializers.ValidationError({"email": [message]}) from None
         recovery.request_link(request._request, email=email)
+        return Response(status=204)
+
+
+class PasswordResetConfirmView(APIView):
+    permission_classes = [Public]
+
+    @extend_schema(
+        operation_id="auth_password_reset_confirm",
+        tags=["auth"],
+        auth=[],
+        request=PasswordResetConfirmSerializer,
+        responses={204: None, **errors(400, 403, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Cambia la contraseña de la cuenta de un enlace de recuperación. Cierra todas sus
+        sesiones y no inicia ninguna. 400 `INVALID_RESET_LINK`: el enlace no vale, sin decir por
+        qué (no existe, caducó, ya se usó o hay uno más nuevo). 400 `VALIDATION_ERROR` en
+        `password`: el enlace vale y no se gasta, pero la contraseña no cumple las reglas. 429:
+        demasiados intentos desde esta red."""
+        sent = PasswordResetConfirmSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            recovery.change_password(request._request, **sent.validated_data)
+        except ValidationError as weak:
+            raise serializers.ValidationError({"password": get_error_detail(weak)}) from None
         return Response(status=204)
 
 
