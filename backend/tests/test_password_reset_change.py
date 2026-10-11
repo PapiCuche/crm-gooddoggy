@@ -142,7 +142,10 @@ def test_a_link_that_is_not_valid_gets_one_answer_whatever_the_reason_and_change
     assert not PasswordReset.objects.exclude(used_at=None).exists()
     assert change(browser, latest).status_code == 204  # y el último de ana sigue valiendo
     assert said(change(browser, latest)) == REFUSED
-    assert json.loads(audit(migrator)[-1][7])["reason"] == "used"
+    used = json.dumps({"method": "reset_link", "reason": "used"})
+    assert audit(migrator)[-1][5:8] == ("user", ana.pk, used)  # el usado también lleva su cuenta
+    for token in ("a" * 43, "corto", old, expired, off, latest):  # ni con una contraseña débil
+        assert said(change(browser, token, "corta")) == REFUSED  # se valida solo si el enlace vale
 
 
 def test_a_password_the_validators_refuse_does_not_spend_the_link(
@@ -173,8 +176,9 @@ def test_attempts_are_limited_by_network_address_with_their_own_counter(
     settings.PASSWORD_RESET_THROTTLE = {**settings.PASSWORD_RESET_THROTTLE, "change": (3, 600)}
     make_user(email=EMAIL)
     secret = issued()
-    for _ in range(3):
-        assert said(change(browser, "b" * 43)) == REFUSED
+    assert change(browser, "").status_code == 400  # un cuerpo que no cumple el contrato no cuenta
+    for token in ("b" * 43, "corto", "b" * 43):  # todo intento cuenta, también el mal formado
+        assert said(change(browser, token)) == REFUSED
     limited = change(browser, secret)  # el cuarto, aunque el enlace valga
     assert reply(limited) == (429, b'{"code":"RATE_LIMITED"}')
     assert 590 < int(limited["Retry-After"]) <= 600

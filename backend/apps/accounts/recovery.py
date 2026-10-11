@@ -48,9 +48,9 @@ Si no fuiste tú, no hagas nada: tu contraseña no cambia.
 """
 
 
-# El límite de quien pide enlaces (ADR-021 §2): por ventana fija, en la tabla de los contadores
-# de acceso pero con claves propias (`rst:`). Una sentencia que bloquea la fila: dos instancias
-# no se pisan. Devuelve cuántos van en la ventana y los segundos que le quedan.
+# El límite de pedir enlaces y el de presentarlos (ADR-021 §2 y §5): por ventana fija, en la
+# tabla de los contadores de acceso pero con claves propias (`rst:`). Una sentencia que bloquea la
+# fila: dos instancias no se pisan. Devuelve cuántos van en la ventana y los segundos que quedan.
 _SPAN = "%(window)s::int * interval '1 second'"
 _COUNT = f"""
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)

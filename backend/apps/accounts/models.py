@@ -99,9 +99,10 @@ class LoginThrottle(models.Model):
     `key` es `id:<huella>`, `par:<huella>:<dirección>` o `ip:<dirección>`. La huella
     es la del email presentado (la de la auditoría de plataforma): el email nunca se
     guarda. `updated_at` es el último fallo (o cuándo empezó el contador); las filas las
-    escribe `apps.accounts.throttle`. También guarda los contadores de quien pide un enlace de
-    recuperación (F2-88), que escribe `apps.accounts.recovery`: `rst:ip:<dirección>` y
-    `rst:id:<huella>`, con las peticiones admitidas en la ventana que empezó en `updated_at`.
+    escribe `apps.accounts.throttle`. También guarda los contadores de la recuperación de
+    contraseña, que escribe `apps.accounts.recovery`: `rst:ip:<dirección>` y `rst:id:<huella>`
+    de quien pide un enlace (F2-88) y `rst:chg:ip:<dirección>` de quien lo presenta (F2-89),
+    con los intentos admitidos en la ventana que empezó en `updated_at`.
     """
 
     id = uuid7_primary_key()
