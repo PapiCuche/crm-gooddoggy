@@ -474,7 +474,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Recuperación de contraseña: la tabla (F2-86, ADR-021)
 
-`password_resets` guarda los enlaces de recuperación de contraseña emitidos. Las reglas de toda la serie (E01-02) están en [ADR-021](../docs/adr/ADR-021-password-recovery.md); F2-86 dejó la tabla y el modelo, y F2-87 la tarea que emite el enlace y lo envía (abajo). Todavía no hay ninguna ruta: pedir el enlace y cambiar la contraseña son los siguientes, y hasta entonces nada encola la tarea.
+`password_resets` guarda los enlaces de recuperación de contraseña emitidos. Las reglas de toda la serie (E01-02) están en [ADR-021](../docs/adr/ADR-021-password-recovery.md); F2-86 dejó la tabla y el modelo, F2-87 la tarea que emite el enlace y lo envía, y F2-88 la ruta que lo pide (las dos, abajo). Cambiar la contraseña con el enlace es el siguiente: hasta entonces un enlace llega pero no se puede usar.
 
 - **Platform-owned** (ADR-001 §2): sin `organization_id` ni política de tenant, como `users` y `login_throttles`. El runtime la lee y la escribe sin contexto de tenant. Modelo `apps.accounts.models.PasswordReset`.
 - **Campos:** `user` (la cuenta), `token_hash` (el SHA-256 del enlace; el enlace no se guarda nunca), `created_at` (cuándo se emitió), `expires_at` y `used_at`. Una fila es un enlace emitido, se haya entregado o no: la crea, antes de entregar el correo, la tarea que lo envía (F2-87, abajo), que es quien genera el enlace (ADR-019 §4, ADR-021 §3).
@@ -484,7 +484,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 
 ## Recuperación de contraseña: emitir y enviar el enlace (F2-87, ADR-021 §3 y §4)
 
-La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuenta recibe un enlace de recuperación, lo emite y lo envía. El trabajo está en `apps.accounts.recovery.issue_link`. **Todavía nada la encola:** la ruta que pide el enlace es el work item siguiente.
+La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuenta recibe un enlace de recuperación, lo emite y lo envía. El trabajo está en `apps.accounts.recovery.issue_link`. La encola la ruta que pide el enlace (F2-88, abajo).
 
 - **Qué recibe:** el correo en su forma canónica (D-F2-3). Busca la cuenta por igualdad.
 - **No emite ni envía nada, sin decir por qué,** si el correo no tiene cuenta, si la cuenta está desactivada o es de personal de plataforma, si `core.mail` no escribiría a esa dirección (`deliverable`), o si la cuenta llegó a uno de sus topes.
@@ -495,6 +495,18 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **El correo:** texto plano, con propósito `password_reset`. El enlace es `{APP_ORIGIN}/restablecer#<secreto>`: el secreto va en el fragmento, que el navegador no envía al servidor.
 - **`APP_ORIGIN`** (`config.env.origin`): el origen público de la aplicación, por entorno; `http` o `https`, un host en ASCII (un dominio internacionalizado, en su forma IDNA; o una IPv6 entre corchetes) y el puerto si lo lleva; sin ruta, consulta, fragmento, credenciales, espacios dentro ni barras invertidas (si no, el proceso no arranca, y el error no repite el valor); el espacio de alrededor se quita. Nunca sale de una petición: una cabecera `Host` falsa no cambia el enlace. Sin él la tarea falla con un error de configuración antes de mirar la cuenta. En `production`, con correo configurado, debe ser `https`. El stack local pone el del proxy (`http://localhost:8080`).
 - **Mientras `production` no tenga servidor de correo:** si tiene `APP_ORIGIN`, cada ejecución para una cuenta que puede recuperarse emite un enlace que no llega y gasta uno de sus 5 del día (ADR-021, «Consequences»); sin `APP_ORIGIN` (sin correo no es obligatorio), la tarea falla antes de mirar la cuenta y no emite ni gasta nada.
+
+## Recuperación de contraseña: pedir el enlace (F2-88, ADR-021 §2 y §7)
+
+`POST /api/v1/auth/password-reset/` con `{"email": "…"}` pide un enlace de recuperación. Es una ruta de plataforma de acceso anónimo: exige CSRF, no sesión. **Responde 204, con el mismo trabajo, exista o no la cuenta**: no la busca. Lo que depende de la cuenta ocurre después, en la tarea (arriba). El trabajo está en `apps.accounts.recovery.request_link`.
+
+- **Orden:** la forma del correo; el límite de intentos; la fila de auditoría; encolar la tarea.
+- **400:** lo que no es una dirección de correo (la canonicalización de D-F2-3 la rechaza). No cuenta, no audita y no encola.
+- **429 `RATE_LIMITED`, con `Retry-After`:** demasiadas peticiones desde esa dirección de red (20 por hora) o para ese identificador, exista o no la cuenta (5 por hora). Son los valores de `PASSWORD_RESET_THROTTLE`, a confirmar como los del acceso (D-F2-8). Los dos rechazan, por ventana fija, y una petición rechazada no cuenta, no audita y no encola. Los contadores viven en `login_throttles` con claves propias (`rst:ip:…`, `rst:id:…`): pedir enlaces no cambia los contadores del acceso, ni al revés, y los purga la misma tarea con su propia ventana.
+- **Auditoría de plataforma:** `auth.password.reset_requested`, con actor anónimo, la huella del identificador, la dirección de red y el agente; sin cuenta, porque la ruta no la mira. Se escribe y se confirma antes de encolar, y **falla cerrado**: si no se puede escribir, no se encola nada y la petición responde 500. `request_link` se niega a correr dentro de una transacción, donde esa fila no se confirmaría.
+- **Encolar:** `accounts.send_password_reset` con el correo canónico como argumento. A Celery se le da el argumento enmascarado (`argsrepr`): es lo que ponen sus eventos y su log. Sus inspecciones (`celery inspect active`, `reserved` y `scheduled`) enseñan el argumento real mientras la tarea está en un worker; el enmascarado solo lo da `inspect().active(safe=True)`, desde Python (la CLI no tiene esa opción). El mensaje caduca a los 15 minutos si nadie lo recoge. La publicación no reintenta: usa una conexión propia con el broker, sin reintentos de conexión y con un plazo de 3 segundos (`recovery.BROKER_WAIT`) para conectar y para cada respuesta de Redis (por operación, no para la publicación entera), porque la del pool de Celery reintenta conectar aunque se publique con `retry=False`. Si el broker no acepta la tarea, la petición responde 500, igual para cualquier correo, con su fila de auditoría y su intento contado ya escritos.
+- **Lo que no hace:** no dice si la cuenta existe, si recibirá correo ni si llegó a su tope del día; no audita los rechazos por límite; no envía nada dentro de la petición.
+- **Despliegue:** el worker debe tener la tarea antes de que esta ruta reciba tráfico. Un worker que recibe una tarea que no conoce escribe el mensaje entero, con el correo, en su log de errores (es de Celery).
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
