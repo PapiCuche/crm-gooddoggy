@@ -260,7 +260,7 @@ describe("PasswordResetChange", () => {
     const answers: ((value: Response) => void)[] = [];
     const api = mockApi({});
     api.mockImplementation(() => new Promise<Response>((resolve) => answers.push(resolve)));
-    open(`#${LINK}`);
+    const view = open(`#${LINK}`);
     vi.useFakeTimers();
     try {
       type(TYPED);
@@ -268,10 +268,12 @@ describe("PasswordResetChange", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // aún espera
       await act(() => vi.advanceTimersByTimeAsync(1_500));
       expect(screen.getByRole("alert")).toHaveTextContent("tarda demasiado");
+      expect(view.client.getMutationCache().getAll()).toHaveLength(1); // no se cancela: sigue ahí
       await act(async () => {
         answers[0]!(new Response(null, { status: 204 })); // la que se dejó de esperar
-        await vi.advanceTimersByTimeAsync(10);
+        await vi.advanceTimersByTimeAsync(250);
       });
+      expect(view.client.getMutationCache().getAll()).toHaveLength(0); // al terminar, la suelta
       expect(screen.queryByText(CHANGED)).not.toBeInTheDocument(); // su respuesta no se vio
       fireEvent.click(button());
       expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // el aviso anterior se retira

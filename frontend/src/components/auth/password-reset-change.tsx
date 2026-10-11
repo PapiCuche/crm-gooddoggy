@@ -46,8 +46,8 @@ function reasons(error: ApiError): string[] | null {
 export function PasswordResetChange() {
   const t = useTranslations();
   // `always`: sin red falla enseguida. `gcTime`: la caché de escrituras no retiene el secreto
-  // ni la contraseña de una petición que ya nadie mira. No 0: mientras una petición abandonada
-  // siguiera pendiente, la caché reprogramaría su limpieza sin pausa.
+  // ni la contraseña de una petición terminada que ya nadie mira. No 0: mientras una petición
+  // abandonada siga pendiente la caché los retiene, y reprogramaría su limpieza sin pausa.
   const { mutate, reset } = useAuthPasswordResetConfirm({
     mutation: { networkMode: "always", gcTime: 250 },
   });
