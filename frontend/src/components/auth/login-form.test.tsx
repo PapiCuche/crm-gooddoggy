@@ -217,6 +217,8 @@ describe("safeNext", () => {
     "/restablecer#" + "a".repeat(43),
     "/o/../Restablecer?x=1#" + "a".repeat(43),
     "/recuperar",
+    "/%72establecer#" + "a".repeat(43), // Next abre la misma página con una letra codificada
+    "/%6Cogin?next=/o",
     "/o/../login",
     "/%2e/login?next=/o",
     "/api/v1/me/organizations/",

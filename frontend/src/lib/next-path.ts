@@ -10,6 +10,9 @@ const ORIGIN = "https://destino.invalid"; // base para resolver; nunca se navega
 const NOT_A_PAGE = /^\/(?:login|recuperar|restablecer|api|_next)(?:[/?#]|$)/i;
 // Controles (C0, DEL, C1), espacios raros y la barra invertida, que el navegador lee como `/`.
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u00a0\u2028\u2029\\]/;
+// Next sirve también la ruta con letras codificadas (`/%72establecer`): se mira descodificada.
+const plain = (path: string) =>
+  path.replace(/%[\da-f]{2}/gi, (code) => String.fromCharCode(parseInt(code.slice(1), 16)));
 
 export function safeNext(value: string | string[] | undefined): string {
   if (typeof value !== "string" || !value.startsWith("/") || UNSAFE.test(value)) {
@@ -22,7 +25,7 @@ export function safeNext(value: string | string[] | undefined): string {
     return DEFAULT_NEXT;
   }
   const outside = url.origin !== ORIGIN || url.pathname.startsWith("//");
-  if (outside || NOT_A_PAGE.test(url.pathname)) return DEFAULT_NEXT;
+  if (outside || NOT_A_PAGE.test(plain(url.pathname))) return DEFAULT_NEXT;
   return url.pathname + url.search + url.hash;
 }
 

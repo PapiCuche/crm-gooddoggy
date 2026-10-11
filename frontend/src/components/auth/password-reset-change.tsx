@@ -18,7 +18,8 @@ const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulari
 // La forma del secreto que emite la API (`apps.accounts.recovery.SECRET`).
 const SECRET = /^[A-Za-z0-9_-]{43}$/;
 // Los `code` de esta ruta que tienen mensaje propio aquí. Cualquier otro es un fallo nuestro.
-const SAID = new Set(["NETWORK_ERROR", "RATE_LIMITED", "CSRF_FAILED"]);
+// También `CSRF_FAILED`: su texto pide recargar, y recargar esta página pierde el enlace.
+const SAID = new Set(["NETWORK_ERROR", "RATE_LIMITED"]);
 const REASONS: unknown = messages.recovery.reasons;
 
 type Step =
@@ -45,9 +46,10 @@ function reasons(error: ApiError): string[] | null {
 export function PasswordResetChange() {
   const t = useTranslations();
   // `always`: sin red falla enseguida. `gcTime`: la caché de escrituras no retiene el secreto
-  // ni la contraseña de una petición que ya nadie mira.
+  // ni la contraseña de una petición que ya nadie mira. No 0: mientras una petición abandonada
+  // siguiera pendiente, la caché reprogramaría su limpieza sin pausa.
   const { mutate, reset } = useAuthPasswordResetConfirm({
-    mutation: { networkMode: "always", gcTime: 0 },
+    mutation: { networkMode: "always", gcTime: 250 },
   });
   // El paso que la pantalla enseña decide si se envía: una pulsación mantenida no envía otra
   // petición entre la respuesta y el momento en que la pantalla la enseña.
@@ -61,7 +63,13 @@ export function PasswordResetChange() {
   const open = useCallback(() => {
     const given = window.location.hash.slice(1);
     const { pathname, search } = window.location;
-    window.history.replaceState(window.history.state, "", pathname + search);
+    const clean = pathname + search;
+    window.history.replaceState(window.history.state, "", clean);
+    // El router de Next guarda su propia copia de la URL, con el fragmento, y la volvería a
+    // escribir en la barra en su siguiente actualización (comprobado en un navegador). Se entera
+    // por un `replaceState` sin su marca en el estado, que él completa; y no antes de que este
+    // efecto termine: al cargar la página, Next aún no ha puesto su `replaceState`.
+    queueMicrotask(() => window.history.replaceState(null, "", clean));
     reset(); // lo que quedara en vuelo con el enlace anterior ya no cambia esta pantalla
     secret.current = SECRET.test(given) ? given : null;
     if (field.current) field.current.value = ""; // lo escrito era para el enlace anterior

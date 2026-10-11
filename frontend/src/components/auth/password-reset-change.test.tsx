@@ -1,6 +1,5 @@
 import { onlineManager } from "@tanstack/react-query";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { StrictMode } from "react";
+import { act, configure, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockApi, renderApp } from "@/test-utils";
@@ -53,22 +52,38 @@ beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
 });
 afterEach(() => {
+  vi.restoreAllMocks();
+  configure({ reactStrictMode: false });
   vi.unstubAllGlobals();
   onlineManager.setOnline(true);
   window.history.replaceState(null, "", "/");
 });
 
 describe("PasswordResetChange", () => {
-  it("saca el secreto de la barra de direcciones al abrir y no lo deja en ningún sitio", () => {
+  it("saca el secreto de la barra de direcciones al abrir y no lo deja en ningún sitio", async () => {
     const api = mockApi({});
     const entries = window.history.length;
+    const strip = vi.spyOn(window.history, "replaceState");
     open(`#${LINK}`);
     expect(window.location.href).toBe(`${window.location.origin}/restablecer?x=1`);
     expect(window.history.length).toBe(entries); // sustituye su entrada: no queda otra con él
-    expect(window.history.state).toEqual({ deNext: true }); // sin pisar el estado del router
+    // Ya, con el estado que hubiera; y después, sin él, que es como se entera el router de Next.
+    expect(strip.mock.calls.slice(1)).toEqual([[{ deNext: true }, "", "/restablecer?x=1"]]);
+    await Promise.resolve();
+    expect(strip.mock.calls.slice(2)).toEqual([[null, "", "/restablecer?x=1"]]);
     expect(field()).toHaveFocus();
     expect(dom()).not.toContain(LINK);
     expect([localStorage.length, sessionStorage.length, api.mock.calls.length]).toEqual([0, 0, 0]);
+  });
+
+  it("hasta sacar el secreto de la barra solo dice que abre el enlace: es su primer render", () => {
+    window.history.replaceState(null, "", `/restablecer#${LINK}`);
+    const strip = vi.spyOn(window.history, "replaceState");
+    strip.mockImplementationOnce(() =>
+      expect(document.body.textContent).toBe("Abriendo el enlace…"),
+    );
+    renderApp(<PasswordResetChange />);
+    expect(strip).toHaveBeenCalledTimes(1);
   });
 
   it("cambia la contraseña con el secreto y lo escrito tal cual, y enlaza al acceso", async () => {
@@ -116,7 +131,7 @@ describe("PasswordResetChange", () => {
 
   it("un enlace que la API no acepta se explica sin decir por qué y deja de ofrecerse", async () => {
     const api = mockApi({ [CHANGE]: refusedLink });
-    open(`#${LINK}`);
+    const view = open(`#${LINK}`);
     type(TYPED);
     expect(await screen.findByRole("heading", { level: 2, name: INVALID })).toHaveFocus();
     expect(
@@ -129,6 +144,7 @@ describe("PasswordResetChange", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(dom()).not.toContain("texto de la API"); // por `code`
     expect(sent(api)).toHaveLength(1);
+    await waitFor(() => expect(view.client.getMutationCache().getAll()).toHaveLength(0)); // ni así
   });
 
   it("lo que los validadores rechazan se dice junto al campo, por su código, y el enlace sigue sirviendo", async () => {
@@ -201,7 +217,8 @@ describe("PasswordResetChange", () => {
       fireEvent.click(button());
       await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(text));
     };
-    await said({ status: 403, body: { code: "CSRF_FAILED" } }, "La página caducó");
+    await said({ status: 429, body: { code: "RATE_LIMITED" } }, "Espera un momento");
+    await said({ status: 403, body: { code: "CSRF_FAILED" } }, "Algo salió mal"); // no «Recárgala»
     await said({ status: 404, body: { code: "NOT_FOUND" } }, "Algo salió mal");
     await said(
       { status: 400, body: { code: "VALIDATION_ERROR", fields: { token: [] } } },
@@ -332,12 +349,8 @@ describe("PasswordResetChange", () => {
 
   it("lee el enlace una sola vez aunque React repita sus efectos", () => {
     mockApi({});
-    open(
-      `#${LINK}`,
-      <StrictMode>
-        <PasswordResetChange />
-      </StrictMode>,
-    );
+    configure({ reactStrictMode: true }); // en la raíz: anidado en `renderApp`, React no los repite
+    open(`#${LINK}`);
     expect(field()).toBeVisible(); // la segunda pasada ya no encuentra el fragmento
     expect(screen.queryByText(INVALID)).not.toBeInTheDocument();
   });
