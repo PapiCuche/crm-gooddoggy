@@ -17,7 +17,7 @@ def purge_expired_sessions() -> int:
 @platform_task(name="accounts.purge_login_throttles")
 def purge_login_throttles() -> int:
     """Borra los contadores de acceso que ya no cuentan (F2-03B)."""
-    return throttle.purge()
+    return throttle.purge() + recovery.purge_limits()  # y los de pedir un enlace (F2-88)
 
 
 # Sin reintentos y sin `acks_late`: cada ejecución puede emitir un enlace, y un enlace emitido

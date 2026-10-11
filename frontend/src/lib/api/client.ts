@@ -46,6 +46,7 @@ import type {
   PaginatedRoleList,
   PaginatedTeamList,
   PaginatedTeamMemberList,
+  PasswordResetRequestRequest,
   PatchedBranchUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
@@ -337,6 +338,111 @@ export const useAuthLogout = <TError = ErrorType<Error>, TContext = unknown>(
   queryClient?: QueryClient,
 ): UseMutationResult<Awaited<ReturnType<typeof authLogout>>, TError, void, TContext> => {
   return useMutation(getAuthLogoutMutationOptions(options), queryClient);
+};
+
+export const getAuthPasswordResetRequestUrl = () => {
+  return `/api/v1/auth/password-reset/`;
+};
+
+/**
+ * Pide un enlace para recuperar la contraseña de la cuenta de ese correo. Responde 204
+ * exista o no la cuenta: si existe y puede recuperarse, le llega un correo. 400: no es
+ * una dirección de correo. 429: demasiadas peticiones desde esta red o para ese correo.
+ */
+export const authPasswordResetRequest = async (
+  passwordResetRequestRequest: PasswordResetRequestRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<void>(getAuthPasswordResetRequestUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(passwordResetRequestRequest),
+  });
+};
+
+export const getAuthPasswordResetRequestMutationKey = () => ["authPasswordResetRequest"] as const;
+
+export const getAuthPasswordResetRequestMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authPasswordResetRequest>>,
+    TError,
+    AuthPasswordResetRequestMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authPasswordResetRequest>>,
+  TError,
+  AuthPasswordResetRequestMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthPasswordResetRequestMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authPasswordResetRequest>>,
+    AuthPasswordResetRequestMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authPasswordResetRequest(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthPasswordResetRequestMutationResult = NonNullable<
+  Awaited<ReturnType<typeof authPasswordResetRequest>>
+>;
+export type AuthPasswordResetRequestMutationBody = PasswordResetRequestRequest;
+export type AuthPasswordResetRequestMutationError = ErrorType<Error>;
+export type AuthPasswordResetRequestMutationVariables = { data: PasswordResetRequestRequest };
+
+export const useAuthPasswordResetRequest = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authPasswordResetRequest>>,
+      TError,
+      AuthPasswordResetRequestMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authPasswordResetRequest>>,
+  TError,
+  AuthPasswordResetRequestMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthPasswordResetRequestMutationOptions(options), queryClient);
 };
 
 export const getAuthSessionUrl = () => {

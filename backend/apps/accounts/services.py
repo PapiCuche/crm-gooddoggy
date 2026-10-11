@@ -34,7 +34,7 @@ SEEN_AT = "seen_at"  # última renovación de la caducidad por inactividad
 EPOCH = "epoch"  # época de sesión del usuario al iniciarla: revocar la deja atrás (D-F2-11)
 
 
-def _client(request: HttpRequest) -> dict[str, Any]:
+def client_of(request: HttpRequest) -> dict[str, Any]:
     """IP y agente del cliente. La IP es la que resuelve el servidor ASGI desde los proxies de
     confianza (`FORWARDED_ALLOW_IPS`); nunca una cabecera leída aquí."""
     remote = request.META.get("REMOTE_ADDR") or ""
@@ -109,7 +109,7 @@ def _audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) 
 def login(request: HttpRequest, *, email: str, password: str) -> User:
     """Autentica y abre la sesión. La misma respuesta para un email desconocido, una contraseña
     incorrecta y un usuario desactivado. Si el acceso no se puede auditar, no hay sesión."""
-    client = _client(request)
+    client = client_of(request)
     if client["ip"] is None:  # todos compartirían un contador: lo delata el proxy de confianza
         logger.warning("login sin dirección de cliente: revisar FORWARDED_ALLOW_IPS")
     attempt = throttle.keys(email, client["ip"])
@@ -151,7 +151,7 @@ def revoke_sessions(user_id: UUID, *, using: str = DEFAULT_DB_ALIAS) -> None:
 
 def logout(request: HttpRequest) -> None:
     """Cierra la sesión y después audita: un fallo de auditoría nunca la mantiene viva."""
-    user_id, client = request.user.pk, _client(request)
+    user_id, client = request.user.pk, client_of(request)
     django_logout(request)  # borra la fila de la sesión
     try:
         platform.record("auth.logout", actor_type=platform.Actor.USER, actor_id=user_id, **client)

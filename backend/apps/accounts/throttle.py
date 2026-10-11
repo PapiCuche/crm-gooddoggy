@@ -65,6 +65,7 @@ _PURGE = f"""
 DELETE FROM login_throttles WHERE id IN (
   SELECT id FROM login_throttles AS t
   WHERE {_QUIET} AND (left(t.key, 4) <> 'par:' OR {_QUIET.replace("window", "kept")})
+    AND left(t.key, 4) <> 'rst:'  -- los de pedir un enlace: su ventana es otra (`recovery`)
   FOR UPDATE SKIP LOCKED)
 """  # noqa: S608 — texto fijo, sin datos
 

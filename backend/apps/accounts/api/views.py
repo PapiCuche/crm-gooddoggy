@@ -2,14 +2,21 @@
 
 from typing import Any
 
+from django.core.exceptions import ValidationError
 from django.middleware.csrf import get_token
 from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import services
-from apps.accounts.api.serializers import LoginSerializer, SessionSerializer
+from apps.accounts import recovery, services
+from apps.accounts.api.serializers import (
+    LoginSerializer,
+    PasswordResetRequestSerializer,
+    SessionSerializer,
+)
+from apps.accounts.emails import canonical_email
 from core.api.permissions import Authenticated, Public
 from core.api.schema import errors
 
@@ -45,6 +52,31 @@ class LoginView(APIView):
         services.login(request._request, **credentials.validated_data)
         request.user = request._request.user  # la vista responde ya con la sesión nueva
         return Response(_session(request))
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = [Public]
+
+    @extend_schema(
+        operation_id="auth_password_reset_request",
+        tags=["auth"],
+        auth=[],
+        request=PasswordResetRequestSerializer,
+        responses={204: None, **errors(400, 403, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Pide un enlace para recuperar la contraseña de la cuenta de ese correo. Responde 204
+        exista o no la cuenta: si existe y puede recuperarse, le llega un correo. 400: no es
+        una dirección de correo. 429: demasiadas peticiones desde esta red o para ese correo."""
+        asked = PasswordResetRequestSerializer(data=request.data)
+        asked.is_valid(raise_exception=True)
+        try:
+            email = canonical_email(asked.validated_data["email"])
+        except ValidationError:
+            message = "No es una dirección de correo."
+            raise serializers.ValidationError({"email": [message]}) from None
+        recovery.request_link(request._request, email=email)
+        return Response(status=204)
 
 
 class LogoutView(APIView):
