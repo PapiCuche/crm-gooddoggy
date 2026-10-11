@@ -4,10 +4,12 @@
 tarea, sin buscar la cuenta. `issue_link` es lo que hace la tarea `accounts.send_password_reset`:
 la única pieza que ve el enlace. Lo genera, guarda su SHA-256 y lo pone en el correo; no lo
 registra ni lo devuelve. `change_password` es lo que hace la ruta que recibe el enlace de
-vuelta: comprueba que vale y cambia la contraseña de su cuenta.
+vuelta: comprueba que vale y cambia la contraseña de su cuenta. `notify_change` es lo que hace
+la tarea `accounts.send_password_changed`: avisar a la cuenta de que su contraseña cambió.
 """
 
 import hashlib
+import logging
 import re
 import secrets
 from datetime import timedelta
@@ -15,7 +17,7 @@ from typing import Any
 
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import connection, transaction
 from django.http import HttpRequest
 from django.utils import timezone
@@ -27,7 +29,10 @@ from apps.audit import platform
 from apps.audit.services import Entity, Result
 from core import mail
 from core.api.errors import ApiError
+from core.observability import reporting
 from core.redaction import EMAIL_MASK
+
+logger = logging.getLogger(__name__)
 
 # ADR-021 §3 y §4: constantes del código.
 LINK_LIFETIME = timedelta(minutes=60)
@@ -45,6 +50,19 @@ enlace para elegir una nueva:
 El enlace vale {minutes} minutos y una sola vez. Si pides otro, este deja de valer.
 
 Si no fuiste tú, no hagas nada: tu contraseña no cambia.
+"""
+ASK_PATH = "/recuperar"  # la pantalla que pide un enlace
+CHANGED_SUBJECT = "La contraseña de tu cuenta de Good Doggy CRM cambió"
+CHANGED_BODY = """Hola:
+
+La contraseña de tu cuenta de Good Doggy CRM se cambió con un enlace de recuperación. Las
+sesiones que tenías abiertas se cerraron.
+
+Si fuiste tú, no hagas nada.
+
+Si no fuiste tú, alguien pudo abrir ese enlace desde tu correo. Pide un enlace nuevo{where},
+elige otra contraseña y cambia también la de tu correo. Si no lo consigues, avisa a quien
+administra tu organización.
 """
 
 
@@ -70,6 +88,7 @@ DELETE FROM login_throttles WHERE id IN (
   FOR UPDATE SKIP LOCKED)
 """  # noqa: S608 — texto fijo, sin datos
 QUEUED_FOR = 15 * 60  # segundos: una tarea que nadie recogió en ese tiempo ya no se ejecuta
+NOTICE_QUEUED_FOR = 24 * 60 * 60  # el aviso sigue sirviendo aunque llegue tarde
 BROKER_WAIT = 3  # segundos que la petición espera a un broker que no contesta
 # La conexión del pool de Celery reintenta conectar aunque se publique con `retry=False`, y la
 # de Redis no tiene plazo: la ruta, que es pública, publica con una propia que no reintenta y que
@@ -132,17 +151,15 @@ def request_link(request: HttpRequest, *, email: str) -> None:
         identifier=email,
         **client,
     )
-    broker = send_password_reset.app.connection_for_write(
-        connect_timeout=BROKER_WAIT, transport_options=_NO_WAIT
-    )
+    _enqueue(send_password_reset, email, QUEUED_FOR, argsrepr=f"({EMAIL_MASK!r},)")
+
+
+def _enqueue(task: Any, argument: str, expires: int, **how: Any) -> None:
+    """Publica `task(argument)` por una conexión propia al broker, que no reintenta ni espera
+    más de `BROKER_WAIT` por operación: un broker caído no retiene una ruta pública."""
+    broker = task.app.connection_for_write(connect_timeout=BROKER_WAIT, transport_options=_NO_WAIT)
     with broker:  # perezosa: se abre al publicar y se cierra al salir
-        send_password_reset.apply_async(
-            args=[email],
-            argsrepr=f"({EMAIL_MASK!r},)",
-            expires=QUEUED_FOR,
-            retry=False,
-            connection=broker,
-        )
+        task.apply_async(args=[argument], expires=expires, retry=False, connection=broker, **how)
 
 
 def token_hash(secret: str) -> str:
@@ -211,7 +228,13 @@ def change_password(request: HttpRequest, *, token: str, password: str) -> None:
     transacción y con la fila de la cuenta bloqueada antes que la del enlace (el orden de
     `issue_link`): contraseña, enlace usado, sesiones revocadas y auditoría, o nada. No inicia
     sesión. Antes de todo, el límite de intentos por dirección de red (`ApiError` 429).
+
+    Con el cambio confirmado, encola el aviso a la cuenta (`accounts.send_password_changed`,
+    con su identificador). Es de mejor esfuerzo: si no se puede encolar, la contraseña ya cambió
+    y esto no lanza; queda en el log y en el reporte de errores, sin datos de la cuenta.
     """
+    from apps.accounts.tasks import send_password_changed  # noqa: PLC0415 — ciclo de imports
+
     if connection.in_atomic_block:  # la fila de un rechazo se desharía con esa transacción
         raise RuntimeError("change_password no se llama dentro de una transacción")
     client = client_of(request)
@@ -251,3 +274,34 @@ def change_password(request: HttpRequest, *, token: str, password: str) -> None:
             )
     if reason:  # fuera de la transacción: la fila del rechazo se confirma por sí misma
         raise _refuse(reason, user.pk, client)
+    try:
+        _enqueue(send_password_changed, str(user.pk), NOTICE_QUEUED_FOR)
+    except Exception as error:
+        logger.exception("aviso de cambio de contraseña sin encolar")
+        try:
+            reporting.reporter().capture_exception(error, {"action": "auth.password.changed"})
+        except Exception:
+            logger.exception("aviso de cambio de contraseña: no se pudo reportar")
+
+
+def notify_change(user_id: str) -> bool:
+    """Avisa por correo a la cuenta `user_id` de que su contraseña se cambió con un enlace de
+    recuperación (ADR-021, Consecuencias). Devuelve si envió el aviso.
+
+    No envía nada si la cuenta no existe, está desactivada o `core.mail` no podría escribir a su
+    dirección. El correo no lleva ningún secreto: dice qué pasó y qué hacer si no fue ella, con
+    la dirección de la página que pide un enlace si `APP_ORIGIN` está configurado. Si la entrega
+    falla lanza `MailError`.
+    """
+    try:
+        found = User.objects.filter(pk=user_id, is_active=True).values_list("email", flat=True)
+        address = found.first()
+    except ValueError, ValidationError:  # no es un identificador de cuenta
+        return False
+    if address is None or not mail.deliverable(address):
+        return False
+    where = f" en {settings.APP_ORIGIN}{ASK_PATH}" if settings.APP_ORIGIN else ""
+    body = CHANGED_BODY.format(where=where)
+    purpose = "password_changed"
+    mail.send(mail.Message(to=address, subject=CHANGED_SUBJECT, body=body, purpose=purpose))
+    return True

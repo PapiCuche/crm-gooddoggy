@@ -15,6 +15,7 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.accounts import recovery
 from apps.accounts.models import PasswordReset, User
+from apps.accounts.tasks import send_password_changed
 from apps.audit import platform
 from core.api.errors import ApiError
 from tests import test_auth_api
@@ -40,8 +41,10 @@ STATE = "SELECT password, session_epoch FROM users WHERE email = %s"
 
 
 @pytest.fixture(autouse=True)
-def origin(settings: Any) -> None:
+def origin(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     settings.APP_ORIGIN = "https://app.example.com"
+    # El aviso del cambio (F2-93) no se encola aquí: no hay broker. Lo prueba su propio fichero.
+    monkeypatch.setattr(send_password_changed, "apply_async", lambda **how: None)
 
 
 def issued(email: str = EMAIL) -> str:
