@@ -15,6 +15,7 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.accounts import recovery
 from apps.accounts.models import PasswordReset, User
+from apps.accounts.tasks import send_password_changed
 from apps.audit import platform
 from core.api.errors import ApiError
 from tests import test_auth_api
@@ -40,8 +41,10 @@ STATE = "SELECT password, session_epoch FROM users WHERE email = %s"
 
 
 @pytest.fixture(autouse=True)
-def origin(settings: Any) -> None:
+def origin(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     settings.APP_ORIGIN = "https://app.example.com"
+    # El aviso del cambio (F2-93) no se encola aquí: no hay broker. Lo prueba su propio fichero.
+    monkeypatch.setattr(send_password_changed, "apply_async", lambda **how: None)
 
 
 def issued(email: str = EMAIL) -> str:
@@ -194,6 +197,7 @@ def test_without_its_audit_row_the_password_does_not_change_and_a_refusal_stays_
 ) -> None:
     make_user(email=EMAIL)
     secret, before = issued(), migrator.execute(STATE, [EMAIL]).fetchone()
+    real = platform.record
 
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise DatabaseError("sin partición")
@@ -204,7 +208,7 @@ def test_without_its_audit_row_the_password_does_not_change_and_a_refusal_stays_
     assert migrator.execute(STATE, [EMAIL]).fetchone() == before
     assert PasswordReset.objects.get().used_at is None  # ni el enlace se gastó
     assert said(change(browser, "c" * 43)) == REFUSED  # un rechazo sin auditar: la misma respuesta
-    monkeypatch.undo()
+    monkeypatch.setattr(platform, "record", real)  # no `undo()`: quitaría el stub del aviso
     assert change(browser, secret).status_code == 204
     with transaction.atomic(), pytest.raises(RuntimeError, match="transacción"):
         recovery.change_password(RequestFactory().post(CHANGE), token=secret, password=NEW)

@@ -27,3 +27,11 @@ def send_password_reset(email: str) -> None:
     """Emite y envía el enlace de recuperación de la cuenta de `email`, si procede (ADR-021).
     `email` llega en su forma canónica. Si la entrega falla, la tarea falla y no reintenta."""
     recovery.issue_link(email)
+
+
+# Sin reintentos, como la que envía el enlace: si la entrega falla, la tarea falla. Su argumento
+# es el identificador de la cuenta, no su correo.
+@platform_task(name="accounts.send_password_changed", ignore_result=True, max_retries=0)
+def send_password_changed(user_id: str) -> None:
+    """Avisa a la cuenta `user_id` de que su contraseña se cambió con un enlace (F2-93)."""
+    recovery.notify_change(user_id)
