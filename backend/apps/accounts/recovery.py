@@ -67,8 +67,8 @@ DELETE FROM login_throttles WHERE id IN (
 QUEUED_FOR = 15 * 60  # segundos: una tarea que nadie recogió en ese tiempo ya no se ejecuta
 BROKER_WAIT = 3  # segundos que la petición espera a un broker que no contesta
 # La conexión del pool de Celery reintenta conectar aunque se publique con `retry=False`, y la
-# de Redis no tiene plazo: la ruta, que es pública, publica con una propia que ni reintenta ni
-# espera más que eso.
+# de Redis no tiene plazo: la ruta, que es pública, publica con una propia que no reintenta y que
+# espera eso como mucho al conectar y por cada respuesta: no es un plazo para toda la publicación.
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
 
 
