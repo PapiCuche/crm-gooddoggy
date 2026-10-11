@@ -189,7 +189,14 @@ export function PasswordResetChange() {
         </h2>
         <p>{t(changed ? "recovery.changedBody" : body)}</p>
         {step.name === "invalid" && step.why === "unsure" ? (
-          <p>{t("recovery.invalidUnsure")}</p>
+          <>
+            <p>{t("recovery.invalidUnsure")}</p>
+            <p className="text-sm">
+              <Link href="/login" className={LINK}>
+                {t("recovery.enter")}
+              </Link>
+            </p>
+          </>
         ) : null}
         <p className="text-sm">
           <Link href={changed ? "/login" : "/recuperar"} className={LINK}>

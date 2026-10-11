@@ -117,6 +117,7 @@ describe("PasswordResetChange", () => {
       ).toHaveFocus();
       expect(screen.getByText(/ábrelo otra vez desde el correo/)).toBeVisible();
       expect(screen.queryByText(INVALID)).not.toBeInTheDocument(); // no es que el enlace no valga
+      expect(screen.queryByText(UNSURE)).not.toBeInTheDocument(); // ni hubo intento alguno
       expect(screen.getByRole("link", { name: "Pedir otro enlace" })).toHaveAttribute(
         "href",
         "/recuperar",
@@ -161,6 +162,7 @@ describe("PasswordResetChange", () => {
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(UNSURE)).not.toBeInTheDocument(); // ningún intento quedó sin respuesta
+    expect(screen.queryByRole("link", { name: "Entrar" })).not.toBeInTheDocument();
     expect(dom()).not.toContain("texto de la API"); // por `code`
     expect(sent(api)).toHaveLength(1);
     await waitFor(() => expect(view.client.getMutationCache().getAll()).toHaveLength(0)); // ni así
@@ -303,6 +305,7 @@ describe("PasswordResetChange", () => {
       });
       expect(screen.getByText(INVALID)).toBeVisible(); // lo que diga la API al reintentar
       expect(screen.getByText(UNSURE)).toBeVisible(); // el intento sin respuesta pudo cambiarla
+      expect(screen.getByRole("link", { name: "Entrar" })).toHaveAttribute("href", "/login");
     } finally {
       vi.useRealTimers();
     }
@@ -351,6 +354,42 @@ describe("PasswordResetChange", () => {
       });
       expect(screen.getByText(INVALID)).toBeVisible();
       expect(screen.queryByText(UNSURE)).not.toBeInTheDocument(); // tuvo su respuesta
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["otro intento que sí tuvo respuesta no la quita", false],
+    ["abrir otro enlace en la pestaña la quita", true],
+  ])("la duda de un intento sin respuesta: %s", async (_case, another) => {
+    const answers: ((value: Response) => void)[] = [];
+    mockApi({}).mockImplementation(() => new Promise<Response>((resolve) => answers.push(resolve)));
+    const reply = (body: unknown, status: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+        answers.at(-1)!(new Response(JSON.stringify(body), { status }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+    open(`#${LINK}`);
+    vi.useFakeTimers();
+    try {
+      type(TYPED);
+      await act(() => vi.advanceTimersByTimeAsync(30_500)); // el primer intento queda sin respuesta
+      if (another) {
+        act(() => {
+          window.location.hash = OTHER;
+          window.dispatchEvent(new HashChangeEvent("hashchange"));
+        });
+      } else {
+        fireEvent.click(button());
+        await reply({ code: "RATE_LIMITED" }, 429); // nada dice de lo que pasó con el primero
+      }
+      type(TYPED);
+      await reply(refusedLink.body, 400);
+      expect(screen.getByText(INVALID)).toBeVisible();
+      expect(screen.queryAllByText(UNSURE)).toHaveLength(another ? 0 : 1);
+      expect(answers).toHaveLength(another ? 2 : 3);
     } finally {
       vi.useRealTimers();
     }
