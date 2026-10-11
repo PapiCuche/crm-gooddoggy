@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 
-import { AuthCard } from "@/components/auth/auth-card";
+import { AuthCard, LINK } from "@/components/auth/auth-card";
 import { LoginForm } from "@/components/auth/login-form";
 import { safeNext } from "@/lib/next-path";
 
@@ -21,6 +22,11 @@ export default async function LoginPage({
     <AuthCard eyebrow={t("eyebrow")} title={t("title")}>
       <p className="text-muted">{t("intro")}</p>
       <LoginForm next={safeNext(next)} />
+      <p className="text-sm">
+        <Link href="/recuperar" className={LINK}>
+          {t("forgot")}
+        </Link>
+      </p>
       <p className="text-muted text-sm">{t("help")}</p>
     </AuthCard>
   );

@@ -23,9 +23,9 @@ BACKEND_ORIGIN=http://127.0.0.1:8000 pnpm dev   # /api y /ws → Django (same-or
 
 ## Estructura
 
-- `src/app/`: `/login` y `/o` son el acceso (ver «Acceso»); `/o/[orgSlug]` es el workspace de una organización (ver «Workspace de una organización»); `/` lleva a `/o`; `/status` muestra el estado del backend (consultado desde el servidor); `/demo` es la demo visual (ver abajo).
+- `src/app/`: `/login` y `/o` son el acceso (ver «Acceso»); `/recuperar` pide un enlace de recuperación de contraseña (ver «Recuperar la contraseña»); `/o/[orgSlug]` es el workspace de una organización (ver «Workspace de una organización»); `/` lleva a `/o`; `/status` muestra el estado del backend (consultado desde el servidor); `/demo` es la demo visual (ver abajo).
 - `src/components/app-shell/`: guardia de la organización (`TenantGate`), barra lateral, barra superior y workspace, con el lenguaje del Figma GOOD DOGGY. El workspace necesita JavaScript: hasta que la API responde, el HTML solo lleva el aviso de carga. En pantallas pequeñas la barra lateral va en un menú (`<dialog>` nativo, con su botón de cerrar). WCAG AA, `prefers-reduced-motion`.
-- `src/components/auth/`: formulario de acceso y lista de organizaciones.
+- `src/components/auth/`: formulario de acceso, lista de organizaciones y formulario que pide un enlace de recuperación.
 - `src/components/ui/`: componentes shadcn/ui y primitivas de formulario (`TextField`).
 - `src/lib/api/`: cliente generado por orval. **Nunca** tipos de API a mano: si cambia el contrato, regenerar el schema del backend y después ejecutar `pnpm api:generate`.
 - `src/lib/http.ts`: el único `fetch` hacia la API (ver «Cliente de API»).
@@ -75,6 +75,16 @@ orval genera las funciones y los hooks; todos llaman a `apiFetch` (`src/lib/http
 - **`/o`:** organizaciones del usuario (`GET /api/v1/me/organizations/`). Con una sola entra directamente; con varias, lista para elegir; con ninguna, un estado vacío. `/o?elegir` muestra siempre la lista. Cada cambio de estado se anuncia en una región viva, y al reintentar tras un error el foco va al botón nuevo o a la lista que llegó. Con el error en pantalla, volver a la pestaña o recuperar la red no pide nada: lo hace «Reintentar», y así no se pierden el foco ni un aviso del cierre de sesión.
 - **Sesión terminada:** `Providers` es el único punto que trata un 401 de una lectura o de una escritura: navega a `/login?next=…` con la ruta en la que estaba. El cierre de sesión trata su propio 401 (`meta.ownSessionEnd`). Es una navegación completa, así que no queda estado en memoria.
 - La lista de organizaciones es la que devuelve la API para la sesión. Elegir una no autoriza nada: lo decide la API en cada petición a `/o/[orgSlug]`.
+
+## Recuperar la contraseña: pedir el enlace (F2-90, ADR-021 §2)
+
+- **`/recuperar`:** página pública, fuera de `/o/`: un campo de correo contra `POST /api/v1/auth/password-reset/`. No pide sesión ni la mira, y al abrirse no hace ninguna petición. `/login` enlaza a ella («¿Olvidaste tu contraseña?») y ella de vuelta a `/login`. Componente `PasswordResetRequest`.
+- **Un único mensaje:** cuando la API admite la petición (204), el formulario se sustituye por «Revisa tu correo»: el enlace llega si hay una cuenta con ese correo, vale 60 minutos y solo sirve el último. Es el mismo para cualquier correo, porque la API responde lo mismo exista o no la cuenta, y no repite el correo escrito. El foco va a ese título. Desde ahí no se vuelve a enviar: para pedir otro hay que abrir la página de nuevo.
+- **Qué es un correo lo decide la API:** la página solo exige que el campo no esté vacío (el aviso se retira al escribir) y envía lo escrito sin espacios exteriores. Si la API no lo acepta (400 en `email`), se dice junto al campo, con el foco en él y sin borrar lo escrito.
+- **Errores, por `code`:** `RATE_LIMITED` muestra la espera de `Retry-After`, en minutos hacia arriba; sin red, falla enseguida con su mensaje y no queda en cola; si la API no contesta en 30 segundos, el formulario deja de esperar, lo dice y permite reintentar (la petición abandonada no se cancela: si llegó, el enlace sale igual, y su respuesta tardía no cambia la pantalla). Ninguno dice nada de ninguna cuenta.
+- **Una petición por pulsación:** mientras se envía, el botón queda ocupado (`aria-disabled`, sin perder el foco) y otra pulsación no cuenta. Lo decide el paso que la pantalla enseña, no la llegada de la respuesta.
+- **Nada se guarda:** el correo solo viaja en el cuerpo de la petición. No va a la URL (el formulario declara `method="post"`) ni al almacenamiento del navegador.
+- **Lo que no hace:** no reenvía desde la pantalla ni cuenta la espera; no avisa de que el servidor de correo no esté configurado (la API tampoco lo dice). La página que cambia la contraseña con el enlace (`/restablecer`) es el work item siguiente: hasta entonces el enlace del correo abre una página que no existe.
 
 ## Workspace de una organización (F2-08, ADR-003 §5)
 

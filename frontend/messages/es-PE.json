@@ -151,7 +151,21 @@
     "submitting": "Entrando…",
     "stalled": "El servidor tarda demasiado en responder. Inténtalo de nuevo.",
     "rateLimited": "Demasiados intentos. Podrás volver a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+    "forgot": "¿Olvidaste tu contraseña?",
     "help": "¿No puedes entrar? Pide ayuda a quien administra tu organización."
+  },
+  "recovery": {
+    "pageTitle": "Recuperar contraseña",
+    "eyebrow": "Good Doggy / Acceso",
+    "title": "Recupera tu acceso.",
+    "intro": "Escribe el correo de tu cuenta. Si existe, te enviaremos un enlace para elegir una contraseña nueva.",
+    "emailInvalid": "Escribe un correo válido.",
+    "submit": "Enviar enlace",
+    "submitting": "Enviando…",
+    "sentTitle": "Revisa tu correo.",
+    "sentBody": "Si hay una cuenta con ese correo, en unos minutos recibirás un enlace para elegir una contraseña nueva. Vale 60 minutos y solo sirve el último que pidas.",
+    "sentHint": "¿No llega? Mira en el correo no deseado o pide ayuda a quien administra tu organización.",
+    "back": "Volver a entrar"
   },
   "organizations": {
     "pageTitle": "Organizaciones",
