@@ -23,7 +23,10 @@ const SAID = new Set(["NETWORK_ERROR", "RATE_LIMITED"]);
 const REASONS: unknown = messages.recovery.reasons;
 
 type Step =
-  | { name: "opening" | "idle" | "missing" | "sending" | "stalled" | "changed" | "invalid" }
+  | { name: "opening" | "idle" | "missing" | "sending" | "stalled" | "changed" }
+  // `absent`: la página se abrió sin enlace. `unsure`: la API lo rechazó después de un intento
+  // que quedó sin respuesta, y que por tanto pudo cambiar la contraseña.
+  | { name: "invalid"; why: "absent" | "refused" | "unsure" }
   | { name: "failed"; error: ApiError };
 
 // Lo que los validadores de la API dicen de la contraseña, por su `code` y nunca por el texto
@@ -56,6 +59,7 @@ export function PasswordResetChange() {
   const [step, setStep] = useState<Step>({ name: "opening" });
   const secret = useRef<string | null>(null);
   const opened = useRef(false);
+  const unsure = useRef(false);
   const field = useRef<HTMLInputElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -72,8 +76,10 @@ export function PasswordResetChange() {
     queueMicrotask(() => window.history.replaceState(null, "", clean));
     reset(); // lo que quedara en vuelo con el enlace anterior ya no cambia esta pantalla
     secret.current = SECRET.test(given) ? given : null;
+    unsure.current = false;
     if (field.current) field.current.value = ""; // lo escrito era para el enlace anterior
-    setStep({ name: secret.current ? "idle" : "invalid" });
+    if (secret.current) setStep({ name: "idle" });
+    else setStep({ name: "invalid", why: given ? "refused" : "absent" });
   }, [reset]);
   useEffect(() => {
     if (!opened.current) {
@@ -99,6 +105,11 @@ export function PasswordResetChange() {
     }, PATIENCE);
     return () => clearTimeout(timer);
   }, [sending, reset]);
+  // Sin respuesta, esa petición pudo llegar y cambiar la contraseña.
+  const stalled = step.name === "stalled";
+  useEffect(() => {
+    if (stalled) unsure.current = true;
+  }, [stalled]);
 
   // Al abrirse el formulario el foco va a la contraseña; cuando deja de ofrecerse, a lo que
   // lo sustituye.
@@ -139,8 +150,11 @@ export function PasswordResetChange() {
         onError: (error) => {
           if (error.code === "INVALID_RESET_LINK") {
             secret.current = null; // no vale: no se vuelve a presentar
-            setStep({ name: "invalid" });
-          } else setStep({ name: "failed", error });
+            setStep({ name: "invalid", why: unsure.current ? "unsure" : "refused" });
+            return;
+          }
+          if (error.code === "NETWORK_ERROR") unsure.current = true; // pudo llegar igualmente
+          setStep({ name: "failed", error });
         },
         // Lo que hay que saber de la respuesta ya está en `step`: soltar la escritura deja
         // que la caché la borre (`gcTime`), con el secreto y la contraseña que llevaba.
@@ -161,6 +175,9 @@ export function PasswordResetChange() {
   if (step.name === "opening") return <p className="text-muted">{t("recovery.opening")}</p>;
   if (step.name === "invalid" || step.name === "changed") {
     const changed = step.name === "changed";
+    const absent = step.name === "invalid" && step.why === "absent";
+    const title = absent ? "recovery.absentTitle" : "recovery.invalidTitle";
+    const body = absent ? "recovery.absentBody" : "recovery.invalidBody";
     return (
       <div className="flex flex-col gap-3">
         <h2
@@ -168,9 +185,19 @@ export function PasswordResetChange() {
           tabIndex={-1}
           className="text-lg font-semibold focus-visible:outline-none"
         >
-          {t(changed ? "recovery.changedTitle" : "recovery.invalidTitle")}
+          {t(changed ? "recovery.changedTitle" : title)}
         </h2>
-        <p>{t(changed ? "recovery.changedBody" : "recovery.invalidBody")}</p>
+        <p>{t(changed ? "recovery.changedBody" : body)}</p>
+        {step.name === "invalid" && step.why === "unsure" ? (
+          <>
+            <p>{t("recovery.invalidUnsure")}</p>
+            <p className="text-sm">
+              <Link href="/login" className={LINK}>
+                {t("recovery.enter")}
+              </Link>
+            </p>
+          </>
+        ) : null}
         <p className="text-sm">
           <Link href={changed ? "/login" : "/recuperar"} className={LINK}>
             {t(changed ? "recovery.enter" : "recovery.askAgain")}

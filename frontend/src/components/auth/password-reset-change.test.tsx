@@ -12,6 +12,7 @@ const OTHER = "b".repeat(43);
 const TYPED = "  una frase larga con espacios  ";
 const CHANGED = "Contraseña cambiada.";
 const INVALID = "Este enlace no vale.";
+const UNSURE = /puede que la contraseña ya sea la nueva: prueba a entrar con ella/;
 const changed = { status: 204 };
 const refusedLink = {
   status: 400,
@@ -106,9 +107,27 @@ describe("PasswordResetChange", () => {
     expect([localStorage.length, sessionStorage.length]).toEqual([0, 0]);
   });
 
+  it.each(["", "#"])(
+    "abierta sin enlace (%j) dice que se abra el del correo y no llama a la API",
+    (hash) => {
+      const api = mockApi({});
+      open(hash);
+      expect(
+        screen.getByRole("heading", { level: 2, name: "Abre el enlace del correo." }),
+      ).toHaveFocus();
+      expect(screen.getByText(/ábrelo otra vez desde el correo/)).toBeVisible();
+      expect(screen.queryByText(INVALID)).not.toBeInTheDocument(); // no es que el enlace no valga
+      expect(screen.queryByText(UNSURE)).not.toBeInTheDocument(); // ni hubo intento alguno
+      expect(screen.getByRole("link", { name: "Pedir otro enlace" })).toHaveAttribute(
+        "href",
+        "/recuperar",
+      );
+      expect(screen.queryByRole("button")).not.toBeInTheDocument();
+      expect(api).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
-    ["", "sin fragmento"],
-    ["#", "vacío"],
     [`#${LINK.slice(1)}`, "corto"],
     [`#${LINK}a`, "largo"],
     [`#${LINK.slice(1)}%`, "con otro carácter"],
@@ -142,6 +161,8 @@ describe("PasswordResetChange", () => {
       "/recuperar",
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(UNSURE)).not.toBeInTheDocument(); // ningún intento quedó sin respuesta
+    expect(screen.queryByRole("link", { name: "Entrar" })).not.toBeInTheDocument();
     expect(dom()).not.toContain("texto de la API"); // por `code`
     expect(sent(api)).toHaveLength(1);
     await waitFor(() => expect(view.client.getMutationCache().getAll()).toHaveLength(0)); // ni así
@@ -283,6 +304,8 @@ describe("PasswordResetChange", () => {
         await vi.advanceTimersByTimeAsync(10);
       });
       expect(screen.getByText(INVALID)).toBeVisible(); // lo que diga la API al reintentar
+      expect(screen.getByText(UNSURE)).toBeVisible(); // el intento sin respuesta pudo cambiarla
+      expect(screen.getByRole("link", { name: "Entrar" })).toHaveAttribute("href", "/login");
     } finally {
       vi.useRealTimers();
     }
@@ -309,6 +332,69 @@ describe("PasswordResetChange", () => {
     }
   });
 
+  it("un rechazo que llega justo antes del plazo no deja puesta la duda de un intento sin respuesta", async () => {
+    const answers: ((value: Response) => void)[] = [];
+    mockApi({}).mockImplementation(() => new Promise<Response>((resolve) => answers.push(resolve)));
+    const view = open(`#${LINK}`);
+    vi.useFakeTimers();
+    try {
+      type(TYPED);
+      await act(() => vi.advanceTimersByTimeAsync(29_999));
+      await act(async () => {
+        answers[0]!(new Response(JSON.stringify({ code: "RATE_LIMITED" }), { status: 429 }));
+        await arrive(view);
+        vi.advanceTimersByTime(1); // el plazo vence con el rechazo leído y sin pintar
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("Espera un momento"); // no «tarda»
+      fireEvent.click(button());
+      await act(() => vi.advanceTimersByTimeAsync(10));
+      await act(async () => {
+        answers[1]!(new Response(JSON.stringify(refusedLink.body), { status: 400 }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(screen.getByText(INVALID)).toBeVisible();
+      expect(screen.queryByText(UNSURE)).not.toBeInTheDocument(); // tuvo su respuesta
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["otro intento que sí tuvo respuesta no la quita", false],
+    ["abrir otro enlace en la pestaña la quita", true],
+  ])("la duda de un intento sin respuesta: %s", async (_case, another) => {
+    const answers: ((value: Response) => void)[] = [];
+    mockApi({}).mockImplementation(() => new Promise<Response>((resolve) => answers.push(resolve)));
+    const reply = (body: unknown, status: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+        answers.at(-1)!(new Response(JSON.stringify(body), { status }));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+    open(`#${LINK}`);
+    vi.useFakeTimers();
+    try {
+      type(TYPED);
+      await act(() => vi.advanceTimersByTimeAsync(30_500)); // el primer intento queda sin respuesta
+      if (another) {
+        act(() => {
+          window.location.hash = OTHER;
+          window.dispatchEvent(new HashChangeEvent("hashchange"));
+        });
+      } else {
+        fireEvent.click(button());
+        await reply({ code: "RATE_LIMITED" }, 429); // nada dice de lo que pasó con el primero
+      }
+      type(TYPED);
+      await reply(refusedLink.body, 400);
+      expect(screen.getByText(INVALID)).toBeVisible();
+      expect(screen.queryAllByText(UNSURE)).toHaveLength(another ? 0 : 1);
+      expect(answers).toHaveLength(another ? 2 : 3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sin red lo dice enseguida y no deja la petición en cola", async () => {
     open(`#${LINK}`);
     onlineManager.setOnline(false); // el navegador avisó de que no hay red
@@ -316,6 +402,10 @@ describe("PasswordResetChange", () => {
     type(TYPED);
     expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión");
     expect(fetch).toHaveBeenCalledTimes(1); // salió: no espera a que vuelva la red
+    mockApi({ [CHANGE]: refusedLink }); // vuelve la red: aquella petición pudo llegar
+    fireEvent.click(button());
+    expect(await screen.findByText(INVALID)).toBeVisible();
+    expect(screen.getByText(UNSURE)).toBeVisible();
   });
 
   it("otro enlace abierto en la misma pestaña sustituye al anterior sin quedarse en la barra", async () => {

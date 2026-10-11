@@ -158,6 +158,48 @@ describe("LoginForm", () => {
     expect(pending).toHaveBeenCalledTimes(2);
   });
 
+  // Aunque el plazo venza antes de pintarla.
+  const LATE = [
+    [401, { code: "INVALID_CREDENTIALS" }],
+    [200, { user }],
+  ] as const;
+  it.each(LATE)("una respuesta (%i) justo antes del plazo cuenta", async (status, body) => {
+    mockApi({ [SESSION]: anonymous });
+    let answer: (value: Response) => void = () => {};
+    const answered = vi.mocked(fetch);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/login/")
+        ? new Promise<Response>((resolve) => (answer = resolve))
+        : answered(input, init),
+    );
+    const { client } = renderApp(<LoginForm next="/o" />);
+    await waitFor(() => expect(screen.getByLabelText("Correo")).toHaveFocus());
+    vi.useFakeTimers();
+    try {
+      fill("ana@acme.pe", "clave");
+      await act(() => vi.advanceTimersByTimeAsync(29_999));
+      await act(async () => {
+        answer(new Response(JSON.stringify(body), { status }));
+        const waiting = () => client.getMutationCache().getAll().at(-1)?.state.status === "pending";
+        expect(waiting()).toBe(true);
+        for (let tick = 0; tick < 100 && waiting(); tick += 1) await Promise.resolve();
+        vi.advanceTimersByTime(1); // el plazo vence con la respuesta leída y sin pintar
+      });
+      if (status === 200) {
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // no «tarda»: está entrando
+        expect(screen.getByRole("button")).toBeDisabled();
+        return expect(router.replace).toHaveBeenCalledWith("/o");
+      }
+      expect(screen.getByRole("alert")).toHaveTextContent("no son correctos"); // no «tarda»
+      // El plazo vuelve a contar en el intento siguiente: el anterior ya no pasa por contestado.
+      fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+      await act(() => vi.advanceTimersByTimeAsync(30_500));
+      expect(screen.getByRole("alert")).toHaveTextContent("tarda demasiado");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sin red lo dice enseguida y no deja el intento en cola", async () => {
     mockApi({ [SESSION]: anonymous });
     renderApp(<LoginForm next="/o" />);

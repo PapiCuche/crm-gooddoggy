@@ -187,6 +187,9 @@
     "enter": "Entrar",
     "invalidTitle": "Este enlace no vale.",
     "invalidBody": "Puede que ya se haya usado, que haya caducado o que hayas pedido otro después. Pide uno nuevo y usa el del último correo.",
+    "invalidUnsure": "Si acabas de intentar el cambio y no viste la respuesta, puede que la contraseña ya sea la nueva: prueba a entrar con ella.",
+    "absentTitle": "Abre el enlace del correo.",
+    "absentBody": "Esta página se abre desde el enlace que te enviamos. Si ya lo habías abierto y recargaste la página o volviste a ella, ábrelo otra vez desde el correo. Si no lo tienes, pide uno nuevo.",
     "askAgain": "Pedir otro enlace"
   },
   "organizations": {
