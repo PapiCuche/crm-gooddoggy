@@ -197,6 +197,7 @@ def test_without_its_audit_row_the_password_does_not_change_and_a_refusal_stays_
 ) -> None:
     make_user(email=EMAIL)
     secret, before = issued(), migrator.execute(STATE, [EMAIL]).fetchone()
+    real = platform.record
 
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise DatabaseError("sin partición")
@@ -207,7 +208,7 @@ def test_without_its_audit_row_the_password_does_not_change_and_a_refusal_stays_
     assert migrator.execute(STATE, [EMAIL]).fetchone() == before
     assert PasswordReset.objects.get().used_at is None  # ni el enlace se gastó
     assert said(change(browser, "c" * 43)) == REFUSED  # un rechazo sin auditar: la misma respuesta
-    monkeypatch.undo()
+    monkeypatch.setattr(platform, "record", real)  # no `undo()`: quitaría el stub del aviso
     assert change(browser, secret).status_code == 204
     with transaction.atomic(), pytest.raises(RuntimeError, match="transacción"):
         recovery.change_password(RequestFactory().post(CHANGE), token=secret, password=NEW)

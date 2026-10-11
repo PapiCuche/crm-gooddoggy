@@ -60,9 +60,9 @@ sesiones que tenías abiertas se cerraron.
 
 Si fuiste tú, no hagas nada.
 
-Si no fuiste tú, alguien pudo abrir ese enlace desde tu correo. Pide un enlace nuevo{where},
-elige otra contraseña y cambia también la de tu correo. Si no lo consigues, avisa a quien
-administra tu organización.
+Si no fuiste tú, alguien pudo abrir ese enlace desde tu correo. Cambia primero la contraseña
+de tu correo. Después pide un enlace nuevo{where} y elige otra contraseña. Si no lo consigues,
+avisa a quien administra tu organización.
 """
 
 

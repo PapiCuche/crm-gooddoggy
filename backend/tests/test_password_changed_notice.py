@@ -3,24 +3,28 @@
 `accounts.send_password_changed` lo envía. PostgreSQL con el rol `crm_app`."""
 
 import logging
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+import psycopg
 import pytest
 from django.contrib.auth import authenticate
 from django.core import mail as outbox
 from django.db import connection
 from django.test import Client
+from kombu.exceptions import OperationalError
 
 from apps.accounts import recovery
 from apps.accounts.models import User
 from apps.accounts.tasks import send_password_changed
 from core import mail as core_mail
 from core.mail import MailError
+from core.observability import reporting
 from core.observability.logging import json_formatter
 from tests import test_auth_api
 from tests.factories import TEST_PASSWORD, make_user
-from tests.test_auth_api import reply
+from tests.test_auth_api import audit, reply
 from tests.test_password_reset_change import EMAIL, NEW, REFUSED, change, issued, said
 
 real_stack, browser = test_auth_api.real_stack, test_auth_api.browser
@@ -72,25 +76,32 @@ def test_a_change_queues_the_notice_for_the_account_once_it_is_committed(
 def test_a_broker_that_refuses_the_notice_does_not_undo_or_hide_the_change(
     browser: Client, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    ana = make_user(email=EMAIL)
-    secret = issued()
+    ana, luis = make_user(email=EMAIL), make_user(email="luis@example.com")
+    secret, other = issued(), issued("luis@example.com")
+    reports: list[Any] = []
+    spy = SimpleNamespace(capture_exception=lambda error, context=None: reports.append(context))
+    monkeypatch.setattr(reporting, "reporter", lambda: spy)
 
     def refuse(**how: Any) -> None:
-        raise ConnectionError("broker caído")
+        raise OperationalError("broker caído")  # lo que lanza kombu: no es un `OSError`
 
     monkeypatch.setattr(send_password_changed, "apply_async", refuse)
     with caplog.at_level(logging.DEBUG):
         assert reply(change(browser, secret)) == (204, b"")  # la contraseña ya cambió
     assert authenticate(username=EMAIL, password=NEW) == ana
+    assert reports == [{"action": "auth.password.changed"}]  # en el reporte de errores
     lines = [json_formatter().format(record) for record in caplog.records]
     told = [line for line in lines if "sin encolar" in line]  # y la traza del fallo, sin datos
-    assert len(told) == 1 and "ConnectionError" in told[0] and str(ana.pk) not in told[0]
+    assert len(told) == 1 and "OperationalError" in told[0] and str(ana.pk) not in told[0]
     logged = "\n".join(lines)
     assert EMAIL not in logged and NEW not in logged and secret not in logged
+    monkeypatch.setattr(reporting, "reporter", refuse)  # ni un reporte roto cambia la respuesta
+    assert reply(change(browser, other)) == (204, b"")
+    assert authenticate(username="luis@example.com", password=NEW) == luis and len(reports) == 1
 
 
 def test_the_task_mails_the_account_what_happened_and_what_to_do_without_any_secret(
-    caplog: pytest.LogCaptureFixture, settings: Any
+    caplog: pytest.LogCaptureFixture, settings: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     ana = make_user(email=EMAIL)
     outbox.outbox.clear()
@@ -100,14 +111,16 @@ def test_the_task_mails_the_account_what_happened_and_what_to_do_without_any_sec
     assert message.to == [EMAIL] and message.subject == recovery.CHANGED_SUBJECT
     body = str(message.body)
     assert "se cambió con un enlace de recuperación" in body and "se cerraron" in body
-    assert f"Pide un enlace nuevo en {ORIGIN}/recuperar," in body  # dónde, si no fue ella
+    assert f"pide un enlace nuevo en {ORIGIN}/recuperar y elige" in body  # dónde, si no fue ella
+    assert body.index("contraseña\nde tu correo.") < body.index("pide un enlace")  # antes, el buzón
     assert "#" not in body and "restablecer" not in body  # ningún enlace que cambie nada
     assert User.objects.get().password not in body
     logged = "\n".join(json_formatter().format(record) for record in caplog.records)
     assert EMAIL not in logged and '"purpose": "password_changed"' in logged
+    assert audit(migrator) == []  # el aviso no se audita: la fila es la del cambio
     settings.APP_ORIGIN = ""  # sin origen público también avisa, sin dirección
     assert recovery.notify_change(str(ana.pk)) is True
-    assert "Pide un enlace nuevo,\n" in str(outbox.outbox[-1].body)
+    assert "pide un enlace nuevo y elige" in str(outbox.outbox[-1].body)
     assert "http" not in str(outbox.outbox[-1].body)
 
 
