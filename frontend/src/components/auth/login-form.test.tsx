@@ -158,6 +158,34 @@ describe("LoginForm", () => {
     expect(pending).toHaveBeenCalledTimes(2);
   });
 
+  it("un rechazo que llega justo antes del plazo se enseña, aunque el plazo venza antes de pintarlo", async () => {
+    mockApi({ [SESSION]: anonymous });
+    let answer: (value: Response) => void = () => {};
+    const answered = vi.mocked(fetch);
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/login/")
+        ? new Promise<Response>((resolve) => (answer = resolve))
+        : answered(input, init),
+    );
+    const { client } = renderApp(<LoginForm next="/o" />);
+    await waitFor(() => expect(screen.getByLabelText("Correo")).toHaveFocus());
+    vi.useFakeTimers();
+    try {
+      fill("ana@acme.pe", "clave");
+      await act(() => vi.advanceTimersByTimeAsync(29_999));
+      await act(async () => {
+        answer(new Response(JSON.stringify({ code: "INVALID_CREDENTIALS" }), { status: 401 }));
+        const waiting = () => client.getMutationCache().getAll().at(-1)?.state.status === "pending";
+        expect(waiting()).toBe(true);
+        for (let tick = 0; tick < 100 && waiting(); tick += 1) await Promise.resolve();
+        vi.advanceTimersByTime(1); // el plazo vence con el rechazo leído y sin pintar
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("no son correctos"); // no «tarda»
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sin red lo dice enseguida y no deja el intento en cola", async () => {
     mockApi({ [SESSION]: anonymous });
     renderApp(<LoginForm next="/o" />);

@@ -26,6 +26,7 @@ export function LoginForm({ next }: { next: string }) {
   const [stalled, setStalled] = useState(false);
   const emailField = useRef<HTMLInputElement>(null);
   const passwordField = useRef<HTMLInputElement>(null);
+  const answered = useRef(false); // la respuesta del intento en curso ya se leyó
 
   useEffect(() => {
     if (session.isSuccess)
@@ -40,6 +41,7 @@ export function LoginForm({ next }: { next: string }) {
   useEffect(() => {
     if (!isPending) return;
     const timer = setTimeout(() => {
+      if (answered.current) return; // llegó justo antes y aún no se pintó: manda la respuesta
       reset(); // se deja de esperar esa respuesta: el formulario vuelve a estar disponible
       setStalled(true);
     }, PATIENCE);
@@ -58,9 +60,11 @@ export function LoginForm({ next }: { next: string }) {
       return;
     }
     setStalled(false);
+    answered.current = false;
     login.mutate(
       { data: { email, password } },
       {
+        onSettled: () => (answered.current = true),
         onSuccess: () => {
           queryClient.clear(); // nada de lo que se leyó sin sesión sigue valiendo
           router.replace(next);
