@@ -228,6 +228,28 @@ describe("PasswordResetRequest", () => {
     }
   });
 
+  it("tampoco un rechazo que llega justo antes del plazo se cambia por «tarda demasiado»", async () => {
+    let answer: (value: Response) => void = () => {};
+    mockApi({}).mockImplementation(() => new Promise<Response>((resolve) => (answer = resolve)));
+    const view = renderApp(<PasswordResetRequest />);
+    vi.useFakeTimers();
+    try {
+      ask("ana@acme.pe");
+      await act(() => vi.advanceTimersByTimeAsync(29_999));
+      await act(async () => {
+        const limit = { status: 429, headers: { "Retry-After": "600" } };
+        answer(new Response(JSON.stringify({ code: "RATE_LIMITED" }), limit));
+        await arrive(view);
+        vi.advanceTimersByTime(1); // el plazo vence con el rechazo leído y sin pintar
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent("en 10 minutos"); // no invita a reintentar
+      await act(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(screen.getByRole("alert")).toHaveTextContent("en 10 minutos"); // ni más tarde
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sin red lo dice enseguida y no deja la petición en cola", async () => {
     renderApp(<PasswordResetRequest />);
     onlineManager.setOnline(false); // el navegador avisó de que no hay red
