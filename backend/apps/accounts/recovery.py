@@ -56,10 +56,20 @@ ON CONFLICT (key) DO UPDATE SET
 RETURNING failures,
   GREATEST(CEIL(EXTRACT(EPOCH FROM updated_at + {_SPAN} - clock_timestamp())), 1)::int
 """  # noqa: S608 — texto fijo, sin datos
+# Como la purga del acceso, salta las filas bloqueadas: `_admit` bloquea dos (dirección y después
+# identificador), y un DELETE que espera a una con la otra ya borrada se interbloquea con él.
 _PURGE = f"""
-DELETE FROM login_throttles WHERE left(key, 4) = 'rst:' AND updated_at < now() - {_SPAN}
+DELETE FROM login_throttles WHERE id IN (
+  SELECT id FROM login_throttles
+  WHERE left(key, 4) = 'rst:' AND updated_at < now() - {_SPAN}
+  FOR UPDATE SKIP LOCKED)
 """  # noqa: S608 — texto fijo, sin datos
 QUEUED_FOR = 15 * 60  # segundos: una tarea que nadie recogió en ese tiempo ya no se ejecuta
+BROKER_WAIT = 3  # segundos que la petición espera a un broker que no contesta
+# La conexión del pool de Celery reintenta conectar aunque se publique con `retry=False`, y la
+# de Redis no tiene plazo: la ruta, que es pública, publica con una propia que ni reintenta ni
+# espera más que eso.
+_NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
 
 
 def _admit(email: str, ip: str | None) -> None:
@@ -93,7 +103,8 @@ def request_link(request: HttpRequest, *, email: str) -> None:
     Primero el límite de intentos (`ApiError` 429). Después la fila de auditoría, que se
     confirma antes de encolar: si no se puede escribir, no se encola nada y esto lanza (falla
     cerrado, ADR-013 §5). Si el broker no acepta la tarea, también lanza, igual para cualquier
-    correo. El correo viaja como argumento de la tarea, enmascarado para lo que Celery enseña.
+    correo. El correo viaja como argumento de la tarea, enmascarado en los eventos y el log de
+    Celery; sus inspecciones (`inspect active`, `reserved`) enseñan el real.
     """
     from apps.accounts.tasks import send_password_reset  # noqa: PLC0415 — las tareas importan esto
 
@@ -107,9 +118,17 @@ def request_link(request: HttpRequest, *, email: str) -> None:
         identifier=email,
         **client,
     )
-    send_password_reset.apply_async(
-        args=[email], argsrepr=f"({EMAIL_MASK!r},)", expires=QUEUED_FOR, retry=False
+    broker = send_password_reset.app.connection_for_write(
+        connect_timeout=BROKER_WAIT, transport_options=_NO_WAIT
     )
+    with broker:  # perezosa: se abre al publicar y se cierra al salir
+        send_password_reset.apply_async(
+            args=[email],
+            argsrepr=f"({EMAIL_MASK!r},)",
+            expires=QUEUED_FOR,
+            retry=False,
+            connection=broker,
+        )
 
 
 def token_hash(secret: str) -> str:
