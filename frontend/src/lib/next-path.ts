@@ -5,7 +5,9 @@
 export const DEFAULT_NEXT = "/o";
 const ORIGIN = "https://destino.invalid"; // base para resolver; nunca se navega a ella
 // Tampoco lo que no es una página ni el propio login, que dejaría dando vueltas a quien ya entró.
-const NOT_A_PAGE = /^\/(?:login|api|_next)(?:[/?#]|$)/i;
+// Ni las páginas de recuperación: un `next` con el enlace de otra cuenta en su fragmento dejaría
+// a quien acaba de entrar ante el formulario que cambia la contraseña de esa otra cuenta.
+const NOT_A_PAGE = /^\/(?:login|recuperar|restablecer|api|_next)(?:[/?#]|$)/i;
 // Controles (C0, DEL, C1), espacios raros y la barra invertida, que el navegador lee como `/`.
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u00a0\u2028\u2029\\]/;
 

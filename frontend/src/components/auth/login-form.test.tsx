@@ -212,6 +212,11 @@ describe("safeNext", () => {
     "/login?next=/o",
     "/login/",
     "/Login",
+    // Ni las páginas de recuperación, con el enlace de otra cuenta en el fragmento o sin él.
+    "/restablecer",
+    "/restablecer#" + "a".repeat(43),
+    "/o/../Restablecer?x=1#" + "a".repeat(43),
+    "/recuperar",
     "/o/../login",
     "/%2e/login?next=/o",
     "/api/v1/me/organizations/",
