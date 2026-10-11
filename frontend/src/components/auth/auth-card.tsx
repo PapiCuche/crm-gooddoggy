@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 
+// Un enlace entre las pantallas de acceso: subrayado, para que no dependa solo del color.
+export const LINK = "underline underline-offset-4 hover:no-underline";
+
 // Tarjeta de las pantallas previas al workspace (login, selección de organización). Deriva de
 // «Acceso demo» del Figma GOOD DOGGY (35:266): papel con borde de tinta sobre el lienzo.
 export function AuthCard({

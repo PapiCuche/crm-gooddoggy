@@ -15,6 +15,7 @@ const FIXED = {
 // Rutas reales, la demo y dos 404 de Next (su HTML también lleva scripts).
 const PAGES = {
   "/login": 200,
+  "/recuperar": 200,
   "/o": 200,
   "/o/ci": 200,
   "/demo": 200,
