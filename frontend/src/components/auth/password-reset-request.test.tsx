@@ -19,6 +19,12 @@ function ask(email: string) {
   fireEvent.change(field(), { target: { value: email } });
   fireEvent.click(button());
 }
+// Deja que la respuesta se lea sin dar tiempo a pintarla (dentro de `act`): solo microtareas.
+async function arrive(view: ReturnType<typeof renderApp>) {
+  const waiting = () => view.client.getMutationCache().getAll().at(-1)?.state.status === "pending";
+  for (let tick = 0; tick < 100 && waiting(); tick += 1) await Promise.resolve();
+  expect(waiting()).toBe(false);
+}
 
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
@@ -90,6 +96,18 @@ describe("PasswordResetRequest", () => {
     expect(field()).toBeValid();
   });
 
+  it("un `code` que esta ruta no contesta se dice como fallo del servidor, no como «no hay cuenta»", async () => {
+    let code = "NOT_FOUND";
+    mockApi({ [ASK]: () => ({ status: 404, body: { code } }) });
+    renderApp(<PasswordResetRequest />);
+    ask("ana@acme.pe");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
+    for (code of ["NOT_AUTHENTICATED", "PERMISSION_DENIED", "OTRO_CODIGO"]) {
+      fireEvent.click(button()); // al reintentar, el aviso anterior se retira
+      expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
+    }
+  });
+
   it("el límite de peticiones dice cuánto esperar; otros errores, el mensaje de su `code`", async () => {
     let reply: Parameters<typeof mockApi>[0][string] = {
       status: 429,
@@ -107,7 +125,8 @@ describe("PasswordResetRequest", () => {
     reply = { status: 429, body: { code: "RATE_LIMITED" } }; // sin cabecera: el mensaje general
     fireEvent.click(button());
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Espera un momento"));
-    reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    // La espera solo es del límite: otro error que traiga `Retry-After` no la enseña.
+    reply = { status: 500, body: { code: "INTERNAL_ERROR" }, headers: { "Retry-After": "120" } };
     fireEvent.click(button());
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Algo salió mal"));
     reply = { status: 403, body: { code: "CSRF_FAILED" } };
@@ -122,6 +141,7 @@ describe("PasswordResetRequest", () => {
     renderApp(<PasswordResetRequest />);
     button().focus();
     ask("ana@acme.pe");
+    fireEvent.input(field(), { target: { value: "otra@acme.pe" } }); // escribir no lo libera
     fireEvent.click(button());
     expect(fireEvent.submit(document.forms[0] as HTMLFormElement)).toBe(false); // nunca nativo
     expect(button()).toHaveTextContent("Enviando…");
@@ -134,6 +154,24 @@ describe("PasswordResetRequest", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
     expect(api).toHaveBeenCalledTimes(1);
     expect(button()).toHaveFocus(); // y sigue ahí para reintentar
+  });
+
+  it("entre la llegada de la respuesta y la pantalla que la enseña, otra pulsación no envía", async () => {
+    let answer: (value: Response) => void = () => {};
+    const api = mockApi({});
+    api.mockImplementation(() => new Promise<Response>((resolve) => (answer = resolve)));
+    const view = renderApp(<PasswordResetRequest />);
+    ask("ana@acme.pe");
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      answer(new Response(null, { status: 500 }));
+      await arrive(view);
+      expect(button()).toHaveTextContent("Enviando…"); // la respuesta llegó; la pantalla aún no
+      fireEvent.click(button());
+      fireEvent.submit(document.forms[0] as HTMLFormElement);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Algo salió mal");
+    expect(api).toHaveBeenCalledTimes(1); // lo decide el paso que se ve, no la llegada
   });
 
   it("un servidor que no contesta no deja el formulario ocupado, y su respuesta tardía no cuenta", async () => {
@@ -168,6 +206,26 @@ describe("PasswordResetRequest", () => {
       vi.useRealTimers();
     }
     expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it("una respuesta que llega justo antes del plazo cuenta, aunque el plazo venza antes de pintarla", async () => {
+    let answer: (value: Response) => void = () => {};
+    mockApi({}).mockImplementation(() => new Promise<Response>((resolve) => (answer = resolve)));
+    const view = renderApp(<PasswordResetRequest />);
+    vi.useFakeTimers();
+    try {
+      ask("ana@acme.pe");
+      await act(() => vi.advanceTimersByTimeAsync(29_999));
+      await act(async () => {
+        answer(new Response(null, { status: 204 }));
+        await arrive(view);
+        vi.advanceTimersByTime(1); // el plazo vence con la respuesta leída y sin pintar
+      });
+      expect(screen.getByText(SENT)).toBeVisible(); // la API la admitió: no pide reintentar
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sin red lo dice enseguida y no deja la petición en cola", async () => {

@@ -10,6 +10,8 @@ import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
 const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulario ocupado
+// Los `code` de esta ruta que tienen mensaje propio aquí. Cualquier otro es un fallo nuestro.
+const SAID = new Set(["NETWORK_ERROR", "RATE_LIMITED", "CSRF_FAILED"]);
 
 type Step =
   | { name: "idle" | "missing" | "sending" | "sent" | "stalled" }
@@ -33,7 +35,8 @@ export function PasswordResetRequest() {
     if (!sending) return;
     const timer = setTimeout(() => {
       reset(); // se deja de esperar esa respuesta: el formulario vuelve a estar disponible
-      setStep({ name: "stalled" });
+      // Solo si aún se esperaba: una respuesta que llegó justo antes y aún no se pintó, manda.
+      setStep((now) => (now.name === "sending" ? { name: "stalled" } : now));
     }, PATIENCE);
     return () => clearTimeout(timer);
   }, [sending, reset]);
@@ -77,10 +80,10 @@ export function PasswordResetRequest() {
     if (error.code === "RATE_LIMITED" && error.retryAfter) {
       return t("auth.rateLimited", { minutes: Math.ceil(error.retryAfter / 60) });
     }
-    // Un 400 que no es del correo no es algo que la persona pueda corregir.
-    return t(
-      `errors.api.${error.code === "VALIDATION_ERROR" ? "INTERNAL_ERROR" : apiErrorKey(error)}`,
-    );
+    // Un 400 que no es del correo no es algo que la persona pueda corregir. Y el texto general
+    // de otros `code` engaña aquí: el de un 404 («No encontramos lo que buscas») se leería como
+    // «no hay cuenta con ese correo».
+    return t(`errors.api.${SAID.has(error.code) ? apiErrorKey(error) : "INTERNAL_ERROR"}`);
   }
 
   if (done) {
