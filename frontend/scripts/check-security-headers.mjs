@@ -16,6 +16,7 @@ const FIXED = {
 const PAGES = {
   "/login": 200,
   "/recuperar": 200,
+  "/restablecer": 200,
   "/o": 200,
   "/o/ci": 200,
   "/demo": 200,

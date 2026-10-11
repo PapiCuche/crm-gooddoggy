@@ -165,7 +165,29 @@
     "sentTitle": "Revisa tu correo.",
     "sentBody": "Si hay una cuenta con ese correo, en unos minutos recibirás un enlace para elegir una contraseña nueva. Vale 60 minutos y solo sirve el último que pidas.",
     "sentHint": "¿No llega? Mira en el correo no deseado o pide ayuda a quien administra tu organización.",
-    "back": "Volver a entrar"
+    "back": "Volver a entrar",
+    "changePageTitle": "Contraseña nueva",
+    "changeTitle": "Elige una contraseña nueva.",
+    "opening": "Abriendo el enlace…",
+    "changeIntro": "Al cambiarla se cerrarán las sesiones que tengas abiertas.",
+    "newPassword": "Contraseña nueva",
+    "passwordHint": "Al menos 12 caracteres. Los espacios cuentan.",
+    "passwordRequired": "Escribe una contraseña nueva.",
+    "passwordRefused": "Esa contraseña no sirve. Elige otra.",
+    "reasons": {
+      "password_too_short": "Es demasiado corta: usa al menos 12 caracteres.",
+      "password_too_common": "Es una contraseña demasiado común.",
+      "password_entirely_numeric": "No puede tener solo números.",
+      "password_too_similar": "Se parece demasiado a los datos de tu cuenta."
+    },
+    "change": "Cambiar contraseña",
+    "changing": "Cambiando…",
+    "changedTitle": "Contraseña cambiada.",
+    "changedBody": "Ya puedes entrar con tu contraseña nueva. Se cerraron las sesiones que tenías abiertas.",
+    "enter": "Entrar",
+    "invalidTitle": "Este enlace no vale.",
+    "invalidBody": "Puede que ya se haya usado, que haya caducado o que hayas pedido otro después. Pide uno nuevo y usa el del último correo.",
+    "askAgain": "Pedir otro enlace"
   },
   "organizations": {
     "pageTitle": "Organizaciones",
