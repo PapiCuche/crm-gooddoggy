@@ -3,7 +3,7 @@
 from django.contrib.sessions.models import Session
 from django.utils import timezone
 
-from apps.accounts import recovery, throttle
+from apps.accounts import mfa, recovery, throttle
 from core.tenancy.celery import platform_task
 
 
@@ -35,3 +35,10 @@ def send_password_reset(email: str) -> None:
 def send_password_changed(user_id: str) -> None:
     """Avisa a la cuenta `user_id` de que su contraseña se cambió con un enlace (F2-93)."""
     recovery.notify_change(user_id)
+
+
+@platform_task(name="accounts.reseal_mfa_secrets")
+def reseal_mfa_secrets() -> dict[str, int]:
+    """Vuelve a cifrar con la clave vigente los secretos TOTP que quedaron con otra (F2-98,
+    ADR-022 §5). Devuelve cuántos volvió a cifrar, cuántos no pudo abrir y cuántos dejó."""
+    return mfa.reseal()
