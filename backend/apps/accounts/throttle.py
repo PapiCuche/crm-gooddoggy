@@ -52,7 +52,9 @@ _WAIT = """
 SELECT GREATEST(CEIL(EXTRACT(EPOCH FROM MAX(blocked_until) - clock_timestamp())), 0)::int
 FROM login_throttles WHERE key = ANY(%s) AND blocked_until > clock_timestamp()
 """
-_UNBLOCK = "UPDATE login_throttles SET blocked_until = NULL WHERE key = %s"
+# Acaba ahora, no «nunca empezó»: a NULL se iría la referencia de la calma, y con el último fallo
+# a más de una ventana el intento siguiente reiniciaría el contador sin haber completado nada.
+_UNBLOCK = "UPDATE login_throttles SET blocked_until = now() WHERE key = %s"
 _RETURN_HEAT = "UPDATE login_throttles SET failures = GREATEST(failures - 1, 0) WHERE key = %s"
 # La dirección pierde este intento y el bloqueo que empezó con él, o el que ya no se sostiene.
 _RETURN_ADDRESS = """

@@ -339,6 +339,35 @@ def test_a_block_the_right_password_started_does_not_refuse_the_second_step(
         [throttle.keys(EMAIL, "127.0.0.1")[scope], seen],
     )
     halfway(browser, ana)  # la contraseña correcta es el intento que llega al límite
+    assert sum(counters(migrator).values()) == seen + 3  # lo contado sigue contado (ADR-023 §5)
     assert second(browser, code_at(clock)).status_code == 200  # y ese bloqueo no lo rechaza
     left = "SELECT failures, blocked_until FROM login_throttles WHERE failures > 0"
     assert migrator.execute(left).fetchall() == ([] if scope == "pair" else [(seen, None)])
+
+
+def test_leaving_the_mark_ends_only_the_blocks_that_its_password_started(
+    migrator: psycopg.Connection[Any],
+) -> None:
+    attempt = throttle.keys(EMAIL, "127.0.0.1")
+    assert throttle.admit(attempt) == []  # una contraseña correcta que no llega a ningún límite
+    migrator.execute("UPDATE login_throttles SET blocked_until = now() + interval '1 hour'")
+    held = "SELECT count(*) FROM login_throttles WHERE blocked_until > now()"
+    throttle.release(attempt, [])  # los empezó otro intento mientras se comprobaba la contraseña
+    assert migrator.execute(held).fetchone() == (3,)
+    throttle.release(attempt, [throttle.Blocked("ip", 30, 300)])  # solo el que empezó con ella
+    assert migrator.execute(held).fetchone() == (2,) and throttle.blocked_for(attempt) > 0
+
+
+def test_a_right_password_without_the_code_does_not_restart_a_counter(
+    browser: Client, clock: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    ana = make_user(email=EMAIL)
+    enrolled(ana)
+    migrator.execute(  # nueve intentos: el último fallo, hace 16 minutos; su bloqueo acaba ahora
+        "INSERT INTO login_throttles (key, failures, updated_at, blocked_until) VALUES"
+        " (%s, 9, now() - interval '16 minutes', now() - interval '1 second')",
+        [throttle.keys(EMAIL, "127.0.0.1")["pair"]],
+    )
+    halfway(browser, ana)  # el bloqueo que empieza con ella acaba ahora, no «nunca empezó»
+    assert second(browser, "000000").status_code == 400
+    assert counters(migrator)["par"] == 11  # sin calma no vuelve a empezar (ADR-023 §5)
