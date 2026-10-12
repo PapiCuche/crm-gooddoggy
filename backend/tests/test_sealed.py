@@ -99,6 +99,10 @@ def test_the_highest_version_seals_every_key_opens_and_a_removed_key_fails_close
     assert unseal(PURPOSE, OWNER, before) == unseal(PURPOSE, OWNER, after) == PLAIN
     assert (stale(before), stale(after), stale(memoryview(after))) == (True, False, False)  # type: ignore[arg-type]
     assert stale(b"") and stale(b"\x02" + after[1:])  # lo que no es de este formato, también
+    settings.SECRETS_KEKS = {1: OLD}  # un proceso que aún no recibió la clave nueva (§5)
+    assert (stale(before), stale(after)) == (False, True)  # lo ve pendiente, y no lo abre
+    with pytest.raises(SealError):
+        unseal(PURPOSE, OWNER, after)
     settings.SECRETS_KEKS = {7: NEW}  # se retira la anterior
     assert unseal(PURPOSE, OWNER, after) == PLAIN
     with pytest.raises(SealError):
@@ -215,6 +219,7 @@ def test_only_core_sealed_reads_the_keys() -> None:
     """ADR-022 §1: ningún otro módulo conoce las claves. Complementa a import-linter, que
     deja `cryptography` solo dentro de `core.sealed`."""
     root = Path(__file__).resolve().parents[1]
+    assert VAR in (root / "core" / "sealed.py").read_text()  # el barrido mira donde está el módulo
     offenders = [
         str(path.relative_to(root)) for folder in ("core", "apps")
         for path in (root / folder).rglob("*.py")
