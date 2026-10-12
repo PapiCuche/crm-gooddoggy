@@ -52,6 +52,9 @@ _WAIT = """
 SELECT GREATEST(CEIL(EXTRACT(EPOCH FROM MAX(blocked_until) - clock_timestamp())), 0)::int
 FROM login_throttles WHERE key = ANY(%s) AND blocked_until > clock_timestamp()
 """
+# Acaba ahora, no «nunca empezó»: a NULL se iría la referencia de la calma, y con el último fallo
+# a más de una ventana el intento siguiente reiniciaría el contador sin haber completado nada.
+_UNBLOCK = "UPDATE login_throttles SET blocked_until = now() WHERE key = %s"
 _RETURN_HEAT = "UPDATE login_throttles SET failures = GREATEST(failures - 1, 0) WHERE key = %s"
 # La dirección pierde este intento y el bloqueo que empezó con él, o el que ya no se sostiene.
 _RETURN_ADDRESS = """
@@ -176,6 +179,16 @@ def forgive(attempt: dict[str, str], started: list[Blocked]) -> None:
         cursor.execute("DELETE FROM login_throttles WHERE key = %s", [attempt["pair"]])
         mine = any(blocked.scope == "ip" for blocked in started)
         cursor.execute(_RETURN_ADDRESS, [mine, limits()["ip"].failures, attempt["ip"]])
+
+
+def release(attempt: dict[str, str], started: list[Blocked]) -> None:
+    """Acaba los bloqueos que empezaron con un intento que acertó y aún no se devuelve (el acceso
+    a medias, ADR-023 §5): lo contado sigue contado, y el intento siguiente se evalúa."""
+    held = {"pair" if blocked.scope == "identifier" else blocked.scope for blocked in started}
+    with connection.cursor() as cursor:
+        for scope in SCOPES:  # en el orden de `admit`: sin interbloqueos
+            if scope in held:
+                cursor.execute(_UNBLOCK, [attempt[scope]])
 
 
 def purge() -> int:

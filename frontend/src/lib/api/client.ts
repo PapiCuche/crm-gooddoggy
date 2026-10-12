@@ -32,6 +32,7 @@ import type {
   InvitationStatusChangeRequest,
   InvitationsListParams,
   InviteRequest,
+  LoginMfaRequest,
   LoginRequest,
   MemberBranch,
   MemberBranchChangeRequest,
@@ -295,6 +296,112 @@ export const useAuthLogin = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getAuthLoginMutationOptions(options), queryClient);
+};
+
+export const getAuthLoginMfaUrl = () => {
+  return `/api/v1/auth/login/mfa/`;
+};
+
+/**
+ * El segundo paso del acceso: con un acceso a medias (la contraseña ya se comprobó) y
+ * un código de la aplicación de autenticación, o uno de respaldo, inicia la sesión. 400 en
+ * `code`: el código no vale, sin decir por qué; se puede probar otro. 401
+ * `MFA_LOGIN_NOT_STARTED`: no hay un acceso a medias, caducó (5 minutos) o dejó de valer:
+ * hay que volver a la contraseña. 429: demasiados intentos desde esta red, o demasiados
+ * códigos fallidos de esa cuenta en 24 horas; entonces tampoco vale el correcto.
+ */
+export const authLoginMfa = async (
+  loginMfaRequest: LoginMfaRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Session> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Session>(getAuthLoginMfaUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(loginMfaRequest),
+  });
+};
+
+export const getAuthLoginMfaMutationKey = () => ["authLoginMfa"] as const;
+
+export const getAuthLoginMfaMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authLoginMfa>>,
+    TError,
+    AuthLoginMfaMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authLoginMfa>>,
+  TError,
+  AuthLoginMfaMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthLoginMfaMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authLoginMfa>>,
+    AuthLoginMfaMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authLoginMfa(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthLoginMfaMutationResult = NonNullable<Awaited<ReturnType<typeof authLoginMfa>>>;
+export type AuthLoginMfaMutationBody = LoginMfaRequest;
+export type AuthLoginMfaMutationError = ErrorType<Error>;
+export type AuthLoginMfaMutationVariables = { data: LoginMfaRequest };
+
+export const useAuthLoginMfa = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authLoginMfa>>,
+      TError,
+      AuthLoginMfaMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authLoginMfa>>,
+  TError,
+  AuthLoginMfaMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthLoginMfaMutationOptions(options), queryClient);
 };
 
 export const getAuthLogoutUrl = () => {

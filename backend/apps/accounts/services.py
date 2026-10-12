@@ -87,7 +87,7 @@ def rate_limited(seconds: int) -> ApiError:
     return error
 
 
-def _audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) -> None:
+def audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) -> None:
     """Una fila cuando empieza un bloqueo, no una por cada intento rechazado después."""
     try:
         platform.record(
@@ -122,7 +122,7 @@ def login(request: HttpRequest, *, email: str, password: str) -> User:
         throttle.failed(attempt)
         _audit_failure(email, client)
         for blocked in started:
-            _audit_block(email, client, blocked)
+            audit_block(email, client, blocked)
         raise ApiError(INVALID_CREDENTIALS, 401)
     assert isinstance(user, User)  # noqa: S101 — el único backend es ModelBackend
     with transaction.atomic():
