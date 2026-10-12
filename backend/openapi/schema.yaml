@@ -79,6 +79,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/auth/mfa/totp/:
+    post:
+      operationId: auth_mfa_totp_start
+      description: |-
+        Empieza el alta del dispositivo TOTP de la cuenta: con su contraseña actual, crea el
+        dispositivo sin confirmar (sustituye a otro sin confirmar) y devuelve su secreto, que no
+        se vuelve a enseñar. No protege ni exige nada hasta confirmarlo. 400 en `password`: no
+        es la contraseña de la cuenta. 409 `MFA_ALREADY_ENABLED`: ya hay un dispositivo
+        confirmado. 429: demasiados intentos desde esta red.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaEnrollmentStartRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaEnrollment'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/auth/password-reset/:
     post:
       operationId: auth_password_reset_request
@@ -2271,6 +2327,33 @@ components:
         * `ACTIVE` - ACTIVE
         * `SUSPENDED` - SUSPENDED
         * `DEACTIVATED` - DEACTIVATED
+    MfaEnrollment:
+      type: object
+      properties:
+        secret:
+          type: string
+          description: El secreto en base32. Solo se enseña esta vez.
+        uri:
+          type: string
+          description: La URI `otpauth://` para un código QR.
+        expires_in:
+          type: integer
+          description: Segundos que quedan para confirmar el alta.
+      required:
+      - expires_in
+      - secret
+      - uri
+    MfaEnrollmentStartRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: La contraseña actual de la cuenta.
+          maxLength: 1024
+      required:
+      - password
     NullEnum:
       enum:
       - null

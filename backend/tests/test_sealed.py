@@ -207,8 +207,8 @@ def test_local_and_test_derive_a_development_key_and_production_and_migrate_neve
         DATABASE_MIGRATOR_URL="postgres://crm_migrator:x@db:5432/crm",
     )
     assert job.SECRETS_KEKS == {}  # el job de migraciones no las guarda aunque se las den
-    production = load_production(monkeypatch, **{VAR: None})
-    assert production.SECRETS_KEKS == {}  # type: ignore[attr-defined]  # falla cerrado al usarse
+    with pytest.raises(ImproperlyConfigured, match=VAR):  # obligatoria desde F2-97 (ADR-022 §6)
+        load_production(monkeypatch, **{VAR: None})
     production = load_production(monkeypatch, **{VAR: f"3:{text(NEW)}"})
     assert production.SECRETS_KEKS == {3: NEW}  # type: ignore[attr-defined]
     with pytest.raises(ImproperlyConfigured, match=VAR):

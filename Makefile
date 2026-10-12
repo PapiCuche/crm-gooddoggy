@@ -17,7 +17,8 @@ TEST_ENV := DATABASE_URL=postgres://crm_app:$(CRM_APP_PASSWORD)@$(PG) \
 	STORAGE_SECRET_ACCESS_KEY=$(STORAGE_SECRET_ACCESS_KEY) CI=1
 DEPLOY_ENV := DJANGO_SETTINGS_MODULE=config.settings.production DJANGO_ALLOWED_HOSTS=app.example.com \
 	FORWARDED_ALLOW_IPS=127.0.0.1 \
-	DATABASE_URL=postgres://ci:ci@localhost:5432/ci DJANGO_SECRET_KEY=$$(openssl rand -hex 32)
+	DATABASE_URL=postgres://ci:ci@localhost:5432/ci DJANGO_SECRET_KEY=$$(openssl rand -hex 32) \
+	SECRETS_KEKS=1:$$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')
 
 .PHONY: up down logs check check-repo check-images check-backend check-frontend
 up: ## Stack completo en http://localhost:$(or $(PROXY_HOST_PORT),8080)
@@ -39,8 +40,10 @@ check-repo:
 check-images: ## Imágenes como en CI: build, usuario no root y prueba de humo HTTP
 	docker build --pull -t crm-backend:ci backend
 	test "$$(docker run --rm --entrypoint id crm-backend:ci -u)" = "10001"
-	DJANGO_SECRET_KEY="$$(openssl rand -hex 32)" sh infra/docker/smoke-image.sh crm-backend:ci 8000 /health/live \
-		-e DJANGO_SECRET_KEY -e DJANGO_ALLOWED_HOSTS=app.example.com -e FORWARDED_ALLOW_IPS=127.0.0.1 \
+	DJANGO_SECRET_KEY="$$(openssl rand -hex 32)" \
+	SECRETS_KEKS="1:$$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')" \
+		sh infra/docker/smoke-image.sh crm-backend:ci 8000 /health/live -e DJANGO_SECRET_KEY -e SECRETS_KEKS \
+		-e DJANGO_ALLOWED_HOSTS=app.example.com -e FORWARDED_ALLOW_IPS=127.0.0.1 \
 		-e DATABASE_URL=postgres://ci:ci@127.0.0.1:5432/ci
 	docker build --pull -t crm-frontend:ci frontend
 	test "$$(docker run --rm --entrypoint id crm-frontend:ci -u)" != "0"

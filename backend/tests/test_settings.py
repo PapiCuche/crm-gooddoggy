@@ -1,3 +1,4 @@
+import base64
 import importlib
 import secrets
 import sys
@@ -25,6 +26,7 @@ BASE_ENV: dict[str, str | None] = {
     "EMAIL_USE_SSL": None,
     "MAIL_FROM": None,
     "APP_ORIGIN": None,
+    "SECRETS_KEKS": "1:" + base64.urlsafe_b64encode(bytes(range(32))).decode(),  # ADR-022 §6
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {

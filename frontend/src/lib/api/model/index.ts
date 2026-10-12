@@ -40,6 +40,8 @@ export * from "./membersListParams";
 export * from "./memberStatus";
 export * from "./memberStatusChangeRequest";
 export * from "./memberUser";
+export * from "./mfaEnrollment";
+export * from "./mfaEnrollmentStartRequest";
 export * from "./nullEnum";
 export * from "./organizationSummary";
 export * from "./paginatedAuditEntryList";

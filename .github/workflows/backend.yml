@@ -89,6 +89,7 @@ jobs:
           DATABASE_URL: postgres://ci:ci@localhost:5432/ci
         run: |
           DJANGO_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(64))')" \
+          SECRETS_KEKS="1:$(python3 -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')" \
             uv run python manage.py check --deploy --fail-level WARNING
       - name: Compose válido (docker compose config)
         env:  # valores ficticios: .env.example deja vacíos los secretos de Garage
@@ -196,8 +197,9 @@ jobs:
           set -euo pipefail
           test "$(docker run --rm --entrypoint id crm-backend:ci -u)" = "10001"
           DJANGO_SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(64))')" \
+          SECRETS_KEKS="1:$(python3 -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())')" \
             sh ../infra/docker/smoke-image.sh crm-backend:ci 8000 /health/live \
-            -e DJANGO_SECRET_KEY -e DJANGO_ALLOWED_HOSTS=app.example.com \
+            -e DJANGO_SECRET_KEY -e SECRETS_KEKS -e DJANGO_ALLOWED_HOSTS=app.example.com \
             -e FORWARDED_ALLOW_IPS=127.0.0.1 -e DATABASE_URL=postgres://ci:ci@127.0.0.1:5432/ci
 
   gate:

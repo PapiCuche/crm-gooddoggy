@@ -80,7 +80,7 @@ def _audit_failure(email: str, client: dict[str, Any]) -> None:
         unaudited(error, "auth.login.failed")
 
 
-def _rate_limited(seconds: int) -> ApiError:
+def rate_limited(seconds: int) -> ApiError:
     """429 `RATE_LIMITED` con `Retry-After`: el mismo para una cuenta real y una inexistente."""
     error = ApiError(RATE_LIMITED, 429)
     error.wait = seconds  # el manejador de errores lo pasa a la cabecera
@@ -116,7 +116,7 @@ def login(request: HttpRequest, *, email: str, password: str) -> User:
     try:
         started = throttle.admit(attempt)  # antes de mirar las credenciales, exista o no
     except throttle.Refused as refused:
-        raise _rate_limited(refused.seconds) from None
+        raise rate_limited(refused.seconds) from None
     user = authenticate(request, username=email, password=password)
     if user is None:
         throttle.failed(attempt)
