@@ -542,6 +542,19 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Rotar:** añadir una clave con una versión más alta y arrancar con ella todos los procesos, parados antes (en un despliegue escalonado, o reiniciándolos sin pararlos, el que aún no la tiene no abre lo que otro ya cifró con ella), sin quitarla si el despliegue se revierte; volver a cifrar lo que `stale` señala; retirar la anterior cuando no quede nada cifrado con ella. Retirarla antes deja ilegible lo que dependía de ella, hasta que vuelva. **El trabajo que vuelve a cifrar no existe todavía:** llega con la primera tabla que guarde secretos.
 - **Lo que no hace:** no guarda nada en ninguna tabla; no audita (se audita la operación que lo usa); no protege de un proceso de runtime comprometido, que tiene las claves en su entorno.
 
+## MFA: las tablas (F2-95, ADR-023)
+
+- **Qué hay:** las dos tablas del segundo factor de una cuenta y sus reglas ([ADR-023](../docs/adr/ADR-023-mfa-totp.md)). **Nada las usa todavía:** ni rutas, ni el cálculo de TOTP, ni el segundo paso del acceso.
+- **Platform-owned** (ADR-001 §2): sin `organization_id` ni política de tenant, como `users` y `password_resets`. El runtime las lee y las escribe sin contexto de tenant. Modelos `apps.accounts.models.MfaDevice` y `MfaBackupCode`.
+- **`user_mfa_devices`:** `user` (la cuenta), `type` (hoy solo `TOTP`), `secret`, `created_at`, `confirmed_at` y `last_step`. Como mucho un dispositivo TOTP por cuenta (`user_mfa_devices_user_type_uq`).
+  - `secret` es el secreto TOTP cifrado con `core.sealed` (propósito `mfa.totp`, dueño `user:<id de la cuenta>`): copiado a la fila de otra cuenta no se abre. La columna solo admite algo del tamaño de un valor cifrado, de 32 a 4127 bytes (`user_mfa_devices_secret_ck`): un secreto TOTP en claro, que tiene 20, no cabe. La base no comprueba que de verdad esté cifrado.
+  - Sin `confirmed_at` es un alta a medias: no protege ni exige nada. No se confirma antes de crearse (`user_mfa_devices_confirmed_ck`).
+  - `last_step` es el último paso de tiempo cuyo código se aceptó; solo lo tiene un dispositivo confirmado y es mayor que cero (`user_mfa_devices_last_step_ck`).
+- **`user_mfa_backup_codes`:** `user`, `code_hash` (el SHA-256 del código; el código no se guarda nunca), `created_at` y `used_at`. El hash tiene forma de SHA-256 en hexadecimal y en minúsculas (`user_mfa_backup_codes_code_hash_ck`) y no se repite dentro de una cuenta (`user_mfa_backup_codes_user_hash_uq`); que otra cuenta tenga el mismo no se nota. No se gasta antes de existir (`user_mfa_backup_codes_used_ck`).
+- **La cuenta no se borra** mientras tenga dispositivo o códigos (`PROTECT` en el ORM y FK en la base).
+- **Lo que la base no comprueba:** que un dispositivo sin confirmar caduque, que un paso no se repita, cuántos códigos de respaldo hay ni cuántos intentos se hacen. Eso será del código que las use (ADR-023 §2, §4, §5 y §6).
+- `core.sealed.unseal` y `stale` aceptan lo que devuelve una columna binaria (`memoryview`).
+
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
 `user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.

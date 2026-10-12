@@ -10,10 +10,14 @@ from typing import Any
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models.functions import Lower
+from django.db.models.functions import Length, Lower
 
 from apps.accounts.emails import canonical_email
 from core.db.models import uuid7_primary_key
+
+# Lo que mide un valor de `core.sealed` (ADR-022 §3): cabecera (3), nonce (12), de 1 a 4096 bytes
+# de texto y etiqueta (16).
+SEALED_MIN, SEALED_MAX = 32, 4127
 
 
 class UserManager(BaseUserManager["User"]):
@@ -154,6 +158,93 @@ class PasswordReset(models.Model):
         ]
         # Los enlaces de una cuenta, del más reciente al más antiguo: topes y «solo vale el último».
         indexes = [models.Index(fields=["user", "-created_at"], name="password_resets_user_idx")]
+
+    def __str__(self) -> str:
+        return str(self.pk)  # nunca la cuenta ni el hash
+
+
+class MfaDevice(models.Model):
+    """El segundo factor de una cuenta (F2-95, ADR-023): platform-owned. Hoy, un dispositivo
+    TOTP; como mucho uno por cuenta.
+
+    `secret` es el secreto TOTP cifrado con `core.sealed` (ADR-022: propósito `mfa.totp`, dueño
+    `user:<id de la cuenta>`); nunca en claro. Sin `confirmed_at` el dispositivo es un alta a
+    medias: no protege ni exige nada. `last_step` es el último paso de tiempo cuyo código se
+    aceptó: uno de ese paso o de uno anterior ya no vale (ADR-023 §2).
+    """
+
+    class Type(models.TextChoices):
+        TOTP = "TOTP"
+
+    id = uuid7_primary_key()
+    # Sin índice propio: `user_mfa_devices_user_type_uq` empieza por la cuenta.
+    user = models.ForeignKey(User, models.PROTECT, related_name="+", db_index=False)
+    type = models.CharField(max_length=16, choices=Type.choices)
+    secret = models.BinaryField(max_length=SEALED_MAX)
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True)
+    last_step = models.BigIntegerField(null=True)
+
+    class Meta:
+        db_table = "user_mfa_devices"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "type"], name="user_mfa_devices_user_type_uq"),
+            models.CheckConstraint(
+                condition=models.Q(type__in=["TOTP"]), name="user_mfa_devices_type_ck"
+            ),
+            # Lo más corto que da `core.sealed` (cabecera, nonce, un byte y etiqueta) son 32
+            # bytes: un secreto TOTP en claro, que tiene 20, no cabe en esta columna.
+            models.CheckConstraint(
+                condition=models.lookups.GreaterThanOrEqual(Length("secret"), SEALED_MIN)
+                & models.lookups.LessThanOrEqual(Length("secret"), SEALED_MAX),
+                name="user_mfa_devices_secret_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(confirmed_at__isnull=True)
+                | models.Q(confirmed_at__gte=models.F("created_at")),
+                name="user_mfa_devices_confirmed_ck",
+            ),
+            # Un paso se acepta al confirmar o después: sin confirmar no hay ninguno.
+            models.CheckConstraint(
+                condition=models.Q(last_step__isnull=True)
+                | (models.Q(last_step__gt=0) & models.Q(confirmed_at__isnull=False)),
+                name="user_mfa_devices_last_step_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)  # nunca la cuenta ni el secreto
+
+
+class MfaBackupCode(models.Model):
+    """Un código de respaldo del segundo factor de una cuenta (F2-95, ADR-023 §6):
+    platform-owned. Solo su SHA-256 (`code_hash`): el código se enseña una vez y no se guarda.
+    `used_at` dice cuándo se gastó; uno gastado no vuelve a valer."""
+
+    id = uuid7_primary_key()
+    # Sin índice propio: `user_mfa_backup_codes_user_hash_uq` empieza por la cuenta.
+    user = models.ForeignKey(User, models.PROTECT, related_name="+", db_index=False)
+    code_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "user_mfa_backup_codes"
+        constraints = [
+            # Por cuenta, no en toda la tabla: que un código exista para otra cuenta no se nota.
+            models.UniqueConstraint(
+                fields=["user", "code_hash"], name="user_mfa_backup_codes_user_hash_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(code_hash__regex=r"^[0-9a-f]{64}$"),
+                name="user_mfa_backup_codes_code_hash_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(used_at__isnull=True)
+                | models.Q(used_at__gte=models.F("created_at")),
+                name="user_mfa_backup_codes_used_ck",
+            ),
+        ]
 
     def __str__(self) -> str:
         return str(self.pk)  # nunca la cuenta ni el hash

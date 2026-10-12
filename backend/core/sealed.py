@@ -71,7 +71,7 @@ def seal(purpose: str, owner: str, plaintext: bytes) -> bytes:
     return head + nonce + _cipher(version, purpose).encrypt(nonce, plaintext, head + bound)
 
 
-def unseal(purpose: str, owner: str, sealed: bytes) -> bytes:
+def unseal(purpose: str, owner: str, sealed: bytes | memoryview) -> bytes:
     """Abre lo que `seal` cifró para ese mismo propósito y ese mismo dueño. `SealError` si no
     se puede, sin decir por qué."""
     _keys()
@@ -86,7 +86,7 @@ def unseal(purpose: str, owner: str, sealed: bytes) -> bytes:
         raise SealError from None
 
 
-def stale(sealed: bytes) -> bool:
+def stale(sealed: bytes | memoryview) -> bool:
     """¿Está cifrado con una clave que ya no es la vigente (o en un formato que no es este)?
     Lo usa quien vuelve a cifrar tras una rotación (ADR-022 §5). No abre nada."""
     sealed = bytes(sealed)

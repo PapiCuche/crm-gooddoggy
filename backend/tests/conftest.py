@@ -100,6 +100,8 @@ def tenant_db(
                 "django_session",
                 "login_throttles",
                 "password_resets",  # F2-86: antes que las cuentas, a las que referencia
+                "user_mfa_backup_codes",  # F2-95: ídem
+                "user_mfa_devices",
                 "users",
                 PLATFORM_AUDIT,
             ):
