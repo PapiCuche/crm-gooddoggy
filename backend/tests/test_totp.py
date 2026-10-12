@@ -82,6 +82,20 @@ def test_a_code_shared_by_two_steps_of_the_window_is_not_accepted_twice() -> Non
     assert accepted_step(RFC_KEY, shared, now=twin * 30.0 - 1, last=None) == twin
 
 
+def test_the_later_of_two_twin_steps_wins_also_when_they_are_not_neighbours() -> None:
+    twin = 153567  # este paso y el de dos después dan el mismo código; el de en medio, otro
+    shared, middle = code(RFC_KEY, twin), code(RFC_KEY, twin + 1)
+    assert shared == code(RFC_KEY, twin + 2) == "468457" and middle == "214300"
+    now = (twin + 1) * 30.0  # los tres pasos están en la ventana
+    for last in (None, twin - 1, twin, twin + 1):
+        assert accepted_step(RFC_KEY, shared, now=now, last=last) == twin + 2
+    # El coste, con un reloj un paso por detrás (el código era el de `twin`): sus dos códigos
+    # siguientes ya no valen, y uno de ellos no se presentó nunca. El tercero sí.
+    assert accepted_step(RFC_KEY, middle, now=now + 30, last=twin + 2) is None
+    assert accepted_step(RFC_KEY, shared, now=now + 60, last=twin + 2) is None
+    assert accepted_step(RFC_KEY, code(RFC_KEY, twin + 3), now=now + 90, last=twin + 2) == twin + 3
+
+
 @pytest.mark.parametrize(
     "presented",
     [

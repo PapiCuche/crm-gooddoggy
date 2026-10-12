@@ -65,6 +65,8 @@ def accepted_step(secret: bytes, presented: str, *, now: float, last: int | None
 
     Si dos pasos de la ventana dan el mismo código (pasa en uno de cada millón de pares),
     devuelve el último: con el primero como `last`, el mismo código valdría otra vez por el otro.
+    A cambio, quien lo presentó por el primero espera uno o dos pasos más a que valga su siguiente
+    código.
 
     Compara en tiempo constante y con todos los pasos de la ventana, sin salir al encontrar el
     que coincide. Lo que no son seis dígitos ASCII no vale.
