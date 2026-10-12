@@ -11,7 +11,7 @@ clave, vuelve a cifrar con la vigente.
 import logging
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -275,6 +275,29 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
         except Exception:
             logger.exception("aviso de segundo factor: no se pudo reportar")
     return codes
+
+
+@dataclass(frozen=True)
+class Status:
+    enabled: bool  # hay un dispositivo confirmado
+    enabled_at: datetime | None
+    enrollment_expires_in: int | None  # segundos que le quedan a un alta empezada; si no, `None`
+    backup_codes_left: int
+
+
+def status(user: User) -> Status:
+    """El estado del segundo factor de `user`, para su propia pantalla (ADR-023 §1, §4 y §6):
+    si tiene un dispositivo confirmado y desde cuándo, si dejó un alta empezada que todavía se
+    puede confirmar, y cuántos códigos de respaldo le quedan sin gastar. Nunca cuáles, ni el
+    secreto. Solo lee."""
+    device = MfaDevice.objects.filter(user=user, type=MfaDevice.Type.TOTP).first()
+    if device is None:
+        return Status(False, None, None, 0)
+    if device.confirmed_at is None:  # la que agotó sus códigos ya no existe (ADR-024)
+        left = int((device.created_at + PENDING_FOR - timezone.now()).total_seconds())
+        return Status(False, None, left if left > 0 else None, 0)
+    unspent = MfaBackupCode.objects.filter(user=user, used_at__isnull=True).count()
+    return Status(True, device.confirmed_at, None, unspent)
 
 
 def notice_address(user_id: str) -> str | None:

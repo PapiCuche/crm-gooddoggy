@@ -9,6 +9,7 @@ urlpatterns = [
     path("logout/", views.LogoutView.as_view(), name="auth-logout"),
     path("mfa/totp/confirm/", views.MfaTotpConfirmView.as_view(), name="auth-mfa-totp-confirm"),
     path("mfa/totp/", views.MfaTotpView.as_view(), name="auth-mfa-totp"),
+    path("mfa/", views.MfaView.as_view(), name="auth-mfa"),
     path(
         "password-reset/confirm/",
         views.PasswordResetConfirmView.as_view(),

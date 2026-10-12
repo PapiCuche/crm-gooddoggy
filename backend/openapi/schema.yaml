@@ -137,6 +137,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/auth/mfa/:
+    get:
+      operationId: auth_mfa_status
+      description: |-
+        El estado del segundo factor de la cuenta de la sesión: si tiene un dispositivo
+        confirmado y desde cuándo, si dejó un alta empezada que aún se puede confirmar, y
+        cuántos códigos de respaldo le quedan. Nunca el secreto ni los códigos.
+      tags:
+      - auth
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaStatus'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/auth/mfa/totp/:
     post:
       operationId: auth_mfa_totp_start
@@ -2509,6 +2533,30 @@ components:
           maxLength: 1024
       required:
       - password
+    MfaStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: La cuenta tiene un dispositivo confirmado.
+        enabled_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Desde cuándo; `null` si no lo tiene.
+        enrollment_expires_in:
+          type: integer
+          nullable: true
+          description: Segundos que quedan para confirmar un alta empezada; `null`
+            si no hay ninguna.
+        backup_codes_left:
+          type: integer
+          description: Códigos de respaldo que quedan sin gastar.
+      required:
+      - backup_codes_left
+      - enabled
+      - enabled_at
+      - enrollment_expires_in
     NullEnum:
       enum:
       - null
