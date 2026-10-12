@@ -41,6 +41,7 @@ import type {
   MemberStatusChangeRequest,
   MembersListParams,
   MfaBackupCodes,
+  MfaDisableRequest,
   MfaEnrollment,
   MfaEnrollmentConfirmRequest,
   MfaEnrollmentStartRequest,
@@ -568,6 +569,113 @@ export function useAuthMfaStatus<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getAuthMfaDisableUrl = () => {
+  return `/api/v1/auth/mfa/disable/`;
+};
+
+/**
+ * Quita el segundo factor de la cuenta, con su contraseña actual y un código (de la
+ * aplicación de autenticación o de respaldo). Borra el dispositivo y sus códigos de
+ * respaldo y cierra las demás sesiones; desde entonces la cuenta entra solo con su
+ * contraseña. 400 en `password`: no es la contraseña de la cuenta. 400 en `code`: el
+ * código no vale. 401: la sesión se revocó mientras tanto. 409 `MFA_NOT_ENABLED`: la
+ * cuenta no tiene segundo factor. 429: demasiados intentos desde esta red, o demasiados
+ * códigos fallidos de esa cuenta en 24 horas.
+ */
+export const authMfaDisable = async (
+  mfaDisableRequest: MfaDisableRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<void>(getAuthMfaDisableUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(mfaDisableRequest),
+  });
+};
+
+export const getAuthMfaDisableMutationKey = () => ["authMfaDisable"] as const;
+
+export const getAuthMfaDisableMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authMfaDisable>>,
+    TError,
+    AuthMfaDisableMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authMfaDisable>>,
+  TError,
+  AuthMfaDisableMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthMfaDisableMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authMfaDisable>>,
+    AuthMfaDisableMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authMfaDisable(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthMfaDisableMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaDisable>>>;
+export type AuthMfaDisableMutationBody = MfaDisableRequest;
+export type AuthMfaDisableMutationError = ErrorType<Error>;
+export type AuthMfaDisableMutationVariables = { data: MfaDisableRequest };
+
+export const useAuthMfaDisable = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authMfaDisable>>,
+      TError,
+      AuthMfaDisableMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authMfaDisable>>,
+  TError,
+  AuthMfaDisableMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthMfaDisableMutationOptions(options), queryClient);
+};
 
 export const getAuthMfaTotpStartUrl = () => {
   return `/api/v1/auth/mfa/totp/`;

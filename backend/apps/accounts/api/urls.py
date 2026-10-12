@@ -7,6 +7,7 @@ urlpatterns = [
     path("login/mfa/", views.LoginMfaView.as_view(), name="auth-login-mfa"),
     path("login/", views.LoginView.as_view(), name="auth-login"),
     path("logout/", views.LogoutView.as_view(), name="auth-logout"),
+    path("mfa/disable/", views.MfaDisableView.as_view(), name="auth-mfa-disable"),
     path("mfa/totp/confirm/", views.MfaTotpConfirmView.as_view(), name="auth-mfa-totp-confirm"),
     path("mfa/totp/", views.MfaTotpView.as_view(), name="auth-mfa-totp"),
     path("mfa/", views.MfaView.as_view(), name="auth-mfa"),
