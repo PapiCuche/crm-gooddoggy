@@ -57,6 +57,55 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/auth/login/mfa/:
+    post:
+      operationId: auth_login_mfa
+      description: |-
+        El segundo paso del acceso: con un acceso a medias (la contraseña ya se comprobó) y
+        un código de la aplicación de autenticación, o uno de respaldo, inicia la sesión. 400 en
+        `code`: el código no vale, sin decir por qué; se puede probar otro. 401
+        `MFA_LOGIN_NOT_STARTED`: no hay un acceso a medias, caducó (5 minutos) o dejó de valer:
+        hay que volver a la contraseña. 429: demasiados intentos desde esta red, o demasiados
+        códigos fallidos de esa cuenta en 24 horas; entonces tampoco vale el correcto.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginMfaRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/auth/logout/:
     post:
       operationId: auth_logout
@@ -2207,6 +2256,17 @@ components:
       required:
       - email
       - role_ids
+    LoginMfaRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: El código de la aplicación de autenticación, o un código de
+            respaldo.
+          maxLength: 32
+      required:
+      - code
     LoginRequest:
       type: object
       properties:

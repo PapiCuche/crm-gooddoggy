@@ -11,8 +11,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import mfa, recovery, services
+from apps.accounts import mfa, recovery, second_step, services
 from apps.accounts.api.serializers import (
+    LoginMfaSerializer,
     LoginSerializer,
     MfaBackupCodesSerializer,
     MfaEnrollmentConfirmSerializer,
@@ -56,6 +57,34 @@ class LoginView(APIView):
         credentials = LoginSerializer(data=request.data)
         credentials.is_valid(raise_exception=True)
         services.login(request._request, **credentials.validated_data)
+        request.user = request._request.user  # la vista responde ya con la sesión nueva
+        return Response(_session(request))
+
+
+class LoginMfaView(APIView):
+    permission_classes = [Public]
+
+    @extend_schema(
+        operation_id="auth_login_mfa",
+        tags=["auth"],
+        auth=[],
+        request=LoginMfaSerializer,
+        responses={200: SessionSerializer, **errors(400, 401, 403, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """El segundo paso del acceso: con un acceso a medias (la contraseña ya se comprobó) y
+        un código de la aplicación de autenticación, o uno de respaldo, inicia la sesión. 400 en
+        `code`: el código no vale, sin decir por qué; se puede probar otro. 401
+        `MFA_LOGIN_NOT_STARTED`: no hay un acceso a medias, caducó (5 minutos) o dejó de valer:
+        hay que volver a la contraseña. 429: demasiados intentos desde esta red, o demasiados
+        códigos fallidos de esa cuenta en 24 horas; entonces tampoco vale el correcto."""
+        sent = LoginMfaSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            second_step.complete(request._request, **sent.validated_data)
+        except mfa.WrongCode:
+            wrong = serializers.ErrorDetail("El código no vale.", code="invalid")
+            raise serializers.ValidationError({"code": [wrong]}) from None
         request.user = request._request.user  # la vista responde ya con la sesión nueva
         return Response(_session(request))
 

@@ -29,6 +29,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
     assert schema["openapi"].startswith("3.") and set(schema["paths"]) == {
         "/api/v1/auth/csrf/",
         "/api/v1/auth/login/",
+        "/api/v1/auth/login/mfa/",
         "/api/v1/auth/password-reset/",
         "/api/v1/auth/password-reset/confirm/",
         "/api/v1/auth/logout/",

@@ -42,6 +42,13 @@ class MfaEnrollmentConfirmSerializer(serializers.Serializer[Any]):
     )
 
 
+class LoginMfaSerializer(serializers.Serializer[Any]):
+    code = serializers.CharField(
+        max_length=32,
+        help_text="El código de la aplicación de autenticación, o un código de respaldo.",
+    )
+
+
 class MfaBackupCodesSerializer(serializers.Serializer[Any]):
     backup_codes = serializers.ListField(
         child=serializers.CharField(),
