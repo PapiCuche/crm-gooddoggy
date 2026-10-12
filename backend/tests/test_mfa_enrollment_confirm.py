@@ -21,6 +21,7 @@ from apps.accounts import backup_codes, mfa, throttle, totp
 from apps.accounts.models import ENROLLMENT_FAILURES, MfaBackupCode, MfaDevice, User
 from apps.accounts.tasks import send_mfa_enabled
 from apps.audit import platform
+from core import sealed
 from core.observability import reporting
 from core.observability.logging import json_formatter
 from tests import test_auth_api
@@ -148,6 +149,7 @@ def test_it_needs_a_session_csrf_and_a_code_of_the_pending_device(
         answer = confirm(browser, wrong)
         assert (answer.status_code, answer.json()) == (400, WRONG), wrong  # sin decir por qué
     assert MfaDevice.objects.get().confirmed_at is None and not MfaBackupCode.objects.exists()
+    assert MfaDevice.objects.get().failed_codes == 4  # cada uno cuenta, sea o no seis dígitos
     assert audit(migrator)[-1] == (
         "auth.mfa.enabled",
         "DENIED",
@@ -180,14 +182,17 @@ def test_a_wrong_code_counts_in_the_sign_in_limit_and_only_a_right_one_gives_it_
     migrator.execute("DELETE FROM login_throttles")
     secret = base64.b32decode(start(browser).json()["secret"])
     migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '5 minutes'")
-    for _ in range(limit):
+    for _ in range(limit - 1):
         assert confirm(browser, now_code(secret, -2)).status_code == 400
+    # El que llega al límite no es un código: el alta sigue en pie, a un fallo de agotarse.
+    assert start(browser, test_auth_api.WRONG).status_code == 400
     assert sorted(dict(migrator.execute(KEYS).fetchall()).values()) == [limit] * 3
     moved = "SELECT count(*) FROM login_throttles WHERE updated_at > now() - interval '1 minute'"
     assert migrator.execute(moved).fetchone() == (3,)  # un fallo adelanta el reloj de los tres
     limited = confirm(browser, now_code(secret))  # ni con el bueno: está bloqueado
     assert reply(limited) == (429, b'{"code":"RATE_LIMITED"}') and int(limited["Retry-After"]) > 0
-    assert not MfaDevice.objects.exists()  # y esos fallos agotaron el alta (ADR-024)
+    waiting = MfaDevice.objects.get()  # bloqueada no confirma, ni suma al tope del alta
+    assert (waiting.confirmed_at, waiting.failed_codes) == (None, limit - 1)
     migrator.execute("DELETE FROM login_throttles")
     secret = base64.b32decode(start(browser).json()["secret"])
     assert confirm(browser, now_code(secret, -2)).status_code == 400
@@ -261,6 +266,7 @@ def test_without_its_audit_row_nothing_is_confirmed_and_no_session_changes(
     assert (
         confirm(browser, now_code(secret, -2)).status_code == 400
     )  # un rechazo sin auditar: igual
+    assert MfaDevice.objects.get().failed_codes == 1  # y cuenta, con su fila o sin ella
     monkeypatch.setattr(part[0], part[1], real)
     with migrator.transaction():  # con la fila de la cuenta bloqueada por otro, espera: no confirma
         migrator.execute("SELECT 1 FROM users WHERE id = %s FOR NO KEY UPDATE", [ana.pk])
@@ -293,10 +299,11 @@ def test_a_secret_that_cannot_be_opened_is_a_code_that_is_not_valid_and_is_repor
 
 
 def test_the_fifth_wrong_code_ends_the_enrolment_whatever_address_it_comes_from(
-    browser: Client, migrator: psycopg.Connection[Any]
+    browser: Client, migrator: psycopg.Connection[Any], caplog: pytest.LogCaptureFixture
 ) -> None:
     make_user(email=EMAIL)
     secret = begun(browser)
+    caplog.set_level(logging.DEBUG)
     for failed in range(1, ENROLLMENT_FAILURES):
         browser.defaults["REMOTE_ADDR"] = f"198.51.100.{failed}"  # cada uno desde otra dirección
         assert confirm(browser, now_code(secret, -2)).status_code == 400
@@ -304,17 +311,22 @@ def test_the_fifth_wrong_code_ends_the_enrolment_whatever_address_it_comes_from(
     blocks = "SELECT count(*) FROM login_throttles WHERE blocked_until IS NOT NULL"
     assert migrator.execute(blocks).fetchone() == (0,)  # el límite por dirección no vio nada
     browser.defaults["REMOTE_ADDR"] = "198.51.100.9"
-    answer = confirm(browser, now_code(secret, -2))
+    answer = confirm(browser, "12345a")  # el quinto: tampoco hace falta que sean seis dígitos
     assert (answer.status_code, answer.json()) == (400, WRONG)  # la respuesta de siempre
     assert not MfaDevice.objects.exists() and not MfaBackupCode.objects.exists()
     denied = [row[7] for row in audit(migrator) if row[:2] == ("auth.mfa.enabled", "DENIED")]
     assert denied == ['{"reason": "code"}'] * 4 + ['{"reason": "code_limit"}']
+    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    for text in ("12345a", secret.hex(), base64.b32encode(secret).decode()):
+        assert text not in logged  # ni el código que no vale ni el secreto
     assert reply(confirm(browser, now_code(secret))) == NOT_STARTED  # ni con el bueno
     assert browser.get(SESSION).status_code == 200  # la sesión sigue: puede empezar otra
     migrator.execute("DELETE FROM login_throttles")
-    secret = base64.b32decode(start(browser).json()["secret"])  # con la contraseña, y a cero
-    assert MfaDevice.objects.get().failed_codes == 0
-    for _ in range(ENROLLMENT_FAILURES - 1):
+    for _ in range(2):  # con la contraseña, y a cero: también sobre un alta que tenía un fallo
+        secret = base64.b32decode(start(browser).json()["secret"])
+        assert MfaDevice.objects.get().failed_codes == 0
+        assert confirm(browser, now_code(secret, -2)).status_code == 400
+    for _ in range(ENROLLMENT_FAILURES - 2):
         assert confirm(browser, now_code(secret, -2)).status_code == 400
     migrator.execute("DELETE FROM login_throttles")
     assert confirm(browser, now_code(secret)).status_code == 200  # cuatro la dejan en pie
@@ -339,6 +351,19 @@ def test_a_failure_counted_meanwhile_is_read_with_the_device_locked(
     assert not MfaDevice.objects.exists()  # contó sobre lo que había al bloquear la fila
     locked = [q["sql"] for q in queries if "user_mfa_devices" in q["sql"] and "SELECT" in q["sql"]]
     assert locked and all(sql.rstrip().endswith("FOR UPDATE") for sql in locked)
+
+
+def test_the_cap_of_an_account_leaves_the_enrolment_of_another_alone(browser: Client) -> None:
+    luis = make_user(email="luis@example.com")
+    sealed_secret = sealed.seal(mfa.PURPOSE, mfa.owner(luis.pk), bytes(20))
+    theirs = MfaDevice.objects.create(user=luis, type="TOTP", secret=sealed_secret, failed_codes=1)
+    make_user(email=EMAIL)
+    secret = begun(browser)
+    for left in (2, 2, 2, 2, 1):  # el quinto borra el alta de esta cuenta, y solo esa
+        assert confirm(browser, now_code(secret, -2)).status_code == 400
+        assert MfaDevice.objects.count() == left
+    theirs.refresh_from_db()
+    assert (theirs.failed_codes, theirs.confirmed_at) == (1, None)
 
 
 def test_the_notice_is_best_effort_and_the_task_mails_the_account_without_any_code(
