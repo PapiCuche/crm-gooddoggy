@@ -52,7 +52,8 @@ def start_enrollment(request: HttpRequest, *, password: str) -> Enrollment:
 
     Pide la contraseña actual: una sesión sola no ata un factor a la cuenta. Una contraseña
     incorrecta lanza `WrongPassword`, cuenta en el límite de intentos del acceso (por dirección;
-    `ApiError` 429 si se alcanza) y deja una fila de auditoría denegada.
+    `ApiError` 429 si se alcanza) y deja una fila de auditoría denegada. La correcta devuelve lo
+    que contó, como un acceso correcto: empezar altas no bloquea el acceso.
 
     Con un dispositivo ya confirmado lanza `ApiError` `MFA_ALREADY_ENABLED`, se pueda leer su
     secreto o no (ADR-023 §3). Si no, sustituye el alta sin confirmar que hubiera por una nueva,
@@ -65,7 +66,7 @@ def start_enrollment(request: HttpRequest, *, password: str) -> Enrollment:
     assert isinstance(user, User)  # noqa: S101 — la ruta exige sesión
     attempt = throttle.keys(user.email, client["ip"])
     try:
-        throttle.admit(attempt)  # antes de mirar la contraseña
+        started = throttle.admit(attempt)  # antes de mirar la contraseña
     except throttle.Refused as refused:
         raise rate_limited(refused.seconds) from None
     if not user.check_password(password):
@@ -83,13 +84,15 @@ def start_enrollment(request: HttpRequest, *, password: str) -> Enrollment:
         except Exception as error:
             unaudited(error, STARTED)
         raise WrongPassword
+    throttle.forgive(attempt, started)  # solo un fallo queda contado, como en el acceso
     secret = totp.new_secret()
     with transaction.atomic():
         User.objects.select_for_update(no_key=True).get(pk=user.pk)  # un alta a la vez
         devices = MfaDevice.objects.filter(user=user, type=MfaDevice.Type.TOTP)
         if devices.filter(confirmed_at__isnull=False).exists():
             raise ApiError(ALREADY_ENABLED, 409)
-        devices.delete()  # la que quedara a medias: su secreto ya no vale
+        # Solo la que quedara a medias (su secreto ya no vale): aquí nunca se borra una confirmada.
+        devices.filter(confirmed_at__isnull=True).delete()
         devices.create(
             user=user,
             type=MfaDevice.Type.TOTP,

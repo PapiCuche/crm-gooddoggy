@@ -4,13 +4,14 @@
 import base64
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import psycopg
 import pytest
 from django.contrib.auth import authenticate
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, connection, transaction
 from django.test import Client, RequestFactory
 from django.utils import timezone
 
@@ -18,6 +19,7 @@ from apps.accounts import mfa, totp
 from apps.accounts.models import MfaDevice
 from apps.audit import platform
 from core import sealed
+from core.observability import reporting
 from core.observability.logging import json_formatter
 from tests import test_auth_api
 from tests.factories import TEST_PASSWORD, make_user
@@ -135,14 +137,19 @@ def test_wrong_passwords_count_in_the_sign_in_limit_of_that_address(
     make_user(email=EMAIL)
     assert login(browser).status_code == 200
     limit = settings.LOGIN_THROTTLE["pair"][0]
+    migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '5 minutes'")
     for _ in range(limit):
         assert start(browser, WRONG).status_code == 400
     counted = dict(migrator.execute(KEYS).fetchall())
     assert sorted(counted.values()) == [limit] * 3  # la cuenta, la dirección y el par
+    moved = "SELECT count(*) FROM login_throttles WHERE updated_at > now() - interval '1 minute'"
+    assert migrator.execute(moved).fetchone() == (3,)  # un fallo adelanta el reloj de los tres
     limited = start(browser)  # ni con la buena: el par cuenta+dirección está bloqueado
     assert reply(limited) == (429, b'{"code":"RATE_LIMITED"}') and int(limited["Retry-After"]) > 0
     assert not MfaDevice.objects.exists()
-    assert [row[0] for row in audit(migrator)].count("auth.mfa.enrollment_started") == limit
+    actions = [row[0] for row in audit(migrator)]
+    assert actions.count("auth.mfa.enrollment_started") == limit
+    assert "auth.login.throttled" not in actions  # el bloqueo no deja la fila del acceso (README)
 
 
 def test_a_confirmed_device_is_not_replaced_even_if_its_secret_cannot_be_read(
@@ -169,7 +176,9 @@ def test_without_its_audit_row_or_without_keys_no_device_is_left(
     assert login(browser).status_code == 200
     assert start(browser).status_code == 201
     kept = MfaDevice.objects.get().pk
-    real = platform.record
+    real, reports = platform.record, list[Any]()
+    spy = SimpleNamespace(capture_exception=lambda error, context=None: reports.append(context))
+    monkeypatch.setattr(reporting, "reporter", lambda: spy)
 
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise DatabaseError("sin partición")
@@ -179,6 +188,7 @@ def test_without_its_audit_row_or_without_keys_no_device_is_left(
     assert reply(start(browser)) == (500, b'{"code":"INTERNAL_ERROR"}')
     assert MfaDevice.objects.get().pk == kept  # falla cerrado: ni borra la que había
     assert start(browser, WRONG).status_code == 400  # un rechazo sin auditar sigue siendo el mismo
+    assert reports == [{"action": "auth.mfa.enrollment_started"}]  # pero no en silencio
     monkeypatch.setattr(platform, "record", real)
     settings.SECRETS_KEKS = {}
     assert reply(start(browser)) == (500, b'{"code":"INTERNAL_ERROR"}')  # sin clave no se guarda
@@ -189,7 +199,7 @@ def test_without_its_audit_row_or_without_keys_no_device_is_left(
     assert "secret" not in repr(mfa.Enrollment("ABC", "otpauth://x", 600)).lower()
 
 
-def test_each_account_starts_its_own_and_two_at_once_leave_one(
+def test_each_account_starts_its_own_and_starting_again_leaves_one(
     browser: Client,
 ) -> None:
     ana, luis = make_user(email=EMAIL), make_user(email="luis@example.com")
@@ -206,3 +216,32 @@ def test_each_account_starts_its_own_and_two_at_once_leave_one(
     for _ in range(3):
         assert start(browser).status_code == 201
     assert MfaDevice.objects.filter(user=ana).count() == 1  # siempre una sola alta a medias
+
+
+def test_the_right_password_gives_back_what_it_counted(
+    browser: Client, migrator: psycopg.Connection[Any], settings: Any
+) -> None:
+    make_user(email=EMAIL)
+    assert login(browser).status_code == 200
+    for _ in range(settings.LOGIN_THROTTLE["pair"][0] + 1):
+        assert start(browser).status_code == 201  # como un acceso correcto: no se acumulan
+    assert set(dict(migrator.execute(KEYS).fetchall()).values()) == {0}
+    assert login(browser).status_code == 200  # empezar altas no bloquea el acceso
+    assert start(browser, WRONG).status_code == 400 and start(browser).status_code == 201
+    counted = dict(migrator.execute(KEYS).fetchall())  # el fallo sigue contado; el par se borra
+    assert sorted(counted.values()) == [1, 1]
+
+
+def test_a_start_waits_for_the_lock_of_its_account_row(
+    browser: Client, migrator: psycopg.Connection[Any]
+) -> None:
+    ana = make_user(email=EMAIL)
+    assert login(browser).status_code == 200
+    browser.raise_request_exception = False
+    with connection.cursor() as cursor:
+        cursor.execute("SET lock_timeout = '200ms'")
+    with migrator.transaction():  # otra transacción retiene la fila de la cuenta: otra alta
+        migrator.execute("SELECT 1 FROM users WHERE id = %s FOR NO KEY UPDATE", [ana.pk])
+        assert reply(start(browser)) == (500, b'{"code":"INTERNAL_ERROR"}')  # espera: no se cuela
+    assert not MfaDevice.objects.exists()
+    assert start(browser).status_code == 201  # libre la fila, empieza
