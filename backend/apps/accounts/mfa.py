@@ -277,16 +277,23 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
     return codes
 
 
+def notice_address(user_id: str) -> str | None:
+    """A dónde se avisa a la cuenta `user_id`: su correo, o `None` si la cuenta no existe, está
+    desactivada o `core.mail` no podría escribir a su dirección."""
+    try:
+        found = User.objects.filter(pk=user_id, is_active=True).values_list("email", flat=True)
+        address: str | None = found.first()
+    except ValueError, ValidationError:  # no es un identificador de cuenta
+        return None
+    return address if address is not None and mail.deliverable(address) else None
+
+
 def notify_enabled(user_id: str) -> bool:
     """Avisa por correo a la cuenta `user_id` de que se le dio de alta un segundo factor
     (ADR-023 §4). Devuelve si envió el aviso. No envía nada si la cuenta no existe, está
     desactivada o `core.mail` no podría escribir a su dirección. Sin secretos ni códigos."""
-    try:
-        found = User.objects.filter(pk=user_id, is_active=True).values_list("email", flat=True)
-        address = found.first()
-    except ValueError, ValidationError:  # no es un identificador de cuenta
-        return False
-    if address is None or not mail.deliverable(address):
+    address = notice_address(user_id)
+    if address is None:
         return False
     notice = mail.Message(
         to=address, subject=ENABLED_SUBJECT, body=ENABLED_BODY, purpose="mfa_enabled"

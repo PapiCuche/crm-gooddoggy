@@ -6,24 +6,58 @@ paso de un código TOTP queda como el último aceptado, y un código de respaldo
 comparten todas las rutas que comprueban un código de un dispositivo confirmado: el segundo
 paso del acceso, el step-up, quitar el factor y regenerar los códigos de respaldo.
 
-No cuenta intentos, no audita y no abre sesión: eso es de cada ruta, que antes cuenta el
-intento con `code_limit` y, si `accept` devuelve un método, lo devuelve. No dice por qué un
-código no vale. Nada de aquí registra un código ni un secreto.
+`accept` no cuenta intentos, no audita y no abre sesión. Las rutas no lo llaman a mano: usan
+`verify`, que lleva el orden entero (F2-104): cuenta el intento con `code_limit` antes, bloquea
+la cuenta y después el dispositivo, devuelve el intento solo si el código valió, y audita y
+avisa cuando se alcanza el tope (ADR-023 §5 y §10). No dice por qué un código no vale. Nada de
+aquí registra un código ni un secreto.
 """
 
 import logging
+from collections.abc import Callable
+from typing import Any
+from uuid import UUID
 
-from django.db import connection
+from django.conf import settings
+from django.db import connection, transaction
 from django.utils import timezone
 
-from apps.accounts import backup_codes, mfa, totp
+from apps.accounts import backup_codes, code_limit, mfa, totp
 from apps.accounts.models import MfaBackupCode, MfaDevice, User
-from core import sealed
+from apps.accounts.recovery import NOTICE_QUEUED_FOR, enqueue
+from apps.accounts.services import unaudited
+from apps.audit import platform
+from apps.audit.services import Entity, Result
+from core import mail, sealed
 from core.observability import reporting
 
 logger = logging.getLogger(__name__)
 
 TOTP, BACKUP_CODE = "totp", "backup_code"  # el método, como lo audita el acceso (ADR-023 §5)
+THROTTLED = "auth.mfa.throttled"  # ADR-023 §10 dejó el nombre a este work item
+LIMIT_SUBJECT = "Tu cuenta de Good Doggy CRM no acepta códigos del segundo factor por ahora"
+LIMIT_BODY = """Hola:
+
+Se fallaron demasiados códigos del segundo factor de tu cuenta de Good Doggy CRM. Para que
+nadie acierte uno a base de probar, tu cuenta deja de aceptar códigos durante un tiempo,
+también los correctos: como mucho {hours} horas. Después vuelve a aceptarlos sola.
+
+Si fuiste tú, espera y vuelve a intentarlo con el código que muestre entonces tu aplicación
+de autenticación.
+
+Si no fuiste tú, quien lo hizo conoce tu contraseña o tiene abierta una sesión tuya. Cambia
+la contraseña con un enlace de recuperación: eso cierra todas tus sesiones, y quien tenía la
+anterior ya no llega a probar códigos. Cambiarla no adelanta el final de la espera. Y avisa
+a quien administra tu organización, te llegue o no ese enlace.
+"""
+
+
+class Capped(Exception):
+    """La cuenta alcanzó el tope de códigos fallidos: no se mira ninguno, tampoco el correcto."""
+
+    def __init__(self, seconds: int) -> None:
+        super().__init__(seconds)
+        self.seconds = seconds
 
 
 class NoDevice(Exception):
@@ -90,3 +124,106 @@ def accept(account: User, presented: str) -> str | None:
         return None
     unspent = MfaBackupCode.objects.filter(user=account, code_hash=hashed, used_at__isnull=True)
     return BACKUP_CODE if unspent.update(used_at=now) else None
+
+
+def _reached(user_id: UUID, actor: UUID | None, client: dict[str, Any]) -> None:
+    """El intento que alcanza el tope quedó contado (ADR-023 §5 y §10): su fila, como la del
+    inicio de un bloqueo del acceso, y el aviso a la cuenta. Las dos cosas de mejor esfuerzo."""
+    from apps.accounts.tasks import send_mfa_code_limit  # noqa: PLC0415 — ciclo de imports
+
+    limit, window = settings.MFA_CODE_THROTTLE
+    try:
+        platform.record(
+            THROTTLED,
+            actor_type=platform.Actor.ANONYMOUS if actor is None else platform.Actor.USER,
+            actor_id=actor,
+            entity=Entity("user", user_id),
+            metadata={"attempts": limit, "seconds": window},
+            result=Result.DENIED,
+            **client,
+        )
+    except Exception as error:
+        unaudited(error, THROTTLED)
+    try:
+        enqueue(send_mfa_code_limit, str(user_id), NOTICE_QUEUED_FOR)
+    except Exception as error:
+        logger.exception("aviso del tope de códigos sin encolar")
+        try:
+            reporting.reporter().capture_exception(error, {"action": THROTTLED})
+        except Exception:
+            logger.exception("aviso del tope de códigos: no se pudo reportar")
+
+
+def verify[T](
+    user_id: UUID,
+    presented: str,
+    *,
+    actor: UUID | None,
+    client: dict[str, Any],
+    ready: Callable[[User], None],
+    accepted: Callable[[User, str], T],
+) -> T:
+    """Comprueba `presented` como segundo factor de la cuenta `user_id` y, si vale, ejecuta lo
+    de la ruta. Es el procedimiento de toda ruta que comprueba un código de un dispositivo
+    confirmado (ADR-023 §5); se llama fuera de toda transacción.
+
+    1. Cuenta el intento (`code_limit.admit`). Con el tope alcanzado lanza `Capped`, con los
+       segundos que faltan, sin mirar el código.
+    2. En una transacción, bloquea la fila de la cuenta y la relee, y llama a `ready(account)`:
+       ahí la ruta comprueba, bajo el bloqueo, lo que no es el código (la marca de acceso a
+       medias y su época; la sesión; la contraseña). Si `ready` lanza, no se probó ningún
+       código: el intento se devuelve. Una cuenta que ya no está activa no llega a `ready`:
+       lanza `User.DoesNotExist`, como una que no existe, y el intento se devuelve.
+    3. `accept`. Si el código no vale lanza `mfa.WrongCode` y el intento queda contado.
+    4. Si vale, `accepted(account, method)` hace lo de la ruta en esa transacción (abrir la
+       sesión, auditar) y el intento se devuelve con ella. Si `accepted` lanza, todo se
+       deshace: el código no queda gastado y el intento queda contado, como en el acceso.
+
+    Cuando el intento que queda contado es el que alcanza el tope, deja la fila `THROTTLED`
+    (actor `actor`, o anónimo si es `None`: en el segundo paso del acceso no hay sesión) y
+    encola el aviso a la cuenta; si alguna de las dos cosas falla, nada cambia para quien
+    llama. La ruta trata `NoDevice`, que sale tal cual y con el intento contado, y
+    `User.DoesNotExist`, con el intento devuelto. Antes de llamar ya comprobó sin bloqueo lo
+    mismo que `ready`: `admit` cuenta sin preguntar quién llama.
+    """
+    try:
+        attempt = code_limit.admit(user_id)
+    except code_limit.Refused as refused:
+        raise Capped(refused.seconds) from None
+    looked = False
+    try:
+        with transaction.atomic():
+            # Activa, o nada: una cuenta desactivada no comprueba códigos (ADR-023 §5).
+            account = User.objects.select_for_update(no_key=True).get(pk=user_id, is_active=True)
+            ready(account)
+            looked = True  # desde aquí el intento cuenta, salvo que el código valga
+            method = accept(account, presented)
+            if method is None:
+                raise mfa.WrongCode
+            result = accepted(account, method)
+            code_limit.give_back(attempt)  # aquí, como el acceso: si falla, nada
+            return result
+    except BaseException:
+        kept = looked
+        if not looked:
+            try:
+                code_limit.give_back(attempt)
+            except Exception:  # queda contado de más: el error que importa es el original
+                logger.exception("intento de código sin devolver")
+                kept = True
+        if kept and attempt.last:  # también el que no se pudo devolver: el tope se alcanzó
+            _reached(user_id, actor, client)
+        raise
+
+
+def notify_code_limit(user_id: str) -> bool:
+    """Avisa por correo a la cuenta `user_id` de que alcanzó el tope de códigos fallidos
+    (ADR-023 §5). Devuelve si envió el aviso; no lo envía en los casos de `mfa.notify_enabled`.
+    Sin secretos ni códigos."""
+    address = mfa.notice_address(user_id)
+    if address is None:
+        return False
+    hours = -(-settings.MFA_CODE_THROTTLE[1] // 3600)  # hacia arriba: el texto dice «como mucho»
+    body = LIMIT_BODY.format(hours=hours)
+    mail.send(mail.Message(to=address, subject=LIMIT_SUBJECT, body=body, purpose="mfa_code_limit"))
+    return True
