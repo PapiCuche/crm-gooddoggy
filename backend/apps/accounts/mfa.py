@@ -126,10 +126,12 @@ class UnreadableSecrets(Exception):
 def reseal() -> dict[str, int]:
     """Vuelve a cifrar con la clave vigente cada secreto TOTP que quedó cifrado con otra
     (ADR-022 §5, paso 2). Devuelve cuántos volvió a cifrar (`resealed`), cuántos no pudo abrir
-    (`unreadable`) y cuántos dejó para otra pasada porque otra operación los tenía (`busy`).
-    La clave anterior se puede retirar cuando una pasada da cero en los tres.
+    (`unreadable`) y cuántos dejó para otra pasada porque otra operación los tenía (`busy`),
+    con la versión de la clave vigente en este proceso (`key`); lo deja también en el log. La
+    clave anterior se puede retirar cuando una pasada cuya `key` es la nueva da cero en los
+    tres: un proceso que aún no la tiene da cero sin haber vuelto a cifrar nada.
 
-    Cada fila va en su transacción, bloqueada, y solo cambia `secret`. Lo que no se abre (su
+    Cada fila pendiente va en su transacción, bloqueada: solo cambia `secret`. Lo que no abre (su
     clave ya no está, o el valor no es de esa cuenta) **no se toca**: en un proceso que aún no
     tiene la clave nueva, lo cifrado con ella también se ve como pendiente y tampoco se abre. Si
     hubo alguno, queda en el log y en el reporte de errores, sin el valor ni la cuenta.
@@ -138,8 +140,10 @@ def reseal() -> dict[str, int]:
     ajuste: volver a cifrar no es una limpieza (ADR-022 §5). Sin claves lanza
     `ImproperlyConfigured`.
     """
-    done = {"resealed": 0, "unreadable": 0, "busy": 0}
-    for pk, user_id in list(MfaDevice.objects.order_by("pk").values_list("pk", "user_id")):
+    done = {"key": sealed.current(), "resealed": 0, "unreadable": 0, "busy": 0}  # sin clave, lanza
+    listed = MfaDevice.objects.order_by("pk").values_list("pk", "user_id", "secret")
+    # Leer no bloquea nada: solo lo que parece pendiente se bloquea y se vuelve a mirar.
+    for pk, user_id in [row[:2] for row in listed if sealed.stale(row[2])]:
         with transaction.atomic():
             rows = MfaDevice.objects.select_for_update(skip_locked=True).filter(pk=pk)
             device = rows.first()
@@ -156,6 +160,9 @@ def reseal() -> dict[str, int]:
             sealed_again = sealed.seal(PURPOSE, owner(user_id), secret)
             MfaDevice.objects.filter(pk=pk).update(secret=sealed_again)
             done["resealed"] += 1
+    logger.info(
+        "secretos TOTP: clave %d, vueltos a cifrar %d, ilegibles %d, ocupados %d", *done.values()
+    )
     if done["unreadable"]:
         error = UnreadableSecrets(done["unreadable"])
         logger.error("secretos TOTP que no se pueden abrir: %d", done["unreadable"])

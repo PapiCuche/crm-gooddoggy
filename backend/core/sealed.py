@@ -58,6 +58,11 @@ def _keys() -> dict[int, bytes]:
     return keys
 
 
+def current() -> int:
+    """La versión de la clave vigente **en este proceso**: la que cifra y la que `stale` mira."""
+    return max(_keys())
+
+
 def seal(purpose: str, owner: str, plaintext: bytes) -> bytes:
     """Cifra `plaintext` para ese propósito y ese dueño, con la clave vigente (la de versión más
     alta). Devuelve formato, versión de la clave, nonce y cifrado con su etiqueta: lo que se
