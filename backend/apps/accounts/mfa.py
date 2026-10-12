@@ -52,8 +52,8 @@ pierdes el dispositivo.
 
 Si no fuiste tú, lo hizo alguien que conoce tu contraseña y tenía abierta una sesión tuya.
 Cambia la contraseña con un enlace de recuperación: eso cierra todas tus sesiones. Y avisa
-cuanto antes a quien administra tu organización: cambiar la contraseña no quita ese segundo
-factor.
+cuanto antes a quien administra tu organización, te llegue o no ese enlace:
+cambiar la contraseña no quita ese segundo factor.
 """
 
 

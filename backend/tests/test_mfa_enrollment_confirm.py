@@ -175,6 +175,8 @@ def test_a_wrong_code_counts_in_the_sign_in_limit_and_only_a_right_one_gives_it_
     assert reply(confirm(browser, "123456")) == NOT_STARTED  # no prueba nada: no los borra
     assert sorted(dict(migrator.execute(KEYS).fetchall()).values()) == [limit] * 3  # y cuenta
     assert start(browser).status_code == 429  # una sesión sola no pone el contador a cero
+    assert login(browser).status_code == 429  # tampoco el acceso desde esa dirección; sin fila:
+    assert {row[0] for row in audit(migrator)} == {"auth.login.succeeded", mfa.STARTED}
     migrator.execute("DELETE FROM login_throttles")
     secret = base64.b32decode(start(browser).json()["secret"])
     migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '5 minutes'")
@@ -311,6 +313,7 @@ def test_the_notice_is_best_effort_and_the_task_mails_the_account_without_any_co
     body = str(message.body)
     assert "Se dio de alta un segundo factor" in body and "se cerraron" in body
     assert "Cambia la contraseña con un enlace" in body  # qué hacer si no fue ella: echarlo
+    assert "te llegue o no ese enlace" in body  # no siempre llega: personal de plataforma
     assert "cambiar la contraseña no quita" in body  # y avisar
     assert all(shown not in body for shown in answer.json()["backup_codes"]) and "http" not in body
     for unknown in (str(uuid4()), str(gone.pk), str(local.pk), "no-es-un-identificador", ""):
