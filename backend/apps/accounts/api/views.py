@@ -175,9 +175,10 @@ class MfaTotpConfirmView(APIView):
     def post(self, request: Request) -> Response:
         """Confirma el alta del dispositivo TOTP con un código suyo: desde ahora la cuenta tiene
         segundo factor. Devuelve sus códigos de respaldo, que no se vuelven a enseñar, y cierra
-        las demás sesiones de la cuenta. 400 en `code`: el código no vale. 401: la sesión se
-        revocó mientras tanto. 409 `MFA_ENROLLMENT_NOT_STARTED`: no hay un alta empezada, o
-        caducó. 409 `MFA_ALREADY_ENABLED`: ya estaba confirmada. 429: demasiados intentos."""
+        las demás sesiones de la cuenta. 400 en `code`: el código no vale; el quinto que no vale
+        borra el alta. 401: la sesión se revocó mientras tanto. 409 `MFA_ENROLLMENT_NOT_STARTED`:
+        no hay un alta empezada, caducó o se agotó con cinco códigos que no valen: hay que empezar
+        otra. 409 `MFA_ALREADY_ENABLED`: ya estaba confirmada. 429: demasiados intentos."""
         sent = MfaEnrollmentConfirmSerializer(data=request.data)
         sent.is_valid(raise_exception=True)
         try:

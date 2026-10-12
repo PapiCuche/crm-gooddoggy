@@ -44,6 +44,7 @@ def test_a_device_keeps_its_secret_sealed_and_bound_to_its_account() -> None:
         None,
         None,
     )  # un alta a medias: sin confirmar y sin ningún paso aceptado
+    assert device.failed_codes == 0  # ni ningún código fallido
     stored = bytes(device.secret)
     assert KEY not in stored and len(stored) == 3 + 12 + 20 + 16  # cifrado, nunca en claro
     assert sealed.unseal("mfa.totp", f"user:{ana.pk}", device.secret) == KEY
@@ -144,6 +145,14 @@ def test_the_database_refuses_a_device_that_is_not_one(migrator: psycopg.Connect
     for column in ("user_id", "type", "secret", "created_at"):
         with pytest.raises(psycopg.errors.NotNullViolation):
             migrator.execute(f"UPDATE user_mfa_devices SET {column} = NULL")  # noqa: S608
+    fails = "UPDATE user_mfa_devices SET failed_codes = %s"
+    with pytest.raises(psycopg.errors.CheckViolation, match="user_mfa_devices_failed_codes_ck"):
+        migrator.execute(fails, [1])  # confirmado no guarda fallos (ADR-024)
+    migrator.execute("UPDATE user_mfa_devices SET confirmed_at = NULL, last_step = NULL")
+    migrator.execute(fails, [models.ENROLLMENT_FAILURES - 1])
+    for count in (models.ENROLLMENT_FAILURES, -1, None):  # el que agota el alta la borra
+        with pytest.raises((psycopg.errors.CheckViolation, psycopg.errors.NotNullViolation)):
+            migrator.execute(fails, [count])
     assert migrator.execute("SELECT count(*) FROM user_mfa_devices").fetchone() == (1,)
 
 

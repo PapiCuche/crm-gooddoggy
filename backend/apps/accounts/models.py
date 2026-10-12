@@ -18,6 +18,7 @@ from core.db.models import uuid7_primary_key
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): cabecera (3), nonce (12), de 1 a 4096 bytes
 # de texto y etiqueta (16). Y su primer byte, el formato: un formato nuevo cambia la restricción.
 SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
+ENROLLMENT_FAILURES = 5  # códigos que no valen y agotan un alta sin confirmar (ADR-024)
 
 
 class UserManager(BaseUserManager["User"]):
@@ -171,6 +172,7 @@ class MfaDevice(models.Model):
     `user:<id de la cuenta>`); nunca en claro. Sin `confirmed_at` el dispositivo es un alta a
     medias: no protege ni exige nada. `last_step` es el último paso de tiempo cuyo código se
     aceptó: uno de ese paso o de uno anterior ya no vale (ADR-023 §2).
+    `failed_codes` son los códigos que no valieron al confirmar un alta a medias (ADR-024).
     """
 
     class Type(models.TextChoices):
@@ -184,6 +186,7 @@ class MfaDevice(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     confirmed_at = models.DateTimeField(null=True)
     last_step = models.BigIntegerField(null=True)
+    failed_codes = models.PositiveSmallIntegerField(default=0, db_default=0)
 
     class Meta:
         db_table = "user_mfa_devices"
@@ -219,6 +222,13 @@ class MfaDevice(models.Model):
                 condition=models.Q(confirmed_at__isnull=True, last_step__isnull=True)
                 | models.Q(confirmed_at__isnull=False, last_step__isnull=False, last_step__gt=0),
                 name="user_mfa_devices_last_step_ck",
+            ),
+            # El quinto fallo borra el alta (ADR-024): la fila nunca llega a guardarlo, y
+            # confirmar la deja a cero.
+            models.CheckConstraint(
+                condition=models.Q(confirmed_at__isnull=True, failed_codes__lt=ENROLLMENT_FAILURES)
+                | models.Q(confirmed_at__isnull=False, failed_codes=0),
+                name="user_mfa_devices_failed_codes_ck",
             ),
         ]
 
