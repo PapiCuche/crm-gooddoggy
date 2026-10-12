@@ -88,7 +88,7 @@ describe("el segundo paso del acceso", () => {
     fireEvent.click(button);
     fireEvent.click(button);
     await waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
-    // Otra petición llegaría con la cookie anterior y la API cerraría la sesión recién abierta.
+    // Ya no hay acceso a medias: otro código recibiría 401 y devolvería a la contraseña.
     fireEvent.submit(screen.getByLabelText("Código").closest("form")!);
     await act(() => new Promise((resolve) => setTimeout(resolve, 0))); // una petición no sale en el acto
     expect(sent(api)).toHaveLength(1);
@@ -247,5 +247,13 @@ describe("el segundo paso del acceso", () => {
     await waitFor(() => expect(asked(api)).toBe(before + 1)); // al volver, sí: una vez
     await comesBack();
     expect(asked(api)).toBeGreaterThan(before + 1); // y en la contraseña, como siempre
+  });
+
+  it("una pregunta por la sesión hecha sin red no sale después, en el paso del código", async () => {
+    onlineManager.setOnline(false); // el navegador dice que no hay red, y la API contesta
+    const { api } = await toSecondStep({});
+    const before = asked(api);
+    await comesBack(); // en pausa, saldría ahora: al volver la red
+    expect(asked(api)).toBe(before);
   });
 });

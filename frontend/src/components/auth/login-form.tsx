@@ -28,9 +28,17 @@ export function LoginForm({ next }: { next: string }) {
   // En el paso del código no se pregunta por la sesión al volver la ventana o la red: esa
   // petición lleva la cookie del acceso a medias y, si llega con el acceso ya completado, la
   // API borra la cookie de la sesión recién abierta (lo mismo que un segundo envío del código).
+  // `always`: sin red la pregunta falla enseguida. En pausa saldría al volver la red, también
+  // en ese paso: TanStack Query retoma lo que quedó en pausa sin mirar estas opciones.
   const asks = second !== "code";
   const session = useAuthSession({
-    query: { retry: false, staleTime: 0, refetchOnWindowFocus: asks, refetchOnReconnect: asks },
+    query: {
+      retry: false,
+      staleTime: 0,
+      networkMode: "always",
+      refetchOnWindowFocus: asks,
+      refetchOnReconnect: asks,
+    },
   });
   // `always`: sin red el intento falla enseguida; no queda en cola para enviarse más tarde.
   const login = useAuthLogin({ mutation: { networkMode: "always" } });
