@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from apps.accounts import mfa, recovery, second_step, services
 from apps.accounts.api.serializers import (
     LoginMfaSerializer,
+    LoginPendingSerializer,
     LoginSerializer,
     MfaBackupCodesSerializer,
     MfaEnrollmentConfirmSerializer,
@@ -50,13 +51,21 @@ class LoginView(APIView):
         tags=["auth"],
         auth=[],
         request=LoginSerializer,
-        responses={200: SessionSerializer, **errors(400, 401, 403, 429)},
+        responses={
+            200: SessionSerializer,
+            202: LoginPendingSerializer,
+            **errors(400, 401, 403, 429),
+        },
     )
     def post(self, request: Request) -> Response:
-        """Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo."""
+        """Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo. Si la cuenta
+        tiene segundo factor, la contraseña correcta no inicia sesión: responde 202 con
+        `mfa_required`, sin datos de la cuenta, y la sesión la inicia `POST /auth/login/mfa/`
+        con un código, en los 5 minutos siguientes."""
         credentials = LoginSerializer(data=request.data)
         credentials.is_valid(raise_exception=True)
-        services.login(request._request, **credentials.validated_data)
+        if services.login(request._request, **credentials.validated_data) is None:
+            return Response(LoginPendingSerializer({"mfa_required": True}).data, status=202)
         request.user = request._request.user  # la vista responde ya con la sesión nueva
         return Response(_session(request))
 

@@ -7,9 +7,10 @@ devolver al límite por dirección el intento de la contraseña. No autentica na
 sigue siendo anónimo y toda ruta que pide sesión responde 401. Deja de valer a los `PENDING_FOR`
 segundos, si la época de la cuenta cambió (D-F2-11) o si la cuenta ya no está activa.
 
-`complete` es lo que hace la ruta: con la marca y un código que vale (TOTP o de respaldo) abre
-la sesión, como el acceso. `mark` deja la marca; **todavía nada lo llama**: hasta que el acceso
-lo haga, la ruta responde siempre 401.
+`begin` es lo que hace el acceso con la contraseña correcta de una cuenta con dispositivo
+confirmado: audita, cierra la sesión que hubiera y deja la marca (`mark`). `complete` es lo que
+hace la ruta del segundo paso: con la marca y un código que vale (TOTP o de respaldo) abre la
+sesión, como el acceso.
 """
 
 import re
@@ -19,6 +20,7 @@ from uuid import UUID
 
 from django.contrib.auth import SESSION_KEY
 from django.contrib.auth import login as django_login
+from django.db import transaction
 from django.http import HttpRequest
 
 from apps.accounts import mfa, second_factor, throttle, totp
@@ -32,13 +34,14 @@ from apps.accounts.services import (
     rate_limited,
     unaudited,
 )
+from apps.accounts.services import PENDING as PENDING  # la marca: también se lee desde aquí
 from apps.audit import platform
 from apps.audit.services import Entity, Result
 from core.api.errors import ApiError
 
-PENDING = "mfa_pending"  # en la sesión: la marca de acceso a medias. No es una sesión de usuario
 PENDING_FOR = 5 * 60  # segundos que vale la marca (ADR-023 §5)
 NOT_STARTED = "MFA_LOGIN_NOT_STARTED"
+REQUIRED = "auth.login.mfa_required"  # ADR-023 §10 dejó el nombre a su work item
 BACKEND = "django.contrib.auth.backends.ModelBackend"
 _APART = re.compile(r"[\s-]")  # `123 456`, como lo enseñan algunas aplicaciones
 
@@ -63,6 +66,33 @@ def mark(
         "keys": dict(attempt),
     }
     throttle.release(attempt, started)
+
+
+def begin(
+    request: HttpRequest,
+    user: User,
+    attempt: dict[str, str],
+    started: list[throttle.Blocked],
+    client: dict[str, Any],
+) -> None:
+    """La contraseña de `user` era la correcta y la cuenta tiene segundo factor: en vez de abrir
+    sesión, deja el acceso a medias (ADR-023 §5).
+
+    En una transacción: la fila de auditoría de esa contraseña (actor anónimo, porque no hay
+    sesión, y la cuenta como entidad afectada; sin esa fila no hay marca, ADR-023 §10), el
+    cierre de la sesión que el navegador tuviera, de esa cuenta o de otra, y la marca, que
+    queda bajo un ID de sesión nuevo. Lo contado en el límite por dirección no se devuelve.
+    """
+    with transaction.atomic():
+        platform.record(
+            REQUIRED,
+            actor_type=platform.Actor.ANONYMOUS,
+            identifier=user.email,
+            entity=Entity("user", user.pk),
+            **client,
+        )
+        request.session.flush()  # borra la fila anterior; al responder se guarda con otro ID
+        mark(request, user, attempt, started)
 
 
 def _refuse(request: HttpRequest) -> ApiError:

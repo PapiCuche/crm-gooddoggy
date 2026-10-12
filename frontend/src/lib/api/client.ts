@@ -33,6 +33,7 @@ import type {
   InvitationsListParams,
   InviteRequest,
   LoginMfaRequest,
+  LoginPending,
   LoginRequest,
   MemberBranch,
   MemberBranchChangeRequest,
@@ -202,12 +203,15 @@ export const getAuthLoginUrl = () => {
 };
 
 /**
- * Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo.
+ * Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo. Si la cuenta
+ * tiene segundo factor, la contraseña correcta no inicia sesión: responde 202 con
+ * `mfa_required`, sin datos de la cuenta, y la sesión la inicia `POST /auth/login/mfa/`
+ * con un código, en los 5 minutos siguientes.
  */
 export const authLogin = async (
   loginRequest: LoginRequest,
   options?: Parameters<typeof apiFetch>[1],
-): Promise<Session> => {
+): Promise<Session | LoginPending> => {
   const getHeaders = (
     h?: NonNullable<RequestInit["headers"]>,
   ): Record<string, string | readonly string[]> => {
@@ -227,7 +231,7 @@ export const authLogin = async (
     }
     return headers;
   };
-  return apiFetch<Session>(getAuthLoginUrl(), {
+  return apiFetch<Session | LoginPending>(getAuthLoginUrl(), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },

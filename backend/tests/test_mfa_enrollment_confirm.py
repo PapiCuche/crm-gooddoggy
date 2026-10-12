@@ -120,7 +120,10 @@ def test_a_code_of_the_device_confirms_it_gives_backup_codes_once_and_closes_oth
     ]  # el aviso, con el identificador de la cuenta y con el alta ya confirmada
     assert reply(confirm(browser, code)) == (409, b'{"code":"MFA_ALREADY_ENABLED"}')
     assert reply(start(browser)) == (409, b'{"code":"MFA_ALREADY_ENABLED"}') and len(queued) == 1
-    assert login(other).status_code == 200  # el acceso todavía no pide el segundo paso
+    assert reply(login(other)) == (
+        202,
+        b'{"mfa_required":true}',
+    )  # el acceso ya pide el segundo paso
     logged = "\n".join(json_formatter().format(record) for record in caplog.records)
     kept = json.dumps([row[7] for row in audit(migrator)])
     for text in (code, secret.hex(), base64.b32encode(secret).decode(), *codes, *stored):

@@ -20,7 +20,7 @@ from django.http import HttpRequest
 
 from apps.accounts import throttle
 from apps.accounts.emails import canonical_email, presented_email
-from apps.accounts.models import User
+from apps.accounts.models import MfaDevice, User
 from apps.audit import platform
 from apps.audit.services import Entity, Result
 from core.api.errors import ApiError
@@ -32,6 +32,7 @@ RATE_LIMITED = "RATE_LIMITED"
 AUTH_AT = "auth_at"  # cuándo se inició la sesión: límite absoluto (ADR-003 §2)
 SEEN_AT = "seen_at"  # última renovación de la caducidad por inactividad
 EPOCH = "epoch"  # época de sesión del usuario al iniciarla: revocar la deja atrás (D-F2-11)
+PENDING = "mfa_pending"  # la marca de acceso a medias (`second_step`): no es una sesión de usuario
 
 
 def client_of(request: HttpRequest) -> dict[str, Any]:
@@ -106,9 +107,14 @@ def audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) -
         unaudited(error, "auth.login.throttled")
 
 
-def login(request: HttpRequest, *, email: str, password: str) -> User:
+def login(request: HttpRequest, *, email: str, password: str) -> User | None:
     """Autentica y abre la sesión. La misma respuesta para un email desconocido, una contraseña
-    incorrecta y un usuario desactivado. Si el acceso no se puede auditar, no hay sesión."""
+    incorrecta y un usuario desactivado. Si el acceso no se puede auditar, no hay sesión.
+
+    Si la cuenta tiene un dispositivo confirmado, la contraseña correcta **no abre sesión**
+    (ADR-023 §5): deja la marca de acceso a medias (`second_step.begin`) y devuelve `None`. La
+    sesión la abre el segundo paso, y lo contado aquí en el límite de intentos lo devuelve él.
+    """
     client = client_of(request)
     if client["ip"] is None:  # todos compartirían un contador: lo delata el proxy de confianza
         logger.warning("login sin dirección de cliente: revisar FORWARDED_ALLOW_IPS")
@@ -125,10 +131,16 @@ def login(request: HttpRequest, *, email: str, password: str) -> User:
             audit_block(email, client, blocked)
         raise ApiError(INVALID_CREDENTIALS, 401)
     assert isinstance(user, User)  # noqa: S101 — el único backend es ModelBackend
+    if MfaDevice.objects.filter(user=user, confirmed_at__isnull=False).exists():
+        from apps.accounts import second_step  # noqa: PLC0415 — ciclo de imports
+
+        second_step.begin(request, user, attempt, started, client)
+        return None
     with transaction.atomic():
         if SESSION_KEY in request.session:  # ya autenticada: `django_login` conservaría su ID
             request.session.clear()  # vacía: la clave nueva se crea antes de borrar la anterior
         django_login(request, user)  # rota el ID de sesión y el token CSRF
+        request.session.pop(PENDING, None)  # una marca nunca vive en una sesión autenticada
         request.session[AUTH_AT] = request.session[SEEN_AT] = int(time.time())
         request.session[EPOCH] = user.session_epoch
         platform.record(
