@@ -555,6 +555,16 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Lo que la base no comprueba:** que un dispositivo sin confirmar caduque, que un paso no se repita, cuántos códigos de respaldo hay ni cuántos intentos se hacen. Eso será del código que las use (ADR-023 §2, §4, §5 y §6).
 - `core.sealed.unseal` y `stale` aceptan lo que devuelve una columna binaria (`memoryview`).
 
+## MFA: calcular y comprobar un código TOTP (F2-96, ADR-023 §2)
+
+- **`apps.accounts.totp`**, con la biblioteca estándar: RFC 6238 sobre RFC 4226, HMAC-SHA-1, 6 dígitos y pasos de 30 segundos. **Nada lo llama todavía**, y no guarda nada: el secreto entra y sale como bytes (lo cifrará y guardará el alta, con `core.sealed`) y el último paso aceptado lo trae y lo guarda quien llama.
+- **`new_secret()`:** 20 bytes aleatorios. **`as_text(secret)`:** su forma en base32 sin relleno, que es la que una persona teclea. **`uri(secret, issuer=, account=)`:** la URI `otpauth://totp/…` de un código QR, con todo escapado. Las dos llevan el secreto: se enseñan una vez, en el alta.
+- **`code(secret, step)`** es el código de un paso de tiempo; **`step_at(seconds)`**, el paso de un instante.
+- **`accepted_step(secret, presented, now=, last=)`** devuelve el paso cuyo código es el presentado, o `None` sin decir por qué. Acepta el paso actual, el anterior y el siguiente (hasta 30 segundos de desfase de reloj), y **solo un paso posterior a `last`**, el último aceptado: el código de un paso ya usado, o de uno anterior, no vale aunque sea correcto. Si dos pasos de la ventana dan el mismo código (uno de cada millón de pares), devuelve el último, para que ese código no valga otra vez por el otro paso. A cambio, a quien lo presentó por el primero de los dos se le rechaza el siguiente código de su aplicación, o los dos siguientes si su reloj va un paso por detrás y los dos pasos no son vecinos (uno de ellos, un código que nunca presentó): espera hasta 60 o 90 segundos, en vez de hasta 30. La regla es por paso, no por las seis cifras: las mismas cifras valen de nuevo si son el código de un paso posterior que entra en la ventana más tarde, como cualquier otro acierto a ciegas. Quien llama guarda el paso devuelto como el nuevo `last`, en la misma transacción.
+- Compara en tiempo constante (`hmac.compare_digest`) con los tres pasos de la ventana, sin salir al encontrar el que coincide. Lo que no son seis dígitos ASCII (dígitos de otra escritura, espacios, un salto de línea) no vale, y hace las mismas comparaciones.
+- **Tests:** los diez valores de RFC 4226 (apéndice D) y los seis instantes de RFC 6238 (apéndice B, SHA-1; con 6 dígitos valen los seis últimos de cada vector).
+- **Lo que no hace:** ni límite de intentos, ni auditoría, ni sesión (son de las rutas que lo usen, ADR-023 §5); no admite otros algoritmos ni 8 dígitos; la hora la da quien llama.
+
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
 `user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.
