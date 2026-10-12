@@ -23,13 +23,19 @@ export function LoginForm({ next }: { next: string }) {
   const t = useTranslations();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const session = useAuthSession({ query: { retry: false, staleTime: 0 } });
+  // `code`: la API espera el código. `expired`: lo esperaba y ya no; hay que empezar otra vez.
+  const [second, setSecond] = useState<"no" | "code" | "expired">("no");
+  // En el paso del código no se pregunta por la sesión al volver la ventana o la red: esa
+  // petición lleva la cookie del acceso a medias y, si llega con el acceso ya completado, la
+  // API borra la cookie de la sesión recién abierta (lo mismo que un segundo envío del código).
+  const asks = second !== "code";
+  const session = useAuthSession({
+    query: { retry: false, staleTime: 0, refetchOnWindowFocus: asks, refetchOnReconnect: asks },
+  });
   // `always`: sin red el intento falla enseguida; no queda en cola para enviarse más tarde.
   const login = useAuthLogin({ mutation: { networkMode: "always" } });
   const [missing, setMissing] = useState({ email: false, password: false });
   const [stalled, setStalled] = useState(false);
-  // `code`: la API espera el código. `expired`: lo esperaba y ya no; hay que empezar otra vez.
-  const [second, setSecond] = useState<"no" | "code" | "expired">("no");
   const [email, setEmail] = useState(""); // el correo enviado: al volver del código sigue ahí
   const returned = useRef(false); // se acaba de volver del paso del código
   const emailField = useRef<HTMLInputElement>(null);
@@ -82,7 +88,8 @@ export function LoginForm({ next }: { next: string }) {
       {
         onSettled: () => (answered.current = true),
         onSuccess: (answer) => {
-          if ("mfa_required" in answer) {
+          // `Object`: un 2xx sin cuerpo llega como `null`, y `in` sobre `null` lanza.
+          if ("mfa_required" in Object(answer)) {
             setSecond("code"); // falta el segundo paso: todavía no hay sesión
             return;
           }

@@ -155,7 +155,7 @@
     "secondStepIntro": "Tu cuenta tiene verificación en dos pasos. Escribe el código que muestra tu aplicación de autenticación, o uno de tus códigos de respaldo.",
     "code": "Código",
     "codeRequired": "Escribe el código.",
-    "codeInvalid": "Ese código no vale. Prueba con el que muestra ahora tu aplicación.",
+    "codeInvalid": "Ese código no vale. Prueba con el que muestra ahora tu aplicación, o con otro de tus códigos de respaldo.",
     "secondStepSubmit": "Verificar y entrar",
     "secondStepSubmitting": "Verificando…",
     "secondStepBack": "Volver a la contraseña",

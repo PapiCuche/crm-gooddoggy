@@ -1,3 +1,4 @@
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -39,6 +40,16 @@ function send(code: string) {
 
 const sent = (api: ReturnType<typeof mockApi>) =>
   api.mock.calls.filter(([url]) => String(url).endsWith("/login/mfa/"));
+const asked = (api: ReturnType<typeof mockApi>) =>
+  api.mock.calls.filter(([url]) => String(url).endsWith("/session/")).length;
+// La ventana vuelve a verse y la red vuelve: lo que hace que TanStack Query pregunte otra vez.
+async function comesBack() {
+  for (const on of [false, true]) {
+    act(() => focusManager.setFocused(on));
+    act(() => onlineManager.setOnline(on));
+  }
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+}
 
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
@@ -47,6 +58,8 @@ afterEach(() => {
   router.replace.mockReset();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  focusManager.setFocused(undefined);
+  onlineManager.setOnline(true);
 });
 
 describe("el segundo paso del acceso", () => {
@@ -77,8 +90,11 @@ describe("el segundo paso del acceso", () => {
     await waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
     // Otra petición llegaría con la cookie anterior y la API cerraría la sesión recién abierta.
     fireEvent.submit(screen.getByLabelText("Código").closest("form")!);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0))); // una petición no sale en el acto
     expect(sent(api)).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Verificando…" })).toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("button", { name: "Volver a la contraseña" }));
+    expect(screen.getByLabelText("Código")).toBeInTheDocument(); // ni se vuelve: está entrando
   });
 
   it("un código que no vale se dice en el campo y deja probar otro", async () => {
@@ -90,10 +106,12 @@ describe("el segundo paso del acceso", () => {
     send("000000");
     await waitFor(() =>
       expect(field).toHaveAccessibleDescription(
-        "Ese código no vale. Prueba con el que muestra ahora tu aplicación.",
+        "Ese código no vale. Prueba con el que muestra ahora tu aplicación, o con otro de tus códigos de respaldo.",
       ),
     );
     expect(field).toHaveFocus();
+    const { selectionStart, selectionEnd } = field as HTMLInputElement;
+    expect([selectionStart, selectionEnd]).toEqual([0, 6]); // seleccionado: escribir lo sustituye
     expect(screen.getAllByRole("alert")).toHaveLength(1); // el del campo, sin fallo general
     expect(router.replace).not.toHaveBeenCalled();
     fireEvent.input(field, { target: { value: "1" } });
@@ -128,6 +146,7 @@ describe("el segundo paso del acceso", () => {
     expect(screen.getByLabelText("Contraseña")).toHaveFocus();
     fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "clave" } });
     fireEvent.click(screen.getByRole("button", { name: /Entrar/ }));
+    expect(screen.queryByRole("alert")).toBeNull(); // el aviso se retira al enviar, no al contestar
     expect(await screen.findByLabelText("Código")).toBeInTheDocument(); // y el aviso ya no está
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -155,6 +174,9 @@ describe("el segundo paso del acceso", () => {
     wait = "3601";
     send("123456");
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("en 2 horas."));
+    wait = "3600"; // una hora justa todavía se dice en minutos
+    send("123456");
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("en 60 minutos."));
     expect(screen.getByLabelText("Código")).toBeInTheDocument(); // sigue en el paso del código
   });
 
@@ -163,6 +185,15 @@ describe("el segundo paso del acceso", () => {
     send("123456");
     expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado.");
     expect(screen.getByRole("button", { name: "Verificar y entrar" })).toBeInTheDocument();
+  });
+
+  it("sin red lo dice enseguida y no deja el código en cola", async () => {
+    const { api } = await toSecondStep({});
+    onlineManager.setOnline(false); // el navegador avisó de que no hay red
+    api.mockRejectedValue(new TypeError("sin red"));
+    send("123456");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No hay conexión");
+    expect(sent(api)).toHaveLength(1); // salió: no espera a que vuelva la red para enviarse
   });
 
   it("deja de esperar a un servidor que no contesta", async () => {
@@ -184,5 +215,37 @@ describe("el segundo paso del acceso", () => {
     expect(screen.queryByLabelText("Código")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: /Entrar/ })).toBeEnabled();
+  });
+
+  it("con un código en vuelo no se vuelve a la contraseña, y su respuesta cuenta", async () => {
+    let answer: (value: Response) => void = () => {};
+    const { api } = await toSecondStep({});
+    const usual = api.getMockImplementation()!;
+    api.mockImplementation((input, init) =>
+      String(input).endsWith("/login/mfa/")
+        ? new Promise<Response>((resolve) => (answer = resolve))
+        : usual(input, init),
+    );
+    const before = asked(api);
+    send("123456");
+    await waitFor(() => expect(sent(api)).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Volver a la contraseña" }));
+    expect(screen.getByLabelText("Código")).toBeInTheDocument();
+    await act(async () => answer(new Response(JSON.stringify({ user }), { status: 200 })));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/o/acme"));
+    expect(asked(api)).toBe(before); // nada salió con la cookie anterior
+  });
+
+  // Llevaría la cookie del acceso a medias: si llega con el acceso ya completado, la API borra
+  // la cookie de la sesión recién abierta.
+  it("en el paso del código no pregunta por la sesión por su cuenta", async () => {
+    const { api } = await toSecondStep({ [STEP]: entered });
+    const before = asked(api);
+    await comesBack();
+    expect(asked(api)).toBe(before);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a la contraseña" }));
+    await waitFor(() => expect(asked(api)).toBe(before + 1)); // al volver, sí: una vez
+    await comesBack();
+    expect(asked(api)).toBeGreaterThan(before + 1); // y en la contraseña, como siempre
   });
 });

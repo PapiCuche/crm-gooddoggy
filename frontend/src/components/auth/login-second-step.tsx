@@ -38,8 +38,9 @@ export function LoginSecondStep({
   const queryClient = useQueryClient();
   // `always`: sin red el intento falla enseguida; no queda en cola para enviarse más tarde.
   const { mutate, reset } = useAuthLoginMfa({ mutation: { networkMode: "always" } });
-  // El paso que la pantalla enseña decide si se envía. Tras entrar no se envía nada más: una
-  // segunda petición llegaría con la cookie anterior y la API cerraría la sesión recién abierta.
+  // El paso que la pantalla enseña decide si se envía. Con un código en vuelo no sale otro:
+  // llegaría con la cookie anterior y, completado el acceso, la API borraría la cookie de la
+  // sesión recién abierta. Tras entrar tampoco: ya no hay acceso a medias que completar.
   const [step, setStep] = useState<Step>({ name: "idle" });
   const field = useRef<HTMLInputElement>(null);
 
@@ -154,7 +155,14 @@ export function LoginSecondStep({
         </Button>
       </form>
       <p className="text-sm">
-        <button type="button" className={LINK} onClick={() => onRestart(false)}>
+        {/* Con un código en vuelo no se vuelve: al volver se pregunta por la sesión, y esa
+            petición, con la cookie anterior, puede costar la sesión que ese código abra. */}
+        <button
+          type="button"
+          className={LINK}
+          aria-disabled={busy}
+          onClick={() => busy || onRestart(false)}
+        >
           {t("auth.secondStepBack")}
         </button>
       </p>
