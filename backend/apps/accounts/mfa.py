@@ -84,7 +84,9 @@ def start_enrollment(request: HttpRequest, *, password: str) -> Enrollment:
         except Exception as error:
             unaudited(error, STARTED)
         raise WrongPassword
-    throttle.forgive(attempt, started)  # solo un fallo queda contado, como en el acceso
+    # Solo cuentan los fallos. Aquí y no en la transacción del alta (el acceso lo hace en la
+    # suya): si esa se deshace (409, 500), la contraseña era la buena y el intento se devuelve.
+    throttle.forgive(attempt, started)
     secret = totp.new_secret()
     with transaction.atomic():
         User.objects.select_for_update(no_key=True).get(pk=user.pk)  # un alta a la vez

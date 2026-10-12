@@ -167,6 +167,9 @@ def test_a_confirmed_device_is_not_replaced_even_if_its_secret_cannot_be_read(
     assert reply(start(browser)) == (409, b'{"code":"MFA_ALREADY_ENABLED"}')  # ADR-023 §3
     assert bytes(MfaDevice.objects.get().secret) == kept and len(audit(migrator)) == before
     assert MfaDevice.objects.filter(user=ana).count() == 1
+    for _ in range(settings.LOGIN_THROTTLE["pair"][0]):  # la contraseña era la buena: el intento
+        assert start(browser).status_code == 409  # se devuelve aunque el alta no empiece
+    assert set(dict(migrator.execute(KEYS).fetchall()).values()) == {0}
 
 
 def test_without_its_audit_row_or_without_keys_no_device_is_left(
@@ -230,6 +233,10 @@ def test_the_right_password_gives_back_what_it_counted(
     assert start(browser, WRONG).status_code == 400 and start(browser).status_code == 201
     counted = dict(migrator.execute(KEYS).fetchall())  # el fallo sigue contado; el par se borra
     assert sorted(counted.values()) == [1, 1]
+    full = [settings.LOGIN_THROTTLE["ip"][0]]  # la dirección, en su umbral: el siguiente bloquea
+    migrator.execute("UPDATE login_throttles SET failures = %s WHERE key LIKE 'ip:%%'", full)
+    assert start(browser).status_code == 201  # y devuelve también el bloqueo que empezó con él
+    assert start(browser).status_code == 201
 
 
 def test_a_start_waits_for_the_lock_of_its_account_row(
