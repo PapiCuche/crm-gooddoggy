@@ -18,7 +18,7 @@ from django.test import Client, RequestFactory
 from django.test.utils import CaptureQueriesContext
 
 from apps.accounts import backup_codes, mfa, throttle, totp
-from apps.accounts.models import MfaBackupCode, MfaDevice, User
+from apps.accounts.models import ENROLLMENT_FAILURES, MfaBackupCode, MfaDevice, User
 from apps.accounts.tasks import send_mfa_enabled
 from apps.audit import platform
 from core.observability import reporting
@@ -187,8 +187,9 @@ def test_a_wrong_code_counts_in_the_sign_in_limit_and_only_a_right_one_gives_it_
     assert migrator.execute(moved).fetchone() == (3,)  # un fallo adelanta el reloj de los tres
     limited = confirm(browser, now_code(secret))  # ni con el bueno: está bloqueado
     assert reply(limited) == (429, b'{"code":"RATE_LIMITED"}') and int(limited["Retry-After"]) > 0
-    assert MfaDevice.objects.get().confirmed_at is None
+    assert not MfaDevice.objects.exists()  # y esos fallos agotaron el alta (ADR-024)
     migrator.execute("DELETE FROM login_throttles")
+    secret = base64.b32decode(start(browser).json()["secret"])
     assert confirm(browser, now_code(secret, -2)).status_code == 400
     assert confirm(browser, now_code(secret)).status_code == 200  # el acierto devuelve lo suyo
     counted = dict(migrator.execute(KEYS).fetchall())
@@ -288,6 +289,56 @@ def test_a_secret_that_cannot_be_opened_is_a_code_that_is_not_valid_and_is_repor
     monkeypatch.setattr(reporting, "reporter", lambda: None)  # un reporte roto: la misma
     assert confirm(browser, now_code(secret)).status_code == 400
     assert MfaDevice.objects.get().confirmed_at is None and not MfaBackupCode.objects.exists()
+    assert MfaDevice.objects.get().failed_codes == 2  # y cuenta para el tope del alta
+
+
+def test_the_fifth_wrong_code_ends_the_enrolment_whatever_address_it_comes_from(
+    browser: Client, migrator: psycopg.Connection[Any]
+) -> None:
+    make_user(email=EMAIL)
+    secret = begun(browser)
+    for failed in range(1, ENROLLMENT_FAILURES):
+        browser.defaults["REMOTE_ADDR"] = f"198.51.100.{failed}"  # cada uno desde otra dirección
+        assert confirm(browser, now_code(secret, -2)).status_code == 400
+        assert MfaDevice.objects.get().failed_codes == failed
+    blocks = "SELECT count(*) FROM login_throttles WHERE blocked_until IS NOT NULL"
+    assert migrator.execute(blocks).fetchone() == (0,)  # el límite por dirección no vio nada
+    browser.defaults["REMOTE_ADDR"] = "198.51.100.9"
+    answer = confirm(browser, now_code(secret, -2))
+    assert (answer.status_code, answer.json()) == (400, WRONG)  # la respuesta de siempre
+    assert not MfaDevice.objects.exists() and not MfaBackupCode.objects.exists()
+    denied = [row[7] for row in audit(migrator) if row[:2] == ("auth.mfa.enabled", "DENIED")]
+    assert denied == ['{"reason": "code"}'] * 4 + ['{"reason": "code_limit"}']
+    assert reply(confirm(browser, now_code(secret))) == NOT_STARTED  # ni con el bueno
+    assert browser.get(SESSION).status_code == 200  # la sesión sigue: puede empezar otra
+    migrator.execute("DELETE FROM login_throttles")
+    secret = base64.b32decode(start(browser).json()["secret"])  # con la contraseña, y a cero
+    assert MfaDevice.objects.get().failed_codes == 0
+    for _ in range(ENROLLMENT_FAILURES - 1):
+        assert confirm(browser, now_code(secret, -2)).status_code == 400
+    migrator.execute("DELETE FROM login_throttles")
+    assert confirm(browser, now_code(secret)).status_code == 200  # cuatro la dejan en pie
+    assert MfaDevice.objects.get().failed_codes == 0  # confirmada, sin fallos anotados
+
+
+def test_a_failure_counted_meanwhile_is_read_with_the_device_locked(
+    browser: Client, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_user(email=EMAIL)
+    secret = begun(browser)
+    assert confirm(browser, now_code(secret, -2)).status_code == 400
+    admit = throttle.admit
+
+    def meanwhile(attempt: dict[str, str]) -> Any:  # otra petición falla con esta en curso
+        migrator.execute("UPDATE user_mfa_devices SET failed_codes = %s", [ENROLLMENT_FAILURES - 1])
+        return admit(attempt)
+
+    monkeypatch.setattr(throttle, "admit", meanwhile)
+    with CaptureQueriesContext(connection) as queries:
+        assert confirm(browser, now_code(secret, -2)).status_code == 400
+    assert not MfaDevice.objects.exists()  # contó sobre lo que había al bloquear la fila
+    locked = [q["sql"] for q in queries if "user_mfa_devices" in q["sql"] and "SELECT" in q["sql"]]
+    assert locked and all(sql.rstrip().endswith("FOR UPDATE") for sql in locked)
 
 
 def test_the_notice_is_best_effort_and_the_task_mails_the_account_without_any_code(

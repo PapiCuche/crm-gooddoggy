@@ -21,7 +21,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 
 from apps.accounts import backup_codes, throttle, totp
-from apps.accounts.models import MfaBackupCode, MfaDevice, User
+from apps.accounts.models import ENROLLMENT_FAILURES, MfaBackupCode, MfaDevice, User
 from apps.accounts.recovery import NOTICE_QUEUED_FOR, enqueue
 from apps.accounts.services import EPOCH, client_of, rate_limited, revoke_sessions, unaudited
 from apps.audit import platform
@@ -183,8 +183,10 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
     `ApiError` 401. Sin alta empezada o caducada, `MFA_ENROLLMENT_NOT_STARTED`; ya confirmada,
     `MFA_ALREADY_ENABLED`. Un código que no vale lanza `WrongCode`, cuenta en el límite de
     intentos del acceso (por dirección) y deja una fila denegada; un secreto que no se abre es
-    un código que no vale, y se reporta. Solo un acierto devuelve lo que contó, en esa
-    transacción: un 409 o un 401 lo borrarían sin probar nada, también los fallos de contraseña.
+    un código que no vale, y se reporta. Cada uno suma además un fallo al alta, y el que hace
+    `ENROLLMENT_FAILURES` la borra (ADR-024): la siguiente petición ya no tiene alta empezada.
+    Solo un acierto devuelve lo que contó, en esa transacción: un 409 o un 401 lo borrarían sin
+    probar nada, también los fallos de contraseña.
     """
     from apps.accounts.tasks import send_mfa_enabled  # noqa: PLC0415 — ciclo de imports
 
@@ -197,7 +199,7 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
         started = throttle.admit(attempt)  # antes de mirar el código
     except throttle.Refused as refused:
         raise rate_limited(refused.seconds) from None
-    refused_as, unreadable, codes = "", False, []
+    refused_as, reason, unreadable, codes = "", "code", False, []
     with transaction.atomic():
         account = User.objects.select_for_update(no_key=True).get(pk=user.pk)
         pending = MfaDevice.objects.select_for_update().filter(
@@ -219,8 +221,16 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
                 step, unreadable = None, True
             if step is None:
                 refused_as = "code"
+                # El fallo se guarda con la fila bloqueada, venga de la dirección que venga; el
+                # que agota el alta la borra: empezar otra pide la contraseña (ADR-024).
+                if device.failed_codes + 1 < ENROLLMENT_FAILURES:
+                    pending.update(failed_codes=device.failed_codes + 1)
+                else:
+                    reason = "code_limit"
+                    pending.delete()
             else:
-                pending.update(confirmed_at=now, last_step=step)  # juntos: la base lo exige
+                # Juntos: la base lo exige. Y sin fallos anotados (ADR-024).
+                pending.update(confirmed_at=now, last_step=step, failed_codes=0)
                 codes = backup_codes.new_codes()
                 MfaBackupCode.objects.filter(user=account).delete()
                 hashes = [backup_codes.code_hash(shown) or "" for shown in codes]
@@ -243,7 +253,7 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
                 request.session[MFA_AT] = int(time.time())
     if refused_as == "code":
         throttle.failed(attempt)
-        _denied(ENABLED, user.pk, "code", client)
+        _denied(ENABLED, user.pk, reason, client)
         if unreadable:  # nadie sabría que falta una clave: la respuesta no lo distingue
             lost = UnreadableSecrets(1)
             try:
