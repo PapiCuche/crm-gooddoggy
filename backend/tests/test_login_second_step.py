@@ -18,7 +18,7 @@ from apps.audit import platform
 from core.observability.logging import json_formatter
 from tests import test_auth_api, test_mfa_second_factor
 from tests.factories import make_user
-from tests.test_auth_api import AGENT, EMAIL, SESSION, audit, reply, send
+from tests.test_auth_api import AGENT, EMAIL, SESSION, audit, login, reply, send
 from tests.test_mfa_enrollment_start import KEYS
 from tests.test_mfa_second_factor import SECRET, code_at, enrolled
 
@@ -126,10 +126,10 @@ def test_it_needs_csrf_and_a_mark_that_is_whole_and_not_five_minutes_old(
         {"at": old},  # caducó
         {"at": int(time.time()) + 60},  # del futuro
         {"at": "ayer"},
+        {"at": 10**400},  # no cabe en la resta
         {"user": "no-es-una-cuenta"},
         {"epoch": "0"},
         {"keys": {"pair": "par:x"}},
-        {"ip_block": None},
     )
     for change in broken:
         migrator.execute("DELETE FROM login_throttles")  # cada marca, con su contraseña
@@ -198,16 +198,44 @@ def test_a_change_that_arrives_during_the_request_opens_no_session(
     assert MfaCodeAttempt.objects.count() == (1 if change == "no_device" else 0)
 
 
+def test_a_mark_opens_one_session_even_with_two_valid_codes_at_once(
+    browser: Client,
+    clock: SimpleNamespace,
+    migrator: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ana = make_user(email=EMAIL)
+    shown = enrolled(ana)
+    halfway(browser, ana)
+    twin, admit = Client(enforce_csrf_checks=True), throttle.admit
+    twin.cookies = browser.cookies  # el mismo navegador: otra petición con la misma marca
+
+    def meanwhile(attempt: dict[str, str]) -> Any:  # la otra llega después y acaba antes
+        monkeypatch.setattr(throttle, "admit", admit)
+        assert second(twin, shown[0]).status_code == 200
+        return admit(attempt)
+
+    monkeypatch.setattr(throttle, "admit", meanwhile)
+    assert reply(second(browser, code_at(clock))) == NOT_STARTED  # y su código era válido
+    assert Session.objects.count() == 1 and browser.get(SESSION).status_code == 200
+    assert [row[7] for row in audit(migrator)] == ['{"method": "backup_code"}']
+    assert MfaDevice.objects.get().last_step == 1 and not MfaCodeAttempt.objects.exists()
+    assert counters(migrator) == {"id": 1, "par": 1, "ip": 1}  # solo el intento rechazado
+
+
 def test_a_code_that_is_not_valid_keeps_the_mark_counts_and_is_audited(
     browser: Client, clock: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
     ana = make_user(email=EMAIL)
     enrolled(ana)
     halfway(browser, ana)
+    migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '9 minutes'")
     marked = browser.cookies["crm_session"].value
     for wrong in (code_at(clock, -2), "12345a", "U" * 16):
         answer = second(browser, wrong)
         assert (answer.status_code, answer.json()) == (400, WRONG), wrong  # sin decir por qué
+    moved = "SELECT count(*) FROM login_throttles WHERE updated_at > now() - interval '1 minute'"
+    assert migrator.execute(moved).fetchone() == (3,)  # un fallo adelanta el reloj de los tres
     assert (
         browser.cookies["crm_session"].value == marked and browser.get(SESSION).status_code == 401
     )
@@ -287,18 +315,30 @@ def test_without_its_audit_row_there_is_no_session_and_the_code_is_not_spent(
     assert second(browser, code_at(clock)).status_code == 200  # el mismo código sigue valiendo
 
 
-def test_completing_gives_back_an_address_block_the_password_step_started(
-    browser: Client, clock: SimpleNamespace, migrator: psycopg.Connection[Any]
+def test_a_mark_inside_an_open_session_of_that_account_still_gets_another_id(
+    browser: Client, clock: SimpleNamespace
+) -> None:
+    ana = make_user(email=EMAIL)
+    assert login(browser).status_code == 200  # nunca debería: la marca, en una sesión abierta
+    enrolled(ana)
+    halfway(browser, ana)
+    opened = browser.cookies["crm_session"].value
+    assert second(browser, code_at(clock)).status_code == 200
+    assert browser.cookies["crm_session"].value != opened and Session.objects.count() == 1
+
+
+@pytest.mark.parametrize("scope", ["identifier", "pair", "ip"])
+def test_a_block_the_right_password_started_does_not_refuse_the_second_step(
+    browser: Client, clock: SimpleNamespace, migrator: psycopg.Connection[Any], scope: str
 ) -> None:
     ana = make_user(email=EMAIL)
     enrolled(ana)
-    halfway(
-        browser, ana, {"ip_block": True}
-    )  # la contraseña correcta llegó al límite de la dirección
+    seen = throttle.limits()[scope].failures - (scope != "identifier")  # la cuenta, ya caliente
     migrator.execute(
-        "UPDATE login_throttles SET blocked_until = now() - interval '1 second', failures = 30"
-        " WHERE key LIKE 'ip:%'"
+        "INSERT INTO login_throttles (key, failures, updated_at) VALUES (%s, %s, now())",
+        [throttle.keys(EMAIL, "127.0.0.1")[scope], seen],
     )
-    assert second(browser, code_at(clock)).status_code == 200
-    blocked = "SELECT failures, blocked_until FROM login_throttles WHERE key LIKE 'ip:%'"
-    assert migrator.execute(blocked).fetchone() == (29, None)  # uno más, dos menos, sin bloqueo
+    halfway(browser, ana)  # la contraseña correcta es el intento que llega al límite
+    assert second(browser, code_at(clock)).status_code == 200  # y ese bloqueo no lo rechaza
+    left = "SELECT failures, blocked_until FROM login_throttles WHERE failures > 0"
+    assert migrator.execute(left).fetchall() == ([] if scope == "pair" else [(seen, None)])

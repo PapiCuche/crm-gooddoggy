@@ -52,15 +52,17 @@ def mark(
 ) -> None:
     """Deja la marca de acceso a medias de `user` en la sesión de `request`. `attempt` y
     `started` son los del límite por dirección al comprobar la contraseña (`throttle.keys` y
-    lo que devolvió `admit`): se devuelven al completar el segundo paso, no antes (ADR-023 §5).
+    lo que devolvió `admit`): lo contado se devuelve al completar el segundo paso, no antes
+    (ADR-023 §5). Los bloqueos que empezaron con esa contraseña, que era la correcta, acaban
+    aquí, como en el acceso: si siguieran, rechazarían el segundo paso de quien acertó.
     Quien llama ya cerró la sesión que hubiera y cambió su ID."""
     request.session[PENDING] = {
         "user": str(user.pk),
         "epoch": user.session_epoch,
         "at": int(time.time()),
         "keys": dict(attempt),
-        "ip_block": any(blocked.scope == "ip" for blocked in started),
     }
+    throttle.release(attempt, started)
 
 
 def _refuse(request: HttpRequest) -> ApiError:
@@ -76,12 +78,11 @@ def _pending(request: HttpRequest) -> dict[str, Any]:
         age = time.time() - found["at"]
         whole = (
             isinstance(found["epoch"], int)
-            and isinstance(found["ip_block"], bool)
             and set(found["keys"]) == set(throttle.SCOPES)
             and all(isinstance(key, str) for key in found["keys"].values())
         )
         UUID(found["user"])
-    except KeyError, TypeError, ValueError, AttributeError:
+    except KeyError, TypeError, ValueError, AttributeError, OverflowError:
         raise _refuse(request) from None
     if not whole or not 0 <= age < PENDING_FOR:
         raise _refuse(request)
@@ -110,7 +111,9 @@ def complete(request: HttpRequest, *, code: str) -> User:
 
     Sin marca, con una caducada, o si la cuenta ya no está activa, cambió de época o no tiene
     dispositivo confirmado, lanza `ApiError` 401 `NOT_STARTED` y borra la marca, sin mirar el
-    código. Lo comprueba antes de contar nada y otra vez con la fila de la cuenta bloqueada.
+    código. Lo comprueba antes de contar nada y otra vez con la fila de la cuenta bloqueada;
+    ahí mira además que la sesión de la marca siga existiendo: una marca abre una sola sesión,
+    aunque lleguen a la vez dos peticiones con ella y dos códigos que valen.
 
     El intento cuenta en el límite por dirección del acceso y en el tope por cuenta
     (`second_factor.verify`); alcanzado cualquiera de los dos, `ApiError` 429. Un código que no
@@ -134,6 +137,10 @@ def complete(request: HttpRequest, *, code: str) -> User:
         raise rate_limited(refused.seconds) from None
 
     def ready(locked: User) -> None:
+        if not request.session.exists(request.session.session_key or ""):
+            # Otra petición completó este acceso (o cerró la sesión) mientras tanto: una marca
+            # abre una sola sesión. La fila ya no existe: la sesión no se toca.
+            raise ApiError(NOT_STARTED, 401)
         if locked.session_epoch != pending["epoch"]:  # una revocación llegó mientras tanto
             raise _Stale
 
@@ -146,8 +153,7 @@ def complete(request: HttpRequest, *, code: str) -> User:
             **client,
         )
         throttle.forgive(attempt, started)
-        before = [throttle.Blocked("ip", 0, 0)] if pending["ip_block"] else []
-        throttle.forgive(pending["keys"], before)  # el de la contraseña, que esperaba a este
+        throttle.forgive(pending["keys"], [])  # el de la contraseña, que esperaba a este
         if SESSION_KEY in request.session:  # nunca debería: la marca no vive en una autenticada
             request.session.clear()
         django_login(request, locked, backend=BACKEND)  # rota el ID de sesión y el token CSRF
