@@ -42,6 +42,19 @@ class MfaEnrollmentConfirmSerializer(serializers.Serializer[Any]):
     )
 
 
+class MfaDisableSerializer(serializers.Serializer[Any]):
+    password = serializers.CharField(
+        max_length=1024,
+        trim_whitespace=False,
+        write_only=True,
+        help_text="La contraseña actual de la cuenta.",
+    )
+    code = serializers.CharField(
+        max_length=32,
+        help_text="El código de la aplicación de autenticación, o un código de respaldo.",
+    )
+
+
 class MfaStatusSerializer(serializers.Serializer[Any]):
     enabled = serializers.BooleanField(help_text="La cuenta tiene un dispositivo confirmado.")
     enabled_at = serializers.DateTimeField(

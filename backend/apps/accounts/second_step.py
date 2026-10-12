@@ -13,7 +13,6 @@ hace la ruta del segundo paso: con la marca y un código que vale (TOTP o de res
 sesión, como el acceso.
 """
 
-import re
 import time
 from typing import Any
 from uuid import UUID
@@ -23,7 +22,7 @@ from django.contrib.auth import login as django_login
 from django.db import transaction
 from django.http import HttpRequest
 
-from apps.accounts import mfa, second_factor, throttle, totp
+from apps.accounts import mfa, second_factor, throttle
 from apps.accounts.models import MfaDevice, User
 from apps.accounts.services import (
     AUTH_AT,
@@ -43,7 +42,6 @@ PENDING_FOR = 5 * 60  # segundos que vale la marca (ADR-023 §5)
 NOT_STARTED = "MFA_LOGIN_NOT_STARTED"
 REQUIRED = "auth.login.mfa_required"  # ADR-023 §10 dejó el nombre a su work item
 BACKEND = "django.contrib.auth.backends.ModelBackend"
-_APART = re.compile(r"[\s-]")  # `123 456`, como lo enseñan algunas aplicaciones
 
 
 class _Stale(Exception):
@@ -193,12 +191,10 @@ def complete(request: HttpRequest, *, code: str) -> User:
         request.session.pop(PENDING, None)
         return locked
 
-    joined = _APART.sub("", code)
-    shaped = len(joined) == totp.DIGITS and joined.isascii() and joined.isdigit()
     try:
         return second_factor.verify(
             account.pk,
-            joined if shaped else code,
+            second_factor.typed(code),  # `123 456` vale
             actor=None,  # todavía no hay sesión
             client=client,
             ready=ready,

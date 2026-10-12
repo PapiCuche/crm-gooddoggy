@@ -14,6 +14,7 @@ aquí registra un código ni un secreto.
 """
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 TOTP, BACKUP_CODE = "totp", "backup_code"  # el método, como lo audita el acceso (ADR-023 §5)
 THROTTLED = "auth.mfa.throttled"  # ADR-023 §10 dejó el nombre a este work item
+_APART = re.compile(r"[\s-]")  # `123 456`, como lo enseñan algunas aplicaciones
 LIMIT_SUBJECT = "Tu cuenta de Good Doggy CRM no acepta códigos del segundo factor por ahora"
 LIMIT_BODY = """Hola:
 
@@ -62,6 +64,15 @@ class Capped(Exception):
 
 class NoDevice(Exception):
     """La cuenta no tiene un dispositivo confirmado: no hay segundo factor que comprobar."""
+
+
+def typed(code: str) -> str:
+    """Lo tecleado, como lo espera `accept`: seis dígitos escritos con espacios o guiones
+    (`123 456`), juntos; cualquier otra cosa, tal cual. Cada ruta lo llama antes de `verify`:
+    si no, ese código TOTP se miraría como uno de respaldo y contaría como un fallo."""
+    joined = _APART.sub("", code)
+    shaped = len(joined) == totp.DIGITS and joined.isascii() and joined.isdigit()
+    return joined if shaped else code
 
 
 def _unreadable() -> None:

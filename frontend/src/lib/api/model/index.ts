@@ -43,6 +43,7 @@ export * from "./memberStatus";
 export * from "./memberStatusChangeRequest";
 export * from "./memberUser";
 export * from "./mfaBackupCodes";
+export * from "./mfaDisableRequest";
 export * from "./mfaEnrollment";
 export * from "./mfaEnrollmentConfirmRequest";
 export * from "./mfaEnrollmentStartRequest";

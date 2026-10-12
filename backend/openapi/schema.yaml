@@ -161,6 +161,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/auth/mfa/disable/:
+    post:
+      operationId: auth_mfa_disable
+      description: |-
+        Quita el segundo factor de la cuenta, con su contraseña actual y un código (de la
+        aplicación de autenticación o de respaldo). Borra el dispositivo y sus códigos de
+        respaldo y cierra las demás sesiones; desde entonces la cuenta entra solo con su
+        contraseña. 400 en `password`: no es la contraseña de la cuenta. 400 en `code`: el
+        código no vale. 401: la sesión se revocó mientras tanto. 409 `MFA_NOT_ENABLED`: la
+        cuenta no tiene segundo factor. 429: demasiados intentos desde esta red, o demasiados
+        códigos fallidos de esa cuenta en 24 horas.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaDisableRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/auth/mfa/totp/:
     post:
       operationId: auth_mfa_totp_start
@@ -2496,6 +2550,24 @@ components:
             vez.
       required:
       - backup_codes
+    MfaDisableRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: La contraseña actual de la cuenta.
+          maxLength: 1024
+        code:
+          type: string
+          minLength: 1
+          description: El código de la aplicación de autenticación, o un código de
+            respaldo.
+          maxLength: 32
+      required:
+      - code
+      - password
     MfaEnrollment:
       type: object
       properties:

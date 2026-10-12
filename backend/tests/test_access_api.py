@@ -60,6 +60,7 @@ PLATFORM = frozenset(  # rutas de plataforma del proyecto: otra frontera (ADR-01
     | {"api/v1/auth/mfa/totp/", "api/v1/auth/mfa/totp/confirm/"}  # F2-97, F2-100
     | {"api/v1/auth/login/mfa/"}  # F2-105
     | {"api/v1/auth/mfa/"}  # F2-108
+    | {"api/v1/auth/mfa/disable/"}  # F2-109
 )
 MEMBER = frozenset({TENANT + "me/"})  # rutas de tenant abiertas a todo miembro activo (F2-11)
 PREFIX = "api/v1/o/"  # las rutas de tenant, como `TENANT_PATH` en el middleware
