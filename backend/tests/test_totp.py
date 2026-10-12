@@ -32,7 +32,8 @@ def test_the_codes_are_those_of_the_rfc_vectors() -> None:
     for seconds, eight in TOTP.items():
         assert code(RFC_KEY, step_at(seconds)) == eight[-6:], seconds
     assert (step_at(0), step_at(29.999), step_at(30), step_at(59)) == (0, 0, 1, 1)
-    assert code(RFC_KEY, 2**40) != code(RFC_KEY, 2**40 + 1)  # el contador entero, no 32 bits
+    # El contador entero, no sus 32 bits bajos (que darían el código de 0 las dos veces).
+    assert (code(RFC_KEY, 2**32), code(RFC_KEY, 2**40)) == ("999456", "445672")
     assert all(len(code(key, STEP)) == 6 for key in (b"\x00" * 20, b"\xff" * 20, RFC_KEY))
     assert code(RFC_KEY, 37037036) == "081804"  # conserva el cero de la izquierda
 
@@ -68,6 +69,19 @@ def test_a_step_is_accepted_once_and_nothing_at_or_before_it_afterwards() -> Non
     assert accepted_step(RFC_KEY, code(RFC_KEY, 0), now=-31.0, last=None) is None
 
 
+def test_a_code_shared_by_two_steps_of_the_window_is_not_accepted_twice() -> None:
+    twin = 910737  # con el secreto de los RFC, este paso y el siguiente dan el mismo código
+    shared = code(RFC_KEY, twin)
+    assert shared == code(RFC_KEY, twin + 1) == "911617"
+    for now in (twin * 30.0, twin * 30.0 + 59.0):  # los dos pasos están en la ventana
+        for last in (None, twin - 1, twin):
+            # Devolver `twin` dejaría presentar el mismo código otra vez, por `twin + 1`.
+            assert accepted_step(RFC_KEY, shared, now=now, last=last) == twin + 1
+        assert accepted_step(RFC_KEY, shared, now=now, last=twin + 1) is None
+    # Con solo `twin` en la ventana se devuelve ese: la regla es por paso, no por las cifras.
+    assert accepted_step(RFC_KEY, shared, now=twin * 30.0 - 1, last=None) == twin
+
+
 @pytest.mark.parametrize(
     "presented",
     [
@@ -90,6 +104,8 @@ def test_what_is_not_six_ascii_digits_is_never_a_code(
     # Ni aunque el código de ese paso, por la razón que fuera, coincidiera con lo presentado.
     monkeypatch.setattr(totp, "code", lambda secret, step: presented)
     assert accepted_step(RFC_KEY, presented, now=NOW, last=None) is None
+    monkeypatch.setattr(totp, "code", lambda secret, step: "\x00" * 6)  # ni con el relleno
+    assert accepted_step(RFC_KEY, presented, now=NOW, last=None) is None
 
 
 def test_it_compares_every_step_of_the_window_in_constant_time(
@@ -110,6 +126,7 @@ def test_it_compares_every_step_of_the_window_in_constant_time(
     seen.clear()
     assert accepted_step(RFC_KEY, "no", now=NOW, last=None) is None
     assert len(seen) == 3  # lo que no es un código hace las mismas comparaciones
+    assert {len(right) for _, right in seen} == {6}  # y de la misma longitud
 
 
 def test_a_new_secret_is_160_random_bits_shown_as_base32_and_as_an_otpauth_uri(
@@ -137,4 +154,5 @@ def test_a_new_secret_is_160_random_bits_shown_as_base32_and_as_an_otpauth_uri(
     odd = uri(first, issuer="A&B=C?/#", account="x y&secret=Z")  # nada se cuela como parámetro
     assert parse_qs(urlsplit(odd).query)["secret"] == [shown]
     assert unquote(urlsplit(odd).path) == "/A&B=C?/#:x y&secret=Z"
+    assert "/" not in urlsplit(odd).path[1:]  # tampoco una barra, que partiría la etiqueta
     assert caplog.records == []  # el módulo no registra nada

@@ -59,9 +59,12 @@ def accepted_step(secret: bytes, presented: str, *, now: float, last: int | None
     """El paso cuyo código es `presented`, si vale; si no, `None`, sin decir por qué.
 
     Vale el código del paso actual, del anterior o del siguiente, y solo de un paso posterior a
-    `last`, el último que se aceptó: un código ya usado, o de un paso anterior a uno usado, no
+    `last`, el último que se aceptó: el código de un paso ya usado, o de uno anterior, no
     vale aunque sea correcto (ADR-023 §2). Quien llama guarda el paso devuelto como el nuevo
     `last`, en la misma transacción en que da el código por bueno.
+
+    Si dos pasos de la ventana dan el mismo código (pasa en uno de cada millón de pares),
+    devuelve el último: con el primero como `last`, el mismo código valdría otra vez por el otro.
 
     Compara en tiempo constante y con todos los pasos de la ventana, sin salir al encontrar el
     que coincide. Lo que no son seis dígitos ASCII no vale.
@@ -72,6 +75,6 @@ def accepted_step(secret: bytes, presented: str, *, now: float, last: int | None
     found: int | None = None
     for step in range(current - WINDOW, current + WINDOW + 1):
         same = hmac.compare_digest(code(secret, step).encode(), given) if step >= 0 else False
-        if same and shaped and (last is None or step > last) and found is None:
-            found = step
+        if same and shaped and (last is None or step > last):
+            found = step  # sin `break` y sin quedarse con el primero: gana el último paso
     return found
