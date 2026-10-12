@@ -5,6 +5,10 @@ Como mucho `MFA_CODE_THROTTLE[0]` intentos contados por cuenta en los últimos
 comprueban un código de un dispositivo confirmado: el segundo paso del acceso, el step-up,
 quitar el factor y regenerar los códigos de respaldo.
 
+`admit` cuenta sin preguntar quién llama. Cada ruta comprueba **antes** todo lo que no es el
+código (la marca de acceso a medias o la sesión, la contraseña donde se pide, y que la cuenta
+tiene un dispositivo confirmado): si no, quien no tiene nada de eso agotaría el tope de otra.
+
 El intento se cuenta **antes** de comprobar el código (`admit`), con la fila de la cuenta
 bloqueada: una ráfaga simultánea no prueba más códigos que el tope. Si el código vale, quien
 llama lo devuelve (`give_back`) en la transacción que lo acepta; si no, la fila se queda y
@@ -46,7 +50,10 @@ _PURGE = f"DELETE FROM user_mfa_code_attempts WHERE created_at <= clock_timestam
 @dataclass(frozen=True, slots=True)
 class Attempt:
     id: UUID
-    last: bool  # con este se alcanza el tope: si falla, quien llama audita y avisa
+    # Con este se alcanza el tope: si no se devuelve, quien llama audita y avisa. Lo es cada
+    # intento admitido al que le falta uno para el tope: hasta tantas veces por ventana como el
+    # tope si los fallos siguen, y también si otro que estaba en curso se devuelve después.
+    last: bool
 
 
 class Refused(Exception):

@@ -618,8 +618,9 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Nada lo pone a cero:** tampoco cambiar la contraseña (ADR-023 §5), ni un código correcto, que solo devuelve el suyo.
 - **`MFA_CODE_THROTTLE`** (`(10, 86400)`: intentos y ventana en segundos) solo puede endurecer ADR-023 §5: con más de 10 intentos o una ventana de menos de 24 horas, ningún proceso arranca.
 - **Purga:** la tarea horaria `accounts.purge_login_throttles` borra también los intentos que salieron de la ventana.
-- **La tabla** es platform-owned (ADR-001 §2), como las otras dos del segundo factor; índice por cuenta y hora (`user_mfa_code_attempts_user_ix`). La cuenta no se borra mientras tenga intentos contados (`PROTECT`): como mucho, 24 horas.
-- **Lo que no hace:** no comprueba ningún código; no audita ni avisa al alcanzarse el tope (ADR-023 §5 y §10: lo hará la ruta que lo alcance, con `Attempt.last`); no cuenta los códigos de un alta sin confirmar, que tienen su tope por alta (ADR-024).
+- **La tabla** es platform-owned (ADR-001 §2), como las otras dos del segundo factor; índice por cuenta y hora (`user_mfa_code_attempts_user_ix`). La cuenta no se borra mientras le queden filas (`PROTECT`), cuenten o no: salen con la purga horaria, hasta una hora después de dejar de contar, y cada intento nuevo alarga el plazo.
+- **Lo que piden las rutas que lo llamen:** comprobar antes de `admit` todo lo que no es el código (la marca de acceso a medias o la sesión, la contraseña donde se pide, que hay un dispositivo confirmado): `admit` cuenta sin preguntar quién llama. Y tratar `Attempt.last` como un aviso que se repite: lo lleva cada intento admitido al que le falta uno para el tope, hasta diez veces por ventana si los fallos siguen, y también cuando otro intento en curso se devuelve después.
+- **Lo que no hace:** no pone plazo a la espera por la fila de la cuenta (ningún ajuste define `lock_timeout`); no comprueba ningún código; no audita ni avisa al alcanzarse el tope (ADR-023 §5 y §10: lo hará la ruta que lo alcance, con `Attempt.last`); no cuenta los códigos de un alta sin confirmar, que tienen su tope por alta (ADR-024).
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
 

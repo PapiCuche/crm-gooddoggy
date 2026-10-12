@@ -12,6 +12,7 @@ import pytest
 from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
+from django.db.models import ProtectedError
 from django.db.utils import OperationalError
 
 from apps.accounts import checks, code_limit
@@ -109,11 +110,17 @@ def test_two_simultaneous_attempts_with_nine_counted_are_not_both_admitted(
             time.sleep(0.02)
         assert migrator.execute(waiting).fetchone() == (2,)  # esperan los dos: uno a la vez
         assert results == [] and counted(ana) == LIMIT - 1
+        released = migrator.execute("SELECT clock_timestamp()").fetchall()[0][0]
     for thread in threads:
         thread.join(10)
     assert sorted(type(result).__name__ for result in results) == ["Attempt", "Refused"]
     assert counted(ana) == LIMIT
-    with connection.cursor() as cursor, migrator.transaction():  # y no espera para siempre
+    # La hora del intento es la de cuando se contó, tras la espera: no la del inicio de su
+    # transacción (`now()`), que es anterior y lo sacaría antes de la ventana.
+    assert MfaCodeAttempt.objects.filter(user=ana).latest("created_at").created_at >= released
+    # Con el tope alcanzado también toma la fila antes de contar. Nada en el módulo pone plazo a
+    # esa espera: aquí lo pone el `lock_timeout` de esta sesión.
+    with connection.cursor() as cursor, migrator.transaction():
         migrator.execute(ROW_LOCK, [ana.pk])
         cursor.execute("SET lock_timeout = '200ms'")
         with pytest.raises(OperationalError):
@@ -131,6 +138,11 @@ def test_the_purge_deletes_only_what_left_the_window(migrator: psycopg.Connectio
     migrator.execute(OLDER, ["2 minutes", edge.id])
     assert purge_login_throttles() == 1  # en la tarea horaria que purga los contadores del acceso
     assert code_limit.admit(ana.pk).last is False and counted(ana) == 2  # sigue contando igual
+    for left in MfaCodeAttempt.objects.values_list("pk", flat=True):
+        migrator.execute(OLDER, ["25 hours", left])
+    with pytest.raises(ProtectedError):  # ya no cuentan, pero hasta la purga la cuenta no se borra
+        ana.delete()
+    assert code_limit.purge() == 2 and counted(ana) == 0
 
 
 @pytest.mark.parametrize(
