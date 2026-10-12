@@ -7,6 +7,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
 from django.test import Client
 
@@ -94,8 +95,9 @@ def test_a_wrong_password_answers_the_same_with_or_without_a_second_factor(
     assert second_step.PENDING not in browser.session
 
 
+@pytest.mark.parametrize("broken", ["audit", "after_closing_the_session"])
 def test_without_its_audit_row_there_is_no_mark_and_the_open_session_stays(
-    browser: Client, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+    browser: Client, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch, broken: str
 ) -> None:
     ana = make_user(email=EMAIL)
     make_user(email=LUIS)
@@ -108,13 +110,31 @@ def test_without_its_audit_row_there_is_no_mark_and_the_open_session_stays(
             raise ConnectionError("sin auditoría")
         return record(action, **how)
 
-    monkeypatch.setattr(platform, "record", unwritable)
+    def unreleased(*given: Any) -> None:
+        raise ConnectionError("sin base de datos")
+
+    if broken == "audit":
+        monkeypatch.setattr(platform, "record", unwritable)
+    else:  # falla lo último, con la fila escrita y la sesión ya cerrada: todo se deshace
+        monkeypatch.setattr(throttle, "release", unreleased)
     browser.raise_request_exception = False
     assert login(browser).status_code == 500
     assert browser.cookies["crm_session"].value == before  # la sesión que había, intacta
     assert browser.get(SESSION).json()["user"]["email"] == LUIS
     assert second_step.PENDING not in browser.session and Session.objects.count() == 1
     assert [row[0] for row in audit(migrator)] == ["auth.login.succeeded"]
+
+
+def test_the_mark_never_lives_under_a_session_id_known_from_before(browser: Client) -> None:
+    enrolled(make_user(email=EMAIL))
+    planted = SessionStore()
+    planted.create()  # una sesión anónima fijada en el navegador: quien la puso conoce su ID
+    browser.cookies["crm_session"] = known = str(planted.session_key)
+    assert reply(login(browser)) == PENDING
+    marked = browser.cookies["crm_session"].value
+    assert marked != known and not Session.objects.filter(session_key=known).exists()
+    assert reply(login(browser)) == PENDING  # otra vez la contraseña: otra marca, otro ID
+    assert browser.cookies["crm_session"].value != marked and Session.objects.count() == 1
 
 
 @pytest.mark.parametrize("device", ["none", "pending"])
