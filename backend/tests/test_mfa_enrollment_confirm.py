@@ -73,6 +73,7 @@ def test_a_code_of_the_device_confirms_it_gives_backup_codes_once_and_closes_oth
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     ana = make_user(email=EMAIL)
+    MfaBackupCode.objects.create(user=ana, code_hash="0" * 64)  # uno de antes: se sustituye
     other = Client(enforce_csrf_checks=True)  # otra sesión abierta, sin segundo factor
     other.get(test_auth_api.CSRF)
     assert login(other).status_code == 200
@@ -91,7 +92,7 @@ def test_a_code_of_the_device_confirms_it_gives_backup_codes_once_and_closes_oth
     ]  # la cuenta, y después el dispositivo
     assert "NO KEY UPDATE" in locks[0] and '"user_mfa_devices"' in locks[1]
     device = MfaDevice.objects.get()
-    assert device.confirmed_at is not None and device.last_step == totp.step_at(time.time())
+    assert device.confirmed_at is not None and totp.code(secret, device.last_step or 0) == code
     stored = set(MfaBackupCode.objects.filter(user=ana).values_list("code_hash", flat=True))
     assert stored == {backup_codes.code_hash(shown) for shown in codes} and len(stored) == 10
     assert not MfaBackupCode.objects.exclude(used_at=None).exists()
@@ -118,6 +119,7 @@ def test_a_code_of_the_device_confirms_it_gives_backup_codes_once_and_closes_oth
     ]  # el aviso, con el identificador de la cuenta y con el alta ya confirmada
     assert reply(confirm(browser, code)) == (409, b'{"code":"MFA_ALREADY_ENABLED"}')
     assert reply(start(browser)) == (409, b'{"code":"MFA_ALREADY_ENABLED"}') and len(queued) == 1
+    assert login(other).status_code == 200  # el acceso todavía no pide el segundo paso
     logged = "\n".join(json_formatter().format(record) for record in caplog.records)
     kept = json.dumps([row[7] for row in audit(migrator)])
     for text in (code, secret.hex(), base64.b32encode(secret).decode(), *codes, *stored):
@@ -162,19 +164,25 @@ def test_it_needs_a_session_csrf_and_a_code_of_the_pending_device(
     assert confirm(browser, f" {now_code(secret)} ").status_code == 200  # recortado: vale
 
 
-def test_only_a_code_that_is_not_valid_counts_in_the_sign_in_limit(
+def test_a_wrong_code_counts_in_the_sign_in_limit_and_only_a_right_one_gives_it_back(
     browser: Client, migrator: psycopg.Connection[Any], settings: Any
 ) -> None:
     make_user(email=EMAIL)
     assert login(browser).status_code == 200
     limit = settings.LOGIN_THROTTLE["pair"][0]
-    for _ in range(limit + 2):  # sin alta empezada: no hay nada que adivinar, no cuenta
-        assert reply(confirm(browser, "123456")) == NOT_STARTED
-    assert sorted(dict(migrator.execute(KEYS).fetchall()).values()) in ([], [0, 0])
+    for _ in range(limit - 1):  # contraseñas incorrectas al empezar el alta, con la sesión
+        assert start(browser, test_auth_api.WRONG).status_code == 400
+    assert reply(confirm(browser, "123456")) == NOT_STARTED  # no prueba nada: no los borra
+    assert sorted(dict(migrator.execute(KEYS).fetchall()).values()) == [limit] * 3  # y cuenta
+    assert start(browser).status_code == 429  # una sesión sola no pone el contador a cero
+    migrator.execute("DELETE FROM login_throttles")
     secret = base64.b32decode(start(browser).json()["secret"])
+    migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '5 minutes'")
     for _ in range(limit):
         assert confirm(browser, now_code(secret, -2)).status_code == 400
     assert sorted(dict(migrator.execute(KEYS).fetchall()).values()) == [limit] * 3
+    moved = "SELECT count(*) FROM login_throttles WHERE updated_at > now() - interval '1 minute'"
+    assert migrator.execute(moved).fetchone() == (3,)  # un fallo adelanta el reloj de los tres
     limited = confirm(browser, now_code(secret))  # ni con el bueno: está bloqueado
     assert reply(limited) == (429, b'{"code":"RATE_LIMITED"}') and int(limited["Retry-After"]) > 0
     assert MfaDevice.objects.get().confirmed_at is None
@@ -197,7 +205,7 @@ def test_an_enrolment_expires_ten_minutes_after_it_started(
     assert confirm(browser, now_code(secret)).status_code == 200  # dentro del plazo
 
 
-@pytest.mark.parametrize("change", ["epoch", "inactive"])
+@pytest.mark.parametrize("change", ["epoch", "inactive", "logout"])
 def test_a_revocation_that_arrives_during_the_request_confirms_nothing_and_ends_the_session(
     browser: Client, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
@@ -209,6 +217,8 @@ def test_a_revocation_that_arrives_during_the_request_confirms_nothing_and_ends_
         # Con la petición ya pasada por el middleware: otra operación revoca o desactiva.
         if change == "epoch":
             migrator.execute("UPDATE users SET session_epoch = session_epoch + 1")
+        elif change == "logout":  # otra petición cerró esta sesión: no revive con otro ID
+            migrator.execute("DELETE FROM django_session")
         else:
             migrator.execute("UPDATE users SET is_active = false")
         return admit(attempt)
@@ -216,27 +226,30 @@ def test_a_revocation_that_arrives_during_the_request_confirms_nothing_and_ends_
     monkeypatch.setattr(throttle, "admit", meanwhile)
     assert reply(confirm(browser, now_code(secret))) == (401, b'{"code":"NOT_AUTHENTICATED"}')
     monkeypatch.setattr(throttle, "admit", admit)
+    assert migrator.execute("SELECT count(*) FROM django_session").fetchone() == (0,)  # cerrada
     assert MfaDevice.objects.get().confirmed_at is None and not MfaBackupCode.objects.exists()
     assert "auth.mfa.enabled" not in [row[0] for row in audit(migrator)]
+    assert sorted(dict(migrator.execute(KEYS).fetchall()).values()) == [1, 1, 1]  # y contado
     assert browser.get(SESSION).status_code == 401  # y esa sesión ya no existe
     assert User.objects.get(pk=ana.pk).session_epoch == ana.session_epoch + (change == "epoch")
 
 
+@pytest.mark.parametrize("part", [(platform, "record"), (throttle, "forgive")])
 def test_without_its_audit_row_nothing_is_confirmed_and_no_session_changes(
-    browser: Client, monkeypatch: pytest.MonkeyPatch, migrator: psycopg.Connection[Any]
+    browser: Client, monkeypatch: pytest.MonkeyPatch, migrator: psycopg.Connection[Any], part: Any
 ) -> None:
     ana = make_user(email=EMAIL)
     other = Client(enforce_csrf_checks=True)
     other.get(test_auth_api.CSRF)
     assert login(other).status_code == 200
     secret = begun(browser)
-    key, real = browser.cookies["crm_session"].value, platform.record
+    key, real = browser.cookies["crm_session"].value, getattr(*part)
 
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise DatabaseError("sin partición")
 
     browser.raise_request_exception = False
-    monkeypatch.setattr(platform, "record", broken)
+    monkeypatch.setattr(part[0], part[1], broken)  # la fila, o devolver lo contado
     assert reply(confirm(browser, now_code(secret))) == (500, b'{"code":"INTERNAL_ERROR"}')
     assert MfaDevice.objects.get().confirmed_at is None and not MfaBackupCode.objects.exists()
     assert User.objects.get(pk=ana.pk).session_epoch == ana.session_epoch  # nadie revocado
@@ -245,7 +258,7 @@ def test_without_its_audit_row_nothing_is_confirmed_and_no_session_changes(
     assert (
         confirm(browser, now_code(secret, -2)).status_code == 400
     )  # un rechazo sin auditar: igual
-    monkeypatch.setattr(platform, "record", real)
+    monkeypatch.setattr(part[0], part[1], real)
     with migrator.transaction():  # con la fila de la cuenta bloqueada por otro, espera: no confirma
         migrator.execute("SELECT 1 FROM users WHERE id = %s FOR NO KEY UPDATE", [ana.pk])
         with connection.cursor() as cursor:
@@ -270,6 +283,8 @@ def test_a_secret_that_cannot_be_opened_is_a_code_that_is_not_valid_and_is_repor
     answer = confirm(browser, now_code(secret))
     assert (answer.status_code, answer.json()) == (400, WRONG)  # la respuesta no lo distingue
     assert reports == [("UnreadableSecrets(1)", {"action": "mfa.confirm"})]
+    monkeypatch.setattr(reporting, "reporter", lambda: None)  # un reporte roto: la misma
+    assert confirm(browser, now_code(secret)).status_code == 400
     assert MfaDevice.objects.get().confirmed_at is None and not MfaBackupCode.objects.exists()
 
 
@@ -278,6 +293,7 @@ def test_the_notice_is_best_effort_and_the_task_mails_the_account_without_any_co
 ) -> None:
     ana = make_user(email=EMAIL)
     gone = make_user(email="baja@example.com", is_active=False)
+    local = make_user(email='"ab"@example.com')  # `core.mail` no escribe a esa dirección
     secret = begun(browser)
 
     def refuse(**how: Any) -> None:
@@ -294,9 +310,10 @@ def test_the_notice_is_best_effort_and_the_task_mails_the_account_without_any_co
     assert message.to == [EMAIL] and message.subject == mfa.ENABLED_SUBJECT
     body = str(message.body)
     assert "Se dio de alta un segundo factor" in body and "se cerraron" in body
-    assert "cambiar la contraseña no quita" in body  # qué hacer si no fue ella
+    assert "Cambia la contraseña con un enlace" in body  # qué hacer si no fue ella: echarlo
+    assert "cambiar la contraseña no quita" in body  # y avisar
     assert all(shown not in body for shown in answer.json()["backup_codes"]) and "http" not in body
-    for unknown in (str(uuid4()), str(gone.pk), "no-es-un-identificador", ""):
+    for unknown in (str(uuid4()), str(gone.pk), str(local.pk), "no-es-un-identificador", ""):
         assert mfa.notify_enabled(unknown) is False
     assert len(outbox.outbox) == 1 and (
         send_mfa_enabled.max_retries,

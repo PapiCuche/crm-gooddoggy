@@ -51,8 +51,9 @@ Si fuiste tú, guarda los códigos de respaldo en un lugar seguro: son la forma 
 pierdes el dispositivo.
 
 Si no fuiste tú, lo hizo alguien que conoce tu contraseña y tenía abierta una sesión tuya.
-Avisa cuanto antes a quien administra tu organización: cambiar la contraseña no quita ese
-segundo factor.
+Cambia la contraseña con un enlace de recuperación: eso cierra todas tus sesiones. Y avisa
+cuanto antes a quien administra tu organización: cambiar la contraseña no quita ese segundo
+factor.
 """
 
 
@@ -176,12 +177,14 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
     (la época avanza) y esta adopta la época nueva, cambia de ID y anota cuándo se verificó; y
     se audita. Sin esa fila no hay confirmación.
 
-    Si la época de la sesión ya no es la de la cuenta, o la cuenta dejó de estar activa (una
-    revocación llegó con la petición en curso), no confirma nada: cierra la sesión y lanza
+    Si la época de la sesión ya no es la de la cuenta, la cuenta dejó de estar activa o la fila
+    de la sesión ya no existe (una revocación, o un cierre de sesión, llegó con la petición en
+    curso), no confirma nada: no revive con otro ID una sesión cerrada. Cierra la sesión y lanza
     `ApiError` 401. Sin alta empezada o caducada, `MFA_ENROLLMENT_NOT_STARTED`; ya confirmada,
     `MFA_ALREADY_ENABLED`. Un código que no vale lanza `WrongCode`, cuenta en el límite de
     intentos del acceso (por dirección) y deja una fila denegada; un secreto que no se abre es
-    un código que no vale, y se reporta. Solo un código que no vale queda contado.
+    un código que no vale, y se reporta. Solo un acierto devuelve lo que contó, en esa
+    transacción: un 409 o un 401 lo borrarían sin probar nada, también los fallos de contraseña.
     """
     from apps.accounts.tasks import send_mfa_enabled  # noqa: PLC0415 — ciclo de imports
 
@@ -201,7 +204,8 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
             user=account, type=MfaDevice.Type.TOTP
         )
         device, now = pending.first(), timezone.now()
-        if not account.is_active or request.session.get(EPOCH, 0) != account.session_epoch:
+        gone = not request.session.exists(request.session.session_key or "")  # la cerró otra
+        if gone or not account.is_active or request.session.get(EPOCH, 0) != account.session_epoch:
             refused_as = "session"
         elif device is not None and device.confirmed_at is not None:
             refused_as = ALREADY_ENABLED
@@ -231,6 +235,7 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
                     entity=Entity("user", account.pk),
                     **client,
                 )
+                throttle.forgive(attempt, started)  # aquí, como el acceso: si falla, nada
                 # Esta sesión sigue: guardaba la época anterior al avance, leída con la fila
                 # bloqueada (ADR-023 §4). Cambia de ID y anota la verificación (ADR-003 §2).
                 request.session.cycle_key()
@@ -240,9 +245,12 @@ def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
         throttle.failed(attempt)
         _denied(ENABLED, user.pk, "code", client)
         if unreadable:  # nadie sabría que falta una clave: la respuesta no lo distingue
-            reporting.reporter().capture_exception(UnreadableSecrets(1), {"action": "mfa.confirm"})
+            lost = UnreadableSecrets(1)
+            try:
+                reporting.reporter().capture_exception(lost, {"action": "mfa.confirm"})
+            except Exception:  # tampoco si el reporte falla: sería un 500 solo en este caso
+                logger.exception("secreto TOTP ilegible al confirmar: no se pudo reportar")
         raise WrongCode
-    throttle.forgive(attempt, started)  # nada que no sea un código que no vale queda contado
     if refused_as == "session":
         request.session.flush()
         raise ApiError(NOT_AUTHENTICATED, 401)
