@@ -40,5 +40,6 @@ def send_password_changed(user_id: str) -> None:
 @platform_task(name="accounts.reseal_mfa_secrets")
 def reseal_mfa_secrets() -> dict[str, int]:
     """Vuelve a cifrar con la clave vigente los secretos TOTP que quedaron con otra (F2-98,
-    ADR-022 §5). Devuelve cuántos volvió a cifrar, cuántos no pudo abrir y cuántos dejó."""
+    ADR-022 §5). Devuelve la versión de la clave vigente en este proceso y cuántos volvió a
+    cifrar, cuántos no pudo abrir y cuántos dejó."""
     return mfa.reseal()

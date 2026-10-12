@@ -129,7 +129,8 @@ def reseal() -> dict[str, int]:
     (`unreadable`) y cuántos dejó para otra pasada porque otra operación los tenía (`busy`),
     con la versión de la clave vigente en este proceso (`key`); lo deja también en el log. La
     clave anterior se puede retirar cuando una pasada cuya `key` es la nueva da cero en los
-    tres: un proceso que aún no la tiene da cero sin haber vuelto a cifrar nada.
+    tres y todos los procesos corren ya con la nueva (ADR-022 §5; esto no lo comprueba nada):
+    uno que aún no la tiene da cero sin haber vuelto a cifrar nada, y cifra con la anterior.
 
     Cada fila pendiente va en su transacción, bloqueada: solo cambia `secret`. Lo que no abre (su
     clave ya no está, o el valor no es de esa cuenta) **no se toca**: en un proceso que aún no
@@ -161,7 +162,11 @@ def reseal() -> dict[str, int]:
             MfaDevice.objects.filter(pk=pk).update(secret=sealed_again)
             done["resealed"] += 1
     logger.info(
-        "secretos TOTP: clave %d, vueltos a cifrar %d, ilegibles %d, ocupados %d", *done.values()
+        "secretos TOTP: clave %d, vueltos a cifrar %d, ilegibles %d, ocupados %d",
+        done["key"],
+        done["resealed"],
+        done["unreadable"],
+        done["busy"],
     )
     if done["unreadable"]:
         error = UnreadableSecrets(done["unreadable"])

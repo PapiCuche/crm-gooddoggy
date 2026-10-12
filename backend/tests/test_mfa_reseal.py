@@ -70,6 +70,7 @@ def test_after_a_new_key_one_pass_leaves_every_secret_under_it_and_a_second_chan
     for text in (b"a" * 20, b"l" * 20, *before.values(), *after.values()):
         assert text.hex() not in logged and text.decode("latin-1") not in logged
     assert "ana@example.com" not in logged
+    assert not any(str(user.pk) in logged for user in (ana, luis))  # tampoco al volver a cifrar
     assert "clave 7, vueltos a cifrar 2, ilegibles 0, ocupados 0" in logged  # lo que se lee
 
 
@@ -103,6 +104,7 @@ def test_what_cannot_be_opened_is_left_untouched_counted_and_reported(
     logged = "\n".join(json_formatter().format(record) for record in caplog.records)
     assert all(value.hex() not in logged for value in kept.values())
     assert not any(str(user.pk) in logged for user in (ana, luis, eva))  # ni la cuenta
+    assert "clave 7, vueltos a cifrar 0, ilegibles 2, ocupados 0" in logged  # cada número, el suyo
     settings.SECRETS_KEKS = {1: OLD, 7: NEW}  # la clave vuelve: lo de ana se recupera
     assert mfa.reseal() == {
         "key": 7,
