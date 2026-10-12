@@ -42,6 +42,20 @@ class MfaEnrollmentConfirmSerializer(serializers.Serializer[Any]):
     )
 
 
+class MfaStatusSerializer(serializers.Serializer[Any]):
+    enabled = serializers.BooleanField(help_text="La cuenta tiene un dispositivo confirmado.")
+    enabled_at = serializers.DateTimeField(
+        allow_null=True, help_text="Desde cuándo; `null` si no lo tiene."
+    )
+    enrollment_expires_in = serializers.IntegerField(
+        allow_null=True,
+        help_text="Segundos que quedan para confirmar un alta empezada; `null` si no hay ninguna.",
+    )
+    backup_codes_left = serializers.IntegerField(
+        help_text="Códigos de respaldo que quedan sin gastar."
+    )
+
+
 class LoginPendingSerializer(serializers.Serializer[Any]):
     mfa_required = serializers.BooleanField(
         help_text="Siempre `true`: falta el segundo paso (`POST /auth/login/mfa/`)."

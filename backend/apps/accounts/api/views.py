@@ -20,6 +20,7 @@ from apps.accounts.api.serializers import (
     MfaEnrollmentConfirmSerializer,
     MfaEnrollmentSerializer,
     MfaEnrollmentStartSerializer,
+    MfaStatusSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     SessionSerializer,
@@ -174,6 +175,21 @@ class SessionView(APIView):
         """La sesión actual. 401 `NOT_AUTHENTICATED` si no hay, caducó o su usuario no está
         activo."""
         return Response(_session(request))
+
+
+class MfaView(APIView):
+    permission_classes = [Authenticated]
+
+    @extend_schema(
+        operation_id="auth_mfa_status",
+        tags=["auth"],
+        responses={200: MfaStatusSerializer, **errors(401)},
+    )
+    def get(self, request: Request) -> Response:
+        """El estado del segundo factor de la cuenta de la sesión: si tiene un dispositivo
+        confirmado y desde cuándo, si dejó un alta empezada que aún se puede confirmar, y
+        cuántos códigos de respaldo le quedan. Nunca el secreto ni los códigos."""
+        return Response(MfaStatusSerializer(mfa.status(request.user)).data)
 
 
 class MfaTotpView(APIView):

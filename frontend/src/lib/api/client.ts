@@ -44,6 +44,7 @@ import type {
   MfaEnrollment,
   MfaEnrollmentConfirmRequest,
   MfaEnrollmentStartRequest,
+  MfaStatus,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
@@ -455,6 +456,118 @@ export const useAuthLogout = <TError = ErrorType<Error>, TContext = unknown>(
 ): UseMutationResult<Awaited<ReturnType<typeof authLogout>>, TError, void, TContext> => {
   return useMutation(getAuthLogoutMutationOptions(options), queryClient);
 };
+
+export const getAuthMfaStatusUrl = () => {
+  return `/api/v1/auth/mfa/`;
+};
+
+/**
+ * El estado del segundo factor de la cuenta de la sesión: si tiene un dispositivo
+ * confirmado y desde cuándo, si dejó un alta empezada que aún se puede confirmar, y
+ * cuántos códigos de respaldo le quedan. Nunca el secreto ni los códigos.
+ */
+export const authMfaStatus = async (
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MfaStatus> => {
+  return apiFetch<MfaStatus>(getAuthMfaStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAuthMfaStatusQueryKey = () => {
+  return [`/api/v1/auth/mfa/`] as const;
+};
+
+export const getAuthMfaStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof authMfaStatus>>,
+  TError = ErrorType<Error>,
+>(options?: {
+  query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>>;
+  request?: SecondParameter<typeof apiFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAuthMfaStatusQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof authMfaStatus>>> = ({ signal }) =>
+    authMfaStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof authMfaStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type AuthMfaStatusQueryResult = NonNullable<Awaited<ReturnType<typeof authMfaStatus>>>;
+export type AuthMfaStatusQueryError = ErrorType<Error>;
+
+export function useAuthMfaStatus<
+  TData = Awaited<ReturnType<typeof authMfaStatus>>,
+  TError = ErrorType<Error>,
+>(
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof authMfaStatus>>,
+          TError,
+          Awaited<ReturnType<typeof authMfaStatus>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAuthMfaStatus<
+  TData = Awaited<ReturnType<typeof authMfaStatus>>,
+  TError = ErrorType<Error>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof authMfaStatus>>,
+          TError,
+          Awaited<ReturnType<typeof authMfaStatus>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAuthMfaStatus<
+  TData = Awaited<ReturnType<typeof authMfaStatus>>,
+  TError = ErrorType<Error>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAuthMfaStatus<
+  TData = Awaited<ReturnType<typeof authMfaStatus>>,
+  TError = ErrorType<Error>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAuthMfaStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getAuthMfaTotpStartUrl = () => {
   return `/api/v1/auth/mfa/totp/`;
