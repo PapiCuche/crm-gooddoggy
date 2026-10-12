@@ -50,7 +50,7 @@ def test_it_seals_with_aes_256_gcm_under_a_key_derived_for_the_purpose(
     assert box == head + nonce + AESGCM(key).encrypt(nonce, PLAIN, bound)
     assert len(box) == 3 + 12 + len(PLAIN) + 16 and PLAIN not in box
     assert unseal(PURPOSE, OWNER, box) == PLAIN
-    assert unseal(PURPOSE, OWNER, memoryview(box)) == PLAIN  # type: ignore[arg-type]  # un BinaryField
+    assert unseal(PURPOSE, OWNER, memoryview(box)) == PLAIN  # un BinaryField
     with pytest.raises(Exception):  # noqa: B017, PT011 — la clave maestra no cifra datos
         AESGCM(OLD).decrypt(nonce, box[15:], bound)
 
@@ -97,7 +97,7 @@ def test_the_highest_version_seals_every_key_opens_and_a_removed_key_fails_close
     after = seal(PURPOSE, OWNER, PLAIN)
     assert (before[:3], after[:3]) == (b"\x01\x00\x01", b"\x01\x00\x07")
     assert unseal(PURPOSE, OWNER, before) == unseal(PURPOSE, OWNER, after) == PLAIN
-    assert (stale(before), stale(after), stale(memoryview(after))) == (True, False, False)  # type: ignore[arg-type]
+    assert (stale(before), stale(after), stale(memoryview(after))) == (True, False, False)
     assert stale(b"") and stale(b"\x02" + after[1:])  # lo que no es de este formato, también
     settings.SECRETS_KEKS = {1: OLD}  # un proceso que aún no recibió la clave nueva (§5)
     assert (stale(before), stale(after)) == (False, True)  # lo ve pendiente, y no lo abre

@@ -28,6 +28,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-020](ADR-020-invitations.md) | Invitaciones a una organización: sin cuenta ni membresía hasta aceptar, enlace de un solo uso guardado como hash, anti-escalada al invitar, y aceptar no inicia sesión | Accepted; la excepción a ADR-014 §4 (aceptar), *Proposed* (D-F2-14) | 2026-10-07 |
 | [ADR-021](ADR-021-password-recovery.md) | Recuperación de contraseña: la petición no mira si la cuenta existe, enlace de un solo uso guardado como hash y con 60 minutos de vida, topes por red, identificador y cuenta, y cambiar la contraseña revoca las sesiones y no inicia sesión | Accepted | 2026-10-07 |
 | [ADR-022](ADR-022-secrets-at-rest.md) | Cifrado en reposo de los secretos que la aplicación tiene que leer: AES-256-GCM en un único módulo (`core.sealed`), claves maestras por entorno con versión (`SECRETS_KEKS`), una clave derivada por propósito, y cada valor atado a su propósito y a su dueño | Accepted | 2026-10-11 |
+| [ADR-023](ADR-023-mfa-totp.md) | Segundo factor con TOTP y códigos de respaldo, sobre ADR-003 §4: un paso se acepta una vez, la contraseña correcta no abre sesión si la cuenta tiene segundo factor, tope de códigos fallidos por cuenta, y la política mira el rol Owner, el Administrador de plantilla y los permisos sensibles de la membresía | Accepted, salvo §11 (*Proposed*, D-F2-15) | 2026-10-11 |
 
 ## Plantilla
 
