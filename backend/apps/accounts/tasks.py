@@ -3,7 +3,7 @@
 from django.contrib.sessions.models import Session
 from django.utils import timezone
 
-from apps.accounts import code_limit, mfa, recovery, throttle
+from apps.accounts import code_limit, mfa, recovery, second_factor, throttle
 from core.tenancy.celery import platform_task
 
 
@@ -52,3 +52,10 @@ def reseal_mfa_secrets() -> dict[str, int]:
 def send_mfa_enabled(user_id: str) -> None:
     """Avisa a la cuenta `user_id` de que se le dio de alta un segundo factor (F2-100)."""
     mfa.notify_enabled(user_id)
+
+
+# Sin reintentos, como los otros avisos. Su argumento es el identificador de la cuenta.
+@platform_task(name="accounts.send_mfa_code_limit", ignore_result=True, max_retries=0)
+def send_mfa_code_limit(user_id: str) -> None:
+    """Avisa a la cuenta `user_id` de que alcanzó el tope de códigos fallidos (F2-104)."""
+    second_factor.notify_code_limit(user_id)
