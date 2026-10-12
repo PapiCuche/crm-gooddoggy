@@ -9,6 +9,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 from django.core import mail as outbox
+from django.db import connection
 from django.test import Client
 
 from apps.accounts import code_limit, mfa, mfa_disable, throttle
@@ -32,7 +33,12 @@ INVALID = "invalid"
 @pytest.fixture(autouse=True)
 def queued(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     calls: list[Any] = []
-    monkeypatch.setattr(send_mfa_disabled, "apply_async", lambda **how: calls.append(how["args"]))
+
+    def sent(**how: Any) -> None:
+        assert not connection.in_atomic_block  # con el factor ya quitado, no antes
+        calls.append(how["args"])
+
+    monkeypatch.setattr(send_mfa_disabled, "apply_async", sent)
     monkeypatch.setattr(send_mfa_code_limit, "apply_async", lambda **how: None)
     return calls
 
@@ -132,7 +138,9 @@ def test_it_needs_a_session_csrf_the_password_and_a_code(
     assert counters(migrator)["par"] == 2  # los dos rechazos cuentan por dirección
     assert MfaDevice.objects.get().confirmed_at is not None  # el factor sigue
     assert browser.get(SESSION).status_code == 200
-    assert reply(off(browser, code_at(clock))) == (204, b"")
+    typed = code_at(clock)  # como lo enseñan algunas aplicaciones: no es un fallo más
+    assert reply(off(browser, f"{typed[:3]} {typed[3:]}")) == (204, b"")
+    assert MfaCodeAttempt.objects.count() == 1  # solo el de antes: el que valió se devuelve
 
 
 def test_without_a_device_there_is_nothing_to_remove(browser: Client) -> None:
@@ -201,6 +209,39 @@ def test_a_revocation_that_arrives_during_the_request_removes_nothing(
     assert not MfaCodeAttempt.objects.exists()  # no se llegó a mirar el código
     assert browser.get(SESSION).status_code == 401  # y esa sesión ya no existe
     assert "auth.mfa.disabled" not in [row[0] for row in audit(migrator)]
+
+
+def test_a_factor_that_went_meanwhile_is_a_409_with_the_attempt_counted(
+    browser: Client,
+    clock: SimpleNamespace,
+    migrator: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inside(browser, enrolled(make_user(email=EMAIL)))
+    admit = throttle.admit
+
+    def meanwhile(attempt: dict[str, str]) -> Any:  # pasada ya la comprobación sin bloqueo
+        migrator.execute("DELETE FROM user_mfa_devices")
+        return admit(attempt)
+
+    monkeypatch.setattr(throttle, "admit", meanwhile)
+    assert reply(off(browser, code_at(clock))) == (409, b'{"code":"MFA_NOT_ENABLED"}')
+    assert MfaCodeAttempt.objects.count() == 1 and browser.get(SESSION).status_code == 200
+
+
+def test_the_rejection_that_starts_a_block_of_the_address_leaves_its_row(
+    browser: Client, clock: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    inside(browser, enrolled(make_user(email=EMAIL)))
+    migrator.execute("DELETE FROM platform_audit_logs")
+    for _ in range(4):
+        assert off(browser, code_at(clock), test_auth_api.WRONG).status_code == 400
+    assert refused(off(browser, code_at(clock, -2))) == (400, {"code": INVALID})  # el quinto
+    rows = [row[0] for row in audit(migrator)]
+    assert rows == ["auth.mfa.disabled"] * 5 + ["auth.login.throttled"]
+    blocked = off(browser, code_at(clock))  # ni con las dos cosas, mientras dure el bloqueo
+    assert reply(blocked) == (429, b'{"code":"RATE_LIMITED"}') and int(blocked["Retry-After"]) > 0
+    assert MfaDevice.objects.get().last_step == 1 and MfaCodeAttempt.objects.count() == 1
 
 
 def test_the_account_cap_refuses_also_the_right_code(

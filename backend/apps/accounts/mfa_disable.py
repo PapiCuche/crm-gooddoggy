@@ -109,6 +109,7 @@ def disable(request: HttpRequest, *, password: str, code: str) -> None:
     if not user.check_password(password):
         failed("password")
         raise mfa.WrongPassword
+    code = second_factor.typed(code)  # `123 456` vale, como en el acceso
 
     def ready(account: User) -> None:
         gone = not request.session.exists(request.session.session_key or "")  # la cerró otra
