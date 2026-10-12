@@ -108,6 +108,16 @@ class Migration(migrations.Migration):
                             django.db.models.lookups.LessThanOrEqual(
                                 django.db.models.functions.text.Length("secret"), 4127
                             ),
+                            django.db.models.lookups.Exact(
+                                models.Func(
+                                    "secret",
+                                    1,
+                                    1,
+                                    function="substring",
+                                    output_field=models.BinaryField(),
+                                ),
+                                models.Value(b"\x01", output_field=models.BinaryField()),
+                            ),
                         ),
                         name="user_mfa_devices_secret_ck",
                     ),
@@ -121,8 +131,12 @@ class Migration(migrations.Migration):
                     ),
                     models.CheckConstraint(
                         condition=models.Q(
-                            ("last_step__isnull", True),
-                            models.Q(("last_step__gt", 0), ("confirmed_at__isnull", False)),
+                            models.Q(("confirmed_at__isnull", True), ("last_step__isnull", True)),
+                            models.Q(
+                                ("confirmed_at__isnull", False),
+                                ("last_step__gt", 0),
+                                ("last_step__isnull", False),
+                            ),
                             _connector="OR",
                         ),
                         name="user_mfa_devices_last_step_ck",

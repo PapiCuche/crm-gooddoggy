@@ -16,8 +16,8 @@ from apps.accounts.emails import canonical_email
 from core.db.models import uuid7_primary_key
 
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): cabecera (3), nonce (12), de 1 a 4096 bytes
-# de texto y etiqueta (16).
-SEALED_MIN, SEALED_MAX = 32, 4127
+# de texto y etiqueta (16). Y su primer byte, el formato: un formato nuevo cambia la restricción.
+SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
 
 
 class UserManager(BaseUserManager["User"]):
@@ -193,10 +193,19 @@ class MfaDevice(models.Model):
                 condition=models.Q(type__in=["TOTP"]), name="user_mfa_devices_type_ck"
             ),
             # Lo más corto que da `core.sealed` (cabecera, nonce, un byte y etiqueta) son 32
-            # bytes: un secreto TOTP en claro, que tiene 20, no cabe en esta columna.
+            # bytes: un secreto TOTP en claro, que tiene 20, no cabe en esta columna. Escrito en
+            # base32 mide justo 32, y en hexadecimal 40: a esos los para el byte de formato.
             models.CheckConstraint(
-                condition=models.lookups.GreaterThanOrEqual(Length("secret"), SEALED_MIN)
-                & models.lookups.LessThanOrEqual(Length("secret"), SEALED_MAX),
+                condition=models.Q(
+                    models.lookups.GreaterThanOrEqual(Length("secret"), SEALED_MIN),
+                    models.lookups.LessThanOrEqual(Length("secret"), SEALED_MAX),
+                    models.lookups.Exact(
+                        models.Func(
+                            "secret", 1, 1, function="substring", output_field=models.BinaryField()
+                        ),
+                        models.Value(SEALED_FORMAT, output_field=models.BinaryField()),
+                    ),
+                ),
                 name="user_mfa_devices_secret_ck",
             ),
             models.CheckConstraint(
@@ -204,10 +213,11 @@ class MfaDevice(models.Model):
                 | models.Q(confirmed_at__gte=models.F("created_at")),
                 name="user_mfa_devices_confirmed_ck",
             ),
-            # Un paso se acepta al confirmar o después: sin confirmar no hay ninguno.
+            # Confirmar es aceptar un paso (ADR-023 §4): sin confirmar no hay ninguno, y
+            # confirmado siempre hay uno, para que el código que confirma no valga otra vez.
             models.CheckConstraint(
-                condition=models.Q(last_step__isnull=True)
-                | (models.Q(last_step__gt=0) & models.Q(confirmed_at__isnull=False)),
+                condition=models.Q(confirmed_at__isnull=True, last_step__isnull=True)
+                | models.Q(confirmed_at__isnull=False, last_step__isnull=False, last_step__gt=0),
                 name="user_mfa_devices_last_step_ck",
             ),
         ]
