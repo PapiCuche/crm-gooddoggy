@@ -586,6 +586,16 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **No es una limpieza:** no distingue un valor legítimo de uno fabricado con una clave comprometida que siga en el ajuste (ADR-022 §5).
 - **Lo que no hace:** no caduca ni purga las altas sin confirmar (también las vuelve a cifrar); no hay otras tablas con secretos; no activa una clave aparte de repartirla; recorre la tabla entera en cada pasada, que es una fila por cuenta con segundo factor.
 
+## MFA: generar y reconocer un código de respaldo (F2-99, ADR-023 §6)
+
+- **`apps.accounts.backup_codes`**, con la biblioteca estándar. **Nada lo llama todavía**, y no guarda nada: quien llame guardará el hash en `user_mfa_backup_codes` y lo gastará.
+- **`new_codes()`:** los diez códigos de una cuenta, distintos entre sí. Cada uno, 16 símbolos aleatorios (80 bits) del base32 de Crockford (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`: sin I, L, O ni U), como se enseñan una vez: en grupos de cuatro, `7K3M-9QXA-0B1C-ZZ2Y`.
+- **`normalized(presented)`:** lo que una persona teclea, como el código que se generó: en mayúsculas, sin guiones ni espacios, y con las letras que se leen como un dígito por su dígito (`I` y `L` por `1`, `O` por `0`). `None` si después no son 16 símbolos del alfabeto: otra longitud, una `U`, un tabulador o un salto de línea, o cualquier carácter que no sea ASCII (se mira antes de pasar a mayúsculas).
+- **`code_hash(presented)`:** el SHA-256, en hexadecimal y en minúsculas, del código normalizado: lo único que se guarda, y por lo que se busca. `None` si lo presentado no es un código; quien llame lo tratará como un código que no vale, sin error distinto.
+- La normalización solo junta con su dígito letras que no están en el alfabeto: dos códigos generados distintos no dan nunca el mismo hash.
+- **Por qué un hash rápido:** con 80 bits aleatorios, quien lea una copia de la base de datos no recupera los códigos (ADR-023 §6).
+- **Lo que no hace:** no guarda, gasta ni regenera códigos; no limita intentos ni audita; no decide si lo presentado en una ruta es un código de respaldo o uno TOTP (uno de seis dígitos no es un código de respaldo).
+
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
 `user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.
