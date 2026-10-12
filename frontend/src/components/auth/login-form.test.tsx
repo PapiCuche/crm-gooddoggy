@@ -120,6 +120,13 @@ describe("LoginForm", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Algo salió mal"));
   });
 
+  it("un 2xx sin cuerpo no deja el formulario ocupado para siempre", async () => {
+    mockApi({ [SESSION]: anonymous, [LOGIN]: { status: 200 } });
+    renderApp(<LoginForm next="/o" />);
+    fill("ana@acme.pe", "clave");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/o")); // como antes de F2-107
+  });
+
   it("dos envíos seguidos hacen un solo intento", async () => {
     const api = mockApi({ [SESSION]: anonymous, [LOGIN]: { status: 200, body: { user } } });
     renderApp(<LoginForm next="/o" />);
