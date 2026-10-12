@@ -17,3 +17,6 @@ os.environ["DATABASE_URL"] = env.required("DATABASE_MIGRATOR_URL")  # solo dentr
 os.environ.setdefault("DJANGO_SECRET_KEY", secrets.token_urlsafe(64))
 
 from config.settings.base import *  # noqa: E402,F403
+
+# El job no cifra ni lee secretos (ADR-002 §1.1): aunque le den las claves, no las guarda.
+SECRETS_KEKS = {}

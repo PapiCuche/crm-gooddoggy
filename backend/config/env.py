@@ -4,6 +4,7 @@ Sin dependencias externas: si falta un valor crítico, el proceso no arranca
 (`ImproperlyConfigured`) en lugar de usar un valor por defecto inseguro.
 """
 
+import base64
 import os
 import re
 from typing import Any
@@ -18,6 +19,8 @@ _FALSE = {"0", "false", "no", "off", ""}
 _ORIGIN = re.compile(
     r"https?://([A-Za-z0-9][A-Za-z0-9._-]{0,252}|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?"
 )
+# `versión:clave`. 43 caracteres de base64 para URL son 32 bytes; el relleno `=` es opcional.
+_KEY = re.compile(r"([1-9][0-9]{0,4}):([A-Za-z0-9_-]{43})=?")
 
 
 def required(name: str) -> str:
@@ -51,6 +54,24 @@ def integer(name: str, default: int) -> int:
     if not (value.isascii() and value.isdigit() and len(value) < 10):
         raise ImproperlyConfigured(f"{name} debe ser un entero no negativo, no {raw!r}")
     return int(value)
+
+
+def keys(name: str) -> dict[int, bytes]:
+    """Claves de 256 bits con su versión (`1:<clave>,2:<clave>`; cada clave, 32 bytes en
+    base64 para URL), o vacío si no se da. Las versiones van de 1 a 65535 y no se repiten;
+    tampoco una clave. El error solo nombra la variable: su valor es un secreto."""
+    value = os.environ.get(name, "").strip()
+    found: dict[int, bytes] = {}
+    for item in value.split(",") if value else []:
+        match = _KEY.fullmatch(item.strip())
+        version = int(match[1]) if match else 0
+        key = base64.urlsafe_b64decode(match[2] + "=") if match else b""
+        if not 0 < version < 2**16 or version in found or key in found.values() or len(key) != 32:
+            raise ImproperlyConfigured(
+                f"{name} debe ser una lista de `versión:clave`, con claves de 32 bytes en base64"
+            )
+        found[version] = key
+    return found
 
 
 def origin(name: str) -> str:

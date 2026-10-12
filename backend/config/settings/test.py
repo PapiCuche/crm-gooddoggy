@@ -1,10 +1,12 @@
 """Tests (pytest). La BD se toma de DATABASE_URL (en CI: servicio postgres:18.6)."""
 
+import hashlib
 import os
 
 os.environ.setdefault("DJANGO_SECRET_KEY", "django-insecure-test-only-not-for-production")
 os.environ.setdefault("DATABASE_URL", "postgres://crm_app:change-me-local-app@localhost:5432/crm")
 
+from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
 ALLOWED_HOSTS = ["testserver"]
@@ -19,3 +21,9 @@ TENANCY_MEMBERSHIP_RESOLVER = "tests.fakes.membership"
 STORAGE_BACKEND = "memory"  # la suite de contrato usa Garage vía STORAGE_* (tests/test_storage.py)
 MAIL_BACKEND = "memory"  # los correos quedan en `django.core.mail.outbox`
 DEFAULT_FROM_EMAIL = "no-reply@crm.test"
+
+# Sin `SECRETS_KEKS`, una clave de desarrollo derivada de la SECRET_KEY local (ADR-022 §6): el
+# cifrado de secretos funciona sin configurar nada. Nunca en production, que no hereda de aquí.
+SECRETS_KEKS = env.keys("SECRETS_KEKS") or {
+    1: hashlib.sha256(b"dev-kek:" + SECRET_KEY.encode()).digest()  # noqa: F405
+}

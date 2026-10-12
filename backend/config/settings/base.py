@@ -216,6 +216,10 @@ DEFAULT_FROM_EMAIL = env.optional("MAIL_FROM", "")
 # El origen público de la aplicación (ADR-021 §8): con él se componen los enlaces que van en un
 # correo. Llega del despliegue, nunca de una petición. Sin él no se emite ningún enlace.
 APP_ORIGIN = env.origin("APP_ORIGIN")
+# Claves maestras del cifrado de secretos en reposo (ADR-022), por versión; cifra la más alta.
+# Llegan del entorno de web, worker, ws y beat, nunca de la base de datos. Sin ellas no se cifra
+# ni se descifra nada (`core.sealed` falla cerrado); `local` y `test` derivan una de desarrollo.
+SECRETS_KEKS = env.keys("SECRETS_KEKS")
 # Reporte de errores (ADR-011 §3): sin SENTRY_DSN, NoopReporter (sin red).
 SENTRY_DSN = env.optional("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = env.optional("SENTRY_ENVIRONMENT", "")

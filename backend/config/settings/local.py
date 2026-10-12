@@ -1,5 +1,6 @@
 """Desarrollo local. Nunca se usa en producción."""
 
+import hashlib
 import os
 
 os.environ.setdefault("DJANGO_SECRET_KEY", "django-insecure-local-only-not-for-production")
@@ -20,3 +21,9 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
     *env.csv_list("DJANGO_CSRF_TRUSTED_ORIGINS"),
 ]
+
+# Sin `SECRETS_KEKS`, una clave de desarrollo derivada de la SECRET_KEY local (ADR-022 §6): el
+# cifrado de secretos funciona sin configurar nada. Nunca en production, que no hereda de aquí.
+SECRETS_KEKS = env.keys("SECRETS_KEKS") or {
+    1: hashlib.sha256(b"dev-kek:" + SECRET_KEY.encode()).digest()  # noqa: F405
+}

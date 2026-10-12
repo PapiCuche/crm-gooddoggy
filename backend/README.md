@@ -530,6 +530,18 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Despliegue:** el worker antes que la web. Un worker que no conoce la tarea vuelca el mensaje en su log de errores (aquí, el identificador de la cuenta, no su correo) y el aviso se pierde.
 - **Lo que no hace:** no avisa de otros cambios de la cuenta; no dice desde qué dirección de red se cambió la contraseña ni cuándo (y puede llegar hasta 24 horas después); mientras producción no tenga servidor de correo (ADR-019 §6) la tarea falla y nadie recibe el aviso.
 
+## Cifrado de secretos en reposo (F2-94, ADR-022)
+
+- **Para qué:** los secretos que la aplicación tiene que poder leer y que por eso no admiten un hash: el secreto TOTP de una cuenta (MFA, E01-03) y, en sus fases, las credenciales de IA y de canales. **Nada lo usa todavía:** este work item entrega el módulo.
+- **`core.sealed`** es el único sitio que cifra y descifra: `seal(purpose, owner, plaintext)` devuelve los bytes que se guardan; `unseal(purpose, owner, sealed)` los abre; `stale(sealed)` dice si un valor quedó cifrado con una clave que ya no es la vigente. No registra nada, y sus errores no llevan la clave, el texto ni el cifrado.
+- **Algoritmo:** AES-256-GCM (`cryptography` 50.0.1, la versión de ADR-012). La clave maestra no cifra datos: de ella se deriva con HKDF-SHA256 una clave por propósito (`mfa.totp`), que es una constante del código.
+- **Lo que se guarda:** 1 byte de formato, 2 con la versión de la clave maestra, 12 de nonce aleatorio y el cifrado con su etiqueta. Dos cifrados del mismo secreto dan valores distintos. El texto en claro, de 1 a 4096 bytes.
+- **Atado a su sitio:** el propósito y el dueño (`user:<id>`: un identificador estable de la fila dueña) van como datos asociados. Un valor copiado a otra fila, presentado como de otro propósito o con un byte cambiado no se abre: `SealError`, sin decir por qué. Quien llama lo trata como un secreto que no existe.
+- **`SECRETS_KEKS`:** las claves maestras, del entorno: `versión:clave` separadas por comas, cada clave 32 bytes en base64 para URL, versiones de 1 a 65535 sin repetir. Cifra la de versión más alta; abren todas las presentes. Un valor mal formado impide arrancar, y el error solo nombra la variable.
+- **Sin `SECRETS_KEKS`:** `seal`, `unseal` y `stale` lanzan `ImproperlyConfigured` (falla cerrado). `production` arranca igual: la variable no es obligatoria mientras nada use el módulo. `local` y `test` derivan una clave de desarrollo de su `SECRET_KEY`, **que no protege nada** (esa `SECRET_KEY` por defecto está en el repositorio); cambiarla deja ilegible lo cifrado en local. El job de migraciones no guarda las claves aunque se las den.
+- **Rotar:** añadir una clave con una versión más alta y desplegar; volver a cifrar lo que `stale` señala; retirar la anterior cuando no quede nada cifrado con ella. Retirarla antes deja ilegible lo que dependía de ella, hasta que vuelva. **El trabajo que vuelve a cifrar no existe todavía:** llega con la primera tabla que guarde secretos.
+- **Lo que no hace:** no guarda nada en ninguna tabla; no audita (se audita la operación que lo usa); no protege de un proceso de runtime comprometido, que tiene las claves en su entorno.
+
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
 `user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.
