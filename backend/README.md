@@ -622,6 +622,17 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Lo que piden las rutas que lo llamen:** comprobar antes de `admit` todo lo que no es el código (la marca de acceso a medias o la sesión, la contraseña donde se pide, que hay un dispositivo confirmado): `admit` cuenta sin preguntar quién llama. Y tratar `Attempt.last` como un aviso que se repite: lo lleva cada intento admitido al que le falta uno para el tope, hasta diez veces por ventana si los fallos siguen, y también cuando otro intento en curso se devuelve después.
 - **Lo que no hace:** no pone plazo a la espera por la fila de la cuenta (ningún ajuste define `lock_timeout`); no comprueba ningún código; no audita ni avisa al alcanzarse el tope (ADR-023 §5 y §10: lo hará la ruta que lo alcance, con `Attempt.last`); no cuenta los códigos de un alta sin confirmar, que tienen su tope por alta (ADR-024).
 
+## MFA: dar por bueno un código (F2-103, ADR-023 §2, §3, §5 y §6)
+
+- **Qué hay:** `apps.accounts.second_factor.accept(account, presented)`, la pieza que decide si lo presentado vale como segundo factor de una cuenta y **lo gasta** al aceptarlo. La compartirán el segundo paso del acceso, el step-up, quitar el factor y regenerar los códigos de respaldo. **Todavía nada la llama.**
+- **Devuelve el método** con el que valió, `totp` o `backup_code` (los nombres con que el acceso lo auditará, ADR-023 §5), o `None` si no vale, sin decir por qué.
+- **Seis dígitos son un código TOTP:** vale el del paso actual, el anterior o el siguiente, y solo de un paso posterior al último aceptado (`last_step`). Al aceptarlo guarda ese paso: ni él ni uno anterior vuelven a valer.
+- **Cualquier otra cosa se mira como código de respaldo** de esa cuenta, escrito como lo teclee una persona (mayúsculas o minúsculas, con guiones o espacios). Vale si no está gastado; al aceptarlo queda gastado (`used_at`), con un `UPDATE` que solo toca uno sin gastar.
+- **En la transacción de quien llama,** con la fila del dispositivo bloqueada antes de mirar nada: dos peticiones con el mismo código no pasan las dos, y si esa transacción se deshace, el código no queda gastado. Fuera de una transacción se niega.
+- **Sin dispositivo confirmado** lanza `NoDevice`, que no es «no vale»: un alta a medias no comprueba nada. Quien llama lo comprueba antes de contar el intento.
+- **Un secreto que no se abre** es un código TOTP que no vale (ADR-023 §3) y se reporta como error de operación (`UnreadableSecrets`, acción `mfa.accept`), en cada intento. Un código de respaldo no necesita el secreto y sigue valiendo.
+- **Lo que no hace:** no cuenta el intento (antes, `code_limit.admit`; si vale, `give_back`), no audita y no abre sesión; no recorta espacios alrededor de un código TOTP (los serializadores ya los quitan); no dice cuántos códigos de respaldo quedan. Un `used_at` anterior al `created_at` del código (relojes desajustados entre procesos) lo rechaza la base y sería un 500: falla cerrado.
+
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
 `user_invitations` guarda las invitaciones a una organización. Las reglas de toda la serie (E01-06) están en [ADR-020](../docs/adr/ADR-020-invitations.md); F2-79 dejó la tabla y el modelo, F2-80 la ruta que invita («Invitar a una persona», abajo), F2-81 la que las lista y F2-82 la que revoca una. Enviar y aceptar son los siguientes, y esperan a D-F2-14.
