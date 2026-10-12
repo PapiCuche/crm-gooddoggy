@@ -104,6 +104,10 @@ def test_a_code_that_is_not_valid_runs_nothing_of_the_route_and_stays_counted(
             uuid4(), "123456", actor=None, client=CLIENT, ready=print, accepted=print
         )
     assert counted(ana) == 3
+    migrator.execute("UPDATE users SET is_active = false WHERE id = %s", [ana.pk])
+    with pytest.raises(User.DoesNotExist):  # desactivada mientras tanto: ni `ready` ni el código
+        check(ana, code_at(clock), ready=lambda account: ran.append("ready"))
+    assert ran == [] and counted(ana) == 3 and MfaDevice.objects.get().last_step == 1
 
 
 def test_if_the_route_fails_after_the_code_nothing_is_spent_and_the_attempt_stays_counted(

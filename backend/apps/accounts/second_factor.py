@@ -170,9 +170,10 @@ def verify[T](
     1. Cuenta el intento (`code_limit.admit`). Con el tope alcanzado lanza `Capped`, con los
        segundos que faltan, sin mirar el código.
     2. En una transacción, bloquea la fila de la cuenta y la relee, y llama a `ready(account)`:
-       ahí la ruta comprueba, bajo el bloqueo, lo que no es el código (que la cuenta sigue
-       activa, que aquí no se mira; la marca de acceso a medias y su época; la sesión; la
-       contraseña). Si `ready` lanza, no se probó ningún código: el intento se devuelve.
+       ahí la ruta comprueba, bajo el bloqueo, lo que no es el código (la marca de acceso a
+       medias y su época; la sesión; la contraseña). Si `ready` lanza, no se probó ningún
+       código: el intento se devuelve. Una cuenta que ya no está activa no llega a `ready`:
+       lanza `User.DoesNotExist`, como una que no existe, y el intento se devuelve.
     3. `accept`. Si el código no vale lanza `mfa.WrongCode` y el intento queda contado.
     4. Si vale, `accepted(account, method)` hace lo de la ruta en esa transacción (abrir la
        sesión, auditar) y el intento se devuelve con ella. Si `accepted` lanza, todo se
@@ -191,7 +192,8 @@ def verify[T](
     looked = False
     try:
         with transaction.atomic():
-            account = User.objects.select_for_update(no_key=True).get(pk=user_id)
+            # Activa, o nada: una cuenta desactivada no comprueba códigos (ADR-023 §5).
+            account = User.objects.select_for_update(no_key=True).get(pk=user_id, is_active=True)
             ready(account)
             looked = True  # desde aquí el intento cuenta, salvo que el código valga
             method = accept(account, presented)
