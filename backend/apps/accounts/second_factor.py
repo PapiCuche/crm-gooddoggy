@@ -45,7 +45,10 @@ def accept(account: User, presented: str) -> str | None:
 
     Corre en la transacción de quien llama y bloquea la fila del dispositivo: dos peticiones
     con el mismo código no pasan las dos, y si esa transacción se deshace, el código no queda
-    gastado. Fuera de una transacción se niega.
+    gastado. Fuera de una transacción se niega. Quien llama bloquea **antes** la fila de la
+    cuenta (`FOR NO KEY UPDATE`), como `mfa.confirm_enrollment`: la cuenta y después el
+    dispositivo. Quien tocara la cuenta después de `accept` (revocar las sesiones al quitar el
+    factor) se cruzaría con quien lleva ese orden, y la base deshace a una de las dos.
 
     Seis dígitos son un código TOTP: vale el de un paso de la ventana posterior al último
     aceptado (ADR-023 §2). Un secreto que no se abre es un código que no vale, y se reporta
@@ -53,8 +56,14 @@ def accept(account: User, presented: str) -> str | None:
     como lo teclee una persona; vale si no está gastado (ADR-023 §6), también con el secreto
     ilegible. Lo presentado llega ya sin espacios alrededor.
 
-    `NoDevice` si la cuenta no tiene un dispositivo confirmado: quien llama lo comprueba antes
-    de contar el intento.
+    `NoDevice` si la cuenta no tiene un dispositivo confirmado. Quien llama lo comprueba antes
+    de contar el intento y aun así lo trata: el factor se pudo quitar entre esa comprobación y
+    esta llamada, y ese intento queda contado. Nunca es un acierto: con él no se abre sesión
+    ni se da nada por verificado.
+
+    Devuelve `BACKUP_CODE` también a la ruta que solo admite un código TOTP (regenerar los
+    códigos, ADR-023 §6), y ya gastado: si esa ruta lo rechaza sin deshacer su transacción, el
+    código de respaldo se pierde sin haber servido.
     """
     if not connection.in_atomic_block:  # gastar el código y lo que lo acepta van juntos
         raise RuntimeError("second_factor.accept se llama dentro de una transacción")

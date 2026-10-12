@@ -2,13 +2,15 @@
 confirmado (ADR-023 §2, §3, §5 y §6). PostgreSQL real y el rol `crm_app`."""
 
 import logging
+import time
 from datetime import timedelta
+from threading import Thread
 from types import SimpleNamespace
 from typing import Any
 
 import psycopg
 import pytest
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.utils import OperationalError
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -128,6 +130,7 @@ def test_a_secret_that_cannot_be_opened_is_a_code_that_is_not_valid_and_is_repor
     settings.SECRETS_KEKS = {2: bytes(range(32))}  # la clave con la que se cifró ya no está
     assert accept(ana, code_at(clock)) is None  # no se distingue de un código que no vale
     assert reports == [("UnreadableSecrets(1)", {"action": "mfa.accept"})]
+    assert accept(ana, "１２３４５６") is None and len(reports) == 1  # no es TOTP: no abre nada
     monkeypatch.setattr(reporting, "reporter", lambda: None)  # un reporte roto: lo mismo
     assert accept(ana, code_at(clock)) is None
     assert MfaDevice.objects.get().last_step == 1
@@ -158,3 +161,79 @@ def test_the_code_is_spent_with_the_device_locked_and_only_if_the_transaction_en
                 accept(ana, presented)
         cursor.execute("SET lock_timeout = 0")
     assert accept(ana, code_at(clock)) == "totp" and accept(ana, shown[1]) == "backup_code"
+
+
+def at_once(
+    migrator: psycopg.Connection[Any],
+    clock: SimpleNamespace,
+    user: User,
+    presented: list[str],
+    meanwhile: timedelta = timedelta(0),
+) -> list[str]:
+    """Lo que `accept` responde a cada uno, presentados a la vez en transacciones distintas.
+    Llegan con la fila del dispositivo tomada por otra: esperan todos, la hora avanza
+    `meanwhile` y, al soltarla, pasan de uno en uno."""
+    results: list[str] = []
+
+    def present(code: str) -> None:
+        try:
+            results.append(str(accept(user, code)))
+        finally:
+            connection.close()  # la conexión de este hilo
+
+    threads = [Thread(target=present, args=(code,)) for code in presented]
+    waiting = "SELECT count(*) FROM pg_locks WHERE NOT granted"
+    with migrator.transaction():
+        migrator.execute("SELECT 1 FROM user_mfa_devices FOR UPDATE")
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + 10
+        while migrator.execute(waiting).fetchone() != (len(threads),):
+            assert time.monotonic() < deadline  # no esperan: no hay bloqueo
+            time.sleep(0.02)
+        assert results == []
+        clock.at += meanwhile
+    for thread in threads:
+        thread.join(10)
+    return sorted(results)
+
+
+def test_two_transactions_with_the_same_code_do_not_both_accept_it(
+    clock: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    ana = make_user(email="ana@example.com")
+    shown = enrolled(ana)
+    same = [code_at(clock), code_at(clock), shown[0], shown[0]]
+    assert at_once(migrator, clock, ana, same) == ["None", "None", "backup_code", "totp"]
+    assert MfaBackupCode.objects.filter(used_at__isnull=False).count() == 1
+    # La hora de un código es la de cuando se mira, con la fila ya tomada: el de dos pasos
+    # después no valía al llegar, y vale porque la espera lo metió en la ventana.
+    assert at_once(migrator, clock, ana, [code_at(clock, 2)], STEP) == ["totp"]
+
+
+def test_a_code_is_a_totp_code_only_if_it_is_six_ascii_digits_as_presented(
+    clock: SimpleNamespace,
+) -> None:
+    ana = make_user(email="ana@example.com")
+    enrolled(ana)
+    digits = "1234-5678-9012-3456"  # un código de respaldo puede ser todo dígitos
+    MfaBackupCode.objects.create(user=ana, code_hash=backup_codes.code_hash(digits) or "")
+    code = code_at(clock)
+    spaced = (f" {code}", f"{code} ", f"{code[:3]} {code[3:]}", f"{code[:3]}-{code[3:]}")
+    for presented in (*spaced, f"{code}\n", f"{code}\x00", f"+{code[1:]}", digits[:7]):
+        assert accept(ana, presented) is None  # ni recorta ni junta: no son seis dígitos
+    assert MfaDevice.objects.get().last_step == 1
+    assert accept(ana, digits.replace("-", "")) == "backup_code"  # dieciséis: de respaldo
+    assert accept(ana, code) == "totp"
+
+
+def test_a_backup_code_spent_before_it_was_created_is_refused_by_the_database(
+    clock: SimpleNamespace,
+) -> None:
+    ana = make_user(email="ana@example.com")
+    shown = enrolled(ana)
+    clock.at -= timedelta(milliseconds=1)  # otro proceso, con el reloj atrasado
+    with pytest.raises(IntegrityError, match="user_mfa_backup_codes_used_ck"):
+        accept(ana, shown[0])  # falla cerrado: un 500, y el código no queda gastado
+    clock.at += timedelta(milliseconds=1)
+    assert accept(ana, shown[0]) == "backup_code"
