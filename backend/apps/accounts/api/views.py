@@ -14,6 +14,8 @@ from rest_framework.views import APIView
 from apps.accounts import mfa, recovery, services
 from apps.accounts.api.serializers import (
     LoginSerializer,
+    MfaBackupCodesSerializer,
+    MfaEnrollmentConfirmSerializer,
     MfaEnrollmentSerializer,
     MfaEnrollmentStartSerializer,
     PasswordResetConfirmSerializer,
@@ -159,3 +161,28 @@ class MfaTotpView(APIView):
             wrong = serializers.ErrorDetail("La contraseña no es correcta.", code="invalid")
             raise serializers.ValidationError({"password": [wrong]}) from None
         return Response(MfaEnrollmentSerializer(enrollment).data, status=201)
+
+
+class MfaTotpConfirmView(APIView):
+    permission_classes = [Authenticated]
+
+    @extend_schema(
+        operation_id="auth_mfa_totp_confirm",
+        tags=["auth"],
+        request=MfaEnrollmentConfirmSerializer,
+        responses={200: MfaBackupCodesSerializer, **errors(400, 401, 403, 409, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Confirma el alta del dispositivo TOTP con un código suyo: desde ahora la cuenta tiene
+        segundo factor. Devuelve sus códigos de respaldo, que no se vuelven a enseñar, y cierra
+        las demás sesiones de la cuenta. 400 en `code`: el código no vale. 401: la sesión se
+        revocó mientras tanto. 409 `MFA_ENROLLMENT_NOT_STARTED`: no hay un alta empezada, o
+        caducó. 409 `MFA_ALREADY_ENABLED`: ya estaba confirmada. 429: demasiados intentos."""
+        sent = MfaEnrollmentConfirmSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            codes = mfa.confirm_enrollment(request._request, **sent.validated_data)
+        except mfa.WrongCode:
+            wrong = serializers.ErrorDetail("El código no vale.", code="invalid")
+            raise serializers.ValidationError({"code": [wrong]}) from None
+        return Response(MfaBackupCodesSerializer({"backup_codes": codes}).data)

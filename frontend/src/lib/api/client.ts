@@ -38,7 +38,9 @@ import type {
   MemberStatus,
   MemberStatusChangeRequest,
   MembersListParams,
+  MfaBackupCodes,
   MfaEnrollment,
+  MfaEnrollmentConfirmRequest,
   MfaEnrollmentStartRequest,
   OrganizationSummary,
   PaginatedAuditEntryList,
@@ -448,6 +450,113 @@ export const useAuthMfaTotpStart = <TError = ErrorType<Error>, TContext = unknow
   TContext
 > => {
   return useMutation(getAuthMfaTotpStartMutationOptions(options), queryClient);
+};
+
+export const getAuthMfaTotpConfirmUrl = () => {
+  return `/api/v1/auth/mfa/totp/confirm/`;
+};
+
+/**
+ * Confirma el alta del dispositivo TOTP con un código suyo: desde ahora la cuenta tiene
+ * segundo factor. Devuelve sus códigos de respaldo, que no se vuelven a enseñar, y cierra
+ * las demás sesiones de la cuenta. 400 en `code`: el código no vale. 401: la sesión se
+ * revocó mientras tanto. 409 `MFA_ENROLLMENT_NOT_STARTED`: no hay un alta empezada, o
+ * caducó. 409 `MFA_ALREADY_ENABLED`: ya estaba confirmada. 429: demasiados intentos.
+ */
+export const authMfaTotpConfirm = async (
+  mfaEnrollmentConfirmRequest: MfaEnrollmentConfirmRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MfaBackupCodes> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<MfaBackupCodes>(getAuthMfaTotpConfirmUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(mfaEnrollmentConfirmRequest),
+  });
+};
+
+export const getAuthMfaTotpConfirmMutationKey = () => ["authMfaTotpConfirm"] as const;
+
+export const getAuthMfaTotpConfirmMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authMfaTotpConfirm>>,
+    TError,
+    AuthMfaTotpConfirmMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authMfaTotpConfirm>>,
+  TError,
+  AuthMfaTotpConfirmMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthMfaTotpConfirmMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authMfaTotpConfirm>>,
+    AuthMfaTotpConfirmMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authMfaTotpConfirm(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthMfaTotpConfirmMutationResult = NonNullable<
+  Awaited<ReturnType<typeof authMfaTotpConfirm>>
+>;
+export type AuthMfaTotpConfirmMutationBody = MfaEnrollmentConfirmRequest;
+export type AuthMfaTotpConfirmMutationError = ErrorType<Error>;
+export type AuthMfaTotpConfirmMutationVariables = { data: MfaEnrollmentConfirmRequest };
+
+export const useAuthMfaTotpConfirm = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authMfaTotpConfirm>>,
+      TError,
+      AuthMfaTotpConfirmMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authMfaTotpConfirm>>,
+  TError,
+  AuthMfaTotpConfirmMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthMfaTotpConfirmMutationOptions(options), queryClient);
 };
 
 export const getAuthPasswordResetRequestUrl = () => {

@@ -36,6 +36,19 @@ class MfaEnrollmentSerializer(serializers.Serializer[Any]):
     expires_in = serializers.IntegerField(help_text="Segundos que quedan para confirmar el alta.")
 
 
+class MfaEnrollmentConfirmSerializer(serializers.Serializer[Any]):
+    code = serializers.CharField(
+        max_length=16, help_text="El código de seis dígitos de la aplicación de autenticación."
+    )
+
+
+class MfaBackupCodesSerializer(serializers.Serializer[Any]):
+    backup_codes = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Los códigos de respaldo, de un solo uso. Solo se enseñan esta vez.",
+    )
+
+
 class UserSerializer(serializers.ModelSerializer[User]):
     class Meta:
         model = User

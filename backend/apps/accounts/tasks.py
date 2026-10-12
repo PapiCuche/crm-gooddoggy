@@ -43,3 +43,11 @@ def reseal_mfa_secrets() -> dict[str, int]:
     ADR-022 §5). Devuelve la versión de la clave vigente en este proceso y cuántos volvió a
     cifrar, cuántos no pudo abrir y cuántos dejó."""
     return mfa.reseal()
+
+
+# Sin reintentos, como el aviso del cambio de contraseña. Su argumento es el identificador de la
+# cuenta, no su correo.
+@platform_task(name="accounts.send_mfa_enabled", ignore_result=True, max_retries=0)
+def send_mfa_enabled(user_id: str) -> None:
+    """Avisa a la cuenta `user_id` de que se le dio de alta un segundo factor (F2-100)."""
+    mfa.notify_enabled(user_id)
