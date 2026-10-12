@@ -2,9 +2,11 @@
 
 `start_enrollment` es lo que hace la ruta que empieza el alta: comprueba la contraseña, crea el
 dispositivo sin confirmar y devuelve, una sola vez, su secreto. El secreto se guarda cifrado
-(`core.sealed`, ADR-022) y no vuelve a salir.
+(`core.sealed`, ADR-022) y no vuelve a salir. `reseal` es lo que hace la tarea
+`accounts.reseal_mfa_secrets`: tras una rotación de clave, vuelve a cifrar con la vigente.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -18,6 +20,9 @@ from apps.audit import platform
 from apps.audit.services import Entity, Result
 from core import sealed
 from core.api.errors import ApiError
+from core.observability import reporting
+
+logger = logging.getLogger(__name__)
 
 PURPOSE = "mfa.totp"  # el propósito de `core.sealed` (ADR-022 §2)
 ISSUER = "Good Doggy CRM"  # lo que enseña la aplicación de autenticación; sin dos puntos
@@ -112,3 +117,62 @@ def start_enrollment(request: HttpRequest, *, password: str) -> Enrollment:
         uri=totp.uri(secret, issuer=ISSUER, account=user.email),
         expires_in=int(PENDING_FOR.total_seconds()),
     )
+
+
+class UnreadableSecrets(Exception):
+    """Hay secretos guardados que no se pueden abrir. Solo lleva cuántos."""
+
+
+def reseal() -> dict[str, int]:
+    """Vuelve a cifrar con la clave vigente cada secreto TOTP que quedó cifrado con otra
+    (ADR-022 §5, paso 2). Devuelve cuántos volvió a cifrar (`resealed`), cuántos no pudo abrir
+    (`unreadable`) y cuántos dejó para otra pasada porque otra operación los tenía (`busy`),
+    con la versión de la clave vigente en este proceso (`key`); lo deja también en el log. La
+    clave anterior se puede retirar cuando una pasada cuya `key` es la nueva da cero en los
+    tres y todos los procesos corren ya con la nueva (ADR-022 §5; esto no lo comprueba nada):
+    uno que aún no la tiene da cero sin haber vuelto a cifrar nada, y cifra con la anterior.
+
+    Cada fila pendiente va en su transacción, bloqueada: solo cambia `secret`. Lo que no abre (su
+    clave ya no está, o el valor no es de esa cuenta) **no se toca**: en un proceso que aún no
+    tiene la clave nueva, lo cifrado con ella también se ve como pendiente y tampoco se abre. Si
+    hubo alguno, queda en el log y en el reporte de errores, sin el valor ni la cuenta.
+
+    No distingue un valor legítimo de uno fabricado con una clave comprometida que siga en el
+    ajuste: volver a cifrar no es una limpieza (ADR-022 §5). Sin claves lanza
+    `ImproperlyConfigured`.
+    """
+    done = {"key": sealed.current(), "resealed": 0, "unreadable": 0, "busy": 0}  # sin clave, lanza
+    listed = MfaDevice.objects.order_by("pk").values_list("pk", "user_id", "secret")
+    # Leer no bloquea nada: solo lo que parece pendiente se bloquea y se vuelve a mirar.
+    for pk, user_id in [row[:2] for row in listed if sealed.stale(row[2])]:
+        with transaction.atomic():
+            rows = MfaDevice.objects.select_for_update(skip_locked=True).filter(pk=pk)
+            device = rows.first()
+            if device is None:  # la borró otra operación, o la tiene bloqueada
+                done["busy"] += int(MfaDevice.objects.filter(pk=pk).exists())
+                continue
+            if not sealed.stale(device.secret):
+                continue
+            try:
+                secret = sealed.unseal(PURPOSE, owner(user_id), device.secret)
+            except sealed.SealError:
+                done["unreadable"] += 1
+                continue
+            sealed_again = sealed.seal(PURPOSE, owner(user_id), secret)
+            MfaDevice.objects.filter(pk=pk).update(secret=sealed_again)
+            done["resealed"] += 1
+    logger.info(
+        "secretos TOTP: clave %d, vueltos a cifrar %d, ilegibles %d, ocupados %d",
+        done["key"],
+        done["resealed"],
+        done["unreadable"],
+        done["busy"],
+    )
+    if done["unreadable"]:
+        error = UnreadableSecrets(done["unreadable"])
+        logger.error("secretos TOTP que no se pueden abrir: %d", done["unreadable"])
+        try:
+            reporting.reporter().capture_exception(error, {"action": "mfa.reseal"})
+        except Exception:
+            logger.exception("secretos TOTP ilegibles: no se pudo reportar")
+    return done

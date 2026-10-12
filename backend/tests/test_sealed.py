@@ -96,6 +96,7 @@ def test_the_highest_version_seals_every_key_opens_and_a_removed_key_fails_close
     settings.SECRETS_KEKS = {1: OLD, 7: NEW}  # rotación: se añade una clave
     after = seal(PURPOSE, OWNER, PLAIN)
     assert (before[:3], after[:3]) == (b"\x01\x00\x01", b"\x01\x00\x07")
+    assert sealed.current() == 7  # la vigente: la de versión más alta de las de este proceso
     assert unseal(PURPOSE, OWNER, before) == unseal(PURPOSE, OWNER, after) == PLAIN
     assert (stale(before), stale(after), stale(memoryview(after))) == (True, False, False)
     assert stale(b"") and stale(b"\x02" + after[1:])  # lo que no es de este formato, también
@@ -119,6 +120,7 @@ def test_without_keys_nothing_is_sealed_or_opened(settings: Any) -> None:
         lambda: seal(PURPOSE, OWNER, PLAIN),
         lambda: unseal(PURPOSE, OWNER, box),
         lambda: stale(box),
+        sealed.current,
     ):
         with pytest.raises(ImproperlyConfigured, match=VAR):
             call()

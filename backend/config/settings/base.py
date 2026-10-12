@@ -110,6 +110,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "accounts.purge_login_throttles",
         "schedule": crontab(minute=7),
     },
+    # F2-98 (ADR-022 §5): tras una rotación de clave, vuelve a cifrar con la vigente. A diario:
+    # sin rotación no encuentra nada que hacer.
+    "accounts.reseal_mfa_secrets": {
+        "task": "accounts.reseal_mfa_secrets",
+        "schedule": crontab(hour=3, minute=47),
+    },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
