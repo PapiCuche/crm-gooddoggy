@@ -170,9 +170,9 @@ def verify[T](
     1. Cuenta el intento (`code_limit.admit`). Con el tope alcanzado lanza `Capped`, con los
        segundos que faltan, sin mirar el código.
     2. En una transacción, bloquea la fila de la cuenta y la relee, y llama a `ready(account)`:
-       ahí la ruta comprueba, bajo el bloqueo, lo que no es el código (la marca de acceso a
-       medias y su época, la sesión, la contraseña). Si `ready` lanza, no se probó ningún
-       código: el intento se devuelve.
+       ahí la ruta comprueba, bajo el bloqueo, lo que no es el código (que la cuenta sigue
+       activa, que aquí no se mira; la marca de acceso a medias y su época; la sesión; la
+       contraseña). Si `ready` lanza, no se probó ningún código: el intento se devuelve.
     3. `accept`. Si el código no vale lanza `mfa.WrongCode` y el intento queda contado.
     4. Si vale, `accepted(account, method)` hace lo de la ruta en esa transacción (abrir la
        sesión, auditar) y el intento se devuelve con ella. Si `accepted` lanza, todo se
@@ -201,12 +201,14 @@ def verify[T](
             code_limit.give_back(attempt)  # aquí, como el acceso: si falla, nada
             return result
     except BaseException:
+        kept = looked
         if not looked:
             try:
                 code_limit.give_back(attempt)
             except Exception:  # queda contado de más: el error que importa es el original
                 logger.exception("intento de código sin devolver")
-        elif attempt.last:
+                kept = True
+        if kept and attempt.last:  # también el que no se pudo devolver: el tope se alcanzó
             _reached(user_id, actor, client)
         raise
 
@@ -218,7 +220,7 @@ def notify_code_limit(user_id: str) -> bool:
     address = mfa.notice_address(user_id)
     if address is None:
         return False
-    hours = settings.MFA_CODE_THROTTLE[1] // 3600
+    hours = -(-settings.MFA_CODE_THROTTLE[1] // 3600)  # hacia arriba: el texto dice «como mucho»
     body = LIMIT_BODY.format(hours=hours)
     mail.send(mail.Message(to=address, subject=LIMIT_SUBJECT, body=body, purpose="mfa_code_limit"))
     return True

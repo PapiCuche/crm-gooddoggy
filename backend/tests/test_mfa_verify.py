@@ -107,7 +107,7 @@ def test_a_code_that_is_not_valid_runs_nothing_of_the_route_and_stays_counted(
 
 
 def test_if_the_route_fails_after_the_code_nothing_is_spent_and_the_attempt_stays_counted(
-    clock: SimpleNamespace,
+    clock: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ana = make_user(email=EMAIL)
     shown = enrolled(ana)
@@ -121,11 +121,19 @@ def test_if_the_route_fails_after_the_code_nothing_is_spent_and_the_attempt_stay
     assert counted(ana) == 2  # como en el acceso: sin lo de la ruta, el intento no se devuelve
     assert MfaDevice.objects.get().last_step == 1  # y el código no quedó gastado
     assert not MfaBackupCode.objects.exclude(used_at=None).exists()
+    with monkeypatch.context() as patch, pytest.raises(ZeroDivisionError):
+        patch.setattr(code_limit, "give_back", lambda attempt: 1 / 0)
+        check(ana, code_at(clock))  # devolverlo va en esa transacción: si falla, tampoco lo demás
+    assert counted(ana) == 3 and MfaDevice.objects.get().last_step == 1
     assert check(ana, code_at(clock)) == "totp" and check(ana, shown[0]) == "backup_code"
 
 
 def test_if_the_route_refuses_before_the_code_the_attempt_is_given_back(
-    clock: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    clock: SimpleNamespace,
+    migrator: psycopg.Connection[Any],
+    queued: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     ana = make_user(email=EMAIL)
     enrolled(ana)
@@ -137,10 +145,17 @@ def test_if_the_route_refuses_before_the_code_the_attempt_is_given_back(
         check(ana, code_at(clock, -2), ready=refuse)
     assert counted(ana) == 0  # no se probó ningún código
     assert not any("user_mfa_devices" in query["sql"] for query in queries)  # ni se miró
+    for _ in range(LIMIT - 1):
+        code_limit.admit(ana.pk)
+    with pytest.raises(PermissionError):
+        check(ana, code_at(clock), ready=refuse)  # el que haría diez: devuelto, no alcanza el tope
+    assert counted(ana) == LIMIT - 1 and audit(migrator) == [] and queued == []
     monkeypatch.setattr(code_limit, "give_back", lambda attempt: 1 / 0)
     with caplog.at_level(logging.ERROR), pytest.raises(PermissionError):
         check(ana, code_at(clock), ready=refuse)  # devolverlo falla: el error sigue siendo el suyo
-    assert counted(ana) == 1 and "sin devolver" in caplog.text
+    assert counted(ana) == LIMIT and "sin devolver" in caplog.text
+    # Quedó contado y es el que alcanza el tope: no se alcanza en silencio.
+    assert [row[0] for row in audit(migrator)] == ["auth.mfa.throttled"] and len(queued) == 1
 
 
 @pytest.mark.parametrize("actor", [None, "account"])
@@ -234,6 +249,9 @@ def test_the_task_mails_the_account_what_happened_without_any_code(settings: Any
     settings.MFA_CODE_THROTTLE = (5, 48 * 60 * 60)  # la ventana que diga el ajuste
     assert second_factor.notify_code_limit(str(ana.pk)) is True
     assert "como mucho 48 horas" in str(outbox.outbox[1].body) and len(outbox.outbox) == 2
+    settings.MFA_CODE_THROTTLE = (5, 24 * 60 * 60 + 1)  # no son horas justas: nunca de menos
+    assert second_factor.notify_code_limit(str(ana.pk)) is True
+    assert "como mucho 25 horas" in str(outbox.outbox[2].body)
     assert (send_mfa_code_limit.name, send_mfa_code_limit.max_retries) == (
         "accounts.send_mfa_code_limit",
         0,

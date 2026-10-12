@@ -18,8 +18,8 @@ intento a intento. Cada intento es una fila con su hora (ventana deslizante, no 
 por ventana fija: a caballo de dos ventanas fijas cabrían el doble de fallos seguidos).
 
 Nada pone el contador a cero: tampoco cambiar la contraseña (ADR-023 §5). No guarda ni
-registra ningún código. La fila de auditoría y el aviso al alcanzarse el tope son de la ruta
-que lo alcanza (`Attempt.last`).
+registra ningún código. La fila de auditoría y el aviso al alcanzarse el tope los deja
+`second_factor.verify` (F2-104), con `Attempt.last`.
 """
 
 from dataclasses import dataclass
