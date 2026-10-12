@@ -3,7 +3,7 @@
 from django.contrib.sessions.models import Session
 from django.utils import timezone
 
-from apps.accounts import mfa, recovery, throttle
+from apps.accounts import code_limit, mfa, recovery, throttle
 from core.tenancy.celery import platform_task
 
 
@@ -17,7 +17,8 @@ def purge_expired_sessions() -> int:
 @platform_task(name="accounts.purge_login_throttles")
 def purge_login_throttles() -> int:
     """Borra los contadores de acceso que ya no cuentan (F2-03B)."""
-    return throttle.purge() + recovery.purge_limits()  # y los de pedir un enlace (F2-88)
+    # Y los de pedir un enlace (F2-88) y los intentos de código del segundo factor (F2-102).
+    return throttle.purge() + recovery.purge_limits() + code_limit.purge()
 
 
 # Sin reintentos y sin `acks_late`: cada ejecución puede emitir un enlace, y un enlace emitido

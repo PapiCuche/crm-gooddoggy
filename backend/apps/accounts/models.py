@@ -268,3 +268,24 @@ class MfaBackupCode(models.Model):
 
     def __str__(self) -> str:
         return str(self.pk)  # nunca la cuenta ni el hash
+
+
+class MfaCodeAttempt(models.Model):
+    """Un intento de código del segundo factor contado contra una cuenta (F2-102, ADR-023 §5):
+    platform-owned. Solo la cuenta y cuándo se contó, con el reloj de la base de datos; nunca el
+    código. Las filas las escribe `apps.accounts.code_limit`: la de un código que valió se
+    borra, y las demás cuentan hasta salir de la ventana."""
+
+    id = uuid7_primary_key()
+    # Sin índice propio: `user_mfa_code_attempts_user_ix` empieza por la cuenta.
+    user = models.ForeignKey(User, models.PROTECT, related_name="+", db_index=False)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "user_mfa_code_attempts"
+        indexes = [
+            models.Index(fields=["user", "created_at"], name="user_mfa_code_attempts_user_ix")
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)  # nunca la cuenta

@@ -102,6 +102,7 @@ def tenant_db(
                 "password_resets",  # F2-86: antes que las cuentas, a las que referencia
                 "user_mfa_backup_codes",  # F2-95: ídem
                 "user_mfa_devices",
+                "user_mfa_code_attempts",  # F2-102: ídem
                 "users",
                 PLATFORM_AUDIT,
             ):
