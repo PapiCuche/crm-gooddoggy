@@ -11,7 +11,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import mfa, mfa_disable, recovery, second_step, services
+from apps.accounts import mfa, mfa_codes, mfa_disable, recovery, second_step, services
 from apps.accounts.api.serializers import (
     LoginMfaSerializer,
     LoginPendingSerializer,
@@ -21,6 +21,7 @@ from apps.accounts.api.serializers import (
     MfaEnrollmentConfirmSerializer,
     MfaEnrollmentSerializer,
     MfaEnrollmentStartSerializer,
+    MfaRegenerateSerializer,
     MfaStatusSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
@@ -221,6 +222,36 @@ class MfaDisableView(APIView):
             wrong = serializers.ErrorDetail("El código no vale.", code="invalid")
             raise serializers.ValidationError({"code": [wrong]}) from None
         return Response(status=204)
+
+
+class MfaBackupCodesView(APIView):
+    permission_classes = [Authenticated]
+
+    @extend_schema(
+        operation_id="auth_mfa_backup_codes_regenerate",
+        tags=["auth"],
+        request=MfaRegenerateSerializer,
+        responses={200: MfaBackupCodesSerializer, **errors(400, 401, 403, 409, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Sustituye los códigos de respaldo de la cuenta por diez nuevos, con su contraseña
+        actual y un código de la aplicación de autenticación. Los devuelve una sola vez; los
+        anteriores dejan de valer todos. 400 en `password`: no es la contraseña de la cuenta.
+        400 en `code`: el código no vale; uno de respaldo tampoco vale aquí, y no se gasta. 401:
+        la sesión se revocó mientras tanto. 409 `MFA_NOT_ENABLED`: la cuenta no tiene segundo
+        factor. 429: demasiados intentos desde esta red, o demasiados códigos fallidos de esa
+        cuenta en 24 horas."""
+        sent = MfaRegenerateSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            codes = mfa_codes.regenerate(request._request, **sent.validated_data)
+        except mfa.WrongPassword:
+            wrong = serializers.ErrorDetail("La contraseña no es correcta.", code="invalid")
+            raise serializers.ValidationError({"password": [wrong]}) from None
+        except mfa.WrongCode:
+            wrong = serializers.ErrorDetail("El código no vale.", code="invalid")
+            raise serializers.ValidationError({"code": [wrong]}) from None
+        return Response(MfaBackupCodesSerializer({"backup_codes": codes}).data)
 
 
 class MfaTotpView(APIView):

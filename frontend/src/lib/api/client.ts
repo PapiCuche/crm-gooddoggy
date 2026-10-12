@@ -45,6 +45,7 @@ import type {
   MfaEnrollment,
   MfaEnrollmentConfirmRequest,
   MfaEnrollmentStartRequest,
+  MfaRegenerateRequest,
   MfaStatus,
   OrganizationSummary,
   PaginatedAuditEntryList,
@@ -569,6 +570,116 @@ export function useAuthMfaStatus<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getAuthMfaBackupCodesRegenerateUrl = () => {
+  return `/api/v1/auth/mfa/backup-codes/`;
+};
+
+/**
+ * Sustituye los códigos de respaldo de la cuenta por diez nuevos, con su contraseña
+ * actual y un código de la aplicación de autenticación. Los devuelve una sola vez; los
+ * anteriores dejan de valer todos. 400 en `password`: no es la contraseña de la cuenta.
+ * 400 en `code`: el código no vale; uno de respaldo tampoco vale aquí, y no se gasta. 401:
+ * la sesión se revocó mientras tanto. 409 `MFA_NOT_ENABLED`: la cuenta no tiene segundo
+ * factor. 429: demasiados intentos desde esta red, o demasiados códigos fallidos de esa
+ * cuenta en 24 horas.
+ */
+export const authMfaBackupCodesRegenerate = async (
+  mfaRegenerateRequest: MfaRegenerateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MfaBackupCodes> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<MfaBackupCodes>(getAuthMfaBackupCodesRegenerateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(mfaRegenerateRequest),
+  });
+};
+
+export const getAuthMfaBackupCodesRegenerateMutationKey = () =>
+  ["authMfaBackupCodesRegenerate"] as const;
+
+export const getAuthMfaBackupCodesRegenerateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authMfaBackupCodesRegenerate>>,
+    TError,
+    AuthMfaBackupCodesRegenerateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authMfaBackupCodesRegenerate>>,
+  TError,
+  AuthMfaBackupCodesRegenerateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthMfaBackupCodesRegenerateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authMfaBackupCodesRegenerate>>,
+    AuthMfaBackupCodesRegenerateMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authMfaBackupCodesRegenerate(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthMfaBackupCodesRegenerateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof authMfaBackupCodesRegenerate>>
+>;
+export type AuthMfaBackupCodesRegenerateMutationBody = MfaRegenerateRequest;
+export type AuthMfaBackupCodesRegenerateMutationError = ErrorType<Error>;
+export type AuthMfaBackupCodesRegenerateMutationVariables = { data: MfaRegenerateRequest };
+
+export const useAuthMfaBackupCodesRegenerate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authMfaBackupCodesRegenerate>>,
+      TError,
+      AuthMfaBackupCodesRegenerateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authMfaBackupCodesRegenerate>>,
+  TError,
+  AuthMfaBackupCodesRegenerateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthMfaBackupCodesRegenerateMutationOptions(options), queryClient);
+};
 
 export const getAuthMfaDisableUrl = () => {
   return `/api/v1/auth/mfa/disable/`;
