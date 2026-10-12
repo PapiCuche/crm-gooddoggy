@@ -2,24 +2,32 @@
 
 `start_enrollment` es lo que hace la ruta que empieza el alta: comprueba la contraseña, crea el
 dispositivo sin confirmar y devuelve, una sola vez, su secreto. El secreto se guarda cifrado
-(`core.sealed`, ADR-022) y no vuelve a salir. `reseal` es lo que hace la tarea
-`accounts.reseal_mfa_secrets`: tras una rotación de clave, vuelve a cifrar con la vigente.
+(`core.sealed`, ADR-022) y no vuelve a salir. `confirm_enrollment` es lo que hace la ruta que
+la confirma: con un código del dispositivo, la cuenta pasa a tener segundo factor y códigos de
+respaldo. `reseal` es lo que hace la tarea `accounts.reseal_mfa_secrets`: tras una rotación de
+clave, vuelve a cifrar con la vigente.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
+from uuid import UUID
 
+from django.core.exceptions import ValidationError
 from django.db import connection, transaction
 from django.http import HttpRequest
+from django.utils import timezone
 
-from apps.accounts import throttle, totp
-from apps.accounts.models import MfaDevice, User
-from apps.accounts.services import client_of, rate_limited, unaudited
+from apps.accounts import backup_codes, throttle, totp
+from apps.accounts.models import MfaBackupCode, MfaDevice, User
+from apps.accounts.recovery import NOTICE_QUEUED_FOR, enqueue
+from apps.accounts.services import EPOCH, client_of, rate_limited, revoke_sessions, unaudited
 from apps.audit import platform
 from apps.audit.services import Entity, Result
-from core import sealed
-from core.api.errors import ApiError
+from core import mail, sealed
+from core.api.errors import NOT_AUTHENTICATED, ApiError
 from core.observability import reporting
 
 logger = logging.getLogger(__name__)
@@ -29,10 +37,32 @@ ISSUER = "Good Doggy CRM"  # lo que enseña la aplicación de autenticación; si
 PENDING_FOR = timedelta(minutes=10)  # lo que vive un alta sin confirmar (ADR-023 §4)
 ALREADY_ENABLED = "MFA_ALREADY_ENABLED"
 STARTED = "auth.mfa.enrollment_started"  # ADR-023 §10 dejó el nombre a este work item
+ENABLED = "auth.mfa.enabled"
+NOT_STARTED = "MFA_ENROLLMENT_NOT_STARTED"
+MFA_AT = "mfa_at"  # en la sesión: cuándo se verificó el segundo factor (ADR-003 §4, step-up)
+ENABLED_SUBJECT = "Tu cuenta de Good Doggy CRM tiene un segundo factor"
+ENABLED_BODY = """Hola:
+
+Se dio de alta un segundo factor en tu cuenta de Good Doggy CRM: un dispositivo con una
+aplicación de autenticación, y sus códigos de respaldo. Las demás sesiones que tenías abiertas
+se cerraron.
+
+Si fuiste tú, guarda los códigos de respaldo en un lugar seguro: son la forma de entrar si
+pierdes el dispositivo.
+
+Si no fuiste tú, lo hizo alguien que conoce tu contraseña y tenía abierta una sesión tuya.
+Cambia la contraseña con un enlace de recuperación: eso cierra todas tus sesiones. Y avisa
+cuanto antes a quien administra tu organización, te llegue o no ese enlace:
+cambiar la contraseña no quita ese segundo factor.
+"""
 
 
 class WrongPassword(Exception):
     """La contraseña presentada no es la de la cuenta. La ruta lo dice en su campo."""
+
+
+class WrongCode(Exception):
+    """El código presentado no vale. La ruta lo dice en su campo, sin decir por qué."""
 
 
 @dataclass(frozen=True)
@@ -117,6 +147,142 @@ def start_enrollment(request: HttpRequest, *, password: str) -> Enrollment:
         uri=totp.uri(secret, issuer=ISSUER, account=user.email),
         expires_in=int(PENDING_FOR.total_seconds()),
     )
+
+
+def _denied(action: str, user_id: UUID, reason: str, client: dict[str, Any]) -> None:
+    """La fila de un rechazo, fuera de toda transacción; si no se puede escribir, la respuesta
+    no cambia (ADR-013 §5)."""
+    try:
+        platform.record(
+            action,
+            actor_type=platform.Actor.USER,
+            actor_id=user_id,
+            entity=Entity("user", user_id),
+            metadata={"reason": reason},
+            result=Result.DENIED,
+            **client,
+        )
+    except Exception as error:
+        unaudited(error, action)
+
+
+def confirm_enrollment(request: HttpRequest, *, code: str) -> list[str]:
+    """Confirma el alta del dispositivo TOTP de la cuenta con sesión (ADR-023 §4) y devuelve,
+    una sola vez, sus códigos de respaldo.
+
+    Vale un código del dispositivo sin confirmar, empezado hace `PENDING_FOR` como mucho. Con
+    la fila de la cuenta bloqueada y releída, y después la del dispositivo, en una transacción:
+    queda confirmado, con el paso de ese código como último aceptado (no vale después para
+    entrar); se guardan los hashes de los códigos de respaldo; las demás sesiones se revocan
+    (la época avanza) y esta adopta la época nueva, cambia de ID y anota cuándo se verificó; y
+    se audita. Sin esa fila no hay confirmación.
+
+    Si la época de la sesión ya no es la de la cuenta, la cuenta dejó de estar activa o la fila
+    de la sesión ya no existe (una revocación, o un cierre de sesión, llegó con la petición en
+    curso), no confirma nada: no revive con otro ID una sesión cerrada. Cierra la sesión y lanza
+    `ApiError` 401. Sin alta empezada o caducada, `MFA_ENROLLMENT_NOT_STARTED`; ya confirmada,
+    `MFA_ALREADY_ENABLED`. Un código que no vale lanza `WrongCode`, cuenta en el límite de
+    intentos del acceso (por dirección) y deja una fila denegada; un secreto que no se abre es
+    un código que no vale, y se reporta. Solo un acierto devuelve lo que contó, en esa
+    transacción: un 409 o un 401 lo borrarían sin probar nada, también los fallos de contraseña.
+    """
+    from apps.accounts.tasks import send_mfa_enabled  # noqa: PLC0415 — ciclo de imports
+
+    if connection.in_atomic_block:  # la fila de un rechazo se desharía con esa transacción
+        raise RuntimeError("confirm_enrollment no se llama dentro de una transacción")
+    user, client = request.user, client_of(request)
+    assert isinstance(user, User)  # noqa: S101 — la ruta exige sesión
+    attempt = throttle.keys(user.email, client["ip"])
+    try:
+        started = throttle.admit(attempt)  # antes de mirar el código
+    except throttle.Refused as refused:
+        raise rate_limited(refused.seconds) from None
+    refused_as, unreadable, codes = "", False, []
+    with transaction.atomic():
+        account = User.objects.select_for_update(no_key=True).get(pk=user.pk)
+        pending = MfaDevice.objects.select_for_update().filter(
+            user=account, type=MfaDevice.Type.TOTP
+        )
+        device, now = pending.first(), timezone.now()
+        gone = not request.session.exists(request.session.session_key or "")  # la cerró otra
+        if gone or not account.is_active or request.session.get(EPOCH, 0) != account.session_epoch:
+            refused_as = "session"
+        elif device is not None and device.confirmed_at is not None:
+            refused_as = ALREADY_ENABLED
+        elif device is None or device.created_at <= now - PENDING_FOR:
+            refused_as = NOT_STARTED
+        else:
+            try:
+                secret = sealed.unseal(PURPOSE, owner(account.pk), device.secret)
+                step = totp.accepted_step(secret, code, now=now.timestamp(), last=None)
+            except sealed.SealError:
+                step, unreadable = None, True
+            if step is None:
+                refused_as = "code"
+            else:
+                pending.update(confirmed_at=now, last_step=step)  # juntos: la base lo exige
+                codes = backup_codes.new_codes()
+                MfaBackupCode.objects.filter(user=account).delete()
+                hashes = [backup_codes.code_hash(shown) or "" for shown in codes]
+                MfaBackupCode.objects.bulk_create(
+                    MfaBackupCode(user=account, code_hash=hashed) for hashed in hashes
+                )
+                revoke_sessions(account.pk)  # las demás se abrieron sin segundo factor
+                platform.record(  # en la transacción: sin esta fila, no hay segundo factor
+                    ENABLED,
+                    actor_type=platform.Actor.USER,
+                    actor_id=account.pk,
+                    entity=Entity("user", account.pk),
+                    **client,
+                )
+                throttle.forgive(attempt, started)  # aquí, como el acceso: si falla, nada
+                # Esta sesión sigue: guardaba la época anterior al avance, leída con la fila
+                # bloqueada (ADR-023 §4). Cambia de ID y anota la verificación (ADR-003 §2).
+                request.session.cycle_key()
+                request.session[EPOCH] = account.session_epoch + 1
+                request.session[MFA_AT] = int(time.time())
+    if refused_as == "code":
+        throttle.failed(attempt)
+        _denied(ENABLED, user.pk, "code", client)
+        if unreadable:  # nadie sabría que falta una clave: la respuesta no lo distingue
+            lost = UnreadableSecrets(1)
+            try:
+                reporting.reporter().capture_exception(lost, {"action": "mfa.confirm"})
+            except Exception:  # tampoco si el reporte falla: sería un 500 solo en este caso
+                logger.exception("secreto TOTP ilegible al confirmar: no se pudo reportar")
+        raise WrongCode
+    if refused_as == "session":
+        request.session.flush()
+        raise ApiError(NOT_AUTHENTICATED, 401)
+    if refused_as:
+        raise ApiError(refused_as, 409)
+    try:  # el aviso es de mejor esfuerzo: el segundo factor ya está dado de alta
+        enqueue(send_mfa_enabled, str(user.pk), NOTICE_QUEUED_FOR)
+    except Exception as error:
+        logger.exception("aviso de segundo factor sin encolar")
+        try:
+            reporting.reporter().capture_exception(error, {"action": ENABLED})
+        except Exception:
+            logger.exception("aviso de segundo factor: no se pudo reportar")
+    return codes
+
+
+def notify_enabled(user_id: str) -> bool:
+    """Avisa por correo a la cuenta `user_id` de que se le dio de alta un segundo factor
+    (ADR-023 §4). Devuelve si envió el aviso. No envía nada si la cuenta no existe, está
+    desactivada o `core.mail` no podría escribir a su dirección. Sin secretos ni códigos."""
+    try:
+        found = User.objects.filter(pk=user_id, is_active=True).values_list("email", flat=True)
+        address = found.first()
+    except ValueError, ValidationError:  # no es un identificador de cuenta
+        return False
+    if address is None or not mail.deliverable(address):
+        return False
+    notice = mail.Message(
+        to=address, subject=ENABLED_SUBJECT, body=ENABLED_BODY, purpose="mfa_enabled"
+    )
+    mail.send(notice)
+    return True
 
 
 class UnreadableSecrets(Exception):

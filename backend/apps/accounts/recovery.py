@@ -151,10 +151,10 @@ def request_link(request: HttpRequest, *, email: str) -> None:
         identifier=email,
         **client,
     )
-    _enqueue(send_password_reset, email, QUEUED_FOR, argsrepr=f"({EMAIL_MASK!r},)")
+    enqueue(send_password_reset, email, QUEUED_FOR, argsrepr=f"({EMAIL_MASK!r},)")
 
 
-def _enqueue(task: Any, argument: str, expires: int, **how: Any) -> None:
+def enqueue(task: Any, argument: str, expires: int, **how: Any) -> None:
     """Publica `task(argument)` por una conexión propia al broker, que no reintenta ni espera
     más de `BROKER_WAIT` por operación: un broker caído no retiene una ruta pública."""
     broker = task.app.connection_for_write(connect_timeout=BROKER_WAIT, transport_options=_NO_WAIT)
@@ -275,7 +275,7 @@ def change_password(request: HttpRequest, *, token: str, password: str) -> None:
     if reason:  # fuera de la transacción: la fila del rechazo se confirma por sí misma
         raise _refuse(reason, user.pk, client)
     try:
-        _enqueue(send_password_changed, str(user.pk), NOTICE_QUEUED_FOR)
+        enqueue(send_password_changed, str(user.pk), NOTICE_QUEUED_FOR)
     except Exception as error:
         logger.exception("aviso de cambio de contraseña sin encolar")
         try:
