@@ -182,8 +182,9 @@ def verify[T](
     Cuando el intento que queda contado es el que alcanza el tope, deja la fila `THROTTLED`
     (actor `actor`, o anónimo si es `None`: en el segundo paso del acceso no hay sesión) y
     encola el aviso a la cuenta; si alguna de las dos cosas falla, nada cambia para quien
-    llama. `NoDevice` sale tal cual, con el intento contado. Antes de llamar, la ruta ya
-    comprobó sin bloqueo lo mismo que `ready`: `admit` cuenta sin preguntar quién llama.
+    llama. La ruta trata `NoDevice`, que sale tal cual y con el intento contado, y
+    `User.DoesNotExist`, con el intento devuelto. Antes de llamar ya comprobó sin bloqueo lo
+    mismo que `ready`: `admit` cuenta sin preguntar quién llama.
     """
     try:
         attempt = code_limit.admit(user_id)
