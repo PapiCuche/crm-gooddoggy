@@ -38,6 +38,8 @@ import type {
   MemberStatus,
   MemberStatusChangeRequest,
   MembersListParams,
+  MfaEnrollment,
+  MfaEnrollmentStartRequest,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
@@ -339,6 +341,113 @@ export const useAuthLogout = <TError = ErrorType<Error>, TContext = unknown>(
   queryClient?: QueryClient,
 ): UseMutationResult<Awaited<ReturnType<typeof authLogout>>, TError, void, TContext> => {
   return useMutation(getAuthLogoutMutationOptions(options), queryClient);
+};
+
+export const getAuthMfaTotpStartUrl = () => {
+  return `/api/v1/auth/mfa/totp/`;
+};
+
+/**
+ * Empieza el alta del dispositivo TOTP de la cuenta: con su contraseña actual, crea el
+ * dispositivo sin confirmar (sustituye a otro sin confirmar) y devuelve su secreto, que no
+ * se vuelve a enseñar. No protege ni exige nada hasta confirmarlo. 400 en `password`: no
+ * es la contraseña de la cuenta. 409 `MFA_ALREADY_ENABLED`: ya hay un dispositivo
+ * confirmado. 429: demasiados intentos desde esta red.
+ */
+export const authMfaTotpStart = async (
+  mfaEnrollmentStartRequest: MfaEnrollmentStartRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MfaEnrollment> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<MfaEnrollment>(getAuthMfaTotpStartUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(mfaEnrollmentStartRequest),
+  });
+};
+
+export const getAuthMfaTotpStartMutationKey = () => ["authMfaTotpStart"] as const;
+
+export const getAuthMfaTotpStartMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authMfaTotpStart>>,
+    TError,
+    AuthMfaTotpStartMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authMfaTotpStart>>,
+  TError,
+  AuthMfaTotpStartMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthMfaTotpStartMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authMfaTotpStart>>,
+    AuthMfaTotpStartMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authMfaTotpStart(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthMfaTotpStartMutationResult = NonNullable<
+  Awaited<ReturnType<typeof authMfaTotpStart>>
+>;
+export type AuthMfaTotpStartMutationBody = MfaEnrollmentStartRequest;
+export type AuthMfaTotpStartMutationError = ErrorType<Error>;
+export type AuthMfaTotpStartMutationVariables = { data: MfaEnrollmentStartRequest };
+
+export const useAuthMfaTotpStart = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authMfaTotpStart>>,
+      TError,
+      AuthMfaTotpStartMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authMfaTotpStart>>,
+  TError,
+  AuthMfaTotpStartMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthMfaTotpStartMutationOptions(options), queryClient);
 };
 
 export const getAuthPasswordResetRequestUrl = () => {

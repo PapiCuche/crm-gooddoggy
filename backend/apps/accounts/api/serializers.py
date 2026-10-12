@@ -21,6 +21,21 @@ class PasswordResetConfirmSerializer(serializers.Serializer[Any]):
     password = serializers.CharField(max_length=1024, trim_whitespace=False, write_only=True)
 
 
+class MfaEnrollmentStartSerializer(serializers.Serializer[Any]):
+    password = serializers.CharField(
+        max_length=1024,
+        trim_whitespace=False,
+        write_only=True,
+        help_text="La contraseña actual de la cuenta.",
+    )
+
+
+class MfaEnrollmentSerializer(serializers.Serializer[Any]):
+    secret = serializers.CharField(help_text="El secreto en base32. Solo se enseña esta vez.")
+    uri = serializers.CharField(help_text="La URI `otpauth://` para un código QR.")
+    expires_in = serializers.IntegerField(help_text="Segundos que quedan para confirmar el alta.")
+
+
 class UserSerializer(serializers.ModelSerializer[User]):
     class Meta:
         model = User

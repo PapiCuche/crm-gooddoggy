@@ -19,6 +19,7 @@ from config.settings.base import (
     EMAIL_USE_TLS,
     MAIL_BACKEND,
     SECRET_KEY,
+    SECRETS_KEKS,
 )
 
 # ADR-002 §1.1: la credencial del migrador (BYPASSRLS) es exclusiva del job de migraciones.
@@ -65,6 +66,10 @@ if EMAIL_HOST and not APP_ORIGIN.startswith("https://"):
     raise ImproperlyConfigured("Con correo configurado, APP_ORIGIN de production debe ser https")
 if MAIL_BACKEND != "smtp":
     raise ImproperlyConfigured("MAIL_BACKEND de production debe ser smtp")
+# ADR-022 §6: desde que una ruta guarda un secreto cifrado (el alta de TOTP, F2-97), sin claves
+# no se arranca. Aquí nunca se deriva una de desarrollo.
+if not SECRETS_KEKS:
+    raise ImproperlyConfigured("SECRETS_KEKS es obligatorio en production (ADR-022 §6)")
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

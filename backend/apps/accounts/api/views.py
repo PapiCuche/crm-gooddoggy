@@ -11,9 +11,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import recovery, services
+from apps.accounts import mfa, recovery, services
 from apps.accounts.api.serializers import (
     LoginSerializer,
+    MfaEnrollmentSerializer,
+    MfaEnrollmentStartSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     SessionSerializer,
@@ -132,3 +134,28 @@ class SessionView(APIView):
         """La sesión actual. 401 `NOT_AUTHENTICATED` si no hay, caducó o su usuario no está
         activo."""
         return Response(_session(request))
+
+
+class MfaTotpView(APIView):
+    permission_classes = [Authenticated]
+
+    @extend_schema(
+        operation_id="auth_mfa_totp_start",
+        tags=["auth"],
+        request=MfaEnrollmentStartSerializer,
+        responses={201: MfaEnrollmentSerializer, **errors(400, 401, 403, 409, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Empieza el alta del dispositivo TOTP de la cuenta: con su contraseña actual, crea el
+        dispositivo sin confirmar (sustituye a otro sin confirmar) y devuelve su secreto, que no
+        se vuelve a enseñar. No protege ni exige nada hasta confirmarlo. 400 en `password`: no
+        es la contraseña de la cuenta. 409 `MFA_ALREADY_ENABLED`: ya hay un dispositivo
+        confirmado. 429: demasiados intentos desde esta red."""
+        sent = MfaEnrollmentStartSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            enrollment = mfa.start_enrollment(request._request, **sent.validated_data)
+        except mfa.WrongPassword:
+            wrong = serializers.ErrorDetail("La contraseña no es correcta.", code="invalid")
+            raise serializers.ValidationError({"password": [wrong]}) from None
+        return Response(MfaEnrollmentSerializer(enrollment).data, status=201)
