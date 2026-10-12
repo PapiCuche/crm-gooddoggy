@@ -38,8 +38,9 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 def enrolled(user: User, secret: bytes = SECRET, *, confirmed: bool = True) -> list[str]:
     """Un dispositivo de `user` y sus códigos de respaldo, como los deja confirmar el alta."""
     box = sealed.seal(mfa.PURPOSE, mfa.owner(user.pk), secret)
-    how = {"confirmed_at": timezone.now(), "last_step": 1} if confirmed else {}
-    MfaDevice.objects.create(user=user, type=MfaDevice.Type.TOTP, secret=box, **how)
+    device = MfaDevice.objects.create(user=user, type=MfaDevice.Type.TOTP, secret=box)
+    if confirmed:  # después de crearlo: con el reloj real, antes sería anterior a `created_at`
+        MfaDevice.objects.filter(pk=device.pk).update(confirmed_at=timezone.now(), last_step=1)
     shown = backup_codes.new_codes()
     MfaBackupCode.objects.bulk_create(
         MfaBackupCode(user=user, code_hash=backup_codes.code_hash(code) or "") for code in shown

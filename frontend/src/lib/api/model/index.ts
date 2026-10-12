@@ -28,6 +28,7 @@ export * from "./invitationStatusChangeRequest";
 export * from "./invitationStatusEnum";
 export * from "./inviteRequest";
 export * from "./loginMfaRequest";
+export * from "./loginPending";
 export * from "./loginRequest";
 export * from "./member";
 export * from "./memberBranch";

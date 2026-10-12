@@ -42,6 +42,12 @@ class MfaEnrollmentConfirmSerializer(serializers.Serializer[Any]):
     )
 
 
+class LoginPendingSerializer(serializers.Serializer[Any]):
+    mfa_required = serializers.BooleanField(
+        help_text="Siempre `true`: falta el segundo paso (`POST /auth/login/mfa/`)."
+    )
+
+
 class LoginMfaSerializer(serializers.Serializer[Any]):
     code = serializers.CharField(
         max_length=32,

@@ -16,8 +16,11 @@ paths:
   /api/v1/auth/login/:
     post:
       operationId: auth_login
-      description: Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del
-        rechazo.
+      description: |-
+        Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo. Si la cuenta
+        tiene segundo factor, la contraseña correcta no inicia sesión: responde 202 con
+        `mfa_required`, sin datos de la cuenta, y la sesión la inicia `POST /auth/login/mfa/`
+        con un código, en los 5 minutos siguientes.
       tags:
       - auth
       requestBody:
@@ -32,6 +35,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Session'
+          description: ''
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginPending'
           description: ''
         '400':
           content:
@@ -2267,6 +2276,14 @@ components:
           maxLength: 32
       required:
       - code
+    LoginPending:
+      type: object
+      properties:
+        mfa_required:
+          type: boolean
+          description: 'Siempre `true`: falta el segundo paso (`POST /auth/login/mfa/`).'
+      required:
+      - mfa_required
     LoginRequest:
       type: object
       properties:
