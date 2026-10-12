@@ -5,6 +5,7 @@ import hashlib
 import logging
 import re
 import secrets
+from collections.abc import Iterator
 
 import pytest
 
@@ -14,6 +15,14 @@ from apps.accounts.backup_codes import ALPHABET, code_hash, new_codes, normalize
 SHOWN = re.compile(r"[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}")
 CODE = "7K3M-9QXA-0B1C-ZZ2Y"  # uno con la forma de los que se enseñan
 PLAIN = CODE.replace("-", "")
+
+
+@pytest.fixture(autouse=True)
+def nothing_is_logged(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    """Ninguna función del módulo registra nada: tampoco lo que se le presenta y no vale."""
+    with caplog.at_level(logging.DEBUG):
+        yield
+    assert caplog.get_records("call") == []
 
 
 def test_it_makes_ten_distinct_codes_of_80_random_bits_each(
@@ -33,9 +42,17 @@ def test_it_makes_ten_distinct_codes_of_80_random_bits_each(
 
 def test_two_equal_draws_do_not_shorten_the_set(monkeypatch: pytest.MonkeyPatch) -> None:
     draws = iter("0" * 16 + "0" * 16 + "".join(ALPHABET[n % 32] * 16 for n in range(1, 10)))
-    monkeypatch.setattr(secrets, "choice", lambda alphabet: next(draws))
+    asked: list[str] = []
+
+    def choice(alphabet: str) -> str:
+        asked.append(alphabet)
+        return next(draws)
+
+    monkeypatch.setattr(secrets, "choice", choice)
     codes = new_codes()
     assert len(set(codes)) == 10 and sorted(codes)[0] == "0000-0000-0000-0000"
+    # Cada símbolo es un sorteo sobre el alfabeto entero (5 bits), y ninguno se repite ni se tira.
+    assert set(asked) == {ALPHABET} and len(asked) == 11 * 16
 
 
 @pytest.mark.parametrize(
@@ -66,6 +83,7 @@ def test_what_a_person_types_gives_the_hash_of_the_code_that_was_made(typed: str
         PLAIN + "0",
         PLAIN[:-1] + "U",  # la U no está en el alfabeto
         PLAIN[:-1] + "_",
+        PLAIN + "_",  # solo se quitan guiones y espacios
         PLAIN[:-1] + "\n",
         PLAIN + "\n",
         "\t" + PLAIN,
