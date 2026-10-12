@@ -153,3 +153,9 @@ name = "HTTP saliente solo vía core.http (allowlist anti-SSRF)"
 type = "protected"
 protected_modules = ["urllib3"]  # requests/httpx/urllib.request/http.client: tests/test_http.py
 allowed_importers = ["core.http"]
+
+[[tool.importlinter.contracts]]
+name = "cryptography solo dentro de core.sealed (ADR-022 §1)"
+type = "protected"
+protected_modules = ["cryptography"]
+allowed_importers = ["core.sealed"]

@@ -26,8 +26,9 @@ _HEAD, _NONCE, _TAG = 3, 12, 16  # formato y versión de la clave; nonce; etique
 
 
 class SealError(Exception):
-    """El valor no se puede abrir: su clave ya no está, se alteró, o es de otro propósito o de
-    otro dueño. No dice cuál: quien llama lo trata como un secreto que no existe."""
+    """El valor no se puede abrir: su clave no está, se alteró, o es de otro propósito o de
+    otro dueño. No dice cuál. Quien llama falla cerrado: no hace lo que pedía el secreto, y no
+    lo confunde con un secreto que falta (ADR-022 §4)."""
 
 
 def _bound(purpose: str, owner: str) -> bytes:

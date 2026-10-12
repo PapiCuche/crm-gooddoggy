@@ -57,7 +57,7 @@ El texto en claro tiene un máximo de 4096 bytes: el módulo es para secretos, n
 
 Los datos asociados de GCM (autenticados, no cifrados) son la cabecera del valor (formato y versión), el propósito y el **dueño**: un identificador estable de la fila a la que pertenece el secreto, que da quien llama (`user:<id>`). No es secreto y no se guarda dentro del valor.
 
-Consecuencia: un valor cifrado copiado a la fila de otra cuenta, presentado como de otro propósito o con un byte alterado **no se abre**. `unseal` lanza `SealError`, sin decir cuál fue el motivo. Quien llama trata ese secreto como si no existiera.
+Consecuencia: un valor cifrado copiado a la fila de otra cuenta, presentado como de otro propósito o con un byte alterado **no se abre**. `unseal` lanza `SealError`, sin decir cuál fue el motivo. Quien llama **falla cerrado**: no hace la operación que necesitaba el secreto. Un secreto que no se abre no es un secreto que falta: una cuenta con un secreto TOTP ilegible se trata como una cuenta con segundo factor que ahora no se puede comprobar, nunca como una cuenta sin él: no entra saltándoselo ni da de alta otro por su cuenta.
 
 ### 5. Rotación
 
@@ -65,13 +65,15 @@ Consecuencia: un valor cifrado copiado a la fila de otra cuenta, presentado como
 2. Un trabajo de mantenimiento vuelve a cifrar lo que `stale` señala (lo cifrado con una versión que no es la vigente). Ese trabajo llega con la primera tabla que guarde secretos; este ADR fija la regla, no lo construye.
 3. Cuando no queda nada cifrado con la clave anterior, se quita de `SECRETS_KEKS`.
 
-Quitar una clave antes de terminar el paso 2 **no corrompe nada, pero deja ilegible** lo que aún dependía de ella: se abre de nuevo si la clave vuelve. Para un secreto TOTP eso significa que la cuenta tiene que volver a dar de alta su segundo factor.
+El paso 1 pide que **todos** los procesos de runtime tengan la clave nueva antes de que uno cifre con ella: la de versión más alta cifra en cuanto un proceso la recibe, y el ajuste no permite repartirla primero solo para leer. En un despliegue escalonado, el proceso que aún no la tiene no abre lo que otro acaba de cifrar (`SealError`: falla cerrado, no se pierde nada) hasta que se reinicia con ella, y `stale` se lo señala como pendiente. Por eso una clave nueva se introduce reiniciando todos los procesos a la vez, y **no se quita al revertir un despliegue**: lo cifrado con ella mientras estuvo quedaría ilegible.
 
-Una clave comprometida se rota igual, y además los secretos que protegía se dan por expuestos: volver a cifrarlos no los cambia. Qué hacer con ellos (obligar a re-enrolar el TOTP, rotar la credencial del proveedor) es del módulo dueño de cada secreto.
+Quitar una clave antes de terminar el paso 2 **no corrompe nada, pero deja ilegible** lo que aún dependía de ella: se abre de nuevo si la clave vuelve. Mientras tanto un secreto TOTP ilegible no comprueba ningún código: la cuenta no pasa el segundo paso con TOTP (§4). Si la clave no vuelve, recupera el acceso como con un dispositivo perdido (ADR-003, *Operational implications*: códigos de respaldo, otro Owner o soporte de plataforma), no dando de alta otro factor por su cuenta.
+
+Una clave comprometida se rota igual, y además los secretos que protegía se dan por expuestos: volver a cifrarlos no los cambia. Tampoco son ya de fiar: mientras esa clave siga en `SECRETS_KEKS`, quien la tenga y pueda escribir en la base de datos fabrica valores que se abren, y volver a cifrar no los distingue de los legítimos. Qué hacer con ellos (obligar a re-enrolar el TOTP, rotar la credencial del proveedor) es del módulo dueño de cada secreto.
 
 ### 6. Sin clave
 
-- **`production` y cualquier otro entorno:** sin `SECRETS_KEKS`, `seal`, `unseal` y `stale` lanzan `ImproperlyConfigured`. Falla cerrado: no se guarda ningún secreto en claro ni con una clave inventada. La aplicación arranca: hasta que exista una función que use el módulo, la variable no es obligatoria. El work item que active MFA decide si, con MFA exigida, la falta de clave impide arrancar.
+- **`production` y cualquier otro entorno:** sin `SECRETS_KEKS`, `seal`, `unseal` y `stale` lanzan `ImproperlyConfigured`. Falla cerrado: no se guarda ningún secreto en claro ni con una clave inventada. La aplicación arranca: hasta que exista una función que use el módulo, la variable no es obligatoria. Deja de ser opcional en el work item que entregue la primera función que guarde un secreto cifrado (el alta de TOTP): desde entonces `production` no arranca sin `SECRETS_KEKS`, porque ADR-003 exige MFA antes de producción y sin clave no hay MFA.
 - **`local` y `test`:** sin `SECRETS_KEKS` derivan una clave de desarrollo de su `SECRET_KEY`, para que el cifrado funcione sin configurar nada. **Esa clave no protege nada:** la `SECRET_KEY` por defecto de esos entornos está en el repositorio. Si se da `SECRETS_KEKS`, manda la del entorno. `production` no hereda de esos ajustes.
 - **El job de migraciones** no guarda las claves aunque se las den (ADR-002 §1.1).
 
@@ -84,7 +86,7 @@ Una clave comprometida se rota igual, y además los secretos que protegía se da
 
 ### 8. Lo que el mantenedor puede querer cambiar
 
-El nombre y el formato de `SECRETS_KEKS`; que la clave de desarrollo se derive de la `SECRET_KEY` local en vez de exigir configurarla; derivar una clave por propósito en vez de cifrar con la KEK o de envolver una clave por fila; el máximo de 4096 bytes.
+El nombre y el formato de `SECRETS_KEKS`; que cifre la clave de versión más alta en vez de una que se active aparte (permitiría repartirla antes de usarla, §5); que la clave de desarrollo se derive de la `SECRET_KEY` local en vez de exigir configurarla; derivar una clave por propósito en vez de cifrar con la KEK o de envolver una clave por fila; el máximo de 4096 bytes.
 
 ## Alternatives considered
 
@@ -93,7 +95,7 @@ El nombre y el formato de `SECRETS_KEKS`; que la clave de desarrollo se derive d
 - **Fernet** (de la misma biblioteca). Es AES-128-CBC con HMAC: no es el AES-256-GCM que fija `security-boundaries.md` §3, y no admite datos asociados, así que no ata el valor a su dueño.
 - **`pgcrypto` en la base de datos.** La clave viajaría en cada consulta y podría acabar en los registros de PostgreSQL; y la regla es «KEK fuera de la BD».
 - **Derivar las claves de `DJANGO_SECRET_KEY` también en producción.** Ata la rotación de dos secretos con ciclos distintos: rotar la clave de sesiones dejaría ilegibles todos los secretos.
-- **Exigir `SECRETS_KEKS` para arrancar desde ahora.** Rompería despliegues que todavía no usan nada de esto; lo decide el work item que active la primera función que lo necesite.
+- **Exigir `SECRETS_KEKS` para arrancar desde ahora.** Rompería despliegues que todavía no usan nada de esto; pasa a ser obligatoria con la primera función que la necesite (§6).
 - **Un nonce derivado o un contador.** Un contador pide estado compartido entre procesos. Con un nonce aleatorio de 96 bits, el límite recomendado es de 2³² cifrados por clave: muy por encima de lo que un CRM cifra con una clave por propósito.
 
 ## Consequences
@@ -108,11 +110,11 @@ El nombre y el formato de `SECRETS_KEKS`; que la clave de desarrollo se derive d
 ## Security implications
 
 - **Quien lee la base de datos no lee los secretos**, salvo que tenga también el entorno de un proceso de runtime. Es el control que pide `security-boundaries.md` §3.
-- **Quien puede escribir en la base de datos no puede mover un secreto de una cuenta a otra** ni fabricar uno: el valor está autenticado y atado a su dueño. Sí puede borrarlo o estropearlo, y eso se ve como un secreto que no existe.
+- **Quien puede escribir en la base de datos no puede mover un secreto de una cuenta a otra** ni fabricar uno: el valor está autenticado y atado a su dueño. Sí puede borrarlo, estropearlo (y entonces no se abre, §4) o **reponer un valor anterior del mismo dueño y propósito**: el valor no lleva fecha ni contador, y este diseño no detecta esa vuelta atrás.
 - **Un proceso de runtime comprometido lee las claves** de su entorno y, con ellas, todo. Este diseño no lo impide; lo impediría un gestor externo con auditoría de accesos (§7).
 - **El dueño tiene que ser estable y único.** Si quien llama usa como dueño algo que cambia o que se reutiliza, el atado no vale. Es responsabilidad del módulo que llama, y la revisión de cada work item que use `seal` lo comprueba.
 - **El módulo no audita** (ADR-013): cifrar y descifrar no son hechos de negocio. Lo que se audita es la operación que los usa (dar de alta un segundo factor, usar una credencial).
-- **Ni las claves ni los secretos van al log ni al reporte de errores.** El nombre del ajuste contiene `SECRET`, así que las vistas de depuración de Django lo ocultan; el reporte de errores no envía variables locales (`core.observability.reporting`, ADR-011).
+- **Ni las claves ni los secretos van al log ni al reporte de errores.** El nombre del ajuste contiene `SECRET`, así que las vistas de depuración de Django lo ocultan; el reporte de errores no envía variables locales (`core.observability.reporting`, ADR-011). Dos salidas quedan fuera: `manage.py diffsettings` imprime el ajuste entero, como imprime `SECRET_KEY` y la contraseña de la base de datos; y la página de depuración de `local` (`DEBUG`) enseña las variables locales de la pila, el texto en claro entre ellas.
 - No debilita ADR-001, ADR-002, ADR-003, ADR-013 ni ADR-014: no hay tablas, rutas ni sesiones nuevas, y el job de migraciones sigue sin recibir secretos de runtime.
 
 ## Operational implications

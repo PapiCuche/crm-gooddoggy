@@ -7,6 +7,7 @@ import importlib
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -143,7 +144,7 @@ def test_it_refuses_what_is_not_a_purpose_an_owner_or_a_secret_without_echoing_i
             with pytest.raises(ValueError, match="^(purpose|owner|plaintext): ") as failed:
                 seal(purpose, owner, plaintext)
             assert PLAIN.decode() not in str(failed.value)
-        assert len(seal(PURPOSE, "u" * 200, b"x" * sealed.PLAINTEXT_MAX)) == 3 + 12 + 4096 + 16
+        assert len(seal("a" * 32, "u" * 200, b"x" * sealed.PLAINTEXT_MAX)) == 3 + 12 + 4096 + 16
         with pytest.raises(ValueError, match="^purpose: "):
             unseal("MFA", OWNER, seal(PURPOSE, OWNER, PLAIN))
     assert caplog.records == []  # el módulo no registra nada
@@ -158,6 +159,9 @@ def test_the_setting_takes_versioned_keys_and_refuses_anything_else_without_echo
     assert env.keys(VAR) == {}
     monkeypatch.setenv(VAR, f" 1:{text(OLD)}, 65535:{text(NEW)}= ")
     assert env.keys(VAR) == {1: OLD, 65535: NEW}
+    urlsafe = bytes(range(224, 256))  # su base64 lleva `-` y `_`: el alfabeto para URL
+    monkeypatch.setenv(VAR, f"9:{text(urlsafe)}")
+    assert {"-", "_"} < set(text(urlsafe)) and env.keys(VAR) == {9: urlsafe}
     short = base64.urlsafe_b64encode(OLD[:31]).decode()
     for value in (
         text(OLD),  # sin versión
@@ -190,8 +194,9 @@ def test_local_and_test_derive_a_development_key_and_production_and_migrate_neve
         derived = hashlib.sha256(b"dev-kek:" + module.SECRET_KEY.encode()).digest()
         assert module.SECRETS_KEKS == {1: derived} and len(derived) == 32
     monkeypatch.setenv(VAR, f"4:{text(NEW)}")  # si se da, manda la del entorno
-    sys.modules.pop("config.settings.local")
-    assert importlib.import_module("config.settings.local").SECRETS_KEKS == {4: NEW}
+    for name in ("config.settings.test", "config.settings.local"):
+        sys.modules.pop(name)
+        assert importlib.import_module(name).SECRETS_KEKS == {4: NEW}
     job: Any = load_migrate(
         monkeypatch,
         DATABASE_URL=None,
@@ -204,3 +209,15 @@ def test_local_and_test_derive_a_development_key_and_production_and_migrate_neve
     assert production.SECRETS_KEKS == {3: NEW}  # type: ignore[attr-defined]
     with pytest.raises(ImproperlyConfigured, match=VAR):
         load_production(monkeypatch, **{VAR: "3:corta"})  # mal formada: no arranca
+
+
+def test_only_core_sealed_reads_the_keys() -> None:
+    """ADR-022 §1: ningún otro módulo conoce las claves. Complementa a import-linter, que
+    deja `cryptography` solo dentro de `core.sealed`."""
+    root = Path(__file__).resolve().parents[1]
+    offenders = [
+        str(path.relative_to(root)) for folder in ("core", "apps")
+        for path in (root / folder).rglob("*.py")
+        if path != root / "core" / "sealed.py" and "SECRETS_KEKS" in path.read_text()
+    ]  # fmt: skip
+    assert offenders == []
