@@ -83,6 +83,9 @@ PASSWORD_RESET_THROTTLE = {
     "identifier": (5, 60 * 60),  # un correo, desde cualquier dirección
     "change": (10, 15 * 60),  # presentar un enlace, desde una dirección de red (ADR-021 §5)
 }
+# Segundo factor (ADR-023 §5): códigos fallidos por cuenta, vengan de donde vengan, y la ventana
+# en segundos. Alcanzado el tope, se rechaza también el código correcto.
+MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {"default": env.database(env.required("DATABASE_URL"))}

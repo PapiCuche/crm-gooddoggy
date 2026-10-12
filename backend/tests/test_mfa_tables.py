@@ -27,7 +27,7 @@ CODE = (
     "INSERT INTO user_mfa_backup_codes (user_id, code_hash, created_at, used_at)"
     " VALUES (%s, %s, now(), now() + %s::interval)"
 )
-TABLES = ("user_mfa_devices", "user_mfa_backup_codes")
+TABLES = ("user_mfa_devices", "user_mfa_backup_codes", "user_mfa_code_attempts")
 
 
 def box(user: Any, secret: bytes = KEY) -> bytes:
@@ -111,6 +111,8 @@ def test_both_tables_are_platform_owned_with_the_documented_indexes_and_privileg
         "user_mfa_devices_user_type_uq": "btree (user_id, type)",
         "user_mfa_backup_codes_pkey": "btree (id)",
         "user_mfa_backup_codes_user_hash_uq": "btree (user_id, code_hash)",
+        "user_mfa_code_attempts_pkey": "btree (id)",  # F2-102: los intentos de una cuenta, por hora
+        "user_mfa_code_attempts_user_ix": "btree (user_id, created_at)",
     }
 
 
