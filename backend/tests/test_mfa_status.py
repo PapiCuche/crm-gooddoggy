@@ -3,6 +3,8 @@
 
 import base64
 import json
+from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import psycopg
@@ -11,15 +13,17 @@ from django.db import connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
+from apps.accounts import mfa
 from apps.accounts.models import ENROLLMENT_FAILURES, MfaBackupCode, MfaDevice
-from tests import test_auth_api
+from tests import test_auth_api, test_mfa_second_factor
 from tests.factories import make_user
-from tests.test_auth_api import EMAIL, login, reply, send
+from tests.test_auth_api import EMAIL, NO_SESSION, login, reply, send
 from tests.test_mfa_enrollment_confirm import CONFIRM, OLDER, now_code
 from tests.test_mfa_enrollment_start import start
 from tests.test_mfa_second_factor import enrolled
 
 real_stack, browser = test_auth_api.real_stack, test_auth_api.browser
+clock = test_mfa_second_factor.clock
 pytestmark = pytest.mark.usefixtures("tenant_db")
 STATUS = "/api/v1/auth/mfa/"
 NONE = {"enabled": False, "enabled_at": None, "enrollment_expires_in": None, "backup_codes_left": 0}
@@ -83,9 +87,26 @@ def test_it_only_tells_the_state_of_the_account_of_the_session(browser: Client) 
     ana, luis = make_user(email=EMAIL), make_user(email="luis@example.com")
     enrolled(luis)  # Luis tiene segundo factor; Ana, no
     MfaBackupCode.objects.filter(user=luis).first().delete()  # type: ignore[union-attr]
+    assert login(browser, "luis@example.com").status_code == 202  # a Luis le falta el segundo paso
+    assert reply(browser.get(STATUS)) == NO_SESSION  # la marca de acceso a medias no es una sesión
     assert login(browser).status_code == 200
     assert state(browser) == NONE
     for asked in (f"?user={luis.pk}", f"?user_id={luis.pk}&email=luis@example.com"):
         assert browser.get(STATUS + asked).json() == NONE  # nada del cuerpo ni de la URL lo cambia
     assert browser.get(f"{STATUS}{luis.pk}/").status_code == 404
     assert MfaDevice.objects.filter(user=ana).count() == 0
+    enrolled(ana)  # ahora las dos cuentas tienen códigos
+    assert state(browser)["backup_codes_left"] == 10  # los suyos: ni los 9 de Luis ni los 19
+
+
+def test_an_enrolment_counts_down_to_the_instant_it_can_no_longer_be_confirmed(
+    clock: SimpleNamespace,
+) -> None:
+    ana = make_user(email=EMAIL)
+    enrolled(ana, confirmed=False)  # deja códigos sin gastar: sin dispositivo confirmado, cero
+    started = clock.at
+    # Segundos enteros, hacia abajo: nunca más tiempo del que queda, y nunca cero. En el último
+    # segundo ya dice que no, aunque `confirm_enrollment` la acepta hasta los 600 justos.
+    for after, left in ((0, 600), (0.4, 599), (598.5, 1), (599, 1), (599.5, None), (600, None)):
+        clock.at = started + timedelta(seconds=after)
+        assert mfa.status(ana) == mfa.Status(False, None, left, 0), after
