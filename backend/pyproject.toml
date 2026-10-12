@@ -9,6 +9,7 @@ dependencies = [
     "boto3==1.43.105",
     "celery==5.6.3",
     "channels==4.3.2",
+    "cryptography==50.0.1",
     "django==5.2.17",
     "djangorestframework==3.18.1",
     "drf-spectacular==0.30.0",
@@ -152,3 +153,9 @@ name = "HTTP saliente solo vía core.http (allowlist anti-SSRF)"
 type = "protected"
 protected_modules = ["urllib3"]  # requests/httpx/urllib.request/http.client: tests/test_http.py
 allowed_importers = ["core.http"]
+
+[[tool.importlinter.contracts]]
+name = "cryptography solo dentro de core.sealed (ADR-022 §1)"
+type = "protected"
+protected_modules = ["cryptography"]
+allowed_importers = ["core.sealed"]
