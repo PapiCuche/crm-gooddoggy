@@ -1,6 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+
 import { useAuthTestAccounts } from "@/lib/api/client";
 
 // Accesos de prueba (ADR-026 §5). Solo se pinta si el backend los tiene activos y hay cuentas:

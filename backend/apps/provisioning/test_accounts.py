@@ -187,7 +187,8 @@ class Listed:
 def listed() -> list[Listed]:
     """Las cuentas de prueba que se pueden usar ahora (ADR-026 §5): activas, con membresía activa
     en la organización de pruebas y con su rol de plantilla, en el orden de `PROFILES`. Vacía si
-    la organización no existe o no es la de pruebas (su `owner@` no tiene el rol Owner). Solo
+    la organización no existe, está suspendida o no es la de pruebas (su `owner@` no tiene el rol
+    Owner). Solo
     correos y nombres de rol: nada que sirva para entrar."""
     slug = _slug()
     found = organization_by_slug(slug)
