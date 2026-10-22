@@ -1419,8 +1419,8 @@ paths:
       operationId: inventory_movements_create
       description: 'Registra un ingreso, una salida o un ajuste (lo contado) y deja
         el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento,
-        que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`
-        o `IDEMPOTENCY_KEY_REUSED`.'
+        que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`,
+        `IDEMPOTENCY_KEY_REUSED` o `STOCK_LIMIT` (el saldo pasaría de 2147483647).'
       parameters:
       - in: path
         name: org_slug
@@ -2245,8 +2245,9 @@ paths:
           description: ''
     delete:
       operationId: products_delete
-      description: Borra el producto y sus variantes (borrado lógico); sus SKU quedan
-        libres.
+      description: 'Borra el producto y sus variantes (borrado lógico); sus SKU quedan
+        libres. 409 `PRODUCT_HAS_STOCK`: alguna variante tiene existencias o reservas;
+        se descontinúa.'
       parameters:
       - in: path
         name: org_slug
@@ -2279,6 +2280,12 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -2484,7 +2491,8 @@ paths:
     delete:
       operationId: variants_delete
       description: 'Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`:
-        es la única viva del producto.'
+        es la única viva del producto; `VARIANT_HAS_STOCK`: tiene existencias o reservas,
+        se desactiva.'
       parameters:
       - in: path
         name: org_slug
