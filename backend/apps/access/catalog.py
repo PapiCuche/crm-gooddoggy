@@ -37,6 +37,11 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("roles.view", "users"),
     PermissionDef("roles.manage", "users", is_sensitive=True),
     PermissionDef("audit.view", "audit", is_sensitive=True),
+    PermissionDef("products.view", "products"),
+    PermissionDef("products.manage", "products"),
+    PermissionDef("products.import", "products"),
+    PermissionDef("categories.manage", "products"),
+    PermissionDef("brands.manage", "products"),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -74,10 +79,17 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "teams.view",
             "teams.manage",
             "roles.view",
+            "products.view",
+            "products.manage",
+            "products.import",
+            "categories.manage",
+            "brands.manage",
         ),
     ),
     RoleTemplate(
-        "supervisor", "Supervisor", _unscoped("organization.view", "users.view", "teams.view")
+        "supervisor",
+        "Supervisor",
+        _unscoped("organization.view", "users.view", "teams.view", "products.view"),
     ),
-    RoleTemplate("seller", "Vendedor", _unscoped("organization.view")),
+    RoleTemplate("seller", "Vendedor", _unscoped("organization.view", "products.view")),
 )

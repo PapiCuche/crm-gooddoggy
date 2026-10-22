@@ -16,9 +16,9 @@ from django.db import IntegrityError, transaction
 
 from apps.audit.services import Entity, record
 from apps.organizations.models import Branch
-from apps.organizations.text import line, name
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import line, name
 
 CODE = re.compile(r"[A-Z0-9]+(-[A-Z0-9]+)*")  # la misma forma que impone la tabla
 CODE_MAX, NAME_MAX, TIMEZONE_MAX = 20, 100, 64

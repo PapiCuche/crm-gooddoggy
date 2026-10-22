@@ -1,4 +1,5 @@
-"""Reglas de texto que comparten los comandos de `organizations` (sucursales, equipos)."""
+"""Reglas de texto de los nombres y líneas que guardan los comandos (sucursales, equipos, marcas).
+Puras: no dependen de ningún módulo."""
 
 import unicodedata
 

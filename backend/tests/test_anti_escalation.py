@@ -55,6 +55,11 @@ ADMIN_REST = (
     "teams.view",
     "teams.manage",
     "roles.view",
+    "products.view",  # F3-01: el catálogo
+    "products.manage",
+    "products.import",
+    "categories.manage",
+    "brands.manage",
 )
 STATE = (
     "SELECT (SELECT count(*) FROM role_permissions), (SELECT count(*) FROM membership_roles), "

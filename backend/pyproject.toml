@@ -101,9 +101,11 @@ source_modules = ["core"]
 forbidden_modules = ["config", "apps"]
 
 [[tool.importlinter.contracts]]
-name = "Capas (module-dependencies §1): provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files (L1) > core (L0)"
+name = "Capas (module-dependencies §1): catalog (L3) > provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files (L1) > core (L0)"
 type = "layers"
 layers = [
+    # L3: dominio de negocio (module-dependencies §1). catalog, el catálogo (Fase 3)
+    "apps.catalog",
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",
     "apps.organizations | apps.access | apps.accounts",
@@ -122,6 +124,12 @@ name = "Membresías e invitaciones: solo members llama a organizations.services 
 type = "protected"
 protected_modules = ["apps.organizations.services"]
 allowed_importers = ["apps.members"]
+
+[[tool.importlinter.contracts]]
+name = "Comandos de marcas: solo la API del catálogo los importa (F3-01)"
+type = "protected"
+protected_modules = ["apps.catalog.brands"]
+allowed_importers = ["apps.catalog.api"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de sucursales y equipos: solo la API de organizations los importa (F2-44, F2-53)"

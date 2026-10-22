@@ -656,6 +656,17 @@
     },
     "audit": {
       "view": "Ver la auditoría"
+    },
+    "products": {
+      "view": "Ver el catálogo",
+      "manage": "Administrar productos",
+      "import": "Importar productos"
+    },
+    "categories": {
+      "manage": "Administrar categorías"
+    },
+    "brands": {
+      "manage": "Administrar marcas"
     }
   },
   "account": {
