@@ -1,8 +1,6 @@
 """Catálogo (Fase 3, E02; modelo de datos §E.7). Tablas tenant-owned con FORCE RLS."""
 
-from django.contrib.postgres.indexes import OpClass
 from django.db import models
-from django.db.models import F
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -75,8 +73,8 @@ class Category(TenantModel):
             # Las ramas se buscan por prefijo de `path` (`LIKE '/a/%'`): sin esta clase de
             # operador el índice no sirve para eso con la colación por defecto.
             models.Index(
-                F("organization_id"),
-                OpClass(F("path"), name="varchar_pattern_ops"),
+                fields=["organization_id", "path"],
+                opclasses=["uuid_ops", "varchar_pattern_ops"],
                 name="categories_org_path_like_idx",
             ),
         ]

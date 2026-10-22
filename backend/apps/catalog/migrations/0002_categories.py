@@ -91,10 +91,8 @@ class Migration(migrations.Migration):
         migrations.AddIndex(
             model_name="category",
             index=models.Index(
-                django.db.models.expressions.F("organization_id"),
-                django.contrib.postgres.indexes.OpClass(
-                    django.db.models.expressions.F("path"), name="varchar_pattern_ops"
-                ),
+                fields=["organization_id", "path"],
+                opclasses=["uuid_ops", "varchar_pattern_ops"],
                 name="categories_org_path_like_idx",
             ),
         ),
