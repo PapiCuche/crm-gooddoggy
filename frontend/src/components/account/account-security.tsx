@@ -12,19 +12,29 @@ import { apiErrorKey } from "@/lib/api-errors";
 import { ApiError } from "@/lib/http";
 
 import { MfaEnrollment } from "./mfa-enrollment";
+import { MfaDisable, MfaRegenerate } from "./mfa-manage";
 
 const FEW = 3; // códigos de respaldo a partir de los que se avisa
 
-// La seguridad de la cuenta propia (ADR-023): el estado del segundo factor y su alta. Lo que
-// dice viene de la API (`GET /auth/mfa/`); la pantalla no decide nada.
+type Mode = "idle" | "enrolling" | "regenerating" | "disabling";
+
+// La seguridad de la cuenta propia (ADR-023): el estado del segundo factor, su alta, la
+// regeneración de los códigos de respaldo y quitarlo. Lo que dice viene de la API
+// (`GET /auth/mfa/`); la pantalla no decide nada.
 export function AccountSecurity() {
   const t = useTranslations();
   const format = useFormatter();
-  // Con el alta en curso no se vuelve a preguntar solo: cambiaría la pantalla bajo los pasos.
+  // Con un cambio en curso no se vuelve a preguntar solo: cambiaría la pantalla bajo los pasos.
   const status = useAuthMfaStatus({
     query: { refetchOnWindowFocus: false, refetchOnReconnect: false },
   });
-  const [enrolling, setEnrolling] = useState(false);
+  const [mode, setMode] = useState<Mode>("idle");
+  const [disabled, setDisabled] = useState(false); // se acaba de quitar desde esta pantalla
+  const busy = mode !== "idle";
+  const back = () => {
+    setMode("idle");
+    void status.refetch();
+  };
   // Sin sesión, `Providers` ya lleva al login: aquí solo se evita mostrar un error mientras.
   const expired = status.error instanceof ApiError && status.error.status === 401;
 
@@ -42,14 +52,19 @@ export function AccountSecurity() {
         </Button>
       </>
     );
-  } else if (enrolling) {
+  } else if (mode === "enrolling") {
+    body = <MfaEnrollment onFinished={back} onCancel={() => setMode("idle")} />;
+  } else if (mode === "regenerating") {
+    body = <MfaRegenerate onFinished={back} onCancel={() => setMode("idle")} />;
+  } else if (mode === "disabling") {
     body = (
-      <MfaEnrollment
-        onFinished={() => {
-          setEnrolling(false);
-          void status.refetch();
+      <MfaDisable
+        onDisabled={() => {
+          setDisabled(true);
+          back();
         }}
-        onCancel={() => setEnrolling(false)}
+        onNotEnabled={back}
+        onCancel={() => setMode("idle")}
       />
     );
   } else if (status.data.enabled) {
@@ -66,13 +81,34 @@ export function AccountSecurity() {
           {t("account.backupLeft", { count: left })}
           {left <= FEW ? ` ${t("account.backupFew")}` : null}
         </p>
+        <div className="flex flex-col gap-2">
+          <Button variant="accent" size="lg" onClick={() => setMode("regenerating")}>
+            {t("account.regenerateOffer")}
+          </Button>
+          <Button variant="ghost" onClick={() => setMode("disabling")}>
+            {t("account.disableOffer")}
+          </Button>
+        </div>
       </>
     );
   } else {
     body = (
       <>
+        {disabled ? (
+          <p role="status" className="text-sm">
+            {t("account.disabled")}
+          </p>
+        ) : null}
         <p className="text-muted">{t("account.mfaOff")}</p>
-        <Button variant="primary" size="lg" className="w-full" onClick={() => setEnrolling(true)}>
+        <Button
+          variant="primary"
+          size="lg"
+          className="w-full"
+          onClick={() => {
+            setDisabled(false);
+            setMode("enrolling");
+          }}
+        >
           {t("account.enable")}
         </Button>
       </>
@@ -91,12 +127,12 @@ export function AccountSecurity() {
         </h2>
         {body}
       </section>
-      <p className="text-sm" hidden={enrolling}>
+      <p className="text-sm" hidden={busy}>
         <Link href="/o" className={LINK}>
           {t("account.back")}
         </Link>
       </p>
-      {enrolling ? null : <SessionActions />}
+      {busy ? null : <SessionActions />}
     </>
   );
 }
