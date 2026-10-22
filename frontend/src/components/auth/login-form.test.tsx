@@ -82,7 +82,10 @@ describe("LoginForm", () => {
     expect(password).toBeInvalid();
     fireEvent.click(screen.getByRole("button", { name: "Entrar" })); // la flecha no se lee
     expect(password).toHaveFocus();
-    expect(api).toHaveBeenCalledTimes(1); // solo la consulta de sesión
+    // Solo la consulta de sesión (aparte de la de accesos de prueba, que solo lee).
+    expect(api.mock.calls.filter(([url]) => !String(url).endsWith("/test-accounts/"))).toHaveLength(
+      1,
+    );
   });
 
   it("los campos sirven a un gestor de contraseñas y no admiten más que el contrato", () => {

@@ -162,7 +162,11 @@
     "secondStepBack": "Volver a la contraseña",
     "secondStepExpired": "El acceso caducó o dejó de valer. Escribe tu contraseña otra vez.",
     "forgot": "¿Olvidaste tu contraseña?",
-    "help": "¿No puedes entrar? Pide ayuda a quien administra tu organización."
+    "help": "¿No puedes entrar? Pide ayuda a quien administra tu organización.",
+    "testAccounts": {
+      "title": "Accesos de prueba",
+      "intro": "Este es un entorno de pruebas. Estas cuentas son sintéticas y tienen roles reales: elige una para escribir su correo y entra con la contraseña de pruebas."
+    }
   },
   "recovery": {
     "pageTitle": "Recuperar contraseña",

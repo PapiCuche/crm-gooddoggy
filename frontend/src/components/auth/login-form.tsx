@@ -11,6 +11,7 @@ import { useAuthLogin, useAuthSession } from "@/lib/api/client";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
+import { TestAccounts } from "./test-accounts";
 import { LoginSecondStep } from "./login-second-step";
 
 const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulario ocupado
@@ -133,54 +134,64 @@ export function LoginForm({ next }: { next: string }) {
 
   // Hasta que la navegación sustituye la página, también la de quien ya tenía sesión.
   const busy = login.isPending || login.isSuccess || session.isSuccess;
+  // Un acceso de prueba solo escribe el correo: la contraseña sigue siendo cosa de quien entra.
+  function pick(address: string) {
+    if (busy || !emailField.current) return;
+    emailField.current.value = address;
+    if (missing.email) setMissing({ ...missing, email: false });
+    passwordField.current?.focus();
+  }
   return (
-    // `method`: un envío antes de que cargue el JavaScript nunca pone la contraseña en la URL.
-    <form
-      noValidate
-      method="post"
-      onSubmit={submit}
-      className="flex flex-col gap-4"
-      aria-busy={busy}
-    >
-      <TextField
-        ref={emailField}
-        label={t("auth.email")}
-        name="email"
-        type="email"
-        autoComplete="username"
-        defaultValue={email}
-        autoCapitalize="none"
-        spellCheck={false}
-        maxLength={254}
-        error={missing.email ? t("auth.emailRequired") : undefined}
-        onInput={() => missing.email && setMissing({ ...missing, email: false })}
-      />
-      <TextField
-        ref={passwordField}
-        label={t("auth.password")}
-        name="password"
-        type="password"
-        autoComplete="current-password"
-        maxLength={1024}
-        error={missing.password ? t("auth.passwordRequired") : undefined}
-        onInput={() => missing.password && setMissing({ ...missing, password: false })}
-      />
-      {login.isError || stalled || second === "expired" ? (
-        <p
-          role="alert"
-          className="border-danger/40 text-danger rounded-[10px] border px-3 py-2 text-sm transition-[opacity,transform] duration-200 ease-(--ease-out) starting:translate-y-1 starting:opacity-0"
-        >
-          {login.isError
-            ? rejection(login.error)
-            : stalled
-              ? t("auth.stalled")
-              : t("auth.secondStepExpired")}
-        </p>
-      ) : null}
-      <Button type="submit" variant="primary" size="lg" disabled={busy} className="mt-1 w-full">
-        {busy ? t("auth.submitting") : t("auth.submit")}
-        {busy ? null : <span aria-hidden>→</span>}
-      </Button>
-    </form>
+    <>
+      {/* `method`: un envío antes de que cargue el JavaScript nunca pone la contraseña en la URL. */}
+      <form
+        noValidate
+        method="post"
+        onSubmit={submit}
+        className="flex flex-col gap-4"
+        aria-busy={busy}
+      >
+        <TextField
+          ref={emailField}
+          label={t("auth.email")}
+          name="email"
+          type="email"
+          autoComplete="username"
+          defaultValue={email}
+          autoCapitalize="none"
+          spellCheck={false}
+          maxLength={254}
+          error={missing.email ? t("auth.emailRequired") : undefined}
+          onInput={() => missing.email && setMissing({ ...missing, email: false })}
+        />
+        <TextField
+          ref={passwordField}
+          label={t("auth.password")}
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          maxLength={1024}
+          error={missing.password ? t("auth.passwordRequired") : undefined}
+          onInput={() => missing.password && setMissing({ ...missing, password: false })}
+        />
+        {login.isError || stalled || second === "expired" ? (
+          <p
+            role="alert"
+            className="border-danger/40 text-danger rounded-[10px] border px-3 py-2 text-sm transition-[opacity,transform] duration-200 ease-(--ease-out) starting:translate-y-1 starting:opacity-0"
+          >
+            {login.isError
+              ? rejection(login.error)
+              : stalled
+                ? t("auth.stalled")
+                : t("auth.secondStepExpired")}
+          </p>
+        ) : null}
+        <Button type="submit" variant="primary" size="lg" disabled={busy} className="mt-1 w-full">
+          {busy ? t("auth.submitting") : t("auth.submit")}
+          {busy ? null : <span aria-hidden>→</span>}
+        </Button>
+      </form>
+      <TestAccounts onPick={pick} />
+    </>
   );
 }

@@ -72,6 +72,7 @@ import type {
   TeamMemberPutRequest,
   TeamMembersListParams,
   TeamsListParams,
+  TestAccounts,
 } from "./model";
 
 import { apiFetch } from "../http";
@@ -1316,6 +1317,118 @@ export function useAuthSession<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getAuthSessionQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAuthTestAccountsUrl = () => {
+  return `/api/v1/auth/test-accounts/`;
+};
+
+/**
+ * Con accesos de prueba activos, las cuentas sintéticas que existen, están activas y tienen
+ * su rol en la organización de pruebas. Sin ellos, 404 como una ruta que no existe. Nunca
+ * contraseñas ni nada que sirva para entrar: el login sigue siendo el de siempre.
+ */
+export const authTestAccounts = async (
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<TestAccounts> => {
+  return apiFetch<TestAccounts>(getAuthTestAccountsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAuthTestAccountsQueryKey = () => {
+  return [`/api/v1/auth/test-accounts/`] as const;
+};
+
+export const getAuthTestAccountsQueryOptions = <
+  TData = Awaited<ReturnType<typeof authTestAccounts>>,
+  TError = ErrorType<Error>,
+>(options?: {
+  query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authTestAccounts>>, TError, TData>>;
+  request?: SecondParameter<typeof apiFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAuthTestAccountsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof authTestAccounts>>> = ({ signal }) =>
+    authTestAccounts({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof authTestAccounts>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type AuthTestAccountsQueryResult = NonNullable<Awaited<ReturnType<typeof authTestAccounts>>>;
+export type AuthTestAccountsQueryError = ErrorType<Error>;
+
+export function useAuthTestAccounts<
+  TData = Awaited<ReturnType<typeof authTestAccounts>>,
+  TError = ErrorType<Error>,
+>(
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof authTestAccounts>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof authTestAccounts>>,
+          TError,
+          Awaited<ReturnType<typeof authTestAccounts>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAuthTestAccounts<
+  TData = Awaited<ReturnType<typeof authTestAccounts>>,
+  TError = ErrorType<Error>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authTestAccounts>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof authTestAccounts>>,
+          TError,
+          Awaited<ReturnType<typeof authTestAccounts>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAuthTestAccounts<
+  TData = Awaited<ReturnType<typeof authTestAccounts>>,
+  TError = ErrorType<Error>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authTestAccounts>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAuthTestAccounts<
+  TData = Awaited<ReturnType<typeof authTestAccounts>>,
+  TError = ErrorType<Error>,
+>(
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof authTestAccounts>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAuthTestAccountsQueryOptions(options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

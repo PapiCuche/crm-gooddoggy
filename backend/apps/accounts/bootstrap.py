@@ -65,3 +65,10 @@ def check_password_for(password: str, emails: list[str]) -> None:
             problems.extend(f"{email}: {message}" for message in error.messages)
     if problems:
         raise ValidationError(problems)
+
+
+def active_account_id(email: str) -> UUID | None:
+    """La cuenta activa con ese correo canónico y una contraseña utilizable, o `None` (la lista de
+    accesos de prueba, ADR-026 §5)."""
+    user = User.objects.filter(email=email, is_active=True).first()
+    return user.pk if user is not None and user.has_usable_password() else None

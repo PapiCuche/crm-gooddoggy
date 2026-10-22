@@ -73,3 +73,16 @@ def grant_template_role(ctx: TenantContext, *, membership_id: UUID, template: st
         assignments.create(membership_id=membership_id, role=role)
         _audit_assignment(ctx, "membership.role_assigned", membership_id, role, [None, role.pk])
     return True
+
+
+def template_role_name(ctx: TenantContext, *, membership_id: UUID, template: str) -> str | None:
+    """El nombre del rol de plantilla `template` si esa membresía lo tiene, o `None`. Solo para
+    enseñarlo: no autoriza nada (ADR-026 §5)."""
+    alias = require_scope(ctx)
+    name: str | None = (
+        MembershipRole.objects.using(alias)
+        .filter(membership_id=membership_id, role__is_system=True, role__code=template)
+        .values_list("role__name", flat=True)
+        .first()
+    )
+    return name

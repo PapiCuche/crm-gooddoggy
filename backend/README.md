@@ -130,6 +130,7 @@ docker compose -f infra/docker/compose.yaml --env-file infra/env/.env exec backe
 - **Contraseña.** La de las cuentas nuevas se pide dos veces sin mostrarla (o `--password-stdin`); las que ya existen conservan la suya. Nunca se imprime, se registra ni se audita.
 - **Nunca toca una organización real.** Si `<slug>` existe y `owner@<slug>.gooddoggy.test` no tiene su rol Owner, se niega sin cambiar nada.
 - Entran por el login normal: contraseña, límites, CSRF y segundo paso si lo activan. Auditoría: `test_accounts.provision.started` y `test_accounts.provisioned` (plataforma), `membership.activated` y `membership.role_assigned` (tenant).
+- **Lista del login (F2-117):** `GET /api/v1/auth/test-accounts/`, pública y de solo lectura (`apps.provisioning.api`). Con el setting vacío, 404 como una ruta que no existe. Con él, `{"accounts": [{"email", "role"}]}`: las cuentas sintéticas activas, con membresía activa y su rol de plantilla, en el orden Owner, Administrador, Supervisor y Vendedor; vacía si la organización no existe, si está suspendida o si su `owner@` no tiene el rol Owner (una organización real con ese slug nunca se lista). Lee con el actor del sistema dentro del `tenant_scope` de la organización de pruebas.
 - La única membresía sin invitación aparte del Owner inicial es esta: `organizations.bootstrap.add_test_membership`, que solo importa `apps.provisioning` y se niega fuera de la organización del setting.
 
 ## Roles y permisos: modelo (F2-04, ADR-003 §5)
