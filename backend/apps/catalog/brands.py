@@ -44,7 +44,7 @@ def brand_slug(value: str) -> str:
 
 
 def slug_from(value: str) -> str:
-    """Un slug a partir del nombre: sin acentos, en minúsculas, con guiones. `ValueError` si el
+    """Un slug a partir del nombre: sin acentos, en minúsculas, con guiones. `NoSlug` si el
     nombre no deja ninguna letra o cifra ASCII (por ejemplo, solo caracteres no latinos)."""
     ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:SLUG_MAX].strip("-")

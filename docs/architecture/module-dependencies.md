@@ -26,7 +26,7 @@
 │                      webhook ingress), files, audit, notifications           │
 ├────────────────────────────────────────────────────────────────────────────┤
 │ L0  Kernel           core (tenancy, ids, sequences, money, outbox, storage,  │
-│                      observability, errors, http client)                     │
+│                      observability, errors, http client, text)               │
 └────────────────────────────────────────────────────────────────────────────┘
   Lectura transversal: analytics, search (solo selectors/eventos, no escriben en otros módulos)
 ```
