@@ -62,14 +62,14 @@ Cada campo tiene un solo sistema con autoridad. Para el stock (existencias, rese
 El stock de una celda cuya autoridad es la tienda **no se copia a `inventory_levels`**. Copiarlo convertiría cada sincronización en movimientos `ADJUSTMENT` del CRM, y podría romper `reserved <= on_hand` cuando la tienda baja sus existencias por debajo de una reserva local.
 
 - Cada almacén de la tienda es en el CRM una fila de `warehouses` de la organización, marcada como del conector: su autoridad es la tienda. Así las celdas de stock siguen un solo modelo, variante × almacén. Se vincula por el mapeo explícito de identificadores (§9), y la marca la añade el work item del conector. Sus celdas no tienen filas en `inventory_levels` ni movimientos en el CRM.
-- Su stock vive en una tabla aparte de instantáneas: una fila por `(organization_id, connector_id, variant_id, external_warehouse_id)`, donde `external_warehouse_id` es esa fila de `warehouses`. Guarda las cantidades que da la tienda, la versión o secuencia de origen y `fetched_at`.
+- Su stock vive en una tabla aparte de instantáneas: una fila por `(organization_id, connector_id, variant_id, warehouse_id)`, donde `warehouse_id` es esa fila de `warehouses`. El servicio de inventario local rechaza movimientos y reservas sobre un almacén marcado como del conector: el work item que añade la marca añade esa guarda. Guarda las cantidades que da la tienda, la versión o secuencia de origen y `fetched_at`.
 - Es tenant-owned, con FORCE RLS (ADR-001, ADR-002).
 - La disponibilidad de una celda externa se calcula desde su instantánea, con la misma fórmula: `available = on_hand - reserved`, con las cantidades de la tienda.
 - **Una instantánea vieja se marca como desactualizada**: cuando supera la antigüedad configurada, o cuando el conector está caído o desconectado. Se enseña con su fecha, y no cuenta como disponible (§4).
 - **Una celda que desaparece en la tienda** (se retiró el producto o el almacén) se marca como desaparecida, con su fecha, y cuenta como no disponible. Nunca se borra en silencio.
 - Cada cambio de una instantánea deja su traza con `correlation_id` (ADR-011).
 
-**Orden de llegada.** Una instantánea solo se reemplaza por otra con una versión o secuencia de origen mayor. La tienda manda valores absolutos, no diferencias. No se ordena por fecha, porque los relojes de dos sistemas no son comparables. Una actualización con una versión menor o igual se ignora, y se cuenta en las métricas del conector. Si es la propia tienda la que vuelve atrás (una lectura completa de la reconciliación trae una versión menor que la guardada, por ejemplo tras restaurar una copia de seguridad), no es un mensaje tardío: se rechaza, la celda queda desactualizada y se avisa. Aceptar la nueva base pide que un operador reinicie las versiones de ese conector, con su motivo y auditado. Sin una versión monótona del origen no hay sincronización incremental de stock: el contrato tiene que darla (§11).
+**Orden de llegada.** Una instantánea solo se reemplaza por otra con una versión o secuencia de origen mayor. La tienda manda valores absolutos, no diferencias. No se ordena por fecha, porque los relojes de dos sistemas no son comparables. Una actualización con una versión menor o igual se ignora, y se cuenta en las métricas del conector; eso incluye una lectura completa que empezó antes de que se guardara la instantánea más nueva. Los dos instantes se comparan con el reloj del CRM. Si es la propia tienda la que vuelve atrás (una lectura completa de la reconciliación, empezada después del `fetched_at` de la instantánea guardada, trae una versión menor que la suya, por ejemplo tras restaurar una copia de seguridad), no es un mensaje tardío: se rechaza, la celda queda desactualizada y se avisa. Aceptar la nueva base pide que un operador reinicie las versiones de ese conector, con su motivo y auditado. Sin una versión monótona del origen no hay sincronización incremental de stock: el contrato tiene que darla (§11).
 
 ### 4. Sin doble descuento
 
@@ -91,7 +91,7 @@ La importación de catálogo y stock por CSV o XLSX (E03-09 y E04-07) sigue esto
 - **Una fila que toca un campo o una celda cuya autoridad es otra sale como error al validar.** La importación no la aplica.
 - **El stock se importa como cantidades absolutas.** Al aplicar, y no al previsualizar, el CRM calcula para cada celda un movimiento `ADJUSTMENT` contra su `on_hand` de ese momento, con la fila de `inventory_levels` bloqueada. Si el `on_hand` cambió desde la previsualización, la fila queda `STALE` y no se aplica a ciegas, como en los lotes de precios (`price_change_batch_items`, [02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.8). Una cantidad absoluta menor que el `reserved` de su celda sale como error: la importación no libera reservas ni rompe `reserved <= on_hand`.
 - **Aplicar dos veces no cambia nada.** Las cantidades son absolutas, y cada movimiento lleva una `idempotency_key` derivada de la importación y de la fila: aplicar otra vez la misma importación no crea movimientos nuevos.
-- **Subir otra vez un archivo igual solo avisa.** La importación se reconoce por el hash de su contenido, y la pantalla dice que ese archivo ya se aplicó. No se bloquea: un recuento legítimo puede dar los mismos números. Como las cantidades son absolutas, una celda que no cambió no genera ajuste.
+- **Subir otra vez un archivo igual solo avisa.** La importación se reconoce por el hash de su contenido, y la pantalla dice que ese archivo ya se subió antes. No se bloquea: un recuento legítimo puede dar los mismos números. Como las cantidades son absolutas, una celda que no cambió no genera ajuste.
 - La fila `STALE` necesita ese valor en `data_import_rows.action`, que hoy no lo tiene ([02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.12). Lo añade el work item de la importación de stock.
 - Los precios de una importación siguen el §6.
 
@@ -114,7 +114,7 @@ Además de lo del §9, el conector hace una sincronización inicial y, **cuando 
 
 ### 8. Dueños por entidad
 
-- Cada registro tiene **un solo sistema dueño**. El otro sistema lo lee o lo recibe; no lo edita. Una entidad puede tener dos registros vinculados, cada uno con su dueño: es el caso de los clientes.
+- Cada dato tiene **un solo sistema dueño**: el registro entero o, en un producto o una variante importados, cada campo según la matriz de autoridad (§2). El otro sistema lo lee o lo recibe; no lo edita. Una entidad puede tener dos registros vinculados, cada uno con su dueño: es el caso de los clientes.
 - Ninguna sincronización empieza sin un contrato verificado: una API de integración con credenciales propias, versionada y documentada.
 
 | Entidad | Dueño | Dirección | Motivo |
@@ -141,7 +141,8 @@ Cuando exista el contrato, cada conector cumple esto:
   - la firma cubre el cuerpo tal como llegó, en bytes y antes de interpretarlo, y una marca de tiempo; se compara en tiempo constante, y una marca fuera de la ventana anti-replay se rechaza;
   - al rotar el secreto, valen dos secretos durante un solapamiento acotado; al acabar, solo el nuevo;
   - el id de cada evento vale una vez **por conector**: dos organizaciones de la tienda podrían repetir un id. Se guarda al menos mientras dura la ventana, y un id repetido no hace nada;
-  - la ruta tiene un límite de frecuencia por conector: llamadas falsas no gastan el presupuesto de peticiones a la tienda;
+  - una petición con una firma que no vale se rechaza antes de contar en nada del conector; su límite es por dirección de red. Así nadie que conozca la ruta silencia los avisos de un conector;
+  - las lecturas que disparan los avisos válidos se agrupan por registro y tienen un tope por conector: una ráfaga de avisos no gasta el presupuesto de peticiones a la tienda;
   - **la organización sale del conector**: su id en la ruta se resuelve con una función `SECURITY DEFINER` mínima como la de las cuentas de canal (ADR-002 §3.3), que devuelve solo `organization_id` y el id del conector, nunca el secreto. El secreto se lee después, dentro del `tenant_scope` de esa organización, y la firma se comprueba antes de escribir nada. **Nunca del contenido del mensaje**;
   - un webhook es un aviso, no un dato: dispara una nueva lectura por la API con las credenciales del conector, y se escribe lo que devuelve esa lectura.
 - **Límites de la tienda.** El conector respeta los límites de frecuencia de la tienda: un presupuesto por conector, espera ante una respuesta de límite excedido y nunca más peticiones en paralelo de las acordadas.
