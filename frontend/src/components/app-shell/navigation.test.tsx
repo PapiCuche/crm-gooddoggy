@@ -6,9 +6,10 @@ import { mockApi, renderApp } from "@/test-utils";
 
 import { TenantGate } from "./tenant-gate";
 
+const route = vi.hoisted(() => ({ pathname: "/o/acme/miembros" }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn() }),
-  usePathname: () => "/o/acme/miembros",
+  usePathname: () => route.pathname,
   notFound: vi.fn(),
 }));
 const ana: SelfContext = {
@@ -27,7 +28,10 @@ const links = async (permissions: SelfContext["permissions"]) => {
     .map((link) => [link.getAttribute("href"), link.getAttribute("aria-current")]);
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  route.pathname = "/o/acme/miembros";
+});
 
 describe("navegación del shell", () => {
   it("no lista una entrada cuyo permiso el usuario no tiene", async () => {
@@ -145,5 +149,15 @@ describe("navegación del shell", () => {
       ["/o/acme/auditoria", null],
     ]);
     expect(screen.getByRole("link", { name: "Catálogo" })).toBeVisible();
+  });
+
+  it("en otra página del catálogo, «Catálogo» es la sección actual, no la página", async () => {
+    route.pathname = "/o/acme/catalogo/categorias";
+    expect(await links([{ code: "products.view", scopes: [] }])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/catalogo/marcas", "true"],
+    ]);
+    expect(screen.getByRole("banner")).toHaveTextContent("Workspace › Catálogo");
+    expect(document.title).toBe("Catálogo · Acme SAC · Good Doggy CRM");
   });
 });

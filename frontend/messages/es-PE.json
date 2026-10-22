@@ -25,7 +25,7 @@
       "branches": "Sucursales",
       "teams": "Equipos",
       "audit": "Auditoría",
-      "brands": "Catálogo"
+      "catalog": "Catálogo"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -34,7 +34,12 @@
     "loggingOut": "Cerrando sesión…",
     "unavailableEyebrow": "Good Doggy / Workspace",
     "unavailableTitle": "No pudimos abrir este espacio.",
-    "accountSecurity": "Seguridad de la cuenta"
+    "accountSecurity": "Seguridad de la cuenta",
+    "catalog": {
+      "label": "Secciones del catálogo",
+      "brands": "Marcas",
+      "categories": "Categorías"
+    }
   },
   "audit": {
     "eyebrow": "Good Doggy / Auditoría",
@@ -82,7 +87,8 @@
       "branch": "Sucursal",
       "team": "Equipo",
       "invitation": "Invitación",
-      "brand": "Marca"
+      "brand": "Marca",
+      "category": "Categoría"
     },
     "actions": {
       "organization": {
@@ -120,6 +126,12 @@
         "created": "Marca creada",
         "updated": "Marca renombrada",
         "deleted": "Marca borrada"
+      },
+      "category": {
+        "created": "Categoría creada",
+        "updated": "Categoría renombrada",
+        "moved": "Categoría movida",
+        "deleted": "Categoría borrada"
       }
     }
   },
@@ -779,6 +791,42 @@
       "denied": "No tienes permiso para borrar marcas.",
       "done": "Marca «{brand}» borrada.",
       "stale": "«{brand}» ya no está en el catálogo: la lista se actualizó."
+    }
+  },
+  "categories": {
+    "eyebrow": "Good Doggy / Catálogo",
+    "title": "Categorías",
+    "intro": "El árbol de categorías de los productos de {organization}, hasta 5 niveles.",
+    "empty": "Esta organización todavía no tiene categorías.",
+    "count": "{count, plural, =0 {Sin categorías} one {# categoría principal en el árbol} other {# categorías principales en el árbol}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando categorías…",
+    "denied": "No tienes permiso para ver el catálogo de esta organización.",
+    "inside": "Dentro de {name}",
+    "parent": {
+      "label": "Dentro de",
+      "root": "En la raíz (sin categoría madre)",
+      "hint": "El árbol admite hasta {max} niveles: las opciones que no caben aparecen desactivadas.",
+      "invalid": "No se puede poner ahí: ese lugar ya no existe o la rama pasaría de 5 niveles. Elige otro."
+    },
+    "create": {
+      "open": "Crear categoría",
+      "title": "Nueva categoría",
+      "name": "Nombre",
+      "slug": "Identificador (opcional)",
+      "slugHint": "Minúsculas, cifras y guiones. Si lo dejas vacío se forma con el nombre. No cambia después.",
+      "submit": "Crear categoría",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "nameRequired": "Escribe el nombre.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres con alguna letra o cifra.",
+      "slugInvalid": "El identificador no es válido: minúsculas sin acento, cifras y guiones entre ellas, hasta 63.",
+      "slugTaken": "Ahí ya hay una categoría con ese identificador.",
+      "slugTakenFormed": "Ahí ya hay una categoría con el identificador que se forma con este nombre. Escribe otro identificador.",
+      "slugNeeded": "Con este nombre no se puede formar un identificador: escríbelo tú.",
+      "denied": "No tienes permiso para crear categorías.",
+      "done": "Categoría «{name}» creada."
     }
   }
 }
