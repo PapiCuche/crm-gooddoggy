@@ -34,6 +34,7 @@ function ParentSelect({
 }) {
   const t = useTranslations("categories.parent");
   const id = useId();
+  const names = new Map(all.map((row) => [row.id, row.name]));
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={id} className="text-sm font-medium">
@@ -49,11 +50,16 @@ function ParentSelect({
         onChange={(event) => busy || onChange(event.target.value)} // mientras se envía, no cambia
       >
         <option value="">{t("root")}</option>
-        {all.map((row) => (
-          <option key={row.id} value={row.id} disabled={blocked(row)}>
-            {"   ".repeat(row.depth - 1) + row.name}
-          </option>
-        ))}
+        {all.map((row) => {
+          // La sangría no se oye: con la madre en el texto, dos «Accesorios» se distinguen.
+          const parent = row.parent_id ? names.get(row.parent_id) : undefined;
+          const text = parent ? t("inside", { name: row.name, parent }) : row.name;
+          return (
+            <option key={row.id} value={row.id} disabled={blocked(row)}>
+              {"   ".repeat(row.depth - 1) + text}
+            </option>
+          );
+        })}
       </select>
       <p id={`${id}-hint`} className="text-muted text-sm">
         {t("hint", { max: MAX_DEPTH })}
@@ -94,10 +100,12 @@ export function CategoryCreate({
     mutation: {
       networkMode: "always",
       onSuccess: async (category) => {
-        // Sigue «Creando…» hasta que el árbol trae la categoría nueva en su sitio.
+        // Sigue «Creando…» hasta que el árbol trae la categoría nueva en su sitio. Si releerlo
+        // falla, la lista sigue enseñando el árbol de antes: se dice, para no dar por hecho.
         await queryClient.invalidateQueries({ queryKey: listKey });
+        const stale = queryClient.getQueryState(listKey)?.status === "error";
         setOpen(false);
-        onDone(t("done", { name: category.name }));
+        onDone(t(stale ? "doneStale" : "done", { name: category.name }));
       },
     },
   });

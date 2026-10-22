@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
+import { holds, NAVIGATION } from "./navigation";
 import { TenantGate } from "./tenant-gate";
 
 const route = vi.hoisted(() => ({ pathname: "/o/acme/miembros" }));
@@ -159,5 +160,13 @@ describe("navegación del shell", () => {
     ]);
     expect(screen.getByRole("banner")).toHaveTextContent("Workspace › Catálogo");
     expect(document.title).toBe("Catálogo · Acme SAC · Good Doggy CRM");
+  });
+
+  it("una sección cubre las páginas bajo su ruta, no las rutas que solo empiezan igual", () => {
+    const catalog = NAVIGATION.find((item) => item.key === "catalog")!;
+    expect(holds(catalog, "/o/acme", "/o/acme/catalogo/marcas")).toBe(true);
+    expect(holds(catalog, "/o/acme", "/o/acme/catalogo/categorias")).toBe(true);
+    expect(holds(catalog, "/o/acme", "/o/acme/catalogos/x")).toBe(false);
+    expect(holds(catalog, "/o/otra", "/o/acme/catalogo/categorias")).toBe(false);
   });
 });

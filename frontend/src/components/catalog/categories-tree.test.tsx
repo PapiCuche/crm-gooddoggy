@@ -93,6 +93,32 @@ describe("CategoriesTree", () => {
     expect(screen.queryByRole("button", { name: /Editar|Borrar/ })).toBeNull();
   });
 
+  it("una hija cuya madre no llegó se enseña en la raíz, no se pierde", async () => {
+    mockApi({ [LIST]: page([phones, pro]) }); // falta iPhone, la madre de Pro
+    screenOf(base);
+    const tree = await screen.findByRole("list", { name: "Categorías" });
+    const roots = within(tree)
+      .getAllByRole("listitem")
+      .filter((item) => item.parentElement === tree)
+      .map((item) => item.querySelector(".font-medium")?.textContent);
+    expect(roots).toEqual(["Celulares", "Pro"]);
+  });
+
+  it("un cursor repetido es un fallo de la API, no una lista sin fin; cada página lleva la señal", async () => {
+    let turns = 0; // sin la guarda, la lista acabaría tras diez vueltas y no habría error
+    const api = mockApi({
+      [LIST]: { status: 200, body: { results: [phones], next: "p2" } },
+      [`${LIST}&cursor=p2`]: () => ({
+        status: 200,
+        body: { results: [extras], next: ++turns < 10 ? "p2" : null },
+      }),
+    });
+    screenOf(base);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
+    expect(sent(api, "GET")).toHaveLength(4); // dos páginas, y otra vez en el único reintento
+    for (const [, init] of api.mock.calls) expect(init?.signal?.aborted).toBe(false);
+  });
+
   it("sin categorías lo dice; sin permiso, la API decide y la pantalla lo explica", async () => {
     mockApi({ [LIST]: page([]) });
     screenOf(base);
@@ -130,10 +156,10 @@ describe("CategoriesTree", () => {
     expect(options()).toEqual([
       ["En la raíz (sin categoría madre)", false],
       ["N1", false],
-      ["N2", false],
-      ["N3", false],
-      ["N4", false],
-      ["N5", true],
+      ["N2, dentro de N1", false], // la madre se oye; la sangría, no
+      ["N3, dentro de N2", false],
+      ["N4, dentro de N3", false],
+      ["N5, dentro de N4", true],
     ]);
     fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "Perros" } });
     fireEvent.change(slug, { target: { value: "perros" } });
@@ -153,6 +179,68 @@ describe("CategoriesTree", () => {
       { name: "Perros", slug: "perros" },
       { name: "Collares", parent_id: "d4" },
     ]);
+  });
+
+  it("sigue «Creando…» hasta que vuelve el árbol; mientras, «Dentro de» no cambia; reabrir empieza de cero", async () => {
+    let rows: Category[] = TREE;
+    let release = () => {};
+    const api = mockApi({
+      [LIST]: () => page(rows),
+      [CREATE]: () => {
+        rows = [...TREE, node("x1", "Perros", "/celulares/perros/", "c1")];
+        return { status: 201, body: rows.at(-1) };
+      },
+    });
+    const reply = api.getMockImplementation()!;
+    api.mockImplementation(async (input, init) => {
+      // El árbol de después del alta tarda: se suelta a mano.
+      if ((init?.method ?? "GET") === "GET" && rows !== TREE) {
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return reply(input, init);
+    });
+    screenOf(manager);
+    await screen.findByRole("button", { name: "Crear categoría" });
+    press("Crear categoría");
+    const form = screen.getByRole("form", { name: "Nueva categoría" });
+    fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "Perros" } });
+    fireEvent.change(within(form).getByLabelText("Dentro de"), { target: { value: "c1" } });
+    press("Crear categoría", form);
+    await waitFor(() => expect(sent(api, "GET")).toHaveLength(2)); // el árbol, otra vez
+    expect(within(form).getByRole("button", { name: "Creando…" })).toBeVisible();
+    fireEvent.change(within(form).getByLabelText("Dentro de"), { target: { value: "c3" } });
+    expect(within(form).getByLabelText("Dentro de")).toHaveValue("c1");
+    release();
+    expect(await screen.findByText("Categoría «Perros» creada.")).toBeVisible();
+    expect(
+      within(screen.getByRole("list", { name: "Dentro de Celulares" })).getByText("Perros"),
+    ).toBeVisible();
+    press("Crear categoría");
+    expect(screen.queryByText("Categoría «Perros» creada.")).toBeNull(); // el aviso ya no aplica
+    expect(screen.getByLabelText("Dentro de")).toHaveValue("");
+  });
+
+  it("si el árbol no se puede releer tras crear, el aviso lo dice en vez de darlo por hecho", async () => {
+    let created = false;
+    mockApi({
+      [LIST]: () => (created ? { status: 500, body: {} } : page(TREE)),
+      [CREATE]: () => {
+        created = true;
+        return { status: 201, body: node("x1", "Perros", "/perros/") };
+      },
+    });
+    screenOf(manager);
+    await screen.findByRole("list", { name: "Categorías" });
+    press("Crear categoría");
+    const form = screen.getByRole("form", { name: "Nueva categoría" });
+    fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "Perros" } });
+    press("Crear categoría", form);
+    expect(
+      await screen.findByText(
+        "Categoría «Perros» creada, pero el árbol no se pudo actualizar. Recarga la página para verla.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Categoría «Perros» creada.")).toBeNull();
   });
 
   it("los errores del alta se dicen por `code`, junto al campo o al lugar", async () => {

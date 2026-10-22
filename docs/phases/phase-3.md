@@ -26,6 +26,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-04 | [#306](https://github.com/PapiCuche/crm-gooddoggy/issues/306) Catalog: hierarchical categories (API) | `feature/f3-catalog-categories` | #294 | backend + API |
 | F3-04b | [#314](https://github.com/PapiCuche/crm-gooddoggy/issues/314) Catalog: rename, move and delete categories (API) | `feature/f3-catalog-categories-edit-api` | #306 | backend + API |
 | F3-05 | [#307](https://github.com/PapiCuche/crm-gooddoggy/issues/307) Catalog: the categories screen | `feature/f3-catalog-categories-screen` | #306 | frontend |
+| F3-05b | [#312](https://github.com/PapiCuche/crm-gooddoggy/issues/312) Catalog: rename, move and delete categories from the screen | `feature/f3-catalog-categories-edit` | #307, #314 | frontend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 

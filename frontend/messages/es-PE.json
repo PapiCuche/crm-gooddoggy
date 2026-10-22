@@ -807,6 +807,7 @@
     "parent": {
       "label": "Dentro de",
       "root": "En la raíz (sin categoría madre)",
+      "inside": "{name}, dentro de {parent}",
       "hint": "El árbol admite hasta {max} niveles: las opciones que no caben aparecen desactivadas.",
       "invalid": "No se puede poner ahí: ese lugar ya no existe o la rama pasaría de 5 niveles. Elige otro."
     },
@@ -826,7 +827,8 @@
       "slugTakenFormed": "Ahí ya hay una categoría con el identificador que se forma con este nombre. Escribe otro identificador.",
       "slugNeeded": "Con este nombre no se puede formar un identificador: escríbelo tú.",
       "denied": "No tienes permiso para crear categorías.",
-      "done": "Categoría «{name}» creada."
+      "done": "Categoría «{name}» creada.",
+      "doneStale": "Categoría «{name}» creada, pero el árbol no se pudo actualizar. Recarga la página para verla."
     }
   }
 }
