@@ -29,6 +29,9 @@ import type {
   Brand,
   BrandCreateRequest,
   BrandsListParams,
+  CategoriesListParams,
+  Category,
+  CategoryCreateRequest,
   Error,
   GrantScopeRequest,
   Invitation,
@@ -54,6 +57,7 @@ import type {
   PaginatedAuditEntryList,
   PaginatedBranchList,
   PaginatedBrandList,
+  PaginatedCategoryList,
   PaginatedInvitationList,
   PaginatedMemberList,
   PaginatedRoleList,
@@ -2473,6 +2477,249 @@ export const useBrandsDelete = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getBrandsDeleteMutationOptions(options), queryClient);
+};
+
+export const getCategoriesListUrl = (orgSlug: string, params?: CategoriesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/categories/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/categories/`;
+};
+
+/**
+ * Las categorías de la organización, sin las borradas, paginadas por creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por `path`).
+ */
+export const categoriesList = async (
+  orgSlug: string,
+  params?: CategoriesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedCategoryList> => {
+  return apiFetch<PaginatedCategoryList>(getCategoriesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getCategoriesListQueryKey = (orgSlug: string, params?: CategoriesListParams) => {
+  return [`/api/v1/o/${orgSlug}/categories/`, ...(params ? [params] : [])] as const;
+};
+
+export const getCategoriesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof categoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: CategoriesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof categoriesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getCategoriesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof categoriesList>>> = ({ signal }) =>
+    categoriesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof categoriesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type CategoriesListQueryResult = NonNullable<Awaited<ReturnType<typeof categoriesList>>>;
+export type CategoriesListQueryError = ErrorType<Error>;
+
+export function useCategoriesList<
+  TData = Awaited<ReturnType<typeof categoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | CategoriesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof categoriesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof categoriesList>>,
+          TError,
+          Awaited<ReturnType<typeof categoriesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useCategoriesList<
+  TData = Awaited<ReturnType<typeof categoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: CategoriesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof categoriesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof categoriesList>>,
+          TError,
+          Awaited<ReturnType<typeof categoriesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useCategoriesList<
+  TData = Awaited<ReturnType<typeof categoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: CategoriesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof categoriesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useCategoriesList<
+  TData = Awaited<ReturnType<typeof categoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: CategoriesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof categoriesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getCategoriesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getCategoriesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/categories/`;
+};
+
+/**
+ * Crea una categoría en la raíz o dentro de `parent_id` (hasta 5 niveles). 409 `CATEGORY_SLUG_TAKEN`: la madre ya tiene una con ese slug.
+ */
+export const categoriesCreate = async (
+  orgSlug: string,
+  categoryCreateRequest: CategoryCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Category> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Category>(getCategoriesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(categoryCreateRequest),
+  });
+};
+
+export const getCategoriesCreateMutationKey = () => ["categoriesCreate"] as const;
+
+export const getCategoriesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof categoriesCreate>>,
+    TError,
+    CategoriesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof categoriesCreate>>,
+  TError,
+  CategoriesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getCategoriesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof categoriesCreate>>,
+    CategoriesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return categoriesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CategoriesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof categoriesCreate>>
+>;
+export type CategoriesCreateMutationBody = CategoryCreateRequest;
+export type CategoriesCreateMutationError = ErrorType<Error>;
+export type CategoriesCreateMutationVariables = { orgSlug: string; data: CategoryCreateRequest };
+
+export const useCategoriesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof categoriesCreate>>,
+      TError,
+      CategoriesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof categoriesCreate>>,
+  TError,
+  CategoriesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getCategoriesCreateMutationOptions(options), queryClient);
 };
 
 export const getInvitationsListUrl = (orgSlug: string, params?: InvitationsListParams) => {

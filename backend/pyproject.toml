@@ -126,9 +126,9 @@ protected_modules = ["apps.organizations.services"]
 allowed_importers = ["apps.members"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos de marcas: solo la API del catálogo los importa (F3-01)"
+name = "Comandos del catálogo: solo su API los importa (F3-01, F3-04)"
 type = "protected"
-protected_modules = ["apps.catalog.brands"]
+protected_modules = ["apps.catalog.brands", "apps.catalog.categories"]
 allowed_importers = ["apps.catalog.api"]
 
 [[tool.importlinter.contracts]]

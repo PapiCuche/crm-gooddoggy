@@ -1032,6 +1032,125 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/categories/:
+    get:
+      operationId: categories_list
+      description: Las categorías de la organización, sin las borradas, paginadas
+        por creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por
+        `path`).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - catalog
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCategoryList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: categories_create
+      description: 'Crea una categoría en la raíz o dentro de `parent_id` (hasta 5
+        niveles). 409 `CATEGORY_SLUG_TAKEN`: la madre ya tiene una con ese slug.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - catalog
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/invitations/:
     get:
       operationId: invitations_list
@@ -2555,6 +2674,54 @@ components:
           maxLength: 63
       required:
       - name
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: La categoría madre, o `null`.
+        name:
+          type: string
+        slug:
+          type: string
+          description: Clave estable, única entre las hermanas.
+        path:
+          type: string
+          description: 'La rama con los slugs: `/celulares/iphone/`.'
+        depth:
+          type: integer
+          description: Nivel en el árbol, desde 1.
+      required:
+      - depth
+      - id
+      - name
+      - parent_id
+      - path
+      - slug
+    CategoryCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        slug:
+          type: string
+          minLength: 1
+          description: Si no se envía, se forma con el nombre. No cambia después.
+          maxLength: 63
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Dentro de qué categoría; sin él, en la raíz.
+      required:
+      - name
     Error:
       type: object
       properties:
@@ -3028,6 +3195,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Brand'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedCategoryList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
         next:
           type: string
           nullable: true

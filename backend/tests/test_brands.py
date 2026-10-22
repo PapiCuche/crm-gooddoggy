@@ -8,8 +8,8 @@ import pytest
 from django.test import Client
 
 from apps.access.catalog import BY_CODE, ROLE_TEMPLATES
-from apps.catalog.brands import slug_from
 from apps.catalog.models import Brand
+from apps.catalog.slugs import slug_from
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
 from tests.test_authorization import give
