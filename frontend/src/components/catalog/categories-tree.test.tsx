@@ -54,6 +54,12 @@ function press(name: string, within_: HTMLElement = document.body) {
   button.focus();
   fireEvent.click(button);
 }
+// Los nombres de las categorías de un nivel, sin las de dentro.
+const names = (list: HTMLElement) =>
+  within(list)
+    .getAllByRole("listitem")
+    .filter((item) => item.parentElement === list)
+    .map((item) => item.querySelector(".font-medium")?.textContent);
 const options = () =>
   [...(screen.getByLabelText("Dentro de") as HTMLSelectElement).options].map((option) => [
     option.text.trim(),
@@ -77,11 +83,6 @@ describe("CategoriesTree", () => {
     screenOf(base);
     expect(screen.getByRole("status")).toHaveTextContent("Cargando categorías");
     const tree = await screen.findByRole("list", { name: "Categorías" });
-    const names = (list: HTMLElement) =>
-      within(list)
-        .getAllByRole("listitem")
-        .filter((item) => item.parentElement === list)
-        .map((item) => item.querySelector(".font-medium")?.textContent);
     expect(names(tree)).toEqual(["Accesorios", "Celulares"]);
     expect(names(screen.getByRole("list", { name: "Dentro de Celulares" }))).toEqual(["iPhone"]);
     const nested = within(screen.getByRole("list", { name: "Dentro de Celulares" }));
@@ -96,12 +97,10 @@ describe("CategoriesTree", () => {
   it("una hija cuya madre no llegó se enseña en la raíz, no se pierde", async () => {
     mockApi({ [LIST]: page([phones, pro]) }); // falta iPhone, la madre de Pro
     screenOf(base);
-    const tree = await screen.findByRole("list", { name: "Categorías" });
-    const roots = within(tree)
-      .getAllByRole("listitem")
-      .filter((item) => item.parentElement === tree)
-      .map((item) => item.querySelector(".font-medium")?.textContent);
-    expect(roots).toEqual(["Celulares", "Pro"]);
+    expect(names(await screen.findByRole("list", { name: "Categorías" }))).toEqual([
+      "Celulares",
+      "Pro",
+    ]);
   });
 
   it("un cursor repetido es un fallo de la API, no una lista sin fin; cada página lleva la señal", async () => {
@@ -261,29 +260,18 @@ describe("CategoriesTree", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("No se puede poner ahí");
   });
 
-  it("sin red crear falla y se dice: no queda en cola", async () => {
+  it("sin red crear falla y se dice, sin cola; Enter mantenido no reabre ni reenvía", async () => {
     const api = mockApi({ [LIST]: page(TREE) });
-    screenOf(manager);
-    fireEvent.click(await screen.findByRole("button", { name: "Crear categoría" }));
-    const form = screen.getByRole("form", { name: "Nueva categoría" });
-    fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "Perros" } });
-    onlineManager.setOnline(false);
-    api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    press("Crear categoría", form);
-    expect(await within(form).findByRole("alert")).toHaveTextContent("No hay conexión");
-    expect(sent(api, "POST")).toHaveLength(1);
-  });
-
-  it("Enter mantenido no vuelve a pulsar: ni reabre ni reenvía", async () => {
-    const api = mockApi({ [LIST]: page(TREE), [CREATE]: { status: 500, body: { code: "X" } } });
     screenOf(manager);
     const open = await screen.findByRole("button", { name: "Crear categoría" });
     expect(fireEvent.keyDown(open, { key: "Enter", repeat: true })).toBe(false);
     fireEvent.click(open);
     const form = screen.getByRole("form", { name: "Nueva categoría" });
     fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "Perros" } });
+    onlineManager.setOnline(false);
+    api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     press("Crear categoría", form);
-    await within(form).findByRole("alert");
+    expect(await within(form).findByRole("alert")).toHaveTextContent("No hay conexión");
     const held = within(form).getByRole("button", { name: "Crear categoría" });
     expect(fireEvent.keyDown(held, { key: "Enter", repeat: true })).toBe(false);
     expect(sent(api, "POST")).toHaveLength(1);

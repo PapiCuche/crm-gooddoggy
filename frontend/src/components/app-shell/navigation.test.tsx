@@ -1,10 +1,12 @@
 import { screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CatalogNav } from "@/components/catalog/catalog-nav";
 import type { SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
 import { holds, NAVIGATION } from "./navigation";
+import { TenantProvider } from "./tenant-context";
 import { TenantGate } from "./tenant-gate";
 
 const route = vi.hoisted(() => ({ pathname: "/o/acme/miembros" }));
@@ -168,5 +170,26 @@ describe("navegación del shell", () => {
     expect(holds(catalog, "/o/acme", "/o/acme/catalogo/categorias")).toBe(true);
     expect(holds(catalog, "/o/acme", "/o/acme/catalogos/x")).toBe(false);
     expect(holds(catalog, "/o/otra", "/o/acme/catalogo/categorias")).toBe(false);
+  });
+
+  it("CatalogNav enlaza las páginas del catálogo y marca la abierta, también con la barra final", () => {
+    route.pathname = "/o/acme/catalogo/categorias/";
+    renderApp(
+      <TenantProvider value={ana}>
+        <CatalogNav />
+      </TenantProvider>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Secciones del catálogo" });
+    const found = within(nav)
+      .getAllByRole("link")
+      .map((link) => [
+        link.textContent,
+        link.getAttribute("href"),
+        link.getAttribute("aria-current"),
+      ]);
+    expect(found).toEqual([
+      ["Marcas", "/o/acme/catalogo/marcas", null],
+      ["Categorías", "/o/acme/catalogo/categorias", "page"],
+    ]);
   });
 });
