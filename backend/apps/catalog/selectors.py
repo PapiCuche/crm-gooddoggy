@@ -1,9 +1,11 @@
 """Lecturas del catálogo. Filtran por organización (RLS y `TenantManager`), no por permiso: el
 permiso lo exige quien las sirve (`HasPermission`)."""
 
+from uuid import UUID
+
 from django.db.models import QuerySet
 
-from apps.catalog.models import Brand, Category, Product
+from apps.catalog.models import Brand, Category, Product, ProductVariant
 
 
 def brands() -> QuerySet[Brand]:
@@ -21,3 +23,10 @@ def categories() -> QuerySet[Category]:
 def products() -> QuerySet[Product]:
     """Los productos vivos, con su marca y su categoría en la misma consulta."""
     return Product.objects.filter(deleted_at__isnull=True).select_related("brand", "category")
+
+
+def variants(product_id: UUID) -> QuerySet[ProductVariant]:
+    """Las variantes vivas de un producto vivo de la organización."""
+    return ProductVariant.objects.filter(
+        product_id=product_id, deleted_at__isnull=True, product__deleted_at__isnull=True
+    )

@@ -13,7 +13,7 @@ from django.db.models.functions import Collate
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
-from apps.catalog.models import Category
+from apps.catalog.models import Category, Product
 from apps.catalog.slugs import clean_slug, slug_from
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -29,6 +29,10 @@ class CategorySlugTaken(Exception):
 
 class CategoryHasChildren(Exception):
     """No se borra una categoría que tiene hijas: antes hay que moverlas o borrarlas."""
+
+
+class CategoryInUse(Exception):
+    """No se borra una categoría que tienen productos vivos."""
 
 
 class BadParent(ValueError):
@@ -178,13 +182,17 @@ def move_category(ctx: TenantContext, *, category_id: UUID, parent_id: UUID | No
 
 def delete_category(ctx: TenantContext, *, category_id: UUID) -> None:
     """Borra una categoría sin hijas (borrado lógico) y lo audita; su slug queda libre bajo ese
-    padre. `CategoryHasChildren` si tiene hijas vivas."""
+    padre. `CategoryHasChildren` si tiene hijas vivas; `CategoryInUse` si la usan productos
+    vivos (que la bloquean al asignarla, como aquí)."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         _lock_tree(alias, ctx)
         category: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
         if _live(alias).filter(parent_id=category.pk).exists():
             raise CategoryHasChildren(category.path)
+        products = Product.objects.using(alias).filter(deleted_at__isnull=True)
+        if products.filter(category_id=category.pk).exists():
+            raise CategoryInUse(category.path)
         category.deleted_at = timezone.now()
         category.deleted_by_user_id = ctx.user_id
         category.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])

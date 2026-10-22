@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from apps.catalog.brands import (
     NAME_MAX,
+    BrandInUse,
     BrandSlugTaken,
     brand_name,
     brand_slug,
@@ -25,6 +26,7 @@ from apps.catalog.categories import NAME_MAX as CATEGORY_NAME_MAX
 from apps.catalog.categories import (
     BadParent,
     CategoryHasChildren,
+    CategoryInUse,
     CategorySlugTaken,
     category_name,
     create_category,
@@ -32,7 +34,7 @@ from apps.catalog.categories import (
     move_category,
     rename_category,
 )
-from apps.catalog.models import Brand, Category, Product
+from apps.catalog.models import Brand, Category, Product, ProductVariant
 from apps.catalog.products import NAME_MAX as PRODUCT_NAME_MAX
 from apps.catalog.products import (
     SKU_MAX,
@@ -40,12 +42,14 @@ from apps.catalog.products import (
     ProductSlugTaken,
     SkuTaken,
     create_product,
+    delete_product,
     description,
     product_name,
     short_description,
     sku,
+    update_product,
 )
-from apps.catalog.selectors import brands, categories, products
+from apps.catalog.selectors import brands, categories, products, variants
 from apps.catalog.slugs import SLUG_MAX, NoSlug, clean_slug
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -162,15 +166,17 @@ class BrandView(APIView):
     @extend_schema(
         operation_id="brands_delete",
         tags=["catalog"],
-        responses={204: None, **errors(401, 403, 404)},
-        description="Borra la marca (borrado lógico) y libera su slug. 404: no es de la "
-        "organización o ya está borrada.",
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Borra la marca (borrado lógico) y libera su slug. 409 `BRAND_IN_USE`: "
+        "productos vivos la usan. 404: no es de la organización o ya está borrada.",
     )
     def delete(self, request: Request, brand_id: UUID, **kwargs: Any) -> Response:
         try:
             delete_brand(_tenant(), brand_id=brand_id)
         except Brand.DoesNotExist:
             raise NotFound from None
+        except BrandInUse:
+            raise ApiError("BRAND_IN_USE", 409, "Hay productos de esta marca.") from None
         return Response(status=204)
 
 
@@ -300,7 +306,8 @@ class CategoryView(APIView):
         tags=["catalog"],
         responses={204: None, **errors(401, 403, 404, 409)},
         description="Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`: tiene "
-        "subcategorías. 404: no es de la organización o ya está borrada.",
+        "subcategorías; `CATEGORY_IN_USE`: productos vivos la usan. 404: no es de la "
+        "organización o ya está borrada.",
     )
     def delete(self, request: Request, category_id: UUID, **kwargs: Any) -> Response:
         try:
@@ -309,6 +316,8 @@ class CategoryView(APIView):
             raise NotFound from None
         except CategoryHasChildren:
             raise ApiError("CATEGORY_HAS_CHILDREN", 409, HAS_CHILDREN) from None
+        except CategoryInUse:
+            raise ApiError("CATEGORY_IN_USE", 409, "Hay productos en esta categoría.") from None
         return Response(status=204)
 
 
@@ -360,6 +369,32 @@ class ProductCreateSerializer(serializers.Serializer[Any]):
         )
 
 
+class ProductUpdateSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField(max_length=PRODUCT_NAME_MAX, required=False)
+    status = serializers.ChoiceField(choices=Product.Status.choices, required=False)
+    brand_id = serializers.UUIDField(required=False, allow_null=True)
+    category_id = serializers.UUIDField(required=False, allow_null=True)
+    short_description = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(max_length=5000, required=False, allow_blank=True)
+    ai_visible = serializers.BooleanField(required=False)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        return _clean(
+            attrs, {**PRODUCT_CLEAN, **{k: (lambda v: v) for k in attrs if k not in PRODUCT_CLEAN}}
+        )
+
+
+class VariantSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    sku = serializers.CharField()
+    barcode = serializers.CharField(allow_blank=True)
+    name = serializers.CharField()
+    condition = serializers.ChoiceField(choices=ProductVariant.Condition.choices)
+    status = serializers.ChoiceField(choices=ProductVariant.Status.choices)
+    is_default = serializers.BooleanField()
+    ai_visible = serializers.BooleanField()
+
+
 PRODUCT_TAKEN = "Ya hay un producto con ese slug en la organización."
 SKU_IN_USE = "Ya hay una variante con ese SKU en la organización."
 
@@ -408,3 +443,61 @@ class ProductsView(generics.ListAPIView):
             text = f"{error}."
             raise serializers.ValidationError({"slug": [text[:1].upper() + text[1:]]}) from None
         return Response(ProductSerializer(product).data, status=201)
+
+
+class ProductView(APIView):
+    """Un producto: `PATCH` cambia sus datos o su estado; `DELETE` lo borra con sus variantes."""
+
+    required_permissions = {"PATCH": "products.manage", "DELETE": "products.manage"}
+
+    @extend_schema(
+        operation_id="products_update",
+        tags=["catalog"],
+        request=ProductUpdateSerializer,
+        responses={200: ProductSerializer, **errors(400, 401, 403, 404)},
+        description="Cambia lo que se envía; el slug y el tipo no cambian. Renombrarlo renombra "
+        "su variante por defecto. 404: no es de la organización o está borrado.",
+    )
+    def patch(self, request: Request, product_id: UUID, **kwargs: Any) -> Response:
+        wanted = ProductUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        try:
+            product = update_product(_tenant(), product_id=product_id, **wanted.validated_data)
+        except Product.DoesNotExist:
+            raise NotFound from None
+        except BadReference as error:
+            raise _reference_error(error) from None
+        return Response(ProductSerializer(product).data)
+
+    @extend_schema(
+        operation_id="products_delete",
+        tags=["catalog"],
+        responses={204: None, **errors(401, 403, 404)},
+        description="Borra el producto y sus variantes (borrado lógico); sus SKU quedan libres.",
+    )
+    def delete(self, request: Request, product_id: UUID, **kwargs: Any) -> Response:
+        try:
+            delete_product(_tenant(), product_id=product_id)
+        except Product.DoesNotExist:
+            raise NotFound from None
+        return Response(status=204)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="variants_list",
+        tags=["catalog"],
+        responses={200: VariantSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Las variantes vivas de un producto, paginadas por creación. 404 si el "
+        "producto no es de la organización o está borrado.",
+    ),
+)
+class VariantsView(generics.ListAPIView):
+    required_permissions = {"GET": "products.view"}
+    serializer_class = VariantSerializer
+
+    def get_queryset(self) -> QuerySet[ProductVariant]:
+        product_id = self.kwargs["product_id"]
+        if not products().filter(pk=product_id).exists():
+            raise NotFound
+        return variants(product_id)
