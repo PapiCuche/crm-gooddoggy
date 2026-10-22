@@ -27,7 +27,7 @@ También hay que elegir el emulador S3 local (D-ENG-2): MinIO dejó de publicar 
 | PostgreSQL | **18.6** (imagen `postgres:18.6`) | minor vigente | Soportada hasta 2030-11-14 | postgresql.org/support/versioning · Docker Hub `library/postgres` |
 | Redis | **8.8.3** (imagen `redis:8.8.3-alpine`) | 2026-09-17 | Línea 8.8 recibiendo parches (8.8.3 publicada junto con 8.10.2) | github.com/redis/redis/releases · Docker Hub `library/redis` |
 | Node.js | **24.21.0** LTS (*Krypton*) | 2026-09-07 | Active LTS hasta 2026-10-20; Maintenance hasta **2028-04-30** | nodejs.org/dist/index.json · github.com/nodejs/Release (schedule.json) |
-| Next.js | **16.3.8** (Active LTS; fijada en F1-09) | 2026-09-30 | Security release que corrige 7 advisories del 2026-09-30; **2 más (1 crítica, 1 alta) siguen pendientes upstream** (§4.1, OBS-F1-09-2). 16.3.6 y 16.3.7 quedan descartadas | npm `next` · nextjs.org/blog · nextjs.org/support-policy · GitHub advisories vercel/next.js |
+| Next.js | **16.4.1** (Active LTS; fijada en F1-09, subida en F3-16, #331) | 2026-10-14 | Security release: corrige 2 críticas (RCE sin autenticación en `use cache` con arrays tipados, GHSA-673q-mjm6-r5xr; y en Image Optimization con SVG, GHSA-2464-fhr4-w9xw) y 1 alta (DoS con Server Actions, GHSA-p3m5-59mp-jv5r), que afectan a 16.0.0–16.4.0. 16.3.8 queda descartada | npm `next` · nextjs.org/blog · GitHub advisories vercel/next.js |
 | React | **19.2.8** | 2026-07-21 | Versión que empareja `create-next-app` 16.3.8 (`nextjsReactPeerVersion`); incluye el fix de GHSA-wx67-qw84-cm4g; revalidada el 2026-09-30 | npm `react` · `packages/create-next-app/templates/index.ts@v16.3.6` · GitHub advisories facebook/react |
 | React DOM | **19.2.8** | 2026-07-21 | Igual que React | npm `react-dom` |
 | @types/react | **19.2.18** | 2026-07-30 | Versión usada por el propio monorepo de Next.js v16.3.8 (revalidada 2026-09-30) | npm `@types/react` · `package.json@v16.3.8` |
@@ -101,7 +101,7 @@ Combinación revalidada **junta** el día de inicio de F1-09 contra npm, los Git
 
 | Paquete | Versión | Evidencia |
 |---|---|---|
-| next / eslint-config-next | **16.3.8** | Publicada el 2026-09-30 16:13 UTC; es la versión más reciente. Sus release notes enumeran los 7 advisories del día: 1 alta (SSRF en Image Optimization, GHSA-cjq9-62q9-8jv4), 5 medias y 1 baja. 16.3.7 (2026-09-29) solo era un backport sin fixes de seguridad. **Pendiente:** según el post oficial "Upcoming Next.js September Security Release" (actualizado el 2026-09-30), quedan **2 vulnerabilidades (1 crítica, 1 alta)** a la espera de coordinación upstream, sin fecha, para "una versión posterior" (OBS-F1-09-2) |
+| next / eslint-config-next | **16.4.1** | Publicada el 2026-10-14; corrige los 3 advisories de arriba. 16.4.0 (2026-10-07) es la minor; sus notas no traen cambios incompatibles para este proyecto. `create-next-app@16.4.1` empareja `react@19.3.0`; seguimos en 19.2.8, que cumple su peer `^19`, y la subida a 19.3 va aparte (no es de seguridad) |
 | react / react-dom | **19.2.8** | `create-next-app@16.3.8` fija `nextjsReactPeerVersion = "19.2.8"`. Último 19.2.x; parchea el último advisory de RSC (GHSA-wx67-qw84-cm4g). 19.3.0 no es la pareja oficial |
 | @types/react | **19.2.18** | Versión del monorepo de Next.js v16.3.8 |
 | @types/react-dom | **19.2.7** | Último 19.2.x (el monorepo usa 19.2.4) |
