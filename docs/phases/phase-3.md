@@ -11,7 +11,7 @@ La Fase 3 empieza sin esperar a que se cierre la Fase 2: el mantenedor pidió el
 - Un producto no es una variante: todo precio, stock y línea de cotización apunta a la variante. Un producto sin opciones tiene una variante por defecto.
 - `available = on_hand - reserved`; los movimientos de stock solo se añaden, nunca se editan ni se borran.
 - `PricingService` es la única autoridad de los precios (ADR-006).
-- Inventario LOCAL primero. Los modos EXTERNAL e HYBRID y el conector con BlackDogStorePeru siguen [ADR-028](../adr/ADR-028-store-data-connectors.md), propuesto; no se implementan hasta que el mantenedor lo acepte y exista un contrato con la tienda.
+- Inventario LOCAL primero. Los modos EXTERNAL e HYBRID y el conector con BlackDogStorePeru siguen [ADR-028](../adr/ADR-028-store-data-connectors.md), aceptado el 2026-10-22; no se implementan hasta que exista un contrato con la tienda.
 - Cada tabla nueva es tenant-owned con FORCE RLS, auditada y con permisos del catálogo.
 
 ## Work items
