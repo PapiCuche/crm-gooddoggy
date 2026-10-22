@@ -221,7 +221,7 @@ describe("AuditList", () => {
       await screen.findByRole("list", { name: "Auditoría" });
       const options = (name: string) =>
         [...select(name).options].map((option) => [option.value, option.text]);
-      expect(options("Acción")).toHaveLength(22);
+      expect(options("Acción")).toHaveLength(25); // con las tres de marcas (F3-02)
       expect(options("Acción")).toContainEqual(["membership.invited", "Persona invitada"]);
       expect(options("Acción")).toContainEqual([
         "membership.invitation_revoked",
@@ -241,6 +241,7 @@ describe("AuditList", () => {
         ["branch", "Sucursal"],
         ["team", "Equipo"],
         ["invitation", "Invitación"],
+        ["brand", "Marca"],
       ]);
       expect(options("Quién")).toEqual([
         ["", "Cualquiera"],
