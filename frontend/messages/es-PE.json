@@ -754,6 +754,8 @@
       "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres con alguna letra o cifra.",
       "slugInvalid": "El identificador no es válido: minúsculas sin acento, cifras y guiones entre ellas, hasta 63.",
       "slugTaken": "Ya hay una marca con ese identificador.",
+      "slugTakenFormed": "Ya hay una marca con el identificador que se forma con este nombre. Escribe otro identificador.",
+      "slugNeeded": "Con este nombre no se puede formar un identificador: escríbelo tú.",
       "denied": "No tienes permiso para crear marcas.",
       "done": "Marca «{name}» creada."
     },

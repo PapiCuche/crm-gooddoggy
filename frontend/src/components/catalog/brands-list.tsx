@@ -60,7 +60,8 @@ export function BrandsList() {
             <span className="text-muted font-mono text-[13px] wrap-anywhere">{brand.slug}</span>
           </p>
           {canManage ? (
-            <div className="flex flex-wrap items-start gap-2">
+            // Abierto, el formulario ocupa la fila entera: en la columna `auto` estrecharía el nombre.
+            <div className="flex flex-wrap items-start gap-2 sm:has-[form]:col-span-2">
               <BrandRenameAction
                 slug={organization.slug}
                 brand={brand}

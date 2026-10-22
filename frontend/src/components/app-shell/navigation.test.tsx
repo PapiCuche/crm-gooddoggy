@@ -131,4 +131,19 @@ describe("navegación del shell", () => {
     ]);
     expect(screen.getByRole("link", { name: "Auditoría" })).toBeVisible();
   });
+
+  it("la entrada «Catálogo» pide `products.view`: administrar marcas no basta", async () => {
+    expect(await links([{ code: "brands.manage", scopes: [] }])).toEqual([["/o/acme", null]]);
+  });
+
+  it("con `products.view` lista «Catálogo», entre «Equipos» y «Auditoría»", async () => {
+    const all = ["audit.view", "products.view", "teams.view"].map((code) => ({ code, scopes: [] }));
+    expect(await links(all)).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/equipos", null],
+      ["/o/acme/catalogo/marcas", null],
+      ["/o/acme/auditoria", null],
+    ]);
+    expect(screen.getByRole("link", { name: "Catálogo" })).toBeVisible();
+  });
 });

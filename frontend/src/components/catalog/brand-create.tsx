@@ -28,6 +28,9 @@ export function BrandCreate({
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  // El último envío iba sin slug: un 400 o un 409 del slug habla del que la API formó con el
+  // nombre, no de un campo que el usuario dejó vacío.
+  const [formed, setFormed] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
   const create = useBrandsCreate({
@@ -74,17 +77,21 @@ export function BrandCreate({
           fields={FIELDS.map((field) => ({
             ...field,
             label: t(field.name),
-            invalid: t(`${field.name}Invalid`),
+            invalid: field.name === "slug" && formed ? t("slugNeeded") : t(`${field.name}Invalid`),
             required: field.name === "name" ? t("nameRequired") : undefined,
             hint: field.name === "slug" ? t("slugHint") : undefined,
+            literal: field.name === "slug",
           }))}
           write={create}
           // Un slug vacío no se envía: así lo forma la API con el nombre.
-          send={({ name, slug: chosen }) =>
-            create.mutate({ orgSlug: slug, data: chosen ? { name, slug: chosen } : { name } })
-          }
+          send={({ name, slug: chosen }) => {
+            setFormed(!chosen);
+            create.mutate({ orgSlug: slug, data: chosen ? { name, slug: chosen } : { name } });
+          }}
           taken={(error) =>
-            error.code === "BRAND_SLUG_TAKEN" ? { field: "slug", text: t("slugTaken") } : null
+            error.code === "BRAND_SLUG_TAKEN"
+              ? { field: "slug", text: t(formed ? "slugTakenFormed" : "slugTaken") }
+              : null
           }
           denied={t("denied")}
           labels={{ submit: t("submit"), busy: t("busy"), cancel: t("cancel") }}
