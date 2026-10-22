@@ -199,6 +199,7 @@ SPECTACULAR_SETTINGS = {
         "AuditResultEnum": "apps.audit.services.Result",
         "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
         "RevokedEnum": ["REVOKED"],  # el único estado que la API pone a una invitación (F2-82)
+        "ProductStatusEnum": "apps.catalog.models.Product.Status",  # F3-06
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.

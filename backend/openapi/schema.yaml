@@ -1851,6 +1851,124 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/products/:
+    get:
+      operationId: products_list
+      description: Los productos vivos de la organización, paginados por creación
+        (ADR-016).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - catalog
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedProductList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: products_create
+      description: Crea un producto en borrador con su variante por defecto (`sku`).
+        Un servicio no lleva stock. 409 `PRODUCT_SLUG_TAKEN` o `SKU_TAKEN`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - catalog
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/:
     get:
       operationId: roles_list
@@ -3353,6 +3471,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedProductList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedRoleList:
       type: object
       required:
@@ -3523,6 +3655,114 @@ components:
             $ref: '#/components/schemas/Permission'
       required:
       - results
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+          description: Clave estable del producto, única en la organización.
+        product_type:
+          $ref: '#/components/schemas/ProductTypeEnum'
+        status:
+          $ref: '#/components/schemas/ProductStatusEnum'
+        brand:
+          allOf:
+          - $ref: '#/components/schemas/ProductRef'
+          nullable: true
+        category:
+          allOf:
+          - $ref: '#/components/schemas/ProductRef'
+          nullable: true
+        short_description:
+          type: string
+        description:
+          type: string
+        tracks_inventory:
+          type: boolean
+          description: 'Falso en los servicios: no llevan stock.'
+        ai_visible:
+          type: boolean
+      required:
+      - ai_visible
+      - brand
+      - category
+      - description
+      - id
+      - name
+      - product_type
+      - short_description
+      - slug
+      - status
+      - tracks_inventory
+    ProductCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        sku:
+          type: string
+          minLength: 1
+          description: El de su variante por defecto. Se guarda en mayúsculas.
+          maxLength: 64
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 63
+        product_type:
+          $ref: '#/components/schemas/ProductTypeEnum'
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+        short_description:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 5000
+      required:
+      - name
+      - sku
+    ProductRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+      required:
+      - id
+      - name
+    ProductStatusEnum:
+      enum:
+      - DRAFT
+      - ACTIVE
+      - DISCONTINUED
+      type: string
+      description: |-
+        * `DRAFT` - Draft
+        * `ACTIVE` - Active
+        * `DISCONTINUED` - Discontinued
+    ProductTypeEnum:
+      enum:
+      - PHYSICAL
+      - SERVICE
+      type: string
+      description: |-
+        * `PHYSICAL` - Physical
+        * `SERVICE` - Service
     RevokedEnum:
       enum:
       - REVOKED

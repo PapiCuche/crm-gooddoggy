@@ -3,7 +3,7 @@ permiso lo exige quien las sirve (`HasPermission`)."""
 
 from django.db.models import QuerySet
 
-from apps.catalog.models import Brand, Category
+from apps.catalog.models import Brand, Category, Product
 
 
 def brands() -> QuerySet[Brand]:
@@ -16,3 +16,8 @@ def categories() -> QuerySet[Category]:
     """Las categorías no borradas de la organización del `tenant_scope` activo. El orden lo pone
     la paginación (ADR-016); quien las enseña en árbol las ordena por `path`."""
     return Category.objects.filter(deleted_at__isnull=True)
+
+
+def products() -> QuerySet[Product]:
+    """Los productos vivos, con su marca y su categoría en la misma consulta."""
+    return Product.objects.filter(deleted_at__isnull=True).select_related("brand", "category")

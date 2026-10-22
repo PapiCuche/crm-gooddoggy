@@ -60,6 +60,7 @@ import type {
   PaginatedCategoryList,
   PaginatedInvitationList,
   PaginatedMemberList,
+  PaginatedProductList,
   PaginatedRoleList,
   PaginatedTeamList,
   PaginatedTeamMemberList,
@@ -71,6 +72,9 @@ import type {
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
   PermissionCatalog,
+  Product,
+  ProductCreateRequest,
+  ProductsListParams,
   Role,
   RoleCreateRequest,
   RolesListParams,
@@ -4058,6 +4062,247 @@ export function usePermissionsList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getProductsListUrl = (orgSlug: string, params?: ProductsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/products/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/products/`;
+};
+
+/**
+ * Los productos vivos de la organización, paginados por creación (ADR-016).
+ */
+export const productsList = async (
+  orgSlug: string,
+  params?: ProductsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedProductList> => {
+  return apiFetch<PaginatedProductList>(getProductsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getProductsListQueryKey = (orgSlug: string, params?: ProductsListParams) => {
+  return [`/api/v1/o/${orgSlug}/products/`, ...(params ? [params] : [])] as const;
+};
+
+export const getProductsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof productsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ProductsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof productsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getProductsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof productsList>>> = ({ signal }) =>
+    productsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof productsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ProductsListQueryResult = NonNullable<Awaited<ReturnType<typeof productsList>>>;
+export type ProductsListQueryError = ErrorType<Error>;
+
+export function useProductsList<
+  TData = Awaited<ReturnType<typeof productsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ProductsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof productsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof productsList>>,
+          TError,
+          Awaited<ReturnType<typeof productsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useProductsList<
+  TData = Awaited<ReturnType<typeof productsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ProductsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof productsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof productsList>>,
+          TError,
+          Awaited<ReturnType<typeof productsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useProductsList<
+  TData = Awaited<ReturnType<typeof productsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ProductsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof productsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useProductsList<
+  TData = Awaited<ReturnType<typeof productsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ProductsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof productsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getProductsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getProductsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/products/`;
+};
+
+/**
+ * Crea un producto en borrador con su variante por defecto (`sku`). Un servicio no lleva stock. 409 `PRODUCT_SLUG_TAKEN` o `SKU_TAKEN`.
+ */
+export const productsCreate = async (
+  orgSlug: string,
+  productCreateRequest: ProductCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Product> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Product>(getProductsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(productCreateRequest),
+  });
+};
+
+export const getProductsCreateMutationKey = () => ["productsCreate"] as const;
+
+export const getProductsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof productsCreate>>,
+    TError,
+    ProductsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof productsCreate>>,
+  TError,
+  ProductsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getProductsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof productsCreate>>,
+    ProductsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return productsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ProductsCreateMutationResult = NonNullable<Awaited<ReturnType<typeof productsCreate>>>;
+export type ProductsCreateMutationBody = ProductCreateRequest;
+export type ProductsCreateMutationError = ErrorType<Error>;
+export type ProductsCreateMutationVariables = { orgSlug: string; data: ProductCreateRequest };
+
+export const useProductsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof productsCreate>>,
+      TError,
+      ProductsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof productsCreate>>,
+  TError,
+  ProductsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getProductsCreateMutationOptions(options), queryClient);
+};
 
 export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
   const normalizedParams = new URLSearchParams();
