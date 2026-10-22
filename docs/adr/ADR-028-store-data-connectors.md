@@ -61,14 +61,15 @@ Cada campo tiene un solo sistema con autoridad. Para el stock (existencias, rese
 
 El stock de una celda cuya autoridad es la tienda **no se copia a `inventory_levels`**. Copiarlo convertiría cada sincronización en movimientos `ADJUSTMENT` del CRM, y podría romper `reserved <= on_hand` cuando la tienda baja sus existencias por debajo de una reserva local.
 
-- Cada almacén de la tienda aparece en el CRM como un almacén externo, vinculado por el mapeo explícito de identificadores (§9). Sus celdas tienen como autoridad la tienda, y no tienen filas en `inventory_levels` ni movimientos en el CRM.
-- Su stock vive en una tabla aparte de instantáneas: una fila por `(organization_id, connector_id, variant_id, external_warehouse_id)`, donde `external_warehouse_id` es ese almacén externo. Guarda las cantidades que da la tienda, la versión o secuencia de origen y `fetched_at`.
+- Cada almacén de la tienda es en el CRM una fila de `warehouses` de la organización, marcada como del conector: su autoridad es la tienda. Así las celdas de stock siguen un solo modelo, variante × almacén. Se vincula por el mapeo explícito de identificadores (§9), y la marca la añade el work item del conector. Sus celdas no tienen filas en `inventory_levels` ni movimientos en el CRM.
+- Su stock vive en una tabla aparte de instantáneas: una fila por `(organization_id, connector_id, variant_id, external_warehouse_id)`, donde `external_warehouse_id` es esa fila de `warehouses`. Guarda las cantidades que da la tienda, la versión o secuencia de origen y `fetched_at`.
 - Es tenant-owned, con FORCE RLS (ADR-001, ADR-002).
 - La disponibilidad de una celda externa se calcula desde su instantánea, con la misma fórmula: `available = on_hand - reserved`, con las cantidades de la tienda.
 - **Una instantánea vieja se marca como desactualizada**: cuando supera la antigüedad configurada, o cuando el conector está caído o desconectado. Se enseña con su fecha, y no cuenta como disponible (§4).
+- **Una celda que desaparece en la tienda** (se retiró el producto o el almacén) se marca como desaparecida, con su fecha, y cuenta como no disponible. Nunca se borra en silencio.
 - Cada cambio de una instantánea deja su traza con `correlation_id` (ADR-011).
 
-**Orden de llegada.** Una instantánea solo se reemplaza por otra con una versión o secuencia de origen mayor. La tienda manda valores absolutos, no diferencias. No se ordena por fecha, porque los relojes de dos sistemas no son comparables. Una actualización con una versión menor o igual se ignora, y se cuenta en las métricas del conector. Sin una versión monótona del origen no hay sincronización incremental de stock: el contrato tiene que darla (§11).
+**Orden de llegada.** Una instantánea solo se reemplaza por otra con una versión o secuencia de origen mayor. La tienda manda valores absolutos, no diferencias. No se ordena por fecha, porque los relojes de dos sistemas no son comparables. Una actualización con una versión menor o igual se ignora, y se cuenta en las métricas del conector. Si es la propia tienda la que vuelve atrás (una lectura completa de la reconciliación trae una versión menor que la guardada, por ejemplo tras restaurar una copia de seguridad), no es un mensaje tardío: se rechaza, la celda queda desactualizada y se avisa. Aceptar la nueva base pide que un operador reinicie las versiones de ese conector, con su motivo y auditado. Sin una versión monótona del origen no hay sincronización incremental de stock: el contrato tiene que darla (§11).
 
 ### 4. Sin doble descuento
 
@@ -88,15 +89,18 @@ Una venta hecha desde Instagram, WhatsApp o el CRM no descuenta dos veces el mis
 La importación de catálogo y stock por CSV o XLSX (E03-09 y E04-07) sigue estos pasos: descargar la plantilla, subir el archivo, previsualizar, mapear columnas, validar (SKU, cantidades, precios, formatos), enseñar duplicados y errores, elegir la política de actualización, confirmar, ver el resultado, y poder revertir con movimientos compensatorios autorizados. Nada destructivo sin confirmación.
 
 - **Una fila que toca un campo o una celda cuya autoridad es otra sale como error al validar.** La importación no la aplica.
-- **El stock se importa como cantidades absolutas.** Al aplicar, y no al previsualizar, el CRM calcula para cada celda un movimiento `ADJUSTMENT` contra su `on_hand` de ese momento, con la fila de `inventory_levels` bloqueada. Si el `on_hand` cambió desde la previsualización, la fila queda `STALE` y no se aplica a ciegas, como en los lotes de precios (ADR-006 §3).
-- **Subir otra vez el mismo archivo no crea movimientos nuevos.** La importación se reconoce por el hash de su contenido, y cada movimiento lleva una `idempotency_key` derivada de la importación y de la fila. Aplicarla dos veces deja el stock igual.
+- **El stock se importa como cantidades absolutas.** Al aplicar, y no al previsualizar, el CRM calcula para cada celda un movimiento `ADJUSTMENT` contra su `on_hand` de ese momento, con la fila de `inventory_levels` bloqueada. Si el `on_hand` cambió desde la previsualización, la fila queda `STALE` y no se aplica a ciegas, como en los lotes de precios (`price_change_batch_items`, [02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.8). Una cantidad absoluta menor que el `reserved` de su celda sale como error: la importación no libera reservas ni rompe `reserved <= on_hand`.
+- **Aplicar dos veces no cambia nada.** Las cantidades son absolutas, y cada movimiento lleva una `idempotency_key` derivada de la importación y de la fila: aplicar otra vez la misma importación no crea movimientos nuevos.
+- **Subir otra vez un archivo igual solo avisa.** La importación se reconoce por el hash de su contenido, y la pantalla dice que ese archivo ya se aplicó. No se bloquea: un recuento legítimo puede dar los mismos números. Como las cantidades son absolutas, una celda que no cambió no genera ajuste.
+- La fila `STALE` necesita ese valor en `data_import_rows.action`, que hoy no lo tiene ([02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.12). Lo añade el work item de la importación de stock.
 - Los precios de una importación siguen el §6.
 
 ### 6. Precios externos
 
 Un precio que viene de la tienda, por importación o por conector, **solo entra como filas del módulo de precios**.
 
-- Entra en una lista de precios (`price_lists`), por un lote de cambios (`price_change_batches`): previsualizar, confirmar y aplicar, con detección de `STALE` si el precio cambió entre la previsualización y la aplicación. Aplicar llama a `PriceChangeService.set_price`, como cualquier otro cambio (ADR-006 §3).
+- Entra en una lista de precios (`price_lists`), por un lote de cambios (`price_change_batches`): previsualizar, confirmar y aplicar, con detección de `STALE` si el precio cambió entre la previsualización y la aplicación (`price_change_batch_items`, §E.8 del modelo de datos). Aplicar llama a `PriceChangeService.set_price`, como cualquier otro cambio (ADR-006 §3).
+- Un precio en una moneda distinta de la de su lista se rechaza al validar. No se convierte.
 - El conector propone el lote. Lo confirma una persona con el permiso de precios, con step-up si es una edición masiva (ADR-003 §4). Confirmarlo de forma automática pediría otra decisión.
 - **`PricingService` sigue siendo el único que resuelve un precio** (ADR-006 §2). El conector no lee `product_prices`, no calcula precios y no guarda un precio fuera del módulo de precios. La regla de import-linter de ADR-006 también vale para él.
 
@@ -110,7 +114,7 @@ Además de lo del §9, el conector hace una sincronización inicial y, **cuando 
 
 ### 8. Dueños por entidad
 
-- Cada entidad tiene **un solo sistema dueño**. El otro sistema la lee o la recibe; no la edita.
+- Cada registro tiene **un solo sistema dueño**. El otro sistema lo lee o lo recibe; no lo edita. Una entidad puede tener dos registros vinculados, cada uno con su dueño: es el caso de los clientes.
 - Ninguna sincronización empieza sin un contrato verificado: una API de integración con credenciales propias, versionada y documentada.
 
 | Entidad | Dueño | Dirección | Motivo |
@@ -134,16 +138,18 @@ Cuando exista el contrato, cada conector cumple esto:
 - **Idempotencia.** Cada cambio lleva su clave: el id externo y su versión, o la del evento. Recibirlo dos veces no cambia nada.
 - **Entrada.** Por consulta periódica o por webhook, según lo que ofrezca la tienda. Cada mensaje se valida antes de escribir.
 - **Webhooks.** La ruta está exenta de CSRF y de sesión, y se autentica por firma (ADR-003 §3):
-  - la firma cubre el cuerpo y una marca de tiempo, y una marca fuera de la ventana anti-replay se rechaza;
-  - el id de cada evento vale una vez: se guarda al menos mientras dura la ventana, y un id repetido no hace nada;
-  - **la organización sale del conector**: de su id en la ruta y de su secreto, resueltos con una función `SECURITY DEFINER` mínima como la de las cuentas de canal (ADR-002 §3.3). **Nunca del contenido del mensaje**;
+  - la firma cubre el cuerpo tal como llegó, en bytes y antes de interpretarlo, y una marca de tiempo; se compara en tiempo constante, y una marca fuera de la ventana anti-replay se rechaza;
+  - al rotar el secreto, valen dos secretos durante un solapamiento acotado; al acabar, solo el nuevo;
+  - el id de cada evento vale una vez **por conector**: dos organizaciones de la tienda podrían repetir un id. Se guarda al menos mientras dura la ventana, y un id repetido no hace nada;
+  - la ruta tiene un límite de frecuencia por conector: llamadas falsas no gastan el presupuesto de peticiones a la tienda;
+  - **la organización sale del conector**: su id en la ruta se resuelve con una función `SECURITY DEFINER` mínima como la de las cuentas de canal (ADR-002 §3.3), que devuelve solo `organization_id` y el id del conector, nunca el secreto. El secreto se lee después, dentro del `tenant_scope` de esa organización, y la firma se comprueba antes de escribir nada. **Nunca del contenido del mensaje**;
   - un webhook es un aviso, no un dato: dispara una nueva lectura por la API con las credenciales del conector, y se escribe lo que devuelve esa lectura.
 - **Límites de la tienda.** El conector respeta los límites de frecuencia de la tienda: un presupuesto por conector, espera ante una respuesta de límite excedido y nunca más peticiones en paralelo de las acordadas.
 - **Reintentos.** En tareas en segundo plano, con espera creciente y un tope. Lo que agota los reintentos va a una cola de errores visible para la organización.
 - **Cola de errores.** Guarda el id externo, la entidad, el motivo y la fecha, no el mensaje completo con datos personales. Se conserva un tiempo configurado y después se borra.
 - **Errores.** Un error de una organización no detiene a las demás. Lo que no se entiende se rechaza y se registra, no se adivina.
 - **Aislamiento entre tenants.** Todo lo importado vive con RLS en su organización (ADR-001, ADR-002). Un conector nunca escribe fuera de la suya.
-- **Auditoría.** Activar, desactivar y cambiar credenciales queda en la auditoría (ADR-013). Cada importación deja su traza con `correlation_id` (ADR-011).
+- **Auditoría.** Activar, desactivar y cambiar credenciales queda en la auditoría de la organización (`audit_logs`), no en la de plataforma (ADR-013 §1). Cada importación deja su traza con `correlation_id` (ADR-011).
 - **Desconexión.** Desactivar el conector no borra lo importado. Borrarlo es una acción aparte, auditada.
 
 ### 10. Datos personales
