@@ -5,7 +5,7 @@ const PX = 4; // px por módulo: nítido a 1x y fácil de leer con la cámara
 
 // Un código QR de `value` (ADR-025): `uqr` solo calcula la matriz y React la dibuja; no se
 // inserta HTML generado. Negro sobre blanco en los dos temas, con el margen de 4 módulos de la
-// norma, que es lo que esperan los lectores, y 4 px por módulo (lo que quepa en pantallas estrechas).
+// norma, que es lo que esperan los lectores, y 4 px por módulo (se encoge solo si no cabe).
 export function QrCode({ value, label }: { value: string; label: string }) {
   const { size, path } = useMemo(() => {
     const qr = encode(value, { ecc: "M", border: 4 });
@@ -18,8 +18,8 @@ export function QrCode({ value, label }: { value: string; label: string }) {
       aria-label={label}
       viewBox={`0 0 ${size} ${size}`}
       shapeRendering="crispEdges"
-      width={size * PX}
-      height={size * PX}
+      width={size * PX + 2} // + el borde de 1 px a cada lado: los módulos quedan de 4 px
+      height={size * PX + 2}
       className="border-border h-auto max-w-full rounded-[10px] border"
     >
       <rect width={size} height={size} fill="#ffffff" />

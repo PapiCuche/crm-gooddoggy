@@ -33,7 +33,8 @@ describe("QrCode", () => {
     // Negro sobre blanco en cualquier tema, y 4 px por módulo.
     expect(container.querySelector("rect")).toHaveAttribute("fill", "#ffffff");
     expect(container.querySelector("path")).toHaveAttribute("fill", "#000000");
-    expect(svg).toHaveAttribute("width", String(qr.size * 4));
+    expect(svg).toHaveAttribute("width", String(qr.size * 4 + 2)); // con el borde
+    expect(svg).toHaveClass("h-auto", "max-w-full"); // se encoge sin deformarse
   });
 
   it("cambia con el valor", () => {

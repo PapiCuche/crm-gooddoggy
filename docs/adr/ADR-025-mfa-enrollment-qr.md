@@ -23,7 +23,7 @@ El QR se calcula en el navegador a partir del `uri` que ya devolvió la API, en 
 
 - Se usa la biblioteca npm `uqr`, versión exacta **0.1.3**, solo su función `encode`, que devuelve la matriz de módulos (`boolean[][]`).
 - La pantalla dibuja la matriz como un `<svg>` de React con un solo `<path>`. No se usa `renderSVG` ni ningún HTML generado por la biblioteca, ni `dangerouslySetInnerHTML`.
-- Corrección de errores **M** (15 %) y margen de **4** módulos, el que pide la norma ISO/IEC 18004, a 4 px por módulo (unos 230 px para una URI normal; menos si la pantalla es más estrecha). Negro sobre blanco en los dos temas, porque los lectores de QR lo esperan así.
+- Corrección de errores **M** (15 %) y margen de **4** módulos, el que pide la norma ISO/IEC 18004, a 4 px por módulo (unos 230 px para una URI normal; menos solo si no cabe en la tarjeta). Negro sobre blanco en los dos temas, porque los lectores de QR lo esperan así.
 
 ### 3. Verificación de la dependencia (2026-10-22)
 
@@ -79,7 +79,7 @@ La matriz se calcula en memoria al pintar el paso y desaparece con él, como la 
 - La clave no sale del navegador por este cambio. La biblioteca es código puro que no hace peticiones ni guarda nada, verificado leyendo el paquete exacto, cuya integridad queda fijada.
 - No se inserta HTML generado: React dibuja la matriz, así que la biblioteca no puede inyectar marcado.
 - La CSP no cambia: un `<svg>` en línea no necesita fuentes nuevas.
-- El QR expone la clave igual que la clave escrita y el enlace, que ya están en pantalla; es más fácil de capturar a distancia o en una grabación de pantalla, como lo es la clave escrita.
+- El QR lleva la clave, como la clave escrita y el enlace, que ya estaban en pantalla: quien grabe o comparta la pantalla durante el alta se la lleva en cualquiera de las tres formas. A distancia, una cámara lee el QR con más facilidad que la clave escrita. Solo se enseña en el paso de la clave del alta, después de la contraseña.
 
 ## Operational implications
 
