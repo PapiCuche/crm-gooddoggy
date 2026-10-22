@@ -8,7 +8,7 @@ en la misma transacción y auditan cada cambio.
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connections, transaction
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
@@ -37,6 +37,21 @@ class BadParent(ValueError):
 
 def category_name(value: str) -> str:
     return clean_name(value, NAME_MAX)
+
+
+def _lock_tree(alias: str, ctx: TenantContext) -> None:
+    """Un escritor a la vez en el árbol de la organización, hasta el fin de la transacción.
+
+    Los bloqueos de fila no bastan en READ COMMITTED: la consulta que bloquea la rama no ve las
+    hijas que otra transacción añade (o mueve dentro) mientras espera, y esas quedarían con un
+    `path` viejo; y dos movimientos cruzados se bloquean en orden opuesto (deadlock, 500). Las
+    escrituras de categorías son pocas: se serializan por organización, y cada sentencia que
+    sigue ve lo que confirmó la anterior."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            [f"categories:{ctx.organization_id}"],
+        )
 
 
 def _live(alias: str) -> Any:
@@ -70,6 +85,7 @@ def create_category(
     chosen = clean_slug(slug) if slug is not None else slug_from(cleaned)
     try:
         with transaction.atomic(using=alias):
+            _lock_tree(alias, ctx)
             parent = _parent(alias, parent_id)
             depth = parent.depth + 1 if parent else 1
             if depth > Category.MAX_DEPTH:
@@ -91,6 +107,7 @@ def rename_category(ctx: TenantContext, *, category_id: UUID, name: str) -> Cate
     alias = require_scope(ctx)
     cleaned = category_name(name)
     with transaction.atomic(using=alias):
+        _lock_tree(alias, ctx)
         category: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
         if category.name != cleaned:
             changes = {"name": [category.name, cleaned]}
@@ -106,6 +123,7 @@ def move_category(ctx: TenantContext, *, category_id: UUID, parent_id: UUID | No
     destino es la propia categoría o una descendiente, o si la rama pasaría de los niveles."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
+        _lock_tree(alias, ctx)
         node: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
         branch = list(
             _live(alias)
@@ -135,6 +153,17 @@ def move_category(ctx: TenantContext, *, category_id: UUID, parent_id: UUID | No
                 Category.objects.using(alias).bulk_update(
                     branch, ["path", "depth", "parent", "updated_at"]
                 )
+                # Las borradas de la rama también: una restauración futura no debe encontrar
+                # rutas viejas. No cuentan para el índice único (solo las vivas).
+                gone = list(
+                    Category.objects.using(alias).filter(
+                        deleted_at__isnull=False, path__startswith=old_path
+                    )
+                )
+                for item in gone:
+                    item.path = new_path + item.path[len(old_path) :]
+                    item.depth += shift
+                Category.objects.using(alias).bulk_update(gone, ["path", "depth"])
         except IntegrityError as error:
             raise _taken(error, node.slug) from None
         changes = {"path": [old_path, new_path]}
@@ -149,6 +178,7 @@ def delete_category(ctx: TenantContext, *, category_id: UUID) -> None:
     padre. `CategoryHasChildren` si tiene hijas vivas."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
+        _lock_tree(alias, ctx)
         category: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
         if _live(alias).filter(parent_id=category.pk).exists():
             raise CategoryHasChildren(category.path)

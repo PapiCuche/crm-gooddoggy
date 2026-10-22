@@ -20,6 +20,7 @@ from apps.catalog.brands import (
     delete_brand,
     rename_brand,
 )
+from apps.catalog.categories import NAME_MAX as CATEGORY_NAME_MAX
 from apps.catalog.categories import (
     BadParent,
     CategoryHasChildren,
@@ -32,7 +33,7 @@ from apps.catalog.categories import (
 )
 from apps.catalog.models import Brand, Category
 from apps.catalog.selectors import brands, categories
-from apps.catalog.slugs import SLUG_MAX, NoSlug
+from apps.catalog.slugs import SLUG_MAX, NoSlug, clean_slug
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -170,7 +171,7 @@ class CategorySerializer(serializers.Serializer[Any]):
 
 
 class CategoryCreateSerializer(serializers.Serializer[Any]):
-    name = serializers.CharField(max_length=NAME_MAX)
+    name = serializers.CharField(max_length=CATEGORY_NAME_MAX)
     slug = serializers.CharField(
         max_length=SLUG_MAX,
         required=False,
@@ -181,11 +182,11 @@ class CategoryCreateSerializer(serializers.Serializer[Any]):
     )
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
-        return _clean(attrs, {"name": category_name, "slug": brand_slug, "parent_id": lambda v: v})
+        return _clean(attrs, {"name": category_name, "slug": clean_slug, "parent_id": lambda v: v})
 
 
 class CategoryUpdateSerializer(serializers.Serializer[Any]):
-    name = serializers.CharField(max_length=NAME_MAX, required=False)
+    name = serializers.CharField(max_length=CATEGORY_NAME_MAX, required=False)
     parent_id = serializers.UUIDField(
         required=False,
         allow_null=True,
@@ -257,8 +258,8 @@ class CategoryView(APIView):
         request=CategoryUpdateSerializer,
         responses={200: CategorySerializer, **errors(400, 401, 403, 404, 409)},
         description="`name` la renombra (el slug no cambia). `parent_id` la mueve con toda su "
-        "rama, sin entrar en sí misma ni pasar de 5 niveles. 404: no es de la organización o "
-        "está borrada.",
+        "rama, sin entrar en sí misma ni pasar de 5 niveles. 409 `CATEGORY_SLUG_TAKEN`: el "
+        "destino ya tiene una con ese slug. 404: no es de la organización o está borrada.",
     )
     def patch(self, request: Request, category_id: UUID, **kwargs: Any) -> Response:
         wanted = CategoryUpdateSerializer(data=request.data)
