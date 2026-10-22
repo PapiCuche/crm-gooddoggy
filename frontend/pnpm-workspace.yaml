@@ -6,22 +6,7 @@ allowBuilds:
   esbuild: false
   unrs-resolver: false
 minimumReleaseAge: 1440
-minimumReleaseAgeStrict: true # ninguna excepción automática: solo las de esta lista
+minimumReleaseAgeStrict: true # sin excepciones (las de Next 16.3.8 se retiraron en F3-16)
 # undici 7.29.0 (dev, vía orval > @scalar/json-magic) tiene advisories altos; 7.29.1 los corrige.
 overrides:
   undici@7: 7.29.1
-# minimumReleaseAge (24 h) de pnpm 12: solo se exceptúa Next.js 16.3.8, security release del
-# 2026-09-30 (7 advisories, ver ADR-012 §4). El resto de dependencias cumple la espera.
-minimumReleaseAgeExclude:
-  - "@next/env@16.3.8"
-  - "@next/eslint-plugin-next@16.3.8"
-  - "@next/swc-darwin-arm64@16.3.8"
-  - "@next/swc-darwin-x64@16.3.8"
-  - "@next/swc-linux-arm64-gnu@16.3.8"
-  - "@next/swc-linux-arm64-musl@16.3.8"
-  - "@next/swc-linux-x64-gnu@16.3.8"
-  - "@next/swc-linux-x64-musl@16.3.8"
-  - "@next/swc-win32-arm64-msvc@16.3.8"
-  - "@next/swc-win32-x64-msvc@16.3.8"
-  - eslint-config-next@16.3.8
-  - next@16.3.8

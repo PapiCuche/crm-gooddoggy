@@ -101,7 +101,7 @@ Combinación revalidada **junta** el día de inicio de F1-09 contra npm, los Git
 
 | Paquete | Versión | Evidencia |
 |---|---|---|
-| next / eslint-config-next | **16.4.1** | Publicada el 2026-10-14; corrige los 3 advisories de arriba. 16.4.0 (2026-10-07) es la minor; sus notas no traen cambios incompatibles para este proyecto. `create-next-app@16.4.1` empareja `react@19.3.0`; seguimos en 19.2.8, que cumple su peer `^19`, y la subida a 19.3 va aparte (no es de seguridad) |
+| next / eslint-config-next | **16.3.8** | Publicada el 2026-09-30 16:13 UTC; es la versión más reciente. Sus release notes enumeran los 7 advisories del día: 1 alta (SSRF en Image Optimization, GHSA-cjq9-62q9-8jv4), 5 medias y 1 baja. 16.3.7 (2026-09-29) solo era un backport sin fixes de seguridad. **Pendiente:** según el post oficial "Upcoming Next.js September Security Release" (actualizado el 2026-09-30), quedan **2 vulnerabilidades (1 crítica, 1 alta)** a la espera de coordinación upstream, sin fecha, para "una versión posterior" (OBS-F1-09-2) |
 | react / react-dom | **19.2.8** | `create-next-app@16.3.8` fija `nextjsReactPeerVersion = "19.2.8"`. Último 19.2.x; parchea el último advisory de RSC (GHSA-wx67-qw84-cm4g). 19.3.0 no es la pareja oficial |
 | @types/react | **19.2.18** | Versión del monorepo de Next.js v16.3.8 |
 | @types/react-dom | **19.2.7** | Último 19.2.x (el monorepo usa 19.2.4) |
@@ -138,8 +138,16 @@ Tooling del frontend fijado en el mismo PR (npm, 2026-09-30):
 - prettier 3.9.9, vitest 4.1.11 (el salto de major a vitest 5, publicado el 2026-09-03, se difiere a propósito: F1-09 no lo necesita), vite 8.3.1, jsdom 30.1.1, geist 1.7.2.
 
 **pnpm 12:**
-- `minimumReleaseAge: 1440` con `minimumReleaseAgeStrict: true` (ninguna excepción automática). Solo Next 16.3.8 y sus binarios quedan exceptuados, por ser security release (`frontend/pnpm-workspace.yaml`);
+- `minimumReleaseAge: 1440` con `minimumReleaseAgeStrict: true` (ninguna excepción automática). Solo Next 16.3.8 y sus binarios quedaban exceptuados (retirado en F3-16, §4.2), por ser security release (`frontend/pnpm-workspace.yaml`);
 - los scripts de instalación de dependencias están denegados explícitamente (`allowBuilds: false`).
+
+### 4.2 Revalidación de F3-16 (2026-10-22, #331)
+
+- **Next.js 16.4.1** (2026-10-14) sustituye a 16.3.8. Es solo de seguridad: 2 críticas (RCE sin autenticación en funciones `use cache` que devuelven arrays tipados, GHSA-673q-mjm6-r5xr; y en Image Optimization con SVG, GHSA-2464-fhr4-w9xw) y 1 alta (DoS en App Router con Server Actions, GHSA-p3m5-59mp-jv5r), que afectan a 16.0.0–16.4.0. El post oficial «Next.js Security Update for Upstream Vulnerabilities» (2026-10-14) dice que incluye los dos fixes aplazados del September Security Release: **cierra el riesgo residual de §4.1 y OBS-F1-09-2**. 16.4.0 (npm, 2026-10-06) es la minor; sus notas no traen cambios incompatibles para este proyecto (`next.config.ts`, `src/proxy.ts`, next-intl 4.14.8 y geist aceptan `next ^16`).
+- **djangorestframework 3.18.2** (2026-10-06) corrige CVE-2026-114136, 114137 y 114138 (GHSA-3547-9m27-7rxg, GHSA-xw6w-gcfp-cf8m, GHSA-33wh-fxxf-88vv). El nuevo rechazo de juegos de caracteres no textuales no cambia nada aquí: `Utf8JSONParser` ya responde 415 antes.
+- **Por qué no la más reciente:** se elige el cambio mínimo de seguridad. DRF 3.18.3 (50 minutos después) solo restaura el valor de `rest_framework.utils.mediatypes.order_by_precedence`, que ni el código ni drf-spectacular usan; next 16.4.2 (2026-10-15) solo trae backports de Turbopack y documentación.
+- **React** sigue en 19.2.8, que cumple el peer `^19` de Next 16.4.1; `create-next-app@16.4.1` ya empareja `19.3.0`, así que la subida que §4 dejó «para cuando Next.js la empareje» va en F3-17 (#337).
+- **pnpm:** las excepciones de `minimumReleaseAgeExclude` para 16.3.8 se retiran; 16.4.1 tiene más de 24 h y no necesita ninguna.
 
 ### 5. Gestores de paquetes y herramientas
 
@@ -191,10 +199,10 @@ En CI se ejecuta contra Garage; contra S3 y R2 solo de forma manual o programada
 
 ## Compatibility matrix (resumen)
 
-| | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.3.8 | React 19.2.8 | TS 6.0.3 |
+| | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.4.1 | React 19.2.8 | TS 6.0.3 |
 |---|---|---|---|---|---|---|---|
 | Django 5.2.17 | ✅ (≥ 5.2.8) | — | ✅ (psycopg 3.3.6) | — | — | — | — |
-| Next 16.3.8 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; pareja oficial) | ✅ (instala `^6.0.0`) |
+| Next 16.4.1 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; la pareja oficial pasa a 19.3.0, F3-17) | ✅ (instala `^6.0.0`) |
 | Celery 5.6 / Channels 4.3 | ✅ | ✅ | — | — | — | — | — |
 | django-stubs 5.2.9 + mypy 1.19.1 | ⚠️ probado hasta 3.13, instalable; verificar en F1-02 | ✅ | — | — | — | — | — |
 | Garage v2.4.1 | — | — | — | — | — | — | — |
