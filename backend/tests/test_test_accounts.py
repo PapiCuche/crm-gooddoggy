@@ -198,6 +198,7 @@ def test_a_password_that_fails_for_one_account_creates_none(
 ) -> None:
     before = counts(migrator)
     # Vale para owner y administrador, pero se parece demasiado a «supervisor».
-    with pytest.raises(CommandError, match="supervisor@pruebas.gooddoggy.test"):
+    with pytest.raises(CommandError, match="supervisor@pruebas.gooddoggy.test") as error:
         provision(monkeypatch, password=SIMILAR)
+    assert SIMILAR not in str(error.value)  # el mensaje dice la regla, nunca la contraseña
     assert counts(migrator) == before and platform_rows(migrator) == []
