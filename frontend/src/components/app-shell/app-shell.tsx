@@ -8,7 +8,7 @@ import { type ReactNode, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 import { MobileMenu } from "./mobile-menu";
-import { NAVIGATION, visibleItems } from "./navigation";
+import { holds, NAVIGATION, visibleItems } from "./navigation";
 import { SessionActions } from "./session-actions";
 import { useTenant } from "./tenant-context";
 
@@ -41,12 +41,13 @@ function Sidebar({ label, current }: { label: string; current: string }) {
         <ul className="flex flex-col gap-1">
           {visibleItems(NAVIGATION, permissions).map((item) => {
             const href = base + item.path;
-            const active = current === href;
+            const active = holds(item, base, current);
             return (
               <li key={item.path}>
                 <Link
                   href={href}
-                  aria-current={active ? "page" : undefined}
+                  // En otra página de su sección, la entrada es la actual pero no esta página.
+                  aria-current={current === href ? "page" : active ? "true" : undefined}
                   className={cn(
                     "flex h-11 items-center gap-3 rounded-lg border border-transparent px-3 lg:h-[37px]",
                     active
@@ -84,7 +85,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const t = useTranslations();
   const pathname = usePathname().replace(/\/$/, ""); // `/o/acme/` es la misma página
   const { organization } = useTenant();
-  const item = NAVIGATION.find((entry) => pathname === `/o/${organization.slug}${entry.path}`);
+  const item = NAVIGATION.find((entry) => holds(entry, `/o/${organization.slug}`, pathname));
   const section = item && item.path ? `${t(`shell.nav.${item.key}`)} · ` : "";
   const title = `${section}${organization.name} · ${t("app.name")}`;
   useEffect(() => {

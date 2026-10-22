@@ -48,7 +48,7 @@ export function CursorList<Row extends { id: string }>({
   // lista se vuelve a pedir, falla, cambia de clave o se cierra con una negativa: conservan el
   // foco. Desmontarlos con el 403 dejaría el foco sin sitio.
   controls?: ReactNode;
-  notice?: ReactNode; // aviso de la pantalla, encima de la lista
+  notice?: ReactNode | ((rows: Row[]) => ReactNode); // aviso de la pantalla, encima de la lista
   empty?: ReactNode; // lo que se ve en lugar de una lista sin filas
   rowClassName?: string;
   children: (row: Row) => ReactNode;
@@ -119,7 +119,7 @@ export function CursorList<Row extends { id: string }>({
   } else if (list.data) {
     body = (
       <>
-        {notice}
+        {typeof notice === "function" ? notice(rows) : notice}
         {rows.length === 0 && empty ? (
           empty
         ) : (

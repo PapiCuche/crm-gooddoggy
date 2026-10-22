@@ -26,6 +26,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-04 | [#306](https://github.com/PapiCuche/crm-gooddoggy/issues/306) Catalog: hierarchical categories (API) | `feature/f3-catalog-categories` | #294 | backend + API |
 | F3-04b | [#314](https://github.com/PapiCuche/crm-gooddoggy/issues/314) Catalog: rename, move and delete categories (API) | `feature/f3-catalog-categories-edit-api` | #306 | backend + API |
 | F3-05 | [#307](https://github.com/PapiCuche/crm-gooddoggy/issues/307) Catalog: the categories screen | `feature/f3-catalog-categories-screen` | #306 | frontend |
+| F3-05b | [#312](https://github.com/PapiCuche/crm-gooddoggy/issues/312) Catalog: rename, move and delete categories from the screen | `feature/f3-catalog-categories-edit` | #307, #314 | frontend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
@@ -33,7 +34,7 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 
 | Historia | Estado |
 |---|---|
-| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla en F3-03. Categorías: API en F3-04 (listar y crear) y F3-04b (editar); pantalla en F3-05 |
+| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla en F3-03. Categorías: API en F3-04 (listar y crear) y F3-04b (editar); pantalla (árbol y crear) en F3-05; renombrar, mover y borrar desde la pantalla en F3-05b (#312) |
 | E02-02 a E02-07 | Pendientes |
 | E03 Precios | Pendiente |
 | E04 Inventario | Pendiente |
@@ -42,3 +43,4 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 
 - **F3-01:** los permisos del catálogo (`products.view`, `products.manage`, `products.import`, `categories.manage`, `brands.manage`) entran en el catálogo; ninguno es sensible ni admite alcance. El Owner los recibe en el siguiente `migrate` (ADR-018). Administrador los recibe todos, y Supervisor y Vendedor `products.view`, en las organizaciones nuevas; en las existentes, sus roles los edita quien tiene `roles.manage` (ADR-018 §3). `apps.catalog` abre la capa L3 de [module-dependencies](../architecture/module-dependencies.md). A confirmar por el mantenedor: los permisos de cada plantilla, que el slug de una marca se forme del nombre y no cambie, y que las marcas se listen por orden de creación (la paginación de ADR-016 solo admite `id`).
 - **F3-02:** la pantalla de marcas, con «Catálogo» en el menú. Por tamaño (ADR-009), borrar una marca desde la pantalla va en su propio work item. **En organizaciones creadas antes de F3-01** (también `pruebas`, la de los accesos de prueba) solo el Owner ve el catálogo hasta que conceda los permisos nuevos a los demás roles en «Roles» (ADR-018 §3).
+- **F3-05:** la pantalla de categorías en árbol, con «Marcas» y «Categorías» dentro de «Catálogo». Por tamaño (ADR-009: la pantalla entera pasaba de 1.200 líneas), renombrar y mover (un solo formulario «Editar», que envía solo lo que cambió) y borrar con confirmación van en un work item aparte. El `select` de «Dentro de» enseña el árbol entero con las opciones imposibles desactivadas; la API decide.
