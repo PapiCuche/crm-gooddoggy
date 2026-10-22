@@ -24,7 +24,8 @@
       "roles": "Roles",
       "branches": "Sucursales",
       "teams": "Equipos",
-      "audit": "Auditoría"
+      "audit": "Auditoría",
+      "brands": "Catálogo"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -80,7 +81,8 @@
       "role": "Rol",
       "branch": "Sucursal",
       "team": "Equipo",
-      "invitation": "Invitación"
+      "invitation": "Invitación",
+      "brand": "Marca"
     },
     "actions": {
       "organization": {
@@ -113,6 +115,11 @@
         "member_added": "Integrante incorporado a un equipo",
         "member_updated": "Integrante de un equipo cambiado",
         "member_removed": "Integrante quitado de un equipo"
+      },
+      "brand": {
+        "created": "Marca creada",
+        "updated": "Marca renombrada",
+        "deleted": "Marca borrada"
       }
     }
   },
@@ -723,5 +730,44 @@
     "disable": "Quitar",
     "disabling": "Quitando…",
     "disabled": "Quitaste la verificación en dos pasos. Por seguridad, cerramos tus otras sesiones abiertas."
+  },
+  "brands": {
+    "eyebrow": "Good Doggy / Catálogo",
+    "title": "Marcas",
+    "intro": "Las marcas de los productos de {organization}.",
+    "empty": "Esta organización todavía no tiene marcas.",
+    "count": "{count, plural, =0 {Sin marcas en la lista} one {# marca en la lista} other {# marcas en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando marcas…",
+    "denied": "No tienes permiso para ver el catálogo de esta organización.",
+    "create": {
+      "open": "Crear marca",
+      "title": "Nueva marca",
+      "name": "Nombre",
+      "slug": "Identificador (opcional)",
+      "slugHint": "Minúsculas, cifras y guiones. Si lo dejas vacío se forma con el nombre. No cambia después.",
+      "submit": "Crear marca",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "nameRequired": "Escribe el nombre.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres con alguna letra o cifra.",
+      "slugInvalid": "El identificador no es válido: minúsculas sin acento, cifras y guiones entre ellas, hasta 63.",
+      "slugTaken": "Ya hay una marca con ese identificador.",
+      "slugTakenFormed": "Ya hay una marca con el identificador que se forma con este nombre. Escribe otro identificador.",
+      "slugNeeded": "Con este nombre no se puede formar un identificador: escríbelo tú.",
+      "denied": "No tienes permiso para crear marcas.",
+      "done": "Marca «{name}» creada."
+    },
+    "rename": {
+      "trigger": "Renombrar",
+      "triggerLabel": "Renombrar {brand}",
+      "title": "Renombrar {brand}",
+      "submit": "Guardar",
+      "busy": "Guardando…",
+      "denied": "No tienes permiso para renombrar marcas.",
+      "done": "Marca renombrada: «{name}».",
+      "stale": "«{brand}» ya no está en el catálogo: la lista se actualizó."
+    }
   }
 }

@@ -502,3 +502,7 @@ Límites de la demo:
 - Sin autenticación ni permisos: el "acceso demo" solo lleva al workspace. Las rutas de tenant (`/o/[orgSlug]`) no cambian.
 - Los tokens `--gd-*` solo se usan bajo `/demo`; las pantallas oficiales tienen los suyos (ver «Lenguaje visual»). DM Sans se descarga de Google Fonts durante el build (`next/font`) y se sirve desde el propio origen.
 - El texto de la demo vive en los componentes, no en `messages/es-PE.json`: es contenido de prototipo, no catálogo del producto.
+
+## Catálogo (Fase 3)
+
+- **Marcas (F3-02):** `/o/{org}/catalogo/marcas`, en el menú como «Catálogo» para quien tiene `products.view`. `BrandsList` usa `CursorList` sobre `GET …/brands/` (por orden de creación) y enseña nombre y slug. Con `brands.manage` se ofrecen «Crear marca» (`BrandCreate`: nombre y, opcional, el identificador; vacío no se envía y la API lo forma con el nombre; `BRAND_SLUG_TAKEN` y el 400 de un nombre que no forma slug se dicen en su campo, con otro texto si se dejó vacío; el campo no pone mayúscula inicial en el móvil) y «Renombrar» por fila (`BrandRenameAction`: solo el nombre; el slug no cambia; un 404 avisa en la lista y la vuelve a pedir). Borrar llega en un work item aparte. La auditoría nombra las acciones `brand.*` y la entidad «Marca».

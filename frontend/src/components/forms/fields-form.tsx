@@ -24,6 +24,9 @@ export type FormField<Name extends string> = {
   required?: string; // lo que se dice si falta; sin él, el campo es opcional
   hint?: string;
   inputMode?: "tel";
+  // Una clave que se escribe tal cual (un slug): el teclado del móvil no pone mayúscula inicial
+  // ni corrige, y la API no tiene que rechazar lo que el usuario no escribió.
+  literal?: boolean;
   defaultValue?: string; // lo que hay al abrir (un formulario de edición)
   list?: string; // el `id` de un `<datalist>` de sugerencias
 };
@@ -173,6 +176,9 @@ export function FieldsForm<Name extends string>({
           name={field.name}
           autoComplete="off"
           inputMode={field.inputMode}
+          autoCapitalize={field.literal ? "none" : undefined}
+          autoCorrect={field.literal ? "off" : undefined}
+          spellCheck={field.literal ? false : undefined}
           defaultValue={field.defaultValue}
           list={field.list}
           maxLength={field.max}

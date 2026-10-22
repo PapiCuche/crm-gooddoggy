@@ -29,7 +29,7 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 
 | Historia | Estado |
 |---|---|
-| E02-01 Marcas y categorías | Marcas: API en F3-01, pantalla en F3-02. Categorías: pendiente |
+| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla, pendiente. Categorías: pendiente |
 | E02-02 a E02-07 | Pendientes |
 | E03 Precios | Pendiente |
 | E04 Inventario | Pendiente |
@@ -37,3 +37,4 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 ## Decisiones y observaciones
 
 - **F3-01:** los permisos del catálogo (`products.view`, `products.manage`, `products.import`, `categories.manage`, `brands.manage`) entran en el catálogo; ninguno es sensible ni admite alcance. El Owner los recibe en el siguiente `migrate` (ADR-018). Administrador los recibe todos, y Supervisor y Vendedor `products.view`, en las organizaciones nuevas; en las existentes, sus roles los edita quien tiene `roles.manage` (ADR-018 §3). `apps.catalog` abre la capa L3 de [module-dependencies](../architecture/module-dependencies.md). A confirmar por el mantenedor: los permisos de cada plantilla, que el slug de una marca se forme del nombre y no cambie, y que las marcas se listen por orden de creación (la paginación de ADR-016 solo admite `id`).
+- **F3-02:** la pantalla de marcas, con «Catálogo» en el menú. Por tamaño (ADR-009), borrar una marca desde la pantalla va en su propio work item. **En organizaciones creadas antes de F3-01** (también `pruebas`, la de los accesos de prueba) solo el Owner ve el catálogo hasta que conceda los permisos nuevos a los demás roles en «Roles» (ADR-018 §3).
