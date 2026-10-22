@@ -33,6 +33,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-025](ADR-025-mfa-enrollment-qr.md) | Código QR en el alta del segundo factor: se dibuja en el navegador desde la URI que ya da la API, con `uqr` 0.1.3 (solo `encode`, sin HTML generado), junto a la clave escrita | Accepted | 2026-10-22 |
 | [ADR-026](ADR-026-test-accounts.md) | Accesos de prueba en entornos aislados: `TEST_ACCOUNTS_ORGANIZATION` (production no arranca con él), cuatro cuentas sintéticas con roles de plantilla y un comando idempotente; el login solo completa el correo | Accepted | 2026-10-22 |
 | [ADR-027](ADR-027-external-identity.md) | Identidad externa: el `User` del CRM es la identidad; `external_identities` única por `(issuer, subject)`; nunca vincular por correo; vincular con acceso reciente y prueba de las dos cuentas; el proveedor nunca concede roles; contrato OIDC mínimo. Hoy no hay proveedor que lo cumpla | Proposed | 2026-10-22 |
+| [ADR-028](ADR-028-store-data-connectors.md) | Inventario híbrido (LOCAL, EXTERNAL, HYBRID) con una autoridad por campo, sin doble descuento ni stock inventado, y conectores de solo lectura con la tienda cuando exista un contrato; dueños por entidad a decidir | Proposed | 2026-10-22 |
 
 ## Plantilla
 

@@ -139,6 +139,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-116 | [#290](https://github.com/PapiCuche/crm-gooddoggy/issues/290) Test accounts: the command that provisions them (ADR-026) | `feature/f2-test-accounts-provisioning` | #286 | backend + ADR |
 | F2-117 | [#291](https://github.com/PapiCuche/crm-gooddoggy/issues/291) Test accounts on the login page | `feature/f2-login-test-accounts-panel` | #290 | backend + frontend |
 | F2-118 | [#292](https://github.com/PapiCuche/crm-gooddoggy/issues/292) External identity: proposed ADR-027 and the provider contract | `docs/f2-external-identity-adr` | #286 | docs |
+| F2-119 | [#293](https://github.com/PapiCuche/crm-gooddoggy/issues/293) Store data: proposed ADR-028, hybrid inventory and connectors | `docs/f2-store-data-connectors-adr` | #286 | docs |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
