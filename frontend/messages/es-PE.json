@@ -693,6 +693,15 @@
     },
     "brands": {
       "manage": "Administrar marcas"
+    },
+    "inventory": {
+      "view": "Ver el inventario",
+      "manage": "Administrar el inventario",
+      "adjust": "Registrar ingresos, salidas y ajustes",
+      "transfer": "Transferir stock"
+    },
+    "warehouses": {
+      "manage": "Administrar almacenes"
     }
   },
   "account": {

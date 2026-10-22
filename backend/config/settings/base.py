@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     "apps.provisioning",
     "apps.members",
     "apps.catalog",
+    "apps.inventory",
 ]
 
 MIDDLEWARE = [
@@ -203,6 +204,7 @@ SPECTACULAR_SETTINGS = {
         # distintas con valores en común.
         "ProductStatusEnum": "apps.catalog.models.Product.Status",
         "VariantStatusEnum": "apps.catalog.models.ProductVariant.Status",
+        "WarehouseTypeEnum": "apps.inventory.models.Warehouse.Type",  # F3-08
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.

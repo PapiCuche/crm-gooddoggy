@@ -46,7 +46,11 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
     assert codes(eva) == []
     done = change(ana, rbac.m_eva, seller.pk)
     assert reply(done) == DONE and "Content-Type" not in done.headers  # sin cuerpo
-    assert codes(eva) == ["organization.view", "products.view"]  # en su siguiente petición
+    assert codes(eva) == [
+        "inventory.view",
+        "organization.view",
+        "products.view",
+    ]  # en su siguiente petición
     listed = ana.get("/api/v1/o/org-a/members/").json()["results"]
     held = {row["id"]: row["roles"] for row in listed}[str(rbac.m_eva)]
     assert held == [{"id": str(seller.pk), "code": "seller", "name": "Vendedor"}]  # el mismo id
