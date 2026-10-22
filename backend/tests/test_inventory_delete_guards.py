@@ -8,10 +8,11 @@ import psycopg
 import pytest
 from django.test import Client
 
-from apps.catalog.events import VariantsHeld
+from apps.catalog.events import VariantsHeld, variants_retiring
 from apps.catalog.models import Product, ProductVariant
 from apps.catalog.products import delete_product, delete_variant
 from apps.inventory import stock
+from apps.inventory.guards import refuse_with_stock
 from apps.inventory.models import InventoryLevel, InventoryMovement
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
@@ -159,3 +160,19 @@ def test_a_receipt_waits_for_a_delete_in_flight_and_finds_nothing(world: Any) ->
     assert outcome[1] == "BadReference" and live(world.a) == (0, 0)
     with tenant_scope(ctx(world.a)):
         assert not InventoryMovement.objects.exists()
+
+
+def test_the_guard_is_wired_and_without_it_nothing_is_deleted(world: Any) -> None:
+    """`inventory` conecta su veto al arrancar; si faltara, el catálogo no borra (falla cerrado)."""
+    assert variants_retiring.has_listeners(ProductVariant)
+    here = cell(world.a)
+    other = sibling(world.a, here[0])
+    product = product_of(world.a, here[0])
+    assert variants_retiring.disconnect(dispatch_uid="inventory.refuse_with_stock")
+    try:
+        for command in (drop_variant(product, other), drop_product(product)):
+            with pytest.raises(RuntimeError):
+                run(world.a, world.ana, command)
+    finally:
+        variants_retiring.connect(refuse_with_stock, dispatch_uid="inventory.refuse_with_stock")
+    assert live(world.a) == (1, 2)

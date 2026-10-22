@@ -7,7 +7,8 @@ No comprueba permisos: los declara la API (`inventory.adjust`), la única que lo
 saldo se crea si falta (`ON CONFLICT DO NOTHING`) y se bloquea (`FOR UPDATE`) antes de leerla, así
 que el segundo movimiento de una celda ve lo que dejó el primero. La clave de idempotencia se
 busca con la fila ya bloqueada; si la misma clave llega a la vez para otra celda, la decide el
-índice único.
+índice único. Todo lo que escriba `inventory_levels` (reservas y transferencias incluidas) bloquea
+antes la variante así; si no, los borrados de catálogo y de almacenes podrían no ver el stock.
 """
 
 import re

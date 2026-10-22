@@ -197,15 +197,18 @@ def _plain(value: Any) -> Any:
 
 def _retiring(alias: str, variant_ids: list[UUID]) -> None:
     """Pregunta a los módulos de encima (`catalog.events`): `VariantsHeld` si alguna de las
-    variantes, ya bloqueadas, tiene existencias o reservas."""
+    variantes, ya bloqueadas, tiene existencias o reservas. Sin nadie que escuche (p. ej.,
+    `inventory` sin conectar) no se borra: falla cerrado."""
+    if not variants_retiring.has_listeners(ProductVariant):
+        raise RuntimeError("catalog.events.variants_retiring sin receptor: no se borra")
     variants_retiring.send(ProductVariant, using=alias, variant_ids=variant_ids)
 
 
 def delete_product(ctx: TenantContext, *, product_id: UUID) -> None:
     """Borra un producto y sus variantes (borrado lógico) y lo audita; sus SKU y su slug quedan
-    libres. Bloquea sus variantes por orden de id (como un movimiento, sin interbloqueos) antes de
-    mirar su stock: `VariantsHeld` si alguna tiene existencias o reservas. `DoesNotExist` si no
-    es de la organización o ya está borrado."""
+    libres. Bloquea la fila del producto (lo que evita interbloqueos) y después sus variantes por
+    orden de id, antes de mirar su stock: `VariantsHeld` si alguna tiene existencias o reservas.
+    `DoesNotExist` si no es de la organización o ya está borrado."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         product: Product = _live(Product, alias).select_for_update(no_key=True).get(pk=product_id)
