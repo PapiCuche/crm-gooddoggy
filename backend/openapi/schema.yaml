@@ -1151,118 +1151,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
-  /api/v1/o/{org_slug}/categories/{category_id}/:
-    patch:
-      operationId: categories_update
-      description: '`name` la renombra (el slug no cambia). `parent_id` la mueve con
-        toda su rama, sin entrar en sí misma ni pasar de 5 niveles. 409 `CATEGORY_SLUG_TAKEN`:
-        el destino ya tiene una con ese slug. 404: no es de la organización o está
-        borrada.'
-      parameters:
-      - in: path
-        name: category_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      - in: path
-        name: org_slug
-        schema:
-          type: string
-        required: true
-      tags:
-      - catalog
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedCategoryUpdateRequest'
-      security:
-      - sessionCookie: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Category'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '409':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-    delete:
-      operationId: categories_delete
-      description: 'Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`:
-        tiene subcategorías. 404: no es de la organización o ya está borrada.'
-      parameters:
-      - in: path
-        name: category_id
-        schema:
-          type: string
-          format: uuid
-        required: true
-      - in: path
-        name: org_slug
-        schema:
-          type: string
-        required: true
-      tags:
-      - catalog
-      security:
-      - sessionCookie: []
-      responses:
-        '204':
-          description: No response body
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
-        '409':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: ''
   /api/v1/o/{org_slug}/invitations/:
     get:
       operationId: invitations_list
@@ -3456,18 +3344,6 @@ components:
           type: string
           minLength: 1
           maxLength: 100
-    PatchedCategoryUpdateRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          minLength: 1
-          maxLength: 100
-        parent_id:
-          type: string
-          format: uuid
-          nullable: true
-          description: Mueve la categoría con toda su rama; `null` la lleva a la raíz.
     PatchedRoleUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está.
