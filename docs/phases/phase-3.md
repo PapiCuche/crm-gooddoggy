@@ -22,6 +22,8 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 |---|---|---|---|---|
 | F3-01 | [#294](https://github.com/PapiCuche/crm-gooddoggy/issues/294) Catalog: module, permissions and brands (API) | `feature/f3-catalog-brands` | #286 | backend + API |
 | F3-02 | [#295](https://github.com/PapiCuche/crm-gooddoggy/issues/295) Catalog: the brands screen | `feature/f3-catalog-brands-screen` | #294 | frontend |
+| F3-04 | [#306](https://github.com/PapiCuche/crm-gooddoggy/issues/306) Catalog: hierarchical categories (API) | `feature/f3-catalog-categories` | #294 | backend + API |
+| F3-05 | [#307](https://github.com/PapiCuche/crm-gooddoggy/issues/307) Catalog: the categories screen | `feature/f3-catalog-categories-screen` | #306 | frontend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
@@ -29,7 +31,7 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 
 | Historia | Estado |
 |---|---|
-| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla, pendiente. Categorías: pendiente |
+| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla, pendiente. Categorías: API en F3-04, pantalla en F3-05 |
 | E02-02 a E02-07 | Pendientes |
 | E03 Precios | Pendiente |
 | E04 Inventario | Pendiente |

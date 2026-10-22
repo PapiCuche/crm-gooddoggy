@@ -1,4 +1,4 @@
-"""Rutas de tenant del catálogo: `…/brands/` (F3-01, E02-01)."""
+"""Rutas de tenant del catálogo: `…/brands/` (F3-01) y `…/categories/` (F3-04), E02-01."""
 
 from typing import Any
 from uuid import UUID
@@ -13,17 +13,26 @@ from rest_framework.views import APIView
 
 from apps.catalog.brands import (
     NAME_MAX,
-    SLUG_MAX,
     BrandSlugTaken,
-    NoSlug,
     brand_name,
     brand_slug,
     create_brand,
     delete_brand,
     rename_brand,
 )
-from apps.catalog.models import Brand
-from apps.catalog.selectors import brands
+from apps.catalog.categories import (
+    BadParent,
+    CategoryHasChildren,
+    CategorySlugTaken,
+    category_name,
+    create_category,
+    delete_category,
+    move_category,
+    rename_category,
+)
+from apps.catalog.models import Brand, Category
+from apps.catalog.selectors import brands, categories
+from apps.catalog.slugs import SLUG_MAX, NoSlug
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -148,4 +157,142 @@ class BrandView(APIView):
             delete_brand(_tenant(), brand_id=brand_id)
         except Brand.DoesNotExist:
             raise NotFound from None
+        return Response(status=204)
+
+
+class CategorySerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    parent_id = serializers.UUIDField(allow_null=True, help_text="La categoría madre, o `null`.")
+    name = serializers.CharField()
+    slug = serializers.CharField(help_text="Clave estable, única entre las hermanas.")
+    path = serializers.CharField(help_text="La rama con los slugs: `/celulares/iphone/`.")
+    depth = serializers.IntegerField(help_text="Nivel en el árbol, desde 1.")
+
+
+class CategoryCreateSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField(max_length=NAME_MAX)
+    slug = serializers.CharField(
+        max_length=SLUG_MAX,
+        required=False,
+        help_text="Si no se envía, se forma con el nombre. No cambia después.",
+    )
+    parent_id = serializers.UUIDField(
+        required=False, allow_null=True, help_text="Dentro de qué categoría; sin él, en la raíz."
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        return _clean(attrs, {"name": category_name, "slug": brand_slug, "parent_id": lambda v: v})
+
+
+class CategoryUpdateSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField(max_length=NAME_MAX, required=False)
+    parent_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Mueve la categoría con toda su rama; `null` la lleva a la raíz.",
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        if not attrs:
+            raise serializers.ValidationError("Envía `name`, `parent_id` o los dos.")
+        return _clean(attrs, {"name": category_name, "parent_id": lambda v: v})
+
+
+CATEGORY_TAKEN = "Ya hay una categoría con ese slug dentro de la misma categoría."
+HAS_CHILDREN = "La categoría tiene subcategorías: muévelas o bórralas antes."
+
+
+def _bad_parent(error: BadParent) -> serializers.ValidationError:
+    text = f"{error}."
+    return serializers.ValidationError({"parent_id": [text[:1].upper() + text[1:]]})
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="categories_list",
+        tags=["catalog"],
+        responses={200: CategorySerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Las categorías de la organización, sin las borradas, paginadas por "
+        "creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por `path`).",
+    ),
+    post=extend_schema(
+        operation_id="categories_create",
+        tags=["catalog"],
+        request=CategoryCreateSerializer,
+        responses={201: CategorySerializer, **errors(400, 401, 403, 404, 409)},
+        description="Crea una categoría en la raíz o dentro de `parent_id` (hasta 5 niveles). "
+        "409 `CATEGORY_SLUG_TAKEN`: la madre ya tiene una con ese slug.",
+    ),
+)
+class CategoriesView(generics.ListAPIView):
+    required_permissions = {"GET": "products.view", "POST": "categories.manage"}
+    serializer_class = CategorySerializer
+
+    def get_queryset(self) -> QuerySet[Category]:
+        return categories()
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = CategoryCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        try:
+            category = create_category(_tenant(), **wanted.validated_data)
+        except CategorySlugTaken:
+            raise ApiError("CATEGORY_SLUG_TAKEN", 409, CATEGORY_TAKEN) from None
+        except BadParent as error:
+            raise _bad_parent(error) from None
+        except NoSlug as error:
+            text = f"{error}."
+            raise serializers.ValidationError({"slug": [text[:1].upper() + text[1:]]}) from None
+        return Response(CategorySerializer(category).data, status=201)
+
+
+class CategoryView(APIView):
+    """Una categoría: `PATCH` la renombra y/o la mueve con su rama; `DELETE` la borra."""
+
+    required_permissions = {"PATCH": "categories.manage", "DELETE": "categories.manage"}
+
+    @extend_schema(
+        operation_id="categories_update",
+        tags=["catalog"],
+        request=CategoryUpdateSerializer,
+        responses={200: CategorySerializer, **errors(400, 401, 403, 404, 409)},
+        description="`name` la renombra (el slug no cambia). `parent_id` la mueve con toda su "
+        "rama, sin entrar en sí misma ni pasar de 5 niveles. 404: no es de la organización o "
+        "está borrada.",
+    )
+    def patch(self, request: Request, category_id: UUID, **kwargs: Any) -> Response:
+        wanted = CategoryUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant, data = _tenant(), wanted.validated_data
+        try:
+            # Renombrar y mover, o nada: una respuesta de error deshace la transacción de la
+            # petición (`tenant_scope`), también lo que ya se hubiera renombrado.
+            if "name" in data:
+                category = rename_category(tenant, category_id=category_id, name=data["name"])
+            if "parent_id" in data:
+                category = move_category(
+                    tenant, category_id=category_id, parent_id=data["parent_id"]
+                )
+        except Category.DoesNotExist:
+            raise NotFound from None
+        except CategorySlugTaken:
+            raise ApiError("CATEGORY_SLUG_TAKEN", 409, CATEGORY_TAKEN) from None
+        except BadParent as error:
+            raise _bad_parent(error) from None
+        return Response(CategorySerializer(category).data)
+
+    @extend_schema(
+        operation_id="categories_delete",
+        tags=["catalog"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`: tiene "
+        "subcategorías. 404: no es de la organización o ya está borrada.",
+    )
+    def delete(self, request: Request, category_id: UUID, **kwargs: Any) -> Response:
+        try:
+            delete_category(_tenant(), category_id=category_id)
+        except Category.DoesNotExist:
+            raise NotFound from None
+        except CategoryHasChildren:
+            raise ApiError("CATEGORY_HAS_CHILDREN", 409, HAS_CHILDREN) from None
         return Response(status=204)
