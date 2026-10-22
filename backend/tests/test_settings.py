@@ -124,6 +124,18 @@ def test_production_adds_loopback_after_validating_configured_hosts(
     assert len(hosts) == len(set(hosts))  # sin duplicados
 
 
+def test_production_refuses_test_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-026 §1: con accesos de prueba, production no arranca."""
+    with pytest.raises(ImproperlyConfigured, match="DJANGO_TEST_ACCOUNTS_ORGANIZATION"):
+        load_production(monkeypatch, DJANGO_TEST_ACCOUNTS_ORGANIZATION="pruebas")
+    assert (
+        load_production(
+            monkeypatch, DJANGO_TEST_ACCOUNTS_ORGANIZATION=None
+        ).TEST_ACCOUNTS_ORGANIZATION
+        == ""
+    )  # type: ignore[attr-defined]
+
+
 @pytest.mark.parametrize(
     ("variable", "value"),
     [

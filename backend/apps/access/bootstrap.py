@@ -44,3 +44,32 @@ def install_initial_owner(ctx: TenantContext, *, membership_id: UUID) -> Role:
         MembershipRole.objects.using(alias).create(membership_id=membership_id, role=owner)
         _audit_assignment(ctx, "membership.role_assigned", membership_id, owner, [None, owner.pk])
     return owner
+
+
+def holds_owner_role(ctx: TenantContext, *, user_id: UUID) -> bool:
+    """¿Tiene esa cuenta el rol Owner en la organización del contexto? Lo localiza el flag."""
+    alias = require_scope(ctx)
+    return (
+        MembershipRole.objects.using(alias)
+        .filter(role__is_owner_role=True, membership__user_id=user_id)
+        .exists()
+    )
+
+
+def grant_template_role(ctx: TenantContext, *, membership_id: UUID, template: str) -> bool:
+    """Da a una membresía el rol clonado de la plantilla `template` (ADR-026 §4); `True` si lo
+    añadió. Solo el rol de plantilla (`is_system`) con ese código: nunca uno propio que se llame
+    igual, y nunca por el nombre. No quita nada. Lo usan las cuentas de prueba, en nombre del
+    sistema.
+    """
+    alias = require_scope(ctx)
+    if (ctx.actor_type, ctx.user_id, ctx.actor_id) != (ActorType.SYSTEM, None, None):
+        raise AccessDenied(Denied.MEMBERSHIP)
+    with transaction.atomic(using=alias):
+        role: Role = Role.objects.using(alias).get(is_system=True, code=template)
+        assignments = MembershipRole.objects.using(alias)
+        if assignments.filter(membership_id=membership_id, role=role).exists():
+            return False
+        assignments.create(membership_id=membership_id, role=role)
+        _audit_assignment(ctx, "membership.role_assigned", membership_id, role, [None, role.pk])
+    return True

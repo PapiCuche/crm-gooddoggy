@@ -31,6 +31,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-023](ADR-023-mfa-totp.md) | Segundo factor con TOTP y códigos de respaldo, sobre ADR-003 §4: un paso se acepta una vez, la contraseña correcta no abre sesión si la cuenta tiene segundo factor, tope de códigos fallidos por cuenta, y la política mira el rol Owner, el Administrador de plantilla y los permisos sensibles de la membresía | Accepted, salvo §11 (*Proposed*, D-F2-15); ampliado por ADR-024 en §4 (tope de códigos por alta) | 2026-10-11 |
 | [ADR-024](ADR-024-mfa-enrollment-code-cap.md) | Tope de códigos fallidos por alta de un dispositivo TOTP: el quinto código que no vale borra el alta, y empezar otra pide la contraseña | Accepted | 2026-10-11 |
 | [ADR-025](ADR-025-mfa-enrollment-qr.md) | Código QR en el alta del segundo factor: se dibuja en el navegador desde la URI que ya da la API, con `uqr` 0.1.3 (solo `encode`, sin HTML generado), junto a la clave escrita | Accepted | 2026-10-22 |
+| [ADR-026](ADR-026-test-accounts.md) | Accesos de prueba en entornos aislados: `TEST_ACCOUNTS_ORGANIZATION` (production no arranca con él), cuatro cuentas sintéticas con roles de plantilla y un comando idempotente; el login solo completa el correo | Accepted | 2026-10-22 |
 
 ## Plantilla
 

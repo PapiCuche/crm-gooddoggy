@@ -1,8 +1,10 @@
 """Settings comunes. Cada entorno (local, test, production) los importa y ajusta."""
 
+import re
 from pathlib import Path
 
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 
 from config import env
 
@@ -229,6 +231,13 @@ APP_ORIGIN = env.origin("APP_ORIGIN")
 # Llegan del entorno de web, worker, ws y beat, nunca de la base de datos. Sin ellas no se cifra
 # ni se descifra nada (`core.sealed` falla cerrado); `local` y `test` derivan una de desarrollo.
 SECRETS_KEKS = env.keys("SECRETS_KEKS")
+# Accesos de prueba (ADR-026): el slug de la organización de pruebas; vacío los desactiva y es
+# el valor por defecto. `production` no arranca con él.
+TEST_ACCOUNTS_ORGANIZATION = env.optional("DJANGO_TEST_ACCOUNTS_ORGANIZATION", "").strip()
+if TEST_ACCOUNTS_ORGANIZATION and not re.fullmatch(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", TEST_ACCOUNTS_ORGANIZATION
+):
+    raise ImproperlyConfigured("DJANGO_TEST_ACCOUNTS_ORGANIZATION no es un slug válido")
 # Reporte de errores (ADR-011 §3): sin SENTRY_DSN, NoopReporter (sin red).
 SENTRY_DSN = env.optional("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = env.optional("SENTRY_ENVIRONMENT", "")
