@@ -32,7 +32,7 @@ Siguen valiendo los principios de la Fase 0: un producto no es una variante; `av
 
 ### 0.1 Matriz de autoridad
 
-Cada campo tiene un solo sistema con autoridad, por organización y, si hace falta, por almacén. La matriz cubre la identidad del producto, la variante, el SKU, el precio, las existencias físicas, las reservas, la disponibilidad, el estado de publicación, y las imágenes y descripciones.
+Cada campo tiene un solo sistema con autoridad. La unidad es la celda variante × almacén: la organización fija un modo por defecto y lo puede cambiar por almacén o por conjunto de productos. Dos reglas que asignan autoridades distintas a una misma celda no se pueden guardar: la autoridad de cada celda sale de una sola regla, sin precedencias que adivinar. La matriz cubre la identidad del producto, la variante, el SKU, el precio, las existencias físicas, las reservas, la disponibilidad, el estado de publicación, y las imágenes y descripciones.
 
 - Un SKU puede estar vinculado a un id externo. Vincularlos no los hace iguales: cada campo sigue a su autoridad.
 - La cantidad disponible se calcula de forma determinista desde la autoridad del stock de cada almacén.
@@ -44,16 +44,18 @@ Cada campo tiene un solo sistema con autoridad, por organización y, si hace fal
 
 Una venta hecha desde Instagram, WhatsApp o el CRM no descuenta dos veces el mismo stock.
 
-- Si la tienda es la autoridad del stock, la reserva y el descuento se piden a la tienda con una operación idempotente (una clave por línea de pedido) y solo cuentan cuando la tienda los confirma.
-- El CRM no da una reserva por hecha hasta esa confirmación.
+- **Solo la autoridad de una celda (§0.1) la descuenta.** El otro sistema refleja el resultado; no lo vuelve a aplicar.
+- Un pedido importado de la tienda **no genera un movimiento de venta en el CRM** sobre stock cuya autoridad es la tienda: la tienda ya lo descontó. Solo lo genera si el CRM es la autoridad de ese almacén, una vez, con una `idempotency_key` derivada del conector y del id externo de la línea.
+- Reservar o vender desde el CRM stock cuya autoridad es la tienda exige el modo bidireccional (§0.4). En solo lectura, ese stock se enseña pero no se reserva ni se vende desde el CRM.
+- En bidireccional, reservar, liberar y descontar se piden a la tienda, cada operación con su propia clave idempotente (la línea del pedido y la operación), y solo cuentan cuando la tienda los confirma: el CRM no da una reserva por hecha hasta esa confirmación. Una respuesta que no llega no es un rechazo: se reintenta con la misma clave o se consulta su estado, nunca con una clave nueva. Que una reserva del CRM venza o se cancele también se pide a la tienda, igual.
 - Con el conector caído, **no se inventa disponibilidad**:
-  - las ventas y reservas de stock externo se **bloquean**, o se **ponen en cola** marcadas como pendientes de confirmar, si la organización lo elige;
-  - consultar el stock externo enseña el último valor conocido, **marcado como desactualizado** y con su fecha;
+  - las ventas y reservas de stock externo se **bloquean**, o se **ponen en cola** marcadas como pendientes de confirmar, si la organización lo elige. Lo que está en cola no cuenta como reservado, caduca si no se confirma a tiempo, y al volver el conector la tienda puede rechazarlo: el pedido queda marcado y lo resuelve una persona;
+  - consultar el stock externo enseña el último valor conocido, **marcado como desactualizado** y con su fecha. Un valor desactualizado no cuenta como disponible para reservar, cotizar ni contestar a un cliente, tampoco a través de la IA;
   - lo local sigue funcionando.
 
 ### 0.3 Importación manual
 
-La importación de catálogo y stock por CSV o XLSX (E03-09 y E04-07) sigue estos pasos: descargar la plantilla, subir el archivo, previsualizar, mapear columnas, validar (SKU, cantidades, precios, formatos), enseñar duplicados y errores, elegir la política de actualización, confirmar, ver el resultado, y poder revertir con movimientos compensatorios autorizados. Nada destructivo sin confirmación.
+La importación de catálogo y stock por CSV o XLSX (E03-09 y E04-07) sigue estos pasos: descargar la plantilla, subir el archivo, previsualizar, mapear columnas, validar (SKU, cantidades, precios, formatos), enseñar duplicados y errores, elegir la política de actualización, confirmar, ver el resultado, y poder revertir con movimientos compensatorios autorizados. Nada destructivo sin confirmación. Una importación no escribe en un campo ni en una celda cuya autoridad es externa: esas filas salen como error al validar.
 
 ### 0.4 Modos de sincronización con la tienda
 
@@ -74,9 +76,9 @@ Propuesta de dueños, a confirmar:
 |---|---|---|---|
 | Clientes | a decidir | — | Los dos sistemas tienen clientes. Es la decisión más delicada: sin dueño claro, una sincronización en dos sentidos crea conflictos. |
 | Productos | tienda | tienda → CRM, solo lectura | El catálogo nace en la tienda. |
-| Variantes | — | — | La tienda no las tiene: no hay nada que conectar. |
-| Inventario | tienda | tienda → CRM, solo lectura | El stock por sucursal es de la tienda; el CRM lo enseña, no lo mueve. |
-| Pedidos | tienda | tienda → CRM, solo lectura | Se crean en la venta. |
+| Variantes | tienda | tienda → CRM, solo lectura | La tienda no tiene variantes: cada artículo vendible es un producto. En el CRM el SKU, el precio y el stock son de la variante, así que cada producto de la tienda se mapea a una variante del CRM (la única de su producto), nunca a un producto. |
+| Inventario | tienda | tienda → CRM, solo lectura | El stock por sucursal es de la tienda; el CRM lo enseña, no lo mueve. Reservarlo o venderlo desde el CRM pide el modo bidireccional (§0.2). |
+| Pedidos de la tienda | tienda | tienda → CRM, solo lectura | Se crean en la venta de la tienda. Los pedidos creados en el CRM son del CRM. |
 | Pagos | tienda | ninguna por ahora | Son datos financieros. Copiarlos al CRM no aporta nada mientras no haya un caso de uso, y aumenta el riesgo. |
 
 ### 2. Forma de un conector
@@ -86,7 +88,7 @@ Cuando exista el contrato, cada conector cumple esto:
 - **Organización autorizada.** El conector es de una organización del CRM. Lo activa alguien con un permiso sensible de esa organización, con step-up (ADR-023 §7), y queda auditado.
 - **Autorización del otro lado.** La tienda emite credenciales de integración para esa organización, con permisos mínimos (solo lectura de las entidades conectadas), revocables y con caducidad. Nunca la sesión de una persona.
 - **Credenciales.** Cifradas en reposo (ADR-022), nunca en logs.
-- **Mapeo explícito de identificadores.** Una tabla por organización: `(organization_id, entity, external_id)` → id del CRM. Se crea al importar. Nunca se deduce por nombre, correo o documento.
+- **Mapeo explícito de identificadores.** Una tabla por organización: `(organization_id, connector, entity, external_id)` → id del CRM, única en los dos sentidos: un id externo apunta a un solo registro del CRM, y un registro del CRM a un solo id externo de ese conector. Se crea al importar un registro nuevo; vincular un registro local que ya existe es una acción explícita de una persona, auditada. Nunca se deduce por nombre, SKU, código de barras, correo o documento.
 - **Idempotencia.** Cada cambio lleva su clave: el id externo y su versión, o la del evento. Recibirlo dos veces no cambia nada.
 - **Entrada.** Por webhook firmado (exento de CSRF y de sesión, ADR-003 §3) o por consulta periódica, según lo que ofrezca la tienda. Cada mensaje se valida antes de escribir.
 - **Reintentos.** En tareas en segundo plano, con espera creciente y un tope. Lo que agota los reintentos va a una cola de errores visible para la organización.
