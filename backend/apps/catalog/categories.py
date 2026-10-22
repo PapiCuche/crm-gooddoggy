@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
+from django.db.models.functions import Collate
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
@@ -56,6 +57,20 @@ def _lock_tree(alias: str, ctx: TenantContext) -> None:
 
 def _live(alias: str) -> Any:
     return Category.objects.using(alias).filter(deleted_at__isnull=True)
+
+
+def _branch(alias: str, path: str) -> Any:
+    """Las vivas cuyo `path` empieza por `path` (que acaba en `/`), como un rango en orden de
+    bytes: `path <= x < path` con su `/` final cambiado por `0`, el carácter siguiente.
+
+    No es `LIKE 'path%'`: con FORCE RLS, PostgreSQL no usa un operador que no sea LEAKPROOF
+    (`~~` no lo es) como condición de índice antes de la política, así que recorrería toda la
+    organización. `>=` y `<` sí lo son, y usan `categories_org_path_c_idx`."""
+    return (
+        _live(alias)
+        .alias(c_path=Collate("path", "C"))
+        .filter(c_path__gte=path, c_path__lt=f"{path[:-1]}0")
+    )
 
 
 def _parent(alias: str, parent_id: UUID | None) -> Category | None:
@@ -120,16 +135,15 @@ def rename_category(ctx: TenantContext, *, category_id: UUID, name: str) -> Cate
 def move_category(ctx: TenantContext, *, category_id: UUID, parent_id: UUID | None) -> Category:
     """Mueve la categoría (con toda su rama) a la raíz o dentro de `parent_id`, y lo audita.
     Recalcula `path` y `depth` de cada descendiente en la misma transacción. `BadParent` si el
-    destino es la propia categoría o una descendiente, o si la rama pasaría de los niveles."""
+    destino es la propia categoría o una descendiente, o si la rama pasaría de los niveles.
+    Las borradas no se tocan: con la misma ruta puede haber otra (borrar y volver a crear) y no
+    cuentan para los niveles; quien las restaure recalcula `path` y `depth` desde su madre."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         _lock_tree(alias, ctx)
         node: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
         branch = list(
-            _live(alias)
-            .select_for_update(no_key=True)
-            .filter(path__startswith=node.path)
-            .order_by("depth", "id")
+            _branch(alias, node.path).select_for_update(no_key=True).order_by("depth", "id")
         )
         parent = _parent(alias, parent_id)
         if parent is not None and parent.path.startswith(node.path):
@@ -153,17 +167,6 @@ def move_category(ctx: TenantContext, *, category_id: UUID, parent_id: UUID | No
                 Category.objects.using(alias).bulk_update(
                     branch, ["path", "depth", "parent", "updated_at"]
                 )
-                # Las borradas de la rama también: una restauración futura no debe encontrar
-                # rutas viejas. No cuentan para el índice único (solo las vivas).
-                gone = list(
-                    Category.objects.using(alias).filter(
-                        deleted_at__isnull=False, path__startswith=old_path
-                    )
-                )
-                for item in gone:
-                    item.path = new_path + item.path[len(old_path) :]
-                    item.depth += shift
-                Category.objects.using(alias).bulk_update(gone, ["path", "depth"])
         except IntegrityError as error:
             raise _taken(error, node.slug) from None
         changes = {"path": [old_path, new_path]}

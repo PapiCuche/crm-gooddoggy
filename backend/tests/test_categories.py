@@ -274,16 +274,32 @@ def test_crossed_moves_queue_instead_of_deadlocking(world: Any) -> None:
     )
 
 
-def test_a_move_also_rewrites_deleted_descendants(
+def test_a_move_leaves_deleted_categories_as_they_were(
     ana: Client, migrator: psycopg.Connection[Any]
 ) -> None:
-    phones, audio = made(ana, "Celulares"), made(ana, "Audio")
-    iphone = made(ana, "iPhone", phones["id"])
-    old = made(ana, "Antiguos", iphone["id"])
+    """Las borradas no se mueven: una con la misma ruta puede ser otra (borrar y volver a crear),
+    y no cuentan para los niveles. Antes, reescribirlas daba 500 (`categories_root_ck` o
+    `categories_depth_ck`) o arrastraba la otra a una rama que no es la suya."""
+    audio = made(ana, "Audio")
+    assert send(ana, "delete", f"{one()}{audio['id']}/").status_code == 204
+    again = made(ana, "Audio")  # el slug quedó libre: otra raíz `/audio/`
+    phones = made(ana, "Celulares", again["id"])
+    old = made(ana, "Antiguos", phones["id"])
     assert send(ana, "delete", f"{one()}{old['id']}/").status_code == 204
-    send(ana, "patch", f"{one()}{iphone['id']}/", {"parent_id": audio["id"]})
-    row = migrator.execute("SELECT path, depth FROM categories WHERE id = %s", [old["id"]])
-    assert row.fetchone() == (
-        "/audio/iphone/antiguos/",
-        3,
-    )  # una restauración no hereda rutas viejas
+    level = None
+    for name in ("Sonido", "Parlantes", "Portátiles"):
+        level = made(ana, name, level["id"] if level else None)
+    moved = send(ana, "patch", f"{one()}{again['id']}/", {"parent_id": level["id"]})  # type: ignore[index]
+    assert moved.status_code == 200, moved.content
+    assert moved.json()["path"] == "/sonido/parlantes/portatiles/audio/"
+    assert tree(ana)["/sonido/parlantes/portatiles/audio/celulares/"] == ("Celulares", 5)
+    rows = migrator.execute(
+        "SELECT id::text, path, depth, parent_id::text FROM categories WHERE id = ANY(%s)",
+        [[audio["id"], old["id"]]],
+    ).fetchall()
+    assert sorted(rows) == sorted(
+        [
+            (audio["id"], "/audio/", 1, None),
+            (old["id"], "/audio/celulares/antiguos/", 3, phones["id"]),
+        ]
+    )

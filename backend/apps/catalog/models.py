@@ -1,6 +1,8 @@
 """Catálogo (Fase 3, E02; modelo de datos §E.7). Tablas tenant-owned con FORCE RLS."""
 
 from django.db import models
+from django.db.models import F
+from django.db.models.functions import Collate
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -70,12 +72,10 @@ class Category(TenantModel):
         db_table = "categories"
         indexes = [
             models.Index(fields=["organization_id", "parent"], name="categories_org_parent_idx"),
-            # Las ramas se buscan por prefijo de `path` (`LIKE '/a/%'`): sin esta clase de
-            # operador el índice no sirve para eso con la colación por defecto.
+            # La rama se busca como un rango de `path` en orden de bytes (`categories._branch`):
+            # con la colación por defecto, el índice único no sirve para eso.
             models.Index(
-                fields=["organization_id", "path"],
-                opclasses=["uuid_ops", "varchar_pattern_ops"],
-                name="categories_org_path_like_idx",
+                F("organization_id"), Collate(F("path"), "C"), name="categories_org_path_c_idx"
             ),
         ]
         constraints = [
