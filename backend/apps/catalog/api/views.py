@@ -1,4 +1,5 @@
-"""Rutas de tenant del catálogo: `…/brands/` (F3-01) y `…/categories/` (F3-04), E02-01."""
+"""Rutas de tenant del catálogo: `…/brands/` (F3-01) y `…/categories/` (F3-04), E02-01;
+`…/products/` (F3-06), E02-02."""
 
 from typing import Any
 from uuid import UUID
@@ -31,8 +32,20 @@ from apps.catalog.categories import (
     move_category,
     rename_category,
 )
-from apps.catalog.models import Brand, Category
-from apps.catalog.selectors import brands, categories
+from apps.catalog.models import Brand, Category, Product
+from apps.catalog.products import NAME_MAX as PRODUCT_NAME_MAX
+from apps.catalog.products import (
+    SKU_MAX,
+    BadReference,
+    ProductSlugTaken,
+    SkuTaken,
+    create_product,
+    description,
+    product_name,
+    short_description,
+    sku,
+)
+from apps.catalog.selectors import brands, categories, products
 from apps.catalog.slugs import SLUG_MAX, NoSlug, clean_slug
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -297,3 +310,101 @@ class CategoryView(APIView):
         except CategoryHasChildren:
             raise ApiError("CATEGORY_HAS_CHILDREN", 409, HAS_CHILDREN) from None
         return Response(status=204)
+
+
+class ProductRefSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class ProductSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    slug = serializers.CharField(help_text="Clave estable del producto, única en la organización.")
+    product_type = serializers.ChoiceField(choices=Product.Type.choices)
+    status = serializers.ChoiceField(choices=Product.Status.choices)
+    brand = ProductRefSerializer(allow_null=True)
+    category = ProductRefSerializer(allow_null=True)
+    short_description = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    tracks_inventory = serializers.BooleanField(
+        help_text="Falso en los servicios: no llevan stock."
+    )
+    ai_visible = serializers.BooleanField()
+
+
+PRODUCT_CLEAN: dict[str, Any] = {
+    "name": product_name,
+    "slug": brand_slug,
+    "sku": sku,
+    "short_description": short_description,
+    "description": description,
+}
+
+
+class ProductCreateSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField(max_length=PRODUCT_NAME_MAX)
+    sku = serializers.CharField(
+        max_length=SKU_MAX, help_text="El de su variante por defecto. Se guarda en mayúsculas."
+    )
+    slug = serializers.CharField(max_length=SLUG_MAX, required=False)
+    product_type = serializers.ChoiceField(choices=Product.Type.choices, required=False)
+    brand_id = serializers.UUIDField(required=False, allow_null=True)
+    category_id = serializers.UUIDField(required=False, allow_null=True)
+    short_description = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(max_length=5000, required=False, allow_blank=True)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        return _clean(
+            attrs, {**PRODUCT_CLEAN, **{k: (lambda v: v) for k in attrs if k not in PRODUCT_CLEAN}}
+        )
+
+
+PRODUCT_TAKEN = "Ya hay un producto con ese slug en la organización."
+SKU_IN_USE = "Ya hay una variante con ese SKU en la organización."
+
+
+def _reference_error(error: BadReference) -> serializers.ValidationError:
+    return serializers.ValidationError({error.field: ["No existe en esta organización."]})
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="products_list",
+        tags=["catalog"],
+        responses={200: ProductSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Los productos vivos de la organización, paginados por creación (ADR-016).",
+    ),
+    post=extend_schema(
+        operation_id="products_create",
+        tags=["catalog"],
+        request=ProductCreateSerializer,
+        responses={201: ProductSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Crea un producto en borrador con su variante por defecto (`sku`). Un "
+        "servicio no lleva stock. 409 `PRODUCT_SLUG_TAKEN` o `SKU_TAKEN`.",
+    ),
+)
+class ProductsView(generics.ListAPIView):
+    required_permissions = {"GET": "products.view", "POST": "products.manage"}
+    serializer_class = ProductSerializer
+
+    def get_queryset(self) -> QuerySet[Product]:
+        return products()
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = ProductCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        data = dict(wanted.validated_data)
+        data["sku_code"] = data.pop("sku")
+        try:
+            product = create_product(_tenant(), **data)
+        except ProductSlugTaken:
+            raise ApiError("PRODUCT_SLUG_TAKEN", 409, PRODUCT_TAKEN) from None
+        except SkuTaken:
+            raise ApiError("SKU_TAKEN", 409, SKU_IN_USE) from None
+        except BadReference as error:
+            raise _reference_error(error) from None
+        except NoSlug as error:
+            text = f"{error}."
+            raise serializers.ValidationError({"slug": [text[:1].upper() + text[1:]]}) from None
+        return Response(ProductSerializer(product).data, status=201)
