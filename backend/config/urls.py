@@ -9,6 +9,8 @@ urlpatterns = [
     path("api/schema/", SpectacularAPIView.as_view(), name="api-schema"),  # contrato OpenAPI
     # Rutas de plataforma (ADR-014 §4): sin tenant. Cada una figura en `PLATFORM` de la
     # auditoría del URLconf (tests/test_access_api.py).
+    # Antes que el resto de `auth/`: los accesos de prueba (ADR-026) son de `provisioning`.
+    path("api/v1/auth/test-accounts/", include("apps.provisioning.api.urls")),
     path("api/v1/auth/", include("apps.accounts.api.urls")),
     path("api/v1/me/", include("apps.organizations.api.urls")),
     # Rutas de tenant: `TenantResolutionMiddleware` resuelve el slug antes de la vista.

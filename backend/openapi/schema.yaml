@@ -483,6 +483,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/auth/test-accounts/:
+    get:
+      operationId: auth_test_accounts
+      description: |-
+        Con accesos de prueba activos, las cuentas sintéticas que existen, están activas y tienen
+        su rol en la organización de pruebas. Sin ellos, 404 como una ruta que no existe. Nunca
+        contraseñas ni nada que sirva para entrar: el login sigue siendo el de siempre.
+      tags:
+      - auth
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestAccounts'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/me/organizations/:
     get:
       operationId: me_organizations
@@ -3175,6 +3197,28 @@ components:
       description: |-
         * `MEMBER` - Member
         * `SUPERVISOR` - Supervisor
+    TestAccount:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: Correo de la cuenta sintética, del dominio `.test`.
+        role:
+          type: string
+          description: Nombre de su rol de plantilla. Solo para enseñarlo.
+      required:
+      - email
+      - role
+    TestAccounts:
+      type: object
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestAccount'
+      required:
+      - accounts
     User:
       type: object
       properties:

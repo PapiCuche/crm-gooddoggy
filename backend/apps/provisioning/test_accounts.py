@@ -12,11 +12,16 @@ from dataclasses import dataclass, field
 from django.conf import settings
 from django.core.exceptions import ValidationError
 
-from apps.access.bootstrap import grant_template_role, holds_owner_role
-from apps.accounts.bootstrap import account_exists, check_password_for, test_account
+from apps.access.bootstrap import grant_template_role, holds_owner_role, template_role_name
+from apps.accounts.bootstrap import (
+    account_exists,
+    active_account_id,
+    check_password_for,
+    test_account,
+)
 from apps.audit import platform
 from apps.audit.services import Entity, Result, record
-from apps.organizations.bootstrap import add_test_membership
+from apps.organizations.bootstrap import active_membership_id, add_test_membership
 from apps.provisioning.services import bootstrap_organization, checked_trail
 from core.tenancy.context import TenantContext
 from core.tenancy.resolution import organization_by_slug
@@ -171,3 +176,38 @@ def _summary(result: Provisioned) -> dict[str, object]:
         "memberships_added": len(result.memberships_added),
         "roles_added": len(result.roles_added),
     }
+
+
+@dataclass(frozen=True)
+class Listed:
+    email: str
+    role: str
+
+
+def listed() -> list[Listed]:
+    """Las cuentas de prueba que se pueden usar ahora (ADR-026 §5): activas, con membresía activa
+    en la organización de pruebas y con su rol de plantilla, en el orden de `PROFILES`. Vacía si
+    la organización no existe o no es la de pruebas (su `owner@` no tiene el rol Owner). Solo
+    correos y nombres de rol: nada que sirva para entrar."""
+    slug = _slug()
+    found = organization_by_slug(slug)
+    if found is None:
+        return []
+    ctx = TenantContext(found.id, "http")  # actor SYSTEM, solo lectura
+    shown: list[Listed] = []
+    with tenant_scope(ctx):
+        owner = active_account_id(email_for(slug, "owner"))
+        if owner is None or not holds_owner_role(ctx, user_id=owner):
+            return []
+        for local, template in PROFILES:
+            email = email_for(slug, local)
+            user_id = active_account_id(email)
+            membership_id = active_membership_id(ctx, user_id=user_id) if user_id else None
+            role = (
+                template_role_name(ctx, membership_id=membership_id, template=template)
+                if membership_id
+                else None
+            )
+            if role is not None:
+                shown.append(Listed(email, role))
+    return shown

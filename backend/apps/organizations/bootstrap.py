@@ -85,3 +85,15 @@ def add_test_membership(ctx: TenantContext, *, user_id: UUID) -> tuple[UUID, boo
             return existing, False
         created = memberships.create(user_id=user_id, status=OrganizationMembership.Status.ACTIVE)
     return created.pk, True
+
+
+def active_membership_id(ctx: TenantContext, *, user_id: UUID) -> UUID | None:
+    """La membresía ACTIVE de esa cuenta en la organización del contexto, o `None`."""
+    alias = require_scope(ctx)
+    found: UUID | None = (
+        OrganizationMembership.objects.using(alias)
+        .filter(user_id=user_id, status=OrganizationMembership.Status.ACTIVE)
+        .values_list("pk", flat=True)
+        .first()
+    )
+    return found
