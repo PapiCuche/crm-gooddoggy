@@ -25,7 +25,8 @@
       "branches": "Sucursales",
       "teams": "Equipos",
       "audit": "Auditoría",
-      "catalog": "Catálogo"
+      "catalog": "Catálogo",
+      "inventory": "Inventario"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -40,6 +41,10 @@
       "brands": "Marcas",
       "categories": "Categorías",
       "products": "Productos"
+    },
+    "inventory": {
+      "label": "Secciones del inventario",
+      "warehouses": "Almacenes"
     }
   },
   "audit": {
@@ -90,7 +95,8 @@
       "invitation": "Invitación",
       "brand": "Marca",
       "category": "Categoría",
-      "product": "Producto"
+      "product": "Producto",
+      "warehouse": "Almacén"
     },
     "actions": {
       "organization": {
@@ -139,6 +145,11 @@
         "created": "Producto creado",
         "updated": "Producto editado",
         "deleted": "Producto borrado"
+      },
+      "warehouse": {
+        "created": "Almacén creado",
+        "updated": "Almacén editado",
+        "deleted": "Almacén borrado"
       }
     }
   },
@@ -929,6 +940,59 @@
       "denied": "No tienes permiso para crear productos.",
       "done": "Producto «{name}» creado, en borrador.",
       "doneStale": "Producto «{name}» creado, pero la lista no se pudo actualizar. Recarga la página para verlo."
+    }
+  },
+  "warehouses": {
+    "eyebrow": "Good Doggy / Inventario",
+    "title": "Almacenes",
+    "intro": "Los almacenes de {organization}. Cada uno es de una sucursal, y el stock se registra por almacén.",
+    "empty": "Esta organización todavía no tiene almacenes. Sin uno no se puede registrar stock.",
+    "count": "{count, plural, =0 {Sin almacenes en la lista} one {# almacén en la lista} other {# almacenes en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando almacenes…",
+    "denied": "No tienes permiso para ver el inventario de esta organización.",
+    "branch": "Sucursal: {name} ({code})",
+    "type": {
+      "STORE": "Tienda",
+      "WAREHOUSE": "Almacén",
+      "TRANSIT": "En tránsito",
+      "SERVICE": "Servicio"
+    },
+    "active": "Activo",
+    "inactive": "Inactivo",
+    "sellable": "Cuenta para la venta",
+    "notSellable": "No cuenta para la venta",
+    "stale": "El almacén «{name}» ya no existe. La lista se volvió a cargar.",
+    "form": {
+      "open": "Crear almacén",
+      "title": "Nuevo almacén",
+      "edit": "Editar",
+      "editLabel": "Editar el almacén {name}",
+      "code": "Código",
+      "codeHint": "Letras sin acento, cifras y guiones entre ellas. Se guarda en mayúsculas. El código y la sucursal no cambian después.",
+      "name": "Nombre",
+      "branch": "Sucursal",
+      "chooseBranch": "Elige una sucursal",
+      "branchOption": "{name} ({code}){active, select, false {, inactiva} other {}}",
+      "branchRequired": "Elige la sucursal.",
+      "branches_loading": "Cargando las sucursales…",
+      "branches_failed": "No se pudo cargar la lista de sucursales: sin ella no se puede crear un almacén. Cierra el formulario y vuelve a abrirlo.",
+      "branchGone": "La sucursal elegida ya no existe en la organización. Elige otra.",
+      "type": "Tipo",
+      "is_sellable": "Su stock cuenta para la venta",
+      "is_active": "Activo (un almacén inactivo no recibe movimientos)",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "codeRequired": "Escribe el código.",
+      "nameRequired": "Escribe el nombre.",
+      "codeInvalid": "El código no es válido: letras sin acento, cifras y guiones entre ellas, hasta 20.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres con alguna letra o cifra.",
+      "codeTaken": "Ya hay un almacén con ese código en la organización.",
+      "denied": "No tienes permiso para administrar almacenes.",
+      "done": "Almacén «{name}» {created, select, true {creado} other {guardado}}.",
+      "doneStale": "Almacén «{name}» {created, select, true {creado} other {guardado}}, pero la lista no se pudo actualizar. Recarga la página para verlo."
     }
   }
 }

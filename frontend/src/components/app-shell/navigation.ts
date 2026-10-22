@@ -1,14 +1,16 @@
 import type { Grant } from "@/lib/api/model";
 
+import type messages from "../../../messages/es-PE.json";
+
 // Entradas de la navegación del workspace. `permission` es el permiso del catálogo que da
 // sentido a la entrada: sin él no se muestra. Si son varios, hacen falta todos, como en la ruta
 // de la API que la pantalla lee. Es comodidad, no seguridad: la API decide en cada petición.
 // Solo se listan módulos que ya existen; cada fase añade los suyos.
 export type NavigationItem = {
-  key: "home" | "members" | "invitations" | "roles" | "branches" | "teams" | "audit" | "catalog";
+  key: keyof typeof messages.shell.nav; // su nombre en el menú
   path: string;
   permission?: string | readonly string[];
-  section?: string; // las páginas bajo esta ruta también son de la entrada (el catálogo)
+  section?: string; // las páginas bajo esta ruta también son de la entrada (catálogo, inventario)
 };
 
 export const NAVIGATION: readonly NavigationItem[] = [
@@ -19,6 +21,12 @@ export const NAVIGATION: readonly NavigationItem[] = [
   { key: "branches", path: "/sucursales", permission: "organization.view" },
   { key: "teams", path: "/equipos", permission: "teams.view" },
   { key: "catalog", path: "/catalogo/marcas", section: "/catalogo", permission: "products.view" },
+  {
+    key: "inventory",
+    path: "/inventario/almacenes",
+    section: "/inventario",
+    permission: "inventory.view",
+  },
   { key: "audit", path: "/auditoria", permission: "audit.view" },
 ];
 

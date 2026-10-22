@@ -35,6 +35,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-09 | [#323](https://github.com/PapiCuche/crm-gooddoggy/issues/323) Inventario: existencias y movimientos (tablas y servicio) | `feature/f3-inventory-movements` | #322, #308 | backend + API |
 | F3-16 | [#331](https://github.com/PapiCuche/crm-gooddoggy/issues/331) Security: djangorestframework 3.18.2 and next 16.4.1 | `chore/f3-drf-3-18-2` | — | backend + frontend |
 | F3-11 | [#326](https://github.com/PapiCuche/crm-gooddoggy/issues/326) Inventario: rutas de existencias y movimientos (API) | `feature/f3-inventory-movements-api` | #323 | backend + API |
+| F3-13 | [#333](https://github.com/PapiCuche/crm-gooddoggy/issues/333) Inventario: la pantalla de almacenes | `feature/f3-inventory-warehouses-screen` | #322, #326 | frontend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
@@ -46,7 +47,7 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 | E02-02 y E02-03 Productos y variantes | Producto con su variante por defecto: API en F3-06 (listar y crear) y F3-06b (cambiar, borrar y listar sus variantes); variantes (añadir, editar y retirar): API en F3-07. Pantalla de productos (lista y crear) en F3-10; cambiar, borrar y el panel de variantes desde la pantalla, y opciones con generación de variantes: pendientes |
 | E02-04 a E02-07 | Pendientes |
 | E03 Precios | Pendiente |
-| E04 Inventario | Almacenes por sucursal: API en F3-08 (listar, crear y cambiar). Existencias y movimientos: tablas y servicio en F3-09; rutas, ledger y borrar un almacén sin stock en F3-11. Transferencias, reservas, importación y las pantallas: pendientes |
+| E04 Inventario | Almacenes por sucursal: API en F3-08 (listar, crear y cambiar). Existencias y movimientos: tablas y servicio en F3-09; rutas, ledger y borrar un almacén sin stock en F3-11. Pantalla de almacenes (lista, crear y editar) en F3-13. Transferencias, reservas, importación y las demás pantallas: pendientes |
 
 ## Decisiones y observaciones
 
@@ -57,3 +58,4 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 - **F3-11:** las rutas del inventario y borrar un almacén (renumerado: F3-10 es la pantalla de productos, #321). La `idempotency_key` va en el cuerpo, no en una cabecera: así está en el contrato generado. Repetir una petición devuelve 200 con el movimiento de entonces. Borrar un almacén se niega si alguna celda tiene `on_hand > 0` (lo reservado nunca pasa de `on_hand`). Hueco conocido: borrar un producto (F3-06b) aún no mira si sus variantes tienen existencias; queda para un work item propio.
 - **F3-05:** la pantalla de categorías en árbol, con «Marcas» y «Categorías» dentro de «Catálogo». Por tamaño (ADR-009: la pantalla entera pasaba de 1.200 líneas), renombrar y mover (un solo formulario «Editar», que envía solo lo que cambió) y borrar con confirmación van en un work item aparte. El `select` de «Dentro de» enseña el árbol entero con las opciones imposibles desactivadas; la API decide.
 - **F3-10:** la pantalla de productos, tercera pestaña de «Catálogo»: la lista y crear (con el SKU de la variante por defecto). Las listas de marcas y categorías del formulario se piden enteras al abrirlo; si no llegan, se crea sin elegir. Auditoría: `product.created`, `product.updated` y `product.deleted`; las de variantes (`variant.*`, de F3-07) llegan con su panel. Cambiar, borrar y el panel de variantes, con sus API ya hechas (F3-06b y F3-07), van en work items aparte.
+- **F3-13:** la pantalla de almacenes abre «Inventario» en el menú, con sus pestañas. Las pantallas del inventario se reparten por tamaño (ADR-009): almacenes aquí, existencias en F3-14 (#334), registrar movimientos en F3-15 (#335) e historial en F3-17 (#336). Editar envía solo lo que cambió y nunca el código ni la sucursal. Borrar un almacén desde la pantalla queda para otro work item. A confirmar por el mantenedor: que la sucursal de cada almacén solo se nombre a quien tiene `organization.view`.
