@@ -22,7 +22,6 @@ Investigación pasiva y de solo lectura: peticiones públicas al sitio y lectura
 - **Verificado:** la tienda es una aplicación propia (Next.js y Django). Sus usuarios entran con usuario o correo y contraseña, y la sesión es un token interno de la propia tienda.
 - **Verificado:** no publica un proveedor de identidad estándar. `/.well-known/openid-configuration`, `/.well-known/oauth-authorization-server` y `/.well-known/jwks.json` responden 404. No hay emisor, claves públicas ni registro de clientes. No hay OIDC, SAML ni login social.
 - **Verificado:** la tienda no tiene segundo factor.
-- **Verificado:** en la tienda el correo no identifica a una sola cuenta.
 - **Hipótesis:** como el código es del mantenedor, la vía realista es añadir a la tienda un proveedor OIDC, o poner un proveedor independiente delante de los dos sistemas. Esa decisión no se toma aquí.
 
 **Conclusión: hoy no hay ningún proveedor al que el CRM pueda federarse.** Este ADR fija el modelo y el contrato, y no declara ninguna integración operativa.
@@ -57,27 +56,30 @@ Una tabla nueva, `external_identities`, global (no es de un tenant):
 
 ### 3. Nunca se vincula por correo
 
-- Que el correo coincida no vincula nada, ni sugiere nada sin que la persona esté autenticada en los dos lados. En la tienda el correo no identifica a una sola cuenta, así que vincular por correo permitiría tomar cuentas ajenas.
-- Un primer login federado sin identidad vinculada **no entra** en una cuenta existente con ese correo. O crea una cuenta nueva del CRM sin membresías (si el mantenedor activa el registro federado), o pide entrar primero con la cuenta local y vincular desde ahí (escenario C).
+- Que el correo coincida no vincula nada, ni sugiere nada sin que la persona esté autenticada en los dos lados. Un correo no es un identificador del proveedor: puede repetirse, cambiar de dueño o declararse sin verificar, así que vincular por correo permitiría tomar cuentas ajenas.
+- Un primer login federado sin identidad vinculada **no entra** en una cuenta existente con ese correo, y la respuesta no dice si esa cuenta existe. Con el registro federado apagado (lo que este ADR propone por defecto), dice que hay que entrar con una cuenta del CRM y vincular desde ahí (escenario C).
+- **Registro federado**, solo si el mantenedor lo activa: el CRM no crea la cuenta con el correo que declara el proveedor, aunque traiga `email_verified`. Manda un enlace de un solo uso a ese correo (ADR-019), con la misma respuesta exista o no una cuenta: si no existe, el enlace termina el alta, sin membresías, y la vincula; si existe, el correo dice que se entre con ella y se vincule desde ahí. Así nadie ocupa el correo de otra persona con una identidad del proveedor que después entraría en la cuenta que esa persona recupere (ADR-021) o con la que acepte una invitación (ADR-020).
+- Una cuenta creada así **no tiene contraseña utilizable**. Lo que ADR-023 protege con la contraseña actual (dar de alta y quitar el segundo factor, regenerar los códigos) y lo que este ADR protege con un acceso reciente (§4, desvincular) le queda cerrado hasta que ponga una por la recuperación (ADR-021). Un login federado no sustituye a la contraseña en esas operaciones: eso relajaría ADR-023 §4, §6 y §8. Con `MFA_ENFORCEMENT = enforce` no abre una organización que exija segundo factor hasta tener contraseña y segundo factor.
 
 ### 4. Vincular (escenario C)
 
 Solo desde una sesión del CRM, en «Seguridad de la cuenta»:
 
 1. La persona confirma con un acceso reciente: la contraseña y, si lo tiene, el segundo factor (step-up, ADR-023 §7).
-2. El CRM inicia Authorization Code con PKCE (S256), con `state` y `nonce` de un solo uso ligados a la sesión, válidos pocos minutos.
-3. A la vuelta, el CRM valida el `id_token`: firma con la clave del JWKS por `kid`, `iss` exacto, `aud` igual a su `client_id`, `exp` e `iat`, `nonce`, y `email_verified` si se usa el correo para algo.
-4. Si `(issuer, subject)` ya está vinculado a otro `User`, se rechaza sin decir a cuál.
-5. Si no, se crea la fila, se audita, se rotan la sesión y su época como en el alta del segundo factor, y se avisa por correo a la cuenta del CRM.
+2. El CRM inicia Authorization Code con PKCE (S256), con `state` y `nonce` de un solo uso ligados a la sesión, válidos pocos minutos, y pide que la persona se autentique de nuevo en el proveedor (`prompt=login`, `max_age=0`). Una sesión que el navegador ya tuviera abierta en el proveedor no basta: puede ser de otra persona, o de un atacante que la dejó abierta allí (login CSRF en el proveedor), y vincular esa identidad le daría la cuenta del CRM.
+3. A la vuelta, el CRM valida el `id_token`: `alg` dentro de la lista asimétrica configurada para ese proveedor (nunca `none` ni HS*), firma con la clave del JWKS por `kid`, `iss` exacto, `aud` que contiene su `client_id` (y `azp` igual a él si hay varias audiencias), `exp` e `iat` con un margen de reloj corto, `nonce`, y `auth_time` posterior al inicio del flujo.
+4. El CRM enseña qué identidad del proveedor va a vincular (el nombre o el correo que declara) y la persona lo confirma con un `POST` con CSRF. Hasta entonces no se escribe nada.
+5. Si `(issuer, subject)` ya está vinculado a otro `User`, se rechaza sin decir a cuál.
+6. Si no, se crea la fila, se audita, se rotan la sesión y su época como en el alta del segundo factor, y se avisa por correo a la cuenta del CRM.
 
-Así se prueba el control de las dos cuentas: la del CRM por la sesión reciente, y la externa por el código de autorización emitido para esa persona.
+Así se prueba el control de las dos cuentas: la del CRM por la sesión reciente, y la externa por un código de autorización emitido tras autenticarse de nuevo en el proveedor (`auth_time`), con la identidad confirmada en pantalla.
 
 ### 5. Iniciar sesión federado (escenario B)
 
 - El botón del proveedor solo aparece si el proveedor está configurado y su discovery responde.
-- El inicio de sesión sigue los mismos pasos de validación que la vinculación. Con `(issuer, subject)` vinculado, abre sesión de ese `User` con las mismas reglas de ADR-003: rotación del ID, época de sesión, límites, auditoría `auth.login.succeeded` con `method: "external:<provider>"`.
+- El inicio de sesión valida el `id_token` como la vinculación (§4, paso 3), salvo `auth_time`: no pide autenticarse de nuevo en el proveedor. Con `(issuer, subject)` vinculado, abre sesión de ese `User` con las mismas reglas de ADR-003: rotación del ID, época de sesión, límites, auditoría `auth.login.succeeded` con `method: "external:<provider>"`.
 - **Segundo factor:**
-  - Si el `User` tiene segundo factor en el CRM, se pide igual (ADR-023 §5). El `amr` del proveedor no lo sustituye mientras el mantenedor no declare confiable ese proveedor para eso.
+  - Si el `User` tiene segundo factor en el CRM, se pide igual (ADR-023 §5). El `amr`/`acr` del proveedor nunca lo sustituye ni anota `mfa_verified_at` (step-up, ADR-023 §7): aceptarlo cambiaría ADR-023 §5 y pediría otro ADR.
   - Si la política lo exige (ADR-023 §9), se exige igual.
 
 ### 6. Casos
@@ -94,6 +96,7 @@ Así se prueba el control de las dos cuentas: la del CRM por la sesión reciente
 | Segundo factor local y del proveedor | Manda el del CRM (§5). |
 | Replay | `state` y `nonce` de un solo uso. El `id_token` caduca pronto. El código de autorización solo vale con su `code_verifier`. |
 | CSRF en la vuelta | El `state` ligado a la sesión que inició el flujo. Fuera de eso, CSRF como siempre (ADR-003 §3). |
+| Sesión ajena o forzada en el proveedor al vincular | Autenticación nueva en el proveedor (`prompt=login`, `max_age=0`, `auth_time`) y confirmación en pantalla de la identidad que se vincula (§4). |
 
 ### 7. Contrato que debe cumplir un proveedor
 
@@ -101,9 +104,9 @@ Hoy ninguno lo cumple. El CRM no se federará con nada que no lo cumpla.
 
 1. **OIDC Discovery** por HTTPS en `/.well-known/openid-configuration`, con un `issuer` exacto y estable.
 2. **JWKS** con claves asimétricas (RS256, ES256 o EdDSA), con `kid`, rotables sin cortes. **Nunca un secreto compartido**: con un secreto compartido, el CRM podría falsificar sesiones del proveedor.
-3. **Authorization Code + PKCE (S256)**, con `state` y `nonce`. Sin flujo implícito ni contraseña directa.
+3. **Authorization Code + PKCE (S256)**, con `state` y `nonce`, y soporte de `prompt=login` y `max_age`. Sin flujo implícito ni contraseña directa.
 4. **Registro de cliente**: un `client_id` propio del CRM, cliente confidencial (secreto o `private_key_jwt`), `redirect_uris` exactas por entorno y scopes mínimos (`openid email profile`).
-5. **`id_token`** con `iss`, `aud`, `exp`, `iat` y `nonce`, y un `sub` estable, único en el emisor y nunca reasignado.
+5. **`id_token`** firmado con un algoritmo asimétrico, con `iss`, `aud`, `exp`, `iat`, `nonce` y `auth_time`, y un `sub` estable, único en el emisor y nunca reasignado.
 6. **`email` y `email_verified`**, solo informativos.
 7. **`amr`/`acr`** honestos, si el proveedor declara factores.
 8. **Revocación**: logout iniciado por el CRM y, a ser posible, back-channel logout o introspección.
@@ -139,8 +142,8 @@ Ninguno empieza hasta que el mantenedor acepte este ADR y un proveedor cumpla el
 
 ## Alternatives considered
 
-- **Vincular automáticamente por correo.** Permite tomar cuentas ajenas, sobre todo porque en la tienda un correo no identifica a una sola cuenta. Descartado.
-- **Aceptar los tokens actuales de la tienda.** Son tokens internos de sesión, sin emisor ni audiencia. Verificarlos exigiría compartir el secreto que los firma, con lo que el CRM podría falsificarlos. Descartado.
+- **Vincular automáticamente por correo.** Permite tomar cuentas ajenas: en un proveedor, un correo puede repetirse, cambiar de dueño o declararse sin verificar. Descartado.
+- **Aceptar los tokens actuales de la tienda.** Son tokens internos de sesión, sin emisor, audiencia ni claves públicas: no están hechos para que un tercero los verifique. Descartado.
 - **Que el proveedor sea la única forma de entrar.** El CRM dependería de la disponibilidad de la tienda, y sería más débil que hoy, porque la tienda no tiene segundo factor. Descartado.
 - **Copiar membresías o roles desde la tienda.** Mezcla dos modelos de permisos y deja que otro sistema conceda acceso al CRM. Descartado.
 - **Un proveedor independiente delante de los dos sistemas** (Keycloak, Authentik o uno gestionado). Es compatible con este ADR: cumple el §7 igual que si la tienda tuviera su propio proveedor. Elegirlo es del mantenedor.
