@@ -146,6 +146,7 @@ describe("ProductsList", () => {
     await screen.findByRole("list", { name: "Productos" });
     fill({ Nombre: "Collar", SKU: "col-01", "Identificador (opcional)": "collar" });
     expect(field("SKU")).toHaveAttribute("autocapitalize", "none");
+    expect(field("Marca")).toHaveAccessibleDescription("Cargando las opciones…");
     await waitFor(() => expect(field("Categoría")).toHaveLength(3));
     const options = [...(field("Categoría") as HTMLSelectElement).options];
     expect(options.map((option) => option.text.trim())).toEqual([
@@ -196,7 +197,13 @@ describe("ProductsList", () => {
       status: 409,
       body: { code: "PRODUCT_SLUG_TAKEN" },
     };
-    const api = mockApi({ ...OPTIONS, [LIST]: page([]), [CREATE]: () => reply });
+    let gone = false; // tras el 400, la marca y la categoría elegidas ya no están
+    const api = mockApi({
+      [BRANDS]: () => (gone ? page([]) : OPTIONS[BRANDS]),
+      [CATEGORIES]: () => (gone ? page([]) : OPTIONS[CATEGORIES]),
+      [LIST]: page([]),
+      [CREATE]: () => reply,
+    });
     screenOf(manager);
     await screen.findByText("Esta organización todavía no tiene productos.");
     fill({ Nombre: "Collar", SKU: "C1" });
@@ -227,16 +234,25 @@ describe("ProductsList", () => {
     await again(bad("sku"), () =>
       expect(field("SKU")).toHaveAccessibleDescription(/El SKU no es válido/),
     );
-    await waitFor(() => expect(field("Marca")).toHaveLength(2));
-    fireEvent.change(field("Marca"), { target: { value: "b1" } });
+    await waitFor(() => expect(field("Categoría")).toHaveLength(3));
+    fill({ Marca: "b1", Categoría: "c2" }, false);
+    gone = true;
     const lists = () => api.mock.calls.filter(([url]) => String(url).includes("limit=200"));
     await again(bad("brand_id"), () =>
       expect(alert()).toHaveTextContent("La marca elegida ya no está"),
     );
     await waitFor(() => expect(lists()).toHaveLength(4)); // marcas y categorías, otra vez
+    await waitFor(() => expect(field("Marca")).toHaveValue(""));
     await again(bad("category_id"), () =>
       expect(alert()).toHaveTextContent("La categoría elegida ya no"),
     );
+    // Lo que ya no está en su lista no se envía.
+    expect(bodies(api).at(-1)).toEqual({
+      name: "Collar",
+      sku: "C1",
+      product_type: "PHYSICAL",
+      slug: "collar",
+    });
     await again({ status: 403, body: { code: "PERMISSION_DENIED" } }, () =>
       expect(alert()).toHaveTextContent("No tienes permiso para crear productos."),
     );
