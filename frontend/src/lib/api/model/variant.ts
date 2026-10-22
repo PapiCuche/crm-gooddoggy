@@ -12,6 +12,9 @@ export interface Variant {
   id: string;
   sku: string;
   barcode: string;
+  /** «256 GB Negro»; vacía en la de defecto. */
+  label: string;
+  /** El nombre del producto más la etiqueta. */
   name: string;
   condition: ConditionEnum;
   status: VariantStatusEnum;

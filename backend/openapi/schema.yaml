@@ -2141,6 +2141,189 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    post:
+      operationId: variants_create
+      description: Añade una variante con su SKU y su etiqueta. 409 `SKU_TAKEN`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - catalog
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VariantCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Variant'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/products/{product_id}/variants/{variant_id}/:
+    patch:
+      operationId: variants_update
+      description: Cambia lo que se envía; la etiqueta cambia su nombre. 409 `SKU_TAKEN`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - catalog
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedVariantUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Variant'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: variants_delete
+      description: 'Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`:
+        es la única viva del producto.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - catalog
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/:
     get:
       operationId: roles_list
@@ -3850,6 +4033,25 @@ components:
           $ref: '#/components/schemas/AssignmentStrategyEnum'
         is_active:
           type: boolean
+    PatchedVariantUpdateRequest:
+      type: object
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          maxLength: 64
+        label:
+          type: string
+          maxLength: 100
+        barcode:
+          type: string
+          maxLength: 64
+        condition:
+          $ref: '#/components/schemas/ConditionEnum'
+        status:
+          $ref: '#/components/schemas/VariantStatusEnum'
+        ai_visible:
+          type: boolean
     Permission:
       type: object
       properties:
@@ -4286,8 +4488,12 @@ components:
           type: string
         barcode:
           type: string
+        label:
+          type: string
+          description: «256 GB Negro»; vacía en la de defecto.
         name:
           type: string
+          description: El nombre del producto más la etiqueta.
         condition:
           $ref: '#/components/schemas/ConditionEnum'
         status:
@@ -4302,9 +4508,28 @@ components:
       - condition
       - id
       - is_default
+      - label
       - name
       - sku
       - status
+    VariantCreateRequest:
+      type: object
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          description: Se guarda en mayúsculas.
+          maxLength: 64
+        label:
+          type: string
+          maxLength: 100
+        barcode:
+          type: string
+          maxLength: 64
+        condition:
+          $ref: '#/components/schemas/ConditionEnum'
+      required:
+      - sku
     VariantStatusEnum:
       enum:
       - ACTIVE

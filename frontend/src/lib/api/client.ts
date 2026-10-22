@@ -73,6 +73,7 @@ import type {
   PatchedProductUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
+  PatchedVariantUpdateRequest,
   PermissionCatalog,
   Product,
   ProductCreateRequest,
@@ -89,6 +90,8 @@ import type {
   TeamMembersListParams,
   TeamsListParams,
   TestAccounts,
+  Variant,
+  VariantCreateRequest,
   VariantsListParams,
 } from "./model";
 
@@ -4651,6 +4654,308 @@ export function useVariantsList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getVariantsCreateUrl = (orgSlug: string, productId: string) => {
+  return `/api/v1/o/${orgSlug}/products/${productId}/variants/`;
+};
+
+/**
+ * Añade una variante con su SKU y su etiqueta. 409 `SKU_TAKEN`.
+ */
+export const variantsCreate = async (
+  orgSlug: string,
+  productId: string,
+  variantCreateRequest: VariantCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Variant> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Variant>(getVariantsCreateUrl(orgSlug, productId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(variantCreateRequest),
+  });
+};
+
+export const getVariantsCreateMutationKey = () => ["variantsCreate"] as const;
+
+export const getVariantsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof variantsCreate>>,
+    TError,
+    VariantsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof variantsCreate>>,
+  TError,
+  VariantsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getVariantsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof variantsCreate>>,
+    VariantsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, productId, data } = props ?? {};
+
+    return variantsCreate(orgSlug, productId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type VariantsCreateMutationResult = NonNullable<Awaited<ReturnType<typeof variantsCreate>>>;
+export type VariantsCreateMutationBody = VariantCreateRequest;
+export type VariantsCreateMutationError = ErrorType<Error>;
+export type VariantsCreateMutationVariables = {
+  orgSlug: string;
+  productId: string;
+  data: VariantCreateRequest;
+};
+
+export const useVariantsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof variantsCreate>>,
+      TError,
+      VariantsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof variantsCreate>>,
+  TError,
+  VariantsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getVariantsCreateMutationOptions(options), queryClient);
+};
+
+export const getVariantsUpdateUrl = (orgSlug: string, productId: string, variantId: string) => {
+  return `/api/v1/o/${orgSlug}/products/${productId}/variants/${variantId}/`;
+};
+
+/**
+ * Cambia lo que se envía; la etiqueta cambia su nombre. 409 `SKU_TAKEN`.
+ */
+export const variantsUpdate = async (
+  orgSlug: string,
+  productId: string,
+  variantId: string,
+  patchedVariantUpdateRequest?: PatchedVariantUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Variant> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Variant>(getVariantsUpdateUrl(orgSlug, productId, variantId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedVariantUpdateRequest),
+  });
+};
+
+export const getVariantsUpdateMutationKey = () => ["variantsUpdate"] as const;
+
+export const getVariantsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof variantsUpdate>>,
+    TError,
+    VariantsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof variantsUpdate>>,
+  TError,
+  VariantsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getVariantsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof variantsUpdate>>,
+    VariantsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, productId, variantId, data } = props ?? {};
+
+    return variantsUpdate(orgSlug, productId, variantId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type VariantsUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof variantsUpdate>>>;
+export type VariantsUpdateMutationBody = PatchedVariantUpdateRequest | undefined;
+export type VariantsUpdateMutationError = ErrorType<Error>;
+export type VariantsUpdateMutationVariables = {
+  orgSlug: string;
+  productId: string;
+  variantId: string;
+  data?: PatchedVariantUpdateRequest;
+};
+
+export const useVariantsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof variantsUpdate>>,
+      TError,
+      VariantsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof variantsUpdate>>,
+  TError,
+  VariantsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getVariantsUpdateMutationOptions(options), queryClient);
+};
+
+export const getVariantsDeleteUrl = (orgSlug: string, productId: string, variantId: string) => {
+  return `/api/v1/o/${orgSlug}/products/${productId}/variants/${variantId}/`;
+};
+
+/**
+ * Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`: es la única viva del producto.
+ */
+export const variantsDelete = async (
+  orgSlug: string,
+  productId: string,
+  variantId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getVariantsDeleteUrl(orgSlug, productId, variantId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getVariantsDeleteMutationKey = () => ["variantsDelete"] as const;
+
+export const getVariantsDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof variantsDelete>>,
+    TError,
+    VariantsDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof variantsDelete>>,
+  TError,
+  VariantsDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getVariantsDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof variantsDelete>>,
+    VariantsDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, productId, variantId } = props ?? {};
+
+    return variantsDelete(orgSlug, productId, variantId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type VariantsDeleteMutationResult = NonNullable<Awaited<ReturnType<typeof variantsDelete>>>;
+
+export type VariantsDeleteMutationError = ErrorType<Error>;
+export type VariantsDeleteMutationVariables = {
+  orgSlug: string;
+  productId: string;
+  variantId: string;
+};
+
+export const useVariantsDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof variantsDelete>>,
+      TError,
+      VariantsDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof variantsDelete>>,
+  TError,
+  VariantsDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getVariantsDeleteMutationOptions(options), queryClient);
+};
 
 export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
   const normalizedParams = new URLSearchParams();
