@@ -6436,7 +6436,7 @@ export const getWarehousesCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea un almacén activo en una sucursal de la organización. 409 `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.
+ * Crea un almacén en una sucursal de la organización, activo salvo `is_active=false`. 409 `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.
  */
 export const warehousesCreate = async (
   orgSlug: string,
@@ -6540,7 +6540,7 @@ export const getWarehousesUpdateUrl = (orgSlug: string, warehouseId: string) => 
 };
 
 /**
- * Cambia el nombre, el tipo, si cuenta para la venta o si está activo. 404: no es de la organización o está borrado.
+ * Cambia el nombre, el tipo, si cuenta para la venta o si está activo. `code` o `branch_id` dan 400 en ese campo: no cambian. 404: no es de la organización o está borrado.
  */
 export const warehousesUpdate = async (
   orgSlug: string,

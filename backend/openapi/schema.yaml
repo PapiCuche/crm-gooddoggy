@@ -3118,8 +3118,8 @@ paths:
           description: ''
     post:
       operationId: warehouses_create
-      description: 'Crea un almacén activo en una sucursal de la organización. 409
-        `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.'
+      description: 'Crea un almacén en una sucursal de la organización, activo salvo
+        `is_active=false`. 409 `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.'
       parameters:
       - in: path
         name: org_slug
@@ -3177,7 +3177,8 @@ paths:
     patch:
       operationId: warehouses_update
       description: 'Cambia el nombre, el tipo, si cuenta para la venta o si está activo.
-        404: no es de la organización o está borrado.'
+        `code` o `branch_id` dan 400 en ese campo: no cambian. 404: no es de la organización
+        o está borrado.'
       parameters:
       - in: path
         name: org_slug

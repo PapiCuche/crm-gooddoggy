@@ -80,8 +80,8 @@ class WarehouseCreateSerializer(WarehouseUpdateSerializer):
         tags=["inventory"],
         request=WarehouseCreateSerializer,
         responses={201: WarehouseSerializer, **errors(400, 401, 403, 404, 409)},
-        description="Crea un almacén activo en una sucursal de la organización. 409 "
-        "`WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.",
+        description="Crea un almacén en una sucursal de la organización, activo salvo "
+        "`is_active=false`. 409 `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.",
     ),
 )
 class WarehousesView(generics.ListAPIView):
@@ -103,6 +103,9 @@ class WarehousesView(generics.ListAPIView):
         return Response(WarehouseSerializer(warehouse).data, status=201)
 
 
+IMMUTABLE = "No se puede cambiar: crea otro almacén si hace falta."
+
+
 class WarehouseView(APIView):
     required_permissions = {"PATCH": "warehouses.manage"}
 
@@ -112,9 +115,14 @@ class WarehouseView(APIView):
         request=WarehouseUpdateSerializer,
         responses={200: WarehouseSerializer, **errors(400, 401, 403, 404)},
         description="Cambia el nombre, el tipo, si cuenta para la venta o si está activo. "
+        "`code` o `branch_id` dan 400 en ese campo: no cambian. "
         "404: no es de la organización o está borrado.",
     )
     def patch(self, request: Request, warehouse_id: UUID, **kwargs: Any) -> Response:
+        # El código y la sucursal no cambian: pedirlo es un error del cliente, no se ignora.
+        fixed = [field for field in ("code", "branch_id") if field in request.data]
+        if fixed:
+            raise serializers.ValidationError({field: [IMMUTABLE] for field in fixed})
         wanted = WarehouseUpdateSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
         try:

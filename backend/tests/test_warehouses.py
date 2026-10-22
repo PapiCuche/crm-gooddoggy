@@ -75,7 +75,9 @@ def test_create_and_change_a_warehouse_audited(
     changed = send(ana, "patch", item, {"name": " Tienda  Lima ", "is_active": False})
     assert changed.status_code == 200 and changed.json()["name"] == "Tienda Lima"
     assert send(ana, "patch", item, {"is_active": False}).status_code == 200  # sin cambios
-    assert send(ana, "patch", item, {"code": "OTRO"}).json()["code"] == "ALM-1"  # no cambia
+    fixed = send(ana, "patch", item, {"code": "OTRO", "branch_id": str(uuid4()), "name": "x"})
+    assert fixed.status_code == 400 and set(fixed.json()["fields"]) == {"code", "branch_id"}
+    assert ana.get(WAREHOUSES).json()["results"][0]["code"] == "ALM-1"  # nada cambió
     assert [row["id"] for row in ana.get(WAREHOUSES).json()["results"]] == [body["id"]]
     assert send(ana, "patch", f"{WAREHOUSES}{uuid4()}/", {"name": "x"}).status_code == 404
     assert [action for action, _ in audit(migrator)] == ["warehouse.created", "warehouse.updated"]
