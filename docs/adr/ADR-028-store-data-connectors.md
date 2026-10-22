@@ -32,7 +32,7 @@ Siguen valiendo los principios de la Fase 0: un producto no es una variante; `av
 
 ### 0.1 Matriz de autoridad
 
-Cada campo tiene un solo sistema con autoridad. La unidad es la celda variante × almacén: la organización fija un modo por defecto y lo puede cambiar por almacén o por conjunto de productos. Dos reglas que asignan autoridades distintas a una misma celda no se pueden guardar: la autoridad de cada celda sale de una sola regla, sin precedencias que adivinar. La matriz cubre la identidad del producto, la variante, el SKU, el precio, las existencias físicas, las reservas, la disponibilidad, el estado de publicación, y las imágenes y descripciones.
+Cada campo tiene un solo sistema con autoridad. Para el stock (existencias, reservas y disponibilidad) la unidad es la celda variante × almacén; para los datos de catálogo y el precio, la variante, sin almacén. La organización fija un modo por defecto y lo puede cambiar por conjunto de productos y, para el stock, por almacén. Dos reglas que asignan autoridades distintas a un mismo campo de una misma celda no se pueden guardar: la autoridad de cada celda sale de una sola regla, sin precedencias que adivinar. La matriz cubre la identidad del producto, la variante, el SKU, el precio, las existencias físicas, las reservas, la disponibilidad, el estado de publicación, y las imágenes y descripciones.
 
 - Un SKU puede estar vinculado a un id externo. Vincularlos no los hace iguales: cada campo sigue a su autoridad.
 - La cantidad disponible se calcula de forma determinista desde la autoridad del stock de cada almacén.
