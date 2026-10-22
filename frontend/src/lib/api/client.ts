@@ -2728,7 +2728,7 @@ export const getCategoriesUpdateUrl = (orgSlug: string, categoryId: string) => {
 };
 
 /**
- * `name` la renombra (el slug no cambia). `parent_id` la mueve con toda su rama, sin entrar en sí misma ni pasar de 5 niveles. 404: no es de la organización o está borrada.
+ * `name` la renombra (el slug no cambia). `parent_id` la mueve con toda su rama, sin entrar en sí misma ni pasar de 5 niveles. 409 `CATEGORY_SLUG_TAKEN`: el destino ya tiene una con ese slug. 404: no es de la organización o está borrada.
  */
 export const categoriesUpdate = async (
   orgSlug: string,
