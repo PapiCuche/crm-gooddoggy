@@ -694,6 +694,18 @@
     "codesFile": "Códigos de respaldo de Good Doggy CRM (cada uno sirve una sola vez)",
     "sessionsClosed": "Por seguridad, cerramos tus otras sesiones abiertas.",
     "saved": "He guardado estos códigos en un lugar seguro.",
-    "finish": "Terminar"
+    "finish": "Terminar",
+    "regenerateOffer": "Generar códigos de respaldo nuevos",
+    "regenerateIntro": "Los códigos que te queden dejarán de valer y tendrás diez nuevos. Escribe tu contraseña actual y el código que te muestra ahora la aplicación de autenticación.",
+    "regenerateCodeInvalid": "Ese código no vale. Escribe el que muestra ahora la aplicación; uno de respaldo no sirve aquí.",
+    "regenerate": "Generar códigos nuevos",
+    "regenerating": "Generando…",
+    "disableOffer": "Quitar la verificación en dos pasos",
+    "disableWarning": "Sin la verificación en dos pasos, a quien consiga tu contraseña le bastará para entrar en tu cuenta.",
+    "disableIntro": "Para quitarla, escribe tu contraseña actual y un código de la aplicación de autenticación o uno de respaldo.",
+    "disableCodeInvalid": "Ese código no vale. Escribe el que muestra ahora la aplicación o uno de respaldo sin usar.",
+    "disable": "Quitar",
+    "disabling": "Quitando…",
+    "disabled": "Quitaste la verificación en dos pasos. Por seguridad, cerramos tus otras sesiones abiertas."
   }
 }

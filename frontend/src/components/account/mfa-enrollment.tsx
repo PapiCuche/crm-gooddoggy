@@ -12,14 +12,18 @@ import type { ApiError } from "@/lib/http";
 const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulario ocupado
 // Los `code` de estas rutas con mensaje propio aquí. Cualquier otro es un fallo nuestro.
 const SAID = new Set(["NETWORK_ERROR", "RATE_LIMITED", "CSRF_FAILED"]);
-const ALERT =
+export const ALERT =
   "border-danger/40 text-danger rounded-[10px] border px-3 py-2 text-sm transition-[opacity,transform] duration-200 ease-(--ease-out) starting:translate-y-1 starting:opacity-0";
 
-type Phase =
+export type Phase =
   { name: "idle" | "missing" | "sending" | "stalled" } | { name: "failed"; error: ApiError };
 
 // Deja de esperar una respuesta a los `PATIENCE` ms; si llegó justo antes y aún no se pintó, manda.
-function useStall(sending: boolean, reset: () => void, set: (next: (now: Phase) => Phase) => void) {
+export function useStall(
+  sending: boolean,
+  reset: () => void,
+  set: (next: (now: Phase) => Phase) => void,
+) {
   useEffect(() => {
     if (!sending) return;
     const timer = setTimeout(() => {
@@ -30,7 +34,7 @@ function useStall(sending: boolean, reset: () => void, set: (next: (now: Phase) 
   }, [sending, reset, set]);
 }
 
-function useRejection() {
+export function useRejection() {
   const t = useTranslations();
   return (error: ApiError) => {
     if (error.code === "RATE_LIMITED" && error.retryAfter) {
@@ -42,7 +46,7 @@ function useRejection() {
   };
 }
 
-const refusedField = (phase: Phase, field: string) =>
+export const refusedField = (phase: Phase, field: string) =>
   phase.name === "failed" &&
   phase.error.code === "VALIDATION_ERROR" &&
   Object.hasOwn(phase.error.fields ?? {}, field);
@@ -85,7 +89,7 @@ export function MfaEnrollment({
       />
     );
   }
-  return <CodesStep codes={step.codes} onDone={onFinished} />;
+  return <CodesStep codes={step.codes} onDone={onFinished} sessionsClosed />;
 }
 
 function PasswordStep({
@@ -316,7 +320,16 @@ function CodeStep({
   );
 }
 
-function CodesStep({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+// Los códigos de respaldo recién hechos, una sola vez (el alta y la regeneración).
+export function CodesStep({
+  codes,
+  onDone,
+  sessionsClosed = false,
+}: {
+  codes: string[];
+  onDone: () => void;
+  sessionsClosed?: boolean;
+}) {
   const t = useTranslations();
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -361,7 +374,7 @@ function CodesStep({ codes, onDone }: { codes: string[]; onDone: () => void }) {
           {t("account.downloadCodes")}
         </Button>
       </div>
-      <p className="text-muted text-sm">{t("account.sessionsClosed")}</p>
+      {sessionsClosed ? <p className="text-muted text-sm">{t("account.sessionsClosed")}</p> : null}
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
