@@ -130,6 +130,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-107 | [#272](https://github.com/PapiCuche/crm-gooddoggy/issues/272) MFA: the screen of the second step of sign-in | `feature/f2-mfa-login-second-step-screen` | #270 | frontend |
 | F2-108 | [#274](https://github.com/PapiCuche/crm-gooddoggy/issues/274) MFA: the state of one's own second factor | `feature/f2-mfa-status` | #272 | backend |
 | F2-109 | [#276](https://github.com/PapiCuche/crm-gooddoggy/issues/276) MFA: removing one's own second factor | `feature/f2-mfa-disable` | #274 | backend |
+| F2-111 | [#281](https://github.com/PapiCuche/crm-gooddoggy/issues/281) Maintenance: certifi 2026.10.19 (PYSEC-2026-4320) | `chore/f2-certifi-2026-10-19` | — | backend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
