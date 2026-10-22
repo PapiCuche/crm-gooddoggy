@@ -3,22 +3,27 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { everyPage } from "@/components/catalog/categories-tree";
 import { getInventoryLevelsListQueryKey, inventoryLevelsList } from "@/lib/api/client";
 
 import { placed, statusOf, useCellPicker, useReads } from "./cell-picker";
+import { MovementForm } from "./movement-form";
 
 const ZERO = { on_hand: 0, reserved: 0, available: 0 }; // una celda sin movimientos
 
 // Existencias (F3-14): elegir almacén y variante y ver su saldo (`GET …/inventory/levels/`,
 // F3-11) en ese almacén y en cada almacén con movimientos. Quién ve qué lo decide la API
-// (`inventory.view`, y `products.view` para elegir el producto).
+// (`inventory.view`, y `products.view` para elegir el producto). Registrar movimientos: F3-15.
 export function StockPanel() {
   const t = useTranslations("stock");
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
   const slug = organization.slug;
+  // Comodidad: registrar se ofrece a quien la API dijo que tiene `inventory.adjust` (F3-15).
+  const canAdjust = permissions.some((grant) => grant.code === "inventory.adjust");
+  const [done, setDone] = useState<string | null>(null);
   const { failed, retry } = useReads();
   const { warehouses, products, warehouse, variant, controls } = useCellPicker(slug);
   const levels = useQuery({
@@ -116,6 +121,17 @@ export function StockPanel() {
       <>
         {controls}
         {cell}
+        {canAdjust ? (
+          <>
+            {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
+            <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
+              {done ?? ""}
+            </p>
+            {variant && warehouse ? (
+              <MovementForm slug={slug} warehouse={warehouse} variant={variant} onDone={setDone} />
+            ) : null}
+          </>
+        ) : null}
       </>
     );
   }

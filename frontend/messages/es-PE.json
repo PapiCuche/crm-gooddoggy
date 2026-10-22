@@ -97,7 +97,8 @@
       "brand": "Marca",
       "category": "Categoría",
       "product": "Producto",
-      "warehouse": "Almacén"
+      "warehouse": "Almacén",
+      "inventory_movement": "Movimiento de inventario"
     },
     "actions": {
       "organization": {
@@ -151,6 +152,11 @@
         "created": "Almacén creado",
         "updated": "Almacén editado",
         "deleted": "Almacén borrado"
+      },
+      "inventory": {
+        "received": "Entrada de stock registrada",
+        "issued": "Salida de stock registrada",
+        "adjusted": "Stock ajustado tras un conteo"
       }
     }
   },
@@ -1027,5 +1033,54 @@
     "unknownWarehouse": "Un almacén que ya no existe",
     "denied": "No tienes permiso para ver el inventario de esta organización.",
     "catalogDenied": "No tienes permiso para ver el catálogo: sin él no puedes elegir un producto."
+  },
+  "movements": {
+    "form": {
+      "open": "Registrar movimiento",
+      "title": "Nuevo movimiento",
+      "kind": "Tipo de movimiento",
+      "kinds": {
+        "RECEIPT": "Entrada: llegan unidades",
+        "ISSUE": "Salida: se van unidades",
+        "ADJUSTMENT": "Ajuste: lo que se contó"
+      },
+      "quantity": {
+        "RECEIPT": "Unidades que entran",
+        "ISSUE": "Unidades que salen",
+        "ADJUSTMENT": "Unidades contadas"
+      },
+      "quantityHint": {
+        "RECEIPT": "Un número entero desde 1.",
+        "ISSUE": "Un número entero desde 1. No puede dejar menos de lo reservado.",
+        "ADJUSTMENT": "Lo que hay de verdad en el almacén, desde 0: las existencias quedan en ese número."
+      },
+      "quantityInvalid": {
+        "RECEIPT": "Escribe un número entero desde 1 hasta 1000000.",
+        "ISSUE": "Escribe un número entero desde 1 hasta 1000000.",
+        "ADJUSTMENT": "Escribe un número entero desde 0 hasta 1000000."
+      },
+      "reason": "Motivo",
+      "reasonHint": "Por qué: queda en el historial y en la auditoría.",
+      "quantityRequired": "Escribe la cantidad.",
+      "reasonRequired": "Escribe el motivo.",
+      "reasonInvalid": "El motivo no es válido: una línea de hasta 255 caracteres.",
+      "insufficient": "No hay stock suficiente: no puede quedar en negativo ni por debajo de lo reservado.",
+      "inactive": "El almacén está desactivado y no recibe movimientos. Reactívalo en «Almacenes».",
+      "reused": "Este envío coincidía con otro movimiento ya registrado. Vuelve a pulsar para registrarlo como uno nuevo.",
+      "gone": "La variante o el almacén ya no existen en la organización. Vuelve a elegirlos.",
+      "denied": "No tienes permiso para registrar movimientos de stock.",
+      "submit": {
+        "RECEIPT": "Registrar entrada",
+        "ISSUE": "Registrar salida",
+        "ADJUSTMENT": "Registrar ajuste"
+      },
+      "busy": "Registrando…",
+      "cancel": "Cancelar",
+      "done": {
+        "RECEIPT": "Entrada registrada: ahora hay {on_hand} en {warehouse}.",
+        "ISSUE": "Salida registrada: ahora hay {on_hand} en {warehouse}.",
+        "ADJUSTMENT": "Ajuste registrado: ahora hay {on_hand} en {warehouse}."
+      }
+    }
   }
 }

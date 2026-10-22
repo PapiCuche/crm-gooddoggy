@@ -23,7 +23,8 @@ export type FormField<Name extends string> = {
   invalid: string; // lo que se dice si la API no acepta el campo
   required?: string; // lo que se dice si falta; sin él, el campo es opcional
   hint?: string;
-  inputMode?: "tel";
+  inputMode?: "tel" | "numeric";
+  valid?: (value: string) => boolean; // lo que la pantalla comprueba antes de enviar lo escrito
   // Una clave que se escribe tal cual (un slug): el teclado del móvil no pone mayúscula inicial
   // ni corrige, y la API no tiene que rechazar lo que el usuario no escribió.
   literal?: boolean;
@@ -71,6 +72,7 @@ export function FieldsForm<Name extends string>({
 }) {
   const errors = useTranslations("errors.api");
   const [missing, setMissing] = useState<readonly Name[]>([]);
+  const [wrong, setWrong] = useState<readonly Name[]>([]); // escritos, pero `valid` no los acepta
   // La escritura cuyo error ya se retiró aquí: la pantalla tarda una tarea en traerla vacía.
   const [dropped, setDropped] = useState<Write | null>(null);
   const inputs = useRef<Partial<Record<Name, HTMLInputElement | null>>>({});
@@ -95,6 +97,7 @@ export function FieldsForm<Name extends string>({
   const own = error ? (taken?.(error) ?? null) : null;
   function fieldError(field: FormField<Name>): string | undefined {
     if (missing.includes(field.name)) return field.required;
+    if (wrong.includes(field.name)) return field.invalid;
     if (own?.field === field.name) return own.text;
     return Object.hasOwn(invalid, field.name) ? field.invalid : undefined;
   }
@@ -133,10 +136,21 @@ export function FieldsForm<Name extends string>({
       write.reset();
       setDropped(write);
       setMissing(empty.map((field) => field.name));
+      setWrong([]);
       inputs.current[empty[0]!.name]?.focus();
       return;
     }
     if (missing.length > 0) setMissing([]); // un aviso anterior no tapa la respuesta de la API
+    const bad = fields.filter(
+      (field) => values[field.name] && field.valid?.(values[field.name]) === false,
+    );
+    setWrong(bad.map((field) => field.name));
+    if (bad.length > 0) {
+      write.reset();
+      setDropped(write);
+      inputs.current[bad[0]!.name]?.focus();
+      return;
+    }
     if (check && !check()) {
       write.reset(); // el error anterior tampoco: ya no es lo que impide enviar
       setDropped(write);
@@ -152,6 +166,7 @@ export function FieldsForm<Name extends string>({
   function edited() {
     if (sending.current) return;
     if (missing.length > 0) setMissing([]);
+    if (wrong.length > 0) setWrong([]);
     if (write.isError) write.reset();
   }
 
