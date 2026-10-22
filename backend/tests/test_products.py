@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.catalog.brands import BrandInUse, delete_brand
 from apps.catalog.categories import CategoryInUse, delete_category
 from apps.catalog.models import Brand, Category, Product, ProductVariant
-from apps.catalog.products import create_product
+from apps.catalog.products import BadReference, create_product
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
 from tests.test_anti_escalation import race
@@ -174,7 +174,6 @@ def test_brand_and_category_in_use(ana: Client, world: Any) -> None:
 
 def test_edit_permissions_and_isolation(world: Any) -> None:
     viewer = signed(world.ana)
-    give(world.a, world.membership, VIEW)
     with tenant_scope(ctx(world.a)):
         mine = Product.objects.create(name="Mío", slug="mio")
         variant = ProductVariant.objects.create(
@@ -182,6 +181,8 @@ def test_edit_permissions_and_isolation(world: Any) -> None:
         )
     with tenant_scope(ctx(world.b)):
         foreign = Product.objects.create(name="Ajeno", slug="ajeno")
+    assert viewer.get(f"{url()}{mine.pk}/variants/").status_code == 403  # sin `products.view`
+    give(world.a, world.membership, VIEW)
     assert send(viewer, "patch", f"{url()}{mine.pk}/", {"name": "X"}).status_code == 403
     assert send(viewer, "delete", f"{url()}{mine.pk}/").status_code == 403
     variants = viewer.get(f"{url()}{mine.pk}/variants/").json()["results"]
@@ -250,3 +251,26 @@ def test_a_category_is_not_deleted_while_a_product_starts_using_it(world: Any) -
     changes = {"create": (world.ana, make), "delete": (world.ana, remove)}
     assert race(world.a, changes, hold="create") == {"create": "ok", "delete": "ok"}
     assert refused == ["CATEGORY_IN_USE"]
+
+
+def test_a_product_does_not_take_a_brand_being_deleted(world: Any) -> None:
+    """Al revés: el borrado retiene la marca; quien crea el producto espera y, al releerla, la
+    ve borrada (400 en `brand_id`), nunca un producto vivo con una marca borrada."""
+    with tenant_scope(ctx(world.a)):
+        apple = Brand.objects.create(name="Apple", slug="apple")
+    refused: list[str] = []
+
+    def make(tenant: Any) -> None:
+        try:
+            create_product(tenant, name="P", sku_code="P1", brand_id=apple.pk)
+        except BadReference as error:
+            refused.append(error.field)
+
+    def remove(tenant: Any) -> None:
+        delete_brand(tenant, brand_id=apple.pk)
+
+    changes = {"delete": (world.ana, remove), "create": (world.ana, make)}
+    assert race(world.a, changes, hold="delete") == {"delete": "ok", "create": "ok"}
+    assert refused == ["brand_id"]
+    with tenant_scope(ctx(world.a)):
+        assert not Product.objects.exists()
