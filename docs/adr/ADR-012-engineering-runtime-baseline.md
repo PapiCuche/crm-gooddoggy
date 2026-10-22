@@ -146,7 +146,7 @@ Tooling del frontend fijado en el mismo PR (npm, 2026-09-30):
 - **Next.js 16.4.1** (2026-10-14) sustituye a 16.3.8. Es solo de seguridad: 2 críticas (RCE sin autenticación en funciones `use cache` que devuelven arrays tipados, GHSA-673q-mjm6-r5xr; y en Image Optimization con SVG, GHSA-2464-fhr4-w9xw) y 1 alta (DoS en App Router con Server Actions, GHSA-p3m5-59mp-jv5r), que afectan a 16.0.0–16.4.0. El post oficial «Next.js Security Update for Upstream Vulnerabilities» (2026-10-14) dice que incluye los dos fixes aplazados del September Security Release: **cierra el riesgo residual de §4.1 y OBS-F1-09-2**. 16.4.0 (npm, 2026-10-06) es la minor; sus notas no traen cambios incompatibles para este proyecto (`next.config.ts`, `src/proxy.ts`, next-intl 4.14.8 y geist aceptan `next ^16`).
 - **djangorestframework 3.18.2** (2026-10-06) corrige CVE-2026-114136, 114137 y 114138 (GHSA-3547-9m27-7rxg, GHSA-xw6w-gcfp-cf8m, GHSA-33wh-fxxf-88vv). El nuevo rechazo de juegos de caracteres no textuales no cambia nada aquí: `Utf8JSONParser` ya responde 415 antes.
 - **Por qué no la más reciente:** se elige el cambio mínimo de seguridad. DRF 3.18.3 (50 minutos después) solo restaura el valor de `rest_framework.utils.mediatypes.order_by_precedence`, que ni el código ni drf-spectacular usan; next 16.4.2 (2026-10-15) solo trae backports de Turbopack y documentación.
-- **React** sigue en 19.2.8, que cumple el peer `^19` de Next 16.4.1; `create-next-app@16.4.1` ya empareja `19.3.0`, así que la subida que §4 dejó «para cuando Next.js la empareje» va en F3-17 (#337).
+- **React** sigue en 19.2.8, que cumple el peer `^19` de Next 16.4.1; `create-next-app@16.4.1` ya empareja `19.3.0`, así que la subida que §4 dejó «para cuando Next.js la empareje» va en F3-18 (#337).
 - **pnpm:** las excepciones de `minimumReleaseAgeExclude` para 16.3.8 se retiran; 16.4.1 tiene más de 24 h y no necesita ninguna.
 
 ### 5. Gestores de paquetes y herramientas
@@ -202,7 +202,7 @@ En CI se ejecuta contra Garage; contra S3 y R2 solo de forma manual o programada
 | | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.4.1 | React 19.2.8 | TS 6.0.3 |
 |---|---|---|---|---|---|---|---|
 | Django 5.2.17 | ✅ (≥ 5.2.8) | — | ✅ (psycopg 3.3.6) | — | — | — | — |
-| Next 16.4.1 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; la pareja oficial pasa a 19.3.0, F3-17) | ✅ (instala `^6.0.0`) |
+| Next 16.4.1 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; la pareja oficial pasa a 19.3.0, F3-18) | ✅ (instala `^6.0.0`) |
 | Celery 5.6 / Channels 4.3 | ✅ | ✅ | — | — | — | — | — |
 | django-stubs 5.2.9 + mypy 1.19.1 | ⚠️ probado hasta 3.13, instalable; verificar en F1-02 | ✅ | — | — | — | — | — |
 | Garage v2.4.1 | — | — | — | — | — | — | — |
