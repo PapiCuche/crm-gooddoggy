@@ -78,6 +78,8 @@ def test_create_and_change_a_warehouse_audited(
     fixed = send(ana, "patch", item, {"code": "OTRO", "branch_id": str(uuid4()), "name": "x"})
     assert fixed.status_code == 400 and set(fixed.json()["fields"]) == {"code", "branch_id"}
     assert ana.get(WAREHOUSES).json()["results"][0]["code"] == "ALM-1"  # nada cambió
+    for wrong in ("5", "null", '"code"', '["code"]'):  # no es un objeto: 400, nunca un 500
+        assert send(ana, "patch", item, wrong).json()["code"] == "VALIDATION_ERROR", wrong
     assert [row["id"] for row in ana.get(WAREHOUSES).json()["results"]] == [body["id"]]
     assert send(ana, "patch", f"{WAREHOUSES}{uuid4()}/", {"name": "x"}).status_code == 404
     assert [action for action, _ in audit(migrator)] == ["warehouse.created", "warehouse.updated"]

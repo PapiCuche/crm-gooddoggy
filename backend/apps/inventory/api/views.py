@@ -1,5 +1,6 @@
 """Rutas de tenant del inventario: `…/warehouses/` (F3-08, E04-01)."""
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -120,7 +121,9 @@ class WarehouseView(APIView):
     )
     def patch(self, request: Request, warehouse_id: UUID, **kwargs: Any) -> Response:
         # El código y la sucursal no cambian: pedirlo es un error del cliente, no se ignora.
-        fixed = [field for field in ("code", "branch_id") if field in request.data]
+        # Un cuerpo que no es un objeto (`5`, `null`, una lista) lo rechaza el serializador.
+        sent = request.data if isinstance(request.data, Mapping) else {}
+        fixed = [field for field in ("code", "branch_id") if field in sent]
         if fixed:
             raise serializers.ValidationError({field: [IMMUTABLE] for field in fixed})
         wanted = WarehouseUpdateSerializer(data=request.data)
