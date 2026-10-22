@@ -38,7 +38,8 @@
     "catalog": {
       "label": "Secciones del catálogo",
       "brands": "Marcas",
-      "categories": "Categorías"
+      "categories": "Categorías",
+      "products": "Productos"
     }
   },
   "audit": {
@@ -88,7 +89,8 @@
       "team": "Equipo",
       "invitation": "Invitación",
       "brand": "Marca",
-      "category": "Categoría"
+      "category": "Categoría",
+      "product": "Producto"
     },
     "actions": {
       "organization": {
@@ -132,6 +134,11 @@
         "updated": "Categoría renombrada",
         "moved": "Categoría movida",
         "deleted": "Categoría borrada"
+      },
+      "product": {
+        "created": "Producto creado",
+        "updated": "Producto editado",
+        "deleted": "Producto borrado"
       }
     }
   },
@@ -829,6 +836,64 @@
       "denied": "No tienes permiso para crear categorías.",
       "done": "Categoría «{name}» creada.",
       "doneStale": "Categoría «{name}» creada, pero el árbol no se pudo actualizar. Recarga la página para verla."
+    }
+  },
+  "products": {
+    "eyebrow": "Good Doggy / Catálogo",
+    "title": "Productos",
+    "intro": "Los productos y servicios de {organization}. Cada uno tiene al menos una variante con su SKU.",
+    "empty": "Esta organización todavía no tiene productos.",
+    "count": "{count, plural, =0 {Sin productos en la lista} one {# producto en la lista} other {# productos en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando productos…",
+    "denied": "No tienes permiso para ver el catálogo de esta organización.",
+    "brand": "Marca: {name}",
+    "category": "Categoría: {name}",
+    "status": {
+      "DRAFT": "Borrador",
+      "ACTIVE": "Activo",
+      "DISCONTINUED": "Descontinuado"
+    },
+    "type": {
+      "PHYSICAL": "Físico",
+      "SERVICE": "Servicio"
+    },
+    "create": {
+      "open": "Crear producto",
+      "title": "Nuevo producto",
+      "name": "Nombre",
+      "sku": "SKU",
+      "slug": "Identificador (opcional)",
+      "short_description": "Descripción corta (opcional)",
+      "skuHint": "El código de su variante por defecto: letras sin acento, cifras y . _ - entre ellas. Se guarda en mayúsculas.",
+      "slugHint": "Minúsculas, cifras y guiones. Si lo dejas vacío se forma con el nombre.",
+      "type": "Tipo",
+      "typeHint": "Un servicio no lleva stock.",
+      "brand": "Marca",
+      "noBrand": "Sin marca",
+      "category": "Categoría",
+      "noCategory": "Sin categoría",
+      "optionsLoading": "Cargando las opciones…",
+      "optionsFailed": "No se pudo cargar la lista. Puedes crear el producto sin elegir, o cerrar el formulario y volver a abrirlo.",
+      "submit": "Crear producto",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "nameRequired": "Escribe el nombre.",
+      "skuRequired": "Escribe el SKU.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 200 caracteres con alguna letra o cifra.",
+      "skuInvalid": "El SKU no es válido: letras sin acento, cifras y . _ - entre ellas, hasta 64.",
+      "slugInvalid": "El identificador no es válido: minúsculas sin acento, cifras y guiones entre ellas, hasta 63.",
+      "short_descriptionInvalid": "La descripción no es válida: una línea de hasta 255 caracteres.",
+      "slugTaken": "Ya hay un producto con ese identificador.",
+      "slugTakenFormed": "Ya hay un producto con el identificador que se forma con este nombre. Escribe otro identificador.",
+      "slugNeeded": "Con este nombre no se puede formar un identificador: escríbelo tú.",
+      "skuTaken": "Ya hay una variante con ese SKU en la organización.",
+      "brandGone": "La marca elegida ya no está en el catálogo. Elige otra o deja «Sin marca».",
+      "categoryGone": "La categoría elegida ya no está en el catálogo. Elige otra o deja «Sin categoría».",
+      "denied": "No tienes permiso para crear productos.",
+      "done": "Producto «{name}» creado, en borrador.",
+      "doneStale": "Producto «{name}» creado, pero la lista no se pudo actualizar. Recarga la página para verlo."
     }
   }
 }
