@@ -32,7 +32,8 @@
     "logout": "Cerrar sesión",
     "loggingOut": "Cerrando sesión…",
     "unavailableEyebrow": "Good Doggy / Workspace",
-    "unavailableTitle": "No pudimos abrir este espacio."
+    "unavailableTitle": "No pudimos abrir este espacio.",
+    "accountSecurity": "Seguridad de la cuenta"
   },
   "audit": {
     "eyebrow": "Good Doggy / Auditoría",
@@ -652,5 +653,47 @@
     "audit": {
       "view": "Ver la auditoría"
     }
+  },
+  "account": {
+    "pageTitle": "Seguridad de la cuenta",
+    "eyebrow": "Good Doggy / Cuenta",
+    "title": "Seguridad de tu cuenta.",
+    "loading": "Cargando…",
+    "retry": "Reintentar",
+    "back": "Volver a tus organizaciones",
+    "mfaTitle": "Verificación en dos pasos",
+    "mfaOff": "Además de tu contraseña, te pediremos un código de una aplicación de autenticación de tu teléfono cada vez que entres. Si alguien consigue tu contraseña, no le bastará.",
+    "mfaOn": "Activada desde el {date}. Al entrar, después de la contraseña te pedimos un código de tu aplicación de autenticación.",
+    "mfaOnUndated": "Activada. Al entrar, después de la contraseña te pedimos un código de tu aplicación de autenticación.",
+    "backupLeft": "{count, plural, =0 {No te queda ningún código de respaldo sin usar.} one {Te queda # código de respaldo sin usar.} other {Te quedan # códigos de respaldo sin usar.}}",
+    "backupFew": "Si los gastas y pierdes el teléfono, no podrás entrar.",
+    "enable": "Activar la verificación en dos pasos",
+    "cancel": "Cancelar",
+    "stepPassword": "Para empezar, escribe tu contraseña actual.",
+    "password": "Contraseña actual",
+    "passwordRequired": "Escribe tu contraseña.",
+    "passwordInvalid": "La contraseña no es correcta.",
+    "continue": "Continuar",
+    "continuing": "Comprobando…",
+    "stepKey": "Abre tu aplicación de autenticación, añade una cuenta y escribe esta clave (o usa el enlace si estás en ese teléfono):",
+    "keyLabel": "Clave",
+    "copyKey": "Copiar la clave",
+    "copied": "Copiado",
+    "openApp": "Abrir en la aplicación de autenticación",
+    "stepCode": "Después, escribe el código de 6 dígitos que te muestra la aplicación.",
+    "code": "Código",
+    "codeRequired": "Escribe el código.",
+    "codeInvalid": "Ese código no vale. Prueba con el que muestra ahora la aplicación.",
+    "confirm": "Activar",
+    "confirming": "Activando…",
+    "expired": "El alta caducó o dejó de valer. Vuelve a empezar: tu contraseña y una clave nueva.",
+    "codesTitle": "Guarda tus códigos de respaldo",
+    "codesIntro": "Si pierdes el teléfono, cada uno de estos códigos sirve una sola vez para entrar en lugar del de la aplicación. Solo los verás ahora.",
+    "copyCodes": "Copiar los códigos",
+    "downloadCodes": "Descargar",
+    "codesFile": "Códigos de respaldo de Good Doggy CRM (cada uno sirve una sola vez)",
+    "sessionsClosed": "Por seguridad, cerramos tus otras sesiones abiertas.",
+    "saved": "He guardado estos códigos en un lugar seguro.",
+    "finish": "Terminar"
   }
 }

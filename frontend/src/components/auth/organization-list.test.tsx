@@ -56,7 +56,9 @@ describe("OrganizationList", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Aún no perteneces a ninguna"),
     );
     expect(screen.getByText(/Pide a quien administra la tuya/)).toBeVisible();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    // Ningún enlace a una organización: solo el de la seguridad de la cuenta (F2-112).
+    const links = screen.queryAllByRole("link").map((link) => link.getAttribute("href"));
+    expect(links).toEqual(["/cuenta/seguridad"]);
   });
 
   it("quien no tiene organizaciones también puede cerrar sesión", async () => {

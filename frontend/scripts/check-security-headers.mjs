@@ -19,6 +19,7 @@ const PAGES = {
   "/restablecer": 200,
   "/o": 200,
   "/o/ci": 200,
+  "/cuenta/seguridad": 200,
   "/demo": 200,
   "/demo/workspace/inbox": 200,
   "/no-existe": 404,
