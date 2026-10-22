@@ -51,7 +51,13 @@ export function CategoryDeleteAction({
       networkMode: "always",
       onSuccess: async (_, { categoryId }) => {
         const focused = here(); // antes de que la fila se vaya: después el foco ya no está en ella
-        await rewrite(queryClient, listKey, categoryId, () => null);
+        // La API solo borra sin hijas: si el árbol le enseñaba alguna, otra pestaña las movió.
+        let had = false;
+        await rewrite(queryClient, listKey, categoryId, (node) => {
+          had = node.children.length > 0;
+          return null;
+        });
+        if (had) void queryClient.invalidateQueries({ queryKey: listKey });
         onDone(t("done", { name: asking ?? category.name }), { here: focused });
       },
       onError: (error) => {

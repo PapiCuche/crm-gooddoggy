@@ -542,4 +542,43 @@ describe("CategoriesTree", () => {
     expect(sent(api, "PATCH")).toHaveLength(1);
     expect(sent(api, "DELETE")).toHaveLength(1);
   });
+
+  it("mover no quita el foco a quien se fue a otra parte mientras volvía el árbol", async () => {
+    let release = () => {};
+    const api = mockApi({
+      [LIST]: page(TREE),
+      [`PATCH ${ONE("c2")}`]: { status: 200, body: { ...iphone, parent_id: null } },
+    });
+    const reply = api.getMockImplementation()!;
+    api.mockImplementation(async (input, init) => {
+      if (sent(api, "PATCH").length > 0 && (init?.method ?? "GET") === "GET")
+        await new Promise<void>((r) => (release = r));
+      return reply(input, init);
+    });
+    screenOf(manager);
+    press("Editar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    fireEvent.change(screen.getByLabelText("Dentro de"), { target: { value: "" } });
+    press("Guardar", screen.getByRole("form"));
+    await waitFor(() => expect(sent(api, "GET")).toHaveLength(2));
+    screen.getByRole("button", { name: "Editar Accesorios" }).focus();
+    release();
+    expect(await screen.findByText(/movida con sus subcategorías/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Editar Accesorios" })).toHaveFocus();
+  });
+
+  it("si la borrada aún enseñaba hijas (otra pestaña las movió), el árbol se vuelve a pedir", async () => {
+    let rows: Category[] = TREE;
+    mockApi({
+      [LIST]: () => page(rows),
+      [`DELETE ${ONE("c2")}`]: () => {
+        rows = [phones, extras, cases, silicone, node("c4", "Pro", "/pro/")];
+        return { status: 204 };
+      },
+    });
+    screenOf(manager);
+    press("Borrar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    press("Borrar", screen.getByRole("group"));
+    expect(await screen.findByText("Categoría «iPhone» borrada.")).toBeVisible();
+    expect(await screen.findByText("Pro")).toBeVisible();
+  });
 });

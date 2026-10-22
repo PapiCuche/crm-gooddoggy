@@ -53,7 +53,6 @@ export function CategoryEditAction({
       networkMode: "always",
       onSuccess: async (saved, { data }) => {
         const moved = !!data && "parent_id" in data;
-        const focused = here(); // antes de que el árbol la cambie de sitio
         await rewrite(queryClient, listKey, saved.id, (node) => ({ ...node, name: saved.name }));
         // Movida, cambian las rutas de toda la rama: sigue «Guardando…» hasta que vuelve el árbol.
         // Si releerlo falla, el árbol de antes sigue en pantalla: se dice.
@@ -62,6 +61,8 @@ export function CategoryEditAction({
           await queryClient.invalidateQueries({ queryKey: listKey });
           stale = queryClient.getQueryState(listKey)?.status === "error";
         }
+        // Tras la espera: si el usuario se fue a otra parte mientras volvía el árbol, se queda ahí.
+        const focused = here();
         setFrom(null);
         const text = moved ? (stale ? "movedStale" : "moved") : "renamed";
         // Movida, la fila se monta en otra lista y el foco no tiene dónde volver: al título.
