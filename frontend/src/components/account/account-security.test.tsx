@@ -1,10 +1,12 @@
 import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockApi, renderApp } from "@/test-utils";
 
 import { AccountSecurity } from "./account-security";
+import { QrCode } from "./qr-code";
 
 const router = { replace: vi.fn() };
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
@@ -80,6 +82,12 @@ describe("AccountSecurity", () => {
     expect(await screen.findByText("ABCD EFGH IJKL MNOP QRST UVWX YZ23 4567")).toBeInTheDocument();
     expect(calls(api, "/mfa/totp/")).toHaveLength(2); // la que no valía y esta
     expect(screen.getByText(/Abre tu aplicación de autenticación/)).toHaveFocus();
+    // El QR es el de la URI que devolvió la API, no el de la clave ni el de otro valor.
+    const qr = /<path d="([^"]+)"/.exec(renderToStaticMarkup(<QrCode value={URI} label="" />))?.[1];
+    expect(qr).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: /Código QR para añadir la cuenta/ }).querySelector("path"),
+    ).toHaveAttribute("d", qr);
     expect(
       screen.getByRole("link", { name: "Abrir en la aplicación de autenticación" }),
     ).toHaveAttribute("href", URI);

@@ -9,6 +9,8 @@ import { useAuthMfaTotpConfirm, useAuthMfaTotpStart } from "@/lib/api/client";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
+import { QrCode } from "./qr-code";
+
 const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulario ocupado
 // Los `code` de estas rutas con mensaje propio aquí. Cualquier otro es un fallo nuestro.
 const SAID = new Set(["NETWORK_ERROR", "RATE_LIMITED", "CSRF_FAILED"]);
@@ -256,6 +258,7 @@ function CodeStep({
       <p ref={intro} tabIndex={-1} className="text-muted">
         {t("account.stepKey")}
       </p>
+      <QrCode value={uri} label={t("account.qrLabel")} />
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium" id="mfa-key-label">
           {t("account.keyLabel")}

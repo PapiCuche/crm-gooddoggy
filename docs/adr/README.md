@@ -17,7 +17,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-009](ADR-009-git-strategy.md) | GitHub Flow | Accepted (enmendado en parte por ADR-015) | 2026-09-28 |
 | [ADR-010](ADR-010-messaging-policy.md) | MessagingPolicyService, ventana de atención y plantillas | Accepted | 2026-09-28 |
 | [ADR-011](ADR-011-observability-and-logs.md) | Observabilidad y separación de logs (aplicación / auditoría / IA) | Accepted | 2026-09-28 |
-| [ADR-012](ADR-012-engineering-runtime-baseline.md) | Baseline de runtimes, herramientas e imágenes; emulador S3 local (Garage) | Accepted | 2026-09-28 |
+| [ADR-012](ADR-012-engineering-runtime-baseline.md) | Baseline de runtimes, herramientas e imágenes; emulador S3 local (Garage) | Accepted; ampliado por ADR-025 en §1 (fila de `uqr`) | 2026-09-28 |
 | [ADR-013](ADR-013-platform-audit.md) | Auditoría de plataforma en un sumidero propio, sin tenant y solo de inserción | Accepted | 2026-10-02 |
 | [ADR-014](ADR-014-api-errors-and-authentication.md) | Contrato de errores de la API, autenticación por sesión y rutas de plataforma | Accepted | 2026-10-02 |
 | [ADR-015](ADR-015-autonomous-delivery-program.md) | Programa de entrega autónoma con merge por gates (modifica la aprobación y el merge de ADR-009 dentro del programa) | Accepted | 2026-10-02 |
@@ -30,6 +30,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-022](ADR-022-secrets-at-rest.md) | Cifrado en reposo de los secretos que la aplicación tiene que leer: AES-256-GCM en un único módulo (`core.sealed`), claves maestras por entorno con versión (`SECRETS_KEKS`), una clave derivada por propósito, y cada valor atado a su propósito y a su dueño | Accepted | 2026-10-11 |
 | [ADR-023](ADR-023-mfa-totp.md) | Segundo factor con TOTP y códigos de respaldo, sobre ADR-003 §4: un paso se acepta una vez, la contraseña correcta no abre sesión si la cuenta tiene segundo factor, tope de códigos fallidos por cuenta, y la política mira el rol Owner, el Administrador de plantilla y los permisos sensibles de la membresía | Accepted, salvo §11 (*Proposed*, D-F2-15); ampliado por ADR-024 en §4 (tope de códigos por alta) | 2026-10-11 |
 | [ADR-024](ADR-024-mfa-enrollment-code-cap.md) | Tope de códigos fallidos por alta de un dispositivo TOTP: el quinto código que no vale borra el alta, y empezar otra pide la contraseña | Accepted | 2026-10-11 |
+| [ADR-025](ADR-025-mfa-enrollment-qr.md) | Código QR en el alta del segundo factor: se dibuja en el navegador desde la URI que ya da la API, con `uqr` 0.1.3 (solo `encode`, sin HTML generado), junto a la clave escrita | Accepted | 2026-10-22 |
 
 ## Plantilla
 
