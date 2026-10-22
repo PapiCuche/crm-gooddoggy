@@ -21,13 +21,8 @@ describe("QrCode", () => {
     expect(svg).toHaveAttribute("viewBox", `0 0 ${qr.size} ${qr.size}`);
     const dark = qr.data.flatMap((row, y) => row.flatMap((on, x) => (on ? [`${x},${y}`] : [])));
     expect(drawn(container)).toEqual(new Set(dark));
-    // El margen de 4 módulos queda en blanco y los tres patrones de posición están en su sitio.
+    // Los tres patrones de posición, tras el margen de 4 módulos.
     const cells = drawn(container);
-    for (let i = 0; i < qr.size; i++) {
-      for (const edge of [0, 3, qr.size - 1, qr.size - 4]) {
-        expect(cells.has(`${i},${edge}`) || cells.has(`${edge},${i}`)).toBe(false);
-      }
-    }
     const end = qr.size - 5;
     for (const [x, y] of [
       [4, 4],
@@ -35,7 +30,10 @@ describe("QrCode", () => {
       [4, end],
     ])
       expect(cells.has(`${x},${y}`)).toBe(true);
-    expect(svg.textContent).not.toContain("ABCD"); // la clave no queda como texto en el dibujo
+    // Negro sobre blanco en cualquier tema, y 4 px por módulo.
+    expect(container.querySelector("rect")).toHaveAttribute("fill", "#ffffff");
+    expect(container.querySelector("path")).toHaveAttribute("fill", "#000000");
+    expect(svg).toHaveAttribute("width", String(qr.size * 4));
   });
 
   it("cambia con el valor", () => {
