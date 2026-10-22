@@ -13,19 +13,14 @@ from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
 from tests.test_anti_escalation import race
 from tests.test_authorization import give
+from tests.test_brands import VIEW, send
 from tests.test_memberships import ctx
 from tests.test_self_context import signed
 
 world, real_stack = test_authorization.world, test_self_context.real_stack
 pytestmark = pytest.mark.usefixtures("tenant_db")
 URL = "/api/v1/o/{}/categories/"
-VIEW: dict[str, str | None] = {"products.view": None}
 MANAGE: dict[str, str | None] = {"products.view": None, "categories.manage": None}
-
-
-def send(client: Client, method: str, path: str, body: Any = None) -> Any:
-    client.cookies["csrftoken"] = token = "t" * 32
-    return getattr(client, method)(path, body, "application/json", headers={"X-CSRFToken": token})
 
 
 def one(org: str = "org-a") -> str:
