@@ -218,7 +218,7 @@ describe("BrandsList", () => {
     });
     screenOf(manager);
     const form = await renaming();
-    expect(form.closest("li > div")).toHaveClass("sm:has-[form]:col-span-2");
+    expect(form.closest("li > div")).toHaveClass("sm:has-[form,[role=group]]:col-span-2");
     fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "Apple Inc." } });
     press("Guardar");
     await waitFor(() =>
