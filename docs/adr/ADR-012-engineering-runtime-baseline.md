@@ -55,9 +55,9 @@ Sin rangos: estas son las versiones que se escriben en `pyproject.toml`, `.pytho
 | boto3 / botocore 1.43.103 | 2026-09-25 | ✅ classifier |
 | mypy (2.3.1 / 1.19.1) | — | ✅ wheel `cp314` |
 | pytest 9.1.1 / pytest-django 4.14.0 | — | ✅ classifier |
-| djangorestframework 3.18.1, drf-spectacular 0.30.0, uvicorn 0.54.0, redis 8.1.0, structlog 26.1.0, argon2-cffi 25.1.0 | — | ✅ classifier |
+| djangorestframework 3.18.2, drf-spectacular 0.30.0, uvicorn 0.54.0, redis 8.1.0, structlog 26.1.0, argon2-cffi 25.1.0 | — | ✅ classifier |
 | **structlog 26.1.0** (fijada en F1-07) | 2026-06-06 | ✅ classifier 3.14, `py.typed`. Validada el **2026-09-30** (PyPI). Uso: logs JSON estructurados (ADR-011) |
-| **djangorestframework 3.18.1 / drf-spectacular 0.30.0** (fijadas en F1-08A) | 2026-09-07 / 2026-07-06 | ✅ classifiers Python 3.14 y Django 5.2. Validadas el **2026-09-30** (PyPI). Uso: API JSON y contrato OpenAPI (`backend/openapi/schema.yaml`, fuente de orval) |
+| **djangorestframework 3.18.2 / drf-spectacular 0.30.0** (fijadas en F1-08A; DRF subida a 3.18.2 en F3-16, #331, por CVE-2026-114136/114137/114138) | 2026-10-06 / 2026-07-06 | ✅ classifiers Python 3.14 y Django 5.2. Validadas el **2026-09-30** (PyPI); 3.18.2, el **2026-10-22**. Uso: API JSON y contrato OpenAPI (`backend/openapi/schema.yaml`, fuente de orval) |
 | **boto3 / botocore 1.43.105** (fijadas en F1-08) | 2026-09-29 | ✅ classifier 3.14 (sin `py.typed`: mypy las trata como `Any`). Validadas el **2026-09-30** (PyPI) y con la suite de contrato contra Garage v2.4.1. Uso: storage S3-compatible, solo en `core.storage` |
 | **urllib3 2.8.0** (fijada en F1-08) | 2026-09-15 | ✅ classifier 3.14, `py.typed`. Validada el **2026-09-30** (PyPI; compatible con botocore `<3`). Uso: cliente HTTP saliente anti-SSRF, solo en `core.http` |
 | **sentry-sdk 2.69.1** (fijada en F1-07) | 2026-09-08 | ✅ classifier 3.14, `py.typed`. Validada el **2026-09-30** (PyPI; la última publicada ese día era 2.71.0, pero se fija 2.69.1 por decisión del PR de F1-07, sin vulnerabilidades en `pip-audit`). Uso: reporte de errores opcional (`SENTRY_DSN`), solo dentro de `core.observability` |

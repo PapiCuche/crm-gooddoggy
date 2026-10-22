@@ -31,6 +31,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-06b | [#316](https://github.com/PapiCuche/crm-gooddoggy/issues/316) Catalog: change and delete products (API) | `feature/f3-catalog-products-edit` | #308, #314 | backend + API |
 | F3-07 | [#311](https://github.com/PapiCuche/crm-gooddoggy/issues/311) Catalog: the variants of a product (API) | `feature/f3-catalog-variants` | #308, #316 | backend + API |
 | F3-10 | [#321](https://github.com/PapiCuche/crm-gooddoggy/issues/321) Catalog: the products screen (list and create) | `feature/f3-catalog-products-screen` | #308 | frontend |
+| F3-16 | [#331](https://github.com/PapiCuche/crm-gooddoggy/issues/331) Bump djangorestframework to 3.18.2 (security) | `chore/f3-drf-3-18-2` | — | backend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
