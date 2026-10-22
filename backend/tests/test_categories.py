@@ -7,9 +7,11 @@ import psycopg
 import pytest
 from django.test import Client
 
+from apps.catalog.categories import BadParent, create_category, move_category
 from apps.catalog.models import Category
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
+from tests.test_anti_escalation import race
 from tests.test_authorization import give
 from tests.test_brands import VIEW, send
 from tests.test_memberships import ctx
@@ -43,7 +45,7 @@ def ana(world: Any) -> Client:
     return signed(world.ana)
 
 
-def test_a_tree_with_paths_and_depths(ana: Client, migrator: psycopg.Connection[Any]) -> None:
+def test_a_tree_with_paths_and_depths(ana: Client) -> None:
     phones = made(ana, "Celulares")
     iphone = made(ana, "iPhone", phones["id"])
     made(ana, "Accesorios", iphone["id"])
@@ -60,10 +62,6 @@ def test_a_tree_with_paths_and_depths(ana: Client, migrator: psycopg.Connection[
         ana, "post", one(), {"name": "Otra", "slug": "accesorios", "parent_id": iphone["id"]}
     )
     assert taken.status_code == 409 and taken.json()["code"] == "CATEGORY_SLUG_TAKEN"
-    audited = migrator.execute(
-        "SELECT changes::text FROM audit_logs WHERE action = 'category.created' ORDER BY id"
-    ).fetchall()
-    assert len(audited) == 4 and '"path": [null, "/celulares/iphone/"]' in audited[1][0]
 
 
 def test_at_most_five_levels(ana: Client) -> None:
@@ -74,6 +72,77 @@ def test_at_most_five_levels(ana: Client) -> None:
     assert deep.status_code == 400 and "parent_id" in deep.json()["fields"]
 
 
+def test_move_rewrites_the_whole_branch_and_refuses_cycles(
+    ana: Client, migrator: psycopg.Connection[Any]
+) -> None:
+    phones, audio = made(ana, "Celulares"), made(ana, "Audio")
+    iphone = made(ana, "iPhone", phones["id"])
+    cases = made(ana, "Fundas", iphone["id"])
+    moved = send(ana, "patch", f"{one()}{iphone['id']}/", {"parent_id": audio["id"]})
+    assert moved.status_code == 200 and moved.json()["path"] == "/audio/iphone/"
+    assert tree(ana)["/audio/iphone/fundas/"] == ("Fundas", 3)
+    assert "/celulares/iphone/" not in tree(ana)
+    # A sí misma o a una descendiente, no.
+    for target in (iphone["id"], cases["id"]):
+        cycle = send(ana, "patch", f"{one()}{iphone['id']}/", {"parent_id": target})
+        assert cycle.status_code == 400 and "parent_id" in cycle.json()["fields"]
+    # A la raíz, y renombrar en la misma petición.
+    root = send(ana, "patch", f"{one()}{iphone['id']}/", {"parent_id": None, "name": "Apple"})
+    assert (root.json()["path"], root.json()["depth"], root.json()["name"]) == (
+        "/iphone/",
+        1,
+        "Apple",
+    )
+    assert tree(ana)["/iphone/fundas/"] == ("Fundas", 2)
+    # Si el destino ya tiene ese slug, nada cambia (tampoco el nombre).
+    made(ana, "iPhone", phones["id"])
+    clash = send(ana, "patch", f"{one()}{iphone['id']}/", {"parent_id": phones["id"], "name": "X"})
+    assert clash.status_code == 409 and clash.json()["code"] == "CATEGORY_SLUG_TAKEN"
+    assert tree(ana)["/iphone/"] == ("Apple", 1)
+    actions = migrator.execute(
+        "SELECT action, changes::text FROM audit_logs WHERE action LIKE 'category.%' "
+        "ORDER BY occurred_at, id"
+    ).fetchall()
+    assert [row[0] for row in actions] == [
+        *["category.created"] * 4,
+        "category.moved",
+        "category.updated",  # renombrar y mover en una petición: dos entradas
+        "category.moved",
+        "category.created",  # el choque de slug no deja nada, tampoco el nombre
+    ]
+    assert ('"path": ["/celulares/iphone/", "/audio/iphone/"]') in actions[4][1]
+
+
+def test_a_move_cannot_exceed_five_levels(ana: Client) -> None:
+    deep = None
+    for level in range(4):
+        deep = made(ana, f"Nivel {level + 1}", deep["id"] if deep else None)
+    branch = made(ana, "Rama")
+    made(ana, "Hoja", branch["id"])
+    too_deep = send(ana, "patch", f"{one()}{branch['id']}/", {"parent_id": deep["id"]})  # type: ignore[index]
+    assert too_deep.status_code == 400 and "parent_id" in too_deep.json()["fields"]
+
+
+def test_delete_only_without_children_and_it_frees_the_slug(
+    ana: Client, migrator: psycopg.Connection[Any]
+) -> None:
+    phones = made(ana, "Celulares")
+    iphone = made(ana, "iPhone", phones["id"])
+    refused = send(ana, "delete", f"{one()}{phones['id']}/")
+    assert refused.status_code == 409 and refused.json()["code"] == "CATEGORY_HAS_CHILDREN"
+    assert send(ana, "delete", f"{one()}{iphone['id']}/").status_code == 204
+    assert send(ana, "delete", f"{one()}{iphone['id']}/").status_code == 404
+    assert "/celulares/iphone/" not in tree(ana)
+    made(ana, "iPhone", phones["id"])  # el slug quedó libre
+    assert send(ana, "patch", f"{one()}{iphone['id']}/", {"name": "X"}).status_code == 404
+    empty = send(ana, "patch", f"{one()}{phones['id']}/", {})
+    assert empty.status_code == 400
+    deleted = migrator.execute(
+        "SELECT entity_id::text FROM audit_logs WHERE action = 'category.deleted'"
+    ).fetchall()
+    assert deleted == [(iphone["id"],)]  # la negada (con hijas) no se audita
+
+
 def test_permissions_and_isolation(world: Any) -> None:
     viewer = signed(world.ana)
     assert viewer.get(one()).status_code == 403
@@ -81,13 +150,20 @@ def test_permissions_and_isolation(world: Any) -> None:
     assert viewer.get(one()).status_code == 200
     assert send(viewer, "post", one(), {"name": "Celulares"}).status_code == 403
     with tenant_scope(ctx(world.a)):
-        Category.objects.create(name="Mía", slug="mia", path="/mia/", depth=1)
+        mine = Category.objects.create(name="Mía", slug="mia", path="/mia/", depth=1)
     with tenant_scope(ctx(world.b)):
         foreign = Category.objects.create(name="Ajena", slug="ajena", path="/ajena/", depth=1)
+    # Solo `products.view`: lee, pero no renombra, no mueve ni borra.
+    assert send(viewer, "patch", f"{one()}{mine.pk}/", {"name": "X"}).status_code == 403
+    assert send(viewer, "delete", f"{one()}{mine.pk}/").status_code == 403
     give(world.a, world.membership, MANAGE)
     assert [row["slug"] for row in viewer.get(one()).json()["results"]] == ["mia"]
     child = send(viewer, "post", one(), {"name": "Hija", "parent_id": str(foreign.pk)})
     assert child.status_code == 400 and "parent_id" in child.json()["fields"]  # no existe aquí
+    into = send(viewer, "patch", f"{one()}{mine.pk}/", {"parent_id": str(foreign.pk)})
+    assert into.status_code == 400
+    assert send(viewer, "patch", f"{one()}{foreign.pk}/", {"name": "X"}).status_code == 404
+    assert send(viewer, "delete", f"{one()}{foreign.pk}/").status_code == 404
 
 
 def test_the_table_keeps_each_branch_in_one_organization(
@@ -121,3 +197,104 @@ def test_the_table_keeps_each_branch_in_one_organization(
             "FOREIGN KEY (organization_id, parent_id) REFERENCES categories(organization_id, id)",
         ),
     ]
+
+
+def paths(org: Any) -> dict[str, tuple[str, int]]:
+    with tenant_scope(ctx(org)):
+        return {row.name: (row.path, row.depth) for row in Category.objects.all()}
+
+
+def test_a_child_added_while_its_branch_moves_moves_with_it(world: Any) -> None:
+    """READ COMMITTED: la consulta que bloquea la rama no ve la hija que otra transacción añade
+    mientras espera; el bloqueo del árbol hace que el movimiento empiece después."""
+    with tenant_scope(ctx(world.a)) as tenant:
+        phones = create_category(tenant, name="Celulares")
+        iphone = create_category(tenant, name="iPhone", parent_id=phones.pk)
+        apple = create_category(tenant, name="Apple")
+
+    def add(tenant: Any) -> None:
+        create_category(tenant, name="Fundas", parent_id=iphone.pk)
+
+    def move(tenant: Any) -> None:
+        move_category(tenant, category_id=phones.pk, parent_id=apple.pk)
+
+    race(world.a, {"add": (world.ana, add), "move": (world.ana, move)}, hold="add")
+    assert paths(world.a)["Fundas"] == ("/apple/celulares/iphone/fundas/", 4)
+
+
+def test_a_branch_moved_into_another_that_is_moving_follows_it(world: Any) -> None:
+    with tenant_scope(ctx(world.a)) as tenant:
+        audio = create_category(tenant, name="Audio")
+        phones = create_category(tenant, name="Celulares", parent_id=audio.pk)
+        cases = create_category(tenant, name="Fundas")
+        sound = create_category(tenant, name="Sonido")
+
+    def into(tenant: Any) -> None:
+        move_category(tenant, category_id=cases.pk, parent_id=phones.pk)
+
+    def away(tenant: Any) -> None:
+        move_category(tenant, category_id=audio.pk, parent_id=sound.pk)
+
+    race(world.a, {"into": (world.ana, into), "away": (world.ana, away)}, hold="into")
+    assert paths(world.a)["Fundas"] == ("/sonido/audio/celulares/fundas/", 4)
+
+
+def test_crossed_moves_queue_instead_of_deadlocking(world: Any) -> None:
+    with tenant_scope(ctx(world.a)) as tenant:
+        audio = create_category(tenant, name="Audio")
+        phones = create_category(tenant, name="Celulares")
+    outcome: dict[str, str] = {}
+
+    def crossing(node: Any, target: Any, name: str) -> Any:
+        def change(tenant: Any) -> None:
+            try:
+                move_category(tenant, category_id=node.pk, parent_id=target.pk)
+            except BadParent:
+                outcome[name] = "refused"
+
+        return change
+
+    race(
+        world.a,
+        {
+            "first": (world.ana, crossing(audio, phones, "first")),
+            "second": (world.ana, crossing(phones, audio, "second")),
+        },
+        hold=None,  # a la vez: sin el bloqueo del árbol, cada uno bloqueaba su fila (deadlock)
+    )
+    assert len(outcome) == 1  # uno mueve; el otro ve ese movimiento y lo niega: sería un ciclo
+    assert sorted(paths(world.a).values()) in (
+        [("/audio/", 1), ("/audio/celulares/", 2)],
+        [("/celulares/", 1), ("/celulares/audio/", 2)],
+    )
+
+
+def test_a_move_leaves_deleted_categories_as_they_were(
+    ana: Client, migrator: psycopg.Connection[Any]
+) -> None:
+    """Las borradas no se mueven: una con la misma ruta puede ser otra (borrar y volver a crear),
+    y no cuentan para los niveles. Antes, reescribirlas daba 500 (`categories_root_ck` o
+    `categories_depth_ck`) o arrastraba la otra a una rama que no es la suya."""
+    audio = made(ana, "Audio")
+    assert send(ana, "delete", f"{one()}{audio['id']}/").status_code == 204
+    again = made(ana, "Audio")  # el slug quedó libre: otra raíz `/audio/`
+    phones = made(ana, "Celulares", again["id"])
+    old = made(ana, "Antiguos", phones["id"])
+    assert send(ana, "delete", f"{one()}{old['id']}/").status_code == 204
+    level = None
+    for name in ("Sonido", "Parlantes", "Portátiles"):
+        level = made(ana, name, level["id"] if level else None)
+    moved = send(ana, "patch", f"{one()}{again['id']}/", {"parent_id": level["id"]})  # type: ignore[index]
+    assert moved.status_code == 200, moved.content
+    assert moved.json()["path"] == "/sonido/parlantes/portatiles/audio/"
+    assert tree(ana)["/sonido/parlantes/portatiles/audio/celulares/"] == ("Celulares", 5)
+    rows = migrator.execute(
+        "SELECT id::text, path, depth, parent_id::text FROM categories WHERE id = ANY(%s)",
+        [[audio["id"], old["id"]]],
+    ).fetchall()
+    assert sorted(rows) == sorted(
+        [
+            (audio["id"], "/audio/", 1, None),
+            (old["id"], "/audio/celulares/antiguos/", 3, phones["id"]),
+        ]
+    )

@@ -1,14 +1,16 @@
-"""Comandos de categorías (F3-04, E02-01): crear en el árbol. Renombrar, mover y borrar llegan
-con F3-04b (#314).
+"""Comandos de categorías (F3-04, F3-04b; E02-01): crear, renombrar, mover y borrar en el árbol.
 
 No comprueban permisos: los declara la API (`categories.manage`), la única que los importa
-(contrato de import-linter). Validan lo que guardan y auditan cada cambio.
+(contrato de import-linter). Validan lo que guardan, mantienen `path` y `depth` de toda la rama
+en la misma transacción y auditan cada cambio.
 """
 
 from typing import Any
 from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
+from django.db.models.functions import Collate
+from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.catalog.models import Category
@@ -25,8 +27,13 @@ class CategorySlugTaken(Exception):
     """Ya hay una categoría con ese slug bajo el mismo padre."""
 
 
+class CategoryHasChildren(Exception):
+    """No se borra una categoría que tiene hijas: antes hay que moverlas o borrarlas."""
+
+
 class BadParent(ValueError):
-    """El padre no sirve: no existe o la categoría pasaría de `Category.MAX_DEPTH` niveles."""
+    """El padre no sirve: no existe, es la propia categoría o una de sus descendientes, o la
+    rama pasaría de `Category.MAX_DEPTH` niveles."""
 
 
 def category_name(value: str) -> str:
@@ -50,6 +57,20 @@ def _lock_tree(alias: str, ctx: TenantContext) -> None:
 
 def _live(alias: str) -> Any:
     return Category.objects.using(alias).filter(deleted_at__isnull=True)
+
+
+def _branch(alias: str, path: str) -> Any:
+    """Las vivas cuyo `path` empieza por `path` (que acaba en `/`), como un rango en orden de
+    bytes: `path <= x < path` con su `/` final cambiado por `0`, el carácter siguiente.
+
+    No es `LIKE 'path%'`: con FORCE RLS, PostgreSQL no usa un operador que no sea LEAKPROOF
+    (`~~` no lo es) como condición de índice antes de la política, así que recorrería toda la
+    organización. `>=` y `<` sí lo son, y usan `categories_org_path_c_idx`."""
+    return (
+        _live(alias)
+        .alias(c_path=Collate("path", "C"))
+        .filter(c_path__gte=path, c_path__lt=f"{path[:-1]}0")
+    )
 
 
 def _parent(alias: str, parent_id: UUID | None) -> Category | None:
@@ -93,3 +114,83 @@ def create_category(
     except IntegrityError as error:
         raise _taken(error, chosen) from None
     return category
+
+
+def rename_category(ctx: TenantContext, *, category_id: UUID, name: str) -> Category:
+    """Cambia el nombre (el slug y la rama no cambian) y lo audita; el mismo nombre no escribe.
+    Una categoría borrada o de otra organización: `DoesNotExist`."""
+    alias = require_scope(ctx)
+    cleaned = category_name(name)
+    with transaction.atomic(using=alias):
+        _lock_tree(alias, ctx)
+        category: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
+        if category.name != cleaned:
+            changes = {"name": [category.name, cleaned]}
+            category.name = cleaned
+            category.save(using=alias, update_fields=["name", "updated_at"])
+            record(ctx, "category.updated", Entity("category", category.pk, category.path), changes)
+    return category
+
+
+def move_category(ctx: TenantContext, *, category_id: UUID, parent_id: UUID | None) -> Category:
+    """Mueve la categoría (con toda su rama) a la raíz o dentro de `parent_id`, y lo audita.
+    Recalcula `path` y `depth` de cada descendiente en la misma transacción. `BadParent` si el
+    destino es la propia categoría o una descendiente, o si la rama pasaría de los niveles.
+    Las borradas no se tocan: con la misma ruta puede haber otra (borrar y volver a crear) y no
+    cuentan para los niveles; quien las restaure recalcula `path` y `depth` desde su madre."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        _lock_tree(alias, ctx)
+        node: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
+        branch = list(
+            _branch(alias, node.path).select_for_update(no_key=True).order_by("depth", "id")
+        )
+        parent = _parent(alias, parent_id)
+        if parent is not None and parent.path.startswith(node.path):
+            raise BadParent("no se mueve dentro de sí misma ni de una de sus descendientes")
+        if (parent.pk if parent else None) == node.parent_id:
+            return node  # ya está ahí: nada que escribir
+        base = parent.depth if parent else 0
+        tallest = max(item.depth for item in branch) - node.depth + 1
+        if base + tallest > Category.MAX_DEPTH:
+            raise BadParent(f"la rama pasaría de {Category.MAX_DEPTH} niveles")
+        old_path, new_path = node.path, f"{parent.path if parent else '/'}{node.slug}/"
+        shift, now = base + 1 - node.depth, timezone.now()
+        try:
+            with transaction.atomic(using=alias):
+                for item in branch:
+                    item.path = new_path + item.path[len(old_path) :]
+                    item.depth += shift
+                    item.updated_at = now  # `bulk_update` no aplica `auto_now`
+                    if item.pk == node.pk:
+                        item.parent = parent
+                Category.objects.using(alias).bulk_update(
+                    branch, ["path", "depth", "parent", "updated_at"]
+                )
+        except IntegrityError as error:
+            raise _taken(error, node.slug) from None
+        changes = {"path": [old_path, new_path]}
+        metadata = {"descendants": len(branch) - 1}
+        record(ctx, "category.moved", Entity("category", node.pk, new_path), changes, metadata)
+    moved: Category = next(item for item in branch if item.pk == node.pk)
+    return moved
+
+
+def delete_category(ctx: TenantContext, *, category_id: UUID) -> None:
+    """Borra una categoría sin hijas (borrado lógico) y lo audita; su slug queda libre bajo ese
+    padre. `CategoryHasChildren` si tiene hijas vivas."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        _lock_tree(alias, ctx)
+        category: Category = _live(alias).select_for_update(no_key=True).get(pk=category_id)
+        if _live(alias).filter(parent_id=category.pk).exists():
+            raise CategoryHasChildren(category.path)
+        category.deleted_at = timezone.now()
+        category.deleted_by_user_id = ctx.user_id
+        category.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])
+        record(
+            ctx,
+            "category.deleted",
+            Entity("category", category.pk, category.path),
+            {"deleted_at": [None, category.deleted_at.isoformat()]},
+        )
