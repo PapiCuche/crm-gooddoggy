@@ -53,8 +53,8 @@ export function BrandDeleteAction({
         // relectura, se repite después.
         const read = queryClient.getQueryState(listKey);
         const rereading = !!read && read.fetchStatus !== "idle" && !read.fetchMeta?.fetchMore;
-        const focused = here();
         await queryClient.cancelQueries({ queryKey: listKey });
+        const focused = here(); // tras la espera, como al renombrar: el foco pudo moverse
         queryClient.setQueryData<Pages>(listKey, (data) =>
           data
             ? {
@@ -108,7 +108,7 @@ export function BrandDeleteAction({
       {asking ? (
         <div
           role="group"
-          aria-label={t("label", { brand: brand.name })}
+          aria-label={t("triggerLabel", { brand: brand.name })}
           aria-describedby={question}
           className="flex flex-col items-start gap-2"
         >

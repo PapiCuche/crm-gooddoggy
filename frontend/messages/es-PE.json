@@ -772,7 +772,6 @@
     "delete": {
       "trigger": "Borrar",
       "triggerLabel": "Borrar {brand}",
-      "label": "Borrar {brand}",
       "ask": "¿Borrar «{brand}»? Dejará de aparecer en el catálogo y su identificador «{slug}» quedará libre para otra marca.",
       "cancel": "Cancelar",
       "confirm": "Borrar marca",
