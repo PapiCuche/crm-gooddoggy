@@ -768,6 +768,18 @@
       "denied": "No tienes permiso para renombrar marcas.",
       "done": "Marca renombrada: «{name}».",
       "stale": "«{brand}» ya no está en el catálogo: la lista se actualizó."
+    },
+    "delete": {
+      "trigger": "Borrar",
+      "triggerLabel": "Borrar {brand}",
+      "label": "Borrar {brand}",
+      "ask": "¿Borrar «{brand}»? Dejará de aparecer en el catálogo y su identificador «{slug}» quedará libre para otra marca.",
+      "cancel": "Cancelar",
+      "confirm": "Borrar marca",
+      "busy": "Borrando…",
+      "denied": "No tienes permiso para borrar marcas.",
+      "done": "Marca «{brand}» borrada.",
+      "stale": "«{brand}» ya no está en el catálogo: la lista se actualizó."
     }
   }
 }
