@@ -47,6 +47,7 @@ export * from "./mfaDisableRequest";
 export * from "./mfaEnrollment";
 export * from "./mfaEnrollmentConfirmRequest";
 export * from "./mfaEnrollmentStartRequest";
+export * from "./mfaRegenerateRequest";
 export * from "./mfaStatus";
 export * from "./nullEnum";
 export * from "./organizationSummary";

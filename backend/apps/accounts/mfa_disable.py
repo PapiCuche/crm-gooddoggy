@@ -9,6 +9,7 @@ Quitar el de otra persona no está aquí: ADR-023 §11 sigue abierta (D-F2-15).
 """
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from django.db import connection
@@ -54,12 +55,12 @@ class _Stale(Exception):
     """La sesión que lo pide dejó de valer con la petición en curso."""
 
 
-def _denied(user: User, reason: str, client: dict[str, Any]) -> None:
+def _denied(action: str, user: User, reason: str, client: dict[str, Any]) -> None:
     """La fila de un rechazo, fuera de toda transacción; si no se puede escribir, la respuesta
     no cambia (ADR-013 §5)."""
     try:
         platform.record(
-            DISABLED,
+            action,
             actor_type=platform.Actor.USER,
             actor_id=user.pk,
             entity=Entity("user", user.pk),
@@ -68,28 +69,35 @@ def _denied(user: User, reason: str, client: dict[str, Any]) -> None:
             **client,
         )
     except Exception as error:
-        unaudited(error, DISABLED)
+        unaudited(error, action)
 
 
-def disable(request: HttpRequest, *, password: str, code: str) -> None:
-    """Quita el segundo factor de la cuenta con sesión (ADR-023 §8).
+def with_password_and_code[T](
+    request: HttpRequest,
+    *,
+    password: str,
+    code: str,
+    action: str,
+    work: Callable[[User, str], T],
+) -> T:
+    """Lo que la cuenta con sesión hace con su segundo factor presentando su contraseña actual
+    y un código (quitarlo, regenerar sus códigos): comprueba las dos cosas y ejecuta `work`.
 
-    Primero la contraseña, que cuenta en el límite por dirección del acceso como al empezar un
-    alta: si no es la de la cuenta lanza `mfa.WrongPassword`, sin mirar el código. Después el
-    código, con `second_factor.verify`: si no vale lanza `mfa.WrongCode` y cuenta en el tope
-    por cuenta. Cada rechazo deja su fila denegada. Sin dispositivo confirmado, `ApiError` 409
-    `NOT_ENABLED`; alcanzado un límite, 429.
+    Primero la contraseña, que cuenta en el límite por dirección del acceso: si no es la de la
+    cuenta lanza `mfa.WrongPassword`, sin mirar el código. Después el código, con
+    `second_factor.verify`: si no vale lanza `mfa.WrongCode` y cuenta en el tope por cuenta.
+    Esos dos rechazos dejan su fila `action` denegada. Sin dispositivo confirmado, `ApiError`
+    409 `NOT_ENABLED`; alcanzado un límite, 429.
 
-    Con las dos cosas, en una transacción y con la fila de la cuenta bloqueada: borra el
-    dispositivo y sus códigos de respaldo, revoca las demás sesiones (la época avanza), audita
-    (sin esa fila no se quita nada) y esta sesión adopta la época nueva y cambia de ID. Si su
-    época ya no era la de la cuenta, o su fila ya no existe, no quita nada: cierra la sesión y
-    lanza `ApiError` 401. Después avisa a la cuenta por correo, de mejor esfuerzo.
+    Con las dos cosas, en una transacción y con la fila de la cuenta bloqueada: devuelve al
+    límite por dirección lo que contó y llama a `work(account, method)`, que hace lo suyo y
+    audita. Si `work` lanza, nada queda hecho: el código no queda gastado y el intento sigue
+    contado; si lanza `mfa.WrongCode` (un método que esa ruta no admite), es además un código
+    que no vale. Si la época de la sesión ya no era la de la cuenta, o su fila ya no existe, no
+    hace nada: cierra la sesión y lanza `ApiError` 401.
     """
-    from apps.accounts.tasks import send_mfa_disabled  # noqa: PLC0415 — ciclo de imports
-
     if connection.in_atomic_block:  # la fila de un rechazo se desharía con esa transacción
-        raise RuntimeError("disable no se llama dentro de una transacción")
+        raise RuntimeError("with_password_and_code no se llama dentro de una transacción")
     user, client = request.user, client_of(request)
     assert isinstance(user, User)  # noqa: S101 — la ruta exige sesión
     if not MfaDevice.objects.filter(user=user, confirmed_at__isnull=False).exists():
@@ -102,7 +110,7 @@ def disable(request: HttpRequest, *, password: str, code: str) -> None:
 
     def failed(reason: str) -> None:
         throttle.failed(attempt)
-        _denied(user, reason, client)
+        _denied(action, user, reason, client)
         for blocked in started:
             audit_block(user.email, client, blocked)
 
@@ -116,26 +124,12 @@ def disable(request: HttpRequest, *, password: str, code: str) -> None:
         if gone or request.session.get(EPOCH, 0) != account.session_epoch:
             raise _Stale
 
-    def accepted(account: User, method: str) -> None:
-        MfaBackupCode.objects.filter(user=account).delete()
-        MfaDevice.objects.filter(user=account).delete()
-        revoke_sessions(account.pk)  # las demás no vieron este cambio
-        platform.record(  # en la transacción: sin esta fila, el factor sigue
-            DISABLED,
-            actor_type=platform.Actor.USER,
-            actor_id=account.pk,
-            entity=Entity("user", account.pk),
-            metadata={"method": method},
-            **client,
-        )
+    def accepted(account: User, method: str) -> T:
         throttle.forgive(attempt, started)
-        # Esta sesión sigue: guardaba la época anterior al avance, leída con la fila bloqueada.
-        request.session.cycle_key()
-        request.session[EPOCH] = account.session_epoch + 1
-        request.session.pop(mfa.MFA_AT, None)  # ya no hay segundo factor que haber verificado
+        return work(account, method)
 
     try:
-        second_factor.verify(
+        return second_factor.verify(
             user.pk, code, actor=user.pk, client=client, ready=ready, accepted=accepted
         )
     except mfa.WrongCode:
@@ -148,8 +142,40 @@ def disable(request: HttpRequest, *, password: str, code: str) -> None:
     except _Stale, User.DoesNotExist:
         request.session.flush()
         raise ApiError(NOT_AUTHENTICATED, 401) from None
+
+
+def disable(request: HttpRequest, *, password: str, code: str) -> None:
+    """Quita el segundo factor de la cuenta con sesión (ADR-023 §8), con su contraseña actual
+    y un código (`with_password_and_code`).
+
+    En esa transacción: borra el dispositivo y sus códigos de respaldo, revoca las demás
+    sesiones (la época avanza), audita (sin esa fila no se quita nada) y esta sesión adopta la
+    época nueva y cambia de ID. Después avisa a la cuenta por correo, de mejor esfuerzo.
+    """
+    from apps.accounts.tasks import send_mfa_disabled  # noqa: PLC0415 — ciclo de imports
+
+    user_id, client = request.user.pk, client_of(request)
+
+    def work(account: User, method: str) -> None:
+        MfaBackupCode.objects.filter(user=account).delete()
+        MfaDevice.objects.filter(user=account).delete()
+        revoke_sessions(account.pk)  # las demás no vieron este cambio
+        platform.record(  # en la transacción: sin esta fila, el factor sigue
+            DISABLED,
+            actor_type=platform.Actor.USER,
+            actor_id=account.pk,
+            entity=Entity("user", account.pk),
+            metadata={"method": method},
+            **client,
+        )
+        # Esta sesión sigue: guardaba la época anterior al avance, leída con la fila bloqueada.
+        request.session.cycle_key()
+        request.session[EPOCH] = account.session_epoch + 1
+        request.session.pop(mfa.MFA_AT, None)  # ya no hay segundo factor que haber verificado
+
+    with_password_and_code(request, password=password, code=code, action=DISABLED, work=work)
     try:  # el aviso es de mejor esfuerzo: el segundo factor ya está quitado
-        enqueue(send_mfa_disabled, str(user.pk), NOTICE_QUEUED_FOR)
+        enqueue(send_mfa_disabled, str(user_id), NOTICE_QUEUED_FOR)
     except Exception as error:
         logger.exception("aviso de segundo factor quitado sin encolar")
         try:
