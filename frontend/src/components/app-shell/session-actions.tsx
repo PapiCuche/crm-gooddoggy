@@ -49,6 +49,9 @@ export function SessionActions({ switcher = true }: { switcher?: boolean }) {
           {t("shell.switchOrganization")}
         </Link>
       ) : null}
+      <Link href="/cuenta/seguridad" className={ACTION}>
+        {t("shell.accountSecurity")}
+      </Link>
       {/* `aria-disabled` y no `disabled`: el botón conserva el foco mientras se cierra. */}
       <button
         type="button"
