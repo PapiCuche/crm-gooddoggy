@@ -1,4 +1,4 @@
-"""Comandos de almacenes (F3-08, E04-01): crear y cambiar.
+"""Comandos de almacenes (F3-08, E04-01): crear, cambiar y borrar (F3-11).
 
 No comprueban permisos: los declara la API (`warehouses.manage`), la única que los importa
 (contrato de import-linter). Validan lo que guardan y auditan cada cambio. El código y la
@@ -10,9 +10,10 @@ from typing import Any
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.audit.services import Entity, record
-from apps.inventory.models import Warehouse
+from apps.inventory.models import InventoryLevel, Warehouse
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import name as clean_name
@@ -25,6 +26,10 @@ UPDATABLE = frozenset({"name", "type", "is_sellable", "is_active"})
 
 class WarehouseCodeTaken(Exception):
     """Ya hay un almacén vivo con ese código en la organización."""
+
+
+class WarehouseHasStock(Exception):
+    """El almacén tiene existencias: no se borra."""
 
 
 class UnknownBranch(ValueError):
@@ -95,3 +100,22 @@ def update_warehouse(ctx: TenantContext, *, warehouse_id: UUID, **fields: Any) -
             entity = Entity("warehouse", warehouse.pk, warehouse.code)
             record(ctx, "warehouse.updated", entity, changes)
     return warehouse
+
+
+def delete_warehouse(ctx: TenantContext, *, warehouse_id: UUID) -> None:
+    """Borra el almacén (borrado lógico), libera su código y lo audita. `WarehouseHasStock` si
+    tiene existencias. `FOR UPDATE` choca con el `FOR KEY SHARE` de los movimientos: espera a
+    los que están en curso, y los que llegan después ya no lo encuentran. Uno borrado o de otra
+    organización: `DoesNotExist`."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        rows = Warehouse.objects.using(alias).select_for_update()
+        warehouse: Warehouse = rows.filter(deleted_at__isnull=True).get(pk=warehouse_id)
+        stock = InventoryLevel.objects.using(alias).filter(warehouse=warehouse, on_hand__gt=0)
+        if stock.exists():
+            raise WarehouseHasStock(warehouse_id)
+        warehouse.deleted_at, warehouse.deleted_by_user_id = timezone.now(), ctx.user_id
+        warehouse.save(
+            using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"]
+        )
+        record(ctx, "warehouse.deleted", Entity("warehouse", warehouse.pk, warehouse.code))

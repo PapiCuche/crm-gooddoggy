@@ -34,6 +34,8 @@ import type {
   CategoryCreateRequest,
   Error,
   GrantScopeRequest,
+  InventoryLevelsListParams,
+  InventoryMovementsListParams,
   Invitation,
   InvitationStatusChangeRequest,
   InvitationsListParams,
@@ -53,13 +55,17 @@ import type {
   MfaEnrollmentStartRequest,
   MfaRegenerateRequest,
   MfaStatus,
+  Movement,
+  MovementCreateRequest,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
   PaginatedBrandList,
   PaginatedCategoryList,
   PaginatedInvitationList,
+  PaginatedLevelList,
   PaginatedMemberList,
+  PaginatedMovementList,
   PaginatedProductList,
   PaginatedRoleList,
   PaginatedTeamList,
@@ -2928,6 +2934,424 @@ export const useCategoriesDelete = <TError = ErrorType<Error>, TContext = unknow
   TContext
 > => {
   return useMutation(getCategoriesDeleteMutationOptions(options), queryClient);
+};
+
+export const getInventoryLevelsListUrl = (orgSlug: string, params?: InventoryLevelsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/inventory/levels/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/inventory/levels/`;
+};
+
+/**
+ * El saldo de cada variante en cada almacén que tuvo movimientos, paginado por creación (ADR-016).
+ */
+export const inventoryLevelsList = async (
+  orgSlug: string,
+  params?: InventoryLevelsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedLevelList> => {
+  return apiFetch<PaginatedLevelList>(getInventoryLevelsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getInventoryLevelsListQueryKey = (
+  orgSlug: string,
+  params?: InventoryLevelsListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/inventory/levels/`, ...(params ? [params] : [])] as const;
+};
+
+export const getInventoryLevelsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof inventoryLevelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryLevelsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryLevelsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getInventoryLevelsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof inventoryLevelsList>>> = ({ signal }) =>
+    inventoryLevelsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof inventoryLevelsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type InventoryLevelsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryLevelsList>>
+>;
+export type InventoryLevelsListQueryError = ErrorType<Error>;
+
+export function useInventoryLevelsList<
+  TData = Awaited<ReturnType<typeof inventoryLevelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | InventoryLevelsListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryLevelsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryLevelsList>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryLevelsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryLevelsList<
+  TData = Awaited<ReturnType<typeof inventoryLevelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryLevelsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryLevelsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryLevelsList>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryLevelsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryLevelsList<
+  TData = Awaited<ReturnType<typeof inventoryLevelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryLevelsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryLevelsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useInventoryLevelsList<
+  TData = Awaited<ReturnType<typeof inventoryLevelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryLevelsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryLevelsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getInventoryLevelsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getInventoryMovementsListUrl = (
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/inventory/movements/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/inventory/movements/`;
+};
+
+/**
+ * El ledger: los movimientos, del más reciente al más antiguo (ADR-016).
+ */
+export const inventoryMovementsList = async (
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedMovementList> => {
+  return apiFetch<PaginatedMovementList>(getInventoryMovementsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getInventoryMovementsListQueryKey = (
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/inventory/movements/`, ...(params ? [params] : [])] as const;
+};
+
+export const getInventoryMovementsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof inventoryMovementsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryMovementsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getInventoryMovementsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof inventoryMovementsList>>> = ({ signal }) =>
+    inventoryMovementsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof inventoryMovementsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type InventoryMovementsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryMovementsList>>
+>;
+export type InventoryMovementsListQueryError = ErrorType<Error>;
+
+export function useInventoryMovementsList<
+  TData = Awaited<ReturnType<typeof inventoryMovementsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | InventoryMovementsListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryMovementsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryMovementsList>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryMovementsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryMovementsList<
+  TData = Awaited<ReturnType<typeof inventoryMovementsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryMovementsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryMovementsList>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryMovementsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryMovementsList<
+  TData = Awaited<ReturnType<typeof inventoryMovementsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryMovementsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useInventoryMovementsList<
+  TData = Awaited<ReturnType<typeof inventoryMovementsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryMovementsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryMovementsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getInventoryMovementsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getInventoryMovementsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/movements/`;
+};
+
+/**
+ * Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` o `IDEMPOTENCY_KEY_REUSED`.
+ */
+export const inventoryMovementsCreate = async (
+  orgSlug: string,
+  movementCreateRequest: MovementCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Movement> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Movement>(getInventoryMovementsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(movementCreateRequest),
+  });
+};
+
+export const getInventoryMovementsCreateMutationKey = () => ["inventoryMovementsCreate"] as const;
+
+export const getInventoryMovementsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inventoryMovementsCreate>>,
+    TError,
+    InventoryMovementsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inventoryMovementsCreate>>,
+  TError,
+  InventoryMovementsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInventoryMovementsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inventoryMovementsCreate>>,
+    InventoryMovementsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return inventoryMovementsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InventoryMovementsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryMovementsCreate>>
+>;
+export type InventoryMovementsCreateMutationBody = MovementCreateRequest;
+export type InventoryMovementsCreateMutationError = ErrorType<Error>;
+export type InventoryMovementsCreateMutationVariables = {
+  orgSlug: string;
+  data: MovementCreateRequest;
+};
+
+export const useInventoryMovementsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof inventoryMovementsCreate>>,
+      TError,
+      InventoryMovementsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof inventoryMovementsCreate>>,
+  TError,
+  InventoryMovementsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getInventoryMovementsCreateMutationOptions(options), queryClient);
 };
 
 export const getInvitationsListUrl = (orgSlug: string, params?: InvitationsListParams) => {
@@ -6642,4 +7066,87 @@ export const useWarehousesUpdate = <TError = ErrorType<Error>, TContext = unknow
   TContext
 > => {
   return useMutation(getWarehousesUpdateMutationOptions(options), queryClient);
+};
+
+export const getWarehousesDeleteUrl = (orgSlug: string, warehouseId: string) => {
+  return `/api/v1/o/${orgSlug}/warehouses/${warehouseId}/`;
+};
+
+/**
+ * Borra el almacén (borrado lógico) y libera su código. 409 `WAREHOUSE_HAS_STOCK`: tiene existencias. 404: no es de la organización o ya está borrado.
+ */
+export const warehousesDelete = async (
+  orgSlug: string,
+  warehouseId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getWarehousesDeleteUrl(orgSlug, warehouseId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getWarehousesDeleteMutationKey = () => ["warehousesDelete"] as const;
+
+export const getWarehousesDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof warehousesDelete>>,
+    TError,
+    WarehousesDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof warehousesDelete>>,
+  TError,
+  WarehousesDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getWarehousesDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof warehousesDelete>>,
+    WarehousesDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, warehouseId } = props ?? {};
+
+    return warehousesDelete(orgSlug, warehouseId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type WarehousesDeleteMutationResult = NonNullable<
+  Awaited<ReturnType<typeof warehousesDelete>>
+>;
+
+export type WarehousesDeleteMutationError = ErrorType<Error>;
+export type WarehousesDeleteMutationVariables = { orgSlug: string; warehouseId: string };
+
+export const useWarehousesDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof warehousesDelete>>,
+      TError,
+      WarehousesDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof warehousesDelete>>,
+  TError,
+  WarehousesDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getWarehousesDeleteMutationOptions(options), queryClient);
 };
