@@ -80,6 +80,7 @@ export function MfaEnrollment({
         uri={step.uri}
         onConfirmed={(codes) => setStep({ name: "codes", codes })}
         onExpired={() => setStep({ name: "password", expired: true })}
+        onAlready={onFinished}
         onCancel={onCancel}
       />
     );
@@ -181,12 +182,14 @@ function CodeStep({
   uri,
   onConfirmed,
   onExpired,
+  onAlready,
   onCancel,
 }: {
   secret: string;
   uri: string;
   onConfirmed: (codes: string[]) => void;
   onExpired: () => void;
+  onAlready: () => void;
   onCancel: () => void;
 }) {
   const t = useTranslations();
@@ -197,6 +200,8 @@ function CodeStep({
   const [phase, setPhase] = useState<Phase>({ name: "idle" });
   const [copied, setCopied] = useState(false);
   const field = useRef<HTMLInputElement>(null);
+  const intro = useRef<HTMLParagraphElement>(null);
+  useEffect(() => intro.current?.focus(), []); // sustituye al formulario: se lee antes la clave
   useStall(phase.name === "sending", reset, setPhase);
   const refused = refusedField(phase, "code");
   useEffect(() => {
@@ -208,7 +213,8 @@ function CodeStep({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (phase.name === "sending") return;
-    const code = String(new FormData(event.currentTarget).get("code") ?? "").trim();
+    // Como lo enseñan las aplicaciones (`123 456`): esta ruta no lo junta y lo contaría como fallo.
+    const code = String(new FormData(event.currentTarget).get("code") ?? "").replace(/[\s-]/g, "");
     if (!code) {
       setPhase({ name: "missing" });
       field.current?.focus();
@@ -221,6 +227,7 @@ function CodeStep({
         onSuccess: (answer) => onConfirmed(answer.backup_codes),
         onError: (error) => {
           if (error.code === "MFA_ENROLLMENT_NOT_STARTED") onExpired();
+          else if (error.code === "MFA_ALREADY_ENABLED") onAlready();
           else setPhase({ name: "failed", error });
         },
       },
@@ -242,14 +249,16 @@ function CodeStep({
       className="flex flex-col gap-4"
       aria-busy={sending}
     >
-      <p className="text-muted">{t("account.stepKey")}</p>
+      <p ref={intro} tabIndex={-1} className="text-muted">
+        {t("account.stepKey")}
+      </p>
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium" id="mfa-key-label">
           {t("account.keyLabel")}
         </span>
         <code
           aria-labelledby="mfa-key-label"
-          className="bg-surface-raised rounded-[10px] px-3 py-2 font-mono text-[16px] tracking-wider break-all"
+          className="bg-surface-raised rounded-[10px] px-3 py-2 font-mono text-[16px] tracking-wider wrap-anywhere"
         >
           {secret.match(/.{1,4}/g)?.join(" ")}
         </code>

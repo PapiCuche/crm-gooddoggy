@@ -58,6 +58,7 @@ describe("AccountSecurity", () => {
     expect(await screen.findByText(/te pediremos un código/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Activar la verificación en dos pasos" }));
     expect(screen.getByLabelText("Contraseña actual")).toHaveFocus();
+    expect(screen.queryByRole("link")).toBeNull(); // durante el alta no se sale de la página
     fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     expect(screen.getByLabelText("Contraseña actual")).toHaveAccessibleDescription(
       "Escribe tu contraseña.",
@@ -74,7 +75,10 @@ describe("AccountSecurity", () => {
     });
     start = started;
     send("Contraseña actual", "clave", "Continuar");
+    fireEvent.click(screen.getByRole("button", { name: "Comprobando…" })); // una sola petición
     expect(await screen.findByText("ABCD EFGH IJKL MNOP QRST UVWX YZ23 4567")).toBeInTheDocument();
+    expect(calls(api, "/mfa/totp/")).toHaveLength(2); // la que no valía y esta
+    expect(screen.getByText(/Abre tu aplicación de autenticación/)).toHaveFocus();
     expect(
       screen.getByRole("link", { name: "Abrir en la aplicación de autenticación" }),
     ).toHaveAttribute("href", URI);
@@ -89,7 +93,7 @@ describe("AccountSecurity", () => {
     );
     expect(screen.getByLabelText("Código")).toHaveFocus();
     confirm = confirmed;
-    fireEvent.change(screen.getByLabelText("Código"), { target: { value: " 123456 " } });
+    fireEvent.change(screen.getByLabelText("Código"), { target: { value: " 123 456 " } });
     const activate = screen.getByRole("button", { name: "Activar" });
     fireEvent.click(activate);
     fireEvent.click(activate); // dos pulsaciones, una petición
@@ -110,6 +114,7 @@ describe("AccountSecurity", () => {
     status = { status: 200, body: on };
     fireEvent.click(screen.getByRole("checkbox", { name: /He guardado estos códigos/ }));
     fireEvent.click(finish);
+    expect(screen.getByText("Cargando…")).toBeInTheDocument(); // no ofrece activarlo mientras
     expect(await screen.findByText(/Activada desde el 21 de octubre de 2026/)).toBeInTheDocument();
     expect(screen.getByText("Te quedan 10 códigos de respaldo sin usar.")).toBeInTheDocument();
     expect(screen.queryByText(CODES[0]!)).toBeNull(); // los códigos ya no están en la página
@@ -165,6 +170,19 @@ describe("AccountSecurity", () => {
     status = { status: 200, body: on };
     start = { status: 409, body: { code: "MFA_ALREADY_ENABLED" } };
     send("Contraseña actual", "clave", "Continuar");
+    expect(await screen.findByText(/Activada desde el/)).toBeInTheDocument();
+  });
+
+  it("si al confirmar ya estaba activado, enseña el estado", async () => {
+    let status: Reply = { status: 200, body: off };
+    const already = { status: 409, body: { code: "MFA_ALREADY_ENABLED" } };
+    mockApi({ [STATUS]: () => status, [START]: started, [CONFIRM]: already });
+    renderApp(<AccountSecurity />);
+    fireEvent.click(await screen.findByRole("button", { name: /Activar la verificación/ }));
+    send("Contraseña actual", "clave", "Continuar");
+    await screen.findByLabelText("Código");
+    status = { status: 200, body: on };
+    send("Código", "123456", "Activar");
     expect(await screen.findByText(/Activada desde el/)).toBeInTheDocument();
   });
 

@@ -21,13 +21,15 @@ export function AccountSecurity() {
   const t = useTranslations();
   const format = useFormatter();
   // Con el alta en curso no se vuelve a preguntar solo: cambiaría la pantalla bajo los pasos.
-  const status = useAuthMfaStatus({ query: { refetchOnWindowFocus: false } });
+  const status = useAuthMfaStatus({
+    query: { refetchOnWindowFocus: false, refetchOnReconnect: false },
+  });
   const [enrolling, setEnrolling] = useState(false);
   // Sin sesión, `Providers` ya lleva al login: aquí solo se evita mostrar un error mientras.
   const expired = status.error instanceof ApiError && status.error.status === 401;
 
   let body;
-  if (status.isPending || expired) {
+  if (status.isPending || status.isRefetching || expired) {
     body = <p className="text-muted">{t("account.loading")}</p>;
   } else if (status.isError) {
     body = (
@@ -89,12 +91,12 @@ export function AccountSecurity() {
         </h2>
         {body}
       </section>
-      <p className="text-sm">
+      <p className="text-sm" hidden={enrolling}>
         <Link href="/o" className={LINK}>
           {t("account.back")}
         </Link>
       </p>
-      <SessionActions />
+      {enrolling ? null : <SessionActions />}
     </>
   );
 }
