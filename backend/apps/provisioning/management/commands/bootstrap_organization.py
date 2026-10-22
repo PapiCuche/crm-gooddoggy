@@ -22,6 +22,31 @@ from apps.provisioning.services import bootstrap_organization
 from core.tenancy.commands import PlatformCommand
 
 
+def read_password(from_stdin: bool, whose: str = "del Owner") -> str:
+    """La contraseña, de la entrada estándar (`--password-stdin`) o pedida dos veces sin eco."""
+    if from_stdin:
+        # Bytes y UTF-8, no el locale del proceso: la contraseña es la que se escribió.
+        stream = getattr(sys.stdin, "buffer", None)
+        password: str | None = None
+        try:
+            password = stream.read().decode("utf-8-sig") if stream else None
+        except UnicodeDecodeError:
+            pass
+        if password is None:
+            raise CommandError("--password-stdin espera texto UTF-8 por la entrada estándar")
+        password = password.removesuffix("\n").removesuffix("\r")
+        if "\n" in password:
+            raise CommandError("--password-stdin espera una sola línea")
+        return password
+    try:
+        first = getpass.getpass(f"Contraseña {whose}: ")
+        if first != getpass.getpass("Repítela: "):
+            raise CommandError("Las contraseñas no coinciden")
+    except EOFError:
+        raise CommandError("Sin terminal: usa --password-stdin") from None
+    return first
+
+
 class Command(PlatformCommand):
     help = "Crea una organización con su Owner inicial y sus roles plantilla."
 
@@ -42,29 +67,6 @@ class Command(PlatformCommand):
             help="El Owner es una cuenta que ya existe: conserva su contraseña",
         )
 
-    def _password(self, from_stdin: bool) -> str:
-        if from_stdin:
-            # Bytes y UTF-8, no el locale del proceso: la contraseña es la que se escribió.
-            stream = getattr(sys.stdin, "buffer", None)
-            password: str | None = None
-            try:
-                password = stream.read().decode("utf-8-sig") if stream else None
-            except UnicodeDecodeError:
-                pass
-            if password is None:
-                raise CommandError("--password-stdin espera texto UTF-8 por la entrada estándar")
-            password = password.removesuffix("\n").removesuffix("\r")
-            if "\n" in password:
-                raise CommandError("--password-stdin espera una sola línea")
-            return password
-        try:
-            first = getpass.getpass("Contraseña del Owner: ")
-            if first != getpass.getpass("Repítela: "):
-                raise CommandError("Las contraseñas no coinciden")
-        except EOFError:
-            raise CommandError("Sin terminal: usa --password-stdin") from None
-        return first
-
     def handle_platform(self, **options: Any) -> None:
         existing = options["existing_owner"]
         if existing and options["password_stdin"]:  # argparse no lo comprueba en `call_command`
@@ -74,7 +76,7 @@ class Command(PlatformCommand):
                 slug=options["slug"],
                 name=options["name"],
                 owner_email=options["owner_email"],
-                owner_password=None if existing else self._password(options["password_stdin"]),
+                owner_password=None if existing else read_password(options["password_stdin"]),
                 operator=getpass.getuser(),
                 reason=options["reason"],
             )

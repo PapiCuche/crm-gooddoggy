@@ -20,6 +20,7 @@ from config.settings.base import (
     MAIL_BACKEND,
     SECRET_KEY,
     SECRETS_KEKS,
+    TEST_ACCOUNTS_ORGANIZATION,
 )
 
 # ADR-002 §1.1: la credencial del migrador (BYPASSRLS) es exclusiva del job de migraciones.
@@ -35,6 +36,8 @@ DEBUG = False
 ENFORCE_RUNTIME_DB_ROLE = True  # ADR-002 §1.1: ni superusuario, ni BYPASSRLS, ni propietario
 if env.boolean("DJANGO_DEBUG", False):
     raise ImproperlyConfigured("DEBUG no puede activarse en production")
+if TEST_ACCOUNTS_ORGANIZATION:  # ADR-026 §1: nunca hay accesos de prueba en production
+    raise ImproperlyConfigured("DJANGO_TEST_ACCOUNTS_ORGANIZATION no puede activarse en production")
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS es obligatorio en production")
 if SECRET_KEY.startswith("django-insecure") or len(SECRET_KEY) < 50:

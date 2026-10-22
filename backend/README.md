@@ -110,9 +110,27 @@ python manage.py bootstrap_organization --slug acme --name "Acme SAC" \
 - **Atómica.** Todo va en una sola transacción, la del `tenant_scope` de la organización nueva. Si un paso falla no queda organización, membresía, roles ni usuario.
 - **Owner.** Con contraseña, una cuenta nueva que cumple la política vigente. Sin contraseña, una cuenta que ya existe, activa y con contraseña utilizable; nunca se le cambia.
 - **Slug.** Minúsculas, dígitos y guiones, de 1 a 63 caracteres, sin empezar ni acabar en guion. Un slug en uso se rechaza.
+
 - **Auditoría.** Dentro del tenant: `membership.role_assigned` y `organization.created`, con el operador y el motivo (hasta 200 caracteres). En la auditoría de plataforma (ADR-013 §5): una fila `organization.bootstrap.started` antes de empezar y una `organization.bootstrapped` con el resultado, que se decide por lo que quedó confirmado en la base. Si no se puede escribir la primera, el alta no empieza.
 - **Fronteras.** Cada módulo de L2 expone su parte del alta en un `bootstrap.py` (`accounts`, `organizations`, `access`). Solo `apps.provisioning` puede importarlos y no toca sus modelos: dos contratos de import-linter lo comprueban.
 - **No es una vía para asignar roles.** `apps.access.bootstrap.install_initial_owner` solo actúa sin actor, sobre una organización sin roles cuya única membresía es la indicada, activa y de un usuario activo. Los cambios posteriores pasan por `assign_role` y `remove_role`, con sus reglas (F2-05C).
+
+## Cuentas de prueba (F2-116, ADR-026)
+
+Solo en local o en una demo aislada. Se activan con `DJANGO_TEST_ACCOUNTS_ORGANIZATION=<slug>` (por ejemplo `pruebas`) en `infra/env/.env`; `production` no arranca con esa variable.
+
+```bash
+make up
+docker compose -f infra/docker/compose.yaml --env-file infra/env/.env exec backend \
+    python manage.py provision_test_accounts --reason "pruebas locales"
+```
+
+- Deja la organización `<slug>` («Good Doggy · Pruebas») con cuatro cuentas sintéticas en el dominio reservado `<slug>.gooddoggy.test`: `owner@`, `administrador@`, `supervisor@` y `vendedor@`, cada una con su membresía activa y el rol de plantilla de su nombre (Owner, Administrador, Supervisor, Vendedor). Sus permisos son los de esa plantilla.
+- **Idempotente.** Crea lo que falta (cuentas, membresías, roles) y deja lo que hay. Una membresía suspendida sigue suspendida.
+- **Contraseña.** La de las cuentas nuevas se pide dos veces sin mostrarla (o `--password-stdin`); las que ya existen conservan la suya. Nunca se imprime, se registra ni se audita.
+- **Nunca toca una organización real.** Si `<slug>` existe y `owner@<slug>.gooddoggy.test` no tiene su rol Owner, se niega sin cambiar nada.
+- Entran por el login normal: contraseña, límites, CSRF y segundo paso si lo activan. Auditoría: `test_accounts.provision.started` y `test_accounts.provisioned` (plataforma), `membership.activated` y `membership.role_assigned` (tenant).
+- La única membresía sin invitación aparte del Owner inicial es esta: `organizations.bootstrap.add_test_membership`, que solo importa `apps.provisioning` y se niega fuera de la organización del setting.
 
 ## Roles y permisos: modelo (F2-04, ADR-003 §5)
 

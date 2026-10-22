@@ -37,3 +37,31 @@ def owner_account(email: str, password: str | None) -> tuple[UUID, bool]:
             return User.objects.create_user(email=email, password=password).pk, True
     except IntegrityError:
         raise exists from None
+
+
+def test_account(email: str, password: str | None) -> tuple[UUID, bool]:
+    """Una cuenta de prueba, como `(id, creada)` (ADR-026 §3): la que ya existe, con su
+    contraseña, o una nueva con `password`. `email` ya es canónico. Sin contraseña y sin cuenta,
+    `ValidationError`; una cuenta desactivada no se reactiva.
+    """
+    if User.objects.filter(email=email).exists():
+        return owner_account(email, None)
+    return owner_account(email, password)
+
+
+def account_exists(email: str) -> bool:
+    return User.objects.filter(email=email).exists()
+
+
+def check_password_for(password: str, emails: list[str]) -> None:
+    """La contraseña de unas cuentas de prueba nuevas debe valer para todas: la política se
+    comprueba con cada correo (la similitud con el correo cambia de una a otra) antes de crear
+    ninguna. `ValidationError` dice con qué correo falla."""
+    problems: list[str] = []
+    for email in emails:
+        try:
+            validate_password(password, User(email=email))
+        except ValidationError as error:
+            problems.extend(f"{email}: {message}" for message in error.messages)
+    if problems:
+        raise ValidationError(problems)

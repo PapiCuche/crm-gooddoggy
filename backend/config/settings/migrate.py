@@ -20,3 +20,5 @@ from config.settings.base import *  # noqa: E402,F403
 
 # El job no cifra ni lee secretos (ADR-002 §1.1): aunque le den las claves, no las guarda.
 SECRETS_KEKS = {}
+# Ni accesos de prueba (ADR-026 §1): es un job de producción y conecta con BYPASSRLS.
+TEST_ACCOUNTS_ORGANIZATION = ""

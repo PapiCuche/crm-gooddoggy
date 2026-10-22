@@ -43,6 +43,19 @@ class Bootstrapped:
     user_created: bool
 
 
+def checked_trail(operator: str, reason: str) -> tuple[str, str]:
+    """El operador y el motivo de una operación de plataforma, limpios y dentro de sus topes."""
+    reason, operator = reason.strip(), operator.strip()
+    if not reason or not operator:
+        raise ValidationError("El motivo y el operador son obligatorios", code="required")
+    if len(reason) > REASON_MAX or len(operator) > OPERATOR_MAX:
+        limits = f"motivo, {REASON_MAX} caracteres; operador, {OPERATOR_MAX}"
+        raise ValidationError(f"Texto demasiado largo ({limits})", code="too_long")
+    if not (reason + operator).isprintable():  # saltos de línea, nulos, sustitutos sueltos
+        raise ValidationError("El motivo y el operador van en una línea de texto", code="invalid")
+    return operator, reason
+
+
 def bootstrap_organization(
     *,
     slug: str,
@@ -57,14 +70,7 @@ def bootstrap_organization(
     Con `owner_password` el Owner es una cuenta nueva; sin ella, una que ya existe y conserva la
     suya. La contraseña nunca se registra ni se devuelve.
     """
-    reason, operator = reason.strip(), operator.strip()
-    if not reason or not operator:
-        raise ValidationError("El motivo y el operador son obligatorios", code="required")
-    if len(reason) > REASON_MAX or len(operator) > OPERATOR_MAX:
-        limits = f"motivo, {REASON_MAX} caracteres; operador, {OPERATOR_MAX}"
-        raise ValidationError(f"Texto demasiado largo ({limits})", code="too_long")
-    if not (reason + operator).isprintable():  # saltos de línea, nulos, sustitutos sueltos
-        raise ValidationError("El motivo y el operador van en una línea de texto", code="invalid")
+    operator, reason = checked_trail(operator, reason)
     name, email = clean(slug, name), canonical_email(owner_email)
     if connection.in_atomic_block:  # antes de la intención: no quedaría en una transacción ajena
         raise TenantContextError("El alta abre su propia transacción: no admite una exterior")

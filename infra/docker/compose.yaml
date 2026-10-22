@@ -36,6 +36,8 @@ x-runtime: &runtime
     MAIL_FROM: no-reply@crm.local
     # El origen con el que se componen los enlaces de un correo (ADR-021): el del proxy local.
     APP_ORIGIN: http://localhost:${PROXY_HOST_PORT:-8080}
+    # Accesos de prueba (ADR-026): slug de la organización de pruebas; vacío = desactivado.
+    DJANGO_TEST_ACCOUNTS_ORGANIZATION: ${DJANGO_TEST_ACCOUNTS_ORGANIZATION:-}
   depends_on:
     migrate:
       condition: service_completed_successfully

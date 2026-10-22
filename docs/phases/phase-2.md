@@ -135,6 +135,9 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-112 | [#283](https://github.com/PapiCuche/crm-gooddoggy/issues/283) MFA: the screen to enable the second factor | `feature/f2-account-security-enrollment-screen` | #278 | frontend |
 | F2-113 | [#285](https://github.com/PapiCuche/crm-gooddoggy/issues/285) MFA: regenerating the codes and removing the second factor from the screen | `feature/f2-account-security-manage-screen` | #283 | frontend |
 | F2-114 | [#286](https://github.com/PapiCuche/crm-gooddoggy/issues/286) MFA: the QR code of the enrolment (ADR-025) | `feature/f2-mfa-enrollment-qr` | #283 | frontend + ADR |
+| F2-115 | [#289](https://github.com/PapiCuche/crm-gooddoggy/issues/289) MFA: the policy per membership (`MFA_ENFORCEMENT`), with its ADR | `feature/f2-mfa-membership-policy` | #286 | backend + ADR |
+| F2-116 | [#290](https://github.com/PapiCuche/crm-gooddoggy/issues/290) Test accounts: the command that provisions them (ADR-026) | `feature/f2-test-accounts-provisioning` | #286 | backend + ADR |
+| F2-117 | [#291](https://github.com/PapiCuche/crm-gooddoggy/issues/291) Test accounts on the login page | `feature/f2-login-test-accounts-panel` | #290 | backend + frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:

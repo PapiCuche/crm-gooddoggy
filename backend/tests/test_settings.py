@@ -26,6 +26,7 @@ BASE_ENV: dict[str, str | None] = {
     "EMAIL_USE_SSL": None,
     "MAIL_FROM": None,
     "APP_ORIGIN": None,
+    "DJANGO_TEST_ACCOUNTS_ORGANIZATION": None,
     "SECRETS_KEKS": "1:" + base64.urlsafe_b64encode(bytes(range(32))).decode(),  # ADR-022 §6
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
@@ -122,6 +123,14 @@ def test_production_adds_loopback_after_validating_configured_hosts(
     assert hosts[0] == "app.example.com"
     assert {"127.0.0.1", "localhost", "[::1]"} <= set(hosts)
     assert len(hosts) == len(set(hosts))  # sin duplicados
+
+
+def test_production_refuses_test_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-026 §1: con accesos de prueba, production no arranca."""
+    with pytest.raises(ImproperlyConfigured, match="DJANGO_TEST_ACCOUNTS_ORGANIZATION"):
+        load_production(monkeypatch, DJANGO_TEST_ACCOUNTS_ORGANIZATION="pruebas")
+    disabled = load_production(monkeypatch, DJANGO_TEST_ACCOUNTS_ORGANIZATION=None)
+    assert disabled.TEST_ACCOUNTS_ORGANIZATION == ""  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
@@ -260,6 +269,18 @@ def test_migrate_settings_use_migrator_url_without_runtime_credentials(
         DJANGO_SECRET_KEY=None,
     )
     assert settings.DATABASES["default"]["USER"] == "crm_migrator"  # type: ignore[attr-defined]
+
+
+def test_migrate_settings_never_enable_test_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-026 §1: el job de migraciones ignora los accesos de prueba aunque los reciba."""
+    settings = load_migrate(
+        monkeypatch,
+        DATABASE_URL=None,
+        DATABASE_MIGRATOR_URL="postgres://crm_migrator:x@db:5432/crm",
+        DJANGO_SECRET_KEY=None,
+        DJANGO_TEST_ACCOUNTS_ORGANIZATION="pruebas",
+    )
+    assert settings.TEST_ACCOUNTS_ORGANIZATION == ""  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
