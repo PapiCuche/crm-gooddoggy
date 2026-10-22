@@ -38,7 +38,7 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 
 | Historia | Estado |
 |---|---|
-| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla en F3-03. Categorías: API en F3-04 (listar y crear) y F3-04b (editar); pantalla (árbol y crear) en F3-05; renombrar, mover y borrar desde la pantalla en F3-05b (#312) |
+| E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla en F3-03. Categorías: API en F3-04 (listar y crear) y F3-04b (editar); pantalla (árbol y crear) en F3-05; renombrar, mover y borrar desde la pantalla en F3-05b. Restaurar borradas: E02-07 |
 | E02-02 y E02-03 Productos y variantes | Producto con su variante por defecto: API en F3-06 (listar y crear) y F3-06b (cambiar, borrar y listar sus variantes); variantes (añadir, editar y retirar): API en F3-07. Pantalla de productos (lista y crear) en F3-10; cambiar, borrar y el panel de variantes desde la pantalla, y opciones con generación de variantes: pendientes |
 | E02-04 a E02-07 | Pendientes |
 | E03 Precios | Pendiente |

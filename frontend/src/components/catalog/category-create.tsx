@@ -11,7 +11,7 @@ import type { ApiError } from "@/lib/http";
 
 import type { CategoryNode } from "./categories-tree";
 
-const MAX_DEPTH = 5; // los niveles que admite la API (F3-04)
+export const MAX_DEPTH = 5; // los niveles que admite la API (F3-04)
 const FIELDS = [
   { name: "name", max: 100 },
   { name: "slug", max: 63 },
@@ -19,7 +19,7 @@ const FIELDS = [
 
 // Dónde va una categoría: en la raíz o dentro de otra. Las opciones siguen el árbol, con sangría;
 // las que no se pueden elegir quedan visibles y desactivadas. La API decide igualmente.
-function ParentSelect({
+export function ParentSelect({
   all,
   value,
   blocked,
@@ -69,7 +69,7 @@ function ParentSelect({
 }
 
 // Un `parent_id` que la API no acepta (ya no existe, o la rama pasaría del límite).
-const parentRefused = (error: ApiError) =>
+export const parentRefused = (error: ApiError) =>
   error.code === "VALIDATION_ERROR" && !!error.fields && Object.hasOwn(error.fields, "parent_id");
 
 // Crear una categoría (F3-05) con `POST /api/v1/o/{slug}/categories/` (F3-04), en la raíz o

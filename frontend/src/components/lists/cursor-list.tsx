@@ -51,7 +51,7 @@ export function CursorList<Row extends { id: string }>({
   notice?: ReactNode | ((rows: Row[]) => ReactNode); // aviso de la pantalla, encima de la lista
   empty?: ReactNode; // lo que se ve en lugar de una lista sin filas
   rowClassName?: string;
-  children: (row: Row) => ReactNode;
+  children: (row: Row, rows: Row[]) => ReactNode; // `rows`: todas las cargadas
   ref?: Ref<CursorListHandle>;
 }) {
   const t = useTranslations();
@@ -134,7 +134,7 @@ export function CursorList<Row extends { id: string }>({
                   rowClassName,
                 )}
               >
-                {children(row)}
+                {children(row, rows)}
               </li>
             ))}
           </ul>
