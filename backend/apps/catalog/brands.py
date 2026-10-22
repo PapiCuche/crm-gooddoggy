@@ -1,0 +1,103 @@
+"""Comandos de marcas (F3-01, E02-01): crear, renombrar y borrar.
+
+No comprueban permisos: los declara la API (`brands.manage`), la única que los importa
+(contrato de import-linter). Validan lo que guardan y auditan cada cambio.
+"""
+
+import re
+import unicodedata
+from typing import Any
+from uuid import UUID
+
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+
+from apps.audit.services import Entity, record
+from apps.catalog.models import Brand
+from apps.organizations.text import name as clean_name
+from core.tenancy.context import TenantContext
+from core.tenancy.scope import require_scope
+
+SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # la misma forma que impone la tabla
+NAME_MAX, SLUG_MAX = 100, 63
+TAKEN_CONSTRAINT = "brands_org_slug_uq"
+
+
+class BrandSlugTaken(Exception):
+    """Ya hay una marca no borrada con ese slug en la organización."""
+
+
+def brand_name(value: str) -> str:
+    return clean_name(value, NAME_MAX)
+
+
+def brand_slug(value: str) -> str:
+    """El slug como se guarda: minúsculas ASCII, cifras y guiones entre ellas."""
+    slug = value.strip()
+    if not (len(slug) <= SLUG_MAX and SLUG.fullmatch(slug)):
+        raise ValueError(f"minúsculas sin acento, cifras y guiones entre ellas, hasta {SLUG_MAX}")
+    return slug
+
+
+def slug_from(value: str) -> str:
+    """Un slug a partir del nombre: sin acentos, en minúsculas, con guiones. `ValueError` si el
+    nombre no deja ninguna letra o cifra ASCII (por ejemplo, solo caracteres no latinos)."""
+    ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:SLUG_MAX].strip("-")
+    if not slug:
+        raise ValueError("no se puede formar a partir del nombre: envía uno")
+    return slug
+
+
+def create_brand(ctx: TenantContext, *, name: str, slug: str | None = None) -> Brand:
+    """Crea una marca en la organización de `ctx` y lo audita. Sin `slug`, se forma del nombre.
+    `BrandSlugTaken` si ya existe uno igual entre las no borradas, sin escribir nada."""
+    alias = require_scope(ctx)
+    cleaned = brand_name(name)
+    chosen = brand_slug(slug) if slug is not None else slug_from(cleaned)
+    try:
+        with transaction.atomic(using=alias):  # savepoint: la marca y su auditoría, o nada
+            brand: Brand = Brand.objects.using(alias).create(name=cleaned, slug=chosen)
+            changes = {"name": [None, cleaned], "slug": [None, chosen]}
+            record(ctx, "brand.created", Entity("brand", brand.pk, brand.slug), changes)
+    except IntegrityError as error:
+        if TAKEN_CONSTRAINT not in str(error):
+            raise
+        raise BrandSlugTaken(chosen) from None
+    return brand
+
+
+def _live(alias: str) -> Any:
+    return Brand.objects.using(alias).select_for_update(no_key=True).filter(deleted_at__isnull=True)
+
+
+def rename_brand(ctx: TenantContext, *, brand_id: UUID, name: str) -> Brand:
+    """Cambia el nombre de una marca no borrada y lo audita; el slug no cambia. Si el nombre ya
+    es ese, no escribe ni audita. Una marca borrada o de otra organización: `DoesNotExist`."""
+    alias = require_scope(ctx)
+    cleaned = brand_name(name)
+    with transaction.atomic(using=alias):
+        brand: Brand = _live(alias).get(pk=brand_id)
+        if brand.name != cleaned:
+            changes = {"name": [brand.name, cleaned]}
+            brand.name = cleaned
+            brand.save(using=alias, update_fields=["name", "updated_at"])
+            record(ctx, "brand.updated", Entity("brand", brand.pk, brand.slug), changes)
+    return brand
+
+
+def delete_brand(ctx: TenantContext, *, brand_id: UUID) -> None:
+    """Borra una marca (borrado lógico) y lo audita. Su slug queda libre. Una marca ya borrada
+    o de otra organización: `DoesNotExist`."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        brand: Brand = _live(alias).get(pk=brand_id)
+        brand.deleted_at = timezone.now()
+        brand.deleted_by_user_id = ctx.user_id
+        brand.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])
+        record(
+            ctx,
+            "brand.deleted",
+            Entity("brand", brand.pk, brand.slug),
+            {"deleted_at": [None, brand.deleted_at.isoformat()]},
+        )

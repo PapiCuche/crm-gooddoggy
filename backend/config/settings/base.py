@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "apps.files",
     "apps.provisioning",
     "apps.members",
+    "apps.catalog",
 ]
 
 MIDDLEWARE = [

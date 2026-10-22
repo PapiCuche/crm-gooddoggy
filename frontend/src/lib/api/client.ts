@@ -26,6 +26,9 @@ import type {
   Branch,
   BranchCreateRequest,
   BranchesListParams,
+  Brand,
+  BrandCreateRequest,
+  BrandsListParams,
   Error,
   GrantScopeRequest,
   Invitation,
@@ -50,6 +53,7 @@ import type {
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
+  PaginatedBrandList,
   PaginatedInvitationList,
   PaginatedMemberList,
   PaginatedRoleList,
@@ -58,6 +62,7 @@ import type {
   PasswordResetConfirmRequest,
   PasswordResetRequestRequest,
   PatchedBranchUpdateRequest,
+  PatchedBrandUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
   PermissionCatalog,
@@ -2038,6 +2043,436 @@ export const useBranchesUpdate = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getBranchesUpdateMutationOptions(options), queryClient);
+};
+
+export const getBrandsListUrl = (orgSlug: string, params?: BrandsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/brands/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/brands/`;
+};
+
+/**
+ * Las marcas de la organización, sin las borradas. Paginado por orden de creación
+ * (ADR-016). `POST` crea una.
+ */
+export const brandsList = async (
+  orgSlug: string,
+  params?: BrandsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedBrandList> => {
+  return apiFetch<PaginatedBrandList>(getBrandsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getBrandsListQueryKey = (orgSlug: string, params?: BrandsListParams) => {
+  return [`/api/v1/o/${orgSlug}/brands/`, ...(params ? [params] : [])] as const;
+};
+
+export const getBrandsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof brandsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BrandsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof brandsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getBrandsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof brandsList>>> = ({ signal }) =>
+    brandsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof brandsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type BrandsListQueryResult = NonNullable<Awaited<ReturnType<typeof brandsList>>>;
+export type BrandsListQueryError = ErrorType<Error>;
+
+export function useBrandsList<
+  TData = Awaited<ReturnType<typeof brandsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | BrandsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof brandsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof brandsList>>,
+          TError,
+          Awaited<ReturnType<typeof brandsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useBrandsList<
+  TData = Awaited<ReturnType<typeof brandsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BrandsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof brandsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof brandsList>>,
+          TError,
+          Awaited<ReturnType<typeof brandsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useBrandsList<
+  TData = Awaited<ReturnType<typeof brandsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BrandsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof brandsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useBrandsList<
+  TData = Awaited<ReturnType<typeof brandsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: BrandsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof brandsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getBrandsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getBrandsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/brands/`;
+};
+
+/**
+ * Crea una marca. Sin `slug`, se forma con el nombre. 409 `BRAND_SLUG_TAKEN`: ya hay una marca con ese slug en la organización.
+ */
+export const brandsCreate = async (
+  orgSlug: string,
+  brandCreateRequest: BrandCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Brand> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Brand>(getBrandsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(brandCreateRequest),
+  });
+};
+
+export const getBrandsCreateMutationKey = () => ["brandsCreate"] as const;
+
+export const getBrandsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof brandsCreate>>,
+    TError,
+    BrandsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof brandsCreate>>,
+  TError,
+  BrandsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getBrandsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof brandsCreate>>,
+    BrandsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return brandsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BrandsCreateMutationResult = NonNullable<Awaited<ReturnType<typeof brandsCreate>>>;
+export type BrandsCreateMutationBody = BrandCreateRequest;
+export type BrandsCreateMutationError = ErrorType<Error>;
+export type BrandsCreateMutationVariables = { orgSlug: string; data: BrandCreateRequest };
+
+export const useBrandsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof brandsCreate>>,
+      TError,
+      BrandsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof brandsCreate>>,
+  TError,
+  BrandsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getBrandsCreateMutationOptions(options), queryClient);
+};
+
+export const getBrandsUpdateUrl = (orgSlug: string, brandId: string) => {
+  return `/api/v1/o/${orgSlug}/brands/${brandId}/`;
+};
+
+/**
+ * Cambia el nombre. Enviar el que ya tiene no escribe nada. 404: la marca no es de la organización o está borrada.
+ */
+export const brandsUpdate = async (
+  orgSlug: string,
+  brandId: string,
+  patchedBrandUpdateRequest?: PatchedBrandUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Brand> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Brand>(getBrandsUpdateUrl(orgSlug, brandId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedBrandUpdateRequest),
+  });
+};
+
+export const getBrandsUpdateMutationKey = () => ["brandsUpdate"] as const;
+
+export const getBrandsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof brandsUpdate>>,
+    TError,
+    BrandsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof brandsUpdate>>,
+  TError,
+  BrandsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getBrandsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof brandsUpdate>>,
+    BrandsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, brandId, data } = props ?? {};
+
+    return brandsUpdate(orgSlug, brandId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BrandsUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof brandsUpdate>>>;
+export type BrandsUpdateMutationBody = PatchedBrandUpdateRequest | undefined;
+export type BrandsUpdateMutationError = ErrorType<Error>;
+export type BrandsUpdateMutationVariables = {
+  orgSlug: string;
+  brandId: string;
+  data?: PatchedBrandUpdateRequest;
+};
+
+export const useBrandsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof brandsUpdate>>,
+      TError,
+      BrandsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof brandsUpdate>>,
+  TError,
+  BrandsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getBrandsUpdateMutationOptions(options), queryClient);
+};
+
+export const getBrandsDeleteUrl = (orgSlug: string, brandId: string) => {
+  return `/api/v1/o/${orgSlug}/brands/${brandId}/`;
+};
+
+/**
+ * Borra la marca (borrado lógico) y libera su slug. 404: no es de la organización o ya está borrada.
+ */
+export const brandsDelete = async (
+  orgSlug: string,
+  brandId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getBrandsDeleteUrl(orgSlug, brandId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getBrandsDeleteMutationKey = () => ["brandsDelete"] as const;
+
+export const getBrandsDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof brandsDelete>>,
+    TError,
+    BrandsDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof brandsDelete>>,
+  TError,
+  BrandsDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getBrandsDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof brandsDelete>>,
+    BrandsDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, brandId } = props ?? {};
+
+    return brandsDelete(orgSlug, brandId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BrandsDeleteMutationResult = NonNullable<Awaited<ReturnType<typeof brandsDelete>>>;
+
+export type BrandsDeleteMutationError = ErrorType<Error>;
+export type BrandsDeleteMutationVariables = { orgSlug: string; brandId: string };
+
+export const useBrandsDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof brandsDelete>>,
+      TError,
+      BrandsDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof brandsDelete>>,
+  TError,
+  BrandsDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getBrandsDeleteMutationOptions(options), queryClient);
 };
 
 export const getInvitationsListUrl = (orgSlug: string, params?: InvitationsListParams) => {

@@ -115,6 +115,12 @@ python manage.py bootstrap_organization --slug acme --name "Acme SAC" \
 - **Fronteras.** Cada módulo de L2 expone su parte del alta en un `bootstrap.py` (`accounts`, `organizations`, `access`). Solo `apps.provisioning` puede importarlos y no toca sus modelos: dos contratos de import-linter lo comprueban.
 - **No es una vía para asignar roles.** `apps.access.bootstrap.install_initial_owner` solo actúa sin actor, sobre una organización sin roles cuya única membresía es la indicada, activa y de un usuario activo. Los cambios posteriores pasan por `assign_role` y `remove_role`, con sus reglas (F2-05C).
 
+## Catálogo (Fase 3)
+
+`apps.catalog` es el primer módulo de la capa L3 ([module-dependencies](../docs/architecture/module-dependencies.md)). Sus comandos (`apps.catalog.brands`) solo los importa su API (contrato de import-linter) y no comprueban permisos: los declara la vista.
+
+- **Marcas (F3-01):** tabla `brands` (`name`, `slug`, `logo_file_id`, borrado lógico con `deleted_at` y `deleted_by_user_id`), FORCE RLS y FK de tenant. `slug` es único por organización entre las no borradas (índice parcial): borrar una marca libera su slug. Rutas `…/brands/` (`GET` con `products.view`, paginada por creación; `POST` con `brands.manage`) y `…/brands/{id}/` (`PATCH` renombra, `DELETE` borra; con `brands.manage`). Sin `slug`, se forma con el nombre (sin acentos, minúsculas, guiones); si el nombre no deja ninguna letra ASCII hay que enviarlo. 409 `BRAND_SLUG_TAKEN`. Auditoría: `brand.created`, `brand.updated` y `brand.deleted`. Una marca borrada o de otra organización da 404.
+
 ## Cuentas de prueba (F2-116, ADR-026)
 
 Solo en local o en una demo aislada. Se activan con `DJANGO_TEST_ACCOUNTS_ORGANIZATION=<slug>` (por ejemplo `pruebas`) en `infra/env/.env`; `production` no arranca con esa variable.
