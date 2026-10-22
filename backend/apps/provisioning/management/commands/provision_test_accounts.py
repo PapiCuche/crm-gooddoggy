@@ -34,9 +34,15 @@ class Command(PlatformCommand):
 
     def handle_platform(self, **options: Any) -> None:
         try:
+            # La contraseña se pide antes de abrir ninguna transacción, y solo si falta una cuenta.
             missing = test_accounts.missing_accounts()
+            password = (
+                read_password(options["password_stdin"], "de las cuentas nuevas")
+                if missing
+                else None
+            )
             result = test_accounts.provision(
-                password=lambda: read_password(options["password_stdin"], "de las cuentas nuevas"),
+                password=password,
                 operator=getpass.getuser(),
                 reason=options["reason"],
             )

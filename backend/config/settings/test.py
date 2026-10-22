@@ -27,3 +27,6 @@ DEFAULT_FROM_EMAIL = "no-reply@crm.test"
 SECRETS_KEKS = env.keys("SECRETS_KEKS") or {
     1: hashlib.sha256(b"dev-kek:" + SECRET_KEY.encode()).digest()  # noqa: F405
 }
+
+# ADR-026: los tests encienden los accesos de prueba cuando los necesitan; nunca desde el entorno.
+TEST_ACCOUNTS_ORGANIZATION = ""

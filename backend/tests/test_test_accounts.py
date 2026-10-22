@@ -33,6 +33,7 @@ EMAILS = [
     "vendedor@pruebas.gooddoggy.test",
 ]
 OTHER, WEAK = "otra-clave-larga-de-prueba-9", "123"  # noqa: S105
+SIMILAR = "supervisor-1234"  # noqa: S105
 TEMPLATE = {template.code: template for template in ROLE_TEMPLATES}
 
 
@@ -133,6 +134,38 @@ def test_it_never_touches_an_organization_that_is_not_the_test_one(
     ]
 
 
+@pytest.mark.usefixtures("enabled")
+def test_a_synthetic_owner_elsewhere_or_a_plain_member_does_not_make_it_the_test_one(
+    migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lo que cuenta es el rol Owner en esa organización, no la cuenta ni otra membresía."""
+    elsewhere = bootstrap(slug="otra", owner_email=EMAILS[0])  # Owner, pero de otra organización
+    real = bootstrap(slug=SLUG)  # la real, con el slug de pruebas y Owner ana@acme.pe
+    system = TenantContext(real.organization_id, "command")
+    with tenant_scope(system):  # y además miembro, sin rol, de la real
+        add_test_membership(system, user_id=elsewhere.owner_user_id)
+    before, audit_before = counts(migrator), len(platform_rows(migrator))
+    with pytest.raises(CommandError, match="no es la de pruebas"):
+        provision(monkeypatch)
+    assert counts(migrator) == before
+    assert [row[:2] for row in platform_rows(migrator)[audit_before:]] == [
+        ("test_accounts.provision.started", "SUCCESS"),
+        ("test_accounts.provisioned", "FAILED"),
+    ]
+
+
+@pytest.mark.usefixtures("enabled")
+def test_the_membership_frontier_refuses_a_user_actor_in_the_test_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provision(monkeypatch)
+    owner = authenticate(username=EMAILS[0], password=TEST_PASSWORD)
+    assert owner is not None
+    ctx = resolve_tenant(SLUG, owner, "test")
+    with tenant_scope(ctx), pytest.raises(PermissionDenied):
+        add_test_membership(ctx, user_id=owner.pk)
+
+
 def test_the_frontier_refuses_any_other_organization_or_a_user_actor(
     settings: Any,
 ) -> None:
@@ -157,3 +190,14 @@ def test_a_weak_password_creates_nothing(
         provision(monkeypatch, password=WEAK)
     assert counts(migrator) == before
     assert set(TABLES) <= set(before)
+
+
+@pytest.mark.usefixtures("enabled")
+def test_a_password_that_fails_for_one_account_creates_none(
+    migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = counts(migrator)
+    # Vale para owner y administrador, pero se parece demasiado a «supervisor».
+    with pytest.raises(CommandError, match="supervisor@pruebas.gooddoggy.test"):
+        provision(monkeypatch, password=SIMILAR)
+    assert counts(migrator) == before and platform_rows(migrator) == []

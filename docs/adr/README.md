@@ -6,7 +6,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 
 | ADR | Título | Estado | Fecha |
 |---|---|---|---|
-| [ADR-001](ADR-001-multi-tenancy.md) | Multi-tenancy con base de datos y esquema compartidos | Accepted | 2026-09-28 |
+| [ADR-001](ADR-001-multi-tenancy.md) | Multi-tenancy con base de datos y esquema compartidos | Accepted (excepción acotada en ADR-026 §5: la organización de pruebas) | 2026-09-28 |
 | [ADR-002](ADR-002-postgresql-rls.md) | PostgreSQL Row Level Security como defensa en profundidad | Accepted | 2026-09-28 |
 | [ADR-003](ADR-003-auth-session.md) | Autenticación por sesión con cookie HttpOnly y MFA | Accepted | 2026-09-28 |
 | [ADR-004](ADR-004-identifiers.md) | UUIDv7 y numeración comercial por organización | Accepted | 2026-09-28 |
@@ -19,14 +19,14 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-011](ADR-011-observability-and-logs.md) | Observabilidad y separación de logs (aplicación / auditoría / IA) | Accepted | 2026-09-28 |
 | [ADR-012](ADR-012-engineering-runtime-baseline.md) | Baseline de runtimes, herramientas e imágenes; emulador S3 local (Garage) | Accepted; ampliado por ADR-025 en §1 (fila de `uqr`) | 2026-09-28 |
 | [ADR-013](ADR-013-platform-audit.md) | Auditoría de plataforma en un sumidero propio, sin tenant y solo de inserción | Accepted | 2026-10-02 |
-| [ADR-014](ADR-014-api-errors-and-authentication.md) | Contrato de errores de la API, autenticación por sesión y rutas de plataforma | Accepted | 2026-10-02 |
+| [ADR-014](ADR-014-api-errors-and-authentication.md) | Contrato de errores de la API, autenticación por sesión y rutas de plataforma | Accepted (excepción acotada en ADR-026 §5: las cuentas de prueba) | 2026-10-02 |
 | [ADR-015](ADR-015-autonomous-delivery-program.md) | Programa de entrega autónoma con merge por gates (modifica la aprobación y el merge de ADR-009 dentro del programa) | Accepted | 2026-10-02 |
 | [ADR-016](ADR-016-api-list-convention.md) | Convención de los listados de la API: paginación por cursor | Accepted | 2026-10-04 |
 | [ADR-017](ADR-017-member-administration-module.md) | Administración de miembros en un módulo de orquestación (`apps.members`); reglas para suspender y reactivar | Accepted | 2026-10-04 |
 | [ADR-018](ADR-018-owner-role-follows-catalog.md) | El rol Owner sigue al catálogo de permisos: lo impone el job de migraciones | Accepted | 2026-10-05 |
 | [ADR-019](ADR-019-outbound-email.md) | Correo saliente por un único módulo (`core.mail`), SMTP por entorno y sin proveedor fijado; se envía desde tareas y los enlaces de un solo uso no se guardan | Accepted (enmendado en parte por ADR-021: §3, en la recuperación de contraseña) | 2026-10-07 |
 | [ADR-020](ADR-020-invitations.md) | Invitaciones a una organización: sin cuenta ni membresía hasta aceptar, enlace de un solo uso guardado como hash, anti-escalada al invitar, y aceptar no inicia sesión | Accepted; la excepción a ADR-014 §4 (aceptar), *Proposed* (D-F2-14) | 2026-10-07 |
-| [ADR-021](ADR-021-password-recovery.md) | Recuperación de contraseña: la petición no mira si la cuenta existe, enlace de un solo uso guardado como hash y con 60 minutos de vida, topes por red, identificador y cuenta, y cambiar la contraseña revoca las sesiones y no inicia sesión | Accepted | 2026-10-07 |
+| [ADR-021](ADR-021-password-recovery.md) | Recuperación de contraseña: la petición no mira si la cuenta existe, enlace de un solo uso guardado como hash y con 60 minutos de vida, topes por red, identificador y cuenta, y cambiar la contraseña revoca las sesiones y no inicia sesión | Accepted (excepción acotada en ADR-026 §5: las cuentas de prueba) | 2026-10-07 |
 | [ADR-022](ADR-022-secrets-at-rest.md) | Cifrado en reposo de los secretos que la aplicación tiene que leer: AES-256-GCM en un único módulo (`core.sealed`), claves maestras por entorno con versión (`SECRETS_KEKS`), una clave derivada por propósito, y cada valor atado a su propósito y a su dueño | Accepted | 2026-10-11 |
 | [ADR-023](ADR-023-mfa-totp.md) | Segundo factor con TOTP y códigos de respaldo, sobre ADR-003 §4: un paso se acepta una vez, la contraseña correcta no abre sesión si la cuenta tiene segundo factor, tope de códigos fallidos por cuenta, y la política mira el rol Owner, el Administrador de plantilla y los permisos sensibles de la membresía | Accepted, salvo §11 (*Proposed*, D-F2-15); ampliado por ADR-024 en §4 (tope de códigos por alta) | 2026-10-11 |
 | [ADR-024](ADR-024-mfa-enrollment-code-cap.md) | Tope de códigos fallidos por alta de un dispositivo TOTP: el quinto código que no vale borra el alta, y empezar otra pide la contraseña | Accepted | 2026-10-11 |

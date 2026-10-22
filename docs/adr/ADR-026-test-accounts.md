@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-22
 - **Deciders:** el mantenedor lo pidió el 2026-10-22; el programa autónomo lo escribe (ADR-015 §5). El mantenedor puede reemplazarlo.
-- **Related:** ADR-003, ADR-013, ADR-017, ADR-018, ADR-021, ADR-023 §9, ADR-015 §3 y §5, F2-116 (#290), F2-117 (#291)
+- **Related:** ADR-001, ADR-003, ADR-013, ADR-014, ADR-017, ADR-018, ADR-021, ADR-023 §9, ADR-015 §3 y §5, F2-116 (#290), F2-117 (#291)
 
 ## Context
 
@@ -24,12 +24,13 @@ Hoy no hay forma de añadir una membresía sin invitación: `create_organization
 - El setting `TEST_ACCOUNTS_ORGANIZATION` (variable `DJANGO_TEST_ACCOUNTS_ORGANIZATION`) nombra el slug de la organización de pruebas.
 - Vacío significa desactivado, y es el valor por defecto.
 - Con `production`, la aplicación **no arranca** si tiene valor (`ImproperlyConfigured`), como con `DEBUG`.
+- El job de migraciones (`config.settings.migrate`, que conecta con BYPASSRLS) lo deja siempre vacío, aunque reciba la variable.
 - El frontend no tiene interruptor propio: pinta la sección solo si la ruta del backend (F2-117) responde con cuentas. Así no hay dos configuraciones que puedan contradecirse, y una variable de compilación del frontend no puede encenderla.
 
 ### 2. Cuentas sintéticas, con roles de plantilla
 
 - Cuatro cuentas, `owner@`, `administrador@`, `supervisor@` y `vendedor@` en el dominio `<slug>.gooddoggy.test`. `.test` está reservado (RFC 6761): no puede ser el correo de nadie.
-- Cada una tiene una membresía activa en la organización de pruebas y el rol de plantilla de su nombre (ADR-018). Sus permisos son los de esa plantilla: ni más ni menos.
+- Cada una tiene una membresía en la organización de pruebas, activa al crearse, y el rol de plantilla de su nombre (ADR-018). Volver a provisionar no reactiva una membresía suspendida ni quita los roles que se le hayan añadido. Sus permisos son los de esa plantilla: ni más ni menos.
 - Entran por el login normal, con contraseña, límites, CSRF y segundo paso si lo activan. Nada se salta.
 
 ### 3. El comando `provision_test_accounts`
@@ -37,7 +38,7 @@ Hoy no hay forma de añadir una membresía sin invitación: `create_organization
 - Es idempotente. Crea lo que falta y deja lo que ya está.
 - Solo funciona con el setting activo y sobre su slug.
 - Si la organización no existe, la crea por el alta controlada de siempre (`bootstrap_organization`), con la cuenta `owner@` como Owner inicial.
-- Si existe, solo sigue si su Owner es la cuenta `owner@` sintética. Si no, se niega sin cambiar nada: nunca convierte una organización real en una de pruebas.
+- Si existe, solo sigue si la cuenta `owner@` sintética tiene el rol Owner de esa organización (no basta con que exista, sea miembro o sea Owner de otra). Si no, se niega sin cambiar nada: nunca convierte una organización real en una de pruebas.
 - La contraseña de las cuentas nuevas se pide sin mostrarla, o llega por la entrada estándar. Pasa la validación de contraseñas. Las cuentas que ya existen conservan la suya. Nunca se imprime, se registra ni se audita.
 - Queda auditado (ADR-013): `test_accounts.provision.started` y `test_accounts.provisioned` en la auditoría de plataforma, con el operador y el motivo; cada membresía que añade, `membership.activated`, y cada rol, `membership.role_assigned`, en la del tenant. Si la organización es nueva, su alta deja además las filas de siempre.
 
@@ -51,7 +52,7 @@ Hoy no hay forma de añadir una membresía sin invitación: `create_organization
 
 - Una ruta pública enseña el correo y el rol de las cuentas sintéticas que existen y están activas en la organización de pruebas. Sin contraseñas, tokens ni nada más.
 - Con el setting vacío responde 404, como una ruta que no existe.
-- Es una excepción **acotada** a «no decir si una cuenta existe» (ADR-021): solo para las cuentas del dominio `.test` de la organización de pruebas, que son públicas por definición. Fuera de eso, el login y la recuperación siguen sin decir nada.
+- Es una excepción **acotada** a «no decir si una cuenta existe» (ADR-014, en el login, y ADR-021, en la recuperación) y a no revelar qué organizaciones existen (ADR-001): solo para las cuentas del dominio `.test` de la organización de pruebas, que son públicas por definición. Fuera de eso, el login y la recuperación siguen sin decir nada.
 
 ## Alternatives considered
 

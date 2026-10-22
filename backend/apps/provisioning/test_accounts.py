@@ -5,13 +5,15 @@ Solo con `TEST_ACCOUNTS_ORGANIZATION` activo, que `production` rechaza. Idempote
 falta y deja lo que hay. Nunca toca una organización cuyo Owner no sea la cuenta sintética.
 """
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 from apps.access.bootstrap import grant_template_role, holds_owner_role
-from apps.accounts.bootstrap import account_exists, test_account
+from apps.accounts.bootstrap import account_exists, check_password_for, test_account
 from apps.audit import platform
 from apps.audit.services import Entity, Result, record
 from apps.organizations.bootstrap import add_test_membership
@@ -20,6 +22,7 @@ from core.tenancy.context import TenantContext
 from core.tenancy.resolution import organization_by_slug
 from core.tenancy.scope import tenant_scope
 
+logger = logging.getLogger(__name__)
 STARTED, DONE = "test_accounts.provision.started", "test_accounts.provisioned"
 NAME = "Good Doggy · Pruebas"
 # (parte local del correo, código de la plantilla de rol), en el orden en que se enseñan.
@@ -70,19 +73,24 @@ def _slug() -> str:
     return slug
 
 
-def provision(*, password: Callable[[], str], operator: str, reason: str) -> Provisioned:
-    """Deja la organización de pruebas con sus cuatro cuentas. `password` solo se llama si hay
-    que crear alguna cuenta, y la contraseña no se guarda en ningún otro sitio que su hash."""
+def provision(*, password: str | None, operator: str, reason: str) -> Provisioned:
+    """Deja la organización de pruebas con sus cuatro cuentas. `password` es la de las cuentas
+    que falten: se valida contra todas ellas antes de escribir nada, así que o valen todas o no se
+    crea ninguna. Solo se guarda su hash."""
     slug = _slug()
     operator, reason = checked_trail(operator, reason)
     result = Provisioned(slug)
     owner_email = email_for(slug, "owner")
-    chosen: list[str] = []
+    missing = missing_accounts()
+    if missing:
+        if password is None:
+            raise ValidationError("Faltan cuentas de prueba: hace falta su contraseña")
+        check_password_for(password, missing)
 
     def secret() -> str:
-        if not chosen:
-            chosen.append(password())
-        return chosen[0]
+        if password is None:  # una cuenta borrada entre la comprobación y el alta
+            raise ValidationError("Faltan cuentas de prueba: hace falta su contraseña")
+        return password
 
     found = organization_by_slug(slug)
     organization_id = found.id if found else None
@@ -112,13 +120,16 @@ def provision(*, password: Callable[[], str], operator: str, reason: str) -> Pro
             for local, template in PROFILES[1:]:
                 _profile(ctx, email_for(slug, local), template, secret, result, trail)
     except Exception as error:
-        platform.record(
-            DONE,
-            actor_type=platform.Actor.SYSTEM,
-            entity=entity,
-            metadata={**trail, "error": type(error).__name__},
-            result=Result.FAILED,
-        )
+        try:
+            platform.record(
+                DONE,
+                actor_type=platform.Actor.SYSTEM,
+                entity=entity,
+                metadata={**trail, "error": type(error).__name__},
+                result=Result.FAILED,
+            )
+        except Exception:  # sin fila de resultado (ADR-013 §5): manda el error original
+            logger.exception("cuentas de prueba: no se pudo registrar el resultado")
         raise
     platform.record(
         DONE,
