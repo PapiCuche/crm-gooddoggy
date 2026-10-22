@@ -4,6 +4,7 @@ sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 from typing import Any
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 from django.test import Client
 
@@ -47,10 +48,14 @@ def test_movements_levels_and_the_ledger(ana: Client, world: Any) -> None:
     assert post(ana, here, "ISSUE", quantity=3).status_code == 201
     counted = post(ana, here, "ADJUSTMENT", quantity=5).json()
     assert (counted["quantity"], counted["on_hand_after"]) == (-2, 5)
+    post(ana, cell(world.a, "OTRA"), "RECEIPT")  # otra variante, en el mismo almacén
     ledger = ana.get(MOVEMENTS, {"variant_id": str(here[0])}).json()["results"]
     assert [row["quantity"] for row in ledger] == [-2, -3, 10]  # el más reciente primero
     rows = ana.get(LEVELS, {"warehouse_id": str(here[1])}).json()["results"]
-    assert [(r["on_hand"], r["reserved"], r["available"]) for r in rows] == [(5, 0, 5)]
+    assert sorted((r["on_hand"], r["reserved"], r["available"]) for r in rows) == [
+        (1, 0, 1),
+        (5, 0, 5),
+    ]
     assert ana.get(LEVELS, {"variant_id": str(uuid4())}).json()["results"] == []
     assert ana.get(LEVELS, {"variant_id": "x"}).status_code == 400
 
@@ -80,7 +85,9 @@ def test_each_refusal_has_its_code_or_its_field(ana: Client, world: Any) -> None
     assert level(world.a, here) == (1, 0, 1)
 
 
-def test_a_warehouse_with_stock_is_not_deleted(ana: Client, world: Any) -> None:
+def test_a_warehouse_with_stock_is_not_deleted(
+    ana: Client, world: Any, migrator: psycopg.Connection[Any]
+) -> None:
     here = cell(world.a)
     item = f"/api/v1/o/org-a/warehouses/{here[1]}/"
     post(ana, here, "RECEIPT")
@@ -88,6 +95,8 @@ def test_a_warehouse_with_stock_is_not_deleted(ana: Client, world: Any) -> None:
     assert refused.status_code == 409 and refused.json()["code"] == "WAREHOUSE_HAS_STOCK"
     post(ana, here, "ISSUE")
     assert send(ana, "delete", item).status_code == 204
+    audit = "SELECT count(*) FROM audit_logs WHERE action = 'warehouse.deleted'"
+    assert migrator.execute(audit).fetchone() == (1,)
     assert send(ana, "delete", item).status_code == 404
     assert "warehouse_id" in post(ana, here, "RECEIPT").json()["fields"]  # ya no existe
 
@@ -114,6 +123,7 @@ def test_permissions_and_isolation(world: Any) -> None:
     assert viewer.get(LEVELS).status_code == 403
     give(world.a, world.membership, VIEW)
     assert post(viewer, here, "RECEIPT").status_code == 403
+    assert send(viewer, "delete", f"/api/v1/o/org-a/warehouses/{here[1]}/").status_code == 403
     move(world.a, world.ana, wanted(here, "RECEIPT", 1))
     move(world.b, None, wanted(cell(world.b, "B"), "RECEIPT", 7))
     assert [row["on_hand"] for row in viewer.get(LEVELS).json()["results"]] == [1]
