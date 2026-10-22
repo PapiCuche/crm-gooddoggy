@@ -97,7 +97,7 @@ def with_password_and_code[T](
     hace nada: cierra la sesión y lanza `ApiError` 401.
     """
     if connection.in_atomic_block:  # la fila de un rechazo se desharía con esa transacción
-        raise RuntimeError("no se llama dentro de una transacción")
+        raise RuntimeError("with_password_and_code no se llama dentro de una transacción")
     user, client = request.user, client_of(request)
     assert isinstance(user, User)  # noqa: S101 — la ruta exige sesión
     if not MfaDevice.objects.filter(user=user, confirmed_at__isnull=False).exists():

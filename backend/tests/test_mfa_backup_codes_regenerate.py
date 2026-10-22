@@ -92,6 +92,7 @@ def test_a_backup_code_does_not_buy_ten_more_and_is_not_spent(
     assert kept(ana) == old  # los mismos códigos
     assert MfaBackupCode.objects.filter(user=ana, used_at__isnull=True).count() == 9  # sin gastar
     assert MfaCodeAttempt.objects.count() == 1  # y cuenta como un código que no vale
+    assert counters(migrator)["par"] == 1  # también por dirección: lo devuelto se deshizo
     (row,) = audit(migrator)
     assert row[:2] == ("auth.mfa.backup_codes_regenerated", "DENIED")
     assert row[7] == '{"reason": "code"}'
