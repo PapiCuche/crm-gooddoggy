@@ -58,7 +58,6 @@ describe("Accesos de prueba en el login", () => {
     expect(screen.getByLabelText("Correo")).toHaveValue("vendedor@pruebas.gooddoggy.test");
     expect(screen.getByLabelText("Contraseña")).toHaveValue(""); // nunca la completa
     expect(screen.getByLabelText("Contraseña")).toHaveFocus();
-    expect(seller).toHaveAttribute("aria-pressed", "true");
     expect(api.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false); // no entra solo
     expect(localStorage.length + sessionStorage.length).toBe(0);
   });

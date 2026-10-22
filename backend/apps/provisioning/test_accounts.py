@@ -24,7 +24,7 @@ from apps.audit.services import Entity, Result, record
 from apps.organizations.bootstrap import active_membership_id, add_test_membership
 from apps.provisioning.services import bootstrap_organization, checked_trail
 from core.tenancy.context import TenantContext
-from core.tenancy.resolution import organization_by_slug
+from core.tenancy.resolution import ACCESSIBLE_STATUSES, organization_by_slug
 from core.tenancy.scope import tenant_scope
 
 logger = logging.getLogger(__name__)
@@ -191,9 +191,9 @@ def listed() -> list[Listed]:
     correos y nombres de rol: nada que sirva para entrar."""
     slug = _slug()
     found = organization_by_slug(slug)
-    if found is None:
+    if found is None or found.status not in ACCESSIBLE_STATUSES:  # suspendida: nadie entraría
         return []
-    ctx = TenantContext(found.id, "http")  # actor SYSTEM, solo lectura
+    ctx = TenantContext(found.id, "http")  # actor SYSTEM; solo consultas
     shown: list[Listed] = []
     with tenant_scope(ctx):
         owner = active_account_id(email_for(slug, "owner"))
