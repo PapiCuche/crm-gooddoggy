@@ -79,6 +79,7 @@ def test_create_and_change_a_warehouse_audited(
     assert [row["id"] for row in ana.get(WAREHOUSES).json()["results"]] == [body["id"]]
     assert send(ana, "patch", f"{WAREHOUSES}{uuid4()}/", {"name": "x"}).status_code == 404
     assert [action for action, _ in audit(migrator)] == ["warehouse.created", "warehouse.updated"]
+    assert audit(migrator)[0][1]["code"] == [None, "ALM-1"]
     changes = {"name": ["Almacén central", "Tienda Lima"], "is_active": [True, False]}
     assert audit(migrator)[1][1] == changes
 
@@ -90,7 +91,7 @@ def test_the_code_is_unique_among_live_ones_and_the_branch_is_of_the_organizatio
     first = create(ana, lima.pk).json()
     taken = create(ana, lima.pk, code="ALM-1")
     assert taken.status_code == 409 and taken.json()["code"] == "WAREHOUSE_CODE_TAKEN"
-    for bad in ({"code": "ñ 1"}, {"name": "  "}, {"type": "SHOP"}, {"is_sellable": "x"}):
+    for bad in ({"code": "ſ1"}, {"name": "  "}, {"type": "SHOP"}, {"is_sellable": "x"}):
         refused = create(ana, lima.pk, **bad)
         assert refused.status_code == 400 and set(refused.json()["fields"]) == set(bad)
     for other in (foreign.pk, uuid4()):
@@ -99,6 +100,7 @@ def test_the_code_is_unique_among_live_ones_and_the_branch_is_of_the_organizatio
     with tenant_scope(ctx(world.a)):  # un borrado lógico libera el código
         Warehouse.objects.filter(pk=first["id"]).update(deleted_at=timezone.now())
     assert send(ana, "patch", f"{WAREHOUSES}{first['id']}/", {"name": "x"}).status_code == 404
+    assert ana.get(WAREHOUSES).json()["results"] == []  # ni se lista
     assert create(ana, lima.pk).status_code == 201
 
 
