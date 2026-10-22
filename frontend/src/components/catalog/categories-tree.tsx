@@ -13,17 +13,19 @@ import { CategoryCreate } from "./category-create";
 
 export type CategoryNode = Category & { children: CategoryNode[] };
 
-// Todas las categorías: el árbol se arma entero, así que se sigue el cursor hasta el final.
-async function allCategories(slug: string, signal: AbortSignal): Promise<Category[]> {
-  const found: Category[] = [];
+// Todas las filas de un listado (el árbol se arma entero; un `select`, también): se sigue el
+// cursor hasta el final.
+export async function everyPage<Row>(
+  fetchPage: (params: {
+    limit: number;
+    cursor?: string;
+  }) => Promise<{ results: Row[]; next?: string | null }>,
+): Promise<Row[]> {
+  const found: Row[] = [];
   const seen = new Set<string>();
   let cursor: string | undefined;
   do {
-    const page = await categoriesList(
-      slug,
-      { limit: 200, ...(cursor ? { cursor } : {}) },
-      { signal },
-    );
+    const page = await fetchPage({ limit: 200, ...(cursor ? { cursor } : {}) });
     found.push(...page.results);
     cursor = page.next ?? undefined;
     // Un cursor repetido no avanza: es un fallo de la API, no una lista sin fin.
@@ -35,7 +37,7 @@ async function allCategories(slug: string, signal: AbortSignal): Promise<Categor
 
 // Por `path` (los slugs de la rama): cada categoría va después de su madre y antes de la
 // hermana siguiente. Sin `localeCompare`: el orden de los caracteres, no el del idioma.
-function grow(found: Category[]): CategoryNode[] {
+export function grow(found: Category[]): CategoryNode[] {
   const sorted = [...found].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const nodes = new Map(sorted.map((row) => [row.id, { ...row, children: [] as CategoryNode[] }]));
   const roots: CategoryNode[] = [];
@@ -44,7 +46,7 @@ function grow(found: Category[]): CategoryNode[] {
   }
   return roots;
 }
-const flatten = (nodes: CategoryNode[]): CategoryNode[] =>
+export const flatten = (nodes: CategoryNode[]): CategoryNode[] =>
   nodes.flatMap((node) => [node, ...flatten(node.children)]);
 
 // Una categoría y, debajo, sus hijas en otra lista: el anidamiento es el del árbol.
@@ -91,7 +93,9 @@ export function CategoriesTree() {
       organization={organization.name}
       listKey={listKey}
       fetchPage={async (_cursor, signal) => ({
-        results: grow(await allCategories(organization.slug, signal)),
+        results: grow(
+          await everyPage((params) => categoriesList(organization.slug, params, { signal })),
+        ),
         next: null,
       })}
       notice={(roots) => (

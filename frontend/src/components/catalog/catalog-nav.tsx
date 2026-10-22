@@ -7,10 +7,11 @@ import { useTranslations } from "next-intl";
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { cn } from "@/lib/utils";
 
-// Las páginas del catálogo. Las dos leen con `products.view`, el permiso de la entrada «Catálogo».
+// Las páginas del catálogo. Todas leen con `products.view`, el permiso de la entrada «Catálogo».
 const PAGES = [
   { key: "brands", path: "/catalogo/marcas" },
   { key: "categories", path: "/catalogo/categorias" },
+  { key: "products", path: "/catalogo/productos" },
 ] as const;
 
 // Navegación entre las páginas del catálogo (F3-05), encima de cada una.

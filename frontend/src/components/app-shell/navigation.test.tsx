@@ -190,6 +190,7 @@ describe("navegación del shell", () => {
     expect(found).toEqual([
       ["Marcas", "/o/acme/catalogo/marcas", null],
       ["Categorías", "/o/acme/catalogo/categorias", "page"],
+      ["Productos", "/o/acme/catalogo/productos", null],
     ]);
   });
 });
