@@ -81,6 +81,9 @@ describe("AccountSecurity", () => {
     expect(calls(api, "/mfa/totp/")).toHaveLength(2); // la que no valía y esta
     expect(screen.getByText(/Abre tu aplicación de autenticación/)).toHaveFocus();
     expect(
+      screen.getByRole("img", { name: /Código QR para añadir la cuenta/ }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("link", { name: "Abrir en la aplicación de autenticación" }),
     ).toHaveAttribute("href", URI);
     fireEvent.click(screen.getByRole("button", { name: "Copiar la clave" }));
