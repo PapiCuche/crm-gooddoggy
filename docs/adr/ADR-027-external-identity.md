@@ -9,7 +9,7 @@
 
 El mantenedor quiere que Good Doggy CRM funcione en tres escenarios:
 
-- **A. Independiente.** Una persona se registra e inicia sesión directamente en el CRM. Es lo único que existe hoy: correo y contraseña, con segundo factor (ADR-003, ADR-023).
+- **A. Independiente.** Una persona tiene una cuenta del CRM e inicia sesión directamente en él, con correo y contraseña y segundo factor (ADR-003, ADR-023). Es lo único que existe hoy. Las cuentas nacen con el alta de una organización o con una invitación (ADR-020); no hay registro propio.
 - **B. Federado.** Una persona inicia sesión con su identidad de BlackDogStorePeru.com, cuando exista un proveedor de identidad confiable y compatible.
 - **C. Vinculado.** Una persona con cuenta del CRM conecta su identidad de la tienda y conserva sus organizaciones, roles, permisos y datos.
 
@@ -21,7 +21,6 @@ Investigación pasiva y de solo lectura: peticiones públicas al sitio y lectura
 
 - **Verificado:** la tienda es una aplicación propia (Next.js y Django). Sus usuarios entran con usuario o correo y contraseña, y la sesión es un token interno de la propia tienda.
 - **Verificado:** no publica un proveedor de identidad estándar. `/.well-known/openid-configuration`, `/.well-known/oauth-authorization-server` y `/.well-known/jwks.json` responden 404. No hay emisor, claves públicas ni registro de clientes. No hay OIDC, SAML ni login social.
-- **Verificado:** la tienda no tiene segundo factor.
 - **Hipótesis:** como el código es del mantenedor, la vía realista es añadir a la tienda un proveedor OIDC, o poner un proveedor independiente delante de los dos sistemas. Esa decisión no se toma aquí.
 
 **Conclusión: hoy no hay ningún proveedor al que el CRM pueda federarse.** Este ADR fija el modelo y el contrato, y no declara ninguna integración operativa.
@@ -68,8 +67,9 @@ Una tabla nueva, `external_identities`, de plataforma (ADR-001 §2: no es de un 
 
 - Que el correo coincida no vincula nada, ni sugiere nada sin que la persona esté autenticada en los dos lados. Un correo no es un identificador del proveedor: puede repetirse, cambiar de dueño o declararse sin verificar, así que vincular por correo permitiría tomar cuentas ajenas.
 - Un primer login federado sin identidad vinculada **no entra** en una cuenta existente con ese correo, y la respuesta no dice si esa cuenta existe. Con el registro federado apagado, que es el valor por defecto, dice que hay que entrar con una cuenta del CRM y vincular desde ahí (escenario C).
-- **Registro federado**, solo si el mantenedor lo activa: el CRM no crea la cuenta con el correo que declara el proveedor, aunque traiga `email_verified`. Manda un enlace de un solo uso a ese correo (ADR-019), con la misma respuesta exista o no una cuenta: si no existe, el enlace termina el alta, sin membresías, y la vincula a la identidad de ese login; si existe, el correo dice que se entre con ella y se vincule desde ahí. El enlace solo termina el alta en el navegador que empezó ese login federado (ligado a su sesión, como el `state`), y enseña qué identidad del proveedor se vincula; abierto en otro navegador no hace nada. Si no, quien declara en el proveedor el correo de otra persona le haría crear, con un clic en su propio buzón, una cuenta vinculada a la identidad del atacante. Así nadie ocupa el correo de otra persona con una identidad del proveedor que después entraría en la cuenta que esa persona recupere (ADR-021) o con la que acepte una invitación (ADR-020).
-- **Tope de esos correos por dirección**, como en la recuperación (ADR-021 §3): una dirección recibe como mucho 5 enlaces de registro en 24 horas, con al menos 2 minutos entre dos. Se cuentan sobre la tabla de enlaces, cuenta todo enlace emitido aunque no se entregue, y dos peticiones simultáneas para la misma dirección no pasan el tope. Pasado el tope no se envía nada, y la respuesta es la misma. Así nadie llena el buzón de otra persona desde un proveedor.
+- **Registro federado**, apagado. Encenderlo pide una decisión propia del mantenedor: sirve sobre todo a personas que no son empleados, y la primera población son empleados y operadores (§0). Si se enciende, el CRM no crea la cuenta con el correo que declara el proveedor, aunque traiga `email_verified`. Manda un enlace de un solo uso a ese correo (ADR-019), con la misma respuesta exista o no una cuenta: si no existe, el enlace termina el alta, sin membresías, y la vincula a la identidad de ese login; si existe, el correo dice que se entre con ella y se vincule desde ahí. El enlace solo termina el alta en el navegador que empezó ese login federado (ligado a su sesión, como el `state`), y enseña qué identidad del proveedor se vincula; abierto en otro navegador no hace nada. Si no, quien declara en el proveedor el correo de otra persona le haría crear, con un clic en su propio buzón, una cuenta vinculada a la identidad del atacante. Así nadie ocupa el correo de otra persona con una identidad del proveedor que después entraría en la cuenta que esa persona recupere (ADR-021) o con la que acepte una invitación (ADR-020).
+- **Tope de esos correos por dirección de correo**, como en la recuperación (ADR-021 §3): una dirección de correo recibe como mucho 5 enlaces de registro en 24 horas, con al menos 2 minutos entre dos, vengan de las direcciones de red que vengan. Se cuentan sobre la tabla de enlaces, cuenta todo enlace emitido aunque no se entregue, y dos peticiones simultáneas para la misma dirección de correo no pasan el tope. Pasado el tope no se envía nada, y la respuesta es la misma. Así nadie llena el buzón de otra persona desde un proveedor.
+- **Dónde se cuentan.** Los enlaces pendientes de registro viven en una tabla propia, que nombra el work item que encienda el registro; como en ADR-021, se guarda el hash del enlace, nunca el enlace. Todavía no hay una fila de cuenta que bloquear, así que las peticiones de una misma dirección de correo se serializan con otro cerrojo, por ejemplo un advisory lock sobre el hash de la dirección, tomado antes de contar y de escribir.
 - Una cuenta creada así **no tiene contraseña utilizable** ni segundo factor. Lo que ADR-023 protege con la contraseña actual (dar de alta y quitar el segundo factor, regenerar los códigos) y lo que este ADR protege con un acceso reciente (§4, desvincular) le queda cerrado hasta que ponga una por la recuperación (ADR-021). Un login federado no sustituye a la contraseña en esas operaciones: eso relajaría ADR-023 §4, §6 y §8. Y como un login federado pide un segundo factor confirmado del CRM (§5), esa cuenta no entra federada hasta tener contraseña y segundo factor.
 
 ### 4. Vincular (escenario C)
@@ -78,7 +78,7 @@ Solo desde una sesión del CRM, en «Seguridad de la cuenta»:
 
 1. La cuenta **tiene un segundo factor confirmado en el CRM** (ADR-023). Sin él, no se vincula. La persona confirma con un acceso reciente: la contraseña y un código del segundo factor (step-up, ADR-023 §7).
 2. El CRM inicia Authorization Code con PKCE (S256), con `state` y `nonce` de un solo uso ligados a la sesión, válidos pocos minutos, y pide que la persona se autentique de nuevo en el proveedor (`prompt=login`, `max_age=0`). Una sesión que el navegador ya tuviera abierta en el proveedor no basta: puede ser de otra persona, o de un atacante que la dejó abierta allí (login CSRF en el proveedor), y vincular esa identidad le daría la cuenta del CRM.
-3. A la vuelta, el CRM comprueba la respuesta de autorización (§6, ataque de mezcla) y después valida el `id_token`: `alg` dentro de la lista asimétrica configurada para ese proveedor (nunca `none` ni HS*), firma con la clave del JWKS por `kid` (§6, claves), `iss` exacto, `aud` que contiene su `client_id` (y `azp` igual a él si hay varias audiencias), `exp` e `iat` con un margen de reloj corto, `nonce`, y `auth_time` posterior al inicio del flujo.
+3. A la vuelta, el CRM comprueba la respuesta de autorización (§6, ataque de mezcla) y después valida el `id_token`: `alg` dentro de la lista asimétrica configurada para ese proveedor (nunca `none` ni HS*), firma con la clave del JWKS por `kid` (§6, claves), `iss` exacto, `aud` que contiene su `client_id` (y `azp` igual a él si hay varias audiencias), `exp` e `iat` con un margen de reloj corto, `nonce`, y `auth_time` posterior al inicio del flujo, con el mismo margen de reloj.
 4. El CRM enseña qué identidad del proveedor va a vincular (el nombre o el correo que declara) y la persona lo confirma con un `POST` con CSRF. Hasta entonces no se escribe nada.
 5. Si `(issuer, subject)` ya está vinculado a otro `User`, se rechaza sin decir a cuál.
 6. Si no, se crea la fila, se audita, se rotan la sesión y su época como en el alta del segundo factor (ADR-023 §4), y se avisa por correo a la cuenta del CRM.
@@ -89,7 +89,7 @@ Así se prueba el control de las dos cuentas: la del CRM por la sesión reciente
 
 - **La página de login nunca llama al proveedor mientras se pinta.** El botón del proveedor sale de un estado de salud guardado en caché, que actualiza una tarea en segundo plano consultando el discovery y el JWKS. Si la última comprobación falló o es demasiado vieja, el botón no se enseña. El login local nunca espera al proveedor.
 - El inicio de sesión comprueba la respuesta de autorización y valida el `id_token` como la vinculación (§4, paso 3), salvo `auth_time`: no pide autenticarse de nuevo en el proveedor.
-- **Solo se completa en una cuenta con un segundo factor confirmado en el CRM.** Con `(issuer, subject)` vinculado a una cuenta activa con segundo factor, el `id_token` válido hace lo que hace la contraseña correcta en ADR-023 §5: no abre sesión, deja la marca de acceso a medias y pide el código. El segundo paso es el mismo, con su tope por cuenta. Al completarlo, la sesión se abre con las reglas de ADR-003: ID nuevo, época de la cuenta, `mfa_verified_at`, límites y auditoría.
+- **Solo se completa en una cuenta con un segundo factor confirmado en el CRM.** Con `(issuer, subject)` vinculado a una cuenta activa con segundo factor, el `id_token` válido hace lo que hace la contraseña correcta en ADR-023 §5: no abre sesión, deja la marca de acceso a medias y pide el código. La marca guarda además el método (`external:<provider>`) y el `sid`, si lo hay. El segundo paso es el mismo, con su tope por cuenta. Al completarlo, la sesión se abre con las reglas de ADR-003: ID nuevo, época de la cuenta, `mfa_verified_at`, límites y auditoría, y hereda de la marca el método y el `sid`: una sesión federada nunca queda registrada como `password`.
 - Sin segundo factor confirmado (nunca lo tuvo, o lo quitó, ADR-023 §8), el login federado se rechaza con la misma respuesta que una identidad sin vincular, y se audita con su motivo interno. La persona entra con su cuenta del CRM.
 - El `amr`/`acr` del proveedor nunca sustituye al segundo factor del CRM ni anota `mfa_verified_at` (step-up, ADR-023 §7): aceptarlo cambiaría ADR-023 §5 y pediría otro ADR.
 - La sesión guarda **cómo se entró**: `password` o `external:<provider>`, y el `sid` del proveedor si el `id_token` lo trae (§7). La política por organización (§9) y el cierre de sesión (§7) lo leen de ahí.
@@ -101,7 +101,7 @@ Así se prueba el control de las dos cuentas: la del CRM por la sesión reciente
 | Proveedor caído o lento | El botón se oculta según el estado de salud en caché (§5). El login local y el segundo factor del CRM siguen. El discovery y el JWKS se guardan en caché con un tiempo acotado. |
 | `kid` desconocido | Una sola descarga nueva del JWKS, con un límite de frecuencia por proveedor. Si la clave sigue sin estar, el token se rechaza. Un `kid` desconocido nunca provoca más descargas que ese límite. |
 | Clave retirada del JWKS | Deja de aceptarse cuando vence el tiempo de la caché. Ese tiempo es acotado y configurable por proveedor. |
-| Ataque de mezcla con varios proveedores | Cada proveedor tiene su propia `redirect_uri`. El estado del flujo guarda qué proveedor lo empezó, y una vuelta que llega por la `redirect_uri` de otro se rechaza. El parámetro `iss` de la respuesta de autorización (RFC 9207) tiene que ser exactamente el emisor de ese proveedor, y se comprueba antes de canjear el código. Con más de un proveedor configurado, ese parámetro es obligatorio (§8). |
+| Ataque de mezcla con varios proveedores | Cada proveedor tiene su propia `redirect_uri`. El estado del flujo guarda qué proveedor lo empezó, y una vuelta que llega por la `redirect_uri` de otro se rechaza. El parámetro `iss` de la respuesta de autorización (RFC 9207) tiene que ser exactamente el emisor de ese proveedor, y se comprueba antes de canjear el código. Si el proveedor anuncia `authorization_response_iss_parameter_supported`, una respuesta sin `iss` se rechaza, también con un solo proveedor. Con más de un proveedor configurado, el parámetro es obligatorio (§8). Una respuesta de error pasa la misma comprobación antes de enseñar nada. |
 | Identidad revocada o cuenta deshabilitada en el proveedor | Deja de servir para logins nuevos (el proveedor no emite el token). Si el proveedor envía un logout token válido (§7), el CRM cierra todas las sesiones de la cuenta vinculada. La cuenta y la vinculación del CRM no se tocan. |
 | Cuenta local ya existente con el mismo correo | No se mezcla (§3). |
 | `(issuer, subject)` ya vinculado a otro `User` | Se rechaza sin decir a quién, y se audita. |
@@ -124,13 +124,14 @@ Así se prueba el control de las dos cuentas: la del CRM por la sesión reciente
 
 - es un JWT firmado con una clave del JWKS del proveedor, con un `alg` de su lista asimétrica, y su `kid` sigue las reglas de §6;
 - `iss` es exactamente el emisor del proveedor, y `aud` contiene el `client_id` del CRM;
-- `iat` está dentro de una ventana corta, con un margen de reloj corto, y `exp` no ha pasado si lo trae;
+- si la cabecera trae `typ`, es `logout+jwt`;
+- `iat` está dentro de una ventana corta, con un margen de reloj corto, y `exp` está presente y no ha pasado;
 - `jti` está presente y no se ha visto antes: se guarda hasta que la ventana de `iat` vence, y un `jti` repetido se rechaza;
 - `events` contiene el miembro `http://schemas.openid.net/event/backchannel-logout`;
-- trae `sub`, `sid` o los dos;
+- trae `sub`. El estándar permite un logout token con solo `sid`, pero mientras no existan registros por sesión el CRM no puede atribuir un `sid` suelto a una cuenta: un logout token sin `sub` se rechaza, y el contrato pide `sub` (§8);
 - **no** trae `nonce`. Un token con `nonce` es un `id_token` y se rechaza.
 
-Mientras no existan registros por sesión, el CRM no puede atribuir un `sid` suelto a una cuenta: un logout token sin `sub` se rechaza, y el contrato pide `sub` (§8). La ruta tiene un límite de frecuencia por proveedor. La respuesta no dice a qué cuenta afectó, ni si existía.
+La ruta tiene un límite de frecuencia por proveedor. La respuesta no dice a qué cuenta afectó, ni si existía.
 
 **Lo que se guarda para cerrar la sesión.** En la sesión del CRM, el proveedor y su `sid`, si el `id_token` lo trae. **Nunca** el `id_token`, el token de acceso, el de refresco ni el código de autorización.
 
@@ -143,7 +144,7 @@ Hoy ninguno lo cumple. El CRM no se federará con nada que no lo cumpla.
 1. **OIDC Discovery** por HTTPS en `/.well-known/openid-configuration`, con un `issuer` exacto y estable.
 2. **JWKS** con claves asimétricas (RS256, ES256 o EdDSA), con `kid`, rotables sin cortes: una clave nueva se publica antes de usarla, y una vieja sigue publicada mientras haya tokens válidos firmados con ella. **Nunca un secreto compartido**: con un secreto compartido, el CRM podría falsificar sesiones del proveedor.
 3. **Authorization Code + PKCE (S256)**, con `state` y `nonce`, y soporte de `prompt=login` y `max_age`. Sin flujo implícito ni contraseña directa.
-4. **El parámetro `iss` en la respuesta de autorización** (RFC 9207, `authorization_response_iss_parameter_supported`). Obligatorio si el CRM configura más de un proveedor.
+4. **El parámetro `iss` en la respuesta de autorización** (RFC 9207, `authorization_response_iss_parameter_supported`), también en las respuestas de error. Obligatorio si el CRM configura más de un proveedor. Si el proveedor lo anuncia, el CRM lo exige siempre.
 5. **Registro de cliente**: un `client_id` propio del CRM, cliente confidencial (secreto o `private_key_jwt`), `redirect_uris` exactas por entorno y una por proveedor, y scopes mínimos (`openid email profile`).
 6. **`id_token`** firmado con un algoritmo asimétrico, con `iss`, `aud`, `exp`, `iat`, `nonce` y `auth_time`, un `sub` estable, único en el emisor y nunca reasignado, y `sid` si el proveedor ofrece cierre de sesión.
 7. **`email` y `email_verified`**, solo informativos.
@@ -195,7 +196,7 @@ Ninguno empieza hasta que un proveedor cumpla el §8. La integración solo se de
 
 - **Vincular automáticamente por correo.** Permite tomar cuentas ajenas: en un proveedor, un correo puede repetirse, cambiar de dueño o declararse sin verificar. Descartado.
 - **Aceptar los tokens actuales de la tienda.** Son tokens internos de sesión, sin emisor, audiencia ni claves públicas: no están hechos para que un tercero los verifique. Descartado.
-- **Que el proveedor sea la única forma de entrar.** El CRM dependería de la disponibilidad de la tienda, y sería más débil que hoy, porque la tienda no tiene segundo factor. Descartado.
+- **Que el proveedor sea la única forma de entrar.** El CRM dependería de la disponibilidad de la tienda, y su acceso dependería de la seguridad del proveedor. Descartado: el CRM conserva su login y pide siempre su propio segundo factor (§5).
 - **Copiar membresías o roles desde la tienda.** Mezcla dos modelos de permisos y deja que otro sistema conceda acceso al CRM. Descartado.
 - **Cerrar solo las sesiones abiertas con la identidad.** Necesita registros por sesión, que no existen (E01-11). Mientras tanto, cerrarlas todas por la época es más seguro que no cerrar ninguna. Aplazado.
 - **Guardar el `id_token` para el cierre de sesión.** Es una credencial del proveedor guardada sin necesidad. Basta el `sid`. Descartado.
@@ -218,7 +219,7 @@ Ninguno empieza hasta que un proveedor cumpla el §8. La integración solo se de
 - Los ataques de mezcla se cierran con una `redirect_uri` por proveedor y el `iss` de la respuesta de autorización (RFC 9207).
 - Un `kid` desconocido no fuerza descargas sin límite del JWKS, y una clave retirada deja de valer al vencer la caché.
 - No se guarda ningún token del proveedor: el `sid` sirve para cerrar la sesión y no da acceso a nada.
-- El registro federado está apagado por defecto. Si se activa, no ocupa correos ajenos (§3) ni llena buzones (tope por dirección).
+- El registro federado está apagado por defecto. Si se activa, no ocupa correos ajenos (§3) ni llena buzones (tope por dirección de correo).
 
 ## Operational implications
 
