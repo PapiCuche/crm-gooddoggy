@@ -993,8 +993,8 @@ paths:
           description: ''
     delete:
       operationId: brands_delete
-      description: 'Borra la marca (borrado lógico) y libera su slug. 404: no es de
-        la organización o ya está borrada.'
+      description: 'Borra la marca (borrado lógico) y libera su slug. 409 `BRAND_IN_USE`:
+        productos vivos la usan. 404: no es de la organización o ya está borrada.'
       parameters:
       - in: path
         name: brand_id
@@ -1027,6 +1027,12 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -1219,7 +1225,8 @@ paths:
     delete:
       operationId: categories_delete
       description: 'Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`:
-        tiene subcategorías. 404: no es de la organización o ya está borrada.'
+        tiene subcategorías; `CATEGORY_IN_USE`: productos vivos la usan. 404: no es
+        de la organización o ya está borrada.'
       parameters:
       - in: path
         name: category_id
@@ -1964,6 +1971,171 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/products/{product_id}/:
+    patch:
+      operationId: products_update
+      description: 'Cambia lo que se envía; el slug y el tipo no cambian. Renombrarlo
+        renombra su variante por defecto. 404: no es de la organización o está borrado.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - catalog
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedProductUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: products_delete
+      description: Borra el producto y sus variantes (borrado lógico); sus SKU quedan
+        libres.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - catalog
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/products/{product_id}/variants/:
+    get:
+      operationId: variants_list
+      description: Las variantes vivas de un producto, paginadas por creación. 404
+        si el producto no es de la organización o está borrado.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - catalog
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedVariantList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -2952,6 +3124,18 @@ components:
           description: Dentro de qué categoría; sin él, en la raíz.
       required:
       - name
+    ConditionEnum:
+      enum:
+      - NEW
+      - OPEN_BOX
+      - REFURBISHED
+      - USED
+      type: string
+      description: |-
+        * `NEW` - New
+        * `OPEN_BOX` - Open Box
+        * `REFURBISHED` - Refurbished
+        * `USED` - Used
     Error:
       type: object
       properties:
@@ -3527,6 +3711,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedVariantList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Variant'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PasswordResetConfirmRequest:
       type: object
       properties:
@@ -3600,6 +3798,31 @@ components:
           format: uuid
           nullable: true
           description: Mueve la categoría con toda su rama; `null` la lleva a la raíz.
+    PatchedProductUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          $ref: '#/components/schemas/ProductStatusEnum'
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+        short_description:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 5000
+        ai_visible:
+          type: boolean
     PatchedRoleUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está.
@@ -4053,6 +4276,45 @@ components:
       - first_name
       - id
       - last_name
+    Variant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        barcode:
+          type: string
+        name:
+          type: string
+        condition:
+          $ref: '#/components/schemas/ConditionEnum'
+        status:
+          $ref: '#/components/schemas/VariantStatusEnum'
+        is_default:
+          type: boolean
+        ai_visible:
+          type: boolean
+      required:
+      - ai_visible
+      - barcode
+      - condition
+      - id
+      - is_default
+      - name
+      - sku
+      - status
+    VariantStatusEnum:
+      enum:
+      - ACTIVE
+      - INACTIVE
+      - DISCONTINUED
+      type: string
+      description: |-
+        * `ACTIVE` - Active
+        * `INACTIVE` - Inactive
+        * `DISCONTINUED` - Discontinued
   securitySchemes:
     sessionCookie:
       type: apiKey

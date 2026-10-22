@@ -64,11 +64,13 @@ import type {
   PaginatedRoleList,
   PaginatedTeamList,
   PaginatedTeamMemberList,
+  PaginatedVariantList,
   PasswordResetConfirmRequest,
   PasswordResetRequestRequest,
   PatchedBranchUpdateRequest,
   PatchedBrandUpdateRequest,
   PatchedCategoryUpdateRequest,
+  PatchedProductUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
   PermissionCatalog,
@@ -87,6 +89,7 @@ import type {
   TeamMembersListParams,
   TeamsListParams,
   TestAccounts,
+  VariantsListParams,
 } from "./model";
 
 import { apiFetch } from "../http";
@@ -2408,7 +2411,7 @@ export const getBrandsDeleteUrl = (orgSlug: string, brandId: string) => {
 };
 
 /**
- * Borra la marca (borrado lógico) y libera su slug. 404: no es de la organización o ya está borrada.
+ * Borra la marca (borrado lógico) y libera su slug. 409 `BRAND_IN_USE`: productos vivos la usan. 404: no es de la organización o ya está borrada.
  */
 export const brandsDelete = async (
   orgSlug: string,
@@ -2841,7 +2844,7 @@ export const getCategoriesDeleteUrl = (orgSlug: string, categoryId: string) => {
 };
 
 /**
- * Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`: tiene subcategorías. 404: no es de la organización o ya está borrada.
+ * Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`: tiene subcategorías; `CATEGORY_IN_USE`: productos vivos la usan. 404: no es de la organización o ya está borrada.
  */
 export const categoriesDelete = async (
   orgSlug: string,
@@ -4303,6 +4306,351 @@ export const useProductsCreate = <TError = ErrorType<Error>, TContext = unknown>
 > => {
   return useMutation(getProductsCreateMutationOptions(options), queryClient);
 };
+
+export const getProductsUpdateUrl = (orgSlug: string, productId: string) => {
+  return `/api/v1/o/${orgSlug}/products/${productId}/`;
+};
+
+/**
+ * Cambia lo que se envía; el slug y el tipo no cambian. Renombrarlo renombra su variante por defecto. 404: no es de la organización o está borrado.
+ */
+export const productsUpdate = async (
+  orgSlug: string,
+  productId: string,
+  patchedProductUpdateRequest?: PatchedProductUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Product> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Product>(getProductsUpdateUrl(orgSlug, productId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedProductUpdateRequest),
+  });
+};
+
+export const getProductsUpdateMutationKey = () => ["productsUpdate"] as const;
+
+export const getProductsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof productsUpdate>>,
+    TError,
+    ProductsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof productsUpdate>>,
+  TError,
+  ProductsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getProductsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof productsUpdate>>,
+    ProductsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, productId, data } = props ?? {};
+
+    return productsUpdate(orgSlug, productId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ProductsUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof productsUpdate>>>;
+export type ProductsUpdateMutationBody = PatchedProductUpdateRequest | undefined;
+export type ProductsUpdateMutationError = ErrorType<Error>;
+export type ProductsUpdateMutationVariables = {
+  orgSlug: string;
+  productId: string;
+  data?: PatchedProductUpdateRequest;
+};
+
+export const useProductsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof productsUpdate>>,
+      TError,
+      ProductsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof productsUpdate>>,
+  TError,
+  ProductsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getProductsUpdateMutationOptions(options), queryClient);
+};
+
+export const getProductsDeleteUrl = (orgSlug: string, productId: string) => {
+  return `/api/v1/o/${orgSlug}/products/${productId}/`;
+};
+
+/**
+ * Borra el producto y sus variantes (borrado lógico); sus SKU quedan libres.
+ */
+export const productsDelete = async (
+  orgSlug: string,
+  productId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getProductsDeleteUrl(orgSlug, productId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getProductsDeleteMutationKey = () => ["productsDelete"] as const;
+
+export const getProductsDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof productsDelete>>,
+    TError,
+    ProductsDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof productsDelete>>,
+  TError,
+  ProductsDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getProductsDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof productsDelete>>,
+    ProductsDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, productId } = props ?? {};
+
+    return productsDelete(orgSlug, productId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ProductsDeleteMutationResult = NonNullable<Awaited<ReturnType<typeof productsDelete>>>;
+
+export type ProductsDeleteMutationError = ErrorType<Error>;
+export type ProductsDeleteMutationVariables = { orgSlug: string; productId: string };
+
+export const useProductsDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof productsDelete>>,
+      TError,
+      ProductsDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof productsDelete>>,
+  TError,
+  ProductsDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getProductsDeleteMutationOptions(options), queryClient);
+};
+
+export const getVariantsListUrl = (
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/products/${productId}/variants/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/products/${productId}/variants/`;
+};
+
+/**
+ * Las variantes vivas de un producto, paginadas por creación. 404 si el producto no es de la organización o está borrado.
+ */
+export const variantsList = async (
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedVariantList> => {
+  return apiFetch<PaginatedVariantList>(getVariantsListUrl(orgSlug, productId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getVariantsListQueryKey = (
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/products/${productId}/variants/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getVariantsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof variantsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getVariantsListQueryKey(orgSlug, productId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof variantsList>>> = ({ signal }) =>
+    variantsList(orgSlug, productId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && productId !== null && productId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof variantsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type VariantsListQueryResult = NonNullable<Awaited<ReturnType<typeof variantsList>>>;
+export type VariantsListQueryError = ErrorType<Error>;
+
+export function useVariantsList<
+  TData = Awaited<ReturnType<typeof variantsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  productId: string,
+  params: undefined | VariantsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof variantsList>>,
+          TError,
+          Awaited<ReturnType<typeof variantsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useVariantsList<
+  TData = Awaited<ReturnType<typeof variantsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof variantsList>>,
+          TError,
+          Awaited<ReturnType<typeof variantsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useVariantsList<
+  TData = Awaited<ReturnType<typeof variantsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useVariantsList<
+  TData = Awaited<ReturnType<typeof variantsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  productId: string,
+  params?: VariantsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getVariantsListQueryOptions(orgSlug, productId, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
   const normalizedParams = new URLSearchParams();

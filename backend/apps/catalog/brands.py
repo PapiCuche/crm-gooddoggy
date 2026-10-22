@@ -11,7 +11,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
-from apps.catalog.models import Brand
+from apps.catalog.models import Brand, Product
 from apps.catalog.slugs import clean_slug, slug_from
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -19,6 +19,10 @@ from core.text import name as clean_name
 
 NAME_MAX = 100
 TAKEN_CONSTRAINT = "brands_org_slug_uq"
+
+
+class BrandInUse(Exception):
+    """No se borra una marca que tienen productos vivos."""
 
 
 class BrandSlugTaken(Exception):
@@ -71,10 +75,15 @@ def rename_brand(ctx: TenantContext, *, brand_id: UUID, name: str) -> Brand:
 
 def delete_brand(ctx: TenantContext, *, brand_id: UUID) -> None:
     """Borra una marca (borrado lógico) y lo audita. Su slug queda libre. Una marca ya borrada
-    o de otra organización: `DoesNotExist`."""
+    o de otra organización: `DoesNotExist`. `BrandInUse` si la usan productos vivos."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
+        # `_live` la bloquea antes de mirar sus productos: quien crea o edita uno la bloquea igual,
+        # así que su producto ya está confirmado (y se ve) o espera a que esta acabe y la ve borrada
         brand: Brand = _live(alias).get(pk=brand_id)
+        products = Product.objects.using(alias).filter(deleted_at__isnull=True)
+        if products.filter(brand_id=brand.pk).exists():
+            raise BrandInUse(brand.slug)
         brand.deleted_at = timezone.now()
         brand.deleted_by_user_id = ctx.user_id
         brand.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])
