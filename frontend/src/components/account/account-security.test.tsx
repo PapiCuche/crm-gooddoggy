@@ -1,3 +1,4 @@
+import { focusManager, onlineManager } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -184,6 +185,18 @@ describe("AccountSecurity", () => {
     status = { status: 200, body: on };
     send("Código", "123456", "Activar");
     expect(await screen.findByText(/Activada desde el/)).toBeInTheDocument();
+  });
+
+  it("con el alta en curso no vuelve a pedir el estado al volver la ventana o la red", async () => {
+    const api = mockApi({ [STATUS]: { status: 200, body: off } });
+    renderApp(<AccountSecurity />);
+    fireEvent.click(await screen.findByRole("button", { name: /Activar la verificación/ }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60_000); // el estado ya está viejo (`staleTime`)
+    for (const on of [false, true])
+      act(() => (focusManager.setFocused(on), onlineManager.setOnline(on)));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(api.mock.calls.filter(([url]) => String(url).endsWith("/auth/mfa/"))).toHaveLength(1);
   });
 
   it("se puede cancelar, y deja de esperar a un servidor que no contesta", async () => {
