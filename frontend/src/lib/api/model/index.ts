@@ -70,6 +70,7 @@ export * from "./passwordResetConfirmRequest";
 export * from "./passwordResetRequestRequest";
 export * from "./patchedBranchUpdateRequest";
 export * from "./patchedBrandUpdateRequest";
+export * from "./patchedCategoryUpdateRequest";
 export * from "./patchedRoleUpdateRequest";
 export * from "./patchedTeamUpdateRequest";
 export * from "./permission";

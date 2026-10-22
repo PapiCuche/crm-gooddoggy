@@ -23,9 +23,13 @@ from apps.catalog.brands import (
 from apps.catalog.categories import NAME_MAX as CATEGORY_NAME_MAX
 from apps.catalog.categories import (
     BadParent,
+    CategoryHasChildren,
     CategorySlugTaken,
     category_name,
     create_category,
+    delete_category,
+    move_category,
+    rename_category,
 )
 from apps.catalog.models import Brand, Category
 from apps.catalog.selectors import brands, categories
@@ -181,7 +185,22 @@ class CategoryCreateSerializer(serializers.Serializer[Any]):
         return _clean(attrs, {"name": category_name, "slug": clean_slug, "parent_id": lambda v: v})
 
 
+class CategoryUpdateSerializer(serializers.Serializer[Any]):
+    name = serializers.CharField(max_length=CATEGORY_NAME_MAX, required=False)
+    parent_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Mueve la categoría con toda su rama; `null` la lleva a la raíz.",
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        if not attrs:
+            raise serializers.ValidationError("Envía `name`, `parent_id` o los dos.")
+        return _clean(attrs, {"name": category_name, "parent_id": lambda v: v})
+
+
 CATEGORY_TAKEN = "Ya hay una categoría con ese slug dentro de la misma categoría."
+HAS_CHILDREN = "La categoría tiene subcategorías: muévelas o bórralas antes."
 
 
 def _bad_parent(error: BadParent) -> serializers.ValidationError:
@@ -226,3 +245,55 @@ class CategoriesView(generics.ListAPIView):
             text = f"{error}."
             raise serializers.ValidationError({"slug": [text[:1].upper() + text[1:]]}) from None
         return Response(CategorySerializer(category).data, status=201)
+
+
+class CategoryView(APIView):
+    """Una categoría: `PATCH` la renombra y/o la mueve con su rama; `DELETE` la borra."""
+
+    required_permissions = {"PATCH": "categories.manage", "DELETE": "categories.manage"}
+
+    @extend_schema(
+        operation_id="categories_update",
+        tags=["catalog"],
+        request=CategoryUpdateSerializer,
+        responses={200: CategorySerializer, **errors(400, 401, 403, 404, 409)},
+        description="`name` la renombra (el slug no cambia). `parent_id` la mueve con toda su "
+        "rama, sin entrar en sí misma ni pasar de 5 niveles. 409 `CATEGORY_SLUG_TAKEN`: el "
+        "destino ya tiene una con ese slug. 404: no es de la organización o está borrada.",
+    )
+    def patch(self, request: Request, category_id: UUID, **kwargs: Any) -> Response:
+        wanted = CategoryUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant, data = _tenant(), wanted.validated_data
+        try:
+            # Renombrar y mover, o nada: una respuesta de error deshace la transacción de la
+            # petición (`tenant_scope`), también lo que ya se hubiera renombrado.
+            if "name" in data:
+                category = rename_category(tenant, category_id=category_id, name=data["name"])
+            if "parent_id" in data:
+                category = move_category(
+                    tenant, category_id=category_id, parent_id=data["parent_id"]
+                )
+        except Category.DoesNotExist:
+            raise NotFound from None
+        except CategorySlugTaken:
+            raise ApiError("CATEGORY_SLUG_TAKEN", 409, CATEGORY_TAKEN) from None
+        except BadParent as error:
+            raise _bad_parent(error) from None
+        return Response(CategorySerializer(category).data)
+
+    @extend_schema(
+        operation_id="categories_delete",
+        tags=["catalog"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Borra la categoría (borrado lógico). 409 `CATEGORY_HAS_CHILDREN`: tiene "
+        "subcategorías. 404: no es de la organización o ya está borrada.",
+    )
+    def delete(self, request: Request, category_id: UUID, **kwargs: Any) -> Response:
+        try:
+            delete_category(_tenant(), category_id=category_id)
+        except Category.DoesNotExist:
+            raise NotFound from None
+        except CategoryHasChildren:
+            raise ApiError("CATEGORY_HAS_CHILDREN", 409, HAS_CHILDREN) from None
+        return Response(status=204)
