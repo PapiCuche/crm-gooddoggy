@@ -46,6 +46,7 @@ export function WarehouseForm(props: {
   const [branchMissing, setBranchMissing] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const base = useRef(warehouse); // la fila al abrir: con ella se compara lo que cambió
 
   async function saved(row: Warehouse) {
     // Sigue «Guardando…» hasta que la lista vuelve. Si releerla falla, se dice.
@@ -99,6 +100,10 @@ export function WarehouseForm(props: {
     write.reset();
     setBranchMissing(false);
     if (next) props.onAsk();
+    // Las sucursales que no llegaron se vuelven a pedir al abrir, como dice su aviso.
+    if (next && branches === "failed")
+      void queryClient.invalidateQueries({ queryKey: getBranchesListQueryKey(slug) });
+    base.current = warehouse;
     const { type, is_sellable, is_active } = warehouse ?? FRESH;
     setBranch("");
     setPicked(next ? { type, is_sellable, is_active } : null);
@@ -189,7 +194,7 @@ export function WarehouseForm(props: {
             // Solo lo que cambió respecto a la fila: no pisa lo que otro cambió en lo demás.
             const data = Object.fromEntries(
               Object.entries({ name, ...picked }).filter(
-                ([key, value]) => value !== warehouse[key as "name"],
+                ([key, value]) => value !== base.current![key as "name"],
               ),
             );
             update.mutate({ orgSlug: slug, warehouseId: warehouse.id, data });

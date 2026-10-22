@@ -238,4 +238,30 @@ describe("WarehousesList", () => {
     expect(await screen.findByText(/todavía no tiene almacenes/)).toBeVisible();
     expect(screen.getByRole("heading", { name: "Almacenes" })).toHaveFocus();
   });
+
+  it("reabrir vuelve a pedir las sucursales que fallaron; editar no deshace lo que otro cambió", async () => {
+    let fail = true;
+    let rows = [central];
+    const api = mockApi({
+      [BRANCHES]: () => (fail ? { status: 500, body: {} } : BRANCH_LIST),
+      [LIST]: () => page(rows),
+      [PATCH]: () => ({ status: 200, body: rows[0] }),
+    });
+    const view = screenOf(manager);
+    await screen.findByRole("listitem");
+    press("Crear almacén");
+    await waitFor(() => expect(field("Sucursal")).toHaveAccessibleDescription(/No se pudo cargar/));
+    fail = false;
+    press("Cancelar", form());
+    press("Crear almacén");
+    await waitFor(() => expect(field("Sucursal")).toHaveLength(3));
+    press("Cancelar", form());
+    press("Editar el almacén Central", screen.getByRole("listitem"));
+    rows = [{ ...central, is_active: false }]; // otra persona lo desactiva mientras se edita
+    await view.client.invalidateQueries({ queryKey: ["/api/v1/o/acme/warehouses/"] });
+    await waitFor(() => expect(screen.getByText("Inactivo")).toBeVisible());
+    fill({ Nombre: "Central Lima" });
+    press("Guardar", form());
+    await waitFor(() => expect(sent(api, "PATCH")).toEqual([{ name: "Central Lima" }]));
+  });
 });
