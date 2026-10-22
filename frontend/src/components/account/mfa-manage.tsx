@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
@@ -26,9 +26,12 @@ type Send<T> = (
 ) => void;
 
 // La contraseña actual y un código, para un cambio del segundo factor (ADR-023 §6 y §8). Un
-// envío por pulsación; la contraseña va tal cual y el código sin espacios ni guiones.
+// envío por pulsación; la contraseña va tal cual y el código sin espacios ni guiones. El foco
+// empieza en la contraseña: `warning`, el id de una advertencia de `intro`, la describe para
+// que un lector de pantalla no se la salte.
 function PasswordAndCode<T>({
   intro,
+  warning,
   codeHint,
   action,
   acting,
@@ -39,6 +42,7 @@ function PasswordAndCode<T>({
   onCancel,
 }: {
   intro: ReactNode;
+  warning?: string;
   codeHint: string;
   action: string;
   acting: string;
@@ -121,6 +125,7 @@ function PasswordAndCode<T>({
         type="password"
         autoComplete="current-password"
         maxLength={1024}
+        aria-describedby={warning}
         error={passwordError}
         onInput={() => passwordError && idle()}
       />
@@ -178,7 +183,10 @@ export function MfaRegenerate({
       acting={t("account.regenerating")}
       send={(data, on) => mutate({ data }, on)}
       reset={reset}
-      onDone={(answer) => setCodes(answer.backup_codes)}
+      onDone={(answer) => {
+        reset(); // la contraseña y el código no quedan en la caché mientras se ven los códigos
+        setCodes(answer.backup_codes);
+      }}
       onNotEnabled={onFinished}
       onCancel={onCancel}
     />
@@ -198,16 +206,22 @@ export function MfaDisable({
 }) {
   const t = useTranslations();
   const { mutate, reset } = useAuthMfaDisable({ mutation: { networkMode: "always", gcTime: 0 } });
+  const warning = useId();
   return (
     <PasswordAndCode<void>
       intro={
         <>
-          <p role="note" className="border-danger/40 rounded-[10px] border px-3 py-2 text-sm">
+          <p
+            id={warning}
+            role="note"
+            className="border-danger/40 rounded-[10px] border px-3 py-2 text-sm"
+          >
             {t("account.disableWarning")}
           </p>
           <p className="text-muted">{t("account.disableIntro")}</p>
         </>
       }
+      warning={warning}
       codeHint={t("account.disableCodeInvalid")}
       action={t("account.disable")}
       acting={t("account.disabling")}

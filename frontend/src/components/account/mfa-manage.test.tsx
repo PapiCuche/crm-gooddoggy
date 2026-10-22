@@ -89,6 +89,8 @@ describe("AccountSecurity con el segundo factor activado", () => {
     expect(posts(api, "/mfa/backup-codes/")).toHaveLength(3);
     expect(sent(api, "/mfa/backup-codes/", 2)).toEqual({ password: "clave", code: "123456" });
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(CODES);
+    // con los códigos a la vista, la contraseña ya no está en la caché de escrituras
+    await waitFor(() => expect(client.getMutationCache().getAll()).toHaveLength(0));
     expect(screen.queryByText(/cerramos tus otras sesiones/)).toBeNull(); // regenerar no las cierra
     status = { status: 200, body: { ...on, backup_codes_left: 10 } };
     fireEvent.click(screen.getByRole("checkbox", { name: /He guardado estos códigos/ }));
@@ -106,11 +108,16 @@ describe("AccountSecurity con el segundo factor activado", () => {
     let status: Reply = { status: 200, body: on };
     let disable: Reply = invalid("code");
     const api = mockApi({ [STATUS]: () => status, [DISABLE]: () => disable });
-    renderApp(<AccountSecurity />);
+    const { client } = renderApp(<AccountSecurity />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Quitar la verificación en dos pasos" }),
     );
     expect(screen.getByRole("note")).toHaveTextContent(/le bastará para entrar/);
+    // El foco salta a la contraseña: la advertencia la describe, o un lector de pantalla no la lee.
+    expect(screen.getByLabelText("Contraseña actual")).toHaveFocus();
+    expect(screen.getByLabelText("Contraseña actual")).toHaveAccessibleDescription(
+      /le bastará para entrar/,
+    );
     expect(screen.queryByRole("button", { name: "Cerrar sesión" })).toBeNull();
     fill("clave", "000000");
     fireEvent.click(screen.getByRole("button", { name: "Quitar" }));
@@ -127,6 +134,10 @@ describe("AccountSecurity con el segundo factor activado", () => {
       "Quitaste la verificación en dos pasos. Por seguridad, cerramos tus otras sesiones abiertas.",
     );
     expect(sent(api, "/mfa/disable/", 1)).toEqual({ password: "clave", code: "aaaabbbbccccdddd" });
+    expect(screen.getByRole("status")).toHaveFocus();
+    await waitFor(() => expect(client.getMutationCache().getAll()).toHaveLength(0));
+    expect(location.search).toBe("");
+    expect(localStorage.length + sessionStorage.length).toBe(0);
     expect(
       screen.getByRole("button", { name: "Activar la verificación en dos pasos" }),
     ).toBeInTheDocument();

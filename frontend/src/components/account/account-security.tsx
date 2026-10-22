@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SessionActions } from "@/components/app-shell/session-actions";
 import { LINK } from "@/components/auth/auth-card";
@@ -31,6 +31,12 @@ export function AccountSecurity() {
   const [mode, setMode] = useState<Mode>("idle");
   const [disabled, setDisabled] = useState(false); // se acaba de quitar desde esta pantalla
   const busy = mode !== "idle";
+  // Al quitarlo, el formulario desaparece: el foco va al aviso, que así también se lee.
+  const notice = useRef<HTMLParagraphElement>(null);
+  const shown = disabled && status.isSuccess && !status.isRefetching;
+  useEffect(() => {
+    if (shown) notice.current?.focus();
+  }, [shown]);
   const back = () => {
     setMode("idle");
     void status.refetch();
@@ -95,7 +101,12 @@ export function AccountSecurity() {
     body = (
       <>
         {disabled ? (
-          <p role="status" className="text-sm">
+          <p
+            ref={notice}
+            role="status"
+            tabIndex={-1}
+            className="text-sm focus-visible:outline-none"
+          >
             {t("account.disabled")}
           </p>
         ) : null}

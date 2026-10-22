@@ -106,6 +106,7 @@ describe("AccountSecurity", () => {
       code: "123456",
     });
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual(CODES);
+    expect(screen.getByText(/cerramos tus otras sesiones/)).toBeInTheDocument();
     const finish = screen.getByRole("button", { name: "Terminar" });
     expect(finish).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(finish); // sin marcar que los guardó, no termina
