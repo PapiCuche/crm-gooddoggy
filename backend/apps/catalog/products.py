@@ -1,4 +1,4 @@
-"""Comandos de productos y variantes (F3-06, F3-06b; E02-02 y E02-03).
+"""Comandos de productos y variantes (F3-06, F3-06b, F3-07; E02-02 y E02-03).
 
 No comprueban permisos: los declara la API (`products.manage`), la única que los importa
 (contrato de import-linter). Validan lo que guardan y auditan cada cambio. Un producto nace con
@@ -20,7 +20,7 @@ from core.tenancy.scope import require_scope
 from core.text import line
 from core.text import name as clean_name
 
-NAME_MAX, SHORT_MAX, SKU_MAX, DESCRIPTION_MAX = 200, 255, 64, 5000
+NAME_MAX, SHORT_MAX, SKU_MAX, BARCODE_MAX, LABEL_MAX, DESCRIPTION_MAX = 200, 255, 64, 64, 100, 5000
 SKU = re.compile(r"[A-Z0-9]([A-Z0-9._-]*[A-Z0-9])?")  # la misma forma que impone la tabla
 SLUG_TAKEN, SKU_TAKEN = "products_org_slug_uq", "product_variants_org_sku_uq"
 
@@ -31,6 +31,10 @@ class ProductSlugTaken(Exception):
 
 class SkuTaken(Exception):
     """Ya hay una variante viva con ese SKU en la organización."""
+
+
+class LastVariant(Exception):
+    """Un producto no se queda sin variante viva: la última no se borra."""
 
 
 class BadReference(ValueError):
@@ -69,6 +73,22 @@ def sku(value: str) -> str:
             f"letras sin acento, cifras y . _ - entre ellas, hasta {SKU_MAX} caracteres"
         )
     return code
+
+
+def barcode(value: str) -> str:
+    code = value.strip()
+    if len(code) > BARCODE_MAX or not (code == "" or code.isascii() and code.isalnum()):
+        raise ValueError(f"letras y cifras, hasta {BARCODE_MAX}")
+    return code
+
+
+def label(value: str) -> str:
+    return line(value, LABEL_MAX)
+
+
+def variant_name(product: str, tag: str) -> str:
+    """El nombre de una variante: el del producto y, si la tiene, su etiqueta."""
+    return f"{product} {tag}" if tag else product
 
 
 def _live(model: Any, alias: str) -> Any:
@@ -161,10 +181,11 @@ def update_product(ctx: TenantContext, *, product_id: UUID, **fields: Any) -> Pr
             for field in changes:
                 setattr(product, field, values[field])
             product.save(using=alias, update_fields=[*changes, "updated_at"])
-            if "name" in changes:
-                _live(ProductVariant, alias).filter(product=product, is_default=True).update(
-                    name=product.name, updated_at=timezone.now()
-                )
+            if "name" in changes:  # cada variante es el producto más su etiqueta
+                rows = _live(ProductVariant, alias).select_for_update(no_key=True)
+                for variant in rows.filter(product=product):
+                    variant.name = variant_name(product.name, variant.label)
+                    variant.save(using=alias, update_fields=["name", "updated_at"])
             record(ctx, "product.updated", Entity("product", product.pk, product.slug), changes)
     return product
 
@@ -192,4 +213,93 @@ def delete_product(ctx: TenantContext, *, product_id: UUID) -> None:
             Entity("product", product.pk, product.slug),
             {"deleted_at": [None, now.isoformat()]},
             {"variants": count},
+        )
+
+
+def _product(alias: str, product_id: UUID) -> Product:
+    """El producto vivo, bloqueado: serializa los cambios de sus variantes."""
+    product: Product = _live(Product, alias).select_for_update(no_key=True).get(pk=product_id)
+    return product
+
+
+def create_variant(
+    ctx: TenantContext, *, product_id: UUID, sku_code: str, tag: str = "", **fields: Any
+) -> ProductVariant:
+    """Añade una variante a un producto vivo y lo audita. `SkuTaken` si el SKU ya es de otra
+    variante viva; `Product.DoesNotExist` si el producto no es de la organización."""
+    alias = require_scope(ctx)
+    code = sku(sku_code)
+    try:
+        with transaction.atomic(using=alias):
+            product = _product(alias, product_id)
+            variant: ProductVariant = ProductVariant.objects.using(alias).create(
+                product=product,
+                sku=code,
+                label=tag,
+                name=variant_name(product.name, tag),
+                **fields,
+            )
+            changes = {"sku": [None, code], "label": [None, tag]}
+            record(ctx, "variant.created", Entity("variant", variant.pk, code), changes)
+    except IntegrityError as error:
+        raise _taken(error, "", code) from None
+    return variant
+
+
+VARIANT_FIELDS = frozenset({"sku", "barcode", "label", "condition", "status", "ai_visible"})
+
+
+def update_variant(
+    ctx: TenantContext, *, product_id: UUID, variant_id: UUID, **fields: Any
+) -> ProductVariant:
+    """Cambia lo que se envía de una variante viva de ese producto y lo audita; cambiar la
+    etiqueta cambia su nombre. `SkuTaken` si el SKU ya es de otra variante viva. `DoesNotExist`
+    si la variante no es de ese producto o está borrada."""
+    alias = require_scope(ctx)
+    if unknown := set(fields) - VARIANT_FIELDS:
+        raise ValueError(f"campos no admitidos: {sorted(unknown)}")
+    try:
+        with transaction.atomic(using=alias):
+            product = _product(alias, product_id)
+            variant: ProductVariant = (
+                _live(ProductVariant, alias)
+                .select_for_update(no_key=True)
+                .get(pk=variant_id, product=product)
+            )
+            changes = {
+                field: [getattr(variant, field), value]
+                for field, value in fields.items()
+                if getattr(variant, field) != value
+            }
+            if changes:
+                for field, (_, value) in changes.items():
+                    setattr(variant, field, value)
+                variant.name = variant_name(product.name, variant.label)
+                variant.save(using=alias, update_fields=[*changes, "name", "updated_at"])
+                record(ctx, "variant.updated", Entity("variant", variant.pk, variant.sku), changes)
+    except IntegrityError as error:
+        raise _taken(error, "", fields.get("sku", "")) from None
+    return variant
+
+
+def delete_variant(ctx: TenantContext, *, product_id: UUID, variant_id: UUID) -> None:
+    """Borra una variante (borrado lógico) y lo audita; su SKU queda libre. `LastVariant` si es
+    la única viva del producto. `DoesNotExist` si no es de ese producto o ya está borrada."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        product = _product(alias, product_id)
+        variant: ProductVariant = (
+            _live(ProductVariant, alias)
+            .select_for_update(no_key=True)
+            .get(pk=variant_id, product=product)
+        )
+        if not _live(ProductVariant, alias).filter(product=product).exclude(pk=variant.pk).exists():
+            raise LastVariant(variant.sku)
+        variant.deleted_at, variant.deleted_by_user_id = timezone.now(), ctx.user_id
+        variant.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])
+        record(
+            ctx,
+            "variant.deleted",
+            Entity("variant", variant.pk, variant.sku),
+            {"deleted_at": [None, variant.deleted_at.isoformat()]},
         )

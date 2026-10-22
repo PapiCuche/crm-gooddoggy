@@ -35,20 +35,27 @@ from apps.catalog.categories import (
     rename_category,
 )
 from apps.catalog.models import Brand, Category, Product, ProductVariant
-from apps.catalog.products import NAME_MAX as PRODUCT_NAME_MAX
 from apps.catalog.products import (
+    LABEL_MAX,
     SKU_MAX,
     BadReference,
+    LastVariant,
     ProductSlugTaken,
     SkuTaken,
+    barcode,
     create_product,
+    create_variant,
     delete_product,
+    delete_variant,
     description,
+    label,
     product_name,
     short_description,
     sku,
     update_product,
+    update_variant,
 )
+from apps.catalog.products import NAME_MAX as PRODUCT_NAME_MAX
 from apps.catalog.selectors import brands, categories, products, variants
 from apps.catalog.slugs import SLUG_MAX, NoSlug, clean_slug
 from core.api.errors import ApiError
@@ -388,11 +395,38 @@ class VariantSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     sku = serializers.CharField()
     barcode = serializers.CharField(allow_blank=True)
-    name = serializers.CharField()
+    label = serializers.CharField(
+        allow_blank=True, help_text="«256 GB Negro»; vacía en la de defecto."
+    )
+    name = serializers.CharField(help_text="El nombre del producto más la etiqueta.")
     condition = serializers.ChoiceField(choices=ProductVariant.Condition.choices)
     status = serializers.ChoiceField(choices=ProductVariant.Status.choices)
     is_default = serializers.BooleanField()
     ai_visible = serializers.BooleanField()
+
+
+class VariantCreateSerializer(serializers.Serializer[Any]):
+    sku = serializers.CharField(max_length=SKU_MAX, help_text="Se guarda en mayúsculas.")
+    label = serializers.CharField(max_length=LABEL_MAX, required=False, allow_blank=True)
+    barcode = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    condition = serializers.ChoiceField(choices=ProductVariant.Condition.choices, required=False)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        clean = {"sku": sku, "barcode": barcode, "label": label}
+        return _clean(attrs, {**clean, **{k: (lambda v: v) for k in attrs if k not in clean}})
+
+
+class VariantUpdateSerializer(serializers.Serializer[Any]):
+    sku = serializers.CharField(max_length=SKU_MAX, required=False)
+    label = serializers.CharField(max_length=LABEL_MAX, required=False, allow_blank=True)
+    barcode = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    condition = serializers.ChoiceField(choices=ProductVariant.Condition.choices, required=False)
+    status = serializers.ChoiceField(choices=ProductVariant.Status.choices, required=False)
+    ai_visible = serializers.BooleanField(required=False)
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        clean = {"sku": sku, "barcode": barcode, "label": label}
+        return _clean(attrs, {**clean, **{k: (lambda v: v) for k in attrs if k not in clean}})
 
 
 PRODUCT_TAKEN = "Ya hay un producto con ese slug en la organización."
@@ -491,9 +525,16 @@ class ProductView(APIView):
         description="Las variantes vivas de un producto, paginadas por creación. 404 si el "
         "producto no es de la organización o está borrado.",
     ),
+    post=extend_schema(
+        operation_id="variants_create",
+        tags=["catalog"],
+        request=VariantCreateSerializer,
+        responses={201: VariantSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Añade una variante con su SKU y su etiqueta. 409 `SKU_TAKEN`.",
+    ),
 )
 class VariantsView(generics.ListAPIView):
-    required_permissions = {"GET": "products.view"}
+    required_permissions = {"GET": "products.view", "POST": "products.manage"}
     serializer_class = VariantSerializer
 
     def get_queryset(self) -> QuerySet[ProductVariant]:
@@ -501,3 +542,64 @@ class VariantsView(generics.ListAPIView):
         if not products().filter(pk=product_id).exists():
             raise NotFound
         return variants(product_id)
+
+    def post(self, request: Request, product_id: UUID, **kwargs: Any) -> Response:
+        wanted = VariantCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        data = dict(wanted.validated_data)
+        data["sku_code"], data["tag"] = data.pop("sku"), data.pop("label", "")
+        try:
+            variant = create_variant(_tenant(), product_id=product_id, **data)
+        except Product.DoesNotExist:
+            raise NotFound from None
+        except SkuTaken:
+            raise ApiError("SKU_TAKEN", 409, SKU_IN_USE) from None
+        return Response(VariantSerializer(variant).data, status=201)
+
+
+class VariantView(APIView):
+    """Una variante: `PATCH` cambia sus datos; `DELETE` la retira (nunca la última viva)."""
+
+    required_permissions = {"PATCH": "products.manage", "DELETE": "products.manage"}
+
+    @extend_schema(
+        operation_id="variants_update",
+        tags=["catalog"],
+        request=VariantUpdateSerializer,
+        responses={200: VariantSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia lo que se envía; la etiqueta cambia su nombre. 409 `SKU_TAKEN`.",
+    )
+    def patch(
+        self, request: Request, product_id: UUID, variant_id: UUID, **kwargs: Any
+    ) -> Response:
+        wanted = VariantUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        try:
+            variant = update_variant(
+                _tenant(), product_id=product_id, variant_id=variant_id, **wanted.validated_data
+            )
+        except Product.DoesNotExist, ProductVariant.DoesNotExist:
+            raise NotFound from None
+        except SkuTaken:
+            raise ApiError("SKU_TAKEN", 409, SKU_IN_USE) from None
+        return Response(VariantSerializer(variant).data)
+
+    @extend_schema(
+        operation_id="variants_delete",
+        tags=["catalog"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`: "
+        "es la única viva del producto.",
+    )
+    def delete(
+        self, request: Request, product_id: UUID, variant_id: UUID, **kwargs: Any
+    ) -> Response:
+        try:
+            delete_variant(_tenant(), product_id=product_id, variant_id=variant_id)
+        except Product.DoesNotExist, ProductVariant.DoesNotExist:
+            raise NotFound from None
+        except LastVariant:
+            raise ApiError(
+                "LAST_VARIANT", 409, "Un producto necesita al menos una variante."
+            ) from None
+        return Response(status=204)

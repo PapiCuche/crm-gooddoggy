@@ -29,6 +29,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-05b | [#312](https://github.com/PapiCuche/crm-gooddoggy/issues/312) Catalog: rename, move and delete categories from the screen | `feature/f3-catalog-categories-edit` | #307, #314 | frontend |
 | F3-06 | [#308](https://github.com/PapiCuche/crm-gooddoggy/issues/308) Catalog: products with their default variant (API) | `feature/f3-catalog-products` | #306 | backend + API |
 | F3-06b | [#316](https://github.com/PapiCuche/crm-gooddoggy/issues/316) Catalog: change and delete products (API) | `feature/f3-catalog-products-edit` | #308, #314 | backend + API |
+| F3-07 | [#311](https://github.com/PapiCuche/crm-gooddoggy/issues/311) Catalog: the variants of a product (API) | `feature/f3-catalog-variants` | #308, #316 | backend + API |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
@@ -37,7 +38,7 @@ Siguen, en este orden: categorías en árbol (API y pantalla), productos con opc
 | Historia | Estado |
 |---|---|
 | E02-01 Marcas y categorías | Marcas: API en F3-01; pantalla (lista, crear y renombrar) en F3-02; borrar desde la pantalla en F3-03. Categorías: API en F3-04 (listar y crear) y F3-04b (editar); pantalla (árbol y crear) en F3-05; renombrar, mover y borrar desde la pantalla en F3-05b (#312) |
-| E02-02 y E02-03 Productos y variantes | Producto con su variante por defecto: API en F3-06 (listar y crear) y F3-06b (cambiar, borrar y listar sus variantes). Editar variantes (F3-07), opciones con generación de variantes y las pantallas: pendientes |
+| E02-02 y E02-03 Productos y variantes | Producto con su variante por defecto: API en F3-06 (listar y crear) y F3-06b (cambiar, borrar y listar sus variantes); variantes (añadir, editar y retirar): API en F3-07. Opciones con generación de variantes y las pantallas: pendientes |
 | E02-04 a E02-07 | Pendientes |
 | E03 Precios | Pendiente |
 | E04 Inventario | Pendiente |

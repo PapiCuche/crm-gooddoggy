@@ -200,7 +200,8 @@ class ProductVariant(TenantModel):
     )
     sku = models.CharField(max_length=64)
     barcode = models.CharField(max_length=64, blank=True)
-    name = models.CharField(max_length=255)
+    label = models.CharField(max_length=100, blank=True)  # «256 GB Negro»; vacía en la de defecto
+    name = models.CharField(max_length=301)  # el del producto (200), un espacio y la etiqueta (100)
     condition = models.CharField(max_length=16, choices=Condition.choices, default=Condition.NEW)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
     is_default = models.BooleanField(default=False)
