@@ -17,9 +17,9 @@ from django.db import IntegrityError, transaction
 
 from apps.audit.services import Entity, record
 from apps.organizations.models import OrganizationMembership, Team, TeamMember
-from apps.organizations.text import line, name
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import line, name
 
 SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # la misma forma que impone la tabla
 SLUG_MAX, NAME_MAX, DESCRIPTION_MAX = 50, 100, 255

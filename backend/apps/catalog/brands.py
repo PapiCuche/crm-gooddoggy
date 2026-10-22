@@ -14,13 +14,17 @@ from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.catalog.models import Brand
-from apps.organizations.text import name as clean_name
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
+from core.text import name as clean_name
 
 SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # la misma forma que impone la tabla
 NAME_MAX, SLUG_MAX = 100, 63
 TAKEN_CONSTRAINT = "brands_org_slug_uq"
+
+
+class NoSlug(ValueError):
+    """El nombre no deja formar un slug: hay que enviarlo."""
 
 
 class BrandSlugTaken(Exception):
@@ -45,7 +49,7 @@ def slug_from(value: str) -> str:
     ascii_text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:SLUG_MAX].strip("-")
     if not slug:
-        raise ValueError("no se puede formar a partir del nombre: envía uno")
+        raise NoSlug("no se puede formar a partir del nombre: envía uno")
     return slug
 
 

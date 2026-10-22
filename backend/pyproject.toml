@@ -101,7 +101,7 @@ source_modules = ["core"]
 forbidden_modules = ["config", "apps"]
 
 [[tool.importlinter.contracts]]
-name = "Capas (module-dependencies §1): provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files (L1) > core (L0)"
+name = "Capas (module-dependencies §1): catalog (L3) > provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files (L1) > core (L0)"
 type = "layers"
 layers = [
     # L3: dominio de negocio (module-dependencies §1). catalog, el catálogo (Fase 3)

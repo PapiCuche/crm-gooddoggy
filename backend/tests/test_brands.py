@@ -87,13 +87,18 @@ def test_create_rename_delete_with_audit(
 
     assert send(ana, "delete", f"{one()}{brand['id']}/").status_code == 204
     assert ana.get(one()).json()["results"] == []
+    gone = migrator.execute("SELECT deleted_by_user_id FROM brands WHERE id = %s", [brand["id"]])
+    assert gone.fetchone() == (world.ana.pk,)  # quién la borró, del contexto
     assert send(ana, "delete", f"{one()}{brand['id']}/").status_code == 404  # ya borrada
     assert send(ana, "patch", f"{one()}{brand['id']}/", {"name": "X"}).status_code == 404
     again = send(ana, "post", one(), {"name": "Apple", "slug": "apple-peru"})
     assert again.status_code == 201  # el borrado libera su slug
 
-    actions = [row[0] for row in audit_rows(migrator)]
+    rows = audit_rows(migrator)
+    actions = [row[0] for row in rows]
     assert actions == ["brand.created", "brand.updated", "brand.deleted", "brand.created"]
+    assert rows[0][2] == '{"name": [null, "Apple Perú"], "slug": [null, "apple-peru"]}'
+    assert rows[1][2] == '{"name": ["Apple Perú", "Apple"]}'  # el antes y el después
 
 
 def test_slug_rules_and_conflicts(ana: Client) -> None:
@@ -116,14 +121,23 @@ def test_permissions_and_isolation(world: Any, migrator: psycopg.Connection[Any]
     assert viewer.get(one()).status_code == 200
     denied = send(viewer, "post", one(), {"name": "Apple"})
     assert (denied.status_code, denied.json()) == (403, DENIED)
+    with tenant_scope(ctx(world.a)):
+        own = Brand.objects.create(name="Propia", slug="propia")
+    for method, body in [("patch", {"name": "Otra"}), ("delete", None)]:
+        refused = send(viewer, method, f"{one()}{own.pk}/", body)  # sin `brands.manage`
+        assert (refused.status_code, refused.json()) == (403, DENIED), method
+    row = migrator.execute("SELECT name, deleted_at FROM brands WHERE id = %s", [own.pk])
+    assert row.fetchone() == ("Propia", None)
     assert viewer.get(one("org-b")).status_code == 404  # otra organización no existe para ella
 
     # Una marca de otra organización no se ve ni se toca.
     with tenant_scope(ctx(world.b)):
         foreign = Brand.objects.create(name="Ajena", slug="ajena")
     give(world.a, world.membership, MANAGE)
-    assert viewer.get(one()).json()["results"] == []
+    assert [item["slug"] for item in viewer.get(one()).json()["results"]] == ["propia"]
     assert send(viewer, "patch", f"{one()}{foreign.pk}/", {"name": "Mía"}).status_code == 404
     assert send(viewer, "delete", f"{one()}{foreign.pk}/").status_code == 404
     row = migrator.execute("SELECT name, deleted_at FROM brands WHERE id = %s", [foreign.pk])
     assert row.fetchone() == ("Ajena", None)
+    # El slug es único dentro de cada organización, no entre ellas.
+    assert send(viewer, "post", one(), {"name": "Ajena"}).status_code == 201

@@ -15,6 +15,7 @@ from apps.catalog.brands import (
     NAME_MAX,
     SLUG_MAX,
     BrandSlugTaken,
+    NoSlug,
     brand_name,
     brand_slug,
     create_brand,
@@ -107,8 +108,9 @@ class BrandsView(generics.ListAPIView):
             brand = create_brand(_tenant(), **wanted.validated_data)
         except BrandSlugTaken:
             raise ApiError("BRAND_SLUG_TAKEN", 409, TAKEN) from None
-        except ValueError as error:  # el nombre no deja formar un slug
-            raise serializers.ValidationError({"slug": [f"{error}."]}) from None
+        except NoSlug as error:
+            text = f"{error}."
+            raise serializers.ValidationError({"slug": [text[:1].upper() + text[1:]]}) from None
         return Response(BrandSerializer(brand).data, status=201)
 
 
