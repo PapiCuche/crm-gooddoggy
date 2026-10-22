@@ -89,7 +89,12 @@ def test_what_the_stock_cannot_do(world: Any) -> None:
         with pytest.raises(stock.BadReference) as refused:
             move(world.a, world.ana, wanted(where, "RECEIPT", 1))
         assert refused.value.field == field
-    for bad in (wanted(here, "RECEIPT", 0), wanted(here, "SALE", 1), wanted(here, "ISSUE", -1)):
+    for bad in (
+        wanted(here, "RECEIPT", 0),
+        wanted(here, "RECEIPT", stock.QUANTITY_MAX + 1),
+        wanted(here, "SALE", 1),
+        wanted(here, "ISSUE", -1),
+    ):
         with pytest.raises(ValueError):
             move(world.a, world.ana, bad)
     with pytest.raises(ValueError):
@@ -108,9 +113,15 @@ def test_the_same_key_registers_once(world: Any) -> None:
     first, new = move(world.a, world.ana, wanted(here, "RECEIPT", 4, key="pedido-0001"))
     again, repeated = move(world.a, world.ana, wanted(here, "RECEIPT", 4, key="pedido-0001"))
     assert (new, repeated, again.pk) == (True, False, first.pk)
-    for other in (
+    with tenant_scope(ctx(world.a)):
+        branch = Warehouse.objects.get(pk=here[1]).branch_id
+        other_wh = Warehouse.objects.create(branch_id=branch, code="OTRO", name="Otro").pk
+    for other in (  # cada campo cuenta: la cantidad, el tipo, el almacén y el motivo
         wanted(here, "RECEIPT", 5, "pedido-0001"),
         wanted(here, "ISSUE", 4, "pedido-0001"),
+        wanted(here, "ADJUSTMENT", 4, "pedido-0001"),  # deja lo mismo, pero es otro tipo
+        wanted((here[0], other_wh), "RECEIPT", 4, "pedido-0001"),
+        stock.Wanted(*here, "RECEIPT", 4, "Otro motivo", "pedido-0001"),
     ):
         with pytest.raises(stock.KeyReused):
             move(world.a, world.ana, other)
@@ -137,7 +148,7 @@ def race(org: UUID, user: Any, wants: list[Any], then: str = "") -> list[Any]:
                     release.wait(timeout=10)
                     if then:
                         connection.cursor().execute(then)
-        except (stock.InsufficientStock, stock.KeyReused, DatabaseError) as error:
+        except Exception as error:  # noqa: BLE001 — el resultado lo comprueba cada test
             outcome[index] = type(error).__name__
         finally:
             wrote.set()
@@ -215,3 +226,14 @@ def test_the_ledger_is_append_only_and_the_level_never_negative(world: Any) -> N
         tenant_scope(ctx(world.a)),
     ):
         InventoryLevel.objects.update(on_hand=-1)
+
+
+def test_a_movement_waits_for_whoever_deletes_the_variant(world: Any) -> None:
+    """Borrarla en el catálogo bloquea la variante (`FOR NO KEY UPDATE`): el movimiento espera y,
+    cuando el borrado confirma, ya no la encuentra. Sin el bloqueo, el stock entraba en ella."""
+    here = cell(world.a)
+    retire = f"UPDATE product_variants SET deleted_at = now() WHERE id = '{here[0]}'"  # noqa: S608
+    outcome = race(world.a, world.ana, [retire, wanted(here, "RECEIPT", 5)])
+    assert outcome[1] == "BadReference"
+    with tenant_scope(ctx(world.a)):
+        assert not InventoryMovement.objects.exists()

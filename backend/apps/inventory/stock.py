@@ -2,10 +2,12 @@
 almacén. Es lo único que cambia `inventory_levels`, y siempre junto a su movimiento.
 
 No comprueba permisos: los declara la API (`inventory.adjust`), la única que lo importa
-(contrato de import-linter). Concurrencia: la fila del saldo se crea si falta (`ON CONFLICT DO
-NOTHING`) y se bloquea (`FOR UPDATE`) antes de leerla, así que dos movimientos de la misma celda
-van de uno en uno y el segundo ve lo que dejó el primero. La clave de idempotencia se busca con
-la fila ya bloqueada; si la misma clave llega a la vez para otra celda, la decide el índice único.
+(contrato de import-linter). Concurrencia: la variante se bloquea como al borrarla en el catálogo
+(no se borra a mitad de un movimiento; los de una misma variante van de uno en uno). La fila del
+saldo se crea si falta (`ON CONFLICT DO NOTHING`) y se bloquea (`FOR UPDATE`) antes de leerla, así
+que el segundo movimiento de una celda ve lo que dejó el primero. La clave de idempotencia se
+busca con la fila ya bloqueada; si la misma clave llega a la vez para otra celda, la decide el
+índice único.
 """
 
 import re
@@ -15,6 +17,7 @@ from uuid import UUID
 from django.db import IntegrityError, connections, transaction
 
 from apps.audit.services import Entity, record
+from apps.catalog.models import ProductVariant
 from apps.catalog.selectors import live_variants
 from apps.inventory.models import InventoryLevel, InventoryMovement
 from core.tenancy.context import ActorType, TenantContext
@@ -113,6 +116,18 @@ def _replay(alias: str, wanted: Wanted) -> InventoryMovement | None:
     return movement
 
 
+def _locked_variant(alias: str, variant_id: UUID) -> ProductVariant:
+    """La variante viva, bloqueada como al borrarla en el catálogo (`FOR NO KEY UPDATE`): no se
+    borra mientras entra o sale su stock, y el movimiento que la esperaba ya no la encuentra."""
+    rows = live_variants().using(alias).select_for_update(no_key=True, of=("self",))
+    variant: ProductVariant | None = rows.filter(pk=variant_id).first()
+    if variant is None:
+        raise BadReference("variant_id", "No existe en esta organización.")
+    if not variant.product.tracks_inventory:
+        raise BadReference("variant_id", "Es un servicio: no lleva stock.")
+    return variant
+
+
 def _locked_level(alias: str, ctx: TenantContext, wanted: Wanted) -> InventoryLevel:
     cell = {"variant_id": wanted.variant_id, "warehouse_id": wanted.warehouse_id}
     new = InventoryLevel(organization_id=ctx.organization_id, **cell)
@@ -128,13 +143,9 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
     sin escribir nada."""
     alias = require_scope(ctx)
     _check(wanted)
-    variant = live_variants().using(alias).filter(pk=wanted.variant_id).first()
-    if variant is None:
-        raise BadReference("variant_id", "No existe en esta organización.")
-    if not variant.product.tracks_inventory:
-        raise BadReference("variant_id", "Es un servicio: no lleva stock.")
     try:
         with transaction.atomic(using=alias):
+            variant = _locked_variant(alias, wanted.variant_id)
             with connections[alias].cursor() as cursor:
                 cursor.execute(_WAREHOUSE, [wanted.warehouse_id])
                 warehouse = cursor.fetchone()
