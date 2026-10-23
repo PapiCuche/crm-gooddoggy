@@ -46,7 +46,8 @@
       "label": "Secciones del inventario",
       "stock": "Existencias",
       "movements": "Movimientos",
-      "warehouses": "Almacenes"
+      "warehouses": "Almacenes",
+      "import": "Importar"
     }
   },
   "audit": {

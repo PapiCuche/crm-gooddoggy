@@ -32,7 +32,7 @@ function rowsOf(bytes: Uint8Array): number {
     if (byte === 10) {
       if (!blank) lines += 1;
       blank = true;
-    } else if (byte !== 32 && byte !== 9 && byte !== 13) blank = false;
+    } else if (![9, 13, 32, 34, 44, 59].includes(byte)) blank = false; // `,,` cuenta como vacía, como en la API
   }
   return lines + (blank ? 0 : 1) - 1;
 }
@@ -269,8 +269,8 @@ export function StockImport() {
             aria-invalid={!!pickError}
             className="file:bg-surface-raised file:text-foreground text-sm file:mr-3 file:h-11 file:rounded-[10px] file:border-0 file:px-4 file:font-medium"
             onChange={(event) => {
+              setFile(event.target.files?.[0] ?? null); // lo que se ve es lo que se enviará
               if (busy) return;
-              setFile(event.target.files?.[0] ?? null);
               setProblem(null);
               upload.reset();
             }}
