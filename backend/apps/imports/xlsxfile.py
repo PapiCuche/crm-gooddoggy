@@ -36,15 +36,7 @@ from openpyxl.styles.stylesheet import apply_stylesheet
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet._reader import WorkSheetParser
 from openpyxl.xml import DEFUSEDXML, LXML
-from openpyxl.xml.constants import (
-    ARC_CONTENT_TYPES,
-    ARC_STYLE,
-    ARC_WORKBOOK,
-    XLSM,
-    XLSX,
-    XLTM,
-    XLTX,
-)
+from openpyxl.xml.constants import ARC_CONTENT_TYPES, ARC_STYLE, XLSM, XLSX, XLTM, XLTX
 from openpyxl.xml.functions import fromstring
 
 from apps.imports.csvfile import MAX_BYTES, MAX_ROWS, Sheet, Unreadable, columns, ignored
@@ -62,9 +54,7 @@ METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 WORKBOOKS = (XLSX, XLSM, XLTX, XLTM)
 DAMAGED = "No pudimos abrir el Excel: está dañado. Ábrelo y guárdalo otra vez como .xlsx."
 NOT_XLSX = "No es un Excel .xlsx: guárdalo como «Libro de Excel (.xlsx)» o como «CSV UTF-8»."
-TOO_BIG_PART = (
-    f"Una parte de la estructura del Excel pasa de {MAX_WHOLE // 1024} KB: no parece de Excel."
-)
+TOO_BIG_PART = f"Una parte interna del Excel pasa de {MAX_WHOLE // 1024} KB: no parece de Excel."
 
 
 def is_zip(data: bytes) -> bool:
@@ -126,12 +116,11 @@ def _signature(archive: zipfile.ZipFile) -> str:
     if ARC_CONTENT_TYPES not in archive.namelist():
         raise Unreadable(NOT_XLSX)
     manifest = Manifest.from_tree(fromstring(archive.read(ARC_CONTENT_TYPES)))
-    found = [
-        kind for kind in (*manifest.Override, *manifest.Default) if kind.ContentType in WORKBOOKS
-    ]
+    kinds = (*manifest.Override, *manifest.Default)
+    found = [kind for kind in kinds if kind.ContentType in WORKBOOKS]
     if [kind.ContentType for kind in found] != [XLSX]:
         raise Unreadable(NOT_XLSX)
-    return str(getattr(found[0], "PartName", f"/{ARC_WORKBOOK}"))[1:]  # como openpyxl
+    return str(getattr(found[0], "PartName", "/xl/workbook.xml"))[1:]  # como openpyxl
 
 
 def _text(value: Any) -> str:

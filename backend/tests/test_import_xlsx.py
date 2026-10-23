@@ -233,21 +233,16 @@ def styles(count: int) -> str:
 
 
 def just_over(build: Callable[[int], str], cap: int) -> int:
-    """El menor número de elementos con el que `build` pasa de `cap` bytes."""
-    low, high = 1, 2
-    while len(build(high)) <= cap:
-        low, high = high, high * 2
+    """El menor número de elementos con el que `build` pasa de `cap` bytes (cada uno ocupa 20+)."""
+    low, high = 0, cap // 20
     while high - low > 1:
-        middle = (low + high) // 2
-        low, high = (middle, high) if len(build(middle)) <= cap else (low, middle)
+        low, high = (mid, high) if len(build(mid := (low + high) // 2)) <= cap else (low, mid)
     return high
 
 
 def sheets(count: int) -> str:
-    many = "".join(
-        f'<sheet name="h{n}" sheetId="{n + 2}" r:id="rId{n + 2}"/>' for n in range(count)
-    )
-    return FIRST + many
+    ids = range(2, count + 2)
+    return FIRST + "".join(f'<sheet name="h{n}" sheetId="{n}" r:id="rId{n}"/>' for n in ids)
 
 
 def links(count: int) -> str:
@@ -288,14 +283,6 @@ def test_the_parts_read_whole_have_their_own_cap(monkeypatch: pytest.MonkeyPatch
     assert len(xlsxfile.read(padded, ALIASES).rows) == 198
 
 
-def test_a_part_shorter_than_what_it_declares_is_damaged() -> None:
-    content = f"{TYPES}{override(XLSX)}</Types>".encode()
-    name = "[Content_Types].xml"
-    short = declare(handmade(), name, len(content) + 1, content)
-    assert refused(short) == xlsxfile.DAMAGED
-    assert xlsxfile.read(declare(handmade(), name, len(content), content), ALIASES).rows == []
-
-
 def restream(stream: bytes, size: int, content: bytes) -> bytes:
     """Un XLSX válido cuya última parte (`xl/extra.xml`, que openpyxl no lee) es el flujo deflate
     `stream`, declarando `size` bytes y el CRC de `content`."""
@@ -319,13 +306,14 @@ def deflate(content: bytes, end: bool = True) -> bytes:
 
 def test_a_stream_must_end_exactly_where_it_declares_with_its_crc() -> None:
     """`zipfile` corta en lo declarado un flujo más largo (con el CRC de ese trozo, lo acepta) y no
-    mira si el flujo acaba: aquí, las dos cosas dañan el archivo, como un CRC que no cuadra."""
+    mira si el flujo acaba: aquí, eso daña el archivo, como uno más corto o un CRC que no cuadra."""
     good = b"<x/>"
     assert len(deflate(good)) == 6  # lo que ocupaba la parte: `restream` mueve el directorio
     assert xlsxfile.read(restream(deflate(good), 4, good), ALIASES).rows == []
     for stream, size, crc in (
         (deflate(good + b" " * 1000), 4, good),  # sigue tras lo declarado
         (deflate(good, end=False), 4, good),  # no acaba
+        (deflate(good), 5, good),  # acaba antes
         (deflate(good), 4, b"<y/>"),
     ):
         assert refused(restream(stream, size, crc)) == xlsxfile.DAMAGED
@@ -375,10 +363,7 @@ def test_the_last_excel_row_is_read_without_filling_the_gap() -> None:
         (packed({"a.txt": "hola"}), xlsxfile.NOT_XLSX),
         (packed({"mimetype": "application/vnd.oasis.opendocument.spreadsheet"}), "No es un Excel"),
         (handmade(kind=XLSM), xlsxfile.NOT_XLSX),  # con macros
-        (
-            handmade(types=override(XLSM, "/xl/b.xml")),
-            xlsxfile.NOT_XLSX,  # dos libros: openpyxl leería el de macros
-        ),
+        (handmade(types=override(XLSM, "/xl/b.xml")), xlsxfile.NOT_XLSX),  # dos libros
     ],
 )
 def test_the_signature_is_an_xlsx_workbook_not_the_name(data: bytes, says: str) -> None:
