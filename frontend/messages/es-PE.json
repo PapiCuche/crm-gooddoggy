@@ -737,7 +737,8 @@
       "view": "Ver contactos",
       "create": "Crear contactos",
       "update": "Editar contactos",
-      "delete": "Borrar contactos"
+      "delete": "Borrar contactos",
+      "assign": "Asignar contactos"
     }
   },
   "account": {

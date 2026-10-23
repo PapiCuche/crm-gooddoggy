@@ -26,6 +26,7 @@ export * from "./category";
 export * from "./categoryCreateRequest";
 export * from "./conditionEnum";
 export * from "./contact";
+export * from "./contactAssignmentRequest";
 export * from "./contactCreateRequest";
 export * from "./contactDocumentTypeEnum";
 export * from "./contactsListParams";

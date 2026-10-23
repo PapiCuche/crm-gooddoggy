@@ -3,7 +3,8 @@
 Los de plataforma se ejecutan sin tenant activo. Las membresías se leen dentro de
 `user_scope`: la política SELECT de `organization_memberships` solo deja ver las del propio
 usuario (ADR-002 §3.2).
-`branches`, `teams` y `team_members` son de tenant: se leen dentro de un `tenant_scope`.
+`branches`, `teams`, `team_members` y `lock_active_member` son de tenant: se leen dentro de un
+`tenant_scope`.
 """
 
 from dataclasses import dataclass
@@ -76,6 +77,18 @@ def organizations_for_user(user: Any) -> list[OrganizationSummary]:
         OrganizationSummary(*row)
         for row in rows.order_by("name", "slug").values_list("id", "slug", "name")
     ]
+
+
+def lock_active_member(user_id: UUID) -> bool:
+    """¿Es `user_id` miembro `ACTIVE`, con su usuario activo, de la organización del
+    `tenant_scope` activo? Si lo es, su membresía queda bloqueada (`FOR NO KEY UPDATE`) hasta el
+    final de la transacción: una suspensión o un cambio de sucursal que llegue después espera, y
+    uno ya confirmado se ve (PostgreSQL relee la fila bloqueada). Para quien guarda a ese miembro
+    como responsable de algo (F4-08), después de bloquear ese algo. Solo se serializa la fila de
+    la membresía: desactivar el usuario (`users.is_active`, de plataforma) a la vez no espera."""
+    rows = OrganizationMembership.objects.select_for_update(no_key=True, of=("self",))
+    found = rows.filter(user_id=user_id, status=ACTIVE, user__is_active=True)
+    return bool(found.values_list("pk", flat=True)[:1])
 
 
 def branches() -> QuerySet[Branch]:

@@ -33,6 +33,7 @@ import type {
   Category,
   CategoryCreateRequest,
   Contact,
+  ContactAssignmentRequest,
   ContactCreateRequest,
   ContactsListParams,
   Error,
@@ -3501,6 +3502,113 @@ export const useContactsDelete = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getContactsDeleteMutationOptions(options), queryClient);
+};
+
+export const getContactsAssignUrl = (orgSlug: string, contactId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/assignment/`;
+};
+
+/**
+ * Deja el contacto con ese responsable y esa sucursal (`contacts.assign`) si `version` sigue vigente (409 `CONTACT_VERSION_CONFLICT` si no). Exige también `contacts.view`; fuera de su alcance: 404. Solo se valida lo que cambia.
+ */
+export const contactsAssign = async (
+  orgSlug: string,
+  contactId: string,
+  contactAssignmentRequest: ContactAssignmentRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Contact> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Contact>(getContactsAssignUrl(orgSlug, contactId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(contactAssignmentRequest),
+  });
+};
+
+export const getContactsAssignMutationKey = () => ["contactsAssign"] as const;
+
+export const getContactsAssignMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactsAssign>>,
+    TError,
+    ContactsAssignMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactsAssign>>,
+  TError,
+  ContactsAssignMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactsAssignMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactsAssign>>,
+    ContactsAssignMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, data } = props ?? {};
+
+    return contactsAssign(orgSlug, contactId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactsAssignMutationResult = NonNullable<Awaited<ReturnType<typeof contactsAssign>>>;
+export type ContactsAssignMutationBody = ContactAssignmentRequest;
+export type ContactsAssignMutationError = ErrorType<Error>;
+export type ContactsAssignMutationVariables = {
+  orgSlug: string;
+  contactId: string;
+  data: ContactAssignmentRequest;
+};
+
+export const useContactsAssign = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactsAssign>>,
+      TError,
+      ContactsAssignMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactsAssign>>,
+  TError,
+  ContactsAssignMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactsAssignMutationOptions(options), queryClient);
 };
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {

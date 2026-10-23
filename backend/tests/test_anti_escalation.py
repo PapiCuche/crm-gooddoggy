@@ -66,6 +66,7 @@ ADMIN_REST = (
     "inventory.transfer",
     "warehouses.manage",
     "contacts.create",  # F4-02: los contactos
+    "contacts.assign",  # F4-08
 )
 SCOPED_REST = ("contacts.view", "contacts.update", "contacts.delete")  # con `ORGANIZATION`
 ADMIN = dict.fromkeys(ADMIN_REST) | dict.fromkeys(SCOPED_REST, "ORGANIZATION")

@@ -111,17 +111,18 @@ def names(crm: SimpleNamespace, *keys: str) -> set[UUID]:
 
 
 def test_the_catalog_and_the_templates_carry_the_contacts_permissions() -> None:
-    for code in (*SCOPED, "contacts.create"):
+    for code in (*SCOPED, "contacts.create", "contacts.assign"):  # `assign`: F4-08
         permission = BY_CODE[code]
         assert (permission.module, permission.is_sensitive) == ("contacts", False)
-        assert permission.supports_scope is (code != "contacts.create")
+        assert permission.supports_scope is (code in SCOPED)
     grants = {template.code: template.grants for template in ROLE_TEMPLATES}
     contacts = {
         code: {k: v for k, v in held.items() if k.startswith("contacts.")}
         for code, held in grants.items()
     }
     organization = dict.fromkeys(SCOPED, Scope.ORGANIZATION)
-    assert contacts["owner"] == contacts["admin"] == {**organization, "contacts.create": None}
+    unscoped = {"contacts.create": None, "contacts.assign": None}
+    assert contacts["owner"] == contacts["admin"] == {**organization, **unscoped}
     assert contacts["supervisor"] == {"contacts.view": Scope.TEAM}
     assert contacts["seller"] == {
         "contacts.view": Scope.OWN,

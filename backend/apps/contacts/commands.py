@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.contacts.models import PHONE_E164, SEPARATORS, Contact, dialed
+from apps.organizations.selectors import lock_active_member
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import line
@@ -51,7 +52,8 @@ _DOCUMENT = frozenset({"document_type", "document_number"})
 
 
 class BadReference(ValueError):
-    """El responsable no es miembro de la organización, o la sucursal no es suya."""
+    """El responsable no es miembro de la organización (activo, al reasignar), o la sucursal no
+    es suya."""
 
     def __init__(self, field: str) -> None:
         super().__init__(field)
@@ -228,6 +230,53 @@ def update_contact(ctx: TenantContext, *, contact_id: UUID, version: int, **fiel
             contact.save(using=alias, update_fields=updated)
             contact.refresh_from_db(using=alias, fields=["version"])
             record(ctx, "contact.updated", Entity("contact", contact.pk), changes)
+    return contact
+
+
+def assign_contact(
+    ctx: TenantContext,
+    *,
+    contact_id: UUID,
+    version: int,
+    owner_user_id: UUID | None,
+    branch_id: UUID | None,
+) -> Contact:
+    """Deja un contacto vivo con ese responsable y esa sucursal (`None`: ninguno), si nadie lo
+    cambió desde `version`, y lo audita (`contact.assigned`) con el antes y el después; si nada
+    cambia, no escribe. Solo se valida lo que cambia: un responsable nuevo es un miembro activo
+    de la organización, y una sucursal nueva es suya; si no, `BadReference` con el campo.
+    `DoesNotExist` y `StaleContact`, como `update_contact`.
+
+    Orden de bloqueo (phase-4.md, F4-03): primero el contacto, como `PATCH` y `DELETE`; después
+    la membresía del responsable nuevo, como suspenderlo o cambiarlo de sucursal (que nunca
+    bloquean contactos): una suspensión confirmada antes se ve, y una posterior espera."""
+    alias = require_scope(ctx)
+    sent = {"owner_user_id": owner_user_id, "branch_id": branch_id}
+    wanted = {k: None if v is None else UUID(str(v)) for k, v in sent.items()}  # también texto
+    try:
+        with transaction.atomic(using=alias):
+            contact: Contact = _live(alias).select_for_update(no_key=True).get(pk=contact_id)
+            if contact.version != version:
+                raise StaleContact(contact_id)
+            changes = {
+                field: [_audited(field, getattr(contact, field)), _audited(field, value)]
+                for field, value in wanted.items()
+                if getattr(contact, field) != value
+            }
+            if "owner_user_id" in changes and (owner := wanted["owner_user_id"]) is not None:
+                if not lock_active_member(owner):
+                    raise BadReference("owner_user_id")
+            if changes:
+                for field in changes:
+                    setattr(contact, field, wanted[field])
+                contact.updated_by_user_id = ctx.user_id
+                contact.version = F("version") + 1
+                updated = [*changes, "updated_by_user_id", "version", "updated_at"]
+                contact.save(using=alias, update_fields=updated)  # la sucursal: su FK compuesta
+                contact.refresh_from_db(using=alias, fields=["version"])
+                record(ctx, "contact.assigned", Entity("contact", contact.pk), changes)
+    except IntegrityError as error:
+        raise _reference(error) from None
     return contact
 
 
