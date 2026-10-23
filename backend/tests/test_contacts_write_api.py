@@ -12,6 +12,7 @@ import pytest
 from django.db import connection
 from django.test import Client
 
+from apps.contacts.models import DocumentType
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_contacts_api, test_self_context
@@ -113,7 +114,8 @@ def test_the_creator_owns_the_contact_in_their_branch_and_organization(
         ({"document_type": "DNI", "document_number": "1234"}, "document_number"),
         ({"document_number": "12345678"}, "document_number"),
         ({"document_type": "RUC"}, "document_type"),
-        ({"source": "TIKTOK"}, "source"),
+        ({"document_type": "12345678"}, "document_type"),
+        ({"source": "+51987654321"}, "source"),
         ({"display_name": " - "}, "display_name"),
         ({"display_name": "", "first_name": "Ana\nMaría"}, "first_name"),
         ({"display_name": "", "first_name": " ", "last_name": ""}, "display_name"),
@@ -125,8 +127,10 @@ def test_a_bad_field_is_a_400_that_names_it_without_echoing_it(
     answer = create(signed(crm.vera), {"display_name": "Ana", **body})
     assert answer.status_code == 400
     assert (answer.json()["code"], set(answer.json()["fields"])) == ("VALIDATION_ERROR", {field})
-    for key in ("primary_phone_e164", "primary_email", "document_number"):
-        assert not body.get(key) or body[key] not in answer.content.decode()
+    for key in ("primary_phone_e164", "primary_email", "document_number", "document_type"):
+        value = body.get(key)  # un tipo válido («DNI») sí puede salir en el mensaje
+        assert not value or value in DocumentType.values or value not in answer.content.decode()
+    assert "+51987654321" not in answer.content.decode()  # tampoco como `source`
     assert migrator.execute("SELECT count(*) FROM contacts").fetchone() == (8,)
 
 
@@ -153,7 +157,10 @@ def test_a_seller_edits_their_own_and_gets_404_on_the_others(
         assert (edited["last_name"], edited["version"]) == ("Suyo", 2)
     before = migrator.execute(ROW).fetchall()
     for contact_id in (*(crm.ids[k] for k in ("lima", "sam", "plain", "deleted", "b")), uuid4()):
-        assert reply(patch(vera, contact_id, {"version": 1, "last_name": "X"})) == NOT_FOUND
+        for version in (1, 9):  # una versión vieja tampoco delata que existe
+            assert (
+                reply(patch(vera, contact_id, {"version": version, "last_name": "X"})) == NOT_FOUND
+            )
     assert migrator.execute(ROW).fetchall() == before
 
 
@@ -210,6 +217,7 @@ def test_a_stale_version_is_a_409_and_no_change_writes_nothing(
     assert (row(migrator, owned), len(audit(migrator))) == (before, logged)  # ni el xmin
     assert patch(vera, owned, {"version": 1, "first_name": "Uno"}).status_code == 200
     before, logged = row(migrator, owned), len(audit(migrator))
+    assert patch(vera, owned, {"version": 1}).status_code == 409  # también sin cambios
     for version in (1, 3):
         answer = patch(vera, owned, {"version": version, "first_name": "Pisado"})
         assert (answer.status_code, answer.json()["code"]) == (409, "CONTACT_VERSION_CONFLICT")

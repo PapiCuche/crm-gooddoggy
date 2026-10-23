@@ -40,6 +40,7 @@ from core.text import line, name
 
 STALE = "Otra persona cambió el contacto: vuelve a cargarlo y repite el cambio."
 PHONE_HELP = "E.164: `+` y el código del país; no se adivina."
+UNKNOWN = {"invalid_choice": "No es un valor admitido."}  # sin repetir lo recibido
 
 
 class ContactSerializer(serializers.Serializer[Any]):
@@ -99,12 +100,17 @@ class ContactWriteSerializer(serializers.Serializer[Any]):
         max_length=EMAIL_MAX, required=False, allow_null=True, allow_blank=True
     )
     document_type = serializers.ChoiceField(
-        choices=Contact.DocumentType.choices, required=False, allow_null=True
+        choices=Contact.DocumentType.choices,
+        required=False,
+        allow_null=True,
+        error_messages=UNKNOWN,
     )
     document_number = serializers.CharField(
         max_length=32, required=False, allow_null=True, allow_blank=True, help_text="Con su tipo."
     )
-    source = serializers.ChoiceField(choices=Contact.Source.choices, required=False)
+    source = serializers.ChoiceField(
+        choices=Contact.Source.choices, required=False, error_messages=UNKNOWN
+    )
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         problems = {}
