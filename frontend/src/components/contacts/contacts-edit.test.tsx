@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { onlineManager } from "@tanstack/react-query";
+import { act, useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -91,6 +92,19 @@ const screenOf = (who: SelfContext) =>
       <ContactsList />
     </TenantProvider>,
   );
+// Los permisos cambian con la pantalla abierta (la guardia los relee al volver a la pestaña).
+let regrant: (who: SelfContext) => void = () => {};
+function Regranted({ initial }: { initial: SelfContext }) {
+  const [who, setWho] = useState(initial);
+  useEffect(() => {
+    regrant = setWho;
+  }, []);
+  return (
+    <TenantProvider value={who}>
+      <ContactsList />
+    </TenantProvider>
+  );
+}
 type Scope = ReturnType<typeof within>;
 const form = (scope: Scope = screen) => scope.getByRole("form", { name: /^Editar el cliente/ });
 const field = (label: string, scope: Scope = screen) => within(form(scope)).getByLabelText(label);
@@ -407,5 +421,65 @@ describe("ContactsList: editar y borrar", () => {
     expect(screen.queryByRole("group")).toBeNull();
     expect(screen.getByRole("heading", { name: "Clientes" })).toHaveFocus();
     expect(sent(api, "DELETE")).toHaveLength(1);
+  });
+
+  it("con solo la fila sostenida no es la lista vacía; el recuento sigue siendo el de la API", async () => {
+    const api = server([rosa]);
+    const view = screenOf(editor);
+    await screen.findByText("Rosa Díaz");
+    press("Editar el cliente Rosa Díaz");
+    api.drop("c1");
+    await view.client.invalidateQueries();
+    expect(await within(form()).findByRole("alert")).toHaveTextContent(/ya no está/);
+    expect(screen.queryByText("Todavía no tienes clientes en la lista.")).toBeNull();
+    expect(screen.getByText("Sin clientes en la lista")).toHaveAttribute("role", "status");
+  });
+
+  it("la fila se deja de sostener al guardar, al borrarla y al desmontarse el formulario", async () => {
+    const api = server([rosa, luis]);
+    const view = screenOf(editor);
+    await screen.findByText("Luis Paz");
+    press("Editar el cliente Rosa Díaz"); // guardado: ya no se sostiene
+    fill({ Nombre: "Rosita" });
+    press("Guardar", form());
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    api.drop("c1");
+    await act(() => view.client.invalidateQueries());
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+    press("Editar el cliente Luis Paz"); // borrado aquí con el formulario abierto
+    press("Borrar el cliente Luis Paz");
+    press("Borrar", screen.getByRole("group"));
+    await waitFor(() => expect(live()).toHaveTextContent("Cliente «Luis Paz» borrado."));
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("listitem")).toBeNull();
+  });
+
+  it("un 403 cierra la lista bajo el formulario: al volver sin la fila, no queda su fantasma", async () => {
+    const api = server([rosa, luis]);
+    const view = screenOf(editor);
+    await screen.findByText("Rosa Díaz");
+    press("Editar el cliente Rosa Díaz");
+    api.answerOnce({ status: 403, body: { code: "PERMISSION_DENIED" } });
+    await act(() => view.client.invalidateQueries());
+    await screen.findByText("No tienes permiso para ver los clientes de esta organización.");
+    api.drop("c1");
+    await act(() => view.client.refetchQueries());
+    await screen.findByText("Luis Paz");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.queryByText("Rosa Díaz")).toBeNull();
+  });
+
+  it("sin permiso de editar a mitad de la edición: la fila que luego se va no se queda", async () => {
+    const api = server([rosa, luis]);
+    const view = renderApp(<Regranted initial={editor} />);
+    await screen.findByText("Rosa Díaz");
+    press("Editar el cliente Rosa Díaz");
+    act(() => regrant(tenant("contacts.delete")));
+    expect(screen.queryByRole("form")).toBeNull();
+    api.drop("c1");
+    await act(() => view.client.invalidateQueries());
+    await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+    expect(screen.queryByText("Rosa Díaz")).toBeNull();
   });
 });

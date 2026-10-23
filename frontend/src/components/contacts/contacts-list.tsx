@@ -34,7 +34,11 @@ export function ContactsList() {
   // pestaña los borró, o salieron de su alcance), su fila sigue con lo escrito y lo dice.
   const [editing, setEditing] = useState<readonly Contact[]>([]);
   const hold = (contact: Contact, open: boolean) =>
-    setEditing((now) => [...now.filter(({ id }) => id !== contact.id), ...(open ? [contact] : [])]);
+    setEditing((now) =>
+      !open && !now.some(({ id }) => id === contact.id)
+        ? now
+        : [...now.filter(({ id }) => id !== contact.id), ...(open ? [contact] : [])],
+    );
   function stale(name: string, here: boolean) {
     setSaid({ text: t("stale", { name }), alert: true });
     list.current?.refetch();
@@ -125,7 +129,14 @@ export function ContactsList() {
                   />
                 ) : null}
                 {canDelete ? (
-                  <ContactDeleteAction {...actions} contact={contact} onDeleted={done} />
+                  <ContactDeleteAction
+                    {...actions}
+                    contact={contact}
+                    onDeleted={(text, here) => {
+                      hold(contact, false); // borrado aquí: su formulario no se queda avisando
+                      done(text, here);
+                    }}
+                  />
                 ) : null}
               </div>
             ) : null}

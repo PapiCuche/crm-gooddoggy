@@ -2,7 +2,7 @@
 
 import { type InfiniteData, type QueryKey, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Choice } from "@/components/catalog/product-create";
 import { FieldsForm } from "@/components/forms/fields-form";
@@ -121,6 +121,11 @@ export function ContactEditAction({
     setDocumentType(row.document_type ?? "");
     setRound((now) => now + 1);
   }
+
+  // Desmontado con el formulario abierto (la lista se cerró con un 403, se perdió el permiso…):
+  // la fila ya no se sostiene.
+  const release = useEffectEvent(() => onHold(contact, false));
+  useEffect(() => () => release(), []);
 
   const open = from !== null;
   const opened = useRef(false);
