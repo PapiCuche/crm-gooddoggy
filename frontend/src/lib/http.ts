@@ -55,6 +55,10 @@ export async function apiFetch<T>(url: string, options: RequestInit = {}): Promi
   }
   const init: RequestInit = { ...options, method, headers, credentials: "same-origin" };
   const response = await fetch(url, init).catch(unreachable);
+  // Las descargas en CSV del contrato (una plantilla, un informe de errores) son un `Blob`.
+  if (response.ok && /^text\/csv(;|$)/i.test(response.headers.get("Content-Type") ?? "")) {
+    return (await response.blob().catch(unreachable)) as T;
+  }
   const text = response.status === 204 ? "" : await response.text().catch(unreachable);
   let body: unknown = null;
   try {
