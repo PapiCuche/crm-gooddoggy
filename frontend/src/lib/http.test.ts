@@ -133,6 +133,19 @@ describe("apiFetch", () => {
     fetchMock.mockResolvedValue(new Response("<h1>mantenimiento</h1>", { status: 200 }));
     const fake = await failure(apiFetch("/api/v1/x/")); // un 2xx que no es JSON no son datos
     expect(fake).toMatchObject({ status: 200, code: "INTERNAL_ERROR" });
+    // Una descarga del contrato (`text/csv`) sí es un `Blob`; otro tipo o un error, no.
+    const reply = (status: number, type: string) =>
+      new Response("sku", { status, headers: { "Content-Type": type } });
+    fetchMock.mockResolvedValue(reply(200, "text/csv; charset=utf-8"));
+    await expect((await apiFetch<Blob>("/api/v1/x/")).text()).resolves.toBe("sku");
+    for (const [status, type] of [
+      [200, "text/csvx"],
+      [200, "text/html"],
+      [403, "text/csv"],
+    ]) {
+      fetchMock.mockResolvedValue(reply(status as number, type as string));
+      expect(await failure(apiFetch("/api/v1/x/"))).toMatchObject({ code: "INTERNAL_ERROR" });
+    }
     for (const code of ["ALGO_NUEVO", "constructor", "toString", "__proto__"]) {
       expect(apiErrorKey(new ApiError(409, code))).toBe("INTERNAL_ERROR");
     }
