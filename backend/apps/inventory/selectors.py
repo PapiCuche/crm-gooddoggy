@@ -1,8 +1,11 @@
 """Lecturas del inventario, por organización (RLS y `TenantManager`). El permiso lo exige quien
 las sirve (`HasPermission`)."""
 
+from uuid import UUID
+
 from django.db.models import QuerySet
 
+from apps.imports.models import DataImport, DataImportRow
 from apps.inventory.models import InventoryLevel, InventoryMovement, Warehouse
 
 
@@ -21,3 +24,13 @@ def movements() -> QuerySet[InventoryMovement]:
     """El ledger de la organización: solo se añade. Con su variante en la misma consulta, también
     si está borrada: el ledger la conserva."""
     return InventoryMovement.objects.select_related("variant")
+
+
+def stock_imports() -> QuerySet[DataImport]:
+    """Las importaciones de stock de la organización (F3-20)."""
+    return DataImport.objects.filter(kind=DataImport.Kind.STOCK)
+
+
+def stock_import_rows(import_id: UUID) -> QuerySet[DataImportRow]:
+    """Las filas de una importación, en el orden del archivo: se crearon así (UUIDv7)."""
+    return DataImportRow.objects.filter(data_import_id=import_id)
