@@ -34,9 +34,12 @@ export function StockPanel() {
   const figures = (cell: typeof ZERO) => (
     <dl className="grid grid-cols-3 gap-2">
       {(["on_hand", "reserved", "available"] as const).map((key) => (
-        <div key={key} className="flex flex-col">
+        <div key={key} className="flex min-w-0 flex-col">
           <dt className="text-muted text-sm">{t(key)}</dt>
-          <dd className="text-[28px] leading-tight font-bold tabular-nums">{cell[key]}</dd>
+          {/* A 390 px, siete cifras caben en un tercio a 22 px; a 28 px no. */}
+          <dd className="text-[22px] leading-tight font-bold wrap-anywhere tabular-nums sm:text-[28px]">
+            {cell[key]}
+          </dd>
         </div>
       ))}
     </dl>

@@ -98,7 +98,7 @@ describe("StockPanel", () => {
   });
 
   it("con varias variantes hay que elegir; sin movimientos, el saldo es cero", async () => {
-    mockApi(ROUTES);
+    mockApi({ ...ROUTES, [LEVELS("v1")]: page([level("w1", 10, 4)]) });
     screenOf();
     await waitFor(() => expect(options("Producto")).toHaveLength(3));
     pick("Almacén", "w2");
@@ -111,7 +111,8 @@ describe("StockPanel", () => {
     expect(figures(here.parentElement!)).toEqual(["0", "0", "0"]);
     expect(screen.getByText(/todavía no tiene movimientos/)).toBeVisible();
     pick("Producto", "p2"); // cambiar de producto deja la variante de antes
-    expect(await screen.findByRole("heading", { name: "Collar en Surco" })).toBeVisible();
+    const surco = await screen.findByRole("heading", { name: "Collar en Surco" });
+    expect(figures(surco.parentElement!)).toEqual(["0", "0", "0"]); // movió en Central, no aquí
   });
 
   it("sin almacenes o sin productos dice qué falta y dónde se crea", async () => {
