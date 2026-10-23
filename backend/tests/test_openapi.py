@@ -59,6 +59,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/inventory/imports/{import_id}/apply/",  # F3-21
         "/api/v1/o/{org_slug}/inventory/imports/{import_id}/errors/",
         "/api/v1/o/{org_slug}/inventory/imports/{import_id}/rows/",
+        "/api/v1/o/{org_slug}/inventory/imports/{import_id}/revert/",  # F3-24
         "/api/v1/o/{org_slug}/inventory/levels/",
         "/api/v1/o/{org_slug}/inventory/movements/",
         "/api/v1/o/{org_slug}/invitations/",
