@@ -2,9 +2,10 @@
 poner en él a un miembro o quitarlo.
 
 Como los de sucursales, no comprueban permisos (`organizations` no importa `access`) y por eso
-no son API pública: solo los importa la API del módulo, que declara `teams.manage` (contrato
-de import-linter). Validan lo que guardan, también para quien no llega por HTTP, y auditan
-cada cambio.
+no son API pública: los importan la API del módulo, que declara `teams.manage`, y
+`apps.members`, que antes comprueba lo que cubre el actor (D-F2-13; contrato de
+import-linter). Validan lo que guardan, también para quien no llega por HTTP, y auditan cada
+cambio.
 """
 
 import re
