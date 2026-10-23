@@ -134,6 +134,42 @@ describe("StockImport", () => {
     expect(atob(body.content)).toBe(lines(1000));
   });
 
+  it("las líneas solo con separadores o comillas cuentan en blanco, como en la API", async () => {
+    const api = mockApi({ [CREATE]: ok(job, 201) });
+    view();
+    const padded = `${lines(1000)},,\n;;\n"",\n \t\r\n`;
+    choose(csv(padded));
+    await screen.findByRole("heading", { name: "Revisa la importación" });
+    expect(atob(JSON.parse(String(posts(api, URL_)[0]?.[1]?.body)).content)).toBe(padded);
+  });
+
+  it("lo que muestra el campo es lo que se envía, también si cambia a mitad de una petición", async () => {
+    let release: (reply: Response) => void = () => {};
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_to: RequestInfo | URL, init?: RequestInit) => {
+        sent.push(atob(JSON.parse(String(init?.body)).content));
+        return sent.length === 1
+          ? new Promise<Response>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(new Response(JSON.stringify(job), { status: 201 }));
+      }),
+    );
+    view();
+    choose(csv("sku,almacen,cantidad\nA,ALM1,1\n"));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    fireEvent.change(screen.getByLabelText("Archivo CSV"), {
+      target: { files: [csv("sku,almacen,cantidad\nB,ALM1,2\n")] },
+    });
+    release(new Response(JSON.stringify({ code: "INTERNAL_ERROR" }), { status: 500 }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
+    press("Previsualizar");
+    await screen.findByRole("heading", { name: "Revisa la importación" });
+    expect(sent).toEqual(["sku,almacen,cantidad\nA,ALM1,1\n", "sku,almacen,cantidad\nB,ALM1,2\n"]);
+  });
+
   it("previsualiza: recuentos y avisos; sin cambios no ofrece aplicar; el archivo no queda en caché", async () => {
     const { client } = await preview();
     expect(screen.getByRole("heading", { name: "Revisa la importación" })).toHaveFocus();
