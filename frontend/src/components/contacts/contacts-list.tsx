@@ -30,6 +30,11 @@ export function ContactsList() {
   const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
   const list = useRef<CursorListHandle>(null);
   const ask = () => setSaid(null);
+  // Los clientes con el formulario de edición abierto: si la lista nueva ya no los trae (otra
+  // pestaña los borró, o salieron de su alcance), su fila sigue con lo escrito y lo dice.
+  const [editing, setEditing] = useState<readonly Contact[]>([]);
+  const hold = (contact: Contact, open: boolean) =>
+    setEditing((now) => [...now.filter(({ id }) => id !== contact.id), ...(open ? [contact] : [])]);
   function stale(name: string, here: boolean) {
     setSaid({ text: t("stale", { name }), alert: true });
     list.current?.refetch();
@@ -52,6 +57,7 @@ export function ContactsList() {
       section="contacts"
       organization={organization.name}
       listKey={listKey}
+      keep={editing}
       fetchPage={(cursor, signal) =>
         contactsList(slug, cursor ? { cursor } : undefined, { signal })
       }
@@ -76,7 +82,7 @@ export function ContactsList() {
       empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
     >
-      {(contact) => {
+      {(contact, rows) => {
         const place = branch(contact);
         return (
           <>
@@ -110,7 +116,13 @@ export function ContactsList() {
               // Abiertos, el formulario o la confirmación ocupan la fila entera.
               <div className="flex flex-wrap items-start gap-2 sm:col-span-2">
                 {canEdit ? (
-                  <ContactEditAction {...actions} contact={contact} onDone={done} />
+                  <ContactEditAction
+                    {...actions}
+                    contact={contact}
+                    gone={!rows.some(({ id }) => id === contact.id)}
+                    onHold={hold}
+                    onDone={done}
+                  />
                 ) : null}
                 {canDelete ? (
                   <ContactDeleteAction {...actions} contact={contact} onDeleted={done} />

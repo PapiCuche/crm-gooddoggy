@@ -36,6 +36,7 @@ export function CursorList<Row extends { id: string }>({
   controls,
   notice,
   empty,
+  keep,
   rowClassName,
   children,
   ref,
@@ -50,8 +51,11 @@ export function CursorList<Row extends { id: string }>({
   controls?: ReactNode;
   notice?: ReactNode | ((rows: Row[]) => ReactNode); // aviso de la pantalla, encima de la lista
   empty?: ReactNode; // lo que se ve en lugar de una lista sin filas
+  // Filas que la pantalla sostiene aunque la lista nueva ya no las traiga (un formulario abierto
+  // en una fila que se borró en otra pestaña): siguen en su sitio, con lo escrito y el foco.
+  keep?: readonly Row[];
   rowClassName?: string;
-  children: (row: Row, rows: Row[]) => ReactNode; // `rows`: todas las cargadas
+  children: (row: Row, rows: Row[]) => ReactNode; // `rows`: todas las que trajo la API
   ref?: Ref<CursorListHandle>;
 }) {
   const t = useTranslations();
@@ -87,6 +91,18 @@ export function CursorList<Row extends { id: string }>({
   const [more, setMore] = useState<"idle" | "busy" | "arrived">("idle");
   const pages = list.data?.pages ?? [];
   const rows = pages.flatMap((page) => page.results);
+  // Las filas como se vieron, mientras alguna está sostenida: una que la lista nueva ya no trae
+  // vuelve a su sitio (moverla quitaría el foco).
+  const [shown, setShown] = useState<readonly Row[]>([]);
+  let visible = rows;
+  for (const row of keep ?? []) {
+    if (visible.some((one) => one.id === row.id)) continue;
+    const at = shown.findIndex((one) => one.id === row.id);
+    visible = visible.toSpliced(at < 0 ? visible.length : at, 0, row);
+  }
+  const moved =
+    visible.length !== shown.length || visible.some((row, index) => row.id !== shown[index]?.id);
+  if (keep?.length && moved) setShown(visible);
   const firstOfLast = pages.length > 1 ? pages.at(-1)?.results[0]?.id : undefined;
 
   useEffect(() => {
@@ -120,11 +136,11 @@ export function CursorList<Row extends { id: string }>({
     body = (
       <>
         {typeof notice === "function" ? notice(rows) : notice}
-        {rows.length === 0 && empty ? (
+        {visible.length === 0 && empty ? (
           empty
         ) : (
           <ul aria-label={t(`${section}.title`)} className="flex flex-col gap-2">
-            {rows.map((row) => (
+            {visible.map((row) => (
               <li
                 key={row.id}
                 ref={row.id === firstOfLast ? fresh : undefined}

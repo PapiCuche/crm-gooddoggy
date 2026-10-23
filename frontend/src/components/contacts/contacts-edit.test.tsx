@@ -60,6 +60,12 @@ function server(initial: Contact[]) {
     drop: (id: string) => (rows = rows.filter((one) => one.id !== id)),
     // La próxima escritura responde esto en lugar de lo que diría el servidor.
     answerOnce: (answer: Answer) => api.mockImplementationOnce(async () => reply(answer)),
+    // La próxima escritura pasa, pero la lista no vuelve después (ni al reintentar).
+    listFailsAfterOnce: () => {
+      api.mockImplementationOnce(api.getMockImplementation()!);
+      api.mockImplementationOnce(async () => reply({ status: 500, body: {} }));
+      api.mockImplementationOnce(async () => reply({ status: 500, body: {} }));
+    },
     // La próxima petición tarda hasta que el test la suelta.
     holdOnce: () => {
       const real = api.getMockImplementation()!;
@@ -332,5 +338,74 @@ describe("ContactsList: editar y borrar", () => {
     ).toHaveAttribute("role", "alert");
     expect(screen.queryByRole("group")).toBeNull();
     await waitFor(() => expect(screen.queryByText("Luis Paz")).toBeNull());
+  });
+
+  it("la fila que desaparece bajo el formulario abierto sigue en su sitio, con lo escrito", async () => {
+    const api = server([rosa, luis]);
+    const view = screenOf(editor);
+    await screen.findByText("Luis Paz");
+    press("Editar el cliente Rosa Díaz");
+    fill({ Nombre: "Rosita" });
+    api.drop("c1"); // otra pestaña lo borró, o salió de su alcance
+    await view.client.invalidateQueries(); // la lista se relee debajo, sin la fila
+    expect(await within(form()).findByRole("alert")).toHaveTextContent(
+      "«Rosa Díaz» ya no está entre los clientes que puedes cambiar: se borró o quedó fuera de tu alcance. Lo que escribiste sigue aquí",
+    );
+    expect(field("Nombre")).toHaveValue("Rosita");
+    expect(field("Nombre")).toHaveFocus();
+    const [first] = screen.getAllByRole("listitem");
+    expect(within(first!).getByRole("form")).toBeVisible(); // en su sitio, no al final
+    press("Cancelar", form());
+    expect(screen.getByText(/«Rosa Díaz» ya no está.*La lista se volvió a cargar/)).toHaveAttribute(
+      "role",
+      "alert",
+    );
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.queryByText("Rosa Díaz")).toBeNull();
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Clientes" })).toHaveFocus();
+    expect(sent(api, "PATCH")).toEqual([]);
+  });
+
+  it("guardado sin la lista nueva: la fila ya lleva lo guardado y editar otra vez no da 409", async () => {
+    const api = server([rosa]);
+    screenOf(editor);
+    await screen.findByText("Rosa Díaz");
+    press("Editar el cliente Rosa Díaz");
+    fill({ "Nombre para mostrar": "Rosa D." });
+    api.listFailsAfterOnce();
+    press("Guardar", form());
+    await waitFor(() =>
+      expect(live()).toHaveTextContent(
+        "Cliente «Rosa D.» guardado, pero la lista no se pudo actualizar.",
+      ),
+    );
+    press("Editar el cliente Rosa D."); // la fila ya lo dice, con la versión nueva
+    expect(field("Nombre para mostrar")).toHaveValue("Rosa D.");
+    fill({ "Correo (opcional)": "rosa@vet.pe" });
+    press("Guardar", form());
+    await waitFor(() => expect(live()).toHaveTextContent("Cliente «Rosa D.» guardado."));
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(sent(api, "PATCH").map(({ body }) => body)).toEqual([
+      { display_name: "Rosa D.", version: 1 },
+      { primary_email: "rosa@vet.pe", version: 2 },
+    ]);
+  });
+
+  it("borrar sin la lista nueva: la confirmación se cierra y lo dice", async () => {
+    const api = server([rosa, luis]);
+    screenOf(editor);
+    await screen.findByText("Rosa Díaz");
+    press("Borrar el cliente Rosa Díaz");
+    api.listFailsAfterOnce();
+    press("Borrar", screen.getByRole("group"));
+    await waitFor(() =>
+      expect(live()).toHaveTextContent(
+        "Cliente «Rosa Díaz» borrado, pero la lista no se pudo actualizar. Recarga la página.",
+      ),
+    );
+    expect(screen.queryByRole("group")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Clientes" })).toHaveFocus();
+    expect(sent(api, "DELETE")).toHaveLength(1);
   });
 });

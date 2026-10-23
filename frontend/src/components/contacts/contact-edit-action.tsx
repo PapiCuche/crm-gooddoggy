@@ -29,19 +29,24 @@ type Name = (typeof FIELDS)[number]["name"];
 // Editar un cliente (F4-05) con `PATCH …/contacts/{id}/` (F4-03): viaja solo lo que cambió
 // respecto a lo que había al abrir, con la `version` leída. Si otro lo cambió antes (409), no se
 // pisa: la lista se vuelve a pedir y el formulario se recarga con lo nuevo. Un 404 es que ya no
-// está en su alcance de edición o que se borró: lo explica la lista.
+// está en su alcance de edición o que se borró: lo explica la lista. Si la lista se relee con el
+// formulario abierto y ya no lo trae, la fila sigue (`onHold`) con lo escrito y lo dice.
 export function ContactEditAction({
   slug,
   contact,
   listKey,
+  gone,
   onAsk,
+  onHold,
   onDone,
   onStale,
 }: {
   slug: string;
   contact: Contact;
   listKey: QueryKey;
+  gone: boolean; // la lista nueva ya no lo trae
   onAsk: () => void; // se abre el formulario: el aviso anterior de la lista ya no aplica
+  onHold: (contact: Contact, open: boolean) => void; // la lista sostiene la fila mientras se edita
   onDone: (text: string) => void;
   onStale: (name: string, here: boolean) => void; // `here`: el foco seguía en esta fila
 }) {
@@ -64,10 +69,23 @@ export function ContactEditAction({
     mutation: {
       networkMode: "always",
       onSuccess: async (saved) => {
+        // Lo guardado entra ya en la lista, con su versión: si releerla falla, la siguiente
+        // edición parte de ahí y no recibe un 409 por su propio cambio.
+        queryClient.setQueryData<InfiniteData<{ results: Contact[] }>>(listKey, (data) =>
+          data
+            ? {
+                ...data,
+                pages: data.pages.map((page) => ({
+                  ...page,
+                  results: page.results.map((row) => (row.id === saved.id ? saved : row)),
+                })),
+              }
+            : data,
+        );
         // Sigue «Guardando…» hasta que la lista vuelve. Si releerla falla, se dice.
         await queryClient.invalidateQueries({ queryKey: listKey });
         const stale = queryClient.getQueryState(listKey)?.status === "error";
-        setFrom(null);
+        close();
         onDone(t(stale ? "doneStale" : "done", { name: saved.display_name }));
       },
       // Sigue «Guardando…» mientras vuelve la lista: el aviso llega con el formulario recargado.
@@ -88,12 +106,16 @@ export function ContactEditAction({
         } else if (error.status !== 404) return;
         // Un 404, o un 409 de uno que ya no está entre los que ve: lo explica la lista.
         const focused = here();
-        setFrom(null);
+        close();
         onStale(contact.display_name, focused);
       },
     },
   });
 
+  function close() {
+    setFrom(null);
+    onHold(contact, false);
+  }
   function load(row: Contact) {
     setFrom(row);
     setDocumentType(row.document_type ?? "");
@@ -114,8 +136,13 @@ export function ContactEditAction({
     update.reset();
     if (next) {
       onAsk();
+      onHold(contact, true);
       load(contact);
-    } else setFrom(null);
+    } else {
+      // Ya no estaba en la lista: su fila se va con el formulario, y lo explica la lista.
+      if (gone) onStale(contact.display_name, here());
+      close();
+    }
   }
   const title = t("title", { name: from?.display_name ?? contact.display_name });
 
@@ -130,7 +157,16 @@ export function ContactEditAction({
         <FieldsForm<Name>
           key={round}
           title={title}
-          heading={<h2 className="font-medium wrap-anywhere">{title}</h2>}
+          heading={
+            <>
+              <h2 className="font-medium wrap-anywhere">{title}</h2>
+              {gone ? (
+                <p role="alert" className="text-danger text-sm wrap-anywhere">
+                  {t("gone", { name: from.display_name })}
+                </p>
+              ) : null}
+            </>
+          }
           className="flex w-full max-w-xl flex-col gap-4"
           fields={FIELDS.map((field) => ({
             ...field,
