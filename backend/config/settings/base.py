@@ -213,6 +213,7 @@ SPECTACULAR_SETTINGS = {
         "ImportRowActionEnum": "apps.imports.models.DataImportRow.Action",
         "ContactSourceEnum": "apps.contacts.models.Source",  # F4-02
         "ContactDocumentTypeEnum": "apps.contacts.models.DocumentType",
+        "TagAppliesToEnum": "apps.contacts.models.TagTarget",  # F4-11
         "PriceListKindEnum": "apps.pricing.models.Kind",  # F3-40b
         "PriceListPaymentConditionEnum": "apps.pricing.models.PaymentCondition",
         "PricePermissionEnum": "apps.pricing.models.READ_PERMISSIONS",

@@ -4059,6 +4059,189 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/tags/:
+    get:
+      operationId: tags_list
+      description: Las etiquetas de contactos, activas o no, por creación (ADR-016).
+        Con `contacts.view` y cualquier alcance.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTagList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: tags_create
+      description: 'Crea una etiqueta de contactos, activa (`settings.manage`). 409
+        `TAG_NAME_TAKEN`: ya hay una con ese nombre, sin distinguir mayúsculas, activa
+        o no.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagWriteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/tags/{tag_id}/:
+    patch:
+      operationId: tags_update
+      description: 'Renombra, cambia el color o activa y desactiva (`settings.manage`);
+        lo que no cambia no se escribe. 409 `TAG_NAME_TAKEN`. Las etiquetas no se
+        borran. 404: no es de la organización.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - contacts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTagUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/teams/:
     get:
       operationId: teams_list
@@ -5942,6 +6125,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedTagList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedTeamList:
       type: object
       required:
@@ -6188,6 +6385,21 @@ components:
         description:
           type: string
           maxLength: 255
+    PatchedTagUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        color:
+          type: string
+          minLength: 1
+          description: '`#RRGGBB`; se guarda en minúsculas.'
+          maxLength: 16
+        is_active:
+          type: boolean
+          description: '`false` la desactiva.'
     PatchedTeamUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está. El `slug`
@@ -6809,6 +7021,54 @@ components:
       - quantity
       - row_number
       - sku
+    Tag:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Único en la organización, sin distinguir mayúsculas.
+        color:
+          type: string
+          description: '`#rrggbb`.'
+        applies_to:
+          allOf:
+          - $ref: '#/components/schemas/TagAppliesToEnum'
+          description: |-
+            Por ahora, CONTACT.
+
+            * `CONTACT` - Contact
+        is_active:
+          type: boolean
+          description: Una desactivada no se pone en más contactos.
+      required:
+      - applies_to
+      - color
+      - id
+      - is_active
+      - name
+    TagAppliesToEnum:
+      enum:
+      - CONTACT
+      type: string
+      description: '* `CONTACT` - Contact'
+    TagWriteRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        color:
+          type: string
+          minLength: 1
+          description: '`#RRGGBB`; se guarda en minúsculas.'
+          maxLength: 16
+      required:
+      - color
+      - name
     Team:
       type: object
       properties:
