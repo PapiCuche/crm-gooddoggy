@@ -3252,7 +3252,7 @@ export const getInventoryMovementsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` o `IDEMPOTENCY_KEY_REUSED`.
+ * Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `IDEMPOTENCY_KEY_REUSED` o `STOCK_LIMIT` (el saldo pasaría de 2147483647).
  */
 export const inventoryMovementsCreate = async (
   orgSlug: string,
@@ -4851,7 +4851,7 @@ export const getProductsDeleteUrl = (orgSlug: string, productId: string) => {
 };
 
 /**
- * Borra el producto y sus variantes (borrado lógico); sus SKU quedan libres.
+ * Borra el producto y sus variantes (borrado lógico); sus SKU quedan libres. 409 `PRODUCT_HAS_STOCK`: alguna variante tiene existencias o reservas; se descontinúa.
  */
 export const productsDelete = async (
   orgSlug: string,
@@ -5305,7 +5305,7 @@ export const getVariantsDeleteUrl = (orgSlug: string, productId: string, variant
 };
 
 /**
- * Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`: es la única viva del producto.
+ * Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`: es la única viva del producto; `VARIANT_HAS_STOCK`: tiene existencias o reservas, se desactiva.
  */
 export const variantsDelete = async (
   orgSlug: string,

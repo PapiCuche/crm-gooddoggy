@@ -7,7 +7,8 @@ No comprueba permisos: los declara la API (`inventory.adjust`), la única que lo
 saldo se crea si falta (`ON CONFLICT DO NOTHING`) y se bloquea (`FOR UPDATE`) antes de leerla, así
 que el segundo movimiento de una celda ve lo que dejó el primero. La clave de idempotencia se
 busca con la fila ya bloqueada; si la misma clave llega a la vez para otra celda, la decide el
-índice único.
+índice único. Todo lo que escriba `inventory_levels` (reservas y transferencias incluidas) bloquea
+antes la variante así; si no, los borrados de catálogo y de almacenes podrían no ver el stock.
 """
 
 import re
@@ -27,6 +28,7 @@ from core.text import line
 Type = InventoryMovement.Type
 KINDS = (Type.RECEIPT, Type.ISSUE, Type.ADJUSTMENT)  # las que registra una persona (F3-09)
 QUANTITY_MAX, REASON_MAX = 1_000_000, 255
+ON_HAND_MAX = 2_147_483_647  # `inventory_levels.on_hand` es INT (F3-12)
 KEY = re.compile(r"[A-Za-z0-9._:-]{8,100}")
 KEY_TAKEN = "inventory_movements_key_uq"
 ACTIONS = {Type.RECEIPT: "received", Type.ISSUE: "issued", Type.ADJUSTMENT: "adjusted"}
@@ -51,6 +53,10 @@ class WarehouseInactive(Exception):
 
 class InsufficientStock(Exception):
     """El movimiento dejaría el stock en negativo o por debajo de lo reservado."""
+
+
+class StockLimit(Exception):
+    """El movimiento dejaría `on_hand` por encima de `ON_HAND_MAX`: no cabe en la columna."""
 
 
 class KeyReused(Exception):
@@ -139,8 +145,8 @@ def _locked_level(alias: str, ctx: TenantContext, wanted: Wanted) -> InventoryLe
 def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
     """Registra el movimiento y deja el saldo como queda, en la misma transacción, y lo audita.
     Devuelve el movimiento y si es nuevo: la misma clave con lo mismo devuelve el de entonces
-    sin escribir nada. `BadReference`, `WarehouseInactive`, `InsufficientStock` o `KeyReused`
-    sin escribir nada."""
+    sin escribir nada. `BadReference`, `WarehouseInactive`, `InsufficientStock`, `StockLimit` o
+    `KeyReused` sin escribir nada."""
     alias = require_scope(ctx)
     _check(wanted)
     try:
@@ -181,6 +187,8 @@ def _apply(
         delta = wanted.quantity if wanted.movement_type == Type.RECEIPT else -wanted.quantity
     if level.on_hand + delta < level.reserved:  # nunca negativo ni por debajo de lo reservado
         raise InsufficientStock(wanted.variant_id)
+    if level.on_hand + delta > ON_HAND_MAX:  # antes de escribir: PostgreSQL daría un 500
+        raise StockLimit(wanted.variant_id)
     level.on_hand += delta
     level.version += 1
     level.save(using=alias, update_fields=["on_hand", "version", "updated_at"])
