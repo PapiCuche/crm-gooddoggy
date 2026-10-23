@@ -84,7 +84,8 @@ def lock_active_member(user_id: UUID) -> bool:
     `tenant_scope` activo? Si lo es, su membresía queda bloqueada (`FOR NO KEY UPDATE`) hasta el
     final de la transacción: una suspensión o un cambio de sucursal que llegue después espera, y
     uno ya confirmado se ve (PostgreSQL relee la fila bloqueada). Para quien guarda a ese miembro
-    como responsable de algo (F4-08), después de bloquear ese algo."""
+    como responsable de algo (F4-08), después de bloquear ese algo. Solo se serializa la fila de
+    la membresía: desactivar el usuario (`users.is_active`, de plataforma) a la vez no espera."""
     rows = OrganizationMembership.objects.select_for_update(no_key=True, of=("self",))
     found = rows.filter(user_id=user_id, status=ACTIVE, user__is_active=True)
     return bool(found.values_list("pk", flat=True)[:1])

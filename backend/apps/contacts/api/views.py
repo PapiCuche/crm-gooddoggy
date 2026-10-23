@@ -358,5 +358,6 @@ class ContactAssignmentView(ContactsQuery, generics.GenericAPIView):
         except StaleContact:
             raise ApiError("CONTACT_VERSION_CONFLICT", 409, STALE) from None
         except BadReference as bad:
-            raise serializers.ValidationError({bad.field: [BAD_REFERENCE[bad.field]]}) from None
+            message = BAD_REFERENCE.get(bad.field, "No es de la organización.")
+            raise serializers.ValidationError({bad.field: [message]}) from None
         return Response(ContactSerializer(contact).data)

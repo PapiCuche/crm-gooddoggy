@@ -296,3 +296,15 @@ def test_the_view_scope_is_decided_on_the_locked_row(
     held(migrator, owned, [move], "UPDATE contacts SET owner_user_id = NULL WHERE id = %s")
     assert outcome == {"assign": NOT_FOUND} and not audit(migrator)
     assert place(migrator, owned) == (None, None, 1, None)
+
+
+def test_an_out_of_scope_contact_is_404_before_any_validation(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """Un responsable o una sucursal que no valen no delatan un contacto fuera del alcance."""
+    give(crm.a, crm.m["vera"], {"contacts.assign": None})
+    vera, before = signed(crm.vera), migrator.execute(ROW).fetchall()
+    for sent in (body(uuid4(), None), body(None, uuid4()), body(crm.luis.pk, None, 9)):
+        for key in ("lima", "b"):
+            assert reply(assign(vera, crm.ids[key], sent)) == NOT_FOUND
+    assert migrator.execute(ROW).fetchall() == before and not audit(migrator)

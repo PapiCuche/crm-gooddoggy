@@ -251,7 +251,8 @@ def assign_contact(
     la membresía del responsable nuevo, como suspenderlo o cambiarlo de sucursal (que nunca
     bloquean contactos): una suspensión confirmada antes se ve, y una posterior espera."""
     alias = require_scope(ctx)
-    wanted = {"owner_user_id": owner_user_id, "branch_id": branch_id}
+    sent = {"owner_user_id": owner_user_id, "branch_id": branch_id}
+    wanted = {k: None if v is None else UUID(str(v)) for k, v in sent.items()}  # también texto
     try:
         with transaction.atomic(using=alias):
             contact: Contact = _live(alias).select_for_update(no_key=True).get(pk=contact_id)
@@ -262,8 +263,8 @@ def assign_contact(
                 for field, value in wanted.items()
                 if getattr(contact, field) != value
             }
-            if "owner_user_id" in changes and owner_user_id is not None:
-                if not lock_active_member(owner_user_id):
+            if "owner_user_id" in changes and (owner := wanted["owner_user_id"]) is not None:
+                if not lock_active_member(owner):
                     raise BadReference("owner_user_id")
             if changes:
                 for field in changes:
