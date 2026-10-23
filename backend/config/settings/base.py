@@ -210,6 +210,8 @@ SPECTACULAR_SETTINGS = {
         "MovementTypeEnum": "apps.inventory.models.InventoryMovement.Type",  # F3-09
         "ImportStatusEnum": "apps.imports.models.DataImport.Status",  # F3-20b
         "ImportRowActionEnum": "apps.imports.models.DataImportRow.Action",
+        "ContactSourceEnum": "apps.contacts.models.Source",  # F4-02
+        "ContactDocumentTypeEnum": "apps.contacts.models.DocumentType",
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.

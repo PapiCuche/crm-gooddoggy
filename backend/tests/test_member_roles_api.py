@@ -17,7 +17,7 @@ from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
 from tests.test_anti_escalation import EDIT, audit, state
-from tests.test_authorization import VIEW, give
+from tests.test_authorization import VIEW, give, widest
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, me, reply, signed
 
@@ -47,6 +47,9 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
     done = change(ana, rbac.m_eva, seller.pk)
     assert reply(done) == DONE and "Content-Type" not in done.headers  # sin cuerpo
     assert codes(eva) == [
+        "contacts.create",  # F4-02
+        "contacts.update",
+        "contacts.view",
         "inventory.view",
         "organization.view",
         "products.view",
@@ -108,7 +111,7 @@ def test_without_session_permission_or_membership_it_changes_and_reveals_nothing
 
 def test_the_route_itself_requires_users_manage(rbac: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     rest = [code for code in BY_CODE if code not in ("users.manage", VIEW, EDIT)]
-    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # todo el catálogo menos `users.manage`
+    give(rbac.a, rbac.m_eva, widest(rest))  # todo el catálogo menos `users.manage`
     reached: list[Any] = []
     for name in ("assign_role", "remove_role"):
         monkeypatch.setattr(views, name, lambda *args, **kwargs: reached.append(kwargs))

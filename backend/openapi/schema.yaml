@@ -1270,6 +1270,113 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/contacts/:
+    get:
+      operationId: contacts_list
+      description: Los contactos vivos dentro del alcance de `contacts.view`, paginados
+        por creación (ADR-016).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedContactList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/contacts/{contact_id}/:
+    get:
+      operationId: contacts_retrieve
+      description: 'Un contacto. 404: no es de la organización, está borrado o queda
+        fuera del alcance de `contacts.view`.'
+      parameters:
+      - in: path
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/imports/:
     post:
       operationId: inventory_imports_create
@@ -4059,6 +4166,106 @@ components:
         * `OPEN_BOX` - Open Box
         * `REFURBISHED` - Refurbished
         * `USED` - Used
+    Contact:
+      type: object
+      description: |-
+        Los datos del propio contacto, también los personales: solo los ve quien lo tiene en su
+        alcance. Nada enmascarado (el documento solo se enmascara en la auditoría).
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        primary_phone_e164:
+          type: string
+          nullable: true
+          description: En E.164.
+        primary_email:
+          type: string
+          nullable: true
+        document_type:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ContactDocumentTypeEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        document_number:
+          type: string
+          nullable: true
+        owner_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: El responsable.
+        branch_id:
+          type: string
+          format: uuid
+          nullable: true
+        source:
+          $ref: '#/components/schemas/ContactSourceEnum'
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          description: Sube con cada cambio.
+      required:
+      - branch_id
+      - created_at
+      - created_by_user_id
+      - display_name
+      - document_number
+      - document_type
+      - first_name
+      - id
+      - last_name
+      - owner_user_id
+      - primary_email
+      - primary_phone_e164
+      - source
+      - updated_at
+      - version
+    ContactDocumentTypeEnum:
+      enum:
+      - DNI
+      - CE
+      - RUC
+      - PASSPORT
+      type: string
+      description: |-
+        * `DNI` - Dni
+        * `CE` - Ce
+        * `RUC` - Ruc
+        * `PASSPORT` - Passport
+    ContactSourceEnum:
+      enum:
+      - INBOUND_MESSAGE
+      - WALK_IN
+      - REFERRAL
+      - IMPORT
+      - MANUAL
+      - CAMPAIGN
+      - AI
+      type: string
+      description: |-
+        * `INBOUND_MESSAGE` - Inbound Message
+        * `WALK_IN` - Walk In
+        * `REFERRAL` - Referral
+        * `IMPORT` - Import
+        * `MANUAL` - Manual
+        * `CAMPAIGN` - Campaign
+        * `AI` - Ai
     Error:
       type: object
       properties:
@@ -4721,6 +4928,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Category'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedContactList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contact'
         next:
           type: string
           nullable: true

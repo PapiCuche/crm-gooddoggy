@@ -20,4 +20,5 @@ urlpatterns = [
     path("api/v1/o/<slug:org_slug>/", include("apps.organizations.api.tenant_urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.catalog.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.inventory.api.urls")),
+    path("api/v1/o/<slug:org_slug>/", include("apps.contacts.api.urls")),
 ]

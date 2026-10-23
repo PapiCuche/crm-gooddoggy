@@ -32,6 +32,8 @@ import type {
   CategoriesListParams,
   Category,
   CategoryCreateRequest,
+  Contact,
+  ContactsListParams,
   Error,
   GrantScopeRequest,
   InventoryImportsRowsListParams,
@@ -63,6 +65,7 @@ import type {
   PaginatedBranchList,
   PaginatedBrandList,
   PaginatedCategoryList,
+  PaginatedContactList,
   PaginatedInvitationList,
   PaginatedLevelList,
   PaginatedMemberList,
@@ -2939,6 +2942,273 @@ export const useCategoriesDelete = <TError = ErrorType<Error>, TContext = unknow
 > => {
   return useMutation(getCategoriesDeleteMutationOptions(options), queryClient);
 };
+
+export const getContactsListUrl = (orgSlug: string, params?: ContactsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/contacts/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/contacts/`;
+};
+
+/**
+ * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016).
+ */
+export const contactsList = async (
+  orgSlug: string,
+  params?: ContactsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedContactList> => {
+  return apiFetch<PaginatedContactList>(getContactsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getContactsListQueryKey = (orgSlug: string, params?: ContactsListParams) => {
+  return [`/api/v1/o/${orgSlug}/contacts/`, ...(params ? [params] : [])] as const;
+};
+
+export const getContactsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof contactsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ContactsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getContactsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof contactsList>>> = ({ signal }) =>
+    contactsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof contactsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ContactsListQueryResult = NonNullable<Awaited<ReturnType<typeof contactsList>>>;
+export type ContactsListQueryError = ErrorType<Error>;
+
+export function useContactsList<
+  TData = Awaited<ReturnType<typeof contactsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ContactsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof contactsList>>,
+          TError,
+          Awaited<ReturnType<typeof contactsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useContactsList<
+  TData = Awaited<ReturnType<typeof contactsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ContactsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof contactsList>>,
+          TError,
+          Awaited<ReturnType<typeof contactsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useContactsList<
+  TData = Awaited<ReturnType<typeof contactsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ContactsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useContactsList<
+  TData = Awaited<ReturnType<typeof contactsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ContactsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getContactsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getContactsRetrieveUrl = (orgSlug: string, contactId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/`;
+};
+
+/**
+ * Un contacto. 404: no es de la organización, está borrado o queda fuera del alcance de `contacts.view`.
+ */
+export const contactsRetrieve = async (
+  orgSlug: string,
+  contactId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Contact> => {
+  return apiFetch<Contact>(getContactsRetrieveUrl(orgSlug, contactId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getContactsRetrieveQueryKey = (orgSlug: string, contactId: string) => {
+  return [`/api/v1/o/${orgSlug}/contacts/${contactId}/`] as const;
+};
+
+export const getContactsRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof contactsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getContactsRetrieveQueryKey(orgSlug, contactId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof contactsRetrieve>>> = ({ signal }) =>
+    contactsRetrieve(orgSlug, contactId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && contactId !== null && contactId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof contactsRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ContactsRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof contactsRetrieve>>>;
+export type ContactsRetrieveQueryError = ErrorType<Error>;
+
+export function useContactsRetrieve<
+  TData = Awaited<ReturnType<typeof contactsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof contactsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof contactsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useContactsRetrieve<
+  TData = Awaited<ReturnType<typeof contactsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof contactsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof contactsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useContactsRetrieve<
+  TData = Awaited<ReturnType<typeof contactsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useContactsRetrieve<
+  TData = Awaited<ReturnType<typeof contactsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getContactsRetrieveQueryOptions(orgSlug, contactId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/inventory/imports/`;

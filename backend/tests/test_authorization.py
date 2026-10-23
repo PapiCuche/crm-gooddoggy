@@ -87,6 +87,11 @@ def give(org: UUID, membership: UUID, grants: dict[str, str | None], code: str =
     return role
 
 
+def widest(codes: list[str]) -> dict[str, str | None]:
+    """Cada permiso con su alcance más amplio: `ORGANIZATION` si lo admite (F4-02)."""
+    return {code: "ORGANIZATION" if BY_CODE[code].supports_scope else None for code in codes}
+
+
 @contextmanager
 def acting(org: UUID, user: User, **changes: Any) -> Iterator[ExecutionContext]:
     tenant = ctx(org, user)

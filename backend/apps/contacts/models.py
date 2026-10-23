@@ -69,6 +69,9 @@ class Contact(TenantModel):
                 fields=["organization_id", "owner_user_id"], name="contacts_org_owner_idx"
             ),
             models.Index(fields=["organization_id", "branch_id"], name="contacts_org_branch_idx"),
+            models.Index(  # el filtro `OWN` también mira al creador (F4-02)
+                fields=["organization_id", "created_by_user_id"], name="contacts_org_created_by_idx"
+            ),
         ]
         constraints = [
             models.UniqueConstraint(  # destino de las FK compuestas de las tablas hijas

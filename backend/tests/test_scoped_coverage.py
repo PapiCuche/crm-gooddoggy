@@ -1,6 +1,6 @@
 """D-F2-13 (F2-123): quien pone a otro en un equipo, lo quita o le cambia la sucursal cubre lo
-que ese miembro gana o pierde, bajo el bloqueo de RBAC. Ningún permiso del catálogo admite aún
-alcance: se prueba con los de prueba de `test_authorization`, contra PostgreSQL real."""
+que ese miembro gana o pierde, bajo el bloqueo de RBAC. Se prueba con los permisos de prueba de
+`test_authorization`, contra PostgreSQL real."""
 
 from collections.abc import Iterator
 from types import SimpleNamespace
@@ -114,8 +114,7 @@ def test_a_branch_scope_never_covers_a_team(scoped: Any, migrator: psycopg.Conne
 def test_only_team_grants_count_so_today_nothing_changes(
     scoped: Any, migrator: psycopg.Connection[Any]
 ) -> None:
-    """Las concesiones sin alcance, `OWN` o `BRANCH` no cambian con el equipo: no se miran. Por
-    eso, con el catálogo de hoy (ninguna admite alcance), ninguna respuesta cambia."""
+    """Las concesiones sin alcance, `OWN` o `BRANCH` no cambian con el equipo: no se miran."""
     give(scoped.a, scoped.m_eva, {"audit.view": None, VIEW: "OWN", EDIT: "BRANCH"})
     assert joins(scoped, scoped.luis, scoped.sales, scoped.m_eva) is None  # sin ser Owner
 

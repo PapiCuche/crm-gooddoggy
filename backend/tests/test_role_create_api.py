@@ -16,7 +16,7 @@ from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
 from tests.test_anti_escalation import EDIT, acting, audit, race, state
-from tests.test_authorization import VIEW, give
+from tests.test_authorization import VIEW, give, widest
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, reply, signed
 
@@ -163,7 +163,7 @@ def test_without_session_permission_or_a_valid_body_it_creates_nothing(
     rbac: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     rest = [code for code in BY_CODE if code not in ("roles.manage", VIEW, EDIT)]
-    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # todo el catálogo menos `roles.manage`
+    give(rbac.a, rbac.m_eva, widest(rest))  # todo el catálogo menos `roles.manage`
     before, eva, ana = state(migrator), signed(rbac.eva), signed(rbac.ana)
     with tenant_scope(ctx(rbac.a)):
         roles = Role.objects.count()
