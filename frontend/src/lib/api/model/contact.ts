@@ -7,6 +7,7 @@
  */
 import type { ContactDocumentTypeEnum } from "./contactDocumentTypeEnum";
 import type { ContactSourceEnum } from "./contactSourceEnum";
+import type { ContactTag } from "./contactTag";
 import type { NullEnum } from "./nullEnum";
 
 /**
@@ -42,4 +43,6 @@ export interface Contact {
   updated_at: string;
   /** Sube con cada cambio. */
   version: number;
+  /** Por nombre. Etiquetar no cambia `version`. */
+  tags: ContactTag[];
 }

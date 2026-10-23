@@ -22,4 +22,8 @@ export type ContactsListParams = {
    * @maxLength 254
    */
   q?: string;
+  /**
+   * Solo los que llevan esa etiqueta (F4-11), activa o no.
+   */
+  tag?: string;
 };

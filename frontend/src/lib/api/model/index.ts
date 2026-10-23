@@ -32,6 +32,7 @@ export * from "./contactDocumentTypeEnum";
 export * from "./contactNotesListParams";
 export * from "./contactsListParams";
 export * from "./contactSourceEnum";
+export * from "./contactTag";
 export * from "./error";
 export * from "./errorFields";
 export * from "./grant";

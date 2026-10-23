@@ -32,6 +32,7 @@ const rosa: Contact = {
   ...{ document_type: "DNI", document_number: "12345678", owner_user_id: "u2" },
   ...{ branch_id: "b1", source: "WALK_IN", created_by_user_id: "u1" },
   ...{ created_at: "2026-10-23T10:00:00Z", updated_at: "2026-10-24T20:30:00Z", version: 3 },
+  tags: [],
 };
 // Una empresa sin datos: solo el nombre para mostrar, que no es de nadie ni de ninguna sucursal.
 const sol: Contact = {

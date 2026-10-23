@@ -2979,7 +2979,7 @@ export const getContactsListUrl = (orgSlug: string, params?: ContactsListParams)
 };
 
 /**
- * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente se pide con el mismo `q`. 400: `q` repetido, de más de 254 caracteres o que no es una línea de texto imprimible.
+ * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016). `q` y `tag` filtran sin cambiar el orden; la página siguiente se pide con los mismos. 400: `q` o `tag` repetidos, `q` de más de 254 caracteres o que no es una línea de texto imprimible, `tag` que no es un UUID.
  */
 export const contactsList = async (
   orgSlug: string,
@@ -4078,6 +4078,170 @@ export const useContactNotesDelete = <TError = ErrorType<Error>, TContext = unkn
   TContext
 > => {
   return useMutation(getContactNotesDeleteMutationOptions(options), queryClient);
+};
+
+export const getContactsTagUrl = (orgSlug: string, contactId: string, tagId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/tags/${tagId}/`;
+};
+
+/**
+ * Pone la etiqueta en el contacto; si ya la lleva, nada. Exige `contacts.view` y `contacts.update`: fuera del alcance de uno u otro, o una etiqueta que no es de la organización, 404. 409 `TAG_INACTIVE`: la etiqueta está desactivada.
+ */
+export const contactsTag = async (
+  orgSlug: string,
+  contactId: string,
+  tagId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getContactsTagUrl(orgSlug, contactId, tagId), {
+    ...options,
+    method: "PUT",
+  });
+};
+
+export const getContactsTagMutationKey = () => ["contactsTag"] as const;
+
+export const getContactsTagMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactsTag>>,
+    TError,
+    ContactsTagMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactsTag>>,
+  TError,
+  ContactsTagMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactsTagMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactsTag>>,
+    ContactsTagMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, tagId } = props ?? {};
+
+    return contactsTag(orgSlug, contactId, tagId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactsTagMutationResult = NonNullable<Awaited<ReturnType<typeof contactsTag>>>;
+
+export type ContactsTagMutationError = ErrorType<Error>;
+export type ContactsTagMutationVariables = { orgSlug: string; contactId: string; tagId: string };
+
+export const useContactsTag = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactsTag>>,
+      TError,
+      ContactsTagMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactsTag>>,
+  TError,
+  ContactsTagMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactsTagMutationOptions(options), queryClient);
+};
+
+export const getContactsUntagUrl = (orgSlug: string, contactId: string, tagId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/tags/${tagId}/`;
+};
+
+/**
+ * Quita la etiqueta del contacto, activa o no; si no la lleva, nada. Los mismos permisos y 404 que ponerla.
+ */
+export const contactsUntag = async (
+  orgSlug: string,
+  contactId: string,
+  tagId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getContactsUntagUrl(orgSlug, contactId, tagId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getContactsUntagMutationKey = () => ["contactsUntag"] as const;
+
+export const getContactsUntagMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactsUntag>>,
+    TError,
+    ContactsUntagMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactsUntag>>,
+  TError,
+  ContactsUntagMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactsUntagMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactsUntag>>,
+    ContactsUntagMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, tagId } = props ?? {};
+
+    return contactsUntag(orgSlug, contactId, tagId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactsUntagMutationResult = NonNullable<Awaited<ReturnType<typeof contactsUntag>>>;
+
+export type ContactsUntagMutationError = ErrorType<Error>;
+export type ContactsUntagMutationVariables = { orgSlug: string; contactId: string; tagId: string };
+
+export const useContactsUntag = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactsUntag>>,
+      TError,
+      ContactsUntagMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactsUntag>>,
+  TError,
+  ContactsUntagMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactsUntagMutationOptions(options), queryClient);
 };
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {

@@ -189,3 +189,34 @@ class Tag(TenantModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class ContactTag(TenantModel):
+    """Una etiqueta puesta en un contacto (N:M, §E.5). El contacto, la etiqueta y quien la puso
+    son de la organización: FKs compuestas en la migración."""
+
+    id = uuid7_primary_key()
+    contact = models.ForeignKey(
+        Contact, models.PROTECT, related_name="tag_links", db_constraint=False, db_index=False
+    )
+    tag = models.ForeignKey(
+        Tag, models.PROTECT, related_name="contact_links", db_constraint=False, db_index=False
+    )
+    added_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_tags"
+        constraints = [
+            models.UniqueConstraint(  # también lleva a las etiquetas de un contacto
+                fields=["organization_id", "contact", "tag"], name="contact_tags_org_contact_tag_uq"
+            ),
+        ]
+        indexes = [  # el filtro `?tag=` de la lista
+            models.Index(
+                fields=["organization_id", "tag", "contact"], name="contact_tags_org_tag_idx"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
