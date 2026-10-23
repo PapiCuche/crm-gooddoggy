@@ -1,5 +1,5 @@
 """Rutas de tenant de los contactos: `…/contacts/` (E05-01). Lectura (F4-02), escrituras (F4-03)
-y búsqueda (F4-07, `?q=`).
+búsqueda (F4-07, `?q=`) y etiquetas (F4-11, `?tag=` y `tags`).
 
 `contacts.view`, `contacts.update` y `contacts.delete` admiten alcance: `ScopeFilter` deja en el
 listado y en `get_object()` solo los contactos que la política de `Contact` permite con los
@@ -36,7 +36,7 @@ from apps.contacts.commands import (
     update_contact,
 )
 from apps.contacts.models import Contact
-from apps.contacts.selectors import contacts, search
+from apps.contacts.selectors import contacts, load_tags, search, tagged, with_tags
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -45,6 +45,15 @@ from core.text import line, name
 STALE = "Otra persona cambió el contacto: vuelve a cargarlo y repite el cambio."
 PHONE_HELP = "E.164: `+` y el código del país; no se adivina."
 UNKNOWN = {"invalid_choice": "No es un valor admitido."}  # sin repetir lo recibido
+
+
+class ContactTagSerializer(serializers.Serializer[Any]):
+    """Una etiqueta que lleva el contacto (F4-11), también si se desactivó después."""
+
+    id = serializers.UUIDField(source="tag_id")
+    name = serializers.CharField(source="tag.name")
+    color = serializers.CharField(source="tag.color", help_text="`#rrggbb`.")
+    is_active = serializers.BooleanField(source="tag.is_active")
 
 
 class ContactSerializer(serializers.Serializer[Any]):
@@ -66,6 +75,15 @@ class ContactSerializer(serializers.Serializer[Any]):
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
     version = serializers.IntegerField(help_text="Sube con cada cambio.")
+    tags = ContactTagSerializer(
+        many=True, source="tag_links.all", help_text="Por nombre. Etiquetar no cambia `version`."
+    )
+
+
+def contact_reply(contact: Contact, status: int = 200) -> Response:
+    """El contacto de una escritura, con sus etiquetas."""
+    load_tags([contact])
+    return Response(ContactSerializer(contact).data, status=status)
 
 
 # Los mismos criterios que los comandos, para nombrar el campo en el 400
@@ -177,17 +195,26 @@ class ContactSearchSerializer(serializers.Serializer[Any]):
         except ValueError as error:
             raise serializers.ValidationError(_message(error)) from None
 
+    tag = serializers.UUIDField(
+        required=False, help_text="Solo los que llevan esa etiqueta (F4-11), activa o no."
+    )
+
 
 class ContactSearch(BaseFilterBackend):
-    """`?q=` (F4-07), detrás de `ScopeFilter`: busca en lo que el alcance ya dejó."""
+    """`?q=` (F4-07) y `?tag=` (F4-11), detrás de `ScopeFilter`: filtran lo que el alcance ya
+    dejó, y se combinan."""
 
     def filter_queryset(self, request: Any, queryset: Any, view: Any) -> QuerySet[Contact]:
         params = request.query_params
-        if len(params.getlist("q")) > 1:  # no se elige uno en silencio
-            raise serializers.ValidationError({"q": ["Una sola vez."]})
-        wanted = ContactSearchSerializer(data={"q": params["q"]} if "q" in params else {})
+        names = ("q", "tag")
+        if repeated := [k for k in names if len(params.getlist(k)) > 1]:  # no se elige uno
+            raise serializers.ValidationError({k: ["Una sola vez."] for k in repeated})
+        wanted = ContactSearchSerializer(data={k: params[k] for k in names if k in params})
         wanted.is_valid(raise_exception=True)
-        return search(queryset, wanted.validated_data.get("q", ""))
+        found = search(queryset, wanted.validated_data.get("q", ""))
+        if (tag := wanted.validated_data.get("tag")) is not None:
+            found = tagged(found, tag)
+        return found
 
 
 class ContactUpdateSchema(OpenApiSerializerExtension):
@@ -210,7 +237,10 @@ class ContactsQuery:
     serializer_class = ContactSerializer
 
     def get_queryset(self) -> QuerySet[Contact]:
-        return contacts()
+        request = getattr(self, "request", None)
+        return (
+            with_tags(contacts()) if request and request.method in ("GET", "HEAD") else contacts()
+        )
 
 
 @extend_schema_view(
@@ -220,9 +250,9 @@ class ContactsQuery:
         parameters=[ContactSearchSerializer],
         responses={200: ContactSerializer(many=True), **errors(400, 401, 403, 404)},
         description="Los contactos vivos dentro del alcance de `contacts.view`, paginados por "
-        "creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente se pide con "
-        f"el mismo `q`. 400: `q` repetido, de más de {EMAIL_MAX} caracteres o que no es una "
-        "línea de texto imprimible.",
+        "creación (ADR-016). `q` y `tag` filtran sin cambiar el orden; la página siguiente se "
+        f"pide con los mismos. 400: `q` o `tag` repetidos, `q` de más de {EMAIL_MAX} "
+        "caracteres o que no es una línea de texto imprimible, `tag` que no es un UUID.",
     ),
     post=extend_schema(
         operation_id="contacts_create",
@@ -248,7 +278,7 @@ class ContactsView(ContactsQuery, generics.ListAPIView):
             owner_user_id=tenant.user_id,
             branch_id=next(iter(place.branch_ids), None),
         )
-        return Response(ContactSerializer(contact).data, status=201)
+        return contact_reply(contact, 201)
 
 
 @extend_schema_view(
@@ -303,7 +333,7 @@ class ContactView(ContactsQuery, generics.RetrieveAPIView):
             raise ApiError("CONTACT_VERSION_CONFLICT", 409, STALE) from None
         except ValueError as error:  # el documento, junto con el tipo o el número guardados
             raise _document_error(error, fields) from None
-        return Response(ContactSerializer(contact).data)
+        return contact_reply(contact)
 
     def delete(self, request: Request, contact_id: UUID, **kwargs: Any) -> Response:
         delete_contact(_tenant(), contact_id=self.get_object().pk)
@@ -360,4 +390,4 @@ class ContactAssignmentView(ContactsQuery, generics.GenericAPIView):
         except BadReference as bad:
             message = BAD_REFERENCE.get(bad.field, "No es de la organización.")
             raise serializers.ValidationError({bad.field: [message]}) from None
-        return Response(ContactSerializer(contact).data)
+        return contact_reply(contact)

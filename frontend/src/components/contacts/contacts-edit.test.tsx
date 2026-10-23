@@ -25,6 +25,7 @@ const contact = (id: string, changes: Partial<Contact> = {}): Contact => ({
   ...{ document_type: "DNI", document_number: "12345678", owner_user_id: "u1" },
   ...{ branch_id: null, source: "MANUAL", created_by_user_id: "u1" },
   ...{ created_at: "2026-10-23T10:00:00Z", updated_at: "2026-10-23T10:00:00Z", version: 1 },
+  tags: [],
   ...changes,
 });
 const rosa = contact("c1");

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogNav } from "@/components/catalog/catalog-nav";
 import { InventoryNav } from "@/components/inventory/inventory-nav";
+import { PricingNav } from "@/components/pricing/pricing-nav";
 import type { SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
@@ -218,6 +219,37 @@ describe("navegación del shell", () => {
       "true",
     ]);
     expect(document.title).toBe("Clientes · Acme SAC · Good Doggy CRM");
+  });
+
+  it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
+    route.pathname = "/o/acme/precios/listas";
+    const without = ["prices.bulk_update", "product_cost.view", "inventory.view"];
+    expect((await links(without.map((code) => ({ code, scopes: [] })))).flat()).not.toContain(
+      "/o/acme/precios/listas",
+    );
+    for (const code of ["view", "view_wholesale", "view_distributor", "view_internal", "manage"]) {
+      cleanup();
+      const all = ["inventory.view", `prices.${code}`, "audit.view"].map((one) => ({
+        code: one,
+        scopes: [],
+      }));
+      expect((await links(all)).slice(1)).toEqual([
+        ["/o/acme/inventario/existencias", null],
+        ["/o/acme/precios/listas", "page"],
+        ["/o/acme/auditoria", null],
+      ]);
+    }
+    const prices = NAVIGATION.find((item) => item.key === "prices")!;
+    expect(holds(prices, "/o/acme", "/o/acme/precios/listas/x")).toBe(true);
+    cleanup();
+    renderApp(
+      <TenantProvider value={ana}>
+        <PricingNav />
+      </TenantProvider>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Secciones de precios" });
+    const link = within(nav).getByRole("link", { name: "Listas", current: "page" });
+    expect(link).toHaveAttribute("href", "/o/acme/precios/listas");
   });
 
   it("CatalogNav enlaza las páginas del catálogo y marca la abierta, también con la barra final", () => {

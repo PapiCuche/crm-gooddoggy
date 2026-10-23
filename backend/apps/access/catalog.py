@@ -29,6 +29,7 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("organization.view", "organization"),
     PermissionDef("organization.manage", "organization", is_sensitive=True),
     PermissionDef("branches.manage", "organization"),
+    PermissionDef("settings.manage", "organization"),  # F4-11: las etiquetas, por ahora
     PermissionDef("users.view", "users"),
     PermissionDef("users.manage", "users", is_sensitive=True),
     PermissionDef("users.invite", "users"),
@@ -92,6 +93,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
         _unscoped(
             "organization.view",
             "branches.manage",
+            "settings.manage",  # F4-11: no está en la matriz de 03 §H; a confirmar
             "users.view",
             "users.manage",
             "users.invite",

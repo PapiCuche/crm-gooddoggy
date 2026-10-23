@@ -2,13 +2,15 @@
 aplica quien las sirve (`HasPermission` y `ScopeFilter`, o `scoped()`)."""
 
 import re
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
-from django.db.models import F, Q, QuerySet
+from django.db.models import Exists, F, OuterRef, Prefetch, Q, QuerySet, prefetch_related_objects
+from django.db.models.functions import Lower
 from django.db.models.lookups import BuiltinLookup
 
-from apps.contacts.models import Contact, Note, dialed
+from apps.contacts.models import Contact, ContactTag, Note, Tag, dialed
 
 _PHONE_QUERY = re.compile(r"\+[0-9]{1,15}")  # el comienzo de un E.164, solo cifras ASCII
 
@@ -48,3 +50,29 @@ def search(found: QuerySet[Contact], text: str) -> QuerySet[Contact]:
 
 def notes(contact_id: UUID) -> QuerySet[Note]:  # ver el contacto lo decide quien las sirve
     return Note.objects.filter(contact_id=contact_id, deleted_at__isnull=True)
+
+
+def tags() -> QuerySet[Tag]:
+    """Las etiquetas de contactos de la organización, activas o no (F4-11)."""
+    return Tag.objects.filter(applies_to=Tag.Target.CONTACT)
+
+
+def _tag_links() -> Prefetch:  # type: ignore[type-arg]
+    links = ContactTag.objects.select_related("tag").order_by(Lower("tag__name"), "tag_id")
+    return Prefetch("tag_links", queryset=links)
+
+
+def with_tags(found: QuerySet[Contact]) -> QuerySet[Contact]:
+    """Con sus etiquetas por nombre, en una consulta más para toda la página (sin N+1)."""
+    return found.prefetch_related(_tag_links())
+
+
+def load_tags(found: Iterable[Contact]) -> None:
+    """Lo mismo para contactos ya leídos (la respuesta de una escritura)."""
+    prefetch_related_objects(list(found), _tag_links())
+
+
+def tagged(found: QuerySet[Contact], tag_id: UUID) -> QuerySet[Contact]:
+    """Los de `found` que llevan la etiqueta, activa o no. Una de otra organización no casa."""
+    links = ContactTag.objects.filter(contact_id=OuterRef("pk"), tag_id=tag_id)
+    return found.filter(Exists(links))

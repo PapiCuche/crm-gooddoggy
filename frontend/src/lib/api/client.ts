@@ -80,6 +80,7 @@ import type {
   PaginatedProductList,
   PaginatedRoleList,
   PaginatedStockImportRowList,
+  PaginatedTagList,
   PaginatedTeamList,
   PaginatedTeamMemberList,
   PaginatedVariantList,
@@ -94,6 +95,7 @@ import type {
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
   PatchedRoleUpdateRequest,
+  PatchedTagUpdateRequest,
   PatchedTeamUpdateRequest,
   PatchedVariantUpdateRequest,
   PatchedWarehouseUpdateRequest,
@@ -112,6 +114,9 @@ import type {
   StockImport,
   StockImportCreateRequest,
   StockImportRevertRequest,
+  Tag,
+  TagWriteRequest,
+  TagsListParams,
   Team,
   TeamCreateRequest,
   TeamMember,
@@ -2974,7 +2979,7 @@ export const getContactsListUrl = (orgSlug: string, params?: ContactsListParams)
 };
 
 /**
- * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente se pide con el mismo `q`. 400: `q` repetido, de más de 254 caracteres o que no es una línea de texto imprimible.
+ * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016). `q` y `tag` filtran sin cambiar el orden; la página siguiente se pide con los mismos. 400: `q` o `tag` repetidos, `q` de más de 254 caracteres o que no es una línea de texto imprimible, `tag` que no es un UUID.
  */
 export const contactsList = async (
   orgSlug: string,
@@ -4073,6 +4078,170 @@ export const useContactNotesDelete = <TError = ErrorType<Error>, TContext = unkn
   TContext
 > => {
   return useMutation(getContactNotesDeleteMutationOptions(options), queryClient);
+};
+
+export const getContactsTagUrl = (orgSlug: string, contactId: string, tagId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/tags/${tagId}/`;
+};
+
+/**
+ * Pone la etiqueta en el contacto; si ya la lleva, nada. Exige `contacts.view` y `contacts.update`: fuera del alcance de uno u otro, o una etiqueta que no es de la organización, 404. 409 `TAG_INACTIVE`: la etiqueta está desactivada.
+ */
+export const contactsTag = async (
+  orgSlug: string,
+  contactId: string,
+  tagId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getContactsTagUrl(orgSlug, contactId, tagId), {
+    ...options,
+    method: "PUT",
+  });
+};
+
+export const getContactsTagMutationKey = () => ["contactsTag"] as const;
+
+export const getContactsTagMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactsTag>>,
+    TError,
+    ContactsTagMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactsTag>>,
+  TError,
+  ContactsTagMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactsTagMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactsTag>>,
+    ContactsTagMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, tagId } = props ?? {};
+
+    return contactsTag(orgSlug, contactId, tagId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactsTagMutationResult = NonNullable<Awaited<ReturnType<typeof contactsTag>>>;
+
+export type ContactsTagMutationError = ErrorType<Error>;
+export type ContactsTagMutationVariables = { orgSlug: string; contactId: string; tagId: string };
+
+export const useContactsTag = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactsTag>>,
+      TError,
+      ContactsTagMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactsTag>>,
+  TError,
+  ContactsTagMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactsTagMutationOptions(options), queryClient);
+};
+
+export const getContactsUntagUrl = (orgSlug: string, contactId: string, tagId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/tags/${tagId}/`;
+};
+
+/**
+ * Quita la etiqueta del contacto, activa o no; si no la lleva, nada. Los mismos permisos y 404 que ponerla.
+ */
+export const contactsUntag = async (
+  orgSlug: string,
+  contactId: string,
+  tagId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getContactsUntagUrl(orgSlug, contactId, tagId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getContactsUntagMutationKey = () => ["contactsUntag"] as const;
+
+export const getContactsUntagMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactsUntag>>,
+    TError,
+    ContactsUntagMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactsUntag>>,
+  TError,
+  ContactsUntagMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactsUntagMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactsUntag>>,
+    ContactsUntagMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, tagId } = props ?? {};
+
+    return contactsUntag(orgSlug, contactId, tagId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactsUntagMutationResult = NonNullable<Awaited<ReturnType<typeof contactsUntag>>>;
+
+export type ContactsUntagMutationError = ErrorType<Error>;
+export type ContactsUntagMutationVariables = { orgSlug: string; contactId: string; tagId: string };
+
+export const useContactsUntag = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactsUntag>>,
+      TError,
+      ContactsUntagMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactsUntag>>,
+  TError,
+  ContactsUntagMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactsUntagMutationOptions(options), queryClient);
 };
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
@@ -8386,6 +8555,354 @@ export const useRolesPermissionsRevoke = <TError = ErrorType<Error>, TContext = 
   TContext
 > => {
   return useMutation(getRolesPermissionsRevokeMutationOptions(options), queryClient);
+};
+
+export const getTagsListUrl = (orgSlug: string, params?: TagsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/tags/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/tags/`;
+};
+
+/**
+ * Las etiquetas de contactos, activas o no, por creación (ADR-016). Con `contacts.view` y cualquier alcance.
+ */
+export const tagsList = async (
+  orgSlug: string,
+  params?: TagsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedTagList> => {
+  return apiFetch<PaginatedTagList>(getTagsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getTagsListQueryKey = (orgSlug: string, params?: TagsListParams) => {
+  return [`/api/v1/o/${orgSlug}/tags/`, ...(params ? [params] : [])] as const;
+};
+
+export const getTagsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof tagsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TagsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tagsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getTagsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof tagsList>>> = ({ signal }) =>
+    tagsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof tagsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type TagsListQueryResult = NonNullable<Awaited<ReturnType<typeof tagsList>>>;
+export type TagsListQueryError = ErrorType<Error>;
+
+export function useTagsList<
+  TData = Awaited<ReturnType<typeof tagsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | TagsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof tagsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof tagsList>>,
+          TError,
+          Awaited<ReturnType<typeof tagsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTagsList<
+  TData = Awaited<ReturnType<typeof tagsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TagsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tagsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof tagsList>>,
+          TError,
+          Awaited<ReturnType<typeof tagsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTagsList<
+  TData = Awaited<ReturnType<typeof tagsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TagsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tagsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useTagsList<
+  TData = Awaited<ReturnType<typeof tagsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TagsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tagsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getTagsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getTagsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/tags/`;
+};
+
+/**
+ * Crea una etiqueta de contactos, activa (`settings.manage`). 409 `TAG_NAME_TAKEN`: ya hay una con ese nombre, sin distinguir mayúsculas, activa o no.
+ */
+export const tagsCreate = async (
+  orgSlug: string,
+  tagWriteRequest: TagWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Tag> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Tag>(getTagsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(tagWriteRequest),
+  });
+};
+
+export const getTagsCreateMutationKey = () => ["tagsCreate"] as const;
+
+export const getTagsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tagsCreate>>,
+    TError,
+    TagsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tagsCreate>>,
+  TError,
+  TagsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTagsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tagsCreate>>,
+    TagsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return tagsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TagsCreateMutationResult = NonNullable<Awaited<ReturnType<typeof tagsCreate>>>;
+export type TagsCreateMutationBody = TagWriteRequest;
+export type TagsCreateMutationError = ErrorType<Error>;
+export type TagsCreateMutationVariables = { orgSlug: string; data: TagWriteRequest };
+
+export const useTagsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tagsCreate>>,
+      TError,
+      TagsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tagsCreate>>,
+  TError,
+  TagsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getTagsCreateMutationOptions(options), queryClient);
+};
+
+export const getTagsUpdateUrl = (orgSlug: string, tagId: string) => {
+  return `/api/v1/o/${orgSlug}/tags/${tagId}/`;
+};
+
+/**
+ * Renombra, cambia el color o activa y desactiva (`settings.manage`); lo que no cambia no se escribe. 409 `TAG_NAME_TAKEN`. Las etiquetas no se borran. 404: no es de la organización.
+ */
+export const tagsUpdate = async (
+  orgSlug: string,
+  tagId: string,
+  patchedTagUpdateRequest?: PatchedTagUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Tag> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Tag>(getTagsUpdateUrl(orgSlug, tagId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedTagUpdateRequest),
+  });
+};
+
+export const getTagsUpdateMutationKey = () => ["tagsUpdate"] as const;
+
+export const getTagsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tagsUpdate>>,
+    TError,
+    TagsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tagsUpdate>>,
+  TError,
+  TagsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTagsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tagsUpdate>>,
+    TagsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, tagId, data } = props ?? {};
+
+    return tagsUpdate(orgSlug, tagId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TagsUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof tagsUpdate>>>;
+export type TagsUpdateMutationBody = PatchedTagUpdateRequest | undefined;
+export type TagsUpdateMutationError = ErrorType<Error>;
+export type TagsUpdateMutationVariables = {
+  orgSlug: string;
+  tagId: string;
+  data?: PatchedTagUpdateRequest;
+};
+
+export const useTagsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tagsUpdate>>,
+      TError,
+      TagsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tagsUpdate>>,
+  TError,
+  TagsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getTagsUpdateMutationOptions(options), queryClient);
 };
 
 export const getTeamsListUrl = (orgSlug: string, params?: TeamsListParams) => {

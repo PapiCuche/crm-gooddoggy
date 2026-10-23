@@ -51,6 +51,9 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/contacts/{contact_id}/assignment/",  # F4-08
         "/api/v1/o/{org_slug}/contacts/{contact_id}/notes/",
         "/api/v1/o/{org_slug}/contacts/{contact_id}/notes/{note_id}/",
+        "/api/v1/o/{org_slug}/contacts/{contact_id}/tags/{tag_id}/",  # F4-11b
+        "/api/v1/o/{org_slug}/tags/",  # F4-11
+        "/api/v1/o/{org_slug}/tags/{tag_id}/",
         "/api/v1/o/{org_slug}/products/",
         "/api/v1/o/{org_slug}/products/{product_id}/",
         "/api/v1/o/{org_slug}/products/{product_id}/variants/",

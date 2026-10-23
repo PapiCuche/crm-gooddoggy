@@ -7,6 +7,7 @@ va a los logs, y la auditoría enmascara el documento (04 §N.1).
 import re
 
 from django.db import models
+from django.db.models.functions import Lower
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -138,6 +139,83 @@ class Note(TenantModel):
         ]
         constraints = [
             models.CheckConstraint(condition=models.Q(version__gte=1), name="notes_version_ck"),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+class TagTarget(models.TextChoices):
+    """A qué se aplica una etiqueta (§E.5). Las de conversaciones y oportunidades llegan con sus
+    fases, con sus propias tablas N:M (`conversation_tags`, `opportunity_tags`)."""
+
+    CONTACT = "CONTACT"
+
+
+TAG_COLOR = r"^#[0-9a-f]{6}$"  # `#rrggbb`, en minúsculas
+
+
+class Tag(TenantModel):
+    """Etiqueta configurable de la organización (F4-11, §E.5). No se borra: se desactiva, y una
+    desactivada sigue en los contactos que ya la llevan, pero no se pone en otros. El nombre es
+    único por organización y destino sin distinguir mayúsculas, también entre las inactivas."""
+
+    Target = TagTarget
+
+    id = uuid7_primary_key()
+    name = models.CharField(max_length=50)
+    color = models.CharField(max_length=7)
+    applies_to = models.CharField(max_length=16, choices=TagTarget.choices)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "tags"
+        constraints = [
+            models.UniqueConstraint(
+                "organization_id", "applies_to", Lower("name"), name="tags_org_target_name_uq"
+            ),
+            models.UniqueConstraint(  # destino de las FK compuestas `tag_id`
+                fields=["organization_id", "id"], name="tags_org_id_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(color__regex=TAG_COLOR), name="tags_color_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(applies_to__in=TagTarget.values), name="tags_applies_to_ck"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class ContactTag(TenantModel):
+    """Una etiqueta puesta en un contacto (N:M, §E.5). El contacto, la etiqueta y quien la puso
+    son de la organización: FKs compuestas en la migración."""
+
+    id = uuid7_primary_key()
+    contact = models.ForeignKey(
+        Contact, models.PROTECT, related_name="tag_links", db_constraint=False, db_index=False
+    )
+    tag = models.ForeignKey(
+        Tag, models.PROTECT, related_name="contact_links", db_constraint=False, db_index=False
+    )
+    added_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_tags"
+        constraints = [
+            models.UniqueConstraint(  # también lleva a las etiquetas de un contacto
+                fields=["organization_id", "contact", "tag"], name="contact_tags_org_contact_tag_uq"
+            ),
+        ]
+        indexes = [  # el filtro `?tag=` de la lista
+            models.Index(
+                fields=["organization_id", "tag", "contact"], name="contact_tags_org_tag_idx"
+            )
         ]
 
     def __str__(self) -> str:

@@ -27,7 +27,8 @@
       "audit": "Auditoría",
       "contacts": "Clientes",
       "catalog": "Catálogo",
-      "inventory": "Inventario"
+      "inventory": "Inventario",
+      "prices": "Precios"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -49,6 +50,10 @@
       "movements": "Movimientos",
       "warehouses": "Almacenes",
       "import": "Importar"
+    },
+    "prices": {
+      "label": "Secciones de precios",
+      "lists": "Listas"
     }
   },
   "audit": {
@@ -696,6 +701,9 @@
     },
     "branches": {
       "manage": "Administrar sucursales"
+    },
+    "settings": {
+      "manage": "Administrar la configuración"
     },
     "users": {
       "view": "Ver miembros",
@@ -1375,6 +1383,79 @@
       "more": "Cargar más",
       "loadingMore": "Cargando más…",
       "count": "{count, plural, =0 {Ninguna fila en la lista} one {# fila en la lista} other {# filas en la lista}}"
+    }
+  },
+  "priceLists": {
+    "eyebrow": "Good Doggy / Precios",
+    "title": "Listas de precios",
+    "intro": "Las listas de precios de {organization}. Cada una la ve quien tiene su permiso; la predeterminada, todos los que ven precios.",
+    "empty": "Esta organización todavía no tiene listas de precios.",
+    "count": "{count, plural, =0 {Sin listas en la vista} one {# lista en la vista} other {# listas en la vista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando listas de precios…",
+    "denied": "No tienes permiso para ver las listas de precios de esta organización.",
+    "kind": {
+      "RETAIL": "Minorista",
+      "CASH": "Contado",
+      "TRANSFER": "Transferencia",
+      "WHOLESALE": "Mayorista",
+      "DISTRIBUTOR": "Distribuidor",
+      "INTERNAL": "Interna",
+      "CUSTOM": "Personalizada"
+    },
+    "audience": {
+      "view": "Todos",
+      "view_wholesale": "Mayoristas",
+      "view_distributor": "Distribuidores",
+      "view_internal": "Interno"
+    },
+    "payment": {
+      "none": "Sin condición de pago",
+      "CASH": "Efectivo",
+      "BANK_TRANSFER": "Transferencia bancaria",
+      "CARD": "Tarjeta"
+    },
+    "seenBy": "Quién la ve: {audience}",
+    "default": "Predeterminada",
+    "active": "Activa",
+    "inactive": "Inactiva",
+    "order": "Orden {order}",
+    "stale": "La lista «{name}» ya no existe o ya no la ves. La vista se volvió a cargar.",
+    "form": {
+      "open": "Crear lista",
+      "title": "Nueva lista de precios",
+      "edit": "Editar",
+      "editLabel": "Editar la lista {name}",
+      "code": "Código",
+      "codeHint": "Letras sin acento, cifras y guiones entre ellas. Se guarda en mayúsculas. El código y la moneda (PEN) no cambian después.",
+      "name": "Nombre",
+      "kind": "Tipo",
+      "audience": "Quién la ve",
+      "audienceHint": "Sale del tipo mientras no elijas otro.",
+      "payment": "Condición de pago",
+      "sort_order": "Orden",
+      "sort_orderHint": "De 0 a 9999: las listas se ofrecen de menor a mayor.",
+      "is_active": "Activa (una lista inactiva no se ofrece)",
+      "is_default": "Predeterminada (la que se usa si no se elige otra)",
+      "defaultHint": "Sin marcarla, la primera lista activa que ven todos pasa a ser la predeterminada.",
+      "ai": "IA pública",
+      "aiHint": "No tiene efecto hasta la Fase 8, cuando un agente de IA pueda dar precios a los clientes.",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "codeRequired": "Escribe el código.",
+      "nameRequired": "Escribe el nombre.",
+      "sort_orderRequired": "Escribe el orden.",
+      "codeInvalid": "El código no es válido: letras sin acento, cifras y guiones entre ellas, hasta 30.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres con alguna letra o cifra.",
+      "sort_orderInvalid": "El orden es un número entero de 0 a 9999.",
+      "codeTaken": "Ya hay una lista con ese código en la organización.",
+      "isDefault": "Es la lista predeterminada: no se desactiva, no deja de serlo ni cambia quién la ve. Antes marca otra como predeterminada.",
+      "defaultRestricted": "Solo puede ser la predeterminada una lista activa que vean «Todos».",
+      "denied": "No tienes permiso para administrar listas de precios.",
+      "done": "Lista «{name}» {created, select, true {creada} other {guardada}}.",
+      "doneStale": "Lista «{name}» {created, select, true {creada} other {guardada}}, pero la vista no se pudo actualizar. Recarga la página para verla."
     }
   }
 }

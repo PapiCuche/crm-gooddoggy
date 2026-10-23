@@ -10,6 +10,7 @@ export type NavigationItem = {
   key: keyof typeof messages.shell.nav; // su nombre en el menú
   path: string;
   permission?: string | readonly string[];
+  anyOf?: readonly string[]; // además, basta uno de estos (precios: cada lista pide el suyo)
   section?: string; // las páginas bajo esta ruta también son de la entrada (catálogo, inventario)
 };
 
@@ -28,17 +29,26 @@ export const NAVIGATION: readonly NavigationItem[] = [
     section: "/inventario",
     permission: "inventory.view",
   },
+  {
+    key: "prices",
+    path: "/precios/listas",
+    section: "/precios",
+    anyOf: ["view", "view_wholesale", "view_distributor", "view_internal", "manage"].map(
+      (code) => `prices.${code}`,
+    ),
+  },
   { key: "audit", path: "/auditoria", permission: "audit.view" },
 ];
 
-export function visibleItems<Item extends { permission?: string | readonly string[] }>(
+export function visibleItems<Item extends Pick<NavigationItem, "permission" | "anyOf">>(
   items: readonly Item[],
   permissions: readonly Grant[],
 ): Item[] {
   const held = new Set(permissions.map((grant) => grant.code));
   const needs = ({ permission = [] }: Item) =>
     typeof permission === "string" ? [permission] : permission;
-  return items.filter((item) => needs(item).every((code) => held.has(code)));
+  const some = ({ anyOf }: Item) => !anyOf || anyOf.some((code) => held.has(code));
+  return items.filter((item) => needs(item).every((code) => held.has(code)) && some(item));
 }
 
 // Si la ruta `path` es de la entrada: su página, o una de su sección. `base`: `/o/{slug}`.

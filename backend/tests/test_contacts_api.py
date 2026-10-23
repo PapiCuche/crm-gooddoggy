@@ -48,6 +48,7 @@ FIELDS = {
     "created_at",
     "updated_at",
     "version",
+    "tags",  # F4-11
 }
 
 
