@@ -191,6 +191,7 @@
       "ROLE_IS_SYSTEM": "Un rol de plantilla no se borra.",
       "CATEGORY_HAS_CHILDREN": "Esta categoría tiene subcategorías. Muévelas o bórralas antes de borrarla.",
       "CATEGORY_IN_USE": "Hay productos en esta categoría. Cámbialos de categoría antes de borrarla.",
+      "IMPORT_NOT_APPLIED": "Solo se revierte una importación aplicada.",
       "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos."
     }
   },
@@ -1294,7 +1295,7 @@
     "ready": "Revisión lista: {rows, plural, one {# fila} other {# filas}}, {errors, plural, =0 {ninguna con error} one {# con error} other {# con error}}.",
     "done": "Importación aplicada: {applied, plural, one {# fila aplicada} other {# filas aplicadas}}.",
     "revert": "Revertir importación",
-    "revertAsk": "{count, plural, one {La celda que cambió vuelve} other {Las # celdas que cambiaron vuelven}} al saldo de antes de importar, cada una con otro ajuste en el historial. Si una celda cambió después de la importación, queda STALE y no se toca.",
+    "revertAsk": "{count, plural, one {La celda que cambió vuelve} other {Las # celdas que cambiaron vuelven}} al saldo de antes de importar, cada una con otro ajuste en el historial. Si una celda se movió después de la importación, aunque tenga el mismo saldo, queda STALE y no se toca.",
     "confirmRevert": "Sí, revertir",
     "reverting": "Revirtiendo…",
     "revertRetryHint": "Si la respuesta se perdió, vuelve a pulsar «Sí, revertir»: la importación se revierte una sola vez.",

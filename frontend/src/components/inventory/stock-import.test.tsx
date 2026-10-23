@@ -305,14 +305,20 @@ describe("StockImport", () => {
 
   it("revierte tras confirmar: dice cuántas celdas vuelven, cuenta el resultado y vuelve a pedir las filas", async () => {
     let undone = false;
-    const reverted: Job = {
+    // Sin filas con error al aplicar: el informe aparece por la STALE de la reversión.
+    const clean: Job = {
       ...applied,
+      error_rows: 0,
+      result: { applied: 1, unchanged: 1, stale: 0, failed: 0 },
+    };
+    const reverted: Job = {
+      ...clean,
       status: "REVERTED",
       revert: { reverted: 1, stale: 1, failed: 0 },
     };
     const stale = row(3, "STALE", ["El saldo cambió después de la importación: era 5, ahora 4."]);
     const { api } = await preview({
-      [APPLY]: ok(applied),
+      [APPLY]: ok(clean),
       [REVERT]: () => ((undone = true), ok(reverted)),
       [ROWS]: () => (undone ? page(row(2, "UPDATE"), stale) : page(row(2, "UPDATE"))),
     });
@@ -320,6 +326,7 @@ describe("StockImport", () => {
     press("Aplicar 2 filas");
     press("Sí, aplicar");
     await screen.findByRole("heading", { name: "Importación aplicada" });
+    expect(screen.queryByRole("button", { name: "Descargar filas con error" })).toBeNull();
     press("Revertir importación");
     const ask = screen.getByRole("group", { name: "Revertir importación" });
     expect(ask).toHaveAccessibleDescription(
@@ -341,10 +348,20 @@ describe("StockImport", () => {
       "Importación revertida: 1 celda volvió al saldo de antes.",
     );
     expect(screen.queryByRole("button", { name: "Revertir importación" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Descargar filas con error" })).toBeVisible();
     const list = await screen.findByRole("list", { name: "Filas del archivo" });
     expect(await within(list).findByText("Revertida · Cambia el saldo")).toBeVisible();
     expect(within(list).getByText(/cambió después de la importación/)).toBeVisible();
     expect(rowsCalls(api)).toHaveLength(3);
+  });
+
+  it("sin celdas aplicadas no ofrece revertir", async () => {
+    const none: Job = { ...applied, result: { applied: 0, unchanged: 1, stale: 1, failed: 0 } };
+    await preview({ [APPLY]: ok(none) });
+    press("Aplicar 2 filas");
+    press("Sí, aplicar");
+    await screen.findByRole("heading", { name: "Importación aplicada" });
+    expect(screen.queryByRole("button", { name: "Revertir importación" })).toBeNull();
   });
 
   it("una respuesta perdida al aplicar se reintenta sin miedo: misma importación, mismo resultado", async () => {
