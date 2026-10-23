@@ -162,6 +162,8 @@
       "LAST_OWNER": "Debe quedar al menos un Owner activo en la organización.",
       "ROLE_IN_USE": "Este rol tiene miembros. Quítaselo antes de borrarlo.",
       "ROLE_IS_SYSTEM": "Un rol de plantilla no se borra.",
+      "CATEGORY_HAS_CHILDREN": "Esta categoría tiene subcategorías. Muévelas o bórralas antes de borrarla.",
+      "CATEGORY_IN_USE": "Hay productos en esta categoría. Cámbialos de categoría antes de borrarla.",
       "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos."
     }
   },
@@ -845,6 +847,30 @@
       "denied": "No tienes permiso para crear categorías.",
       "done": "Categoría «{name}» creada.",
       "doneStale": "Categoría «{name}» creada, pero el árbol no se pudo actualizar. Recarga la página para verla."
+    },
+    "edit": {
+      "trigger": "Editar",
+      "triggerLabel": "Editar {name}",
+      "title": "Editar {name}",
+      "submit": "Guardar",
+      "busy": "Guardando…",
+      "denied": "No tienes permiso para cambiar categorías.",
+      "slugTaken": "Ahí ya hay una categoría con el mismo identificador. Elige otro lugar.",
+      "renamed": "Categoría renombrada: «{name}».",
+      "moved": "Categoría «{name}» movida con sus subcategorías.",
+      "movedStale": "Categoría «{name}» movida, pero el árbol no se pudo actualizar. Recarga la página para verla en su sitio.",
+      "stale": "«{name}» ya no está en el catálogo: el árbol se actualizó."
+    },
+    "delete": {
+      "trigger": "Borrar",
+      "label": "Borrar {name}",
+      "ask": "¿Borrar «{name}»? Solo se puede si no tiene subcategorías ni productos. No se puede deshacer.",
+      "confirm": "Borrar",
+      "busy": "Borrando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para borrar categorías.",
+      "done": "Categoría «{name}» borrada.",
+      "stale": "«{name}» ya no está en el catálogo: el árbol se actualizó."
     }
   },
   "products": {

@@ -10,6 +10,7 @@ import { CategoriesTree } from "./categories-tree";
 
 const LIST = "GET /api/v1/o/acme/categories/?limit=200";
 const CREATE = "POST /api/v1/o/acme/categories/";
+const ONE = (id: string) => `/api/v1/o/acme/categories/${id}/`;
 const base: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
@@ -275,5 +276,309 @@ describe("CategoriesTree", () => {
     const held = within(form).getByRole("button", { name: "Crear categoría" });
     expect(fireEvent.keyDown(held, { key: "Enter", repeat: true })).toBe(false);
     expect(sent(api, "POST")).toHaveLength(1);
+  });
+
+  it("renombra sin mover: solo envía el nombre, cambia la fila sin releer y el foco vuelve a «Editar»", async () => {
+    const api = mockApi({
+      [LIST]: page(TREE),
+      [`PATCH ${ONE("c2")}`]: { status: 200, body: { ...iphone, name: "iPhone 17" } },
+    });
+    screenOf(manager);
+    press("Editar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    const form = screen.getByRole("form", { name: "Editar iPhone" });
+    expect(within(form).getByLabelText("Nombre")).toHaveValue("iPhone");
+    expect(within(form).getByLabelText("Dentro de")).toHaveValue("c1");
+    fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "iPhone 17" } });
+    press("Guardar", form);
+    fireEvent.submit(form); // otra vez, enseguida
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar iPhone 17" })).toHaveFocus(),
+    );
+    expect(screen.getByText("Categoría renombrada: «iPhone 17».")).toBeVisible();
+    expect(sent(api, "PATCH")).toEqual([[ONE("c2"), { name: "iPhone 17" }]]);
+    expect(sent(api, "GET")).toHaveLength(1);
+  });
+
+  it("mueve la rama: ni dentro de sí ni donde pasaría de 5 niveles; el árbol vuelve y el foco va al título", async () => {
+    let rows: Category[] = TREE;
+    const api = mockApi({
+      [LIST]: () => page(rows),
+      [`PATCH ${ONE("c1")}`]: () => {
+        const moved = {
+          ...phones,
+          parent_id: "c5",
+          depth: 3,
+          path: "/accesorios/fundas/celulares/",
+        };
+        rows = [extras, cases, silicone, moved];
+        return { status: 200, body: moved };
+      },
+    });
+    screenOf(manager);
+    press("Editar Celulares", await screen.findByRole("list", { name: "Categorías" }));
+    expect(options()).toEqual([
+      ["En la raíz (sin categoría madre)", false],
+      ["Accesorios", false],
+      ["Fundas, dentro de Accesorios", false], // 2 + 3 niveles de la rama: cabe justo
+      ["Silicona, dentro de Fundas", true], // 3 + 3: pasaría de 5
+      ["Celulares", true], // ella misma
+      ["iPhone, dentro de Celulares", true], // y sus descendientes
+      ["Pro, dentro de iPhone", true],
+    ]);
+    fireEvent.change(screen.getByLabelText("Dentro de"), { target: { value: "c5" } });
+    press("Guardar", screen.getByRole("form", { name: "Editar Celulares" }));
+    expect(
+      await screen.findByText("Categoría «Celulares» movida con sus subcategorías."),
+    ).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+    const fundas = screen.getByRole("list", { name: "Dentro de Fundas" });
+    expect(names(fundas)).toEqual(["Celulares", "Silicona"]);
+    expect(sent(api, "PATCH")).toEqual([[ONE("c1"), { parent_id: "c5" }]]);
+  });
+
+  it("a la raíz envía `parent_id: null`; sin cambios no envía nada", async () => {
+    const api = mockApi({
+      [LIST]: page(TREE),
+      [`PATCH ${ONE("c2")}`]: { status: 200, body: { ...iphone, parent_id: null } },
+    });
+    screenOf(manager);
+    press("Editar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    press("Guardar", screen.getByRole("form")); // nada cambió: se cierra sin pedir
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar iPhone" })).toHaveFocus(),
+    );
+    press("Editar iPhone");
+    fireEvent.change(screen.getByLabelText("Dentro de"), { target: { value: "" } });
+    press("Guardar", screen.getByRole("form"));
+    expect(await screen.findByText(/movida con sus subcategorías/)).toBeVisible();
+    expect(sent(api, "PATCH")).toEqual([[ONE("c2"), { parent_id: null }]]);
+  });
+
+  it("si el árbol no se puede releer tras mover, el aviso lo dice", async () => {
+    let moved = false;
+    mockApi({
+      [LIST]: () => (moved ? { status: 500, body: {} } : page(TREE)),
+      [`PATCH ${ONE("c2")}`]: () => {
+        moved = true;
+        return { status: 200, body: { ...iphone, parent_id: null } };
+      },
+    });
+    screenOf(manager);
+    press("Editar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    fireEvent.change(screen.getByLabelText("Dentro de"), { target: { value: "" } });
+    press("Guardar", screen.getByRole("form"));
+    expect(await screen.findByText(/movida, pero el árbol no se pudo actualizar/)).toBeVisible();
+    expect(screen.queryByText(/movida con sus subcategorías/)).toBeNull();
+    // La fila no se fue: el foco vuelve a su «Editar», no al título.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar iPhone" })).toHaveFocus(),
+    );
+  });
+
+  it("al editar, los errores van por `code` en el formulario", async () => {
+    let reply = { status: 409, body: { code: "CATEGORY_SLUG_TAKEN" } as object };
+    mockApi({ [LIST]: page(TREE), [`PATCH ${ONE("c2")}`]: () => reply });
+    screenOf(manager);
+    press("Editar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    const form = screen.getByRole("form", { name: "Editar iPhone" });
+    fireEvent.change(screen.getByLabelText("Dentro de"), { target: { value: "c3" } });
+    press("Guardar", form);
+    expect(await within(form).findByRole("alert")).toHaveTextContent("mismo identificador");
+    for (const [next, text] of [
+      [
+        { status: 400, body: { code: "VALIDATION_ERROR", fields: { parent_id: ["x"] } } },
+        "No se puede poner ahí",
+      ],
+      [
+        { status: 403, body: { code: "PERMISSION_DENIED" } },
+        "No tienes permiso para cambiar categorías.",
+      ],
+      [{ status: 500, body: { code: "INTERNAL_ERROR" } }, "Algo salió mal"],
+    ] as const) {
+      reply = next;
+      press("Guardar", form);
+      await waitFor(() => expect(within(form).getByRole("alert")).toHaveTextContent(text));
+    }
+  });
+
+  it("borrar pide confirmación con el foco en «Cancelar» y explica por qué no se pudo", async () => {
+    let reply = { status: 409, body: { code: "CATEGORY_HAS_CHILDREN" } as object };
+    const api = mockApi({ [LIST]: page(TREE), [`DELETE ${ONE("c1")}`]: () => reply });
+    screenOf(manager);
+    press("Borrar Celulares", await screen.findByRole("list", { name: "Categorías" }));
+    const ask = screen.getByRole("group", { name: "Borrar Celulares" });
+    expect(ask).toHaveAccessibleDescription(/si no tiene subcategorías ni productos/);
+    await waitFor(() =>
+      expect(within(ask).getByRole("button", { name: "Cancelar" })).toHaveFocus(),
+    );
+    press("Cancelar", ask);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Borrar Celulares" })).toHaveFocus(),
+    );
+    expect(sent(api, "DELETE")).toHaveLength(0);
+    press("Borrar Celulares");
+    press("Borrar", screen.getByRole("group"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("tiene subcategorías");
+    await waitFor(() => expect(sent(api, "GET")).toHaveLength(2)); // por si no las enseñaba
+    for (const [next, text] of [
+      [{ status: 409, body: { code: "CATEGORY_IN_USE" } }, "Hay productos en esta categoría"],
+      [{ status: 403, body: { code: "PERMISSION_DENIED" } }, "No tienes permiso para borrar"],
+      [{ status: 400, body: { code: "VALIDATION_ERROR" } }, "Algo salió mal"],
+    ] as const) {
+      reply = next;
+      press("Borrar", screen.getByRole("group"));
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(text));
+    }
+    expect(sent(api, "GET")).toHaveLength(2);
+  });
+
+  it("una lectura del árbol en vuelo se cancela al borrar y se repite después", async () => {
+    let rows: Category[] = TREE;
+    let deletes = 0;
+    let release = () => {};
+    const api = mockApi({
+      [LIST]: () => page(rows),
+      [`DELETE ${ONE("c4")}`]: () => {
+        if (++deletes === 1) return { status: 409, body: { code: "CATEGORY_HAS_CHILDREN" } };
+        rows = [...TREE.filter((row) => row.id !== "c4"), node("x1", "Perros", "/perros/")];
+        return { status: 204 };
+      },
+    });
+    const reply = api.getMockImplementation()!;
+    api.mockImplementation(async (input, init) => {
+      // La relectura que pide el 409 se queda en vuelo, con el árbol de antes.
+      if (deletes === 1 && (init?.method ?? "GET") === "GET") {
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return reply(input, init);
+    });
+    screenOf(manager);
+    press("Borrar Pro", await screen.findByRole("list", { name: "Categorías" }));
+    press("Borrar", screen.getByRole("group"));
+    await waitFor(() => expect(sent(api, "GET")).toHaveLength(2));
+    press("Borrar", screen.getByRole("group"));
+    expect(await screen.findByText("Categoría «Pro» borrada.")).toBeVisible();
+    release(); // llega tarde y con Pro: ya no cuenta
+    expect(await screen.findByText("Perros")).toBeVisible(); // se repitió la lectura
+    expect(screen.queryByText("Pro")).toBeNull();
+  });
+
+  it("borra una vez aunque se pulse dos; la fila sale sin releer y el foco va al título", async () => {
+    const api = mockApi({ [LIST]: page(TREE), [`DELETE ${ONE("c4")}`]: { status: 204 } });
+    screenOf(manager);
+    press("Borrar Pro", await screen.findByRole("list", { name: "Categorías" }));
+    const ask = screen.getByRole("group", { name: "Borrar Pro" });
+    press("Borrar", ask);
+    fireEvent.click(within(ask).getByRole("button", { name: /Borra/ }));
+    expect(await screen.findByText("Categoría «Pro» borrada.")).toBeVisible();
+    expect(screen.queryByRole("list", { name: "Dentro de iPhone" })).toBeNull();
+    expect(screen.getByText("iPhone")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+    expect(sent(api, "DELETE")).toHaveLength(1);
+    expect(sent(api, "GET")).toHaveLength(1);
+  });
+
+  it("si la categoría ya no existe, el árbol avisa y se vuelve a pedir; sin sesión no hay error", async () => {
+    let rows = TREE;
+    const gone = { status: 404, body: { code: "NOT_FOUND" } };
+    mockApi({
+      [LIST]: () => page(rows),
+      [`DELETE ${ONE("c4")}`]: () => {
+        rows = TREE.filter((row) => row.id !== "c4");
+        return gone;
+      },
+      [`PATCH ${ONE("c2")}`]: () => {
+        rows = [phones, extras, cases, silicone];
+        return gone;
+      },
+      [`DELETE ${ONE("c3")}`]: { status: 401, body: { code: "NOT_AUTHENTICATED" } },
+    });
+    screenOf(manager);
+    press("Borrar Pro", await screen.findByRole("list", { name: "Categorías" }));
+    press("Borrar", screen.getByRole("group"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "«Pro» ya no está en el catálogo: el árbol se actualizó.",
+    );
+    await waitFor(() => expect(screen.queryByText("Pro")).toBeNull());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    press("Editar iPhone");
+    expect(screen.queryByRole("alert")).toBeNull(); // abrir retira el aviso anterior
+    fireEvent.change(screen.getByLabelText("Nombre"), { target: { value: "iPhone 17" } });
+    press("Guardar", screen.getByRole("form"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("«iPhone» ya no está");
+    await waitFor(() => expect(screen.queryByText("iPhone")).toBeNull());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    press("Borrar Accesorios");
+    press("Borrar", screen.getByRole("group"));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("group")).getByRole("button", { name: "Borrando…" }),
+      ).toBeVisible(),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("sin red editar o borrar falla y se dice, sin cola; Enter mantenido no reabre", async () => {
+    const api = mockApi({ [LIST]: page(TREE) });
+    screenOf(manager);
+    const edit = await screen.findByRole("button", { name: "Editar Pro" });
+    expect(fireEvent.keyDown(edit, { key: "Enter", repeat: true })).toBe(false);
+    const remove = screen.getByRole("button", { name: "Borrar Pro" });
+    expect(fireEvent.keyDown(remove, { key: "Enter", repeat: true })).toBe(false);
+    press("Editar Pro");
+    const form = screen.getByRole("form", { name: "Editar Pro" });
+    fireEvent.change(within(form).getByLabelText("Nombre"), { target: { value: "Pro Max" } });
+    onlineManager.setOnline(false);
+    api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    press("Guardar", form);
+    expect(await within(form).findByRole("alert")).toHaveTextContent("No hay conexión");
+    press("Cancelar", form);
+    press("Borrar Pro");
+    api.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    press("Borrar", screen.getByRole("group"));
+    expect(await within(screen.getByRole("group")).findByRole("alert")).toHaveTextContent(
+      "No hay conexión",
+    );
+    expect(sent(api, "PATCH")).toHaveLength(1);
+    expect(sent(api, "DELETE")).toHaveLength(1);
+  });
+
+  it("mover no quita el foco a quien se fue a otra parte mientras volvía el árbol", async () => {
+    let release = () => {};
+    const api = mockApi({
+      [LIST]: page(TREE),
+      [`PATCH ${ONE("c2")}`]: { status: 200, body: { ...iphone, parent_id: null } },
+    });
+    const reply = api.getMockImplementation()!;
+    api.mockImplementation(async (input, init) => {
+      if (sent(api, "PATCH").length > 0 && (init?.method ?? "GET") === "GET")
+        await new Promise<void>((r) => (release = r));
+      return reply(input, init);
+    });
+    screenOf(manager);
+    press("Editar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    fireEvent.change(screen.getByLabelText("Dentro de"), { target: { value: "" } });
+    press("Guardar", screen.getByRole("form"));
+    await waitFor(() => expect(sent(api, "GET")).toHaveLength(2));
+    screen.getByRole("button", { name: "Editar Accesorios" }).focus();
+    release();
+    expect(await screen.findByText(/movida con sus subcategorías/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Editar Accesorios" })).toHaveFocus();
+  });
+
+  it("si la borrada aún enseñaba hijas (otra pestaña las movió), el árbol se vuelve a pedir", async () => {
+    let rows: Category[] = TREE;
+    mockApi({
+      [LIST]: () => page(rows),
+      [`DELETE ${ONE("c2")}`]: () => {
+        rows = [phones, extras, cases, silicone, node("c4", "Pro", "/pro/")];
+        return { status: 204 };
+      },
+    });
+    screenOf(manager);
+    press("Borrar iPhone", await screen.findByRole("list", { name: "Categorías" }));
+    press("Borrar", screen.getByRole("group"));
+    expect(await screen.findByText("Categoría «iPhone» borrada.")).toBeVisible();
+    expect(await screen.findByText("Pro")).toBeVisible();
   });
 });
