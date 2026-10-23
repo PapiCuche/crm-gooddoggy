@@ -1176,6 +1176,8 @@
       "show": "Mostrar",
       "all": "Todas",
       "line": "Línea {line}",
+      "place": "{sku} · {almacen}",
+      "missing": "—",
       "seen": "Saldo visto {seen} · cantidad nueva {quantity}",
       "raw": "Cantidad en el archivo: «{value}»",
       "action": {

@@ -1,5 +1,6 @@
+import { onlineManager } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StockImport, StockImportRow } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
@@ -55,6 +56,15 @@ const options = () =>
   within(screen.getByLabelText("Mostrar"))
     .getAllByRole("option")
     .map((option) => option.textContent);
+
+const press = (name: string) => {
+  const button = screen.getByRole("button", { name });
+  button.focus();
+  fireEvent.click(button);
+  return button;
+};
+
+afterEach(() => onlineManager.setOnline(true));
 
 describe("StockImportRows", () => {
   it("enseña cada fila: línea, SKU y almacén, saldo visto y nuevo (o lo que vino), acción y errores", async () => {
@@ -162,5 +172,98 @@ describe("StockImportRows", () => {
     expect(within(gone!).getByText("STALE")).toHaveClass("text-danger");
     expect(gone).toHaveTextContent("El saldo cambió desde la previsualización.");
     expect(options()).toContain("STALE");
+  });
+  it("sin red, «Cargar más» queda ocupado desde la pulsación hasta la respuesta", async () => {
+    const api = mockApi({
+      [ROWS]: page([row(2, "CREATE")], "c2"),
+      [`${ROWS}?cursor=c2`]: page([row(3, "UPDATE")]),
+    });
+    view();
+    await items();
+    onlineManager.setOnline(false); // la petición espera a la red
+    const button = press("Cargar más");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveTextContent("Cargando más…");
+    fireEvent.click(button); // ocupado: no cuenta
+    onlineManager.setOnline(true);
+    await waitFor(async () => expect(await items()).toHaveLength(2));
+    expect(urls(api).filter((url) => url.endsWith("?cursor=c2"))).toHaveLength(1);
+  });
+
+  it("sin red, «Reintentar» queda ocupado; al abrir la lista el foco va al título", async () => {
+    let reply: { status: number; body: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    mockApi({ [ROWS]: () => reply });
+    view();
+    await screen.findByRole("alert");
+    reply = page([row(2, "CREATE")]);
+    onlineManager.setOnline(false);
+    const button = press("Reintentar");
+    await waitFor(() => expect(button).toHaveAttribute("aria-disabled", "true"));
+    expect(button).toHaveTextContent("Cargando filas…");
+    onlineManager.setOnline(true);
+    expect(await items()).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Filas del archivo" })).toHaveFocus();
+  });
+
+  it("la misma fila nueva en otra lista también recibe el foco", async () => {
+    mockApi({
+      [ROWS]: page([row(2, "CREATE")], "c2"),
+      [`${ROWS}?cursor=c2`]: page([row(52, "CREATE")], "c3"),
+      [`${ROWS}?action=CREATE`]: page([row(2, "CREATE")], "k2"),
+      [`${ROWS}?action=CREATE&cursor=k2`]: page([row(52, "CREATE")]),
+    });
+    view();
+    await items();
+    press("Cargar más");
+    await waitFor(async () => expect((await items())[1]).toHaveFocus());
+    fireEvent.change(screen.getByLabelText("Mostrar"), { target: { value: "CREATE" } });
+    await screen.findByRole("button", { name: "Cargar más" });
+    press("Cargar más");
+    await waitFor(async () => expect(await items()).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull(); // última página
+    await waitFor(async () => expect((await items())[1]).toHaveFocus());
+  });
+
+  it("si el foco ya se fue a otra parte, la página nueva no se lo quita", async () => {
+    mockApi({
+      [ROWS]: page([row(2, "CREATE")], "c2"),
+      [`${ROWS}?cursor=c2`]: page([row(3, "UPDATE")]),
+    });
+    view();
+    await items();
+    press("Cargar más");
+    const select = screen.getByLabelText("Mostrar");
+    select.focus(); // antes de que llegue la respuesta
+    await waitFor(async () => expect(await items()).toHaveLength(2));
+    expect(select).toHaveFocus();
+  });
+
+  it("un 401 al cargar más no enseña error: lo trata `Providers`", async () => {
+    const api = mockApi({
+      [ROWS]: page([row(2, "CREATE")], "c2"),
+      [`${ROWS}?cursor=c2`]: { status: 401, body: { code: "NOT_AUTHENTICATED" } },
+    });
+    view();
+    await items();
+    press("Cargar más");
+    await waitFor(() => expect(urls(api)).toContain(`${URL_}?cursor=c2`));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Cargar más" })).toHaveAttribute(
+        "aria-disabled",
+        "false",
+      ),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("un 403 no enseña la tarjeta de error mientras la pantalla se cierra", async () => {
+    mockApi({ [ROWS]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
+    const onDenied = view();
+    await waitFor(() => expect(onDenied).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+    expect(screen.getByText("Cargando filas…")).toBeVisible();
   });
 });

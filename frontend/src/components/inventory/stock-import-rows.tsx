@@ -55,21 +55,38 @@ export function StockImportRows({
   }, [status, onDenied]);
   const pages = rows.data?.pages ?? [];
   const list = pages.flatMap((page) => page.results);
-  // Tras «Cargar más», el foco pasa a la primera fila nueva (el botón puede desaparecer).
-  const fresh = useRef<HTMLLIElement>(null);
-  const more = useRef<HTMLButtonElement>(null);
+  // El foco y los estados ocupados, como en `CursorList`: «Cargar más» y «Reintentar» quedan
+  // ocupados desde la pulsación hasta la respuesta, también si la petición espera a la red.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const fresh = useRef<HTMLLIElement>(null); // la primera fila de la última página cargada
+  const moreButton = useRef<HTMLButtonElement>(null);
+  const retryButton = useRef<HTMLButtonElement>(null);
   const firstOfLast = pages.length > 1 ? pages.at(-1)?.results[0]?.id : undefined;
-  const [arrived, setArrived] = useState<string>();
+  const [more, setMore] = useState<"idle" | "busy" | "arrived">("idle");
+  const [retrying, setRetrying] = useState(false);
+  const shown = useRef(0); // cada filtro es otra lista: lo que llega de la anterior no cuenta
+  // El foco solo se mueve si sigue donde el usuario pulsó (o en ninguna parte).
+  const still = (control: HTMLElement | null) =>
+    document.activeElement === document.body || document.activeElement === control;
   useEffect(() => {
-    if (arrived) fresh.current?.focus();
-  }, [arrived]);
+    // «Cargar más» puede desaparecer (última página): el foco sigue en lo que llegó.
+    if (more === "arrived" && still(moreButton.current)) fresh.current?.focus();
+  }, [more]);
   async function loadMore() {
-    const before = pages.length;
+    const list = shown.current;
+    setMore("busy");
     const result = await rows.fetchNextPage();
-    const got = result.data?.pages ?? [];
-    // Solo si el foco sigue en el botón (o en ninguna parte): no se lo quita a otro control.
-    const still = [document.body, more.current].includes(document.activeElement as HTMLElement);
-    if (got.length > before && still) setArrived(got.at(-1)?.results[0]?.id);
+    if (list !== shown.current) return;
+    setMore((result.data?.pages.length ?? 0) > pages.length ? "arrived" : "idle");
+  }
+  async function retry() {
+    const list = shown.current;
+    setRetrying(true);
+    const result = await rows.refetch();
+    if (list !== shown.current) return;
+    setRetrying(false);
+    // Al abrir la lista, el foco va al título (la tarjeta de error se va).
+    if (result.isSuccess && still(retryButton.current)) heading.current?.focus();
   }
 
   let body;
@@ -92,7 +109,10 @@ export function StockImportRows({
               </span>
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="font-medium wrap-anywhere">
-                  {row.sku || "—"} · {row.almacen || "—"}
+                  {t("rows.place", {
+                    sku: row.sku || t("rows.missing"),
+                    almacen: row.almacen || t("rows.missing"),
+                  })}
                 </span>
                 <span className="text-muted wrap-anywhere tabular-nums">
                   {quantity !== null && seen !== null
@@ -123,30 +143,43 @@ export function StockImportRows({
     ) : (
       <p className="text-muted">{t("rows.empty")}</p>
     );
-  } else if (rows.isError && status !== 401) {
+  } else if ((rows.isError && status !== 401 && status !== 403) || retrying) {
+    // Sin sesión (401) `Providers` lleva al login y un 403 cierra la pantalla: sin tarjeta.
     body = (
       <div className="flex flex-col items-start gap-3">
-        <p role="alert" className="text-danger">
-          {errors(`api.${apiErrorKey(rows.error)}`)}
-        </p>
+        {rows.isError ? (
+          <p role="alert" className="text-danger">
+            {errors(`api.${apiErrorKey(rows.error)}`)}
+          </p>
+        ) : null}
         <Button
+          ref={retryButton}
           variant="primary"
           size="lg"
-          aria-disabled={rows.isFetching}
-          onClick={() => rows.isFetching || void rows.refetch()}
+          aria-disabled={retrying}
+          onClick={() => retrying || void retry()}
         >
-          {rows.isFetching ? t("rows.loading") : errors("retry")}
+          {retrying ? t("rows.loading") : errors("retry")}
         </Button>
       </div>
     );
   } else {
-    body = <p className="text-muted">{t("rows.loading")}</p>;
+    body = (
+      <p role="status" className="text-muted">
+        {t("rows.loading")}
+      </p>
+    );
   }
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h3 id={`${id}-title`} className="text-lg font-semibold">
+        <h3
+          ref={heading}
+          id={`${id}-title`}
+          tabIndex={-1}
+          className="text-lg font-semibold focus-visible:outline-none"
+        >
           {t("rows.title")}
         </h3>
         <div className="flex w-full flex-col gap-1.5 sm:w-56">
@@ -158,7 +191,12 @@ export function StockImportRows({
             id={`${id}-action`}
             value={action}
             className="bg-surface border-foreground/50 focus-visible:border-foreground h-11 w-full rounded-[10px] border px-3 text-[16px]"
-            onChange={(event) => setAction(event.target.value as Action | "")}
+            onChange={(event) => {
+              shown.current += 1;
+              setMore("idle");
+              setRetrying(false);
+              setAction(event.target.value as Action | "");
+            }}
           >
             <option value="">{t("rows.all")}</option>
             {(applied ? RESULT : REVIEW).map((value) => (
@@ -176,15 +214,15 @@ export function StockImportRows({
       {rows.data && rows.hasNextPage ? (
         <div className="flex items-start gap-3">
           <Button
-            ref={more}
+            ref={moreButton}
             variant="accent"
             size="lg"
-            aria-disabled={rows.isFetchingNextPage}
-            onClick={() => rows.isFetchingNextPage || void loadMore()}
+            aria-disabled={more === "busy"}
+            onClick={() => more === "busy" || void loadMore()}
           >
-            {rows.isFetchingNextPage ? t("rows.loadingMore") : t("rows.more")}
+            {more === "busy" ? t("rows.loadingMore") : t("rows.more")}
           </Button>
-          {rows.isFetchNextPageError && status !== 401 && !rows.isFetchingNextPage ? (
+          {rows.isFetchNextPageError && status !== 401 && more !== "busy" ? (
             <p role="alert" className="text-danger min-w-0 self-center text-sm">
               {errors(`api.${apiErrorKey(rows.error)}`)}
             </p>
