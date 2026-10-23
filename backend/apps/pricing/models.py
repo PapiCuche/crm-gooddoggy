@@ -1,5 +1,7 @@
 """Precios (Fase 3, E03; modelo de datos §E.8, ADR-006). Tablas tenant-owned con FORCE RLS."""
 
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import RangeOperators
 from django.db import models
 
 from core.db.models import TenantModel, uuid7_primary_key
@@ -12,6 +14,7 @@ VIEW, WHOLESALE, DISTRIBUTOR, INTERNAL = (
     "prices.view_internal",
 )
 READ_PERMISSIONS = (VIEW, WHOLESALE, DISTRIBUTOR, INTERNAL)
+OVERLAP = "product_prices_no_overlap_ex"  # la `EXCLUDE`: su violación es un 409, nunca un 500
 
 
 class Kind(models.TextChoices):
@@ -70,6 +73,9 @@ class PriceList(TenantModel):
             models.UniqueConstraint(  # destino de las FK compuestas `price_list_id`
                 fields=["organization_id", "id"], name="price_lists_org_id_uq"
             ),
+            models.UniqueConstraint(  # y de la de `product_prices`, que lleva su moneda (F3-42)
+                fields=["organization_id", "id", "currency"], name="price_lists_currency_uq"
+            ),
             models.CheckConstraint(
                 condition=models.Q(code__regex=r"^[A-Z0-9]+(-[A-Z0-9]+)*$"),
                 name="price_lists_code_ck",
@@ -100,3 +106,73 @@ class PriceList(TenantModel):
 
     def __str__(self) -> str:
         return self.code
+
+
+class ProductPrice(TenantModel):
+    """El precio de una variante en una lista durante `[starts_at, ends_at)` (§E.8, ADR-006 §1).
+    La tabla es el historial: cambiar un precio cierra el vigente e inserta otro. Inmutable salvo
+    el cierre de su vigencia [INM]: el runtime solo puede cambiar `ends_at`. La `EXCLUDE` impide
+    dos precios solapados del mismo par variante × lista, aunque falle el servicio."""
+
+    id = uuid7_primary_key()
+    variant = models.ForeignKey(  # misma organización: FKs compuestas en la migración
+        "catalog.ProductVariant",
+        models.PROTECT,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    price_list = models.ForeignKey(  # con su moneda: la FK compuesta lleva `currency`
+        PriceList, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    tax_included = models.BooleanField(default=True)  # IGV incluido (D-PRC-1)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField(null=True, blank=True)  # NULL: sin fin
+    change_reason = models.CharField(max_length=500)
+    previous_price = models.ForeignKey(  # el que regía en `starts_at` al escribirla
+        "self",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    created_by_user_id = models.UUIDField(null=True, blank=True)  # FK compuesta a membresías
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "product_prices"
+        constraints = [
+            models.UniqueConstraint(  # destino de la FK compuesta `previous_price_id`
+                fields=["organization_id", "id"], name="product_prices_org_id_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="product_prices_amount_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__isnull=True)
+                | models.Q(ends_at__gt=models.F("starts_at")),
+                name="product_prices_validity_ck",
+            ),
+            ExclusionConstraint(
+                name=OVERLAP,
+                index_type="gist",
+                expressions=[
+                    ("organization_id", RangeOperators.EQUAL),
+                    ("variant", RangeOperators.EQUAL),
+                    ("price_list", RangeOperators.EQUAL),
+                    (
+                        models.Func(
+                            "starts_at", "ends_at", models.Value("[)"), function="TSTZRANGE"
+                        ),
+                        RangeOperators.OVERLAPS,
+                    ),
+                ],
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.amount} {self.currency}"

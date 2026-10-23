@@ -146,9 +146,9 @@ protected_modules = ["apps.inventory.warehouses", "apps.inventory.stock", "apps.
 allowed_importers = ["apps.inventory.api", "apps.inventory.imports"]  # la importación usa `stock`
 
 [[tool.importlinter.contracts]]
-name = "Comandos de precios: solo su API los importa (F3-40, F3-40b)"
+name = "Comandos de precios: solo su API los importa (F3-40, F3-40b, F3-42)"
 type = "protected"
-protected_modules = ["apps.pricing.price_lists"]
+protected_modules = ["apps.pricing.price_lists", "apps.pricing.prices"]
 allowed_importers = ["apps.pricing.api"]
 
 [[tool.importlinter.contracts]]

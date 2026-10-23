@@ -42,6 +42,7 @@ TENANT_TABLES = ("notes", *TENANT_TABLES)  # F4-09: delante, referencia a los co
 TENANT_TABLES = ("price_lists", *TENANT_TABLES)  # F3-40: delante, referencia a las membresías
 TENANT_TABLES = ("tags", *TENANT_TABLES)  # F4-11
 TENANT_TABLES = ("contact_tags", *TENANT_TABLES)  # F4-11b: a contactos, etiquetas y membresías
+TENANT_TABLES = ("product_prices", *TENANT_TABLES)  # F3-42: delante de las listas y variantes
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
