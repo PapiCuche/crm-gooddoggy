@@ -9,6 +9,8 @@ que el segundo movimiento de una celda ve lo que dejó el primero. La clave de i
 busca con la fila ya bloqueada; si la misma clave llega a la vez para otra celda, la decide el
 índice único. Todo lo que escriba `inventory_levels` (reservas y transferencias incluidas) bloquea
 antes la variante así; si no, los borrados de catálogo y de almacenes podrían no ver el stock.
+Quien bloquea varias variantes en una transacción (la importación, F3-21; el catálogo al borrar o
+renombrar un producto) lo hace por id ascendente: si no, dos de ellas se interbloquean.
 """
 
 import re

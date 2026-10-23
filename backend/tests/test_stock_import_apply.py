@@ -1,21 +1,26 @@
 """F3-21: aplicar una importación de stock (`apps.inventory.imports.apply` y `…/apply/`), contra
 PostgreSQL real con el rol `crm_app`, también con dos transacciones a la vez."""
 
+import threading
+import time
 from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
 import psycopg
 import pytest
+from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
+from apps.catalog import products
 from apps.catalog.models import ProductVariant
 from apps.imports.models import DataImport, DataImportRow
 from apps.inventory import imports, stock
 from apps.inventory.models import InventoryLevel, InventoryMovement, Warehouse
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
+from tests.conftest import migrator_conninfo
 from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_inventory_stock import cell, level, move, race, wanted
@@ -212,7 +217,8 @@ def test_the_service_only_takes_manual_or_import_references(world: Any) -> None:
 def test_a_manual_movement_never_takes_an_import_key(ana: Client, world: Any) -> None:
     here = cell(world.a)
     job = preview(world.a, world.ana, HEADER + "IP16,ALM,4\n")
-    body = {"variant_id": str(here[0]), "warehouse_id": str(here[1]), "movement_type": "ADJUSTMENT"}
+    body: dict[str, Any] = {"variant_id": str(here[0]), "warehouse_id": str(here[1])}
+    body |= {"movement_type": "ADJUSTMENT"}
     body |= {"quantity": 4, "reason": imports.REASON, "idempotency_key": f"import:{job.pk}:2"}
     refused = send(ana, "post", "/api/v1/o/org-a/inventory/movements/", body)
     assert "idempotency_key" in refused.json()["fields"]
@@ -236,3 +242,80 @@ def test_two_imports_of_the_same_cells_in_opposite_order_do_not_deadlock(world: 
     done = race(world.a, world.ana, [confirm(one), confirm(two)])
     assert [job.summary["result"]["stale"] for job in done] == [0, 2]
     assert (level(world.a, first_cell), level(world.a, second_cell)) == ((5, 0, 5), (5, 0, 5))
+
+
+def _held(migrator: psycopg.Connection[Any], world: Any, commands: Any, variant: UUID) -> list[Any]:
+    """El primer comando espera la fila del saldo de `variant`, retenida; el segundo arranca y
+    espera también; al soltarla, los dos siguen. Lo que dio cada uno, o su excepción."""
+    outcome = list[Any]([None, None])
+
+    def run(index: int, command: Any) -> None:
+        try:
+            with tenant_scope(ctx(world.a, world.ana)) as tenant:
+                outcome[index] = command(tenant)
+        except Exception as error:  # noqa: BLE001 — el resultado lo comprueba cada test
+            outcome[index] = f"{type(error).__name__}: {error}"
+        finally:
+            connection.close()
+
+    def waiting(count: int) -> None:
+        for _ in range(100):
+            found = migrator.execute("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
+            if found.fetchone() == (count,):
+                return
+            time.sleep(0.05)
+        raise AssertionError("no esperó")
+
+    threads = [threading.Thread(target=run, args=pair) for pair in enumerate(commands)]
+    with psycopg.connect(migrator_conninfo()) as holder:
+        holder.execute("SELECT 1 FROM inventory_levels WHERE variant_id = %s FOR UPDATE", [variant])
+        threads[0].start()
+        waiting(1)
+        threads[1].start()
+        waiting(2)
+        holder.rollback()
+    for thread in threads:
+        thread.join(timeout=15)
+    return outcome
+
+
+def test_an_import_and_renaming_the_product_of_two_of_its_variants_do_not_deadlock(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """La importación bloquea A y espera B; renombrar el producto bloqueaba B (la fila que el
+    escaneo devuelve antes) y esperaba A: interbloqueo y un 500. Por id, renombrar espera."""
+    first, here = cell(world.a, "A1")
+    with tenant_scope(ctx(world.a)):
+        product = ProductVariant.objects.get(pk=first).product_id
+        second = ProductVariant.objects.create(
+            product_id=product, sku="A2", name="A2", label="x"
+        ).pk
+    for variant in (first, second):
+        move(world.a, world.ana, wanted((variant, here), "RECEIPT", 1))
+    job = preview(world.a, world.ana, HEADER + "A1,ALM,5\nA2,ALM,6\n")
+    for sku in ("A1-TMP", "A1"):  # una tupla nueva de A1 detrás de A2, también en los índices
+        migrator.execute("UPDATE product_variants SET sku = %s WHERE id = %s", [sku, first])
+    apply_it = lambda tenant: imports.apply(tenant, import_id=job.pk)  # noqa: E731
+    rename = lambda tenant: products.update_product(tenant, product_id=product, name="Otro")  # noqa: E731
+    outcome = _held(migrator, world, (apply_it, rename), first)
+    assert not any(isinstance(done, str) for done in outcome), outcome
+    assert (level(world.a, (first, here)), level(world.a, (second, here))) == ((5, 0, 5), (6, 0, 6))
+
+
+def test_two_imports_interleaved_in_opposite_order_queue(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """La primera tiene A y espera su saldo; la segunda (B, A en el archivo) empieza por A, no por
+    B: espera sin bloquear nada que la primera necesite."""
+    low, here = cell(world.a, "A1")
+    high = cell(world.a, "B2")[0]
+    for variant in (low, high):
+        move(world.a, world.ana, wanted((variant, here), "RECEIPT", 1))
+    one = preview(world.a, world.ana, HEADER + "A1,ALM,5\nB2,ALM,5\n")
+    two = preview(world.a, world.ana, HEADER + "B2,ALM,7\nA1,ALM,7\n")
+    confirm = [
+        lambda tenant, job=job: imports.apply(tenant, import_id=job.pk) for job in (one, two)
+    ]
+    outcome = _held(migrator, world, confirm, low)
+    assert [job.summary["result"]["stale"] for job in outcome] == [0, 2], outcome
+    assert (level(world.a, (low, here)), level(world.a, (high, here))) == ((5, 0, 5), (5, 0, 5))
