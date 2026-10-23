@@ -11,6 +11,7 @@ import { MAX_BYTES, MAX_ROWS, StockImport } from "./stock-import";
 const URL_ = "/api/v1/o/acme/inventory/imports/";
 const CREATE = `POST ${URL_}`;
 const APPLY = `POST ${URL_}i1/apply/`;
+const REVERT = `POST ${URL_}i1/revert/`;
 const TEMPLATE = `GET ${URL_}template/`;
 const REPORT = `GET ${URL_}i1/errors/`;
 const ROWS = `GET ${URL_}i1/rows/`;
@@ -37,6 +38,7 @@ const job: Job = {
   created_at: "2026-10-23T10:00:00Z",
   applied_at: null,
   result: null,
+  revert: null,
 };
 const applied: Job = {
   ...job,
@@ -299,6 +301,50 @@ describe("StockImport", () => {
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
     press("Subir otro archivo");
     expect(screen.getByLabelText("Archivo CSV o Excel")).toHaveFocus();
+  });
+
+  it("revierte tras confirmar: dice cuántas celdas vuelven, cuenta el resultado y vuelve a pedir las filas", async () => {
+    let undone = false;
+    const reverted: Job = {
+      ...applied,
+      status: "REVERTED",
+      revert: { reverted: 1, stale: 1, failed: 0 },
+    };
+    const stale = row(3, "STALE", ["El saldo cambió después de la importación: era 5, ahora 4."]);
+    const { api } = await preview({
+      [APPLY]: ok(applied),
+      [REVERT]: () => ((undone = true), ok(reverted)),
+      [ROWS]: () => (undone ? page(row(2, "UPDATE"), stale) : page(row(2, "UPDATE"))),
+    });
+    expect(screen.queryByRole("button", { name: "Revertir importación" })).toBeNull();
+    press("Aplicar 2 filas");
+    press("Sí, aplicar");
+    await screen.findByRole("heading", { name: "Importación aplicada" });
+    press("Revertir importación");
+    const ask = screen.getByRole("group", { name: "Revertir importación" });
+    expect(ask).toHaveAccessibleDescription(
+      /^La celda que cambió vuelve al saldo de antes de importar.*queda STALE y no se toca\.$/,
+    );
+    expect(screen.getByRole("button", { name: "Cancelar" })).toHaveFocus();
+    press("Cancelar");
+    expect(screen.getByRole("button", { name: "Revertir importación" })).toHaveFocus();
+    press("Revertir importación");
+    fireEvent.click(screen.getByRole("button", { name: "Sí, revertir" }));
+    fireEvent.click(screen.getByRole("button", { name: /Sí, revertir|Revirtiendo/ }));
+    expect(await screen.findByRole("heading", { name: "Importación revertida" })).toHaveFocus();
+    const sent = posts(api, `${URL_}i1/revert/`);
+    expect(sent.map(([, init]) => init?.body)).toEqual([JSON.stringify({ confirm: true })]);
+    expect(tile("Revertidas")).toHaveTextContent("1");
+    expect(tile("STALE")).toHaveTextContent("1");
+    expect(screen.getByText(/Las filas STALE no se revirtieron/)).toBeVisible();
+    expect(announced()).toHaveTextContent(
+      "Importación revertida: 1 celda volvió al saldo de antes.",
+    );
+    expect(screen.queryByRole("button", { name: "Revertir importación" })).toBeNull();
+    const list = await screen.findByRole("list", { name: "Filas del archivo" });
+    expect(await within(list).findByText("Revertida · Cambia el saldo")).toBeVisible();
+    expect(within(list).getByText(/cambió después de la importación/)).toBeVisible();
+    expect(rowsCalls(api)).toHaveLength(3);
   });
 
   it("una respuesta perdida al aplicar se reintenta sin miedo: misma importación, mismo resultado", async () => {

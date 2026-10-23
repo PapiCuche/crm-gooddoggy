@@ -1293,13 +1293,22 @@
     "report": "Descargar filas con error",
     "ready": "Revisión lista: {rows, plural, one {# fila} other {# filas}}, {errors, plural, =0 {ninguna con error} one {# con error} other {# con error}}.",
     "done": "Importación aplicada: {applied, plural, one {# fila aplicada} other {# filas aplicadas}}.",
+    "revert": "Revertir importación",
+    "revertAsk": "{count, plural, one {La celda que cambió vuelve} other {Las # celdas que cambiaron vuelven}} al saldo de antes de importar, cada una con otro ajuste en el historial. Si una celda cambió después de la importación, queda STALE y no se toca.",
+    "confirmRevert": "Sí, revertir",
+    "reverting": "Revirtiendo…",
+    "revertRetryHint": "Si la respuesta se perdió, vuelve a pulsar «Sí, revertir»: la importación se revierte una sola vez.",
+    "revertedTitle": "Importación revertida",
+    "revertStaleHint": "Las filas STALE no se revirtieron: esas celdas cambiaron después de la importación. Corrígelas a mano si hace falta.",
+    "undone": "Importación revertida: {reverted, plural, =0 {ninguna celda volvió} one {# celda volvió} other {# celdas volvieron}} al saldo de antes.",
     "count": {
       "CREATE": "Celdas nuevas",
       "UPDATE": "Cambian",
       "UNCHANGED": "Sin cambios",
       "ERROR": "Con error",
       "applied": "Aplicadas",
-      "STALE": "STALE"
+      "STALE": "STALE",
+      "reverted": "Revertidas"
     },
     "rows": {
       "title": "Filas del archivo",
@@ -1319,6 +1328,7 @@
         "STALE": "STALE"
       },
       "applied": "Aplicada · {action}",
+      "reverted": "Revertida · {action}",
       "empty": "Ninguna fila con esa acción.",
       "loading": "Cargando filas…",
       "more": "Cargar más",

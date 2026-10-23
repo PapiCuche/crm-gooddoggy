@@ -19,7 +19,8 @@ const RESULT: Action[] = [...REVIEW, "STALE"]; // STALE solo existe tras aplicar
 // Las filas de una importación de stock (F3-22b), en el orden del archivo, 50 por página con
 // «Cargar más» (`GET …/inventory/imports/{id}/rows/`). El filtro es el de la API: pide solo las
 // de esa acción. Aplicar cambia las filas (STALE, ERROR, aplicadas): el estado de la importación
-// va en la clave y la lista se vuelve a pedir. Un 403 cierra la pantalla (`onDenied`); un 401
+// va en la clave y la lista se vuelve a pedir; revertir (F3-24), igual: las que volvieron al
+// saldo de antes se marcan como revertidas, y las que no, STALE o ERROR con su motivo. Un 403 cierra la pantalla (`onDenied`); un 401
 // lo trata `Providers`.
 export function StockImportRows({
   slug,
@@ -33,7 +34,8 @@ export function StockImportRows({
   const t = useTranslations("stockImport");
   const errors = useTranslations("errors");
   const id = useId();
-  const applied = job.status === "APPLIED";
+  const applied = job.status === "APPLIED" || job.status === "REVERTED";
+  const done = job.status === "REVERTED" ? "rows.reverted" : "rows.applied";
   const [action, setAction] = useState<Action | "">("");
   const filter = action ? { action } : {};
   const rows = useInfiniteQuery<Page, ApiError>({
@@ -94,7 +96,7 @@ export function StockImportRows({
     body = list.length ? (
       <ul aria-labelledby={`${id}-title`} className="flex flex-col gap-2">
         {list.map((row) => {
-          const done = applied && (row.action === "CREATE" || row.action === "UPDATE");
+          const moved = applied && (row.action === "CREATE" || row.action === "UPDATE");
           const wrong = row.action === "ERROR" || row.action === "STALE";
           const { quantity, on_hand_seen: seen } = row; // sin los dos (fila con error), lo que vino
           return (
@@ -128,12 +130,12 @@ export function StockImportRows({
               <span
                 className={cn(
                   "font-medium sm:text-right",
-                  done && "text-success",
+                  moved && job.status === "APPLIED" && "text-success",
                   wrong && "text-danger",
                 )}
               >
-                {done
-                  ? t("rows.applied", { action: t(`rows.action.${row.action}`) })
+                {moved
+                  ? t(done, { action: t(`rows.action.${row.action}`) })
                   : t(`rows.action.${row.action}`)}
               </span>
             </li>
