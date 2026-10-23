@@ -19,4 +19,9 @@ urlpatterns = [
         views.MemberBranchView.as_view(),
         name="member-branch",
     ),
+    path(
+        "teams/<uuid:team_id>/members/<uuid:membership_id>/",
+        views.TeamMemberView.as_view(),
+        name="team-member",
+    ),
 ]

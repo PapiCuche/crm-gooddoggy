@@ -11,7 +11,7 @@ from django.db import IntegrityError, connection
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from apps.access.catalog import PERMISSIONS
+from apps.access.models import Role
 from apps.organizations import teams
 from apps.organizations.models import OrganizationMembership, Team, TeamMember
 from apps.organizations.teams import OwnTeamMembership, create_team, put_team_member, update_team
@@ -37,6 +37,14 @@ TOUCHED = "SELECT updated_at FROM team_members WHERE team_id = %s AND membership
 
 def put(client: Client, team_id: Any, membership_id: Any, body: Any, org: str = "org-a") -> Any:
     return send(client, "put", f"/api/v1/o/{org}/teams/{team_id}/members/{membership_id}/", body)
+
+
+@pytest.fixture(autouse=True)
+def owner_role(world: Any) -> None:
+    """Toda organización tiene su rol Owner (F2-06): su fila es el bloqueo de RBAC que toman
+    `PUT` y `DELETE` (D-F2-13). Sin él, 409 `LAST_OWNER`, como cualquier cambio de RBAC."""
+    with tenant_scope(ctx(world.a)):
+        Role.objects.create(code="owner", name="Owner", is_system=True, is_owner_role=True)
 
 
 @pytest.fixture
@@ -360,10 +368,3 @@ def test_a_write_in_flight_does_not_block_other_rows_that_point_at_the_team(
         release.set()
         writing.join(timeout=10)
     assert len(stored(world.a)) == 2
-
-
-def test_no_catalog_permission_has_a_scope_while_d_f2_13_is_open() -> None:
-    """Incorporar a alguien a un equipo amplía su alcance `TEAM` y esta ruta no mide qué gana
-    (D-F2-13). Mientras ningún permiso admita alcance, no cambia ninguna respuesta. Quien
-    añada el primero tiene que cerrar antes esa decisión."""
-    assert [permission.code for permission in PERMISSIONS if permission.supports_scope] == []

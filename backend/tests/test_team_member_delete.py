@@ -27,6 +27,7 @@ from tests.test_teams import team
 
 world, real_stack = test_authorization.world, test_self_context.real_stack
 ana, luis = test_team_member_put.ana, test_team_member_put.luis
+owner_role = test_team_member_put.owner_role  # autouse: el bloqueo de RBAC (D-F2-13)
 pytestmark = pytest.mark.usefixtures("tenant_db")
 
 

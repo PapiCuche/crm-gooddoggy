@@ -7,8 +7,9 @@ y audita. Una denegación no escribe nada. `is_owner_role` solo identifica al ro
 tres restricciones (permisos sensibles, último Owner y que sus concesiones no se editan); por
 sí solo no concede nada.
 
-`ensure_can_manage_member` aplica las mismas reglas al estado de una membresía y a su sucursal,
-y `ensure_can_invite` a una invitación (F2-80, ADR-020), que escribe `organizations` (F2-19,
+`ensure_can_manage_member` aplica las mismas reglas al estado de una membresía,
+`ensure_can_move_member` a su sucursal, `ensure_can_place_in_team` a sus equipos (D-F2-13) y
+`ensure_can_invite` a una invitación (F2-80, ADR-020), que escribe `organizations` (F2-19,
 F2-69, ADR-017): comprueban y conservan el bloqueo; no escriben ni auditan.
 """
 
@@ -73,6 +74,22 @@ class _Actor:
         if not self.is_owner and any(BY_CODE[code].is_sensitive for code, _ in wanted):
             raise AccessDenied(Denied.SENSITIVE)
 
+    def must_cover_in(self, codes: Iterable[str], scope: Scope, places: Collection[UUID]) -> None:
+        """Concesiones del miembro con alcance `TEAM` o `BRANCH`, sobre esos equipos o sucursales
+        (D-F2-13): el actor tiene cada permiso con `ORGANIZATION`, o con ese alcance siendo de
+        todos ellos. `BRANCH` no cubre un equipo, ni `TEAM` una sucursal; lo sensible, un Owner."""
+        mine = self.ectx.team_ids if scope == Scope.TEAM else self.ectx.branch_ids
+        inside = all(place in mine for place in places)
+        wanted = list(codes)
+        for code in wanted:
+            held = self.ectx.permissions.get(code, frozenset())
+            if code not in BY_CODE or not (
+                Scope.ORGANIZATION in held or (inside and scope in held)
+            ):
+                raise AccessDenied(Denied.ESCALATION)
+        if not self.is_owner and any(BY_CODE[code].is_sensitive for code in wanted):
+            raise AccessDenied(Denied.SENSITIVE)
+
     def holds(self, role: Role) -> bool:
         assigned = MembershipRole.objects.using(self.alias)
         return assigned.filter(membership_id=self.ectx.membership_id, role=role).exists()
@@ -130,8 +147,7 @@ def ensure_owner_remains(ctx: TenantContext, *, without_membership_id: UUID) -> 
 
 
 def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving: bool) -> None:
-    """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017) y para cambiar su
-    sucursal (F2-69, con `leaving=False`). Para `apps.members`.
+    """Reglas para suspender o reactivar otra membresía (F2-19, ADR-017). Para `apps.members`.
 
     Permiso `users.manage`; nadie cambia la suya; el actor cubre todas las concesiones de todos
     los roles del miembro, como para quitárselos (PO-1); y si `leaving` y el miembro es un Owner
@@ -140,18 +156,63 @@ def ensure_can_manage_member(ctx: TenantContext, *, membership_id: UUID, leaving
     Si no deniega, el bloqueo del rol Owner dura hasta el final del `tenant_scope`: quien llama
     escribe a continuación, en ese mismo scope. Una denegación lo libera y no escribe nada.
     """
-    membership_id = UUID(str(membership_id))
-    with _change(ctx, "users.manage") as actor:
-        if membership_id == actor.ectx.membership_id:
-            raise AccessDenied(Denied.SELF)
-        status = _member(actor.alias, membership_id)
-        held = RolePermission.objects.using(actor.alias)
-        grants = held.filter(role__assignments__membership_id=membership_id)
-        actor.must_cover(grants.values_list("permission_id", "scope"))
+    with _managing(ctx, membership_id) as (actor, membership_id, status, _):
         assigned = MembershipRole.objects.using(actor.alias)
         holds = assigned.filter(membership_id=membership_id, role=actor.owner).exists()
         if leaving and status == ACTIVE and holds:  # si ya no está activa, no deja de contar
             _owner_remains(actor.alias, actor.owner, membership_id)
+
+
+def ensure_can_move_member(
+    ctx: TenantContext, *, membership_id: UUID, branch_id: UUID | None
+) -> None:
+    """Reglas para poner, cambiar o quitar la sucursal de otra membresía (F2-69). Para
+    `apps.members`.
+
+    Las de suspenderla, sin contar Owners (no deja de serlo), y además (D-F2-13) cada concesión
+    con alcance `BRANCH` del miembro se cubre en la sucursal de origen y en la de destino: con
+    `ORGANIZATION`, o con `BRANCH` siendo de las dos. Sin sucursal, `BRANCH` es `OWN`: no hay
+    sucursal que cubrir. El bloqueo, como en `ensure_can_manage_member`.
+    """
+    with _managing(ctx, membership_id) as (actor, membership_id, _, origin):
+        places = {UUID(str(place)) for place in (origin, branch_id) if place is not None}
+        held = RolePermission.objects.using(actor.alias).filter(scope=Scope.BRANCH)
+        grants = held.filter(role__assignments__membership_id=membership_id)
+        actor.must_cover_in(grants.values_list("permission_id", flat=True), Scope.BRANCH, places)
+
+
+def ensure_can_place_in_team(ctx: TenantContext, *, team_id: UUID, membership_id: UUID) -> None:
+    """Reglas para poner a otra membresía en un equipo, cambiar su papel en él o quitarla
+    (F2-58, F2-59, D-F2-13). Para `apps.members`.
+
+    Permisos `teams.manage` y `users.view`, releídos bajo el bloqueo de RBAC: una revocación
+    confirmada mientras se esperaba detiene la escritura. El actor cubre, sobre ese equipo, cada
+    concesión con alcance `TEAM` del miembro, porque entrar o salir cambia lo que alcanza; las
+    demás no cambian con el equipo. Uno mismo, el equipo y la membresía los comprueba después
+    el comando de `organizations`. El bloqueo, como en `ensure_can_manage_member`.
+    """
+    team_id, membership_id = UUID(str(team_id)), UUID(str(membership_id))
+    with _change(ctx, "teams.manage") as actor:
+        require(actor.ectx, "users.view")
+        held = RolePermission.objects.using(actor.alias).filter(scope=Scope.TEAM)
+        grants = held.filter(role__assignments__membership_id=membership_id)
+        actor.must_cover_in(grants.values_list("permission_id", flat=True), Scope.TEAM, {team_id})
+
+
+@contextmanager
+def _managing(
+    ctx: TenantContext, membership_id: UUID
+) -> Iterator[tuple[_Actor, UUID, str, UUID | None]]:
+    """`users.manage`, nadie cambia la suya y el actor cubre todos los roles del miembro."""
+    membership_id = UUID(str(membership_id))  # también si llega como texto: SELF compara UUID
+    with _change(ctx, "users.manage") as actor:
+        if membership_id == actor.ectx.membership_id:
+            raise AccessDenied(Denied.SELF)
+        status, branch_id = _member(actor.alias, membership_id)
+        held = RolePermission.objects.using(actor.alias)
+        grants = held.filter(role__assignments__membership_id=membership_id)
+        actor.must_cover(grants.values_list("permission_id", "scope"))
+        yield actor, membership_id, status, branch_id
 
 
 class UnknownRole(Exception):
@@ -196,11 +257,12 @@ def _inviting(ctx: TenantContext, role_ids: Collection[UUID]) -> Iterator[tuple[
         yield actor, wanted
 
 
-def _member(alias: str, membership_id: UUID) -> str:
-    """Estado de la membresía. Es de esta organización (la filtra RLS), o no existe."""
+def _member(alias: str, membership_id: UUID) -> tuple[str, UUID | None]:
+    """Estado y sucursal de la membresía. Es de esta organización (la filtra RLS), o no existe."""
     memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
-    status: str = memberships.using(alias).values_list("status", flat=True).get(pk=membership_id)
-    return status
+    rows = memberships.using(alias).values_list("status", "default_branch_id")
+    found: tuple[str, UUID | None] = rows.get(pk=membership_id)
+    return found
 
 
 NAME_MAX = Role._meta.get_field("name").max_length or 0
