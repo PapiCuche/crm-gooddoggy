@@ -12,11 +12,11 @@ import {
   getContactNotesListQueryKey,
   useContactNotesCreate,
 } from "@/lib/api/client";
-import type { PaginatedNoteList } from "@/lib/api/model";
+import { type PaginatedNoteList, ScopesEnum } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
-import { ContactNote } from "./contact-note";
+import { ContactNote, type Done } from "./contact-note";
 import { useContactNames } from "./contact-names";
 import { NoteForm } from "./note-form";
 
@@ -26,13 +26,17 @@ const ROW = "border-border bg-surface rounded-lg border p-4 focus-visible:outlin
 // reciente a la más antigua, por cursor (ADR-016); las fijadas se marcan, no se adelantan. Un
 // 404 de la lista es el del contacto: la página de «no encontrada», como la ficha. Carga, error
 // con «Reintentar», 403 y 401 como en `CursorList` (que no se usa: pinta su propia página).
-// Con `contacts.update` (cualquier alcance) se añaden; qué contacto admite notas lo decide la API.
+// Con `contacts.update` (cualquier alcance) se añaden; se editan, fijan y borran las propias, y
+// las de otros solo con `contacts.update` `ORGANIZATION` (la regla de F4-09, que la API aplica).
+// Un contacto fuera del alcance de edición, o una nota que se borró, responden 404.
 export function ContactNotes({ contactId }: { contactId: string }) {
   const t = useTranslations("contacts.notes");
   const errors = useTranslations("errors");
-  const { organization, permissions } = useTenant();
+  const { organization, permissions, user } = useTenant();
   const slug = organization.slug;
-  const canWrite = permissions.some((grant) => grant.code === "contacts.update");
+  const update = permissions.find((grant) => grant.code === "contacts.update");
+  const canWrite = !!update;
+  const anyNote = !!update?.scopes.includes(ScopesEnum.ORGANIZATION); // también las de otros
   const { who } = useContactNames("contacts.card");
   const client = useQueryClient();
   const listKey = [...getContactNotesListQueryKey(slug, contactId), "pages"];
@@ -51,7 +55,9 @@ export function ContactNotes({ contactId }: { contactId: string }) {
   const moreButton = useRef<HTMLButtonElement>(null);
   const fresh = useRef<HTMLLIElement>(null); // la primera nota de la última página cargada
   const [retrying, setRetrying] = useState(false);
-  const [said, setSaid] = useState(""); // lo que respondió la última escritura
+  // Lo que respondió la última escritura; una nota que ya no se puede cambiar (`alert`) se
+  // explica aquí, no en su fila, que puede irse con la lista nueva.
+  const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
   const [round, setRound] = useState(0); // otra vuelta del formulario: vacío tras añadir
   const [more, setMore] = useState<"idle" | "busy" | "arrived">("idle");
   const status = list.error?.status;
@@ -60,11 +66,20 @@ export function ContactNotes({ contactId }: { contactId: string }) {
   if (denied && list.isSuccess) setDenied(false);
   if (status === 404) notFound();
 
+  const done = (action: Done, stale: boolean, here = false) => {
+    setSaid({ text: t(stale ? "doneStale" : "done", { action }) });
+    if (here) heading.current?.focus(); // borrada: su fila se fue y el foco no tiene dónde
+  };
+  const warn = (text: string, here: boolean) => {
+    setSaid({ text, alert: true });
+    void list.refetch();
+    if (here) heading.current?.focus();
+  };
   // `networkMode`: sin red falla y se dice; una escritura no queda en cola para después.
   const create = useContactNotesCreate({
     mutation: {
       networkMode: "always",
-      onMutate: () => setSaid(""),
+      onMutate: () => setSaid(null),
       onSuccess: async (note) => {
         // Sigue «Añadiendo…» hasta que vuelve la lista, con la nota nueva la primera. Si no
         // vuelve, la nota entra igual en la caché, la primera (si la lista llegó a cargarse).
@@ -78,7 +93,7 @@ export function ContactNotes({ contactId }: { contactId: string }) {
           });
         }
         setRound((now) => now + 1);
-        setSaid(t(stale ? "doneStale" : "done"));
+        done("created", stale);
       },
       // Fuera de su alcance de edición, o el contacto se borró: lo dice el formulario, y releer
       // la lista lleva a «no encontrada» si el contacto ya no está.
@@ -129,7 +144,13 @@ export function ContactNotes({ contactId }: { contactId: string }) {
               tabIndex={note.id === firstOfLast ? -1 : undefined}
               className={note.is_pinned ? `${ROW} border-l-accent border-l-4` : ROW}
             >
-              <ContactNote note={note} who={who} />
+              <ContactNote
+                {...{ slug, contactId, listKey, note, who }}
+                canWrite={canWrite && (note.author_user_id === user.id || anyNote)}
+                onAsk={() => setSaid(null)}
+                onDone={done}
+                onAlert={warn}
+              />
             </li>
           ))}
         </ul>
@@ -186,9 +207,14 @@ export function ContactNotes({ contactId }: { contactId: string }) {
           {t("title")}
         </h2>
         {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
-        <p role="status" className={said ? "text-sm" : "sr-only"}>
-          {said}
+        <p role="status" className={said && !said.alert ? "text-sm" : "sr-only"}>
+          {said && !said.alert ? said.text : ""}
         </p>
+        {said?.alert ? (
+          <p role="alert" className="text-danger wrap-anywhere">
+            {said.text}
+          </p>
+        ) : null}
         {body}
         {list.hasNextPage && !denied ? (
           <div className="flex items-start gap-3">
