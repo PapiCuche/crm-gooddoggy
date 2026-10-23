@@ -146,9 +146,11 @@ class Migration(migrations.Migration):
         ),
         # FK de tenant, como en el resto de tablas (OBS-F2-02-2)
         fk("contacts_organization_fk", "organization_id", "organizations (id)"),
-        # ADR-001 §3: el responsable y quien lo crea son miembros de esta organización
+        # ADR-001 §3: el responsable y quien lo crea, cambia o borra son miembros de esta organización
         fk("contacts_owner_fk", "organization_id, owner_user_id", MEMBERS),
         fk("contacts_created_by_fk", "organization_id, created_by_user_id", MEMBERS),
+        fk("contacts_updated_by_fk", "organization_id, updated_by_user_id", MEMBERS),
+        fk("contacts_deleted_by_fk", "organization_id, deleted_by_user_id", MEMBERS),
         # la sucursal es de esta organización
         fk("contacts_branch_fk", "organization_id, branch_id", "branches (organization_id, id)"),
         EnableRLS("Contact"),
