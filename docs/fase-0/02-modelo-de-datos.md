@@ -461,7 +461,9 @@
 
 **`data_imports`** — `kind` (CATALOG/PRICES/STOCK/CONTACTS), `file_id`, `status` (UPLOADED/VALIDATING/VALIDATED/APPLYING/APPLIED/FAILED/CANCELLED), `total_rows`, `valid_rows`, `error_rows`, `new_count`, `update_count`, `summary` JSONB, `created_by_user_id`, `applied_by_user_id`, `applied_at`.
 
-**`data_import_rows`** — `import_id`, `row_number`, `raw` JSONB, `normalized` JSONB, `action` (CREATE/UPDATE/UNCHANGED/SKIP/ERROR), `errors` JSONB, `target_entity_type/id`.
+**`data_import_rows`** — `import_id`, `row_number`, `raw` JSONB, `normalized` JSONB, `action` (CREATE/UPDATE/UNCHANGED/SKIP/ERROR/STALE), `errors` JSONB, `target_entity_type/id`.
+
+> **F3-20 (importación de stock, ADR-028 §5):** `STALE` es la fila cuya celda cambió entre la previsualización y la aplicación: no se aplica. El archivo no se guarda (ni en `files` ni en el object storage): de él quedan sus filas, con solo las columnas conocidas, `file_name` y `content_sha256`, con el que se avisa de un archivo ya subido. `file_id` llega cuando haga falta conservar el original (con el antivirus de ADR-008). El tamaño (1 MiB) y las filas (1000) tienen tope; la previsualización y la aplicación son síncronas.
 
 **`search_documents`** — Proyección para la búsqueda global (§86). `entity_type`, `entity_id`, `title`, `subtitle`, `keywords` (teléfonos normalizados, @usernames, SKU, números), `search_vector`, `updated_at`. UNIQUE (`entity_type`, `entity_id`); índices GIN (tsvector) + trigram.
 
