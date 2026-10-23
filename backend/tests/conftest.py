@@ -33,6 +33,7 @@ TENANT_TABLES = ("user_invitations", *TENANT_TABLES)  # F2-79: delante, referenc
 TENANT_TABLES += ("brands",)  # F3-01
 TENANT_TABLES = ("categories", *TENANT_TABLES)  # F3-04
 TENANT_TABLES = ("product_variants", "products", *TENANT_TABLES)  # F3-06: delante de marcas
+TENANT_TABLES = ("warehouses", *TENANT_TABLES)  # F3-08: delante de las sucursales
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

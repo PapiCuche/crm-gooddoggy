@@ -3055,6 +3055,182 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/warehouses/:
+    get:
+      operationId: warehouses_list
+      description: Los almacenes de la organización, activos o no, sin los borrados.
+        Paginado por creación (ADR-016).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedWarehouseList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: warehouses_create
+      description: 'Crea un almacén en una sucursal de la organización, activo salvo
+        `is_active=false`. 409 `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WarehouseCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/warehouses/{warehouse_id}/:
+    patch:
+      operationId: warehouses_update
+      description: 'Cambia el nombre, el tipo, si cuenta para la venta o si está activo.
+        `code` o `branch_id` dan 400 en ese campo: no cambian. 404: no es de la organización
+        o está borrado.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: warehouse_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedWarehouseUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Warehouse'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:
@@ -3908,6 +4084,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedWarehouseList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Warehouse'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PasswordResetConfirmRequest:
       type: object
       properties:
@@ -4051,6 +4241,19 @@ components:
         status:
           $ref: '#/components/schemas/VariantStatusEnum'
         ai_visible:
+          type: boolean
+    PatchedWarehouseUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          $ref: '#/components/schemas/WarehouseTypeEnum'
+        is_sellable:
+          type: boolean
+        is_active:
           type: boolean
     Permission:
       type: object
@@ -4540,6 +4743,73 @@ components:
         * `ACTIVE` - Active
         * `INACTIVE` - Inactive
         * `DISCONTINUED` - Discontinued
+    Warehouse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+          description: La sucursal del almacén. No cambia.
+        code:
+          type: string
+          description: Clave estable, única en la organización. No cambia.
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/WarehouseTypeEnum'
+        is_sellable:
+          type: boolean
+          description: Si su stock cuenta para la venta (el que verán la IA y el cliente).
+        is_active:
+          type: boolean
+      required:
+      - branch_id
+      - code
+      - id
+      - is_active
+      - is_sellable
+      - name
+      - type
+    WarehouseCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          $ref: '#/components/schemas/WarehouseTypeEnum'
+        is_sellable:
+          type: boolean
+        is_active:
+          type: boolean
+        branch_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          minLength: 1
+          description: Se guarda en mayúsculas.
+          maxLength: 20
+      required:
+      - branch_id
+      - code
+      - name
+    WarehouseTypeEnum:
+      enum:
+      - STORE
+      - WAREHOUSE
+      - TRANSIT
+      - SERVICE
+      type: string
+      description: |-
+        * `STORE` - Store
+        * `WAREHOUSE` - Warehouse
+        * `TRANSIT` - Transit
+        * `SERVICE` - Service
   securitySchemes:
     sessionCookie:
       type: apiKey

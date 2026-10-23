@@ -60,6 +60,11 @@ ADMIN_REST = (
     "products.import",
     "categories.manage",
     "brands.manage",
+    "inventory.view",  # F3-08: el inventario
+    "inventory.manage",
+    "inventory.adjust",
+    "inventory.transfer",
+    "warehouses.manage",
 )
 STATE = (
     "SELECT (SELECT count(*) FROM role_permissions), (SELECT count(*) FROM membership_roles), "

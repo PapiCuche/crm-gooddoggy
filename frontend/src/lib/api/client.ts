@@ -65,6 +65,7 @@ import type {
   PaginatedTeamList,
   PaginatedTeamMemberList,
   PaginatedVariantList,
+  PaginatedWarehouseList,
   PasswordResetConfirmRequest,
   PasswordResetRequestRequest,
   PatchedBranchUpdateRequest,
@@ -74,6 +75,7 @@ import type {
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
   PatchedVariantUpdateRequest,
+  PatchedWarehouseUpdateRequest,
   PermissionCatalog,
   Product,
   ProductCreateRequest,
@@ -93,6 +95,9 @@ import type {
   Variant,
   VariantCreateRequest,
   VariantsListParams,
+  Warehouse,
+  WarehouseCreateRequest,
+  WarehousesListParams,
 } from "./model";
 
 import { apiFetch } from "../http";
@@ -6285,4 +6290,356 @@ export const useTeamMembersRemove = <TError = ErrorType<Error>, TContext = unkno
   TContext
 > => {
   return useMutation(getTeamMembersRemoveMutationOptions(options), queryClient);
+};
+
+export const getWarehousesListUrl = (orgSlug: string, params?: WarehousesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/warehouses/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/warehouses/`;
+};
+
+/**
+ * Los almacenes de la organización, activos o no, sin los borrados. Paginado por creación (ADR-016).
+ */
+export const warehousesList = async (
+  orgSlug: string,
+  params?: WarehousesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedWarehouseList> => {
+  return apiFetch<PaginatedWarehouseList>(getWarehousesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getWarehousesListQueryKey = (orgSlug: string, params?: WarehousesListParams) => {
+  return [`/api/v1/o/${orgSlug}/warehouses/`, ...(params ? [params] : [])] as const;
+};
+
+export const getWarehousesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof warehousesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: WarehousesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof warehousesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getWarehousesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof warehousesList>>> = ({ signal }) =>
+    warehousesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof warehousesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type WarehousesListQueryResult = NonNullable<Awaited<ReturnType<typeof warehousesList>>>;
+export type WarehousesListQueryError = ErrorType<Error>;
+
+export function useWarehousesList<
+  TData = Awaited<ReturnType<typeof warehousesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | WarehousesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof warehousesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof warehousesList>>,
+          TError,
+          Awaited<ReturnType<typeof warehousesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useWarehousesList<
+  TData = Awaited<ReturnType<typeof warehousesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: WarehousesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof warehousesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof warehousesList>>,
+          TError,
+          Awaited<ReturnType<typeof warehousesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useWarehousesList<
+  TData = Awaited<ReturnType<typeof warehousesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: WarehousesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof warehousesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useWarehousesList<
+  TData = Awaited<ReturnType<typeof warehousesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: WarehousesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof warehousesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getWarehousesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getWarehousesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/warehouses/`;
+};
+
+/**
+ * Crea un almacén en una sucursal de la organización, activo salvo `is_active=false`. 409 `WAREHOUSE_CODE_TAKEN`: ya hay uno con ese código.
+ */
+export const warehousesCreate = async (
+  orgSlug: string,
+  warehouseCreateRequest: WarehouseCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Warehouse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Warehouse>(getWarehousesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(warehouseCreateRequest),
+  });
+};
+
+export const getWarehousesCreateMutationKey = () => ["warehousesCreate"] as const;
+
+export const getWarehousesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof warehousesCreate>>,
+    TError,
+    WarehousesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof warehousesCreate>>,
+  TError,
+  WarehousesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getWarehousesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof warehousesCreate>>,
+    WarehousesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return warehousesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type WarehousesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof warehousesCreate>>
+>;
+export type WarehousesCreateMutationBody = WarehouseCreateRequest;
+export type WarehousesCreateMutationError = ErrorType<Error>;
+export type WarehousesCreateMutationVariables = { orgSlug: string; data: WarehouseCreateRequest };
+
+export const useWarehousesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof warehousesCreate>>,
+      TError,
+      WarehousesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof warehousesCreate>>,
+  TError,
+  WarehousesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getWarehousesCreateMutationOptions(options), queryClient);
+};
+
+export const getWarehousesUpdateUrl = (orgSlug: string, warehouseId: string) => {
+  return `/api/v1/o/${orgSlug}/warehouses/${warehouseId}/`;
+};
+
+/**
+ * Cambia el nombre, el tipo, si cuenta para la venta o si está activo. `code` o `branch_id` dan 400 en ese campo: no cambian. 404: no es de la organización o está borrado.
+ */
+export const warehousesUpdate = async (
+  orgSlug: string,
+  warehouseId: string,
+  patchedWarehouseUpdateRequest?: PatchedWarehouseUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Warehouse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Warehouse>(getWarehousesUpdateUrl(orgSlug, warehouseId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedWarehouseUpdateRequest),
+  });
+};
+
+export const getWarehousesUpdateMutationKey = () => ["warehousesUpdate"] as const;
+
+export const getWarehousesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof warehousesUpdate>>,
+    TError,
+    WarehousesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof warehousesUpdate>>,
+  TError,
+  WarehousesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getWarehousesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof warehousesUpdate>>,
+    WarehousesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, warehouseId, data } = props ?? {};
+
+    return warehousesUpdate(orgSlug, warehouseId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type WarehousesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof warehousesUpdate>>
+>;
+export type WarehousesUpdateMutationBody = PatchedWarehouseUpdateRequest | undefined;
+export type WarehousesUpdateMutationError = ErrorType<Error>;
+export type WarehousesUpdateMutationVariables = {
+  orgSlug: string;
+  warehouseId: string;
+  data?: PatchedWarehouseUpdateRequest;
+};
+
+export const useWarehousesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof warehousesUpdate>>,
+      TError,
+      WarehousesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof warehousesUpdate>>,
+  TError,
+  WarehousesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getWarehousesUpdateMutationOptions(options), queryClient);
 };
