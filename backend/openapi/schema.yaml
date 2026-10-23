@@ -1270,6 +1270,188 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/inventory/imports/:
+    post:
+      operationId: inventory_imports_create
+      description: 'Sube un CSV de cantidades absolutas y lo previsualiza: valida
+        cada fila contra el stock de ahora y no lo cambia. Hasta 1 MiB y 1000 filas;
+        UTF-8 (o el CSV de Excel en Windows); separador `,`, `;` o tabulador. 400
+        en `content` si el archivo entero no se puede leer.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockImportCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockImport'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/imports/{import_id}/rows/:
+    get:
+      operationId: inventory_imports_rows_list
+      description: Las filas de una importación, en el orden del archivo (ADR-016).
+      parameters:
+      - in: query
+        name: action
+        schema:
+          enum:
+          - CREATE
+          - UPDATE
+          - UNCHANGED
+          - SKIP
+          - ERROR
+          - STALE
+          type: string
+          minLength: 1
+        description: |-
+          Solo las de esa acción.
+
+          * `CREATE` - Create
+          * `UPDATE` - Update
+          * `UNCHANGED` - Unchanged
+          * `SKIP` - Skip
+          * `ERROR` - Error
+          * `STALE` - Stale
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - in: path
+        name: import_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedStockImportRowList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/imports/template/:
+    get:
+      operationId: inventory_imports_template
+      description: 'La plantilla CSV: `sku`, `almacen` (el código) y `cantidad` (lo
+        que hay, no lo que entra).'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/levels/:
     get:
       operationId: inventory_levels_list
@@ -3810,6 +3992,40 @@ components:
           oneOf:
           - $ref: '#/components/schemas/ScopesEnum'
           - $ref: '#/components/schemas/NullEnum'
+    ImportRowActionEnum:
+      enum:
+      - CREATE
+      - UPDATE
+      - UNCHANGED
+      - SKIP
+      - ERROR
+      - STALE
+      type: string
+      description: |-
+        * `CREATE` - Create
+        * `UPDATE` - Update
+        * `UNCHANGED` - Unchanged
+        * `SKIP` - Skip
+        * `ERROR` - Error
+        * `STALE` - Stale
+    ImportStatusEnum:
+      enum:
+      - UPLOADED
+      - VALIDATING
+      - VALIDATED
+      - APPLYING
+      - APPLIED
+      - FAILED
+      - CANCELLED
+      type: string
+      description: |-
+        * `UPLOADED` - Uploaded
+        * `VALIDATING` - Validating
+        * `VALIDATED` - Validated
+        * `APPLYING` - Applying
+        * `APPLIED` - Applied
+        * `FAILED` - Failed
+        * `CANCELLED` - Cancelled
     Invitation:
       type: object
       properties:
@@ -4483,6 +4699,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedStockImportRowList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockImportRow'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedTeamList:
       type: object
       required:
@@ -4960,6 +5190,115 @@ components:
           $ref: '#/components/schemas/User'
       required:
       - user
+    StockImport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/ImportStatusEnum'
+        file_name:
+          type: string
+        total_rows:
+          type: integer
+          description: Las líneas con texto, sin la cabecera.
+        valid_rows:
+          type: integer
+        error_rows:
+          type: integer
+        new_count:
+          type: integer
+          description: Celdas que aún no tenían saldo.
+        update_count:
+          type: integer
+          description: Celdas cuyo saldo cambiaría.
+        unchanged_count:
+          type: integer
+        duplicate_of:
+          type: string
+          format: uuid
+          nullable: true
+          description: Otra importación de stock con el mismo archivo. Solo es un
+            aviso.
+        encoding:
+          type: string
+          description: utf-8 o windows-1252.
+        ignored_columns:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - duplicate_of
+      - encoding
+      - error_rows
+      - file_name
+      - id
+      - ignored_columns
+      - new_count
+      - status
+      - total_rows
+      - unchanged_count
+      - update_count
+      - valid_rows
+    StockImportCreateRequest:
+      type: object
+      properties:
+        file_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content:
+          type: string
+          minLength: 1
+          description: El archivo CSV, en base64.
+          maxLength: 1402197
+      required:
+      - content
+      - file_name
+    StockImportRow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        row_number:
+          type: integer
+          description: La línea del archivo (la cabecera es la 1).
+        action:
+          $ref: '#/components/schemas/ImportRowActionEnum'
+        sku:
+          type: string
+          description: Tal como vino.
+        almacen:
+          type: string
+        cantidad:
+          type: string
+        quantity:
+          type: integer
+          nullable: true
+        on_hand_seen:
+          type: integer
+          nullable: true
+          description: 'El saldo al previsualizar: aplicar no pisa una celda que cambió.'
+        errors:
+          type: array
+          items:
+            type: string
+      required:
+      - action
+      - almacen
+      - cantidad
+      - errors
+      - id
+      - on_hand_seen
+      - quantity
+      - row_number
+      - sku
     Team:
       type: object
       properties:

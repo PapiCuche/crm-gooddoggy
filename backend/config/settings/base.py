@@ -207,6 +207,8 @@ SPECTACULAR_SETTINGS = {
         "VariantStatusEnum": "apps.catalog.models.ProductVariant.Status",
         "WarehouseTypeEnum": "apps.inventory.models.Warehouse.Type",  # F3-08
         "MovementTypeEnum": "apps.inventory.models.InventoryMovement.Type",  # F3-09
+        "ImportStatusEnum": "apps.imports.models.DataImport.Status",  # F3-20b
+        "ImportRowActionEnum": "apps.imports.models.DataImportRow.Action",
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
