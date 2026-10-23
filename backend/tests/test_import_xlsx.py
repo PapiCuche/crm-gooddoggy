@@ -9,6 +9,7 @@ import struct
 import tracemalloc
 import zipfile
 import zlib
+from collections.abc import Callable
 from typing import Any
 
 import openpyxl.xml
@@ -222,12 +223,112 @@ def test_a_part_that_inflates_past_what_it_declares_is_never_inflated(name: str)
     assert peak < 2 << 20, peak
 
 
+def styles(count: int) -> str:
+    """Estilos honrados: `count` formatos de celda distintos (razón de compresión < 100)."""
+    xfs = "".join(
+        f'<xf numFmtId="{n}" fontId="{n % 97}" fillId="{n % 13}" borderId="{n % 7}" xfId="0"/>'
+        for n in range(count)
+    )
+    return f'<styleSheet xmlns="{MAIN}"><cellXfs count="{count}">{xfs}</cellXfs></styleSheet>'
+
+
+def just_over(build: Callable[[int], str], cap: int) -> int:
+    """El menor número de elementos con el que `build` pasa de `cap` bytes."""
+    low, high = 1, 2
+    while len(build(high)) <= cap:
+        low, high = high, high * 2
+    while high - low > 1:
+        middle = (low + high) // 2
+        low, high = (middle, high) if len(build(middle)) <= cap else (low, middle)
+    return high
+
+
+def sheets(count: int) -> str:
+    many = "".join(
+        f'<sheet name="h{n}" sheetId="{n + 2}" r:id="rId{n + 2}"/>' for n in range(count)
+    )
+    return FIRST + many
+
+
+def links(count: int) -> str:
+    target = f'Type="{OFFICE}/worksheet" Target="worksheets/sheet1.xml"'
+    return LINK + "".join(f'<Relationship Id="rId{n + 2}" {target}/>' for n in range(count))
+
+
+def test_the_parts_read_whole_have_their_own_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Estilos, libro, relaciones y tipos los lee openpyxl enteros: 9 MiB honrados de `<xf/>` ya
+    son cientos de MiB. La hoja y los textos compartidos se leen por trozos: solo el tope total."""
+    assert xlsxfile.MAX_WHOLE == csvfile.MAX_BYTES
+    real = handmade(order=sheets(300), parts={"xl/styles.xml": styles(3000)})  # unos 200 KB
+    assert xlsxfile.read(real, ALIASES).rows == []
+    cap = csvfile.MAX_BYTES
+    for big in (
+        handmade(parts={"xl/styles.xml": styles(just_over(styles, cap))}),
+        handmade(order=sheets(just_over(sheets, cap))),
+        handmade(links=links(just_over(links, cap))),
+    ):
+        assert refused(big) == xlsxfile.TOO_BIG_PART
+    for part, data in (
+        ("xl/styles.xml", handmade(parts={"xl/styles.xml": styles(10)})),
+        ("xl/workbook.xml", handmade(order=sheets(10))),
+        ("xl/_rels/workbook.xml.rels", handmade(links=links(10))),
+        ("[Content_Types].xml", handmade(types=override("text/xml", "/x.xml") * 10)),
+    ):
+        sizes = {i.filename: i.file_size for i in zipfile.ZipFile(io.BytesIO(data)).infolist()}
+        size = sizes.pop(part)
+        assert size > max(sizes.values())  # la más grande de todas
+        monkeypatch.setattr(xlsxfile, "MAX_WHOLE", size)
+        assert xlsxfile.read(data, ALIASES).rows == []
+        monkeypatch.setattr(xlsxfile, "MAX_WHOLE", size - 1)
+        assert refused(data) == xlsxfile.TOO_BIG_PART, part
+    monkeypatch.setattr(xlsxfile, "MAX_WHOLE", 1024)  # la hoja, mucho más grande: sin ese tope
+    rows = "".join(f'<row r="{n}"><c r="C{n}"><v>{n}</v></c></row>' for n in range(2, 200))
+    strings = f'<sst xmlns="{MAIN}">' + "<si><t>s</t></si>" * 300 + "</sst>"
+    padded = handmade(HEADER + rows, parts={"xl/sharedStrings.xml": strings})
+    assert len(xlsxfile.read(padded, ALIASES).rows) == 198
+
+
 def test_a_part_shorter_than_what_it_declares_is_damaged() -> None:
     content = f"{TYPES}{override(XLSX)}</Types>".encode()
     name = "[Content_Types].xml"
     short = declare(handmade(), name, len(content) + 1, content)
     assert refused(short) == xlsxfile.DAMAGED
     assert xlsxfile.read(declare(handmade(), name, len(content), content), ALIASES).rows == []
+
+
+def restream(stream: bytes, size: int, content: bytes) -> bytes:
+    """Un XLSX válido cuya última parte (`xl/extra.xml`, que openpyxl no lee) es el flujo deflate
+    `stream`, declarando `size` bytes y el CRC de `content`."""
+    data = bytearray(handmade(parts={"xl/extra.xml": "<x/>"}))
+    last = zipfile.ZipFile(io.BytesIO(bytes(data))).getinfo("xl/extra.xml")
+    name, extra = struct.unpack_from("<HH", data, last.header_offset + 26)
+    begin = last.header_offset + 30 + name + extra
+    data[begin : begin + last.compress_size] = stream
+    fields = (zlib.crc32(content), len(stream), size)
+    struct.pack_into("<III", data, last.header_offset + 14, *fields)
+    struct.pack_into("<III", data, data.rindex(b"PK\x01\x02") + 16, *fields)
+    end = data.rindex(b"PK\x05\x06") + 16
+    struct.pack_into("<I", data, end, struct.unpack_from("<I", data, end)[0] + len(stream) - 6)
+    return bytes(data)
+
+
+def deflate(content: bytes, end: bool = True) -> bytes:
+    pack = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    return pack.compress(content) + pack.flush(zlib.Z_FINISH if end else zlib.Z_SYNC_FLUSH)
+
+
+def test_a_stream_must_end_exactly_where_it_declares_with_its_crc() -> None:
+    """`zipfile` corta en lo declarado un flujo más largo (con el CRC de ese trozo, lo acepta) y no
+    mira si el flujo acaba: aquí, las dos cosas dañan el archivo, como un CRC que no cuadra."""
+    good = b"<x/>"
+    assert len(deflate(good)) == 6  # lo que ocupaba la parte: `restream` mueve el directorio
+    assert xlsxfile.read(restream(deflate(good), 4, good), ALIASES).rows == []
+    for stream, size, crc in (
+        (deflate(good + b" " * 1000), 4, good),  # sigue tras lo declarado
+        (deflate(good, end=False), 4, good),  # no acaba
+        (deflate(good), 4, b"<y/>"),
+    ):
+        assert refused(restream(stream, size, crc)) == xlsxfile.DAMAGED
 
 
 def test_a_part_that_is_not_plain_zip_is_refused() -> None:
