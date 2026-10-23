@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 
 import { FieldsForm } from "@/components/forms/fields-form";
 import { Button } from "@/components/ui/button";
@@ -33,41 +33,51 @@ const counts = (kind: Kind) => (value: string) =>
   (kind === "ADJUSTMENT" || Number(value) > 0);
 
 // Registrar una entrada, una salida o un ajuste (lo contado) de la celda elegida (F3-15), con
-// `POST …/inventory/movements/` (F3-11). Cada envío lleva su `idempotency_key`, y reintentar el
-// mismo envío (los mismos datos) reutiliza la suya: si la respuesta se perdió por el camino, la
-// API devuelve el movimiento ya registrado en lugar de contarlo dos veces. Quién puede hacerlo lo
-// decide la API (`inventory.adjust`).
+// `POST …/inventory/movements/` (F3-11). Cada movimiento lleva su `idempotency_key`, y la clave
+// sigue hasta que la API da uno por registrado (o dice `IDEMPOTENCY_KEY_REUSED`): tras un fallo
+// sin respuesta, el siguiente envío lleva la misma aunque se haya corregido algo. Si el primero sí
+// se registró, la API lo devuelve (mismos datos) o responde `IDEMPOTENCY_KEY_REUSED` (otros
+// datos), y nunca cuenta dos veces. Quién puede hacerlo lo decide la API (`inventory.adjust`).
 export function MovementForm({
   slug,
   warehouse,
   variant,
+  keyRef,
   onDone,
 }: {
   slug: string;
   warehouse: Warehouse;
   variant: Variant;
+  // La clave pendiente, de la pantalla: sobrevive a cerrar el formulario o cambiar de celda.
+  keyRef: RefObject<string | null>;
   onDone: (text: string | null) => void; // `null`: se abre el formulario; el anuncio ya no aplica
 }) {
   const t = useTranslations("movements.form");
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<Kind | null>(null); // `null`: cerrado
-  const last = useRef<{ sent: string; key: string } | null>(null);
+  // La celda tal como era al enviar: el usuario puede cambiarla mientras se registra.
+  const sentTo = useRef({ variant: variant.name, warehouse: warehouse.name });
   const trigger = useRef<HTMLButtonElement>(null);
   const create = useInventoryMovementsCreate({
     mutation: {
       networkMode: "always", // sin red falla y se dice; no queda en cola para después
       onSuccess: async (movement) => {
-        last.current = null; // el siguiente, aunque sea igual, es otro movimiento
+        keyRef.current = null; // el siguiente, aunque sea igual, es otro movimiento
         // Sigue «Registrando…» hasta que vuelve el saldo; el historial se pedirá de nuevo.
         void queryClient.invalidateQueries({ queryKey: getInventoryMovementsListQueryKey(slug) });
         await queryClient.invalidateQueries({ queryKey: getInventoryLevelsListQueryKey(slug) });
         setKind(null);
         const on_hand = movement.on_hand_after;
-        onDone(t(`done.${movement.movement_type as Kind}`, { on_hand, warehouse: warehouse.name }));
+        onDone(t(`done.${movement.movement_type as Kind}`, { on_hand, ...sentTo.current }));
       },
       onError: (error) => {
-        // La clave ya era de otro movimiento: el siguiente envío lleva una nueva.
-        if (error.code === "IDEMPOTENCY_KEY_REUSED") last.current = null;
+        // Un envío anterior sin respuesta sí se registró, con otros datos: el saldo y el historial
+        // se vuelven a pedir, y el siguiente envío, si el usuario lo quiere, lleva clave nueva.
+        if (error.code === "IDEMPOTENCY_KEY_REUSED") {
+          keyRef.current = null;
+          void queryClient.invalidateQueries({ queryKey: getInventoryMovementsListQueryKey(slug) });
+          void queryClient.invalidateQueries({ queryKey: getInventoryLevelsListQueryKey(slug) });
+        }
         // La variante o el almacén ya no existen: almacenes, productos y variantes, otra vez.
         if (error.fields?.variant_id || error.fields?.warehouse_id) {
           void queryClient.invalidateQueries({ queryKey: getWarehousesListQueryKey(slug) });
@@ -142,10 +152,9 @@ export function MovementForm({
               quantity: Number(quantity),
               reason,
             };
-            // El mismo envío otra vez (tras un fallo de red o del servidor) lleva la misma clave.
-            const sent = JSON.stringify(data);
-            if (last.current?.sent !== sent) last.current = { sent, key: freshKey() };
-            create.mutate({ orgSlug: slug, data: { ...data, idempotency_key: last.current.key } });
+            sentTo.current = { variant: variant.name, warehouse: warehouse.name };
+            keyRef.current ??= freshKey();
+            create.mutate({ orgSlug: slug, data: { ...data, idempotency_key: keyRef.current } });
           }}
           taken={(error) => {
             if (error.code === "INSUFFICIENT_STOCK")

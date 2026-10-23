@@ -119,7 +119,9 @@ describe("MovementForm", () => {
     fireEvent.click(field("Salida: se van unidades")); // mientras se registra, no cambia
     expect(field("Entrada: llegan unidades")).toBeChecked();
     release();
-    expect(await screen.findByText("Entrada registrada: ahora hay 15 en Central.")).toBeVisible();
+    expect(
+      await screen.findByText("Entrada registrada: ahora hay 15 de Collar en Central."),
+    ).toBeVisible();
     const here = screen.getByRole("heading", { name: "Collar en Central" }).parentElement!;
     expect(
       within(here)
@@ -143,7 +145,7 @@ describe("MovementForm", () => {
     expect(posts(api)[1].idempotency_key).not.toBe(body.idempotency_key);
   });
 
-  it("un ajuste acepta cero; reintentar el mismo envío repite la clave, cambiarlo no", async () => {
+  it("un ajuste acepta cero; tras un fallo, la clave sigue hasta que se registra", async () => {
     let reply: { status: number; body: object } = { status: 500, body: {} };
     const api = mockApi({ ...CATALOG, [LEVELS]: page([level(10)]), [MOVE]: () => reply });
     await opened();
@@ -161,11 +163,14 @@ describe("MovementForm", () => {
     type("Motivo", "Conteo semanal");
     reply = { status: 200, body: moved(0, "ADJUSTMENT") }; // la API devuelve el ya registrado
     press("Registrar ajuste", form());
-    expect(await screen.findByText("Ajuste registrado: ahora hay 0 en Central.")).toBeVisible();
+    expect(
+      await screen.findByText("Ajuste registrado: ahora hay 0 de Collar en Central."),
+    ).toBeVisible();
     const [first, second, third] = posts(api);
     expect(first).toMatchObject({ movement_type: "ADJUSTMENT", quantity: 0 });
     expect(second.idempotency_key).toBe(first.idempotency_key);
-    expect(third.idempotency_key).not.toBe(first.idempotency_key);
+    // Corregido el motivo, la misma: si el primero llegó, la API dice `IDEMPOTENCY_KEY_REUSED`.
+    expect(third.idempotency_key).toBe(first.idempotency_key);
   });
 
   it("los errores se dicen por `code`, junto a la cantidad o en el formulario", async () => {
@@ -186,7 +191,7 @@ describe("MovementForm", () => {
     await again(reply, /No hay stock suficiente/);
     expect(field("Unidades que salen")).toHaveFocus();
     await again({ status: 409, body: { code: "WAREHOUSE_INACTIVE" } }, /está desactivado/);
-    await again({ status: 409, body: { code: "IDEMPOTENCY_KEY_REUSED" } }, /coincidía con otro/);
+    await again({ status: 409, body: { code: "IDEMPOTENCY_KEY_REUSED" } }, /sí se registró/);
     const bad = { code: "VALIDATION_ERROR", fields: { warehouse_id: ["x"] } };
     await again({ status: 400, body: bad }, /ya no existen/);
     await waitFor(() =>

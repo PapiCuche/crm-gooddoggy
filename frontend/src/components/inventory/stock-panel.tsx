@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { everyPage } from "@/components/catalog/categories-tree";
@@ -24,6 +24,7 @@ export function StockPanel() {
   // Comodidad: registrar se ofrece a quien la API dijo que tiene `inventory.adjust` (F3-15).
   const canAdjust = permissions.some((grant) => grant.code === "inventory.adjust");
   const [done, setDone] = useState<string | null>(null);
+  const keyRef = useRef<string | null>(null); // la de `MovementForm`, hasta un registro
   const { failed, retry } = useReads();
   const { warehouses, products, warehouse, variant, controls } = useCellPicker(slug);
   const levels = useQuery({
@@ -128,7 +129,13 @@ export function StockPanel() {
               {done ?? ""}
             </p>
             {variant && warehouse ? (
-              <MovementForm slug={slug} warehouse={warehouse} variant={variant} onDone={setDone} />
+              <MovementForm
+                slug={slug}
+                warehouse={warehouse}
+                variant={variant}
+                keyRef={keyRef}
+                onDone={setDone}
+              />
             ) : null}
           </>
         ) : null}

@@ -1066,7 +1066,7 @@
       "reasonInvalid": "El motivo no es válido: una línea de hasta 255 caracteres.",
       "insufficient": "No hay stock suficiente: no puede quedar en negativo ni por debajo de lo reservado.",
       "inactive": "El almacén está desactivado y no recibe movimientos. Reactívalo en «Almacenes».",
-      "reused": "Este envío coincidía con otro movimiento ya registrado. Vuelve a pulsar para registrarlo como uno nuevo.",
+      "reused": "Un envío anterior que se quedó sin respuesta sí se registró, con otros datos, y las existencias ya lo incluyen. Revísalas; si aun así vuelves a pulsar, esto se registra como un movimiento nuevo.",
       "gone": "La variante o el almacén ya no existen en la organización. Vuelve a elegirlos.",
       "denied": "No tienes permiso para registrar movimientos de stock.",
       "submit": {
@@ -1077,9 +1077,9 @@
       "busy": "Registrando…",
       "cancel": "Cancelar",
       "done": {
-        "RECEIPT": "Entrada registrada: ahora hay {on_hand} en {warehouse}.",
-        "ISSUE": "Salida registrada: ahora hay {on_hand} en {warehouse}.",
-        "ADJUSTMENT": "Ajuste registrado: ahora hay {on_hand} en {warehouse}."
+        "RECEIPT": "Entrada registrada: ahora hay {on_hand} de {variant} en {warehouse}.",
+        "ISSUE": "Salida registrada: ahora hay {on_hand} de {variant} en {warehouse}.",
+        "ADJUSTMENT": "Ajuste registrado: ahora hay {on_hand} de {variant} en {warehouse}."
       }
     }
   }
