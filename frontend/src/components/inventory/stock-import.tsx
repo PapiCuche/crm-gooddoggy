@@ -2,7 +2,15 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type FormEvent, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
@@ -16,6 +24,8 @@ import type { StockImport } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
+
+import { StockImportRows } from "./stock-import-rows";
 
 // Los topes de la API (`apps.imports.csvfile`): se miran antes de enviar, con su mensaje.
 export const MAX_BYTES = 1_048_576;
@@ -119,7 +129,8 @@ function Counts({ items }: { items: [string, number, boolean?][] }) {
 }
 
 // Importar stock desde un CSV (F3-22, E04-07): plantilla, archivo, revisión con sus recuentos,
-// confirmación y resultado, con `POST …/inventory/imports/` y `…/{id}/apply/` (F3-20, F3-21).
+// confirmación y resultado, con `POST …/inventory/imports/` y `…/{id}/apply/` (F3-20, F3-21);
+// en la revisión y en el resultado, las filas una a una (`StockImportRows`, F3-22b).
 // El archivo se lee en el navegador al enviarlo y viaja en base64 en el JSON; no se guarda en
 // el navegador (la escritura no queda en la caché: `gcTime: 0` y `reset`). Aplicar otra vez la
 // misma importación no repite ajustes (la API la aplica una vez): tras perder una respuesta,
@@ -132,6 +143,7 @@ export function StockImport() {
   // Comodidad: la frontera es la API (`inventory.adjust` en cada ruta de la importación).
   const allowed = permissions.some((grant) => grant.code === "inventory.adjust");
   const [denied, setDenied] = useState(false);
+  const deny = useCallback(() => setDenied(true), []);
   const [step, setStep] = useState<Step>({ name: "pick" });
   const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState<Problem | "gone" | null>(null);
@@ -390,6 +402,7 @@ export function StockImport() {
             </div>
           </div>
         ) : null}
+        <StockImportRows key={job.id} slug={slug} job={job} onDenied={deny} />
       </div>
     );
   }

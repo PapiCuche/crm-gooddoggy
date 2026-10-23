@@ -1170,6 +1170,30 @@
       "ERROR": "Con error",
       "applied": "Aplicadas",
       "STALE": "STALE"
+    },
+    "rows": {
+      "title": "Filas del archivo",
+      "show": "Mostrar",
+      "all": "Todas",
+      "line": "Línea {line}",
+      "place": "{sku} · {almacen}",
+      "missing": "—",
+      "seen": "Saldo visto {seen} · cantidad nueva {quantity}",
+      "raw": "Cantidad en el archivo: «{value}»",
+      "action": {
+        "CREATE": "Celda nueva",
+        "UPDATE": "Cambia el saldo",
+        "UNCHANGED": "Sin cambios",
+        "SKIP": "Omitida",
+        "ERROR": "Con error",
+        "STALE": "STALE"
+      },
+      "applied": "Aplicada · {action}",
+      "empty": "Ninguna fila con esa acción.",
+      "loading": "Cargando filas…",
+      "more": "Cargar más",
+      "loadingMore": "Cargando más…",
+      "count": "{count, plural, =0 {Ninguna fila en la lista} one {# fila en la lista} other {# filas en la lista}}"
     }
   }
 }

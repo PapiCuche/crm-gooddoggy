@@ -1,9 +1,9 @@
 import { onlineManager } from "@tanstack/react-query";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { SelfContext, StockImport as Job } from "@/lib/api/model";
+import type { SelfContext, StockImport as Job, StockImportRow } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
 import { MAX_BYTES, StockImport } from "./stock-import";
@@ -13,6 +13,7 @@ const CREATE = `POST ${URL_}`;
 const APPLY = `POST ${URL_}i1/apply/`;
 const TEMPLATE = `GET ${URL_}template/`;
 const REPORT = `GET ${URL_}i1/errors/`;
+const ROWS = `GET ${URL_}i1/rows/`;
 const tenant = (...codes: string[]): SelfContext => ({
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
@@ -43,6 +44,20 @@ const applied: Job = {
   result: { applied: 1, unchanged: 1, stale: 1, failed: 0 },
 };
 const ok = (body: unknown, status = 200) => ({ status, body });
+const row = (n: number, action: StockImportRow["action"], errors: string[] = []) => ({
+  id: `r${n}`,
+  row_number: n,
+  action,
+  sku: "IP16",
+  almacen: "ALM1",
+  cantidad: "5",
+  quantity: 5,
+  on_hand_seen: 3,
+  errors,
+});
+const page = (...results: unknown[]) => ok({ results, next: null });
+const rowsCalls = (api: ReturnType<typeof mockApi>) =>
+  api.mock.calls.filter(([to]) => to === `${URL_}i1/rows/`);
 const csv = (text: string, name = "stock.csv") => new File([text], name, { type: "text/csv" });
 const lines = (n: number) => `sku,almacen,cantidad\n${"IP16,ALM1,5\n".repeat(n)}`;
 
@@ -67,7 +82,7 @@ const announced = () => screen.getAllByRole("status").at(-1);
 const posts = (api: ReturnType<typeof mockApi>, url: string) =>
   api.mock.calls.filter(([to, init]) => to === url && init?.method === "POST");
 async function preview(routes: Parameters<typeof mockApi>[0] = {}) {
-  const api = mockApi({ [CREATE]: ok(job, 201), ...routes });
+  const api = mockApi({ [CREATE]: ok(job, 201), [ROWS]: page(row(2, "CREATE")), ...routes });
   const screen_ = view();
   choose(csv("sku,almacen,cantidad\nIP16,ALM1,5\n"));
   await screen.findByRole("heading", { name: "Revisa la importación" });
@@ -228,10 +243,15 @@ describe("StockImport", () => {
   });
 
   it("confirma con un diálogo explícito, aplica una vez por pulsación y enseña el resultado", async () => {
+    let done = false;
+    const stale = row(3, "STALE", ["El saldo cambió desde la previsualización: era 3, ahora 4."]);
     const { api } = await preview({
-      [APPLY]: ok(applied),
+      [APPLY]: () => ((done = true), ok(applied)),
       [REPORT]: { status: 200, body: "x", headers: { "Content-Type": "text/csv" } },
+      [ROWS]: () =>
+        done ? page(row(2, "UPDATE"), stale) : page(row(2, "UPDATE"), row(3, "UPDATE")),
     });
+    expect(await screen.findAllByText("Cambia el saldo")).toHaveLength(2);
     press("Aplicar 2 filas");
     const ask = screen.getByRole("group", { name: "Aplicar 2 filas" });
     expect(ask).toHaveAccessibleDescription(
@@ -249,6 +269,12 @@ describe("StockImport", () => {
     expect(tile("STALE")).toHaveTextContent("1");
     expect(screen.getByText(/Las filas STALE no se tocaron/)).toBeVisible();
     expect(announced()).toHaveTextContent("Importación aplicada: 1 fila aplicada.");
+    // Aplicar cambia las filas: la lista se vuelve a pedir y enseña la STALE y la aplicada.
+    const list = await screen.findByRole("list", { name: "Filas del archivo" });
+    expect(await within(list).findByText("STALE")).toBeVisible();
+    expect(within(list).getByText("Aplicada · Cambia el saldo")).toBeVisible();
+    expect(within(list).getByText(/El saldo cambió desde la previsualización/)).toBeVisible();
+    expect(rowsCalls(api)).toHaveLength(2);
     press("Descargar filas con error");
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
     press("Subir otro archivo");
@@ -295,6 +321,12 @@ describe("StockImport", () => {
     press("Aplicar 2 filas");
     press("Sí, aplicar");
     expect(await screen.findByText(/No tienes permiso para importar stock/)).toBeVisible();
+  });
+
+  it("las filas: un 403 al pedirlas cierra la pantalla, como el resto", async () => {
+    await preview({ [ROWS]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
+    expect(await screen.findByText(/No tienes permiso para importar stock/)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Revisa la importación" })).toBeNull();
   });
 
   it("Enter mantenido no repite el envío", () => {
