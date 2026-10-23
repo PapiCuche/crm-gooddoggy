@@ -181,7 +181,7 @@ describe("navegación del shell", () => {
     }));
     expect((await links(all)).slice(1)).toEqual([
       ["/o/acme/catalogo/marcas", null],
-      ["/o/acme/inventario/almacenes", "page"],
+      ["/o/acme/inventario/existencias", "true"],
       ["/o/acme/auditoria", null],
     ]);
     const inventory = NAVIGATION.find((item) => item.key === "inventory")!;

@@ -23,7 +23,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
   { key: "catalog", path: "/catalogo/marcas", section: "/catalogo", permission: "products.view" },
   {
     key: "inventory",
-    path: "/inventario/almacenes",
+    path: "/inventario/existencias",
     section: "/inventario",
     permission: "inventory.view",
   },

@@ -44,6 +44,7 @@
     },
     "inventory": {
       "label": "Secciones del inventario",
+      "stock": "Existencias",
       "warehouses": "Almacenes"
     }
   },
@@ -994,5 +995,37 @@
       "done": "Almacén «{name}» {created, select, true {creado} other {guardado}}.",
       "doneStale": "Almacén «{name}» {created, select, true {creado} other {guardado}}, pero la lista no se pudo actualizar. Recarga la página para verlo."
     }
+  },
+  "stock": {
+    "eyebrow": "Good Doggy / Inventario",
+    "title": "Existencias",
+    "intro": "Elige un almacén y una variante para ver cuánto hay, cuánto está reservado y cuánto se puede vender en {organization}.",
+    "choose": "Qué ver",
+    "warehouse": "Almacén",
+    "chooseWarehouse": "Elige un almacén",
+    "warehouseOption": "{name} ({code}){active, select, false {, inactivo} other {}}",
+    "search": "Buscar producto",
+    "noMatch": "Ningún producto que lleve stock coincide con lo buscado.",
+    "product": "Producto",
+    "chooseProduct": "Elige un producto",
+    "variant": "Variante",
+    "chooseVariant": "Elige una variante",
+    "variantOption": "{name} · {sku}",
+    "loading": "Cargando las opciones…",
+    "loadingLevels": "Cargando las existencias…",
+    "no_warehouses": "Esta organización todavía no tiene almacenes.",
+    "create_warehouses": "Crear un almacén",
+    "no_products": "Todavía no hay productos que lleven stock.",
+    "create_products": "Crear un producto",
+    "pick": "Elige un almacén, un producto y su variante para ver sus existencias.",
+    "here": "{variant} en {warehouse}",
+    "on_hand": "Existencias",
+    "reserved": "Reservado",
+    "available": "Disponible",
+    "everywhere": "En todos los almacenes",
+    "none": "Esta variante todavía no tiene movimientos en ningún almacén.",
+    "unknownWarehouse": "Un almacén que ya no existe",
+    "denied": "No tienes permiso para ver el inventario de esta organización.",
+    "catalogDenied": "No tienes permiso para ver el catálogo: sin él no puedes elegir un producto."
   }
 }
