@@ -47,14 +47,17 @@ export function useContactNames(texts: "contacts" | "contacts.card") {
   const naming = people.isLoading;
   const places = new Map(branches.data?.map((row) => [row.id, row]));
 
+  // Un miembro por su identificador: también el autor de una nota y quien la editó (F4-10).
+  function who(id: string): string {
+    if (id === user.id) return t("ownerYou");
+    const name = names.get(id);
+    if (!name && naming) return t("ownerPending"); // sin «otro miembro» fugaz
+    return name ? t("owner", { name }) : t("ownerOther");
+  }
+
   return {
-    owner({ owner_user_id: id }: Contact): string {
-      if (!id) return t("ownerNone");
-      if (id === user.id) return t("ownerYou");
-      const name = names.get(id);
-      if (!name && naming) return t("ownerPending"); // sin «otro miembro» fugaz
-      return name ? t("owner", { name }) : t("ownerOther");
-    },
+    who,
+    owner: ({ owner_user_id: id }: Contact): string => (id ? who(id) : t("ownerNone")),
     // `null`: tiene sucursal, pero el usuario no la puede nombrar; no se enseña nada.
     branch({ branch_id: id }: Contact): string | null {
       if (!id) return t("branchNone");

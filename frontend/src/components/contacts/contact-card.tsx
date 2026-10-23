@@ -12,13 +12,15 @@ import { contactsRetrieve, getContactsRetrieveQueryKey } from "@/lib/api/client"
 import type { Contact } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
+import { cn } from "@/lib/utils";
 
 import { useContactNames } from "./contact-names";
+import { ContactNotes } from "./contact-notes";
 
 const BOX = "border-border bg-surface flex flex-col gap-4 rounded-lg border p-4";
 
 // La ficha del cliente (F4-06), de solo lectura, con `GET /api/v1/o/{slug}/contacts/{id}/`.
-// Solo la pestaña «Resumen»: las demás (notas, etiquetas, oportunidades…) llegan con sus API.
+// Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10); las demás llegan con sus API.
 // Fuera del alcance, borrado, de otra organización o inexistente, la API responde el mismo
 // 404, y la ficha es la página de «no encontrada» de cualquier dirección: no dice cuál fue.
 // Carga, error con «Reintentar», 403 y 401 se tratan como en `CursorList`.
@@ -26,8 +28,10 @@ export function ContactCard({ contactId }: { contactId: string }) {
   const t = useTranslations("contacts");
   const errors = useTranslations("errors");
   const format = useFormatter();
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
   const slug = organization.slug;
+  const notes = permissions.some((grant) => grant.code === "contacts.view");
+  const order: readonly ("summary" | "notes")[] = notes ? ["summary", "notes"] : ["summary"];
   const { owner, branch } = useContactNames("contacts.card");
   const card = useQuery<Contact, ApiError>({
     queryKey: getContactsRetrieveQueryKey(slug, contactId),
@@ -43,6 +47,14 @@ export function ContactCard({ contactId }: { contactId: string }) {
     if (document.activeElement === document.body) heading.current?.focus();
   }, []);
   const [retrying, setRetrying] = useState(false);
+  const [tab, setTab] = useState<"summary" | "notes">("summary");
+  const [seen, setSeen] = useState(false); // «Notas» sigue montada tras abrirla: no se repide
+  const tabs = useRef<Partial<Record<typeof tab, HTMLButtonElement | null>>>({});
+  if (!notes && tab === "notes") setTab("summary"); // perdió `contacts.view` con la ficha abierta
+  function pick(next: typeof tab) {
+    setTab(next);
+    if (next === "notes") setSeen(true);
+  }
   // Como la lista: un 403 cierra la ficha aunque ya estuviera en pantalla, y sigue cerrada
   // hasta que la API responde bien (un fallo pasajero posterior no la reabre).
   const status = card.error?.status;
@@ -126,28 +138,68 @@ export function ContactCard({ contactId }: { contactId: string }) {
     );
     body = (
       <>
-        <div role="tablist" aria-label={t("card.tabs")} className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            role="tab"
-            id={`${id}-tab`}
-            aria-selected
-            aria-controls={`${id}-panel`}
-            className="border-foreground/10 bg-accent text-accent-foreground flex h-11 items-center rounded-lg border px-4 text-sm lg:h-9"
-          >
-            {t("card.summary")}
-          </button>
+        <div
+          role="tablist"
+          aria-label={t("card.tabs")}
+          className="flex flex-wrap gap-2"
+          // Las flechas, Inicio y Fin mueven entre pestañas y las abren (APG, activación automática).
+          onKeyDown={(event) => {
+            const at = order.indexOf(tab);
+            const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: -1 }[event.key];
+            if (to === undefined) return;
+            event.preventDefault();
+            const next = order.at(to % order.length)!;
+            pick(next);
+            tabs.current[next]?.focus();
+          }}
+        >
+          {order.map((key) => (
+            <button
+              key={key}
+              ref={(node) => {
+                tabs.current[key] = node;
+              }}
+              type="button"
+              role="tab"
+              id={`${id}-${key}-tab`}
+              aria-selected={tab === key}
+              aria-controls={`${id}-${key}-panel`}
+              tabIndex={tab === key ? 0 : -1}
+              onClick={() => pick(key)}
+              className={cn(
+                "flex h-11 items-center rounded-lg border px-4 text-sm lg:h-9",
+                tab === key
+                  ? "border-foreground/10 bg-accent text-accent-foreground"
+                  : "border-border text-muted hover:text-foreground",
+              )}
+            >
+              {t(`card.${key}`)}
+            </button>
+          ))}
         </div>
         <div
           role="tabpanel"
           tabIndex={0}
-          id={`${id}-panel`}
-          aria-labelledby={`${id}-tab`}
+          id={`${id}-summary-panel`}
+          aria-labelledby={`${id}-summary-tab`}
+          hidden={tab !== "summary"}
           className="flex flex-col gap-4"
         >
           {group("profile", fields)}
           {group("record", record)}
         </div>
+        {notes ? (
+          <div
+            role="tabpanel"
+            tabIndex={0}
+            id={`${id}-notes-panel`}
+            aria-labelledby={`${id}-notes-tab`}
+            hidden={tab !== "notes"}
+            className="flex flex-col gap-4"
+          >
+            {seen ? <ContactNotes contactId={contactId} /> : null}
+          </div>
+        ) : null}
       </>
     );
   } else if ((card.isError && status !== 401) || retrying) {
