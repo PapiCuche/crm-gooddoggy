@@ -25,6 +25,7 @@
       "branches": "Sucursales",
       "teams": "Equipos",
       "audit": "Auditoría",
+      "contacts": "Clientes",
       "catalog": "Catálogo",
       "inventory": "Inventario"
     },
@@ -100,7 +101,8 @@
       "category": "Categoría",
       "product": "Producto",
       "warehouse": "Almacén",
-      "inventory_movement": "Movimiento de inventario"
+      "inventory_movement": "Movimiento de inventario",
+      "contact": "Contacto"
     },
     "actions": {
       "organization": {
@@ -159,6 +161,11 @@
         "received": "Entrada de stock registrada",
         "issued": "Salida de stock registrada",
         "adjusted": "Stock ajustado tras un conteo"
+      },
+      "contact": {
+        "created": "Contacto creado",
+        "updated": "Contacto editado",
+        "deleted": "Contacto borrado"
       }
     }
   },
@@ -1008,6 +1015,70 @@
       "denied": "No tienes permiso para administrar almacenes.",
       "done": "Almacén «{name}» {created, select, true {creado} other {guardado}}.",
       "doneStale": "Almacén «{name}» {created, select, true {creado} other {guardado}}, pero la lista no se pudo actualizar. Recarga la página para verlo."
+    }
+  },
+  "contacts": {
+    "eyebrow": "Good Doggy / Clientes",
+    "title": "Clientes",
+    "intro": "Los clientes de {organization} que puedes ver: los que tienes a cargo y los que tu rol te deja ver.",
+    "empty": "Todavía no tienes clientes en la lista.",
+    "count": "{count, plural, =0 {Sin clientes en la lista} one {# cliente en la lista} other {# clientes en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando clientes…",
+    "denied": "No tienes permiso para ver los clientes de esta organización.",
+    "phone": "Teléfono",
+    "email": "Correo",
+    "owner": "Responsable: {name}",
+    "ownerPending": "Responsable",
+    "ownerYou": "Responsable: tú",
+    "ownerOther": "Responsable: otro miembro",
+    "ownerNone": "Sin responsable",
+    "branch": "Sucursal: {name} ({code})",
+    "branchNone": "Sin sucursal",
+    "create": {
+      "open": "Crear cliente",
+      "title": "Nuevo cliente",
+      "first_name": "Nombre",
+      "last_name": "Apellido",
+      "display_name": "Nombre para mostrar (opcional)",
+      "display_nameHint": "Si lo dejas vacío se forma con el nombre y el apellido. Para una empresa, escribe aquí su nombre.",
+      "primary_phone_e164": "Teléfono (opcional)",
+      "primary_phone_e164Hint": "Con + y el código del país, por ejemplo +51 987 654 321 en Perú.",
+      "primary_email": "Correo (opcional)",
+      "document_number": "Número de documento (opcional)",
+      "document_numberHint": "Con su tipo, justo debajo.",
+      "document_type": "Tipo de documento",
+      "noDocument": "Sin documento",
+      "documentType": {
+        "DNI": "DNI",
+        "CE": "Carné de extranjería",
+        "RUC": "RUC",
+        "PASSPORT": "Pasaporte"
+      },
+      "source": "Origen",
+      "sourceHint": "Cómo llegó el cliente.",
+      "sources": {
+        "MANUAL": "Registro manual",
+        "WALK_IN": "Visita a la tienda",
+        "REFERRAL": "Recomendación",
+        "INBOUND_MESSAGE": "Mensaje recibido",
+        "CAMPAIGN": "Campaña"
+      },
+      "submit": "Crear cliente",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "first_nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres.",
+      "last_nameInvalid": "El apellido no es válido: una línea de hasta 100 caracteres.",
+      "display_nameInvalid": "Falta un nombre: escribe el nombre, el apellido o el nombre para mostrar, con alguna letra o cifra.",
+      "primary_phone_e164Invalid": "El teléfono no es válido: escribe + y el código del país (+51 en Perú), hasta 15 cifras.",
+      "primary_emailInvalid": "El correo no es válido.",
+      "document_numberInvalid": "El número no tiene la forma del tipo elegido: DNI 8 cifras, RUC 11, carné de extranjería 8 a 12 letras o cifras, pasaporte 6 a 12.",
+      "documentTypeMissing": "Elige el tipo de documento, o borra el número.",
+      "documentNumberMissing": "Escribe el número del documento, o elige «Sin documento».",
+      "denied": "No tienes permiso para crear clientes.",
+      "done": "Cliente «{name}» creado.",
+      "doneStale": "Cliente «{name}» creado, pero la lista no se pudo actualizar. Recarga la página para verlo."
     }
   },
   "stock": {

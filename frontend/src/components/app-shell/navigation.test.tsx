@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogNav } from "@/components/catalog/catalog-nav";
@@ -194,6 +194,22 @@ describe("navegación del shell", () => {
     const nav = screen.getByRole("navigation", { name: "Secciones del inventario" });
     const link = within(nav).getByRole("link", { name: "Almacenes", current: "page" });
     expect(link).toHaveAttribute("href", "/o/acme/inventario/almacenes");
+  });
+
+  it("«Clientes» pide `contacts.view` y va entre «Equipos» y «Catálogo»", async () => {
+    route.pathname = "/o/acme/clientes";
+    const all = ["contacts.create", "products.view", "teams.view"].map((code) => ({
+      code,
+      scopes: [],
+    }));
+    expect((await links(all)).map(([href]) => href)).not.toContain("/o/acme/clientes");
+    cleanup();
+    expect((await links([...all, { code: "contacts.view", scopes: [] }])).slice(1)).toEqual([
+      ["/o/acme/equipos", null],
+      ["/o/acme/clientes", "page"],
+      ["/o/acme/catalogo/marcas", null],
+    ]);
+    expect(document.title).toBe("Clientes · Acme SAC · Good Doggy CRM");
   });
 
   it("CatalogNav enlaza las páginas del catálogo y marca la abierta, también con la barra final", () => {
