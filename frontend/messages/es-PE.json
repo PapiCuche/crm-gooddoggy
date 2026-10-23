@@ -1119,6 +1119,7 @@
       "loading": "Cargando el cliente…",
       "tabs": "Secciones de la ficha",
       "summary": "Resumen",
+      "notes": "Notas",
       "profile": "Datos del cliente",
       "record": "En la organización",
       "document": "Documento",
@@ -1134,6 +1135,16 @@
       "branchNone": "Sin sucursal",
       "created": "Creado",
       "updated": "Actualizado"
+    },
+    "notes": {
+      "title": "Notas del cliente",
+      "loading": "Cargando las notas…",
+      "more": "Cargar más",
+      "loadingMore": "Cargando más…",
+      "empty": "Este cliente todavía no tiene notas.",
+      "denied": "No tienes permiso para ver las notas de este cliente.",
+      "pinned": "Fijada",
+      "editedBy": "editada por {name}"
     }
   },
   "stock": {

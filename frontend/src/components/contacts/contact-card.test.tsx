@@ -79,7 +79,7 @@ function notFoundThrown() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ContactCard", () => {
-  it("enseña el perfil, el responsable, la sucursal, el origen y las fechas en «Resumen», su única pestaña", async () => {
+  it("enseña el perfil, el responsable, la sucursal, el origen y las fechas en «Resumen», la primera pestaña", async () => {
     const api = mockApi({
       [CARD]: ok(rosa),
       [MEMBERS]: page([member("u2", "Luis", "Ramos", "luis@acme.pe")]),
@@ -89,10 +89,12 @@ describe("ContactCard", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Cargando el cliente…");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Ficha del cliente");
     expect(await screen.findByRole("heading", { level: 1, name: "Rosa Díaz" })).toBeVisible();
-    const [tab, ...others] = within(screen.getByRole("tablist")).getAllByRole("tab");
-    expect(others).toEqual([]); // ni notas ni etiquetas ni pestañas desactivadas
+    const [tab, notes, ...others] = within(screen.getByRole("tablist")).getAllByRole("tab");
+    expect(others).toEqual([]); // ni etiquetas ni pestañas desactivadas
     expect(tab).toHaveAccessibleName("Resumen");
     expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(notes).toHaveAccessibleName("Notas");
+    expect(notes).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("tablist")).toHaveAccessibleName("Secciones de la ficha");
     const panel = screen.getByRole("tabpanel", { name: "Resumen" });
     expect(panel).toHaveAttribute("tabindex", "0"); // se llega con Tab desde la pestaña
@@ -322,6 +324,6 @@ describe("ContactCard", () => {
       expect(list).not.toHaveClass("grid-cols-2");
     }
     expect(value("Correo")).toHaveClass("wrap-anywhere");
-    expect(screen.getByRole("tab")).toHaveClass("h-11", "lg:h-9");
+    for (const tab of screen.getAllByRole("tab")) expect(tab).toHaveClass("h-11", "lg:h-9");
   });
 });
