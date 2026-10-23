@@ -3330,6 +3330,142 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/prices/:
+    get:
+      operationId: price_list_prices_list
+      description: 'Las variantes vivas por creación (ADR-016), con el precio vigente,
+        el próximo y lo que resuelve `PricingService`. 404: lista oculta o inactiva.'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: price_list_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: query
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo las de ese producto.
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedListPriceList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: price_list_prices_create
+      description: Fija el precio de una variante, desde ahora o programado. 409 `PRICE_UNCHANGED`,
+        `PRICE_ALREADY_SCHEDULED` o `PRICE_CONFLICT`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: price_list_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PriceSetRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Price'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/products/:
     get:
       operationId: products_list
@@ -5402,6 +5538,33 @@ components:
       - id
       - is_active
       - name
+    CurrentPrice:
+      type: object
+      properties:
+        price_id:
+          type: string
+          format: uuid
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+        currency:
+          type: string
+        tax_included:
+          type: boolean
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - amount
+      - currency
+      - ends_at
+      - price_id
+      - starts_at
+      - tax_included
     Error:
       type: object
       properties:
@@ -5585,6 +5748,31 @@ components:
       - variant
       - variant_id
       - warehouse_id
+    ListPrice:
+      type: object
+      properties:
+        variant:
+          $ref: '#/components/schemas/PriceVariant'
+        current:
+          allOf:
+          - $ref: '#/components/schemas/CurrentPrice'
+          nullable: true
+          description: El que rige ahora en la lista.
+        next:
+          allOf:
+          - $ref: '#/components/schemas/NextPrice'
+          nullable: true
+          description: El siguiente programado.
+        resolution:
+          allOf:
+          - $ref: '#/components/schemas/PriceResolution'
+          description: 'Lo que dice `PricingService`: sin precio si la variante no
+            se vende (`VARIANT_UNAVAILABLE`) o no tiene precio vigente (`NO_PRICE`).'
+      required:
+      - current
+      - next
+      - resolution
+      - variant
     LoginMfaRequest:
       type: object
       properties:
@@ -5997,6 +6185,22 @@ components:
         * `RESERVE` - Reserve
         * `RELEASE` - Release
         * `SALE` - Sale
+    NextPrice:
+      type: object
+      properties:
+        price_id:
+          type: string
+          format: uuid
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+        starts_at:
+          type: string
+          format: date-time
+      required:
+      - amount
+      - price_id
+      - starts_at
     Note:
       type: object
       properties:
@@ -6158,6 +6362,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Level'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedListPriceList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListPrice'
         next:
           type: string
           nullable: true
@@ -6611,6 +6829,61 @@ components:
             $ref: '#/components/schemas/Permission'
       required:
       - results
+    Price:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        variant_id:
+          type: string
+          format: uuid
+        price_list_id:
+          type: string
+          format: uuid
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+        previous_amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          nullable: true
+          description: El que regía al fijarlo.
+        currency:
+          type: string
+        tax_included:
+          type: boolean
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        change_reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Quién lo fijó; `null` si no fue una persona. El nombre lo resuelve
+            `users.view`.
+      required:
+      - amount
+      - change_reason
+      - created_at
+      - created_by_user_id
+      - currency
+      - ends_at
+      - id
+      - previous_amount
+      - price_list_id
+      - starts_at
+      - tax_included
+      - variant_id
     PriceList:
       type: object
       properties:
@@ -6752,6 +7025,84 @@ components:
         * `prices.view_wholesale` - prices.view_wholesale
         * `prices.view_distributor` - prices.view_distributor
         * `prices.view_internal` - prices.view_internal
+    PriceResolution:
+      type: object
+      properties:
+        found:
+          type: boolean
+        reason:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/PriceResolutionReasonEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        final_amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          nullable: true
+          description: Lo que paga el cliente, IGV incluido.
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: '`null`: sin fin.'
+      required:
+      - final_amount
+      - found
+      - reason
+      - valid_until
+    PriceResolutionReasonEnum:
+      enum:
+      - VARIANT_UNAVAILABLE
+      - NO_PRICE
+      type: string
+      description: |-
+        * `VARIANT_UNAVAILABLE` - VARIANT_UNAVAILABLE
+        * `NO_PRICE` - NO_PRICE
+    PriceSetRequest:
+      type: object
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          minLength: 1
+          description: IGV incluido. Mayor que cero.
+        starts_at:
+          type: string
+          format: date-time
+          description: 'Desde cuándo rige: ahora o después, nunca antes. Sin él, ahora.'
+        reason:
+          type: string
+          minLength: 1
+          description: Sin HTML.
+          maxLength: 500
+      required:
+      - amount
+      - reason
+      - variant_id
+    PriceVariant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+        product_id:
+          type: string
+          format: uuid
+        product_name:
+          type: string
+      required:
+      - id
+      - name
+      - product_id
+      - product_name
+      - sku
     Product:
       type: object
       properties:
