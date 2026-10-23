@@ -65,7 +65,10 @@ ADMIN_REST = (
     "inventory.adjust",
     "inventory.transfer",
     "warehouses.manage",
+    "contacts.create",  # F4-02: los contactos
 )
+SCOPED_REST = ("contacts.view", "contacts.update", "contacts.delete")  # con `ORGANIZATION`
+ADMIN = dict.fromkeys(ADMIN_REST) | dict.fromkeys(SCOPED_REST, "ORGANIZATION")
 STATE = (
     "SELECT (SELECT count(*) FROM role_permissions), (SELECT count(*) FROM membership_roles), "
     "(SELECT count(*) FROM audit_logs)"
@@ -367,7 +370,7 @@ def test_nobody_modifies_their_own_roles(rbac: Any, migrator: psycopg.Connection
 def test_assign_requires_covering_every_grant_of_the_role(
     rbac: Any, migrator: psycopg.Connection[Any]
 ) -> None:
-    give(rbac.a, rbac.m_luis, dict.fromkeys(ADMIN_REST))  # luis cubre todo lo del rol admin
+    give(rbac.a, rbac.m_luis, ADMIN)  # luis cubre todo lo del rol admin
     roles, before = rbac.roles, state(migrator)
     to_eva = {"membership_id": rbac.m_eva}
     for code, reason in (("admin", Denied.SENSITIVE), ("owner", Denied.ESCALATION)):
@@ -395,7 +398,7 @@ def test_assign_requires_covering_every_grant_of_the_role(
 def test_remove_requires_covering_every_grant_too(
     rbac: Any, migrator: psycopg.Connection[Any]
 ) -> None:
-    give(rbac.a, rbac.m_luis, dict.fromkeys(ADMIN_REST))
+    give(rbac.a, rbac.m_luis, ADMIN)
     roles = rbac.roles
     with tenant_scope(ctx(rbac.a)):
         for code in ("seller", "admin"):

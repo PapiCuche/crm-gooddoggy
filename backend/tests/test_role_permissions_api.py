@@ -18,7 +18,7 @@ from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
 from tests.test_anti_escalation import EDIT, audit, state
-from tests.test_authorization import VIEW, give
+from tests.test_authorization import VIEW, give, widest
 from tests.test_memberships import ctx, join
 from tests.test_self_context import NOT_FOUND, me, reply, signed
 
@@ -90,7 +90,7 @@ def test_without_session_permission_or_a_valid_request_it_changes_nothing(
     stranger = join(rbac.b, make_user(email="otra@example.com")).pk
     foreign = give(rbac.b, stranger, {"users.view": None}, code="de-b").pk
     rest = [code for code in BY_CODE if code not in ("roles.manage", VIEW, EDIT)]
-    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # todo el catálogo menos `roles.manage`
+    give(rbac.a, rbac.m_eva, widest(rest))  # todo el catálogo menos `roles.manage`
     give(rbac.a, rbac.membership, {VIEW: "ORGANIZATION"})
     before, eva, ana = state(migrator), signed(rbac.eva), signed(rbac.ana)
     assert grant(Client(), target, "organization.view").status_code == 401
@@ -217,7 +217,7 @@ def test_revoking_without_session_permission_or_the_grant_changes_nothing(
     stranger = join(rbac.b, make_user(email="otra@example.com")).pk
     foreign = give(rbac.b, stranger, {"users.view": None}, code="de-b").pk
     rest = [code for code in BY_CODE if code not in ("roles.manage", VIEW, EDIT)]
-    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # todo el catálogo menos `roles.manage`
+    give(rbac.a, rbac.m_eva, widest(rest))  # todo el catálogo menos `roles.manage`
     before, eva, ana = state(migrator), signed(rbac.eva), signed(rbac.ana)
     assert grant(Client(), target, "organization.view", method="delete").status_code == 401
     for role, code in ((target, "organization.view"), (target, "users.view"), (foreign, "x")):

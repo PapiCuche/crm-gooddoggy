@@ -1,7 +1,7 @@
 """D-F2-16 (F2-124): asignar o quitar un rol, y conceder, cambiar o retirar un permiso de un rol,
 cubren por lugar las concesiones `TEAM` o `BRANCH` que ganan o pierden sus miembros, como D-F2-13
-al poner a alguien en un equipo. Ningún permiso del catálogo admite aún alcance: se prueba con los
-de prueba de `test_authorization`, contra PostgreSQL real."""
+al poner a alguien en un equipo. Se prueba con los permisos de prueba de `test_authorization`,
+contra PostgreSQL real."""
 
 from itertools import count
 from types import SimpleNamespace
@@ -165,8 +165,7 @@ def test_granting_or_revoking_covers_every_holder_of_the_role(
 
 
 def test_today_nothing_changes(placed: Any) -> None:
-    """Sin alcance, `OWN` u `ORGANIZATION`: el lugar no cuenta. Con el catálogo de hoy, ninguna
-    concesión admite alcance, así que ninguna respuesta cambia."""
+    """Sin alcance, `OWN` u `ORGANIZATION`: el lugar no cuenta."""
     give(placed.a, placed.m_luis, {VIEW: "ORGANIZATION"})
     plain = role(placed.a, {"users.view": None, VIEW: "OWN"}).pk
     assert (

@@ -23,7 +23,7 @@ from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
 from tests.test_anti_escalation import EDIT, acting, audit, race, state
 from tests.test_anti_escalation import denied as refused
-from tests.test_authorization import VIEW, give
+from tests.test_authorization import VIEW, give, widest
 from tests.test_branches import branch
 from tests.test_membership_branch import own_branches
 from tests.test_memberships import ctx, join
@@ -105,7 +105,7 @@ def test_without_session_permission_or_membership_it_changes_and_reveals_nothing
     mine, theirs = branch(rbac.a, "LIM"), branch(rbac.b, "LIM")
     other = join(rbac.b, make_user(email="otra@example.com")).pk
     rest = [code for code in BY_CODE if code not in ("users.manage", VIEW, EDIT)]
-    give(rbac.a, rbac.m_eva, dict.fromkeys(rest))  # eva: todo el catálogo menos `users.manage`
+    give(rbac.a, rbac.m_eva, widest(rest))  # eva: todo el catálogo menos `users.manage`
     before, eva = state(migrator), signed(rbac.eva)
     assert place(Client(), rbac.m_luis, mine.pk).status_code == 401
     for member in (rbac.m_luis, other, uuid4()):  # sin el permiso no se aprende quién existe

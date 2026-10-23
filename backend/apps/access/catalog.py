@@ -47,6 +47,10 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("inventory.adjust", "inventory"),
     PermissionDef("inventory.transfer", "inventory"),
     PermissionDef("warehouses.manage", "inventory"),
+    PermissionDef("contacts.view", "contacts", supports_scope=True),  # los primeros con alcance
+    PermissionDef("contacts.create", "contacts"),
+    PermissionDef("contacts.update", "contacts", supports_scope=True),
+    PermissionDef("contacts.delete", "contacts", supports_scope=True),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -94,6 +98,10 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "inventory.adjust",
             "inventory.transfer",
             "warehouses.manage",
+            "contacts.create",
+        )
+        | dict.fromkeys(
+            ("contacts.view", "contacts.update", "contacts.delete"), Scope.ORGANIZATION
         ),
     ),
     RoleTemplate(
@@ -101,9 +109,13 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
         "Supervisor",
         _unscoped(
             "organization.view", "users.view", "teams.view", "products.view", "inventory.view"
-        ),
+        )
+        | {"contacts.view": Scope.TEAM},
     ),
     RoleTemplate(
-        "seller", "Vendedor", _unscoped("organization.view", "products.view", "inventory.view")
+        "seller",
+        "Vendedor",
+        _unscoped("organization.view", "products.view", "inventory.view", "contacts.create")
+        | {"contacts.view": Scope.OWN, "contacts.update": Scope.OWN},
     ),
 )
