@@ -110,3 +110,35 @@ class Contact(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+
+class Note(TenantModel):
+    """Nota sobre un cliente (§E.5), no del chat. FKs compuestas al contacto y a las membresías."""
+
+    id = uuid7_primary_key()
+    contact_id = models.UUIDField()
+    body = models.TextField()
+    author_user_id = models.UUIDField()
+    is_pinned = models.BooleanField(default=False)
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_user_id = models.UUIDField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "notes"
+        indexes = [
+            models.Index(  # el listado de un contacto, por `id` (ADR-016)
+                fields=["organization_id", "contact_id", "id"],
+                name="notes_org_contact_idx",
+                condition=models.Q(deleted_at__isnull=True),
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(version__gte=1), name="notes_version_ck"),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)

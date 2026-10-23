@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.contacts.api import views
+from apps.contacts.api import notes, views
 
 urlpatterns = [
     path("contacts/", views.ContactsView.as_view(), name="contacts"),
@@ -10,4 +10,6 @@ urlpatterns = [
         views.ContactAssignmentView.as_view(),
         name="contact-assignment",
     ),
+    path("contacts/<uuid:contact_id>/notes/", notes.NotesView.as_view(), name="notes"),
+    path("contacts/<uuid:contact_id>/notes/<uuid:note_id>/", notes.NoteView.as_view(), name="note"),
 ]

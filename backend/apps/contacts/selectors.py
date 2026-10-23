@@ -3,11 +3,12 @@ aplica quien las sirve (`HasPermission` y `ScopeFilter`, o `scoped()`)."""
 
 import re
 from typing import Any
+from uuid import UUID
 
 from django.db.models import F, Q, QuerySet
 from django.db.models.lookups import BuiltinLookup
 
-from apps.contacts.models import Contact, dialed
+from apps.contacts.models import Contact, Note, dialed
 
 _PHONE_QUERY = re.compile(r"\+[0-9]{1,15}")  # el comienzo de un E.164, solo cifras ASCII
 
@@ -43,3 +44,7 @@ def search(found: QuerySet[Contact], text: str) -> QuerySet[Contact]:
     if _PHONE_QUERY.fullmatch(number := dialed(text)):
         return found.filter(_Prefix(F("primary_phone_e164"), number))
     return found.filter(Q(display_name__icontains=text) | Q(primary_email__istartswith=text))
+
+
+def notes(contact_id: UUID) -> QuerySet[Note]:  # ver el contacto lo decide quien las sirve
+    return Note.objects.filter(contact_id=contact_id, deleted_at__isnull=True)

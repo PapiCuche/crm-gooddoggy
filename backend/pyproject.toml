@@ -147,7 +147,7 @@ allowed_importers = ["apps.inventory.api", "apps.inventory.imports"]  # la impor
 [[tool.importlinter.contracts]]
 name = "Comandos de contactos: solo su API los importa (F4-01)"
 type = "protected"
-protected_modules = ["apps.contacts.commands"]
+protected_modules = ["apps.contacts.commands", "apps.contacts.notes"]
 allowed_importers = ["apps.contacts.api"]
 
 [[tool.importlinter.contracts]]
