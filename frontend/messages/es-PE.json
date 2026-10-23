@@ -1097,7 +1097,8 @@
       "conflict_failed": "Otra persona cambió este cliente mientras lo editabas, y no se pudo cargar lo nuevo. Recarga la página y repite tu cambio.",
       "denied": "No tienes permiso para editar clientes.",
       "done": "Cliente «{name}» guardado.",
-      "doneStale": "Cliente «{name}» guardado, pero la lista no se pudo actualizar. Recarga la página para verlo."
+      "doneStale": "Cliente «{name}» guardado, pero la lista no se pudo actualizar. Recarga la página para verlo.",
+      "gone": "«{name}» ya no está entre los clientes que puedes cambiar: se borró o quedó fuera de tu alcance. Lo que escribiste sigue aquí, pero no se podrá guardar; al cancelar, sale de la lista."
     },
     "delete": {
       "trigger": "Borrar",
