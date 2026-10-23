@@ -33,6 +33,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-10 | [#321](https://github.com/PapiCuche/crm-gooddoggy/issues/321) Catalog: the products screen (list and create) | `feature/f3-catalog-products-screen` | #308 | frontend |
 | F3-08 | [#322](https://github.com/PapiCuche/crm-gooddoggy/issues/322) Inventario: almacenes (API) | `feature/f3-inventory-warehouses` | #308 | backend + API |
 | F3-09 | [#323](https://github.com/PapiCuche/crm-gooddoggy/issues/323) Inventario: existencias y movimientos (API) | `feature/f3-inventory-movements` | #322, #308 | backend + API |
+| F3-16 | [#331](https://github.com/PapiCuche/crm-gooddoggy/issues/331) Security: djangorestframework 3.18.2 and next 16.4.1 | `chore/f3-drf-3-18-2` | — | backend + frontend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
