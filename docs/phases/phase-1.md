@@ -121,7 +121,9 @@ El log de acceso de uvicorn no pasa por el redactor, porque incluye el query str
 `storage()` crea un cliente boto3 por llamada. Reutilizarlo cuando existan consumidores reales.
 - Resuelto en F1-08: production exige `https` y sin credenciales en `STORAGE_ENDPOINT_URL`; el tamaño de las subidas firmadas va en la firma.
 
-### OBS-F1-09-2 — Next.js: 2 fixes de seguridad pendientes upstream (1 Critical, 1 High) — ABIERTA
+### OBS-F1-09-2 — Next.js: 2 fixes de seguridad pendientes upstream (1 Critical, 1 High) — CERRADA (2026-10-22)
+Cerrada por F3-16 (#331): Next.js 16.4.1 (2026-10-14) incluye los dos fixes aplazados, según el post oficial «Next.js Security Update for Upstream Vulnerabilities». Llegó en la línea 16.4, no en 16.3.x. El SLA de 72 h contado desde el 2026-10-14 no se cumplió: la auditoría del gate lo detectó el 2026-10-22.
+
 El post oficial de Next.js del 2026-09-30 indica que 2 de las 9 vulnerabilidades anunciadas quedan pendientes de coordinación upstream y llegarán en "una versión posterior", sin fecha. Ninguna versión estable las corrige: 16.3.8 es la más reciente.
 - Riesgo residual **aceptado** por el reviewer/PM para el esqueleto de F1-09, que no está desplegado en producción (ADR-012 §4.1).
 - No se declaran "no aplicables": sus detalles técnicos aún no son públicos.

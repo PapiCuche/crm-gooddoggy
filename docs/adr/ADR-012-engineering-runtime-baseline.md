@@ -27,7 +27,7 @@ También hay que elegir el emulador S3 local (D-ENG-2): MinIO dejó de publicar 
 | PostgreSQL | **18.6** (imagen `postgres:18.6`) | minor vigente | Soportada hasta 2030-11-14 | postgresql.org/support/versioning · Docker Hub `library/postgres` |
 | Redis | **8.8.3** (imagen `redis:8.8.3-alpine`) | 2026-09-17 | Línea 8.8 recibiendo parches (8.8.3 publicada junto con 8.10.2) | github.com/redis/redis/releases · Docker Hub `library/redis` |
 | Node.js | **24.21.0** LTS (*Krypton*) | 2026-09-07 | Active LTS hasta 2026-10-20; Maintenance hasta **2028-04-30** | nodejs.org/dist/index.json · github.com/nodejs/Release (schedule.json) |
-| Next.js | **16.3.8** (Active LTS; fijada en F1-09) | 2026-09-30 | Security release que corrige 7 advisories del 2026-09-30; **2 más (1 crítica, 1 alta) siguen pendientes upstream** (§4.1, OBS-F1-09-2). 16.3.6 y 16.3.7 quedan descartadas | npm `next` · nextjs.org/blog · nextjs.org/support-policy · GitHub advisories vercel/next.js |
+| Next.js | **16.4.1** (Active LTS; fijada en F1-09, subida en F3-16, #331) | 2026-10-14 | Security release: corrige 2 críticas (RCE sin autenticación en `use cache` con arrays tipados, GHSA-673q-mjm6-r5xr; y en Image Optimization con SVG, GHSA-2464-fhr4-w9xw) y 1 alta (DoS con Server Actions, GHSA-p3m5-59mp-jv5r), que afectan a 16.0.0–16.4.0. 16.3.8 queda descartada | npm `next` · nextjs.org/blog · GitHub advisories vercel/next.js |
 | React | **19.2.8** | 2026-07-21 | Versión que empareja `create-next-app` 16.3.8 (`nextjsReactPeerVersion`); incluye el fix de GHSA-wx67-qw84-cm4g; revalidada el 2026-09-30 | npm `react` · `packages/create-next-app/templates/index.ts@v16.3.6` · GitHub advisories facebook/react |
 | React DOM | **19.2.8** | 2026-07-21 | Igual que React | npm `react-dom` |
 | @types/react | **19.2.18** | 2026-07-30 | Versión usada por el propio monorepo de Next.js v16.3.8 (revalidada 2026-09-30) | npm `@types/react` · `package.json@v16.3.8` |
@@ -55,9 +55,9 @@ Sin rangos: estas son las versiones que se escriben en `pyproject.toml`, `.pytho
 | boto3 / botocore 1.43.103 | 2026-09-25 | ✅ classifier |
 | mypy (2.3.1 / 1.19.1) | — | ✅ wheel `cp314` |
 | pytest 9.1.1 / pytest-django 4.14.0 | — | ✅ classifier |
-| djangorestframework 3.18.1, drf-spectacular 0.30.0, uvicorn 0.54.0, redis 8.1.0, structlog 26.1.0, argon2-cffi 25.1.0 | — | ✅ classifier |
+| djangorestframework 3.18.2, drf-spectacular 0.30.0, uvicorn 0.54.0, redis 8.1.0, structlog 26.1.0, argon2-cffi 25.1.0 | — | ✅ classifier |
 | **structlog 26.1.0** (fijada en F1-07) | 2026-06-06 | ✅ classifier 3.14, `py.typed`. Validada el **2026-09-30** (PyPI). Uso: logs JSON estructurados (ADR-011) |
-| **djangorestframework 3.18.1 / drf-spectacular 0.30.0** (fijadas en F1-08A) | 2026-09-07 / 2026-07-06 | ✅ classifiers Python 3.14 y Django 5.2. Validadas el **2026-09-30** (PyPI). Uso: API JSON y contrato OpenAPI (`backend/openapi/schema.yaml`, fuente de orval) |
+| **djangorestframework 3.18.2 / drf-spectacular 0.30.0** (fijadas en F1-08A; DRF subida a 3.18.2 en F3-16, #331, por CVE-2026-114136/114137/114138) | 2026-10-06 / 2026-07-06 | ✅ classifiers Python 3.14 y Django 5.2. Validadas el **2026-09-30** (PyPI); 3.18.2, el **2026-10-22**. Uso: API JSON y contrato OpenAPI (`backend/openapi/schema.yaml`, fuente de orval) |
 | **boto3 / botocore 1.43.105** (fijadas en F1-08) | 2026-09-29 | ✅ classifier 3.14 (sin `py.typed`: mypy las trata como `Any`). Validadas el **2026-09-30** (PyPI) y con la suite de contrato contra Garage v2.4.1. Uso: storage S3-compatible, solo en `core.storage` |
 | **urllib3 2.8.0** (fijada en F1-08) | 2026-09-15 | ✅ classifier 3.14, `py.typed`. Validada el **2026-09-30** (PyPI; compatible con botocore `<3`). Uso: cliente HTTP saliente anti-SSRF, solo en `core.http` |
 | **sentry-sdk 2.69.1** (fijada en F1-07) | 2026-09-08 | ✅ classifier 3.14, `py.typed`. Validada el **2026-09-30** (PyPI; la última publicada ese día era 2.71.0, pero se fija 2.69.1 por decisión del PR de F1-07, sin vulnerabilidades en `pip-audit`). Uso: reporte de errores opcional (`SENTRY_DSN`), solo dentro de `core.observability` |
@@ -138,8 +138,16 @@ Tooling del frontend fijado en el mismo PR (npm, 2026-09-30):
 - prettier 3.9.9, vitest 4.1.11 (el salto de major a vitest 5, publicado el 2026-09-03, se difiere a propósito: F1-09 no lo necesita), vite 8.3.1, jsdom 30.1.1, geist 1.7.2.
 
 **pnpm 12:**
-- `minimumReleaseAge: 1440` con `minimumReleaseAgeStrict: true` (ninguna excepción automática). Solo Next 16.3.8 y sus binarios quedan exceptuados, por ser security release (`frontend/pnpm-workspace.yaml`);
+- `minimumReleaseAge: 1440` con `minimumReleaseAgeStrict: true` (ninguna excepción automática). Solo Next 16.3.8 y sus binarios quedaban exceptuados (retirado en F3-16, §4.2), por ser security release (`frontend/pnpm-workspace.yaml`);
 - los scripts de instalación de dependencias están denegados explícitamente (`allowBuilds: false`).
+
+### 4.2 Revalidación de F3-16 (2026-10-22, #331)
+
+- **Next.js 16.4.1** (2026-10-14) sustituye a 16.3.8. Es solo de seguridad: 2 críticas (RCE sin autenticación en funciones `use cache` que devuelven arrays tipados, GHSA-673q-mjm6-r5xr; y en Image Optimization con SVG, GHSA-2464-fhr4-w9xw) y 1 alta (DoS en App Router con Server Actions, GHSA-p3m5-59mp-jv5r), que afectan a 16.0.0–16.4.0. El post oficial «Next.js Security Update for Upstream Vulnerabilities» (2026-10-14) dice que incluye los dos fixes aplazados del September Security Release: **cierra el riesgo residual de §4.1 y OBS-F1-09-2**. 16.4.0 (npm, 2026-10-06) es la minor; sus notas no traen cambios incompatibles para este proyecto (`next.config.ts`, `src/proxy.ts`, next-intl 4.14.8 y geist aceptan `next ^16`).
+- **djangorestframework 3.18.2** (2026-10-06) corrige CVE-2026-114136, 114137 y 114138 (GHSA-3547-9m27-7rxg, GHSA-xw6w-gcfp-cf8m, GHSA-33wh-fxxf-88vv). El nuevo rechazo de juegos de caracteres no textuales no cambia nada aquí: `Utf8JSONParser` ya responde 415 antes.
+- **Por qué no la más reciente:** se elige el cambio mínimo de seguridad. DRF 3.18.3 (50 minutos después) solo restaura el valor de `rest_framework.utils.mediatypes.order_by_precedence`, que ni el código ni drf-spectacular usan; next 16.4.2 (2026-10-15) solo trae backports de Turbopack y documentación.
+- **React** sigue en 19.2.8, que cumple el peer `^19` de Next 16.4.1; `create-next-app@16.4.1` ya empareja `19.3.0`, así que la subida que §4 dejó «para cuando Next.js la empareje» va en F3-18 (#337).
+- **pnpm:** las excepciones de `minimumReleaseAgeExclude` para 16.3.8 se retiran; 16.4.1 tiene más de 24 h y no necesita ninguna.
 
 ### 5. Gestores de paquetes y herramientas
 
@@ -191,10 +199,10 @@ En CI se ejecuta contra Garage; contra S3 y R2 solo de forma manual o programada
 
 ## Compatibility matrix (resumen)
 
-| | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.3.8 | React 19.2.8 | TS 6.0.3 |
+| | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.4.1 | React 19.2.8 | TS 6.0.3 |
 |---|---|---|---|---|---|---|---|
 | Django 5.2.17 | ✅ (≥ 5.2.8) | — | ✅ (psycopg 3.3.6) | — | — | — | — |
-| Next 16.3.8 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; pareja oficial) | ✅ (instala `^6.0.0`) |
+| Next 16.4.1 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; la pareja oficial pasa a 19.3.0, F3-18) | ✅ (instala `^6.0.0`) |
 | Celery 5.6 / Channels 4.3 | ✅ | ✅ | — | — | — | — | — |
 | django-stubs 5.2.9 + mypy 1.19.1 | ⚠️ probado hasta 3.13, instalable; verificar en F1-02 | ✅ | — | — | — | — | — |
 | Garage v2.4.1 | — | — | — | — | — | — | — |
