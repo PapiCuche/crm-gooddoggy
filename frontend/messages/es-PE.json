@@ -1111,7 +1111,7 @@
     },
     "card": {
       "eyebrow": "Good Doggy",
-      "breadcrumb": "Ruta",
+      "breadcrumb": "Ruta de navegación",
       "title": "Ficha del cliente",
       "loading": "Cargando el cliente…",
       "tabs": "Secciones de la ficha",
@@ -1122,7 +1122,7 @@
       "missing": "Sin registrar",
       "ownerLabel": "Responsable",
       "owner": "{name}",
-      "ownerPending": "…",
+      "ownerPending": "Cargando",
       "ownerYou": "Tú",
       "ownerOther": "Otro miembro",
       "ownerNone": "Sin responsable",

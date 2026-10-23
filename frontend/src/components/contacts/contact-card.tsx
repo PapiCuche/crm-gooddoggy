@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,11 @@ export function ContactCard({ contactId }: { contactId: string }) {
   const id = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const retryButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // La lista y la ficha tienen el mismo título de pestaña, así que Next no anuncia el cambio, y
+    // el enlace pulsado ya no existe: el foco va al título, salvo que el usuario esté en otra parte.
+    if (document.activeElement === document.body) heading.current?.focus();
+  }, []);
   const [retrying, setRetrying] = useState(false);
   // Como la lista: un 403 cierra la ficha aunque ya estuviera en pantalla, y sigue cerrada
   // hasta que la API responde bien (un fallo pasajero posterior no la reabre).
@@ -70,6 +75,14 @@ export function ContactCard({ contactId }: { contactId: string }) {
     );
     const kind = contact.document_type;
     const place = branch(contact);
+    const who = owner(contact);
+    // Mientras llega el directorio: «…» a la vista y «Cargando» para el lector de pantalla.
+    const waiting = (
+      <>
+        <span aria-hidden>…</span>
+        <span className="sr-only">{who}</span>
+      </>
+    );
     const fields: [string, ReactNode][] = [
       [t("create.first_name"), contact.first_name || missing],
       [t("create.last_name"), contact.last_name || missing],
@@ -90,7 +103,7 @@ export function ContactCard({ contactId }: { contactId: string }) {
       ],
     ];
     const record: [string, ReactNode][] = [
-      [t("card.ownerLabel"), owner(contact)],
+      [t("card.ownerLabel"), who === t("card.ownerPending") ? waiting : who],
       ...(place ? [[t("card.branchLabel"), place] as [string, ReactNode]] : []),
       [t("create.source"), t(`create.sources.${contact.source}`)],
       [t("card.created"), when(contact.created_at)],
@@ -127,6 +140,7 @@ export function ContactCard({ contactId }: { contactId: string }) {
         </div>
         <div
           role="tabpanel"
+          tabIndex={0}
           id={`${id}-panel`}
           aria-labelledby={`${id}-tab`}
           className="flex flex-col gap-4"

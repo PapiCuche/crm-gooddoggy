@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -95,6 +95,7 @@ describe("ContactCard", () => {
     expect(tab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tablist")).toHaveAccessibleName("Secciones de la ficha");
     const panel = screen.getByRole("tabpanel", { name: "Resumen" });
+    expect(panel).toHaveAttribute("tabindex", "0"); // se llega con Tab desde la pestaña
     expect(tab).toHaveAttribute("aria-controls", panel.id);
     expect(within(panel).getByRole("region", { name: "Datos del cliente" })).toBeVisible();
     expect(within(panel).getByRole("region", { name: "En la organización" })).toBeVisible();
@@ -112,7 +113,9 @@ describe("ContactCard", () => {
     expect(created).toHaveAttribute("dateTime", "2026-10-23T10:00:00Z");
     expect(created).toHaveTextContent(/^23 de octubre de 2026 a las 5:00/); // hora de Lima
     expect(value("Actualizado")).toHaveTextContent(/^24 de octubre de 2026 a las 3:30 p/);
-    const back = within(screen.getByRole("navigation", { name: "Ruta" })).getByRole("link");
+    const back = within(screen.getByRole("navigation", { name: "Ruta de navegación" })).getByRole(
+      "link",
+    );
     expect(back).toHaveAccessibleName("Clientes");
     expect(back).toHaveAttribute("href", "/o/acme/clientes");
     expect(screen.queryByRole("button", { name: /editar|borrar/i })).toBeNull(); // solo lectura
@@ -162,7 +165,13 @@ describe("ContactCard", () => {
     });
     const view = cardOf({ ...viewer, permissions: grants("contacts.view", "users.view") });
     await screen.findByRole("heading", { name: "Rosa Díaz" });
-    expect(value("Responsable")).toHaveTextContent(/^…$/);
+    expect(value("Responsable")).toHaveTextContent(/^…Cargando$/); // ni «Otro miembro»
+    expect(within(value("Responsable") as HTMLElement).getByText("…")).toHaveAttribute(
+      "aria-hidden",
+    );
+    expect(within(value("Responsable") as HTMLElement).getByText("Cargando")).toHaveClass(
+      "sr-only",
+    );
     release();
     expect(await screen.findByText("luis@acme.pe")).toBe(value("Responsable"));
     view.unmount();
@@ -215,7 +224,13 @@ describe("ContactCard", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Ficha del cliente");
     reply = { status: 500, body: {} };
     await open.client.refetchQueries();
+    const key = [`/api/v1/o/acme/contacts/${ID}/`];
+    await waitFor(() =>
+      expect(open.client.getQueryState(key)?.error).toMatchObject({ status: 500 }),
+    );
+    await act(async () => {}); // React ya pintó con el 500
     expect(screen.getByRole("alert")).toHaveTextContent(/No tienes permiso/);
+    expect(screen.queryByRole("heading", { name: "Rosa Díaz" })).toBeNull();
     reply = ok(rosa);
     await open.client.refetchQueries();
     expect(await screen.findByRole("heading", { name: "Rosa Díaz" })).toBeVisible();
@@ -244,6 +259,46 @@ describe("ContactCard", () => {
     const heading = await screen.findByRole("heading", { name: "Rosa Díaz" });
     await waitFor(() => expect(heading).toHaveFocus());
     expect(api).toHaveBeenCalledTimes(fetches + 1);
+  });
+
+  it("si el usuario se fue a otra parte mientras reintentaba, el foco no se mueve", async () => {
+    let release = () => {};
+    let reply: { status: number; body: unknown } = { status: 500, body: {} };
+    const api = mockApi({ [CARD]: () => reply });
+    cardOf(viewer);
+    await screen.findByRole("alert");
+    const handle = api.getMockImplementation()!;
+    api.mockImplementationOnce(async (input, init) => {
+      await new Promise<void>((done) => (release = done));
+      return handle(input, init);
+    });
+    reply = ok(rosa);
+    const again = screen.getByRole("button", { name: "Reintentar" });
+    again.focus();
+    fireEvent.click(again);
+    const back = screen.getByRole("link", { name: "Clientes" });
+    back.focus(); // mientras reintenta
+    release();
+    await screen.findByRole("heading", { name: "Rosa Díaz" });
+    await act(async () => {});
+    expect(back).toHaveFocus();
+  });
+
+  it("al llegar, el foco va al título; no se lo quita a quien ya está en otra parte", async () => {
+    mockApi({ [CARD]: ok(rosa) });
+    const view = cardOf(viewer);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(); // sin anuncio de Next
+    expect(await screen.findByRole("heading", { name: "Rosa Díaz" })).toHaveFocus();
+    view.unmount();
+    const elsewhere = document.body.appendChild(document.createElement("button"));
+    try {
+      elsewhere.focus();
+      cardOf(viewer);
+      await screen.findByRole("heading", { name: "Rosa Díaz" });
+      expect(elsewhere).toHaveFocus();
+    } finally {
+      elsewhere.remove();
+    }
   });
 
   it("sin sesión (401) queda el aviso de carga, sin error: el login lo decide el proveedor", async () => {

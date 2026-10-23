@@ -84,6 +84,7 @@ export function ContactsList() {
               {/* El nombre abre la ficha (F4-06). */}
               <Link
                 href={`/o/${slug}/clientes/${contact.id}`}
+                prefetch={false}
                 className="self-start font-medium wrap-anywhere underline-offset-4 hover:underline"
               >
                 {contact.display_name}
