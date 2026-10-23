@@ -45,6 +45,7 @@
     "inventory": {
       "label": "Secciones del inventario",
       "stock": "Existencias",
+      "movements": "Movimientos",
       "warehouses": "Almacenes"
     }
   },
@@ -1009,6 +1010,7 @@
     "choose": "Qué ver",
     "warehouse": "Almacén",
     "chooseWarehouse": "Elige un almacén",
+    "anyWarehouse": "Todos los almacenes",
     "warehouseOption": "{name} ({code}){active, select, false {, inactivo} other {}}",
     "search": "Buscar producto",
     "noMatch": "Ningún producto que lleve stock coincide con lo buscado.",
@@ -1082,5 +1084,31 @@
         "ADJUSTMENT": "Ajuste registrado: ahora hay {on_hand} de {variant} en {warehouse}."
       }
     }
+  },
+  "ledger": {
+    "eyebrow": "Good Doggy / Inventario",
+    "title": "Movimientos",
+    "intro": "Lo que entró, salió o se ajustó en {organization}, del más reciente al más antiguo.",
+    "loading": "Cargando movimientos…",
+    "denied": "No tienes permiso para ver el inventario de esta organización.",
+    "count": "{count, plural, =0 {Sin movimientos en la lista} one {# movimiento en la lista} other {# movimientos en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "pick": "Elige un producto y su variante para ver sus movimientos.",
+    "empty": "Esta variante todavía no tiene movimientos aquí.",
+    "types": {
+      "RECEIPT": "Entrada",
+      "ISSUE": "Salida",
+      "ADJUSTMENT": "Ajuste",
+      "TRANSFER_OUT": "Transferencia enviada",
+      "TRANSFER_IN": "Transferencia recibida",
+      "RESERVE": "Reserva",
+      "RELEASE": "Reserva liberada",
+      "SALE": "Venta"
+    },
+    "change": "Cambio en existencias: {change}",
+    "after": "Quedan {on_hand}",
+    "warehouse": "{name} ({code}){active, select, false {, inactivo} other {}}",
+    "unknownWarehouse": "Un almacén que ya no existe"
   }
 }

@@ -56,8 +56,8 @@ export function useReads() {
 // Elegir una celda del inventario (F3-14): el almacén y la variante (buscando el producto). La
 // usan las existencias y el historial. Almacenes, productos y variantes se piden enteros
 // (`everyPage`): la API de productos no busca, así que la búsqueda es del navegador. Nada queda
-// entre visitas (`gcTime: 0`).
-export function useCellPicker(slug: string) {
+// entre visitas (`gcTime: 0`). `anyWarehouse`: «Todos los almacenes» también vale (F3-17).
+export function useCellPicker(slug: string, anyWarehouse = false) {
   const t = useTranslations("stock");
   const { failed, retry } = useReads();
   const [warehouseId, setWarehouseId] = useState("");
@@ -109,7 +109,7 @@ export function useCellPicker(slug: string) {
           busy={false}
           onChange={setWarehouseId}
           options={[
-            ["", t("chooseWarehouse")],
+            ["", t(anyWarehouse ? "anyWarehouse" : "chooseWarehouse")],
             ...(warehouses.data ?? []).map((row): [string, string] => [
               row.id,
               t("warehouseOption", placed(row)),
