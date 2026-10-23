@@ -137,6 +137,7 @@ ignore_imports =
 | Regla | Mecanismo |
 |---|---|
 | `sentry_sdk` solo en `core.observability` | Contrato forbidden |
+| `openpyxl` solo en `apps.imports.xlsxfile`, tras sus topes (ADR-012 §4.3) | Contrato protected |
 | Sin `TenantModel.all_tenants` fuera de `apps.platform` | Test estático (grep AST) |
 | Solo `AssignmentService` escribe las columnas de asignación | Test estático |
 | Solo `MessagingPolicyService` + outbound envían a los adapters | Contrato forbidden (`apps.channels.adapters` solo desde `apps.channels`) |

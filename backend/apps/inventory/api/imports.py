@@ -53,7 +53,9 @@ class StockImportSerializer(serializers.Serializer[Any]):
         allow_null=True,
         help_text="Otra importación de stock con el mismo archivo. Solo es un aviso.",
     )
-    encoding = serializers.CharField(source="summary.encoding", help_text="utf-8 o windows-1252.")
+    encoding = serializers.CharField(
+        source="summary.encoding", help_text="utf-8 o windows-1252 (CSV), o xlsx."
+    )
     ignored_columns = serializers.ListField(
         child=serializers.CharField(), source="summary.ignored_columns"
     )
@@ -83,7 +85,7 @@ class StockImportRowSerializer(serializers.Serializer[Any]):
 class StockImportCreateSerializer(serializers.Serializer[Any]):
     file_name = serializers.CharField(max_length=imports.NAME_MAX)
     content = serializers.CharField(
-        max_length=BODY_MAX, trim_whitespace=False, help_text="El archivo CSV, en base64."
+        max_length=BODY_MAX, trim_whitespace=False, help_text="El archivo CSV o XLSX, en base64."
     )
 
     def validate_content(self, value: str) -> bytes:
@@ -128,9 +130,10 @@ class TemplateView(APIView):
         tags=["inventory"],
         request=StockImportCreateSerializer,
         responses={201: StockImportSerializer, **errors(400, 401, 403, 404)},
-        description="Sube un CSV de cantidades absolutas y lo previsualiza: valida cada fila "
-        "contra el stock de ahora y no lo cambia. Hasta 1 MiB y 1000 filas; UTF-8 (o el CSV "
-        "de Excel en Windows); separador `,`, `;` o tabulador. 400 en `content` si el archivo "
+        description="Sube un CSV o un XLSX de cantidades absolutas y lo previsualiza: valida "
+        "cada fila contra el stock de ahora y no lo cambia. Hasta 1 MiB y 1000 filas. CSV en "
+        "UTF-8 (o el de Excel en Windows), separador `,`, `;` o tabulador; XLSX (por su firma, "
+        "no por el nombre): la primera hoja, sin fórmulas. 400 en `content` si el archivo "
         "entero no se puede leer.",
     )
 )

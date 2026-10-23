@@ -10,9 +10,11 @@ dependencies = [
     "celery==5.6.3",
     "channels==4.3.2",
     "cryptography==50.0.1",
+    "defusedxml==0.7.1",
     "django==5.2.17",
     "djangorestframework==3.18.2",
     "drf-spectacular==0.30.0",
+    "openpyxl==3.1.5",
     "psycopg[binary]==3.3.6",
     "redis==8.1.0",
     "sentry-sdk==2.69.1",
@@ -58,7 +60,7 @@ exclude = ["^\\.venv/"]
 [[tool.mypy.overrides]]  # sin py.typed (F1-04); types-channels exige django-stubs 6
 module = [
     "celery.*", "kombu.*", "channels.*", "boto3.*", "botocore.*", "rest_framework.*",
-    "drf_spectacular.*",
+    "drf_spectacular.*", "openpyxl.*",
 ]
 follow_imports = "skip"  # tipos Any: sin stubs compatibles
 ignore_missing_imports = true
@@ -112,7 +114,7 @@ layers = [
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",
     "apps.organizations | apps.access | apps.accounts",
-    # imports: las tablas genéricas de importación y el lector CSV (F3-20); cada módulo valida
+    # imports: las tablas genéricas de importación y los lectores CSV y XLSX; cada módulo valida
     # y aplica las suyas
     "apps.audit | apps.files | apps.imports",
     "core",
@@ -190,3 +192,9 @@ name = "cryptography solo dentro de core.sealed (ADR-022 §1)"
 type = "protected"
 protected_modules = ["cryptography"]
 allowed_importers = ["core.sealed"]
+
+[[tool.importlinter.contracts]]
+name = "openpyxl solo dentro de apps.imports.xlsxfile, tras sus topes (ADR-012 §4.3)"
+type = "protected"
+protected_modules = ["openpyxl"]
+allowed_importers = ["apps.imports.xlsxfile"]

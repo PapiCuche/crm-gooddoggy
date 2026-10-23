@@ -54,7 +54,8 @@ def _decode(data: bytes) -> tuple[str, str]:
         raise Unreadable("No es texto UTF-8 ni de Excel: guárdalo como «CSV UTF-8».") from None
 
 
-def _columns(header: list[str], aliases: Mapping[str, Iterable[str]]) -> dict[int, str]:
+def columns(header: list[str], aliases: Mapping[str, Iterable[str]]) -> dict[int, str]:
+    """Cada columna de `aliases` → su posición en la cabecera; todas obligatorias, una vez."""
     wanted = {key(alias): column for column, names in aliases.items() for alias in names}
     found: dict[int, str] = {}
     for index, title in enumerate(header):
@@ -75,7 +76,7 @@ def read(data: bytes, aliases: Mapping[str, Iterable[str]]) -> Sheet:
     if len(data) > MAX_BYTES:
         raise Unreadable(f"El archivo pasa de {MAX_BYTES // 1024} KB: divídelo.")
     if data.startswith(b"PK\x03\x04") or b"\x00" in data:
-        raise Unreadable("No es un CSV. Si es un Excel, guárdalo como «CSV UTF-8».")
+        raise Unreadable("No es un CSV ni un Excel .xlsx: guárdalo como .xlsx o «CSV UTF-8».")
     decoded, encoding = _decode(data)
     text = decoded.lstrip(" \t\r\n")  # las líneas en blanco del principio no son la cabecera
     skipped = decoded[: len(decoded) - len(text)].count("\n")
@@ -85,20 +86,25 @@ def read(data: bytes, aliases: Mapping[str, Iterable[str]]) -> Sheet:
     reader = csv.reader(io.StringIO(text, newline=""), delimiter=separator, strict=True)
     try:
         header = next(reader)
-        columns = _columns(header, aliases)
+        found = columns(header, aliases)
         rows: list[tuple[int, dict[str, str]]] = []
         for cells in reader:
             if not any(cell.strip() for cell in cells):
                 continue
             if len(rows) == MAX_ROWS:
                 raise Unreadable(f"Más de {MAX_ROWS} filas: divídelo en varios archivos.")
-            cell = {column: cells[i] if i < len(cells) else "" for i, column in columns.items()}
+            cell = {column: cells[i] if i < len(cells) else "" for i, column in found.items()}
             rows.append((reader.line_num + skipped, cell))
     except csv.Error as error:
         line = reader.line_num + skipped
         raise Unreadable(f"Línea {line}: el CSV está mal formado ({error}).") from None
-    ignored = [title.strip()[:CELL_MAX] for i, title in enumerate(header) if i not in columns]
-    return Sheet(encoding, separator, [title for title in ignored if title][:IGNORED_MAX], rows)
+    return Sheet(encoding, separator, ignored(header, found), rows)
+
+
+def ignored(header: list[str], found: dict[int, str]) -> list[str]:
+    """Las cabeceras que no son de ninguna columna conocida, con tope de número y de largo."""
+    titles = [title.strip()[:CELL_MAX] for i, title in enumerate(header) if i not in found]
+    return [title for title in titles if title][:IGNORED_MAX]
 
 
 def _safe(value: object) -> str:

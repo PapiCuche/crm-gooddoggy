@@ -6,7 +6,7 @@ import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { SelfContext, StockImport as Job, StockImportRow } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
-import { MAX_BYTES, StockImport } from "./stock-import";
+import { MAX_BYTES, MAX_ROWS, StockImport } from "./stock-import";
 
 const URL_ = "/api/v1/o/acme/inventory/imports/";
 const CREATE = `POST ${URL_}`;
@@ -73,7 +73,7 @@ function press(name: string) {
   fireEvent.click(button);
 }
 function choose(file: File) {
-  fireEvent.change(screen.getByLabelText("Archivo CSV"), { target: { files: [file] } });
+  fireEvent.change(screen.getByLabelText("Archivo CSV o Excel"), { target: { files: [file] } });
   press("Previsualizar");
 }
 const tile = (label: string) =>
@@ -104,7 +104,7 @@ describe("StockImport", () => {
     const api = mockApi({});
     view("inventory.view");
     expect(screen.getByRole("alert")).toHaveTextContent("No tienes permiso para importar stock");
-    expect(screen.queryByLabelText("Archivo CSV")).toBeNull();
+    expect(screen.queryByLabelText("Archivo CSV o Excel")).toBeNull();
     expect(api).not.toHaveBeenCalled();
   });
 
@@ -127,9 +127,9 @@ describe("StockImport", () => {
     const api = mockApi({ [CREATE]: ok(job, 201) });
     view();
     press("Previsualizar");
-    expect(screen.getByRole("alert")).toHaveTextContent("Elige un archivo CSV.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Elige un archivo CSV o Excel.");
     const cases: [File, string][] = [
-      [csv("a", "stock.xlsx"), "Por ahora solo se importa CSV"],
+      [csv("a", "stock.xls"), "Solo se importan CSV y Excel .xlsx"],
       [new File([new Uint8Array(MAX_BYTES + 1)], "big.csv"), "pasa de 1 MB"],
       [csv(" \r\n\n"), "El archivo está vacío."],
       [csv(lines(1001)), "más de 1000 filas"],
@@ -137,7 +137,7 @@ describe("StockImport", () => {
     for (const [file, message] of cases) {
       choose(file);
       expect(await screen.findByRole("alert")).toHaveTextContent(message);
-      expect(screen.getByLabelText("Archivo CSV")).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByLabelText("Archivo CSV o Excel")).toHaveAttribute("aria-invalid", "true");
     }
     expect(api).not.toHaveBeenCalled();
     choose(csv(lines(1000), "á.csv")); // 1000 filas sí; el contenido, en base64
@@ -147,6 +147,26 @@ describe("StockImport", () => {
     const body = JSON.parse(String(posts(api, URL_)[0]?.[1]?.body));
     expect(body.file_name).toBe("á.csv");
     expect(atob(body.content)).toBe(lines(1000));
+  });
+
+  it("un Excel (por su firma) va tal cual: sus filas las cuenta la API", async () => {
+    const api = mockApi({ [CREATE]: ok({ ...job, encoding: "xlsx", ignored_columns: [] }, 201) });
+    view();
+    const zip = new Uint8Array([
+      0x50,
+      0x4b,
+      0x03,
+      0x04,
+      ...new Array(MAX_ROWS + 5).fill([97, 10]).flat(),
+    ]);
+    choose(csv(lines(1001), "stock.xlsx")); // un CSV con otro nombre: se cuenta como CSV
+    expect(await screen.findByRole("alert")).toHaveTextContent("más de 1000 filas");
+    choose(new File([zip], "conteo.xlsx"));
+    await screen.findByRole("heading", { name: "Revisa la importación" });
+    expect(posts(api, URL_)).toHaveLength(1);
+    const sent = atob(JSON.parse(String(posts(api, URL_)[0]?.[1]?.body)).content);
+    expect(Uint8Array.from(sent, (char) => char.charCodeAt(0))).toEqual(zip);
+    expect(screen.getByText("Se leyó la primera hoja del Excel.")).toBeVisible();
   });
 
   it("las líneas solo con separadores o comillas cuentan en blanco, como en la API", async () => {
@@ -175,7 +195,7 @@ describe("StockImport", () => {
     view();
     choose(csv("sku,almacen,cantidad\nA,ALM1,1\n"));
     await waitFor(() => expect(sent).toHaveLength(1));
-    fireEvent.change(screen.getByLabelText("Archivo CSV"), {
+    fireEvent.change(screen.getByLabelText("Archivo CSV o Excel"), {
       target: { files: [csv("sku,almacen,cantidad\nB,ALM1,2\n")] },
     });
     release(new Response(JSON.stringify({ code: "INTERNAL_ERROR" }), { status: 500 }));
@@ -278,7 +298,7 @@ describe("StockImport", () => {
     press("Descargar filas con error");
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
     press("Subir otro archivo");
-    expect(screen.getByLabelText("Archivo CSV")).toHaveFocus();
+    expect(screen.getByLabelText("Archivo CSV o Excel")).toHaveFocus();
   });
 
   it("una respuesta perdida al aplicar se reintenta sin miedo: misma importación, mismo resultado", async () => {
@@ -314,7 +334,7 @@ describe("StockImport", () => {
     expect(
       await screen.findByText("Esa importación ya no existe. Sube el archivo otra vez."),
     ).toBeVisible();
-    expect(screen.getByLabelText("Archivo CSV")).toHaveFocus();
+    expect(screen.getByLabelText("Archivo CSV o Excel")).toHaveFocus();
     status = 403;
     choose(csv("sku,almacen,cantidad\nIP16,ALM1,5\n"));
     await screen.findByRole("button", { name: "Aplicar 2 filas" });
@@ -332,7 +352,7 @@ describe("StockImport", () => {
   it("Enter mantenido no repite el envío", () => {
     mockApi({});
     view();
-    const form = screen.getByLabelText("Archivo CSV");
+    const form = screen.getByLabelText("Archivo CSV o Excel");
     expect(fireEvent.keyDown(form, { key: "Enter", repeat: true })).toBe(false);
     expect(fireEvent.keyDown(form, { key: "Enter" })).toBe(true);
   });

@@ -14,6 +14,7 @@ from apps.imports import csvfile
 from tests import test_authorization, test_self_context
 from tests.factories import make_user
 from tests.test_authorization import give
+from tests.test_import_xlsx import book
 from tests.test_inventory_stock import cell, level, move, wanted
 from tests.test_memberships import join
 from tests.test_products import send
@@ -97,6 +98,17 @@ def test_what_cannot_be_read_is_a_400_on_content(
         assert refused.json()["fields"]["content"][0]["message"] == says
     assert "file_name" in upload(ana, "sku,almacen,cantidad\nA,B,1\n", name="").json()["fields"]
     assert migrator.execute("SELECT count(*) FROM data_imports").fetchone() == (0,)
+
+
+def test_an_xlsx_is_read_and_a_formula_is_a_400(ana: Client, world: Any) -> None:
+    cell(world.a)
+    for rows, status in (([["IP16", "ALM", 3.0]], 201), ([["IP16", "ALM", "=1+2"]], 400)):
+        content = base64.b64encode(book(["sku", "almacen", "cantidad"], *rows)).decode()
+        response = send(ana, "post", IMPORTS, {"file_name": "conteo.xlsx", "content": content})
+        assert response.status_code == status, response.content
+    assert response.json()["fields"]["content"][0]["message"] == (
+        "La celda C2 tiene una fórmula: pega solo los valores."
+    )
 
 
 def test_the_template(ana: Client) -> None:

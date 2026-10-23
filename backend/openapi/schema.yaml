@@ -1535,9 +1535,10 @@ paths:
   /api/v1/o/{org_slug}/inventory/imports/:
     post:
       operationId: inventory_imports_create
-      description: 'Sube un CSV de cantidades absolutas y lo previsualiza: valida
-        cada fila contra el stock de ahora y no lo cambia. Hasta 1 MiB y 1000 filas;
-        UTF-8 (o el CSV de Excel en Windows); separador `,`, `;` o tabulador. 400
+      description: 'Sube un CSV o un XLSX de cantidades absolutas y lo previsualiza:
+        valida cada fila contra el stock de ahora y no lo cambia. Hasta 1 MiB y 1000
+        filas. CSV en UTF-8 (o el de Excel en Windows), separador `,`, `;` o tabulador;
+        XLSX (por su firma, no por el nombre): la primera hoja, sin fórmulas. 400
         en `content` si el archivo entero no se puede leer.'
       parameters:
       - in: path
@@ -5783,7 +5784,7 @@ components:
             aviso.
         encoding:
           type: string
-          description: utf-8 o windows-1252.
+          description: utf-8 o windows-1252 (CSV), o xlsx.
         ignored_columns:
           type: array
           items:
@@ -5826,7 +5827,7 @@ components:
         content:
           type: string
           minLength: 1
-          description: El archivo CSV, en base64.
+          description: El archivo CSV o XLSX, en base64.
           maxLength: 1402197
       required:
       - content

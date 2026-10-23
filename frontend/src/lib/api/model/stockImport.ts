@@ -26,7 +26,7 @@ export interface StockImport {
    * @nullable
    */
   duplicate_of: string | null;
-  /** utf-8 o windows-1252. */
+  /** utf-8 o windows-1252 (CSV), o xlsx. */
   encoding: string;
   ignored_columns: string[];
   created_at: string;
