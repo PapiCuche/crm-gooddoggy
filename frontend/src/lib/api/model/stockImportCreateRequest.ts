@@ -13,7 +13,7 @@ export interface StockImportCreateRequest {
    */
   file_name: string;
   /**
-   * El archivo CSV, en base64.
+   * El archivo CSV o XLSX, en base64.
    * @minLength 1
    * @maxLength 1402197
    */

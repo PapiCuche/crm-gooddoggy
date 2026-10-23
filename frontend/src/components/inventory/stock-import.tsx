@@ -30,7 +30,13 @@ import { StockImportRows } from "./stock-import-rows";
 // Los topes de la API (`apps.imports.csvfile`): se miran antes de enviar, con su mensaje.
 export const MAX_BYTES = 1_048_576;
 export const MAX_ROWS = 1_000;
-type Problem = "noFile" | "empty" | "tooBig" | "tooManyRows" | "notCsv" | "localRead";
+const ZIP = [0x50, 0x4b, 0x03, 0x04]; // la firma de un XLSX, como la mira la API
+// Cómo se leyó el archivo, si no es el CSV en UTF-8 de siempre (`encoding` de la API).
+const READ_AS = new Map<string, "windows1252" | "xlsx">([
+  ["windows-1252", "windows1252"],
+  ["xlsx", "xlsx"],
+]);
+type Problem = "noFile" | "empty" | "tooBig" | "tooManyRows" | "unsupported" | "localRead";
 type Step = { name: "pick" } | { name: "preview" | "result"; job: StockImport };
 
 // Las líneas con texto, sin la cabecera: como cuenta la API (una celda con saltos de línea
@@ -49,7 +55,7 @@ function rowsOf(bytes: Uint8Array): number {
 
 // El archivo, en base64 como lo pide la API, o por qué no se envía.
 async function encode(file: File): Promise<{ content: string } | { problem: Problem }> {
-  if (/\.(xlsx?|ods|numbers)$/i.test(file.name)) return { problem: "notCsv" };
+  if (/\.(xls|ods|numbers)$/i.test(file.name)) return { problem: "unsupported" }; // solo ayuda
   if (file.size > MAX_BYTES) return { problem: "tooBig" };
   let bytes: Uint8Array;
   try {
@@ -57,9 +63,12 @@ async function encode(file: File): Promise<{ content: string } | { problem: Prob
   } catch {
     return { problem: "localRead" };
   }
-  const rows = rowsOf(bytes);
-  if (rows < 0) return { problem: "empty" };
-  if (rows > MAX_ROWS) return { problem: "tooManyRows" };
+  // Las filas de un XLSX no se cuentan aquí (va comprimido): las cuenta la API.
+  if (!ZIP.every((byte, at) => bytes[at] === byte)) {
+    const rows = rowsOf(bytes);
+    if (rows < 0) return { problem: "empty" };
+    if (rows > MAX_ROWS) return { problem: "tooManyRows" };
+  }
   let binary = "";
   for (let at = 0; at < bytes.length; at += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
@@ -276,7 +285,7 @@ export function StockImport() {
             ref={input}
             id={fileId}
             type="file"
-            accept=".csv,text/csv"
+            accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             aria-describedby={`${fileId}-hint${pickError ? ` ${fileId}-error` : ""}`}
             aria-invalid={!!pickError}
             className="file:bg-surface-raised file:text-foreground text-sm file:mr-3 file:h-11 file:rounded-[10px] file:border-0 file:px-4 file:font-medium"
@@ -306,6 +315,7 @@ export function StockImport() {
     const changes = job.new_count + job.update_count;
     const result = job.result;
     const wrong = job.error_rows + (result ? result.stale + result.failed : 0);
+    const read = READ_AS.get(job.encoding);
     const applyError =
       apply.error && ![401, 403, 404].includes(apply.error.status) ? apply.error : null;
     body = (
@@ -343,9 +353,9 @@ export function StockImport() {
           </p>
         ) : null}
         {result?.stale ? <p className="text-sm">{t("staleHint")}</p> : null}
-        {job.encoding === "windows-1252" || job.ignored_columns.length ? (
+        {read || job.ignored_columns.length ? (
           <p className="text-muted text-sm wrap-anywhere">
-            {job.encoding === "windows-1252" ? `${t("windows1252")} ` : ""}
+            {read ? `${t(read)} ` : ""}
             {job.ignored_columns.length
               ? t("ignored", { columns: job.ignored_columns.join(", ") })
               : ""}
