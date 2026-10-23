@@ -51,6 +51,7 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("contacts.create", "contacts"),
     PermissionDef("contacts.update", "contacts", supports_scope=True),
     PermissionDef("contacts.delete", "contacts", supports_scope=True),
+    PermissionDef("contacts.assign", "contacts"),  # sin alcance: lo decide `contacts.view`
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -99,6 +100,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "inventory.transfer",
             "warehouses.manage",
             "contacts.create",
+            "contacts.assign",
         )
         | dict.fromkeys(
             ("contacts.view", "contacts.update", "contacts.delete"), Scope.ORGANIZATION

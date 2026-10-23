@@ -1544,6 +1544,71 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/contacts/{contact_id}/assignment/:
+    put:
+      operationId: contacts_assign
+      description: 'Deja el contacto con ese responsable y esa sucursal (`contacts.assign`)
+        si `version` sigue vigente (409 `CONTACT_VERSION_CONFLICT` si no). Exige también
+        `contacts.view`; fuera de su alcance: 404. Solo se valida lo que cambia.'
+      parameters:
+      - in: path
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactAssignmentRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/imports/:
     post:
       operationId: inventory_imports_create
@@ -4470,6 +4535,27 @@ components:
       - primary_phone_e164
       - source
       - updated_at
+      - version
+    ContactAssignmentRequest:
+      type: object
+      properties:
+        owner_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 'El responsable: un miembro activo de la organización, o null.'
+        branch_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Una sucursal de la organización, o null.
+        version:
+          type: integer
+          minimum: 1
+          description: 'La que se leyó. Si ya no es la vigente: 409.'
+      required:
+      - branch_id
+      - owner_user_id
       - version
     ContactCreateRequest:
       type: object

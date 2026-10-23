@@ -25,7 +25,9 @@ from apps.contacts.commands import (
     EMAIL_MAX,
     NAME_MAX,
     PART_MAX,
+    BadReference,
     StaleContact,
+    assign_contact,
     create_contact,
     delete_contact,
     document,
@@ -306,3 +308,55 @@ class ContactView(ContactsQuery, generics.RetrieveAPIView):
     def delete(self, request: Request, contact_id: UUID, **kwargs: Any) -> Response:
         delete_contact(_tenant(), contact_id=self.get_object().pk)
         return Response(status=204)
+
+
+class ContactAssignmentSerializer(serializers.Serializer[Any]):
+    owner_user_id = serializers.UUIDField(
+        allow_null=True, help_text="El responsable: un miembro activo de la organización, o null."
+    )
+    branch_id = serializers.UUIDField(
+        allow_null=True, help_text="Una sucursal de la organización, o null."
+    )
+    version = serializers.IntegerField(
+        min_value=1, help_text="La que se leyó. Si ya no es la vigente: 409."
+    )
+
+
+BAD_REFERENCE = {  # sin repetir el id recibido
+    "owner_user_id": "No es un miembro activo de la organización.",
+    "branch_id": "No es una sucursal de la organización.",
+}
+
+
+@extend_schema_view(
+    put=extend_schema(
+        operation_id="contacts_assign",
+        tags=["contacts"],
+        request=ContactAssignmentSerializer,
+        responses={200: ContactSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Deja el contacto con ese responsable y esa sucursal (`contacts.assign`) si "
+        "`version` sigue vigente (409 `CONTACT_VERSION_CONFLICT` si no). Exige también "
+        "`contacts.view`; fuera de su alcance: 404. Solo se valida lo que cambia.",
+    ),
+)
+class ContactAssignmentView(ContactsQuery, generics.GenericAPIView):
+    """F4-08 (E05-01). `contacts.assign` no admite alcance (03 §H): qué contactos alcanza lo
+    decide `contacts.view`, sobre la fila bloqueada hasta el final de la petición."""
+
+    required_permissions = {"PUT": ("contacts.view", "contacts.assign")}
+    lookup_url_kwarg = "contact_id"
+
+    def get_queryset(self) -> QuerySet[Contact]:
+        return super().get_queryset().select_for_update(no_key=True)
+
+    def put(self, request: Request, contact_id: UUID, **kwargs: Any) -> Response:
+        wanted = ContactAssignmentSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        found = self.get_object()
+        try:
+            contact = assign_contact(_tenant(), contact_id=found.pk, **wanted.validated_data)
+        except StaleContact:
+            raise ApiError("CONTACT_VERSION_CONFLICT", 409, STALE) from None
+        except BadReference as bad:
+            raise serializers.ValidationError({bad.field: [BAD_REFERENCE[bad.field]]}) from None
+        return Response(ContactSerializer(contact).data)
