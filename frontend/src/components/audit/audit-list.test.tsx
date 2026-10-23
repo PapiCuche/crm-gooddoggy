@@ -221,7 +221,8 @@ describe("AuditList", () => {
       await screen.findByRole("list", { name: "Auditoría" });
       const options = (name: string) =>
         [...select(name).options].map((option) => [option.value, option.text]);
-      expect(options("Acción")).toHaveLength(35); // con marcas, categorías, productos y almacenes (F3-13)
+      expect(options("Acción")).toHaveLength(38); // con catálogo, almacenes (F3-13) y stock (F3-15)
+      expect(options("Acción")).toContainEqual(["inventory.issued", "Salida de stock registrada"]);
       expect(options("Acción")).toContainEqual(["warehouse.updated", "Almacén editado"]);
       expect(options("Acción")).toContainEqual(["membership.invited", "Persona invitada"]);
       expect(options("Acción")).toContainEqual(["product.created", "Producto creado"]);
@@ -247,6 +248,7 @@ describe("AuditList", () => {
         ["category", "Categoría"],
         ["product", "Producto"],
         ["warehouse", "Almacén"],
+        ["inventory_movement", "Movimiento de inventario"],
       ]);
       expect(options("Quién")).toEqual([
         ["", "Cualquiera"],
