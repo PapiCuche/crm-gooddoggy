@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 MAX_BYTES, MAX_ROWS, CELL_MAX = 1_048_576, 1_000, 200
+IGNORED_MAX = 20  # cabeceras ignoradas que se cuentan al usuario, cada una hasta `CELL_MAX`
 SEPARATORS = (",", ";", "\t")
 _FORMULA = ("=", "+", "-", "@", "\t", "\r", "|")
 
@@ -29,7 +30,7 @@ class Unreadable(ValueError):
 class Sheet:
     encoding: str
     separator: str
-    ignored: list[str]  # las cabeceras que no son de ninguna columna conocida
+    ignored: list[str]  # las cabeceras que no son de ninguna columna conocida (con tope)
     rows: list[tuple[int, dict[str, str]]]  # (línea del archivo, columna → texto)
 
 
@@ -96,8 +97,8 @@ def read(data: bytes, aliases: Mapping[str, Iterable[str]]) -> Sheet:
     except csv.Error as error:
         line = reader.line_num + skipped
         raise Unreadable(f"Línea {line}: el CSV está mal formado ({error}).") from None
-    ignored = [title.strip() for i, title in enumerate(header) if i not in columns]
-    return Sheet(encoding, separator, [title for title in ignored if title], rows)
+    ignored = [title.strip()[:CELL_MAX] for i, title in enumerate(header) if i not in columns]
+    return Sheet(encoding, separator, [title for title in ignored if title][:IGNORED_MAX], rows)
 
 
 def _safe(value: object) -> str:

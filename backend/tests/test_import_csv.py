@@ -52,6 +52,13 @@ def test_what_cannot_be_read_says_why(data: bytes, says: str) -> None:
     assert says in str(refused.value)
 
 
+def test_the_ignored_headers_are_capped_in_number_and_length() -> None:
+    """Lo que se guarda de las columnas desconocidas (sus títulos) tiene tope, como cada celda."""
+    header = b"sku,almacen,cantidad," + b",".join([b"y" * 100_000] + [b"n"] * 50)
+    ignored = csvfile.read(header + b"\nA,B,1\n", ALIASES).ignored
+    assert len(ignored) == csvfile.IGNORED_MAX and ignored[0] == "y" * csvfile.CELL_MAX
+
+
 def test_the_row_cap_counts_rows_with_text_only() -> None:
     data = b"sku,almacen,cantidad\n" + b"A,B,1\n\n" * csvfile.MAX_ROWS
     assert len(csvfile.read(data, ALIASES).rows) == csvfile.MAX_ROWS
