@@ -1,62 +1,30 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { everyPage } from "@/components/catalog/categories-tree";
 import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
-import {
-  branchesList,
-  contactsList,
-  getBranchesListQueryKey,
-  getContactsListQueryKey,
-  getMembersListQueryKey,
-  membersList,
-} from "@/lib/api/client";
+import { contactsList, getContactsListQueryKey } from "@/lib/api/client";
 import type { Contact } from "@/lib/api/model";
 
 import { ContactCreate } from "./contact-create";
 import { ContactDeleteAction } from "./contact-delete-action";
 import { ContactEditAction } from "./contact-edit-action";
+import { useContactNames } from "./contact-names";
 
 // Clientes (F4-04): los contactos que devuelve `GET /api/v1/o/{slug}/contacts/` (F4-02), los
 // del alcance de `contacts.view`, por orden de creación. La lista, sus estados y su foco son
-// los de `CursorList`. Editar y borrar (F4-05), en cada fila. Quién puede verlos, crearlos o
-// cambiarlos lo decide la API.
+// los de `CursorList`. El nombre abre la ficha (F4-06); editar y borrar (F4-05), en cada fila.
+// Quién puede verlos, crearlos o cambiarlos lo decide la API.
 export function ContactsList() {
   const t = useTranslations("contacts");
-  const { organization, permissions, user } = useTenant();
+  const { organization, permissions } = useTenant();
   const slug = organization.slug;
   const held = (code: string) => permissions.some((grant) => grant.code === code);
   const listKey = [...getContactsListQueryKey(slug), "pages"];
-  // El responsable y la sucursal llegan como identificadores. Se nombran con el directorio y
-  // con las sucursales solo si la API dijo que el usuario puede leerlos (`users.view`,
-  // `organization.view`) y además ve la lista; si no, o si fallan, funciona con menos detalle.
-  const sees = (code: string) => held("contacts.view") && held(code);
-  const people = useQuery({
-    queryKey: [...getMembersListQueryKey(slug), "all"],
-    queryFn: ({ signal }) => everyPage((params) => membersList(slug, params, { signal })),
-    enabled: sees("users.view"),
-    gcTime: 0,
-  });
-  const branches = useQuery({
-    queryKey: [...getBranchesListQueryKey(slug), "all"],
-    queryFn: ({ signal }) => everyPage((params) => branchesList(slug, params, { signal })),
-    enabled: sees("organization.view"),
-    gcTime: 0,
-  });
-  const names = new Map(
-    people.data?.map(({ user: one }) => [
-      one.id,
-      `${one.first_name} ${one.last_name}`.trim() || one.email,
-    ]),
-  );
-  // Leído aquí, en cada render: TanStack Query solo repinta por lo que se lee, y las filas
-  // pueden no estar todavía cuando el directorio termina.
-  const naming = people.isLoading;
-  const places = new Map(branches.data?.map((row) => [row.id, row]));
+  const { owner, branch } = useContactNames("contacts");
   // Lo que respondió la última escritura. Un cliente que ya no está a su alcance (`alert`) se
   // explica aquí y no en su fila, que desaparece cuando llega la lista nueva.
   const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
@@ -77,19 +45,6 @@ export function ContactsList() {
   const canEdit = held("contacts.update");
   const canDelete = held("contacts.delete");
   const writes = canEdit || canDelete || held("contacts.create");
-
-  function owner({ owner_user_id: id }: Contact): string {
-    if (!id) return t("ownerNone");
-    if (id === user.id) return t("ownerYou");
-    const name = names.get(id);
-    if (!name && naming) return t("ownerPending"); // sin «otro miembro» fugaz
-    return name ? t("owner", { name }) : t("ownerOther");
-  }
-  function branch({ branch_id: id }: Contact): string | null {
-    if (!id) return t("branchNone");
-    const place = places.get(id);
-    return place ? t("branch", { name: place.name, code: place.code }) : null;
-  }
 
   return (
     <CursorList<Contact>
@@ -126,7 +81,13 @@ export function ContactsList() {
         return (
           <>
             <div className="flex min-w-0 flex-col leading-snug">
-              <span className="font-medium wrap-anywhere">{contact.display_name}</span>
+              {/* El nombre abre la ficha (F4-06). */}
+              <Link
+                href={`/o/${slug}/clientes/${contact.id}`}
+                className="self-start font-medium wrap-anywhere underline-offset-4 hover:underline"
+              >
+                {contact.display_name}
+              </Link>
               {contact.primary_phone_e164 ? (
                 <span className="text-muted text-sm">
                   <span className="sr-only">{t("phone")}: </span>

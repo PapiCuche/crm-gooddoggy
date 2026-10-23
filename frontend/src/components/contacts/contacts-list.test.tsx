@@ -97,6 +97,16 @@ describe("ContactsList", () => {
     expect(first).not.toHaveClass("grid-cols-2");
     expect(within(first!).getByText("rosa@correo.pe")).toHaveClass("wrap-anywhere");
     expect(within(first!).getByText("Rosa Díaz")).toHaveClass("wrap-anywhere");
+    // El nombre abre la ficha (F4-06), en cada fila.
+    expect(within(first!).getByRole("link", { name: "Rosa Díaz" })).toHaveAttribute(
+      "href",
+      "/o/acme/clientes/c1",
+    );
+    expect(
+      within(list)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/o/acme/clientes/c1", "/o/acme/clientes/c2", "/o/acme/clientes/c3"]);
     expect(first).toHaveTextContent("Teléfono: +51987654321");
     expect(first).toHaveTextContent("Correo: rosa@correo.pe");
     expect(within(first!).getByText("Responsable: tú")).toBeVisible();

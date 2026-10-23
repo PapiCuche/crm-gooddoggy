@@ -210,6 +210,14 @@ describe("navegación del shell", () => {
       ["/o/acme/catalogo/marcas", null],
     ]);
     expect(document.title).toBe("Clientes · Acme SAC · Good Doggy CRM");
+    cleanup();
+    route.pathname = "/o/acme/clientes/6f1c2a4e-0b7d-4c8e-9a51-3d2f7e8b9c10"; // la ficha
+    const card = await links([...all, { code: "contacts.view", scopes: [] }]);
+    expect(card.find(([href]) => href === "/o/acme/clientes")).toEqual([
+      "/o/acme/clientes",
+      "true",
+    ]);
+    expect(document.title).toBe("Clientes · Acme SAC · Good Doggy CRM");
   });
 
   it("CatalogNav enlaza las páginas del catálogo y marca la abierta, también con la barra final", () => {

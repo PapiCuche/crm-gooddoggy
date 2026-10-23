@@ -1063,7 +1063,9 @@
         "WALK_IN": "Visita a la tienda",
         "REFERRAL": "Recomendación",
         "INBOUND_MESSAGE": "Mensaje recibido",
-        "CAMPAIGN": "Campaña"
+        "CAMPAIGN": "Campaña",
+        "IMPORT": "Importación",
+        "AI": "Asistente de IA"
       },
       "submit": "Crear cliente",
       "busy": "Creando…",
@@ -1106,6 +1108,29 @@
       "denied": "No tienes permiso para borrar clientes.",
       "done": "Cliente «{name}» borrado.",
       "doneStale": "Cliente «{name}» borrado, pero la lista no se pudo actualizar. Recarga la página."
+    },
+    "card": {
+      "eyebrow": "Good Doggy",
+      "breadcrumb": "Ruta",
+      "title": "Ficha del cliente",
+      "loading": "Cargando el cliente…",
+      "tabs": "Secciones de la ficha",
+      "summary": "Resumen",
+      "profile": "Datos del cliente",
+      "record": "En la organización",
+      "document": "Documento",
+      "missing": "Sin registrar",
+      "ownerLabel": "Responsable",
+      "owner": "{name}",
+      "ownerPending": "…",
+      "ownerYou": "Tú",
+      "ownerOther": "Otro miembro",
+      "ownerNone": "Sin responsable",
+      "branchLabel": "Sucursal",
+      "branch": "{name} ({code})",
+      "branchNone": "Sin sucursal",
+      "created": "Creado",
+      "updated": "Actualizado"
     }
   },
   "stock": {
