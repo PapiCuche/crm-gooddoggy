@@ -1170,8 +1170,23 @@
       "adding": "Añadiendo…",
       "contactGone": "No puedes añadir notas a este cliente: quedó fuera de tu alcance o se borró.",
       "writeDenied": "No tienes permiso para escribir notas de este cliente.",
-      "done": "Nota añadida.",
-      "doneStale": "Nota añadida, pero las notas no se pudieron actualizar. Recarga la página."
+      "edit": "Editar",
+      "editTitle": "Editar la nota",
+      "save": "Guardar",
+      "saving": "Guardando…",
+      "cancel": "Cancelar",
+      "pinAction": "Fijar",
+      "unpin": "Quitar de fijadas",
+      "delete": "Borrar",
+      "deleteLabel": "Borrar la nota",
+      "ask": "¿Borrar esta nota? Deja de verse en la ficha.",
+      "deleting": "Borrando…",
+      "conflict_reloaded": "Otra persona cambió esta nota mientras la editabas. Ahora ves lo que guardó: revisa y repite tu cambio.",
+      "conflict_failed": "Otra persona cambió esta nota mientras la editabas, y no se pudo cargar lo nuevo. Recarga la página y repite tu cambio.",
+      "pinConflict": "Otra persona cambió esa nota: las notas se volvieron a cargar. Repite el cambio si sigue haciendo falta.",
+      "stale": "Esa nota se borró o ya no la puedes cambiar. Las notas se volvieron a cargar.",
+      "done": "Nota {action, select, created {añadida} updated {guardada} pinned {fijada} unpinned {quitada de fijadas} other {borrada}}.",
+      "doneStale": "Nota {action, select, created {añadida} updated {guardada} pinned {fijada} unpinned {quitada de fijadas} other {borrada}}, pero las notas no se pudieron actualizar. Recarga la página."
     }
   },
   "stock": {

@@ -5,12 +5,14 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { apiErrorKey } from "@/lib/api-errors";
+import type { Note } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 type Write = { isPending: boolean; isError: boolean; error: ApiError | null; reset: () => void };
 
-// Añadir una nota (F4-10): el cuerpo en un área de texto y «Fijar la nota». Como `FieldsForm`:
+// Añadir o editar una nota (F4-10): el cuerpo en un área de texto y «Fijar la nota». Al editar
+// (`editing`) abre con lo de la nota, tiene «Cancelar» y explica un 409. Como `FieldsForm`:
 // un envío por pulsación (la marca se suelta cuando la pantalla ya enseña el resultado), errores
 // por `code` y nunca con el texto de la respuesta (que no repite el cuerpo); sin sesión (401)
 // sigue ocupado: `Providers` lleva al login. El límite (5000 caracteres tras NFC) solo se ayuda:
@@ -19,16 +21,18 @@ export function NoteForm({
   write,
   send,
   focus,
+  editing,
 }: {
   write: Write;
   send: (body: string, pinned: boolean) => void;
   focus: boolean; // al montarse, el foco al área de texto si no está en otra parte
+  editing?: { note: Note; conflict: string; onCancel: () => void };
 }) {
   const t = useTranslations("contacts.notes");
   const errors = useTranslations("errors.api");
   const id = useId();
-  const [body, setBody] = useState("");
-  const [pinned, setPinned] = useState(false);
+  const [body, setBody] = useState(editing?.note.body ?? "");
+  const [pinned, setPinned] = useState(editing?.note.is_pinned ?? false);
   const [empty, setEmpty] = useState(false); // se pulsó sin nada escrito
   const area = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
@@ -42,7 +46,9 @@ export function NoteForm({
   const fieldError = empty ? t("required") : bad ? t("invalid") : null;
   let formError: string | null = null;
   if (error && !bad) {
-    if (error.status === 404) formError = t("contactGone");
+    if (error.code === "NOTE_VERSION_CONFLICT" && editing) formError = editing.conflict;
+    else if (error.status === 404)
+      formError = t("contactGone"); // al editar, lo explica la lista
     else if (error.code === "PERMISSION_DENIED") formError = t("writeDenied");
     else
       formError = errors(error.code === "VALIDATION_ERROR" ? "INTERNAL_ERROR" : apiErrorKey(error));
@@ -56,7 +62,8 @@ export function NoteForm({
   }
 
   useEffect(() => {
-    // Tras añadir una nota (el formulario se monta de nuevo, vacío): al área de texto.
+    // Al abrir la edición (el botón que la abrió ya no está), al recargarla tras un 409 o tras
+    // añadir una nota (el formulario se monta de nuevo): al área de texto.
     if (focus && document.activeElement === document.body) area.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al montar
   }, []);
@@ -64,7 +71,7 @@ export function NoteForm({
   return (
     <form
       noValidate
-      aria-label={t("new")}
+      aria-label={t(editing ? "editTitle" : "new")}
       aria-busy={busy}
       className="flex w-full flex-col gap-3"
       onSubmit={(event) => {
@@ -81,7 +88,7 @@ export function NoteForm({
         send(body.trim(), pinned);
       }}
     >
-      <h2 className="text-lg font-semibold">{t("new")}</h2>
+      {editing ? null : <h2 className="text-lg font-semibold">{t("new")}</h2>}
       <div className="flex flex-col gap-1.5">
         <label htmlFor={id} className="text-sm font-medium">
           {t("body")}
@@ -132,6 +139,17 @@ export function NoteForm({
         </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
+        {editing ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11 sm:min-h-9"
+            aria-disabled={busy}
+            onClick={() => sending.current || editing.onCancel()}
+          >
+            {t("cancel")}
+          </Button>
+        ) : null}
         {/* `aria-disabled` y no `disabled`: conserva el foco mientras se envía. */}
         <Button
           type="submit"
@@ -139,7 +157,7 @@ export function NoteForm({
           className="min-h-11 sm:min-h-9"
           aria-disabled={busy}
         >
-          {t(busy ? "adding" : "add")}
+          {editing ? t(busy ? "saving" : "save") : t(busy ? "adding" : "add")}
         </Button>
       </div>
     </form>
