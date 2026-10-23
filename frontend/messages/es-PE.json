@@ -1030,6 +1030,7 @@
     "phone": "Teléfono",
     "email": "Correo",
     "owner": "Responsable: {name}",
+    "ownerPending": "Responsable",
     "ownerYou": "Responsable: tú",
     "ownerOther": "Responsable: otro miembro",
     "ownerNone": "Sin responsable",

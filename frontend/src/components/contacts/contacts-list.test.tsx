@@ -102,7 +102,7 @@ describe("ContactsList", () => {
     expect(within(first!).getByText("Responsable: tú")).toBeVisible();
     expect(await within(first!).findByText("Sucursal: Miraflores (MIR)")).toBeVisible();
     expect(await within(second!).findByText("Responsable: Luis Ramos")).toBeVisible();
-    expect(second).not.toHaveTextContent(/Sucursal|Teléfono|Correo/); // b9: no la puede nombrar
+    expect(second).not.toHaveTextContent(/sucursal|teléfono|correo/i); // b9: no la puede nombrar
     expect(within(third!).getByText("Sin responsable")).toBeVisible();
     expect(within(third!).getByText("Sin sucursal")).toBeVisible();
     expect(screen.getByText("3 clientes en la lista")).toBeInTheDocument();
@@ -138,6 +138,32 @@ describe("ContactsList", () => {
     expect(api.mock.calls.map(([url]) => String(url))).not.toContain(
       "/api/v1/o/acme/members/?limit=200",
     );
+  });
+
+  it("sin `contacts.view` no pide directorio ni sucursales aunque pueda leerlos", async () => {
+    const api = mockApi({ [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
+    screenOf({ ...viewer, permissions: grants("users.view", "organization.view") });
+    expect(await screen.findByText(/No tienes permiso para ver los clientes/)).toBeVisible();
+    expect(api.mock.calls.map(([url]) => String(url))).toEqual(["/api/v1/o/acme/contacts/"]);
+  });
+
+  it("mientras llega el directorio dice solo «Responsable»; lo lee entero, página a página", async () => {
+    let release = () => {};
+    const api = mockApi({
+      [LIST]: page([luis]),
+      [`${MEMBERS}&cursor=p2`]: page([member("u2", "", "", "luis@acme.pe")]),
+    });
+    const reply = api.getMockImplementation()!;
+    api.mockImplementation(async (input, init) => {
+      if (String(input) !== MEMBERS.slice(4)) return reply(input, init);
+      await new Promise<void>((done) => (release = done)); // el directorio tarda
+      return new Response(JSON.stringify({ results: [], next: "p2" }), { status: 200 });
+    });
+    screenOf({ ...viewer, permissions: grants("contacts.view", "users.view") });
+    expect(await screen.findByText("Responsable")).toBeVisible();
+    expect(screen.queryByText(/otro miembro/)).toBeNull();
+    release();
+    expect(await screen.findByText("Responsable: luis@acme.pe")).toHaveClass("wrap-anywhere");
   });
 
   it("pagina por cursor con «Cargar más»", async () => {
@@ -180,8 +206,16 @@ describe("ContactsList", () => {
     });
     screenOf(creator);
     await screen.findByText("Todavía no tienes clientes en la lista.");
+    // La región viva existe antes del alta: un lector de pantalla anuncia el cambio.
+    const live = screen.getAllByRole("status").find((node) => node.textContent === "");
+    expect(live).toHaveClass("sr-only");
     press("Crear cliente");
     expect(field("Nombre")).toHaveFocus();
+    const limits = { Nombre: 100, Apellido: 100, "Nombre para mostrar (opcional)": 200 };
+    const more = { "Teléfono (opcional)": 32, "Correo (opcional)": 254 };
+    for (const [label, max] of Object.entries({ ...limits, ...more })) {
+      expect(field(label)).toHaveAttribute("maxlength", String(max));
+    }
     expect(field("Teléfono (opcional)")).toHaveAccessibleDescription(/\+51 987 654 321 en Perú/);
     expect(field("Teléfono (opcional)")).toHaveAttribute("inputmode", "tel");
     expect(field("Teléfono (opcional)")).toHaveValue(""); // el prefijo no se impone
@@ -202,11 +236,11 @@ describe("ContactsList", () => {
     press("Crear cliente", form());
     await waitFor(() => expect(posted(api)).toHaveLength(1));
     expect(within(form()).getByRole("button", { name: "Creando…" })).toBeVisible();
+    fill({ "Tipo de documento": "RUC", Origen: "CAMPAIGN" }); // mientras se crea, no cambian
+    expect(field("Tipo de documento")).toHaveValue("DNI");
+    expect(field("Origen")).toHaveValue("WALK_IN");
     release();
-    expect(await screen.findByText("Cliente «Rosa Díaz» creado.")).toHaveAttribute(
-      "role",
-      "status",
-    );
+    await waitFor(() => expect(live).toHaveTextContent("Cliente «Rosa Díaz» creado."));
     expect(await screen.findByText("Rosa Díaz")).toBeVisible(); // la lista se volvió a pedir
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Crear cliente" })).toHaveFocus(),
@@ -220,6 +254,8 @@ describe("ContactsList", () => {
     ]);
     // Lo mínimo: solo el nombre para mostrar y el origen, que siempre se ve elegido.
     press("Crear cliente");
+    expect(live).toBeEmptyDOMElement(); // abrir retira el anuncio anterior
+    expect(live).toHaveClass("sr-only");
     fill({ "Nombre para mostrar (opcional)": "Veterinaria Sol" });
     press("Crear cliente", form());
     await waitFor(() => expect(posted(api)).toHaveLength(2));
@@ -284,6 +320,8 @@ describe("ContactsList", () => {
     press("Cancelar", form());
     expect(screen.queryByRole("form")).toBeNull();
     expect(screen.getByRole("button", { name: "Crear cliente" })).toHaveFocus();
+    press("Crear cliente"); // reabrir no trae el error anterior
+    expect(within(form()).queryByRole("alert")).toBeNull();
   });
 
   it("sin red, el alta falla enseguida y se dice; no queda en cola", async () => {

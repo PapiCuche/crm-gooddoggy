@@ -30,17 +30,18 @@ export function ContactsList() {
   const listKey = [...getContactsListQueryKey(slug), "pages"];
   // El responsable y la sucursal llegan como identificadores. Se nombran con el directorio y
   // con las sucursales solo si la API dijo que el usuario puede leerlos (`users.view`,
-  // `organization.view`); si no, o si fallan, la lista funciona igual con menos detalle.
+  // `organization.view`) y además ve la lista; si no, o si fallan, funciona con menos detalle.
+  const sees = (code: string) => held("contacts.view") && held(code);
   const people = useQuery({
     queryKey: [...getMembersListQueryKey(slug), "all"],
     queryFn: ({ signal }) => everyPage((params) => membersList(slug, params, { signal })),
-    enabled: held("users.view"),
+    enabled: sees("users.view"),
     gcTime: 0,
   });
   const branches = useQuery({
     queryKey: [...getBranchesListQueryKey(slug), "all"],
     queryFn: ({ signal }) => everyPage((params) => branchesList(slug, params, { signal })),
-    enabled: held("organization.view"),
+    enabled: sees("organization.view"),
     gcTime: 0,
   });
   const names = new Map(
@@ -49,6 +50,9 @@ export function ContactsList() {
       `${one.first_name} ${one.last_name}`.trim() || one.email,
     ]),
   );
+  // Leído aquí, en cada render: TanStack Query solo repinta por lo que se lee, y las filas
+  // pueden no estar todavía cuando el directorio termina.
+  const naming = people.isLoading;
   const places = new Map(branches.data?.map((row) => [row.id, row]));
   const [done, setDone] = useState<string | null>(null);
 
@@ -56,6 +60,7 @@ export function ContactsList() {
     if (!id) return t("ownerNone");
     if (id === user.id) return t("ownerYou");
     const name = names.get(id);
+    if (!name && naming) return t("ownerPending"); // sin «otro miembro» fugaz
     return name ? t("owner", { name }) : t("ownerOther");
   }
   function branch({ branch_id: id }: Contact): string | null {
@@ -112,7 +117,7 @@ export function ContactsList() {
               ) : null}
             </div>
             <p className="text-muted flex flex-wrap gap-x-3 text-sm sm:flex-col sm:items-end">
-              <span>{owner(contact)}</span>
+              <span className="wrap-anywhere">{owner(contact)}</span>
               {place ? <span className="wrap-anywhere">{place}</span> : null}
             </p>
           </>
