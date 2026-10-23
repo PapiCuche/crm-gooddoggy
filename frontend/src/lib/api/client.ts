@@ -35,6 +35,7 @@ import type {
   Contact,
   ContactAssignmentRequest,
   ContactCreateRequest,
+  ContactNotesListParams,
   ContactsListParams,
   Error,
   GrantScopeRequest,
@@ -62,6 +63,8 @@ import type {
   MfaStatus,
   Movement,
   MovementCreateRequest,
+  Note,
+  NoteWriteRequest,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
@@ -72,6 +75,7 @@ import type {
   PaginatedLevelList,
   PaginatedMemberList,
   PaginatedMovementList,
+  PaginatedNoteList,
   PaginatedProductList,
   PaginatedRoleList,
   PaginatedStockImportRowList,
@@ -85,6 +89,7 @@ import type {
   PatchedBrandUpdateRequest,
   PatchedCategoryUpdateRequest,
   PatchedContactUpdateRequest,
+  PatchedNoteUpdateRequest,
   PatchedProductUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedTeamUpdateRequest,
@@ -3609,6 +3614,460 @@ export const useContactsAssign = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getContactsAssignMutationOptions(options), queryClient);
+};
+
+export const getContactNotesListUrl = (
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/contacts/${contactId}/notes/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/contacts/${contactId}/notes/`;
+};
+
+export const contactNotesList = async (
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedNoteList> => {
+  return apiFetch<PaginatedNoteList>(getContactNotesListUrl(orgSlug, contactId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getContactNotesListQueryKey = (
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/contacts/${contactId}/notes/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getContactNotesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof contactNotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactNotesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getContactNotesListQueryKey(orgSlug, contactId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof contactNotesList>>> = ({ signal }) =>
+    contactNotesList(orgSlug, contactId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && contactId !== null && contactId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof contactNotesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ContactNotesListQueryResult = NonNullable<Awaited<ReturnType<typeof contactNotesList>>>;
+export type ContactNotesListQueryError = ErrorType<Error>;
+
+export function useContactNotesList<
+  TData = Awaited<ReturnType<typeof contactNotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  params: undefined | ContactNotesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactNotesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof contactNotesList>>,
+          TError,
+          Awaited<ReturnType<typeof contactNotesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useContactNotesList<
+  TData = Awaited<ReturnType<typeof contactNotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactNotesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof contactNotesList>>,
+          TError,
+          Awaited<ReturnType<typeof contactNotesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useContactNotesList<
+  TData = Awaited<ReturnType<typeof contactNotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactNotesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useContactNotesList<
+  TData = Awaited<ReturnType<typeof contactNotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  contactId: string,
+  params?: ContactNotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof contactNotesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getContactNotesListQueryOptions(orgSlug, contactId, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getContactNotesCreateUrl = (orgSlug: string, contactId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/notes/`;
+};
+
+export const contactNotesCreate = async (
+  orgSlug: string,
+  contactId: string,
+  noteWriteRequest: NoteWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Note> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Note>(getContactNotesCreateUrl(orgSlug, contactId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(noteWriteRequest),
+  });
+};
+
+export const getContactNotesCreateMutationKey = () => ["contactNotesCreate"] as const;
+
+export const getContactNotesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactNotesCreate>>,
+    TError,
+    ContactNotesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactNotesCreate>>,
+  TError,
+  ContactNotesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactNotesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactNotesCreate>>,
+    ContactNotesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, data } = props ?? {};
+
+    return contactNotesCreate(orgSlug, contactId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactNotesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof contactNotesCreate>>
+>;
+export type ContactNotesCreateMutationBody = NoteWriteRequest;
+export type ContactNotesCreateMutationError = ErrorType<Error>;
+export type ContactNotesCreateMutationVariables = {
+  orgSlug: string;
+  contactId: string;
+  data: NoteWriteRequest;
+};
+
+export const useContactNotesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactNotesCreate>>,
+      TError,
+      ContactNotesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactNotesCreate>>,
+  TError,
+  ContactNotesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactNotesCreateMutationOptions(options), queryClient);
+};
+
+export const getContactNotesUpdateUrl = (orgSlug: string, contactId: string, noteId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/notes/${noteId}/`;
+};
+
+export const contactNotesUpdate = async (
+  orgSlug: string,
+  contactId: string,
+  noteId: string,
+  patchedNoteUpdateRequest: PatchedNoteUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Note> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Note>(getContactNotesUpdateUrl(orgSlug, contactId, noteId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedNoteUpdateRequest),
+  });
+};
+
+export const getContactNotesUpdateMutationKey = () => ["contactNotesUpdate"] as const;
+
+export const getContactNotesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactNotesUpdate>>,
+    TError,
+    ContactNotesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactNotesUpdate>>,
+  TError,
+  ContactNotesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactNotesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactNotesUpdate>>,
+    ContactNotesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, noteId, data } = props ?? {};
+
+    return contactNotesUpdate(orgSlug, contactId, noteId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactNotesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof contactNotesUpdate>>
+>;
+export type ContactNotesUpdateMutationBody = PatchedNoteUpdateRequest;
+export type ContactNotesUpdateMutationError = ErrorType<Error>;
+export type ContactNotesUpdateMutationVariables = {
+  orgSlug: string;
+  contactId: string;
+  noteId: string;
+  data: PatchedNoteUpdateRequest;
+};
+
+export const useContactNotesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactNotesUpdate>>,
+      TError,
+      ContactNotesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactNotesUpdate>>,
+  TError,
+  ContactNotesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactNotesUpdateMutationOptions(options), queryClient);
+};
+
+export const getContactNotesDeleteUrl = (orgSlug: string, contactId: string, noteId: string) => {
+  return `/api/v1/o/${orgSlug}/contacts/${contactId}/notes/${noteId}/`;
+};
+
+export const contactNotesDelete = async (
+  orgSlug: string,
+  contactId: string,
+  noteId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getContactNotesDeleteUrl(orgSlug, contactId, noteId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getContactNotesDeleteMutationKey = () => ["contactNotesDelete"] as const;
+
+export const getContactNotesDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof contactNotesDelete>>,
+    TError,
+    ContactNotesDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof contactNotesDelete>>,
+  TError,
+  ContactNotesDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getContactNotesDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof contactNotesDelete>>,
+    ContactNotesDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, contactId, noteId } = props ?? {};
+
+    return contactNotesDelete(orgSlug, contactId, noteId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ContactNotesDeleteMutationResult = NonNullable<
+  Awaited<ReturnType<typeof contactNotesDelete>>
+>;
+
+export type ContactNotesDeleteMutationError = ErrorType<Error>;
+export type ContactNotesDeleteMutationVariables = {
+  orgSlug: string;
+  contactId: string;
+  noteId: string;
+};
+
+export const useContactNotesDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof contactNotesDelete>>,
+      TError,
+      ContactNotesDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof contactNotesDelete>>,
+  TError,
+  ContactNotesDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getContactNotesDeleteMutationOptions(options), queryClient);
 };
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
