@@ -16,12 +16,12 @@ import { cn } from "@/lib/utils";
 
 import { useContactNames } from "./contact-names";
 import { ContactNotes } from "./contact-notes";
-import { TagList } from "./contact-tags";
+import { ContactTags } from "./contact-tagging";
 
 const BOX = "border-border bg-surface flex flex-col gap-4 rounded-lg border p-4";
 
 // La ficha del cliente (F4-06), de solo lectura, con `GET /api/v1/o/{slug}/contacts/{id}/`.
-// «Resumen» lleva sus etiquetas (F4-12). Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10); las demás llegan con sus API.
+// «Resumen» lleva sus etiquetas, que se ponen y quitan con `contacts.update` (F4-12). Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10); las demás llegan con sus API.
 // Fuera del alcance, borrado, de otra organización o inexistente, la API responde el mismo
 // 404, y la ficha es la página de «no encontrada» de cualquier dirección: no dice cuál fue.
 // Carga, error con «Reintentar», 403 y 401 se tratan como en `CursorList`.
@@ -31,7 +31,8 @@ export function ContactCard({ contactId }: { contactId: string }) {
   const format = useFormatter();
   const { organization, permissions } = useTenant();
   const slug = organization.slug;
-  const notes = permissions.some((grant) => grant.code === "contacts.view");
+  const held = (code: string) => permissions.some((grant) => grant.code === code);
+  const notes = held("contacts.view");
   const order: readonly ("summary" | "notes")[] = notes ? ["summary", "notes"] : ["summary"];
   const { owner, branch } = useContactNames("contacts.card");
   const card = useQuery<Contact, ApiError>({
@@ -187,17 +188,8 @@ export function ContactCard({ contactId }: { contactId: string }) {
           className="flex flex-col gap-4"
         >
           {group("profile", fields)}
-          {/* Sus etiquetas (F4-12), también las desactivadas, que siguen en el contacto. */}
-          <section aria-labelledby={`${id}-tags`} className={BOX}>
-            <h2 id={`${id}-tags`} className="text-lg font-semibold">
-              {t("tags.label")}
-            </h2>
-            {contact.tags.length > 0 ? (
-              <TagList tags={contact.tags} />
-            ) : (
-              <p className="text-muted">{t("tags.none")}</p>
-            )}
-          </section>
+          {/* Sus etiquetas (F4-12), también las desactivadas; con `contacts.update`, se cambian. */}
+          <ContactTags contact={contact} canTag={held("contacts.update")} />
           {group("record", record)}
         </div>
         {notes ? (
