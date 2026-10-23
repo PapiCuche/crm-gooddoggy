@@ -13,6 +13,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
+from apps.catalog.events import variants_retiring
 from apps.catalog.models import Brand, Category, Product, ProductVariant
 from apps.catalog.slugs import clean_slug, slug_from
 from core.tenancy.context import TenantContext
@@ -194,16 +195,28 @@ def _plain(value: Any) -> Any:
     return str(value) if isinstance(value, UUID) else value
 
 
+def _retiring(alias: str, variant_ids: list[UUID]) -> None:
+    """Pregunta a los módulos de encima (`catalog.events`): `VariantsHeld` si alguna de las
+    variantes, ya bloqueadas, tiene existencias o reservas. Sin nadie que escuche (p. ej.,
+    `inventory` sin conectar) no se borra: falla cerrado."""
+    if not variants_retiring.has_listeners(ProductVariant):
+        raise RuntimeError("catalog.events.variants_retiring sin receptor: no se borra")
+    variants_retiring.send(ProductVariant, using=alias, variant_ids=variant_ids)
+
+
 def delete_product(ctx: TenantContext, *, product_id: UUID) -> None:
     """Borra un producto y sus variantes (borrado lógico) y lo audita; sus SKU y su slug quedan
-    libres. `DoesNotExist` si no es de la organización o ya está borrado."""
+    libres. Bloquea la fila del producto (lo que evita interbloqueos) y después sus variantes por
+    orden de id, antes de mirar su stock: `VariantsHeld` si alguna tiene existencias o reservas.
+    `DoesNotExist` si no es de la organización o ya está borrado."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         product: Product = _live(Product, alias).select_for_update(no_key=True).get(pk=product_id)
         now = timezone.now()
-        variants = (
-            _live(ProductVariant, alias).select_for_update(no_key=True).filter(product=product)
-        )
+        rows = _live(ProductVariant, alias).select_for_update(no_key=True).filter(product=product)
+        ids = list(rows.order_by("pk").values_list("pk", flat=True))
+        _retiring(alias, ids)
+        variants = ProductVariant.objects.using(alias).filter(pk__in=ids)
         count = variants.update(deleted_at=now, deleted_by_user_id=ctx.user_id, updated_at=now)
         product.deleted_at, product.deleted_by_user_id = now, ctx.user_id
         product.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])
@@ -284,7 +297,8 @@ def update_variant(
 
 def delete_variant(ctx: TenantContext, *, product_id: UUID, variant_id: UUID) -> None:
     """Borra una variante (borrado lógico) y lo audita; su SKU queda libre. `LastVariant` si es
-    la única viva del producto. `DoesNotExist` si no es de ese producto o ya está borrada."""
+    la única viva del producto; `VariantsHeld` si tiene existencias o reservas (la mira ya
+    bloqueada). `DoesNotExist` si no es de ese producto o ya está borrada."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         product = _product(alias, product_id)
@@ -295,6 +309,7 @@ def delete_variant(ctx: TenantContext, *, product_id: UUID, variant_id: UUID) ->
         )
         if not _live(ProductVariant, alias).filter(product=product).exclude(pk=variant.pk).exists():
             raise LastVariant(variant.sku)
+        _retiring(alias, [variant.pk])
         variant.deleted_at, variant.deleted_by_user_id = timezone.now(), ctx.user_id
         variant.save(using=alias, update_fields=["deleted_at", "deleted_by_user_id", "updated_at"])
         record(

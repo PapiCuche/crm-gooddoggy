@@ -19,6 +19,7 @@ from core.api.schema import errors
 NOT_ENOUGH = "No hay stock suficiente: no puede quedar en negativo ni por debajo de lo reservado."
 INACTIVE = "El almacén está desactivado."
 REUSED = "Esa clave de idempotencia ya se usó para otro movimiento."
+LIMIT = f"El saldo no puede pasar de {stock.ON_HAND_MAX} unidades."
 
 
 class CellFilterSerializer(serializers.Serializer[Any]):
@@ -119,8 +120,8 @@ class MovementCreateSerializer(serializers.Serializer[Any]):
         },
         description="Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo "
         "como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se "
-        "devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` o "
-        "`IDEMPOTENCY_KEY_REUSED`.",
+        "devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, "
+        "`IDEMPOTENCY_KEY_REUSED` o `STOCK_LIMIT` (el saldo pasaría de 2147483647).",
     ),
 )
 class MovementsView(generics.ListAPIView):
@@ -142,6 +143,8 @@ class MovementsView(generics.ListAPIView):
             raise ApiError("INSUFFICIENT_STOCK", 409, NOT_ENOUGH) from None
         except stock.WarehouseInactive:
             raise ApiError("WAREHOUSE_INACTIVE", 409, INACTIVE) from None
+        except stock.StockLimit:
+            raise ApiError("STOCK_LIMIT", 409, LIMIT) from None
         except stock.KeyReused:
             raise ApiError("IDEMPOTENCY_KEY_REUSED", 409, REUSED) from None
         return Response(MovementSerializer(movement).data, status=201 if new else 200)

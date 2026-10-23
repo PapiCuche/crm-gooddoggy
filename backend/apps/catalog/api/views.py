@@ -34,6 +34,7 @@ from apps.catalog.categories import (
     move_category,
     rename_category,
 )
+from apps.catalog.events import VariantsHeld
 from apps.catalog.models import Brand, Category, Product, ProductVariant
 from apps.catalog.products import (
     LABEL_MAX,
@@ -431,6 +432,12 @@ class VariantUpdateSerializer(serializers.Serializer[Any]):
 
 PRODUCT_TAKEN = "Ya hay un producto con ese slug en la organización."
 SKU_IN_USE = "Ya hay una variante con ese SKU en la organización."
+PRODUCT_HELD = (
+    "Tiene existencias o reservas en algún almacén: no se borra. Descontinúalo (`DISCONTINUED`)."
+)
+VARIANT_HELD = (
+    "Tiene existencias o reservas en algún almacén: no se borra. Desactívala (`INACTIVE`)."
+)
 
 
 def _reference_error(error: BadReference) -> serializers.ValidationError:
@@ -506,14 +513,17 @@ class ProductView(APIView):
     @extend_schema(
         operation_id="products_delete",
         tags=["catalog"],
-        responses={204: None, **errors(401, 403, 404)},
-        description="Borra el producto y sus variantes (borrado lógico); sus SKU quedan libres.",
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Borra el producto y sus variantes (borrado lógico); sus SKU quedan libres. "
+        "409 `PRODUCT_HAS_STOCK`: alguna variante tiene existencias o reservas; se descontinúa.",
     )
     def delete(self, request: Request, product_id: UUID, **kwargs: Any) -> Response:
         try:
             delete_product(_tenant(), product_id=product_id)
         except Product.DoesNotExist:
             raise NotFound from None
+        except VariantsHeld:
+            raise ApiError("PRODUCT_HAS_STOCK", 409, PRODUCT_HELD) from None
         return Response(status=204)
 
 
@@ -589,7 +599,8 @@ class VariantView(APIView):
         tags=["catalog"],
         responses={204: None, **errors(401, 403, 404, 409)},
         description="Retira la variante (borrado lógico) y libera su SKU. 409 `LAST_VARIANT`: "
-        "es la única viva del producto.",
+        "es la única viva del producto; `VARIANT_HAS_STOCK`: tiene existencias o reservas, se "
+        "desactiva.",
     )
     def delete(
         self, request: Request, product_id: UUID, variant_id: UUID, **kwargs: Any
@@ -602,4 +613,6 @@ class VariantView(APIView):
             raise ApiError(
                 "LAST_VARIANT", 409, "Un producto necesita al menos una variante."
             ) from None
+        except VariantsHeld:
+            raise ApiError("VARIANT_HAS_STOCK", 409, VARIANT_HELD) from None
         return Response(status=204)
