@@ -15,7 +15,9 @@ from typing import Any
 import openpyxl.xml
 import pytest
 from openpyxl import Workbook
+from openpyxl.cell.text import Text
 from openpyxl.worksheet._reader import WorkSheetParser
+from openpyxl.xml.functions import fromstring
 
 from apps.imports import csvfile, xlsxfile
 from apps.imports.csvfile import Unreadable
@@ -468,19 +470,107 @@ def test_what_is_dropped_is_freed_as_it_closes() -> None:
     assert peak < 1 << 20, peak  # sin quitarlos, unos 30 MiB
 
 
+SST = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"
+
+
+def with_strings(texts: str, rows: str) -> bytes:
+    """Un XLSX con la tabla de textos compartidos `texts` (los `<si>`) y las filas `rows`."""
+    parts: dict[str, bytes | str] = {"xl/sharedStrings.xml": f'<sst xmlns="{MAIN}">{texts}</sst>'}
+    return handmade(HEADER + rows, types=override(SST, "/xl/sharedStrings.xml"), parts=parts)
+
+
 def test_the_shared_strings_are_capped_while_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """openpyxl arma la tabla entera: 581 991 textos costaban +110 MiB y 2,3 s. Cuentan sus
-    elementos (`MAX_TEXT_NODES`) y los de cada texto (`MAX_UNIT`), como en la hoja."""
-    assert xlsxfile.MAX_TEXT_NODES == xlsxfile.MAX_CELLS
-    kind = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"
-    texts = f'<sst xmlns="{MAIN}"><si><t>A</t></si><si><r><t>x005F_B</t></r></si></sst>'
-    row = '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="B2" t="s"><v>1</v></c></row>'
-    parts: dict[str, bytes | str] = {"xl/sharedStrings.xml": texts}
-    data = handmade(HEADER + row, types=override(kind, "/xl/sharedStrings.xml"), parts=parts)
-    monkeypatch.setattr(xlsxfile, "MAX_TEXT_NODES", 6)  # sst, 2 de uno y 3 del otro
-    assert xlsxfile.read(data, ALIASES).rows == [(2, {"sku": "A", "almacen": "B", "cantidad": ""})]
-    monkeypatch.setattr(xlsxfile, "MAX_TEXT_NODES", 5)
+    """openpyxl arma la tabla entera: 581 991 textos costaban +110 MiB y 2,3 s. Caben tantos como
+    celdas (`MAX_CELLS`: son los de todas las hojas); sus elementos cuentan en `MAX_NODES` y los de
+    cada texto en `MAX_UNIT`, como en la hoja."""
+    texts = (
+        "<si><t>A</t></si><si><r><t>B</t></r></si>" + "<si><r><t>z</t></r><r><t>z</t></r></si>" * 4
+    )
+    data = with_strings(
+        texts, '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="B2" t="s"><v>1</v></c></row>'
+    )
+    rows = [(2, {"sku": "A", "almacen": "B", "cantidad": ""})]
+    monkeypatch.setattr(xlsxfile, "MAX_CELLS", 6)  # 6 textos y 5 celdas
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 26)  # sst, 2, 3 y 4 × 5 (la hoja tiene 17)
+    assert xlsxfile.read(data, ALIASES).rows == rows
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 25)
+    assert refused(data) == xlsxfile.TOO_MANY_TEXTS
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 26)
+    monkeypatch.setattr(xlsxfile, "MAX_CELLS", 5)
     assert refused(data) == xlsxfile.TOO_MANY_TEXTS
     monkeypatch.undo()
-    monkeypatch.setattr(xlsxfile, "MAX_UNIT", 2)  # el segundo texto tiene 3
+    monkeypatch.setattr(xlsxfile, "MAX_UNIT", 4)  # los últimos tienen 5 (y la cabecera, 10)
     assert refused(data) == xlsxfile.TOO_MANY_TEXTS
+
+
+def test_as_many_shared_strings_as_cells_fit() -> None:
+    """Excel guarda cada texto en la tabla, y la tabla es de todo el libro: 100 000 distintos."""
+    texts = "".join(f"<si><t>texto {n}</t></si>" for n in range(xlsxfile.MAX_CELLS))
+    row = '<row r="2"><c r="A2" t="s"><v>99999</v></c></row>'
+    blank = {"almacen": "", "cantidad": ""}
+    assert xlsxfile.read(with_strings(texts, row), ALIASES).rows == [
+        (2, {"sku": "texto 99999", **blank})
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<t> a b </t>",
+        "<t/>",
+        "",
+        '<r><t>a</t></r><r><rPr><b/></rPr><t xml:space="preserve"> b</t></r>',
+        '<t>p</t><r><t>q</t></r><rPh sb="0" eb="1"><t>fonética</t></rPh>',
+        "<t>x005F_x</t>",
+    ],
+)
+def test_a_shared_string_reads_as_openpyxl_reads_it(text: str) -> None:
+    """Su `<t>` y el de cada tramo con formato, sin la fonética, como `Text.content`."""
+    same = Text.from_tree(fromstring(f'<si xmlns="{MAIN}">{text}</si>')).content
+    row = '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="C2"><v>1</v></c></row>'
+    sheet = xlsxfile.read(with_strings(f"<si>{text}</si>", row), ALIASES)
+    assert sheet.rows == [(2, {"sku": same.replace("x005F_", ""), "almacen": "", "cantidad": "1"})]
+
+
+def test_a_long_tag_is_refused_before_it_is_built(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Los atributos de una etiqueta se arman antes de su evento: 270 000 costaban +140 MiB. No
+    pasan más de `MAX_QUIET` bytes sin un elemento; el texto más largo de Excel sí cabe."""
+    assert xlsxfile.MAX_QUIET == 256 * 1024
+    longest = "".join(chr(0x4E00 + n % 20_000) for n in range(32_767))  # 3 bytes cada uno
+    row = f'<row r="2"><c r="A2" t="inlineStr"><is><t>{longest}</t></is></c></row>'
+    blank = {"almacen": "", "cantidad": ""}
+    assert xlsxfile.read(handmade(HEADER + row), ALIASES).rows == [(2, {"sku": longest, **blank})]
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 10**6)  # solo este tope
+    attrs = "".join(f' a{n}="1"' for n in range(30_000))  # unos 270 KB
+    data = handmade(HEADER + f'<row r="2"{attrs}/>')
+    tracemalloc.start()
+    try:
+        assert refused(data) == xlsxfile.TOO_FULL
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 << 20, peak  # armados, unos 10 MiB
+
+
+def test_distinct_names_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El parser guarda cada nombre distinto de etiqueta o de atributo, aunque el elemento se
+    tire: 425 000 costaban +130 MiB."""
+    assert xlsxfile.MAX_NAMES == 1024
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 8)  # worksheet, sheetData, row, c, is, t, `r` y `t`
+    assert xlsxfile.read(handmade(), ALIASES).rows == []
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 7)
+    assert refused(handmade()) == xlsxfile.TOO_FULL
+
+
+def test_row_attributes_are_not_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openpyxl guarda los atributos de cada fila que trae más que `r`: no se usan."""
+    real, kept = WorkSheetParser.parse_row, []
+
+    def parse_row(parser: Any, row: Any) -> Any:
+        kept.append(len(parser.row_dimensions))
+        return real(parser, row)
+
+    monkeypatch.setattr(WorkSheetParser, "parse_row", parse_row)
+    rows = "".join(f'<row r="{n}" ht="20"><c r="A{n}"><v>1</v></c></row>' for n in (2, 3, 4))
+    assert len(xlsxfile.read(handmade(HEADER + rows), ALIASES).rows) == 3
+    assert kept == [0, 0, 0, 0]

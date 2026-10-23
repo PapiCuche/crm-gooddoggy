@@ -19,8 +19,11 @@ Solo se lee la primera hoja declarada, con el parser de filas de openpyxl y no c
 solo lectura, que rellena las filas y columnas que faltan (una celda en `XFD1048576` serían miles
 de millones). openpyxl arma entero cada elemento que lee (una fila, `mergeCells`, la tabla de
 textos compartidos) antes de que cuente ningún tope (F3-23b): la hoja y los textos se recorren
-aquí, contando sus elementos mientras llega el XML, y a openpyxl solo le llega cada fila o texto
-ya contado; lo demás (formatos, validaciones, enlaces) se tira al cerrarse, sin pasar por él.
+aquí, contando sus elementos mientras llega el XML; a openpyxl solo le llega cada fila ya
+contada (de cada texto se toman sus `<t>`) y lo demás (formatos, validaciones, enlaces) se tira
+al cerrarse, sin pasar por él.
+El parser arma los atributos antes de dar el evento y guarda cada nombre distinto: también se
+cuentan los bytes sin un elemento (`MAX_QUIET`) y los nombres (`MAX_NAMES`).
 Una fórmula en cualquier celda rechaza el archivo: ni se evalúa ni se usa el valor que Excel
 guardó. Lo que Excel convierte vuelve a texto: un número entero (`5.0`) en cifras («5»), otro
 tal cual («5.5»), una fecha como fecha; la validación de cada importación decide.
@@ -35,7 +38,6 @@ from collections.abc import Iterable, Iterator, Mapping
 from typing import IO, Any
 from xml.etree.ElementTree import Element
 
-from openpyxl.cell.text import Text
 from openpyxl.packaging.manifest import Manifest
 from openpyxl.reader.excel import ExcelReader
 from openpyxl.styles.stylesheet import apply_stylesheet
@@ -64,10 +66,13 @@ logger = logging.getLogger(__name__)
 MAX_PARTS, MAX_UNPACKED, MAX_RATIO = 100, 10 * MAX_BYTES, 100
 MAX_CELLS, MAX_LINE = 100_000, 1_048_576  # celdas leídas (una fila vacía cuenta una); la de Excel
 MAX_WHOLE = MAX_BYTES  # cada parte que openpyxl lee entera: tipos, libro, relaciones, estilos
-# Elementos XML que openpyxl arma: en la hoja (una celda con texto son 3), en los textos
-# compartidos y en cada fila o texto (Excel tiene 16 384 columnas).
-MAX_NODES, MAX_TEXT_NODES, MAX_UNIT = 3 * MAX_CELLS, MAX_CELLS, 16_384
-ROW, STRING = f"{{{SHEET_MAIN_NS}}}row", f"{{{SHEET_MAIN_NS}}}si"
+# Elementos XML que openpyxl arma: en la hoja o en los textos compartidos (una celda con texto
+# en línea son 3, un texto con formato 3 o más) y en cada fila o texto (16 384 columnas en Excel).
+MAX_NODES, MAX_UNIT = 3 * MAX_CELLS, 16_384
+MAX_QUIET = 256 * 1024  # bytes seguidos sin que empiece o acabe un elemento (un texto de Excel:
+# 32 767 caracteres)
+MAX_NAMES = 1024  # nombres de etiqueta y de atributo distintos: el parser los guarda todos
+ROW, STRING, RUN, TEXT = (f"{{{SHEET_MAIN_NS}}}{tag}" for tag in ("row", "si", "r", "t"))
 ZIP = b"PK\x03\x04"
 METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 WORKBOOKS = (XLSX, XLSM, XLTX, XLTM)
@@ -158,20 +163,40 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+class _Paced:
+    """La parte, para `iterparse`, que no da más de `MAX_QUIET` bytes sin un elemento: los
+    atributos de una etiqueta se arman antes de su evento (270 000 costaban +140 MiB)."""
+
+    def __init__(self, source: IO[bytes], refusal: str) -> None:
+        self.source, self.refusal, self.quiet = source, refusal, 0
+
+    def read(self, size: int) -> bytes:
+        if self.quiet > MAX_QUIET:
+            raise Unreadable(self.refusal)
+        chunk = self.source.read(size)
+        self.quiet += len(chunk)
+        return chunk
+
+
 def _units(source: IO[bytes], tag: str, most: int, refusal: str) -> Iterator[Element]:
     """Cada elemento `tag` de la parte (una fila, un texto), entero; el resto se tira al cerrarse.
     openpyxl arma entero lo que lee (una fila de 700 000 celdas, `mergeCells`), así que los topes
     de elementos van mientras se lee el XML: `most` en la parte y `MAX_UNIT` en cada `tag`."""
     path: list[Element] = []
+    names: set[str] = set()
     nodes, inside, depth = 0, 0, 0  # `inside`: elementos del `tag` abierto (0, ninguno)
-    for event, element in iterparse(source, events=("start", "end")):
+    paced = _Paced(source, refusal)
+    for event, element in iterparse(paced, events=("start", "end")):
+        paced.quiet = 0
         if event == "start":
             nodes += 1
             if inside:
                 inside += 1
             elif element.tag == tag:
                 inside, depth = 1, len(path)
-            if nodes > most or inside > MAX_UNIT:
+            names.add(element.tag)
+            names.update(element.attrib)
+            if nodes > most or inside > MAX_UNIT or len(names) > MAX_NAMES:
                 raise Unreadable(refusal)
             path.append(element)
             continue
@@ -186,13 +211,20 @@ def _units(source: IO[bytes], tag: str, most: int, refusal: str) -> Iterator[Ele
 
 
 def _strings(reader: ExcelReader) -> list[str]:
-    """Los textos compartidos, como los lee `read_string_table` de openpyxl, con sus topes."""
+    """Los textos compartidos, con sus topes: son de todas las hojas del libro, así que caben
+    tantos como celdas (`MAX_CELLS`). El texto es el de `read_string_table` de openpyxl (su `<t>`
+    y el de cada tramo con formato, sin la fonética), sin armar sus objetos (4 µs por texto)."""
     part = reader.package.find(SHARED_STRINGS)
     if part is None:
         return []
+    strings: list[str] = []
     with reader.archive.open(part.PartName[1:]) as source:
-        texts = _units(source, STRING, MAX_TEXT_NODES, TOO_MANY_TEXTS)
-        return [Text.from_tree(text).content.replace("x005F_", "") for text in texts]
+        for text in _units(source, STRING, MAX_NODES, TOO_MANY_TEXTS):
+            if len(strings) == MAX_CELLS:
+                raise Unreadable(TOO_MANY_TEXTS)
+            runs = (run.findtext(TEXT, "") for run in text.iterfind(RUN))
+            strings.append("".join((text.findtext(TEXT, ""), *runs)).replace("x005F_", ""))
+    return strings
 
 
 def _first_sheet(data: bytes) -> tuple[ExcelReader, str]:
@@ -226,6 +258,7 @@ def _read(data: bytes, aliases: Mapping[str, Iterable[str]]) -> Sheet:
         strings = reader.shared_strings
         parser = WorkSheetParser(source, strings, data_only=False, epoch=wb.epoch, **dates)
         for line, cells in map(parser.parse_row, _units(source, ROW, MAX_NODES, TOO_FULL)):
+            parser.row_dimensions.clear()  # openpyxl guarda los atributos de la fila: no se usan
             budget -= max(len(cells), 1)
             if budget < 0:
                 raise Unreadable(f"La hoja pasa de {MAX_CELLS} celdas: deja solo la plantilla.")
