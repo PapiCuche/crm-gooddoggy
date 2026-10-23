@@ -54,6 +54,11 @@
     "prices": {
       "label": "Secciones de precios",
       "lists": "Listas"
+    },
+    "contacts": {
+      "label": "Secciones de clientes",
+      "list": "Clientes",
+      "tags": "Etiquetas"
     }
   },
   "audit": {
@@ -1221,6 +1226,64 @@
       "stale": "Esa nota se borró o ya no la puedes cambiar. Las notas se volvieron a cargar.",
       "done": "Nota {action, select, created {añadida} updated {guardada} pinned {fijada} unpinned {quitada de fijadas} other {borrada}}.",
       "doneStale": "Nota {action, select, created {añadida} updated {guardada} pinned {fijada} unpinned {quitada de fijadas} other {borrada}}, pero las notas no se pudieron actualizar. Recarga la página."
+    }
+  },
+  "contactTags": {
+    "eyebrow": "Good Doggy / Clientes",
+    "title": "Etiquetas",
+    "intro": "Las etiquetas de clientes de {organization}. Una desactivada sigue en los clientes que la llevan, pero no se pone en otros; las etiquetas no se borran.",
+    "readOnly": "Solo quien administra la configuración de la organización puede crear y cambiar etiquetas.",
+    "empty": "Esta organización todavía no tiene etiquetas.",
+    "count": "{count, plural, =0 {Sin etiquetas en la lista} one {# etiqueta en la lista} other {# etiquetas en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "loading": "Cargando etiquetas…",
+    "denied": "No tienes permiso para ver las etiquetas de esta organización.",
+    "stale": "La etiqueta «{name}» ya no está en esta organización. La lista se volvió a cargar.",
+    "form": {
+      "open": "Crear etiqueta",
+      "title": "Nueva etiqueta",
+      "edit": "Editar",
+      "editLabel": "Editar la etiqueta {name}",
+      "name": "Nombre",
+      "nameRequired": "Escribe el nombre de la etiqueta.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 50 caracteres.",
+      "nameTaken": "Ya hay una etiqueta con ese nombre, quizá desactivada. Reactívala o elige otro nombre.",
+      "color": "Color",
+      "colorHint": "#RRGGBB, como #1f9d55, o uno de la paleta.",
+      "colorRequired": "Escribe un color o elige uno de la paleta.",
+      "colorInvalid": "Escribe el color como #RRGGBB (seis cifras hexadecimales), como #1f9d55.",
+      "palette": "Paleta",
+      "swatch": "{name} ({color})",
+      "colors": {
+        "honey": "Miel",
+        "ink": "Tinta",
+        "green": "Verde",
+        "red": "Rojo",
+        "gray": "Gris",
+        "light": "Gris claro"
+      },
+      "preview": "Así se verá:",
+      "sample": "Etiqueta",
+      "create": "Crear etiqueta",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para cambiar las etiquetas.",
+      "done": "Etiqueta «{name}» {created, select, true {creada} other {guardada}}.",
+      "doneStale": "Etiqueta «{name}» {created, select, true {creada} other {guardada}}, pero la lista no se pudo actualizar. Recarga la página.",
+      "unchanged": "Sin cambios en la etiqueta «{name}»: no había nada que guardar."
+    },
+    "status": {
+      "deactivate": "Desactivar",
+      "activate": "Reactivar",
+      "deactivateLabel": "Desactivar la etiqueta {name}",
+      "activateLabel": "Reactivar la etiqueta {name}",
+      "busy": "Guardando…",
+      "denied": "No tienes permiso para cambiar las etiquetas.",
+      "deactivated": "Etiqueta «{name}» desactivada: sigue en los clientes que la llevan.",
+      "activated": "Etiqueta «{name}» reactivada.",
+      "doneStale": "Etiqueta «{name}» cambiada, pero la lista no se pudo actualizar. Recarga la página."
     }
   },
   "stock": {
