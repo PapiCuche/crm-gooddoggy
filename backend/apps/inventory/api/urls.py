@@ -10,6 +10,16 @@ urlpatterns = [
     path("inventory/imports/", imports.StockImportsView.as_view(), name="stock-imports"),
     path("inventory/imports/template/", imports.TemplateView.as_view(), name="stock-template"),
     path(
+        "inventory/imports/<uuid:import_id>/apply/",
+        imports.StockImportApplyView.as_view(),
+        name="stock-import-apply",
+    ),
+    path(
+        "inventory/imports/<uuid:import_id>/errors/",
+        imports.StockImportErrorsView.as_view(),
+        name="stock-import-errors",
+    ),
+    path(
         "inventory/imports/<uuid:import_id>/rows/",
         imports.StockImportRowsView.as_view(),
         name="stock-import-rows",

@@ -184,7 +184,8 @@ def update_product(ctx: TenantContext, *, product_id: UUID, **fields: Any) -> Pr
             product.save(using=alias, update_fields=[*changes, "updated_at"])
             if "name" in changes:  # cada variante es el producto más su etiqueta
                 rows = _live(ProductVariant, alias).select_for_update(no_key=True)
-                for variant in rows.filter(product=product):
+                # por id, como la importación de stock (F3-21): bloquea varias a la vez
+                for variant in rows.filter(product=product).order_by("pk"):
                     variant.name = variant_name(product.name, variant.label)
                     variant.save(using=alias, update_fields=["name", "updated_at"])
             record(ctx, "product.updated", Entity("product", product.pk, product.slug), changes)

@@ -113,6 +113,7 @@ export * from "./selfContext";
 export * from "./session";
 export * from "./stockImport";
 export * from "./stockImportCreateRequest";
+export * from "./stockImportResult";
 export * from "./stockImportRow";
 export * from "./team";
 export * from "./teamCreateRequest";

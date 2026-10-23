@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ImportStatusEnum } from "./importStatusEnum";
+import type { StockImportResult } from "./stockImportResult";
 
 export interface StockImport {
   id: string;
@@ -29,4 +30,8 @@ export interface StockImport {
   encoding: string;
   ignored_columns: string[];
   created_at: string;
+  /** @nullable */
+  applied_at: string | null;
+  /** Al aplicarla. */
+  result: StockImportResult | null;
 }

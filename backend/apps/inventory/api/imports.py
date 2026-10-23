@@ -31,6 +31,13 @@ CSV: dict[Any, Any] = {(200, "text/csv"): OpenApiTypes.BINARY}
 PERMISSION = "inventory.adjust"  # un lote de ajustes; `products.import` es del catálogo
 
 
+class StockImportResultSerializer(serializers.Serializer[Any]):
+    applied = serializers.IntegerField(help_text="Filas con su ajuste en el ledger.")
+    unchanged = serializers.IntegerField()
+    stale = serializers.IntegerField(help_text="Celdas que cambiaron desde la previsualización.")
+    failed = serializers.IntegerField(help_text="Filas válidas que fallaron al aplicar.")
+
+
 class StockImportSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     status = serializers.ChoiceField(choices=DataImport.Status.choices)
@@ -51,6 +58,10 @@ class StockImportSerializer(serializers.Serializer[Any]):
         child=serializers.CharField(), source="summary.ignored_columns"
     )
     created_at = serializers.DateTimeField()
+    applied_at = serializers.DateTimeField(allow_null=True)
+    result = StockImportResultSerializer(
+        source="summary.result", allow_null=True, help_text="Al aplicarla."
+    )
 
 
 class StockImportRowSerializer(serializers.Serializer[Any]):
@@ -158,3 +169,46 @@ class StockImportRowsView(generics.ListAPIView):
         wanted.is_valid(raise_exception=True)
         rows = stock_import_rows(_found(self.kwargs["import_id"]).pk)
         return rows.filter(**wanted.validated_data)
+
+
+class StockImportApplyView(APIView):
+    required_permissions = {"POST": PERMISSION}
+
+    @extend_schema(
+        operation_id="inventory_imports_apply",
+        tags=["inventory"],
+        request=None,
+        responses={200: StockImportSerializer, **errors(401, 403, 404)},
+        description="Confirma la importación: cada fila válida deja su celda con la cantidad del "
+        "archivo (un ajuste en el ledger). Una celda que cambió desde la previsualización queda "
+        "`STALE` y no se toca. Aplicar otra vez no cambia nada.",
+    )
+    def post(self, request: Request, import_id: UUID, **kwargs: Any) -> Response:
+        try:
+            job = imports.apply(_tenant(), import_id=import_id)
+        except DataImport.DoesNotExist:
+            raise NotFound from None
+        return Response(StockImportSerializer(job).data)
+
+
+class StockImportErrorsView(APIView):
+    required_permissions = {"GET": PERMISSION}
+
+    @extend_schema(
+        operation_id="inventory_imports_errors",
+        tags=["inventory"],
+        responses={**CSV, **errors(401, 403, 404)},
+        description="Las filas con `ERROR` o `STALE`, en CSV, con sus errores.",
+    )
+    def get(self, request: Request, import_id: UUID, **kwargs: Any) -> HttpResponse:
+        wrong = (DataImportRow.Action.ERROR, DataImportRow.Action.STALE)
+        rows = stock_import_rows(_found(import_id).pk).filter(action__in=wrong).order_by("id")
+        report = csvfile.write(
+            ["linea", *imports.COLUMNS, "accion", "errores"],
+            (
+                [r.row_number, *map(r.raw.get, imports.COLUMNS), r.action, " | ".join(r.errors)]
+                for r in rows
+            ),
+        )
+        headers = {"Content-Disposition": 'attachment; filename="errores-stock.csv"'}
+        return HttpResponse(report, "text/csv; charset=utf-8", headers=headers)
