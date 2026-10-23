@@ -15,6 +15,9 @@ from typing import Any
 import openpyxl.xml
 import pytest
 from openpyxl import Workbook
+from openpyxl.cell.text import Text
+from openpyxl.worksheet._reader import WorkSheetParser
+from openpyxl.xml.functions import fromstring
 
 from apps.imports import csvfile, xlsxfile
 from apps.imports.csvfile import Unreadable
@@ -404,3 +407,216 @@ def test_rows_and_cells_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
     assert xlsxfile.read(four, ALIASES).rows == []
     monkeypatch.setattr(xlsxfile, "MAX_CELLS", 3)
     assert refused(four) == "La hoja pasa de 3 celdas: deja solo la plantilla."
+
+
+def test_a_row_is_capped_before_openpyxl_reads_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openpyxl arma una fila entera antes de leerla: una de 700 000 celdas costaba +340 MiB y
+    1,6 s antes de que contara el presupuesto. Sus elementos se cuentan mientras llega el XML."""
+    assert xlsxfile.MAX_UNIT == 16_384  # las columnas de Excel
+    real, parsed = WorkSheetParser.parse_row, []
+
+    def parse_row(parser: Any, row: Any) -> Any:
+        parsed.append(len(row))
+        return real(parser, row)
+
+    monkeypatch.setattr(WorkSheetParser, "parse_row", parse_row)
+    monkeypatch.setattr(xlsxfile, "MAX_UNIT", 10)  # la cabecera: la fila y 3 × (c, is, t)
+    wide = [handmade(HEADER + '<row r="2">' + "<c><v>1</v></c>" * n + "</row>") for n in (4, 5)]
+    assert len(xlsxfile.read(wide[0], ALIASES).rows) == 1  # la fila y 4 × (c, v): 9
+    parsed.clear()
+    assert refused(wide[1]) == xlsxfile.TOO_FULL and parsed == [3]  # 11: ni se arma
+    monkeypatch.setattr(xlsxfile, "MAX_UNIT", 9)
+    parsed.clear()
+    assert refused(handmade()) == xlsxfile.TOO_FULL and parsed == []
+
+
+NOT_ROWS = (
+    '<cols><col min="1" max="2" width="9"/></cols><sheetData>{}</sheetData>'
+    '<mergeCells><mergeCell ref="A2:B2"/></mergeCells>'
+    '<conditionalFormatting sqref="A2"><cfRule type="cellIs" priority="1" operator="equal">'
+    "<formula>1</formula></cfRule></conditionalFormatting>"
+    '<dataValidations><dataValidation type="whole" sqref="A2"><formula1>1</formula1>'
+    '</dataValidation></dataValidations><hyperlinks><hyperlink ref="A2" location="h!A1"/>'
+    "</hyperlinks>"
+)
+
+
+def test_what_is_not_a_row_is_dropped_but_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Columnas, celdas combinadas, formatos condicionales, validaciones y enlaces: openpyxl los
+    armaba enteros fuera del presupuesto (hasta +137 MiB y 1,35 s). Solo se leen las filas; el
+    resto se tira y cuenta en `MAX_NODES`, con todos los elementos de la hoja."""
+    assert xlsxfile.MAX_NODES == 3 * xlsxfile.MAX_CELLS  # una celda con texto: c, is y t
+    row = '<row r="2"><c r="A2" t="inlineStr"><is><t>A</t></is></c></row>'
+    sheet = f'<worksheet xmlns="{MAIN}">{NOT_ROWS.format(HEADER + row)}</worksheet>'
+    data = handmade(parts={"xl/worksheets/sheet1.xml": sheet})
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 28)  # 10 + 4 de filas y 14 del resto
+    assert xlsxfile.read(data, ALIASES).rows == [(2, {"sku": "A", "almacen": "", "cantidad": ""})]
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 27)
+    assert refused(data) == xlsxfile.TOO_FULL
+
+
+def test_what_is_dropped_is_freed_as_it_closes() -> None:
+    """Ni lo que no es fila ni las filas ya leídas se quedan en el árbol: 50 000 de cada."""
+    sheet = NOT_ROWS.replace("<mergeCell ", '<mergeCell ref="A1:B1"/>' * 50_000 + "<mergeCell ")
+    xml = f'<worksheet xmlns="{MAIN}">{sheet.format("<row/>" * 50_000)}</worksheet>'.encode()
+    source = io.BytesIO(xml)
+    tracemalloc.start()
+    try:
+        rows = sum(1 for _ in xlsxfile._units(source, xlsxfile.ROW, 10**6, "x"))
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert rows == 50_000
+    assert peak < 1 << 20, peak  # sin quitarlos, unos 30 MiB
+
+
+SST = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"
+
+
+def with_strings(texts: str, rows: str) -> bytes:
+    """Un XLSX con la tabla de textos compartidos `texts` (los `<si>`) y las filas `rows`."""
+    parts: dict[str, bytes | str] = {"xl/sharedStrings.xml": f'<sst xmlns="{MAIN}">{texts}</sst>'}
+    return handmade(HEADER + rows, types=override(SST, "/xl/sharedStrings.xml"), parts=parts)
+
+
+def test_the_shared_strings_are_capped_while_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openpyxl arma la tabla entera: 581 991 textos costaban +110 MiB y 2,3 s. Caben tantos como
+    celdas (`MAX_CELLS`: son los de todas las hojas); sus elementos cuentan en `MAX_NODES` y los de
+    cada texto en `MAX_UNIT`, como en la hoja."""
+    texts = (
+        "<si><t>A</t></si><si><r><t>B</t></r></si>" + "<si><r><t>z</t></r><r><t>z</t></r></si>" * 4
+    )
+    data = with_strings(
+        texts, '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="B2" t="s"><v>1</v></c></row>'
+    )
+    rows = [(2, {"sku": "A", "almacen": "B", "cantidad": ""})]
+    monkeypatch.setattr(xlsxfile, "MAX_CELLS", 6)  # 6 textos y 5 celdas
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 26)  # sst, 2, 3 y 4 × 5 (la hoja tiene 17)
+    assert xlsxfile.read(data, ALIASES).rows == rows
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 25)
+    assert refused(data) == xlsxfile.TOO_MANY_TEXTS
+    monkeypatch.setattr(xlsxfile, "MAX_NODES", 26)
+    monkeypatch.setattr(xlsxfile, "MAX_CELLS", 5)
+    assert refused(data) == xlsxfile.TOO_MANY_TEXTS
+    monkeypatch.undo()
+    monkeypatch.setattr(xlsxfile, "MAX_UNIT", 4)  # los últimos tienen 5 (y la cabecera, 10)
+    assert refused(data) == xlsxfile.TOO_MANY_TEXTS
+
+
+def test_as_many_shared_strings_as_cells_fit() -> None:
+    """Excel guarda cada texto en la tabla, y la tabla es de todo el libro: 100 000 distintos."""
+    texts = "".join(f"<si><t>texto {n}</t></si>" for n in range(xlsxfile.MAX_CELLS))
+    row = '<row r="2"><c r="A2" t="s"><v>99999</v></c></row>'
+    blank = {"almacen": "", "cantidad": ""}
+    assert xlsxfile.read(with_strings(texts, row), ALIASES).rows == [
+        (2, {"sku": "texto 99999", **blank})
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "<t> a b </t>",
+        "<t/>",
+        "",
+        '<r><t>a</t></r><r><rPr><b/></rPr><t xml:space="preserve"> b</t></r>',
+        '<t>p</t><r><t>q</t></r><rPh sb="0" eb="1"><t>fonética</t></rPh>',
+        "<t>x005F_x</t>",
+        "<t>a</t><t>b</t>",  # el último
+    ],
+)
+def test_a_shared_string_reads_as_openpyxl_reads_it(text: str) -> None:
+    """Su `<t>` y el de cada tramo con formato, sin la fonética, como `Text.content`."""
+    same = Text.from_tree(fromstring(f'<si xmlns="{MAIN}">{text}</si>')).content
+    row = '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="C2"><v>1</v></c></row>'
+    sheet = xlsxfile.read(with_strings(f"<si>{text}</si>", row), ALIASES)
+    assert sheet.rows == [(2, {"sku": same.replace("x005F_", ""), "almacen": "", "cantidad": "1"})]
+
+
+def test_a_long_tag_is_refused_before_it_is_built(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Los atributos de una etiqueta se arman antes de su evento: 270 000 costaban +140 MiB. No
+    pasan más de `MAX_QUIET` bytes sin un elemento; el texto más largo de Excel sí cabe."""
+    assert xlsxfile.MAX_QUIET == 256 * 1024
+    longest = "".join(chr(0x4E00 + n % 20_000) for n in range(32_767))  # 3 bytes cada uno
+    row = f'<row r="2"><c r="A2" t="inlineStr"><is><t>{longest}</t></is></c></row>'
+    blank = {"almacen": "", "cantidad": ""}
+    assert xlsxfile.read(handmade(HEADER + row), ALIASES).rows == [(2, {"sku": longest, **blank})]
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 10**6)  # solo este tope
+    attrs = "".join(f' a{n}="1"' for n in range(30_000))  # unos 270 KB
+    data = handmade(HEADER + f'<row r="2"{attrs}/>')
+    tracemalloc.start()
+    try:
+        assert refused(data) == xlsxfile.TOO_FULL
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 << 20, peak  # armados, unos 10 MiB
+
+
+def test_distinct_names_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El parser guarda cada nombre distinto de etiqueta o de atributo, aunque el elemento se
+    tire: 425 000 costaban +130 MiB."""
+    assert xlsxfile.MAX_NAMES == 1024
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 8)  # worksheet, sheetData, row, c, is, t, `r` y `t`
+    assert xlsxfile.read(handmade(), ALIASES).rows == []
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 7)
+    assert refused(handmade()) == xlsxfile.TOO_FULL
+
+
+def test_row_attributes_are_not_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openpyxl guarda los atributos de cada fila que trae más que `r`: no se usan."""
+    real, kept = WorkSheetParser.parse_row, []
+
+    def parse_row(parser: Any, row: Any) -> Any:
+        kept.append(len(parser.row_dimensions))
+        return real(parser, row)
+
+    monkeypatch.setattr(WorkSheetParser, "parse_row", parse_row)
+    rows = "".join(f'<row r="{n}" ht="20"><c r="A{n}"><v>1</v></c></row>' for n in (2, 3, 4))
+    assert len(xlsxfile.read(handmade(HEADER + rows), ALIASES).rows) == 3
+    assert kept == [0, 0, 0, 0]
+
+
+def spread(count: int, tag: str = "x") -> str:
+    """`count` atributos distintos, 16 por elemento `tag`."""
+    names = [f' a{n}="1"' for n in range(count)]
+    return "".join(f"<{tag}{''.join(names[n : n + 16])}/>" for n in range(0, count, 16))
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda xml: handmade(
+            parts={"xl/styles.xml": f'<styleSheet xmlns="{MAIN}">{xml}</styleSheet>'}
+        ),
+        lambda xml: handmade(order=FIRST + xml),
+        lambda xml: handmade(links=LINK + xml),
+        lambda xml: handmade(types=xml),
+    ],
+    ids=["estilos", "libro", "relaciones", "tipos"],
+)
+def test_the_parts_read_whole_are_walked_first(build: Callable[[str], bytes]) -> None:
+    """openpyxl arma enteros estilos, libro, relaciones y tipos (1 MiB cada uno): 150 000 nombres
+    distintos o los atributos de una sola etiqueta pasaban de 50 MiB. Se recorren antes con los
+    topes de la hoja."""
+    assert refused(build(spread(2 * xlsxfile.MAX_NAMES))) == xlsxfile.TOO_FULL_PART
+    try:  # openpyxl puede no aceptar esos elementos; los topes, sí
+        xlsxfile.read(build(spread(xlsxfile.MAX_NAMES // 2)), ALIASES)
+    except Unreadable as error:
+        assert str(error) == xlsxfile.DAMAGED
+
+
+def test_a_long_tag_in_a_part_read_whole_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 10**6)  # solo `MAX_QUIET`
+    attrs = "".join(f' a{n}="1"' for n in range(30_000))  # unos 270 KB
+    styles = f'<styleSheet xmlns="{MAIN}"{attrs}/>'
+    assert refused(handmade(parts={"xl/styles.xml": styles})) == xlsxfile.TOO_FULL_PART
+
+
+def test_the_parts_read_whole_share_one_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hasta 100 partes de 1 MiB: los elementos se cuentan entre todas, el libro también."""
+    assert xlsxfile.MAX_WHOLE_NODES == 32_768
+    monkeypatch.setattr(xlsxfile, "MAX_WHOLE_NODES", 7)  # tipos 2, relaciones 2 y libro 3
+    assert xlsxfile.read(handmade(), ALIASES).rows == []
+    monkeypatch.setattr(xlsxfile, "MAX_WHOLE_NODES", 6)
+    assert refused(handmade()) == xlsxfile.TOO_FULL_PART
