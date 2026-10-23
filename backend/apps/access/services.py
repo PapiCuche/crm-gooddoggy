@@ -60,7 +60,7 @@ def covers(held: Iterable[Scope | None], wanted: Scope | None) -> bool:
 _BY_PLACE = frozenset({Scope.TEAM, Scope.BRANCH})
 
 
-def _places(alias: str, members: Collection[UUID]) -> list[tuple[set[UUID], set[UUID]]]:
+def _places(alias: str, members: Iterable[UUID]) -> list[tuple[set[UUID], set[UUID]]]:
     """Equipos y sucursal de cada miembro, leídos bajo el bloqueo de RBAC: los cambios de equipo
     y de sucursal lo toman también (D-F2-13), así que no cambian mientras se decide."""
     memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
@@ -109,7 +109,7 @@ class _Actor:
             raise AccessDenied(Denied.SENSITIVE)
 
     def must_cover_where(
-        self, grants: Iterable[tuple[str, str | None]], members: Collection[UUID]
+        self, grants: Iterable[tuple[str, str | None]], members: Iterable[UUID]
     ) -> None:
         """D-F2-16: cada concesión `TEAM` o `BRANCH` que esos miembros ganan o pierden se cubre en
         sus equipos o en su sucursal, como `must_cover_in` (D-F2-13). Se llama después de

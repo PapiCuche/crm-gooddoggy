@@ -19,7 +19,12 @@ from apps.access.services import (
     remove_role,
     revoke_permission,
 )
-from apps.members.services import remove_team_member, set_member_status
+from apps.members.services import (
+    put_team_member,
+    remove_team_member,
+    set_member_branch,
+    set_member_status,
+)
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_scoped_coverage
 from tests.factories import make_user
@@ -193,3 +198,98 @@ def test_leaving_the_team_while_waiting_stops_the_assignment(
     before = writes(migrator)
     assert race(placed.a, changes, hold="ana") == {"ana": "ok", "luis": Denied.ESCALATION}
     assert writes(migrator) == (before[0], before[1], before[2] + 1)  # solo lo de ana
+
+
+def holders(s: Any, grants: dict[str, str | None]) -> UUID:
+    """Rol que tienen eva (soporte) y, después, zoe (ventas); luis gestiona roles y es de
+    soporte, pero no de ventas."""
+    give(s.a, s.m_luis, {"roles.manage": None})
+    add(s.a, s.support, s.m_luis)
+    zoe = join(s.a, make_user(email="zoe@example.com")).pk
+    add(s.a, s.sales, zoe)
+    shared = role(s.a, grants)
+    with tenant_scope(ctx(s.a)):
+        for member in (s.m_eva, zoe):
+            MembershipRole.objects.create(membership_id=member, role=shared)
+    return shared.pk
+
+
+def test_every_holder_counts_not_just_the_first(placed: Any) -> None:
+    grant = {"role_id": holders(placed, {}), "code": VIEW, "scope": "TEAM"}
+    assert attempt(placed, placed.luis, grant_permission, **grant) is Denied.ESCALATION
+    revoke = {"role_id": holders_again(placed), "code": VIEW}
+    assert attempt(placed, placed.luis, revoke_permission, **revoke) is Denied.ESCALATION
+
+
+def holders_again(s: Any) -> UUID:
+    """Otro rol, ya con `VIEW` `TEAM`, con los mismos dos titulares."""
+    shared = role(s.a, {VIEW: "TEAM"})
+    zoe = join(s.a, make_user(email="zoe2@example.com")).pk
+    add(s.a, s.sales, zoe)
+    with tenant_scope(ctx(s.a)):
+        for member in (s.m_eva, zoe):
+            MembershipRole.objects.create(membership_id=member, role=shared)
+    return shared.pk
+
+
+def test_an_inactive_team_membership_still_counts(placed: Any) -> None:
+    """Como en `execution_context`: una pertenencia inactiva también cuenta."""
+    add(placed.a, placed.support, placed.m_luis)
+    add(placed.a, placed.sales, placed.m_eva, is_active=False)
+    wanted = {"membership_id": placed.m_eva, "role_id": placed.team_role}
+    assert attempt(placed, placed.luis, assign_role, **wanted) is Denied.ESCALATION
+
+
+def test_the_member_places_are_read_under_the_lock(
+    placed: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """Lado del miembro de la carrera: ana pone a eva en ventas (o la cambia de sucursal) y
+    retiene su transacción; luis, que espera, ya ve el lugar nuevo."""
+    add(placed.a, placed.support, placed.m_luis)
+    joining = {
+        "ana": (
+            placed.ana,
+            lambda t: put_team_member(t, team_id=placed.sales, membership_id=placed.m_eva),
+        ),
+        "luis": (
+            placed.luis,
+            lambda t: assign_role(t, membership_id=placed.m_eva, role_id=placed.team_role),
+        ),
+    }
+    assert race(placed.a, joining, hold="ana") == {"ana": "ok", "luis": Denied.ESCALATION}
+    lima, cusco = branch(placed.a, "LIM"), branch(placed.a, "CUZ")
+    give(placed.a, placed.m_luis, {EDIT: "BRANCH"})
+    migrator.execute(SET_BRANCH, [lima.pk, placed.m_luis])
+    migrator.execute(SET_BRANCH, [lima.pk, placed.m_eva])
+    edit_role = role(placed.a, {EDIT: "BRANCH"}).pk
+    moving = {
+        "ana": (
+            placed.ana,
+            lambda t: set_member_branch(t, membership_id=placed.m_eva, branch_id=cusco.pk),
+        ),
+        "luis": (
+            placed.luis,
+            lambda t: assign_role(t, membership_id=placed.m_eva, role_id=edit_role),
+        ),
+    }
+    assert race(placed.a, moving, hold="ana") == {"ana": "ok", "luis": Denied.ESCALATION}
+
+
+def test_suspending_or_moving_covers_every_place_of_the_member(
+    placed: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """Suspender o mover exige cubrir todo lo que tiene el miembro, como para quitarle sus
+    roles: sus concesiones `BRANCH` en su sucursal y también las `TEAM` en sus equipos, aunque
+    la sucursal no cambie sus equipos."""
+    lima = branch(placed.a, "LIM")
+    give(placed.a, placed.m_eva, {EDIT: "BRANCH"})
+    give(placed.a, placed.m_luis, {EDIT: "BRANCH"})
+    migrator.execute(SET_BRANCH, [lima.pk, placed.m_eva])
+    suspend = {"membership_id": placed.m_eva, "status": "SUSPENDED"}
+    assert attempt(placed, placed.luis, set_member_status, **suspend) is Denied.ESCALATION
+    migrator.execute(SET_BRANCH, [lima.pk, placed.m_luis])
+    give(placed.a, placed.m_eva, {VIEW: "TEAM"})  # eva es de soporte; luis, no
+    move = {"membership_id": placed.m_eva, "branch_id": None}
+    assert attempt(placed, placed.luis, set_member_branch, **move) is Denied.ESCALATION
+    add(placed.a, placed.support, placed.m_luis)
+    assert attempt(placed, placed.luis, set_member_branch, **move) is None
