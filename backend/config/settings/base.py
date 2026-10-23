@@ -212,6 +212,7 @@ SPECTACULAR_SETTINGS = {
         "ImportRowActionEnum": "apps.imports.models.DataImportRow.Action",
         "ContactSourceEnum": "apps.contacts.models.Source",  # F4-02
         "ContactDocumentTypeEnum": "apps.contacts.models.DocumentType",
+        "TagAppliesToEnum": "apps.contacts.models.TagTarget",  # F4-11
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.

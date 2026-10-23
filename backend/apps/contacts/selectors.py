@@ -8,7 +8,7 @@ from uuid import UUID
 from django.db.models import F, Q, QuerySet
 from django.db.models.lookups import BuiltinLookup
 
-from apps.contacts.models import Contact, Note, dialed
+from apps.contacts.models import Contact, Note, Tag, dialed
 
 _PHONE_QUERY = re.compile(r"\+[0-9]{1,15}")  # el comienzo de un E.164, solo cifras ASCII
 
@@ -48,3 +48,8 @@ def search(found: QuerySet[Contact], text: str) -> QuerySet[Contact]:
 
 def notes(contact_id: UUID) -> QuerySet[Note]:  # ver el contacto lo decide quien las sirve
     return Note.objects.filter(contact_id=contact_id, deleted_at__isnull=True)
+
+
+def tags() -> QuerySet[Tag]:
+    """Las etiquetas de contactos de la organización, activas o no (F4-11)."""
+    return Tag.objects.filter(applies_to=Tag.Target.CONTACT)

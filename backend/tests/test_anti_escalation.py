@@ -50,6 +50,7 @@ DELEGATE = {"roles.manage": None, "users.manage": None, VIEW: "TEAM"}  # sin ser
 ADMIN_REST = (
     "organization.view",
     "branches.manage",
+    "settings.manage",  # F4-11
     "users.view",
     "users.invite",
     "teams.view",

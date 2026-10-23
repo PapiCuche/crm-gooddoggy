@@ -697,6 +697,9 @@
     "branches": {
       "manage": "Administrar sucursales"
     },
+    "settings": {
+      "manage": "Administrar la configuración"
+    },
     "users": {
       "view": "Ver miembros",
       "manage": "Administrar miembros",
