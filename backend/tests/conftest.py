@@ -35,6 +35,7 @@ TENANT_TABLES = ("categories", *TENANT_TABLES)  # F3-04
 TENANT_TABLES = ("product_variants", "products", *TENANT_TABLES)  # F3-06: delante de marcas
 TENANT_TABLES = ("warehouses", *TENANT_TABLES)  # F3-08: delante de las sucursales
 TENANT_TABLES = ("inventory_movements", "inventory_levels", *TENANT_TABLES)  # F3-09
+TENANT_TABLES = ("data_import_rows", "data_imports", *TENANT_TABLES)  # F3-20: a las membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
