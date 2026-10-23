@@ -46,7 +46,9 @@ from tests.test_memberships import ctx, join
 pytestmark = pytest.mark.usefixtures("tenant_db")
 EDIT = "widgets.manage"  # segundo permiso de prueba con alcance
 DELEGATE = {"roles.manage": None, "users.manage": None, VIEW: "TEAM"}  # sin ser Owner
-# Lo que lleva la plantilla «Administrador» además de `users.manage`, su único permiso sensible.
+# La plantilla «Administrador» sin `users.manage` (que `luis` ya tiene por DELEGATE). Lleva otros
+# sensibles (`prices.manage` y `prices.bulk_update`, F3-40): con ella `luis` la cubre entera, y
+# asignarla sigue siendo SENSITIVE porque no es Owner.
 ADMIN_REST = (
     "organization.view",
     "branches.manage",
@@ -60,6 +62,13 @@ ADMIN_REST = (
     "products.import",
     "categories.manage",
     "brands.manage",
+    "prices.view",  # F3-40: los precios, sin los costos
+    "prices.view_wholesale",
+    "prices.view_distributor",
+    "prices.view_internal",
+    "prices.manage",
+    "prices.bulk_update",
+    "promotions.manage",
     "inventory.view",  # F3-08: el inventario
     "inventory.manage",
     "inventory.adjust",
@@ -375,7 +384,7 @@ def test_assign_requires_covering_every_grant_of_the_role(
     roles, before = rbac.roles, state(migrator)
     to_eva = {"membership_id": rbac.m_eva}
     for code, reason in (("admin", Denied.SENSITIVE), ("owner", Denied.ESCALATION)):
-        kwargs = {**to_eva, "role_id": roles[code].pk}  # admin lleva users.manage; luis no es Owner
+        kwargs = {**to_eva, "role_id": roles[code].pk}  # admin lleva sensibles; luis no es Owner
         assert denied(rbac.a, rbac.luis, assign_role, **kwargs) is reason
     for foreign in (
         {**to_eva, "role_id": uuid4()},

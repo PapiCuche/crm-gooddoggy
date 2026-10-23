@@ -73,6 +73,7 @@ def test_catalog_is_synced_and_scope_is_never_part_of_a_code(
 ) -> None:
     assert catalog_rows() == EXPECTED
     sensitive = {"organization.manage", "users.manage", "roles.manage", "audit.view"}
+    sensitive |= {"prices.manage", "prices.bulk_update", "product_cost.view", "product_cost.manage"}
     assert {p.code for p in PERMISSIONS if p.is_sensitive} == sensitive
     owners = [template for template in ROLE_TEMPLATES if template.is_owner_role]
     assert len(owners) == 1 and set(owners[0].grants) == set(BY_CODE)

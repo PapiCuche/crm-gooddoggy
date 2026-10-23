@@ -52,6 +52,7 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
         "contacts.view",
         "inventory.view",
         "organization.view",
+        "prices.view",  # F3-40
         "products.view",
     ]  # en su siguiente petición
     listed = ana.get("/api/v1/o/org-a/members/").json()["results"]
