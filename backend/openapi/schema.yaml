@@ -1331,6 +1331,57 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    post:
+      operationId: contacts_create
+      description: 'Crea un contacto: quien lo crea es su creador y responsable, en
+        la sucursal de su membresía (o ninguna). Un 400 nombra el campo sin repetir
+        el dato.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactCreateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/contacts/{contact_id}/:
     get:
       operationId: contacts_retrieve
@@ -1359,6 +1410,110 @@ paths:
               schema:
                 $ref: '#/components/schemas/Contact'
           description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    patch:
+      operationId: contacts_update
+      description: 'Cambia lo enviado si `version` sigue vigente (409 `CONTACT_VERSION_CONFLICT`
+        si no). Exige también `contacts.view`; fuera del alcance de uno u otro: 404.'
+      parameters:
+      - in: path
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedContactUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: contacts_delete
+      description: 'Borrado lógico. Exige también `contacts.view`; fuera del alcance
+        de uno u otro, o ya borrado: 404.'
+      parameters:
+      - in: path
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - contacts
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
         '401':
           content:
             application/json:
@@ -4236,6 +4391,40 @@ components:
       - source
       - updated_at
       - version
+    ContactCreateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          description: Si no se envía, se forma con el nombre y el apellido.
+          maxLength: 200
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        primary_phone_e164:
+          type: string
+          nullable: true
+          description: 'E.164: `+` y el código del país; no se adivina.'
+          maxLength: 32
+        primary_email:
+          type: string
+          nullable: true
+          maxLength: 254
+        document_type:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ContactDocumentTypeEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        document_number:
+          type: string
+          nullable: true
+          description: Con su tipo.
+          maxLength: 32
+        source:
+          $ref: '#/components/schemas/ContactSourceEnum'
     ContactDocumentTypeEnum:
       enum:
       - DNI
@@ -5173,6 +5362,46 @@ components:
           format: uuid
           nullable: true
           description: Mueve la categoría con toda su rama; `null` la lleva a la raíz.
+    PatchedContactUpdateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+        primary_phone_e164:
+          type: string
+          nullable: true
+          description: 'E.164: `+` y el código del país; no se adivina.'
+          maxLength: 32
+        primary_email:
+          type: string
+          nullable: true
+          maxLength: 254
+        document_type:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ContactDocumentTypeEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        document_number:
+          type: string
+          nullable: true
+          description: Con su tipo.
+          maxLength: 32
+        source:
+          $ref: '#/components/schemas/ContactSourceEnum'
+        version:
+          type: integer
+          minimum: 1
+          description: 'La que se leyó. Si ya no es la vigente: 409.'
+      required:
+      - version
     PatchedProductUpdateRequest:
       type: object
       properties:
