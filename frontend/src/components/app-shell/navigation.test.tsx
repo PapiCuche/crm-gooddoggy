@@ -2,6 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CatalogNav } from "@/components/catalog/catalog-nav";
+import { InventoryNav } from "@/components/inventory/inventory-nav";
 import type { SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
@@ -170,6 +171,29 @@ describe("navegación del shell", () => {
     expect(holds(catalog, "/o/acme", "/o/acme/catalogo/categorias")).toBe(true);
     expect(holds(catalog, "/o/acme", "/o/acme/catalogos/x")).toBe(false);
     expect(holds(catalog, "/o/otra", "/o/acme/catalogo/categorias")).toBe(false);
+  });
+
+  it("«Inventario» pide `inventory.view`, va tras «Catálogo» y cubre sus pestañas", async () => {
+    route.pathname = "/o/acme/inventario/almacenes";
+    const all = ["audit.view", "inventory.view", "products.view"].map((code) => ({
+      code,
+      scopes: [],
+    }));
+    expect((await links(all)).slice(1)).toEqual([
+      ["/o/acme/catalogo/marcas", null],
+      ["/o/acme/inventario/almacenes", "page"],
+      ["/o/acme/auditoria", null],
+    ]);
+    const inventory = NAVIGATION.find((item) => item.key === "inventory")!;
+    expect(holds(inventory, "/o/acme", "/o/acme/inventarios")).toBe(false);
+    renderApp(
+      <TenantProvider value={ana}>
+        <InventoryNav />
+      </TenantProvider>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Secciones del inventario" });
+    const link = within(nav).getByRole("link", { name: "Almacenes", current: "page" });
+    expect(link).toHaveAttribute("href", "/o/acme/inventario/almacenes");
   });
 
   it("CatalogNav enlaza las páginas del catálogo y marca la abierta, también con la barra final", () => {

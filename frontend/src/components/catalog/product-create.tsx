@@ -27,11 +27,12 @@ const FIELDS = [
 const TYPES: ProductTypeEnum[] = ["PHYSICAL", "SERVICE"];
 
 // Un `select` del formulario, con sus opciones `[valor, texto]`. Mientras se envía no cambia:
-// lo enviado es lo que se ve.
-function Choice({
+// lo enviado es lo que se ve. Un error sustituye a la ayuda y se anuncia, como en `TextField`.
+export function Choice({
   label,
   value,
   hint,
+  error,
   busy,
   onChange,
   options,
@@ -39,11 +40,13 @@ function Choice({
   label: string;
   value: string;
   hint?: string;
+  error?: string;
   busy: boolean;
   onChange: (value: string) => void;
   options: [string, string][];
 }) {
   const id = useId();
+  const note = error || hint;
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={id} className="text-sm font-medium">
@@ -54,8 +57,9 @@ function Choice({
         id={id}
         value={value}
         aria-disabled={busy}
-        aria-describedby={hint ? `${id}-hint` : undefined}
-        className="bg-surface border-foreground/50 focus-visible:border-foreground h-11 w-full rounded-[10px] border px-3 text-[16px]"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={note ? `${id}-hint` : undefined}
+        className="bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger h-11 w-full rounded-[10px] border px-3 text-[16px]"
         onChange={(event) => busy || onChange(event.target.value)}
       >
         {options.map(([key, text]) => (
@@ -64,9 +68,13 @@ function Choice({
           </option>
         ))}
       </select>
-      {hint ? (
-        <p id={`${id}-hint`} className="text-muted text-sm">
-          {hint}
+      {note ? (
+        <p
+          id={`${id}-hint`}
+          role={error ? "alert" : undefined}
+          className={error ? "text-danger text-sm" : "text-muted text-sm"}
+        >
+          {note}
         </p>
       ) : null}
     </div>

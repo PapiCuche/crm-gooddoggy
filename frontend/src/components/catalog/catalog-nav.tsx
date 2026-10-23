@@ -15,14 +15,24 @@ const PAGES = [
 ] as const;
 
 // Navegación entre las páginas del catálogo (F3-05), encima de cada una.
-export function CatalogNav() {
-  const t = useTranslations("shell.catalog");
+export const CatalogNav = () => <SectionNav section="catalog" pages={PAGES} />;
+
+// Las pestañas de una entrada del menú con varias páginas (catálogo, inventario): `section` es
+// su espacio de mensajes en `shell`, con `label` y el nombre de cada página.
+export function SectionNav({
+  section,
+  pages,
+}: {
+  section: "catalog" | "inventory";
+  pages: readonly { key: string; path: string }[];
+}) {
+  const t = useTranslations(`shell.${section}`);
   const { organization } = useTenant();
   const pathname = usePathname().replace(/\/$/, "");
   return (
     <nav aria-label={t("label")} className="mb-6">
       <ul className="flex flex-wrap gap-2">
-        {PAGES.map((page) => {
+        {pages.map((page) => {
           const href = `/o/${organization.slug}${page.path}`;
           const current = pathname === href;
           return (
@@ -37,7 +47,7 @@ export function CatalogNav() {
                     : "border-border hover:bg-surface-raised active:bg-surface-raised",
                 )}
               >
-                {t(page.key)}
+                {t(page.key as "label")}
               </Link>
             </li>
           );
