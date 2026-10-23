@@ -4,9 +4,12 @@ Da la misma `csvfile.Sheet` que el CSV (columnas por alias, filas vacías fuera,
 de columnas ignoradas): previsualizar, aplicar y el informe no cambian. La línea es la fila de
 Excel. Los topes van antes de que openpyxl (fijada) lea nada, con los metadatos del ZIP: partes,
 bytes descomprimidos en total y razón de compresión de cada parte; sin cifrado y solo `stored` o
-`deflate`. `zipfile` no descomprime más de lo que declara cada parte, así que el total acota la
-memoria. Es un XLSX por su firma: un ZIP cuyo `[Content_Types].xml` declara un solo libro, del
-tipo `.xlsx` (no `.xlsm` ni plantillas); la extensión y el `Content-Type` no cuentan.
+`deflate`. Esos tamaños los declara quien sube el archivo, y `ZipFile.read()` descomprime el flujo
+entero antes de recortarlo a lo declarado (una parte que dice 9 MiB puede inflarse a 1 GiB). Por
+eso ni la firma ni openpyxl leen el ZIP subido: cada parte se descomprime por trozos de 64 KiB,
+que nunca pasan de lo que declara, debe dar justo eso, y va a un ZIP nuevo sin comprimir, que es
+el único que se lee. Es un XLSX por su firma: un ZIP cuyo `[Content_Types].xml` declara un solo
+libro, del tipo `.xlsx` (no `.xlsm` ni plantillas); la extensión y el `Content-Type` no cuentan.
 
 openpyxl lee el XML con defusedxml (sin entidades ni DTD externas): sin ella, el módulo no carga.
 Solo se lee la primera hoja declarada, con el parser de filas de openpyxl y no con su hoja de
@@ -40,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 MAX_PARTS, MAX_UNPACKED, MAX_RATIO = 100, 10 * MAX_BYTES, 100
 MAX_CELLS, MAX_LINE = 100_000, 1_048_576  # celdas leídas (una fila vacía cuenta una); la de Excel
+CHUNK = 65_536  # `read(n)` descomprime como mucho `n` bytes; `read()`, el flujo entero
 ZIP = b"PK\x03\x04"
 METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 WORKBOOKS = (XLSX, XLSM, XLTX, XLTM)
@@ -66,6 +70,26 @@ def _parts(archive: zipfile.ZipFile) -> None:
     if sum(part.file_size for part in parts) > MAX_UNPACKED:
         mb = MAX_UNPACKED // MAX_BYTES
         raise Unreadable(f"El Excel pasa de {mb} MB descomprimido: deja solo la hoja de datos.")
+
+
+def _unpacked(data: bytes) -> bytes:
+    """El ZIP subido, con los topes de sus metadatos y cada parte descomprimida por trozos hasta lo
+    que declara (nunca más), en un ZIP sin comprimir. Una parte que no da justo lo declarado está
+    dañada: así los topes de `_parts`, hechos con lo declarado, valen para lo real."""
+    out = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(data)) as archive,
+        zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as clean,
+    ):
+        _parts(archive)
+        for part in archive.infolist():
+            size = 0
+            with archive.open(part) as source, clean.open(part.filename, "w") as target:
+                while chunk := source.read(CHUNK):
+                    size += target.write(chunk)
+            if size != part.file_size:
+                raise Unreadable(DAMAGED)
+    return out.getvalue()
 
 
 def _signature(archive: zipfile.ZipFile) -> None:
@@ -103,8 +127,8 @@ def _first_sheet(data: bytes) -> tuple[ExcelReader, str]:
 
 
 def _read(data: bytes, aliases: Mapping[str, Iterable[str]]) -> Sheet:
+    data = _unpacked(data)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        _parts(archive)
         _signature(archive)
     reader, path = _first_sheet(data)
     wb = reader.wb

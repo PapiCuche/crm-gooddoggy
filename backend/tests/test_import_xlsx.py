@@ -5,7 +5,10 @@ parte a parte, con el XML que escribiría Excel."""
 
 import datetime
 import io
+import struct
+import tracemalloc
 import zipfile
+import zlib
 from typing import Any
 
 import openpyxl.xml
@@ -187,6 +190,44 @@ def plus(name: str, method: int = zipfile.ZIP_DEFLATED, *, locked: bool = False)
     if locked:
         data[data.rindex(b"PK\x01\x02") + 8] |= 0x1
     return bytes(data)
+
+
+def declare(data: bytes, name: str, size: int, content: bytes) -> bytes:
+    """`data` con la parte `name` declarando `size` bytes descomprimidos y el CRC de `content`, en
+    su cabecera local y en el directorio central: lo que miente un archivo hostil."""
+    raw, crc = bytearray(data), zlib.crc32(content)
+    local = zipfile.ZipFile(io.BytesIO(data)).getinfo(name).header_offset
+    struct.pack_into("<I", raw, local + 14, crc)
+    struct.pack_into("<I", raw, local + 22, size)
+    central = raw.index(b"PK\x01\x02")
+    while raw[central + 46 : central + 46 + len(name)] != name.encode():
+        central = raw.index(b"PK\x01\x02", central + 1)
+    struct.pack_into("<I", raw, central + 16, crc)
+    struct.pack_into("<I", raw, central + 24, size)
+    return bytes(raw)
+
+
+@pytest.mark.parametrize("name", ["[Content_Types].xml", "xl/workbook.xml"])
+def test_a_part_that_inflates_past_what_it_declares_is_never_inflated(name: str) -> None:
+    """Dice 64 KiB (razón 4, pasa los topes) con el CRC de esos 64 KiB, pero su flujo da 16 MiB:
+    `ZipFile.read()` los descomprimiría todos antes de recortar. Se lee por trozos, hasta 64 KiB."""
+    small = 65_536
+    bomb = declare(handmade(parts={name: b" " * (16 << 20)}), name, small, b" " * small)
+    tracemalloc.start()
+    try:
+        assert refused(bomb) == xlsxfile.DAMAGED  # 64 KiB de espacios no son XML
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 << 20, peak
+
+
+def test_a_part_shorter_than_what_it_declares_is_damaged() -> None:
+    content = f"{TYPES}{override(XLSX)}</Types>".encode()
+    name = "[Content_Types].xml"
+    short = declare(handmade(), name, len(content) + 1, content)
+    assert refused(short) == xlsxfile.DAMAGED
+    assert xlsxfile.read(declare(handmade(), name, len(content), content), ALIASES).rows == []
 
 
 def test_a_part_that_is_not_plain_zip_is_refused() -> None:
