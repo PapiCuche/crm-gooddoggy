@@ -16,6 +16,7 @@ from apps.inventory.models import InventoryLevel, InventoryMovement, Warehouse
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.factories import make_user
+from tests.test_import_xlsx import book
 from tests.test_inventory_stock import cell, level, move, wanted
 from tests.test_memberships import ctx, join
 
@@ -119,6 +120,28 @@ def test_an_update_and_the_same_file_again_only_warns(world: Any) -> None:
         preview(world.a, world.ana, "sku,almacen,cantidad\nIP16,ALM,5\n").summary["duplicate_of"]
         is None
     )
+
+
+def test_an_xlsx_previews_like_its_csv_whatever_its_name(world: Any) -> None:
+    """Lo decide la firma del archivo, no su nombre: un XLSX llamado `.csv` y al revés."""
+    move(world.a, world.ana, wanted(cell(world.a), "RECEIPT", 2))
+    table: list[list[Any]] = [["sku", "Almacén", "cantidad", "nota"], ["IP16", "alm", 4, "x"]]
+    table += [["IP16", "ALM", "1.5"], [], ["NOPE", "ALM", 1]]
+    csv = "\n".join(",".join(map(str, row)) for row in table).encode()
+    jobs = []
+    for name, data in (("conteo.xlsx", csv), ("conteo.csv", book(*table))):
+        with tenant_scope(ctx(world.a, world.ana)) as tenant:
+            jobs.append(imports.preview(tenant, file_name=name, data=data))
+    seen = [
+        [(r.row_number, r.action, r.raw, r.normalized, r.errors) for r in rows(world.a, j).values()]
+        for j in jobs
+    ]
+    assert seen[0] == seen[1] and [line for line, *_ in seen[0]] == [2, 3, 5]
+    counts = [
+        (j.total_rows, j.error_rows, j.update_count, j.summary["ignored_columns"]) for j in jobs
+    ]
+    assert counts == [(3, 2, 1, ["nota"])] * 2
+    assert [j.summary["encoding"] for j in jobs] == ["utf-8", "xlsx"]
 
 
 def test_a_file_that_cannot_be_read_saves_nothing(

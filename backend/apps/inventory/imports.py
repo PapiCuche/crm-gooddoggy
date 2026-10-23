@@ -1,6 +1,8 @@
-"""Importar stock por CSV (F3-20, E04-07, ADR-028 §5): cantidades absolutas por SKU y almacén.
+"""Importar stock por CSV o XLSX (F3-20, F3-23, E04-07, ADR-028 §5): cantidades absolutas por SKU
+y almacén.
 
-Previsualizar no cambia el stock: lee el archivo (`apps.imports.csvfile`), valida cada fila
+Previsualizar no cambia el stock: lee el archivo (un ZIP con `apps.imports.xlsxfile`, que mira
+si es un XLSX por su firma; lo demás con `apps.imports.csvfile`), valida cada fila
 contra lo que hay y guarda la importación con sus filas y el `on_hand` que vio en cada celda.
 
 Aplicar (F3-21) es síncrono, en la transacción de la petición: bloquea la importación (dos
@@ -25,7 +27,7 @@ from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.catalog.selectors import live_variants
-from apps.imports import csvfile
+from apps.imports import csvfile, xlsxfile
 from apps.imports.models import DataImport, DataImportRow
 from apps.inventory import stock
 from apps.inventory.models import InventoryLevel, Warehouse
@@ -130,7 +132,7 @@ def preview(ctx: TenantContext, *, file_name: str, data: bytes) -> DataImport:
     `csvfile.Unreadable` si el archivo entero no se puede leer: no guarda nada."""
     alias = require_scope(ctx)
     assert ctx.user_id is not None  # noqa: S101 — la sube una persona (la API)
-    sheet = csvfile.read(data, COLUMNS)
+    sheet = (xlsxfile.read if xlsxfile.is_zip(data) else csvfile.read)(data, COLUMNS)
     if not sheet.rows:
         raise csvfile.Unreadable("El archivo no tiene filas, solo la cabecera.")
     digest = hashlib.sha256(data).hexdigest()
