@@ -1,6 +1,7 @@
 """Lecturas de precios, por organización (RLS y `TenantManager`). El permiso de la ruta lo exige
 quien las sirve (`HasPermission`); la visibilidad de cada lista, estas lecturas."""
 
+from collections.abc import Iterable
 from datetime import datetime
 from uuid import UUID
 
@@ -27,12 +28,25 @@ def _pair(variant_id: UUID, price_list_id: UUID) -> QuerySet[ProductPrice]:
     return ProductPrice.objects.filter(variant_id=variant_id, price_list_id=price_list_id)
 
 
+def _ruling(at: datetime) -> Q:
+    """`starts_at <= at < ends_at`: el inicio incluido, el fin excluido (NULL: sin fin)."""
+    return Q(starts_at__lte=at) & (Q(ends_at__isnull=True) | Q(ends_at__gt=at))
+
+
 def price_at(variant_id: UUID, price_list_id: UUID, at: datetime) -> ProductPrice | None:
-    """El precio que rige en `at`: `starts_at <= at < ends_at` (inicio incluido, fin excluido).
-    Sin comprobar la visibilidad de la lista: la decide quien pregunta (el motor, F3-43)."""
-    rows = _pair(variant_id, price_list_id).filter(starts_at__lte=at)
-    found: ProductPrice | None = rows.filter(Q(ends_at__isnull=True) | Q(ends_at__gt=at)).first()
+    """El precio que rige en `at`. Sin comprobar la visibilidad de la lista: la decide quien
+    pregunta (el motor, `services`)."""
+    found: ProductPrice | None = _pair(variant_id, price_list_id).filter(_ruling(at)).first()
     return found
+
+
+def prices_at(
+    variant_ids: Iterable[UUID], price_list_id: UUID, at: datetime
+) -> QuerySet[ProductPrice]:
+    """Los precios que rigen en `at` para varias variantes de una lista, en una consulta: como
+    mucho uno por variante (la `EXCLUDE`). Tampoco comprueba la visibilidad."""
+    rows = ProductPrice.objects.filter(variant_id__in=variant_ids, price_list_id=price_list_id)
+    return rows.filter(_ruling(at))
 
 
 def next_price(variant_id: UUID, price_list_id: UUID, after: datetime) -> ProductPrice | None:
