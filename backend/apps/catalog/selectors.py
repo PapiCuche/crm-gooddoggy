@@ -30,3 +30,10 @@ def variants(product_id: UUID) -> QuerySet[ProductVariant]:
     return ProductVariant.objects.filter(
         product_id=product_id, deleted_at__isnull=True, product__deleted_at__isnull=True
     )
+
+
+def live_variants() -> QuerySet[ProductVariant]:
+    """Las variantes vivas de productos vivos, con su producto (el inventario lee
+    `tracks_inventory`)."""
+    live = ProductVariant.objects.filter(deleted_at__isnull=True, product__deleted_at__isnull=True)
+    return live.select_related("product")
