@@ -4,11 +4,21 @@ El perfil CRM del cliente es de Good Doggy (ADR-028 §1). Lleva datos personales
 va a los logs, y la auditoría enmascara el documento (04 §N.1).
 """
 
+import re
+
 from django.db import models
 
 from core.db.models import TenantModel, uuid7_primary_key
 
 PHONE_E164 = r"^\+[1-9][0-9]{7,14}$"
+SEPARATORS = re.compile(r"[\s().-]")  # los que se escriben entre las cifras
+
+
+def dialed(value: str) -> str:
+    """Lo marcado, sin separadores y con el `00` internacional como `+`: lo que se compara con
+    E.164 al guardar un teléfono (F4-01) y al buscarlo (F4-07)."""
+    digits = SEPARATORS.sub("", value)
+    return f"+{digits[2:]}" if digits.startswith("00") else digits
 
 
 class DocumentType(models.TextChoices):
@@ -62,8 +72,10 @@ class Contact(TenantModel):
     class Meta:
         db_table = "contacts"
         indexes = [
-            models.Index(
-                fields=["organization_id", "primary_phone_e164"], name="contacts_org_phone_idx"
+            models.Index(  # `varchar_pattern_ops`: también el prefijo de la búsqueda (F4-07)
+                fields=["organization_id", "primary_phone_e164"],
+                opclasses=["uuid_ops", "varchar_pattern_ops"],
+                name="contacts_org_phone_idx",
             ),
             models.Index(
                 fields=["organization_id", "owner_user_id"], name="contacts_org_owner_idx"

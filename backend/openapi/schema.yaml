@@ -1273,8 +1273,10 @@ paths:
   /api/v1/o/{org_slug}/contacts/:
     get:
       operationId: contacts_list
-      description: Los contactos vivos dentro del alcance de `contacts.view`, paginados
-        por creación (ADR-016).
+      description: 'Los contactos vivos dentro del alcance de `contacts.view`, paginados
+        por creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente
+        se pide con el mismo `q`. 400: `q` repetido, de más de 254 caracteres o que
+        no es una línea de texto imprimible.'
       parameters:
       - name: cursor
         in: query
@@ -1296,6 +1298,16 @@ paths:
         schema:
           type: string
         required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 254
+        description: 'Busca dentro del alcance. Con `+` (o `00`) y cifras, ignorando
+          espacios, puntos, guiones y paréntesis: el teléfono empieza por ese prefijo
+          E.164. Si no: el nombre contiene el texto o el correo empieza por él, sin
+          distinguir mayúsculas. Unas cifras sin `+` no son un teléfono. Vacío: sin
+          filtro.'
       tags:
       - contacts
       security:

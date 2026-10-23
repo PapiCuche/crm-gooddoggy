@@ -1,4 +1,5 @@
-"""Rutas de tenant de los contactos: `…/contacts/` (E05-01). Lectura (F4-02) y escrituras (F4-03).
+"""Rutas de tenant de los contactos: `…/contacts/` (E05-01). Lectura (F4-02), escrituras (F4-03)
+y búsqueda (F4-07, `?q=`).
 
 `contacts.view`, `contacts.update` y `contacts.delete` admiten alcance: `ScopeFilter` deja en el
 listado y en `get_object()` solo los contactos que la política de `Contact` permite con los
@@ -15,10 +16,11 @@ from django.db.models import QuerySet
 from drf_spectacular.extensions import OpenApiSerializerExtension
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
+from rest_framework.filters import BaseFilterBackend
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from apps.access.permissions import request_context
+from apps.access.permissions import ScopeFilter, request_context
 from apps.contacts.commands import (
     EMAIL_MAX,
     NAME_MAX,
@@ -32,7 +34,7 @@ from apps.contacts.commands import (
     update_contact,
 )
 from apps.contacts.models import Contact
-from apps.contacts.selectors import contacts
+from apps.contacts.selectors import contacts, search
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -156,6 +158,36 @@ class ContactUpdateSerializer(ContactWriteSerializer):
     )
 
 
+class ContactSearchSerializer(serializers.Serializer[Any]):
+    q = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=EMAIL_MAX,  # cabe el correo más largo que se guarda
+        help_text="Busca dentro del alcance. Con `+` (o `00`) y cifras, ignorando espacios, "
+        "puntos, guiones y paréntesis: el teléfono empieza por ese prefijo E.164. Si no: el "
+        "nombre contiene el texto o el correo empieza por él, sin distinguir mayúsculas. Unas "
+        "cifras sin `+` no son un teléfono. Vacío: sin filtro.",
+    )
+
+    def validate_q(self, value: str) -> str:
+        try:  # como se guarda un nombre: una línea en NFC, con un solo espacio entre palabras
+            return line(value, EMAIL_MAX)
+        except ValueError as error:
+            raise serializers.ValidationError(_message(error)) from None
+
+
+class ContactSearch(BaseFilterBackend):
+    """`?q=` (F4-07), detrás de `ScopeFilter`: busca en lo que el alcance ya dejó."""
+
+    def filter_queryset(self, request: Any, queryset: Any, view: Any) -> QuerySet[Contact]:
+        params = request.query_params
+        if len(params.getlist("q")) > 1:  # no se elige uno en silencio
+            raise serializers.ValidationError({"q": ["Una sola vez."]})
+        wanted = ContactSearchSerializer(data={"q": params["q"]} if "q" in params else {})
+        wanted.is_valid(raise_exception=True)
+        return search(queryset, wanted.validated_data.get("q", ""))
+
+
 class ContactUpdateSchema(OpenApiSerializerExtension):
     """drf-spectacular trata todo `PATCH` como parcial; aquí la `version` sigue obligatoria."""
 
@@ -183,9 +215,12 @@ class ContactsQuery:
     get=extend_schema(
         operation_id="contacts_list",
         tags=["contacts"],
+        parameters=[ContactSearchSerializer],
         responses={200: ContactSerializer(many=True), **errors(400, 401, 403, 404)},
         description="Los contactos vivos dentro del alcance de `contacts.view`, paginados por "
-        "creación (ADR-016).",
+        "creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente se pide con "
+        f"el mismo `q`. 400: `q` repetido, de más de {EMAIL_MAX} caracteres o que no es una "
+        "línea de texto imprimible.",
     ),
     post=extend_schema(
         operation_id="contacts_create",
@@ -198,6 +233,7 @@ class ContactsQuery:
 )
 class ContactsView(ContactsQuery, generics.ListAPIView):
     required_permissions = {"GET": "contacts.view", "POST": "contacts.create"}
+    filter_backends = [ScopeFilter, ContactSearch]  # en este orden
 
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = ContactCreateSerializer(data=request.data)

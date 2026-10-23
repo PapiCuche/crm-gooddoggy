@@ -17,4 +17,9 @@ export type ContactsListParams = {
    * @maximum 200
    */
   limit?: number;
+  /**
+   * Busca dentro del alcance. Con `+` (o `00`) y cifras, ignorando espacios, puntos, guiones y paréntesis: el teléfono empieza por ese prefijo E.164. Si no: el nombre contiene el texto o el correo empieza por él, sin distinguir mayúsculas. Unas cifras sin `+` no son un teléfono. Vacío: sin filtro.
+   * @maxLength 254
+   */
+  q?: string;
 };

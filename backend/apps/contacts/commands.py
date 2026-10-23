@@ -16,7 +16,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
-from apps.contacts.models import PHONE_E164, Contact
+from apps.contacts.models import PHONE_E164, SEPARATORS, Contact, dialed
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import line
@@ -24,7 +24,6 @@ from core.text import name as clean_name
 
 NAME_MAX, PART_MAX, EMAIL_MAX = 200, 100, 254
 _PHONE = re.compile(PHONE_E164)
-_SEPARATORS = re.compile(r"[\s().-]")
 DOCUMENTS = {  # la forma de cada tipo, ya en mayúsculas
     Contact.DocumentType.DNI: re.compile(r"[0-9]{8}"),
     Contact.DocumentType.RUC: re.compile(r"[0-9]{11}"),
@@ -66,10 +65,8 @@ class StaleContact(Exception):
 def phone(value: str | None) -> str | None:
     """El teléfono en E.164 (`+51987654321`), sin separadores. No adivina el país: sin `+` (o
     `00`) delante, se rechaza. Vacío es sin teléfono."""
-    if value is None or not (digits := _SEPARATORS.sub("", value)):
+    if value is None or not (digits := dialed(value)):
         return None
-    if digits.startswith("00"):
-        digits = f"+{digits[2:]}"
     if not _PHONE.fullmatch(digits):  # `[0-9]`: solo cifras ASCII
         raise ValueError("en formato internacional: + y el código del país, hasta 15 cifras")
     return digits
@@ -91,7 +88,7 @@ def email(value: str | None) -> str | None:
 def document(kind: str | None, number: str | None) -> tuple[str | None, str | None]:
     """El tipo y el número, los dos o ninguno; el número en mayúsculas, sin espacios ni guiones,
     con la forma de su tipo."""
-    raw = _SEPARATORS.sub("", number or "")
+    raw = SEPARATORS.sub("", number or "")
     code = raw.upper() if raw.isascii() else "?"  # antes de `upper()`: «ﬁ» pasaría a «FI»
     if not kind and not code:
         return None, None
