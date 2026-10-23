@@ -23,7 +23,8 @@ aquí, contando sus elementos mientras llega el XML; a openpyxl solo le llega ca
 contada (de cada texto se toman sus `<t>`) y lo demás (formatos, validaciones, enlaces) se tira
 al cerrarse, sin pasar por él.
 El parser arma los atributos antes de dar el evento y guarda cada nombre distinto: también se
-cuentan los bytes sin un elemento (`MAX_QUIET`) y los nombres (`MAX_NAMES`).
+cuentan los bytes sin un elemento (`MAX_QUIET`) y los nombres (`MAX_NAMES`). Las partes que
+openpyxl lee enteras se recorren antes igual, con `MAX_WHOLE_NODES` elementos entre todas.
 Una fórmula en cualquier celda rechaza el archivo: ni se evalúa ni se usa el valor que Excel
 guardó. Lo que Excel convierte vuelve a texto: un número entero (`5.0`) en cifras («5»), otro
 tal cual («5.5»), una fecha como fecha; la validación de cada importación decide.
@@ -34,7 +35,7 @@ import logging
 import struct
 import zipfile
 import zlib
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from typing import IO, Any
 from xml.etree.ElementTree import Element
 
@@ -72,6 +73,7 @@ MAX_NODES, MAX_UNIT = 3 * MAX_CELLS, 16_384
 MAX_QUIET = 256 * 1024  # bytes seguidos sin que empiece o acabe un elemento (un texto de Excel:
 # 32 767 caracteres)
 MAX_NAMES = 1024  # nombres de etiqueta y de atributo distintos: el parser los guarda todos
+MAX_WHOLE_NODES = 32_768  # entre las partes que openpyxl lee enteras (1 MiB de `<xf/>`: 16 000)
 ROW, STRING, RUN, TEXT = (f"{{{SHEET_MAIN_NS}}}{tag}" for tag in ("row", "si", "r", "t"))
 ZIP = b"PK\x03\x04"
 METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
@@ -79,6 +81,7 @@ WORKBOOKS = (XLSX, XLSM, XLTX, XLTM)
 DAMAGED = "No pudimos abrir el Excel: está dañado. Ábrelo y guárdalo otra vez como .xlsx."
 NOT_XLSX = "No es un Excel .xlsx: guárdalo como «Libro de Excel (.xlsx)» o como «CSV UTF-8»."
 TOO_BIG_PART = f"Una parte interna del Excel pasa de {MAX_WHOLE // 1024} KB: no parece de Excel."
+TOO_FULL_PART = "Una parte interna del Excel tiene demasiados datos: no parece de Excel."
 TOO_FULL = "La hoja tiene demasiados datos (celdas, formatos o enlaces): deja solo la plantilla."
 TOO_MANY_TEXTS = "El Excel tiene demasiados textos: deja solo la hoja de datos."
 
@@ -86,6 +89,11 @@ TOO_MANY_TEXTS = "El Excel tiene demasiados textos: deja solo la hoja de datos."
 def is_zip(data: bytes) -> bool:
     """Empieza como un ZIP: lo lee este módulo (que comprueba si es un XLSX), no el de CSV."""
     return data.startswith(ZIP)
+
+
+def _whole(name: str) -> bool:
+    """Una parte que openpyxl lee entera, como un árbol XML (el libro, aparte, tras la firma)."""
+    return name in (ARC_CONTENT_TYPES, ARC_STYLE) or name.endswith(".rels")
 
 
 def _parts(archive: zipfile.ZipFile) -> None:
@@ -99,8 +107,7 @@ def _parts(archive: zipfile.ZipFile) -> None:
             raise Unreadable(DAMAGED)
         if part.file_size > MAX_RATIO * max(part.compress_size, 1):
             raise Unreadable("Una parte del Excel se descomprime demasiado: no parece de Excel.")
-        whole = part.filename in (ARC_CONTENT_TYPES, ARC_STYLE) or part.filename.endswith(".rels")
-        if whole and part.file_size > MAX_WHOLE:  # el libro, tras la firma (`_read`)
+        if _whole(part.filename) and part.file_size > MAX_WHOLE:  # el libro, tras la firma
             raise Unreadable(TOO_BIG_PART)
     if sum(part.file_size for part in parts) > MAX_UNPACKED:
         mb = MAX_UNPACKED // MAX_BYTES
@@ -178,7 +185,7 @@ class _Paced:
         return chunk
 
 
-def _units(source: IO[bytes], tag: str, most: int, refusal: str) -> Iterator[Element]:
+def _units(source: IO[bytes], tag: str, most: int, refusal: str) -> Generator[Element, None, int]:
     """Cada elemento `tag` de la parte (una fila, un texto), entero; el resto se tira al cerrarse.
     openpyxl arma entero lo que lee (una fila de 700 000 celdas, `mergeCells`), así que los topes
     de elementos van mientras se lee el XML: `most` en la parte y `MAX_UNIT` en cada `tag`."""
@@ -208,6 +215,19 @@ def _units(source: IO[bytes], tag: str, most: int, refusal: str) -> Iterator[Ele
             yield element
         if path:
             path[-1].remove(element)  # su único hijo: los anteriores ya se quitaron
+    return nodes
+
+
+def _walk(contents: Iterable[bytes], left: int) -> int:
+    """Recorre antes las partes que openpyxl leerá enteras, con los topes de `_units` (150 000
+    atributos en 1 MiB pasaban de 50 MiB) y `left` elementos entre todas; da los que quedan."""
+    for content in contents:
+        walker = _units(io.BytesIO(content), "", left, TOO_FULL_PART)
+        try:
+            next(walker)  # ningún elemento se llama "": la recorre entera
+        except StopIteration as end:
+            left -= end.value
+    return left
 
 
 def _strings(reader: ExcelReader) -> list[str]:
@@ -223,7 +243,8 @@ def _strings(reader: ExcelReader) -> list[str]:
             if len(strings) == MAX_CELLS:
                 raise Unreadable(TOO_MANY_TEXTS)
             runs = (run.findtext(TEXT, "") for run in text.iterfind(RUN))
-            strings.append("".join((text.findtext(TEXT, ""), *runs)).replace("x005F_", ""))
+            plain = [t.text or "" for t in text.iterfind(TEXT)][-1:]  # el último, como openpyxl
+            strings.append("".join((*plain, *runs)).replace("x005F_", ""))
     return strings
 
 
@@ -245,8 +266,13 @@ def _first_sheet(data: bytes) -> tuple[ExcelReader, str]:
 def _read(data: bytes, aliases: Mapping[str, Iterable[str]]) -> Sheet:
     data = _unpacked(data)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        if archive.getinfo(_signature(archive)).file_size > MAX_WHOLE:
+        left = _walk(
+            (archive.read(name) for name in archive.namelist() if _whole(name)), MAX_WHOLE_NODES
+        )
+        book = _signature(archive)
+        if archive.getinfo(book).file_size > MAX_WHOLE:
             raise Unreadable(TOO_BIG_PART)
+        _walk([archive.read(book)], left)
     reader, path = _first_sheet(data)
     wb = reader.wb
     header: list[str] | None = None

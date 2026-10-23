@@ -522,6 +522,7 @@ def test_as_many_shared_strings_as_cells_fit() -> None:
         '<r><t>a</t></r><r><rPr><b/></rPr><t xml:space="preserve"> b</t></r>',
         '<t>p</t><r><t>q</t></r><rPh sb="0" eb="1"><t>fonética</t></rPh>',
         "<t>x005F_x</t>",
+        "<t>a</t><t>b</t>",  # el último
     ],
 )
 def test_a_shared_string_reads_as_openpyxl_reads_it(text: str) -> None:
@@ -574,3 +575,48 @@ def test_row_attributes_are_not_kept(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = "".join(f'<row r="{n}" ht="20"><c r="A{n}"><v>1</v></c></row>' for n in (2, 3, 4))
     assert len(xlsxfile.read(handmade(HEADER + rows), ALIASES).rows) == 3
     assert kept == [0, 0, 0, 0]
+
+
+def spread(count: int, tag: str = "x") -> str:
+    """`count` atributos distintos, 16 por elemento `tag`."""
+    names = [f' a{n}="1"' for n in range(count)]
+    return "".join(f"<{tag}{''.join(names[n : n + 16])}/>" for n in range(0, count, 16))
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda xml: handmade(
+            parts={"xl/styles.xml": f'<styleSheet xmlns="{MAIN}">{xml}</styleSheet>'}
+        ),
+        lambda xml: handmade(order=FIRST + xml),
+        lambda xml: handmade(links=LINK + xml),
+        lambda xml: handmade(types=xml),
+    ],
+    ids=["estilos", "libro", "relaciones", "tipos"],
+)
+def test_the_parts_read_whole_are_walked_first(build: Callable[[str], bytes]) -> None:
+    """openpyxl arma enteros estilos, libro, relaciones y tipos (1 MiB cada uno): 150 000 nombres
+    distintos o los atributos de una sola etiqueta pasaban de 50 MiB. Se recorren antes con los
+    topes de la hoja."""
+    assert refused(build(spread(2 * xlsxfile.MAX_NAMES))) == xlsxfile.TOO_FULL_PART
+    try:  # openpyxl puede no aceptar esos elementos; los topes, sí
+        xlsxfile.read(build(spread(xlsxfile.MAX_NAMES // 2)), ALIASES)
+    except Unreadable as error:
+        assert str(error) == xlsxfile.DAMAGED
+
+
+def test_a_long_tag_in_a_part_read_whole_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(xlsxfile, "MAX_NAMES", 10**6)  # solo `MAX_QUIET`
+    attrs = "".join(f' a{n}="1"' for n in range(30_000))  # unos 270 KB
+    styles = f'<styleSheet xmlns="{MAIN}"{attrs}/>'
+    assert refused(handmade(parts={"xl/styles.xml": styles})) == xlsxfile.TOO_FULL_PART
+
+
+def test_the_parts_read_whole_share_one_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hasta 100 partes de 1 MiB: los elementos se cuentan entre todas, el libro también."""
+    assert xlsxfile.MAX_WHOLE_NODES == 32_768
+    monkeypatch.setattr(xlsxfile, "MAX_WHOLE_NODES", 7)  # tipos 2, relaciones 2 y libro 3
+    assert xlsxfile.read(handmade(), ALIASES).rows == []
+    monkeypatch.setattr(xlsxfile, "MAX_WHOLE_NODES", 6)
+    assert refused(handmade()) == xlsxfile.TOO_FULL_PART
