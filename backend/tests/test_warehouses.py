@@ -112,6 +112,10 @@ def test_the_database_keeps_the_branch_in_the_organization(world: Any) -> None:
     foreign = branch(world.b, "AJENA")
     with pytest.raises(IntegrityError), tenant_scope(ctx(world.a)):
         Warehouse.objects.create(branch_id=foreign.pk, code="X", name="X")
+    with pytest.raises(IntegrityError), tenant_scope(ctx(world.a)):  # quien borra, miembro
+        Warehouse.objects.create(
+            branch=branch(world.a), code="Y", name="Y", deleted_by_user_id=uuid4()
+        )
 
 
 def test_permissions_and_isolation(world: Any) -> None:

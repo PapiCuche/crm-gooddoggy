@@ -101,5 +101,11 @@ class Migration(migrations.Migration):
             "FOREIGN KEY (organization_id, branch_id) REFERENCES branches (organization_id, id)",
             "ALTER TABLE warehouses DROP CONSTRAINT IF EXISTS warehouses_branch_fk",
         ),
+        migrations.RunSQL(  # quien lo borra es miembro de la misma organización (ADR-001 §3)
+            "ALTER TABLE warehouses ADD CONSTRAINT warehouses_deleted_by_fk "
+            "FOREIGN KEY (organization_id, deleted_by_user_id) "
+            "REFERENCES organization_memberships (organization_id, user_id)",
+            "ALTER TABLE warehouses DROP CONSTRAINT IF EXISTS warehouses_deleted_by_fk",
+        ),
         EnableRLS("Warehouse"),
     ]
