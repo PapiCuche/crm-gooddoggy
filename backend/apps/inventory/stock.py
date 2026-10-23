@@ -9,8 +9,9 @@ que el segundo movimiento de una celda ve lo que dejó el primero. La clave de i
 busca con la fila ya bloqueada; si la misma clave llega a la vez para otra celda, la decide el
 índice único. Todo lo que escriba `inventory_levels` (reservas y transferencias incluidas) bloquea
 antes la variante así; si no, los borrados de catálogo y de almacenes podrían no ver el stock.
-Quien bloquea varias variantes en una transacción (la importación, F3-21; el catálogo al borrar o
-renombrar un producto) lo hace por id ascendente: si no, dos de ellas se interbloquean.
+Quien bloquea varias variantes en una transacción (la importación al aplicarla y al revertirla,
+F3-21 y F3-24; el catálogo al borrar o renombrar un producto) lo hace por id ascendente: si no,
+dos de ellas se interbloquean.
 """
 
 import re
@@ -67,7 +68,8 @@ class KeyReused(Exception):
 
 
 class Stale(Exception):
-    """El saldo de la celda, ya bloqueada, no es `Wanted.expected_on_hand` (F3-21)."""
+    """El saldo de la celda, ya bloqueada, no es `Wanted.expected_on_hand` (F3-21), o su
+    `version` no es `Wanted.expected_version` (F3-24): alguien la escribió después."""
 
     def __init__(self, on_hand: int) -> None:
         super().__init__(on_hand)
@@ -85,6 +87,7 @@ class Wanted:
     reason: str
     idempotency_key: str
     expected_on_hand: int | None = None  # la importación (F3-21): si no es el saldo, `Stale`
+    expected_version: int | None = None  # revertirla (F3-24): si la celda se escribió, `Stale`
     reference_type: str = InventoryMovement.Reference.MANUAL  # o IMPORT, con `reference_id`
     reference_id: UUID | None = None
 
@@ -187,7 +190,9 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
                 return done, False
             if not warehouse[0]:
                 raise WarehouseInactive(wanted.warehouse_id)
-            if wanted.expected_on_hand not in (None, level.on_hand):
+            if wanted.expected_on_hand not in (None, level.on_hand) or (
+                wanted.expected_version not in (None, level.version)
+            ):
                 raise Stale(level.on_hand)
             movement = _apply(alias, ctx, wanted, level)
             label = f"{variant.sku} @ {warehouse[1]}"

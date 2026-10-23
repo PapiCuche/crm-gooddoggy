@@ -12,6 +12,13 @@ y de la línea. Con la celda bloqueada, si el saldo cambió la fila queda `STALE
 repetir no crea movimientos (la clave). Las filas van por variante y almacén ascendentes, el
 orden de bloqueo de F3-09: dos importaciones a la vez no se interbloquean.
 
+Revertir (F3-24) devuelve cada celda que la importación movió al saldo de antes con otro
+`ADJUSTMENT` (`reference_type = IMPORT`, la clave de su fila con `REVERT_KEY`), solo si nadie la
+escribió después: su `version` es la que dejó la importación (`expected_version`; un recuento que
+la devolvió al mismo saldo también la cambia). Si no, la fila queda `STALE` y no se toca.
+Nada del ledger se edita ni se borra: quedan los dos movimientos. Mismo orden de bloqueo que al
+aplicar; revertir otra vez no crea movimientos (el estado y la clave).
+
 No comprueba permisos: los declara la API (`inventory.adjust`), la única que lo importa. Ningún
 almacén tiene hoy otra autoridad que el CRM: cuando exista la marca de almacén del conector
 (ADR-028 §3), su work item rechaza aquí, al validar, las filas de esos almacenes (§5).
@@ -30,7 +37,7 @@ from apps.catalog.selectors import live_variants
 from apps.imports import csvfile, xlsxfile
 from apps.imports.models import DataImport, DataImportRow
 from apps.inventory import stock
-from apps.inventory.models import InventoryLevel, Warehouse
+from apps.inventory.models import InventoryLevel, InventoryMovement, Warehouse
 from apps.inventory.stock import QUANTITY_MAX
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -43,6 +50,7 @@ COLUMNS = {  # columna → alias de la cabecera (sin tildes ni mayúsculas, ver 
 }
 NAME_MAX = 255
 REASON, MOVEMENT = "Importación de stock", "inventory_movement"
+REVERT_REASON, REVERT_KEY = "Reversión de una importación de stock", ":revert"
 REFUSED: dict[
     type[Exception], str
 ] = {  # lo que pudo cambiar desde la previsualización y deja la fila en ERROR
@@ -206,8 +214,13 @@ def _apply_row(alias: str, ctx: TenantContext, job: DataImport, row: DataImportR
         wanted = stock.Wanted(variant, warehouse, *adjust, row.normalized["on_hand_seen"])
         wanted = replace(wanted, reference_type=stock.Reference.IMPORT, reference_id=job.pk)
         try:
-            movement, _ = stock.move(ctx, wanted)
+            movement, new = stock.move(ctx, wanted)
             row.target_entity_type, row.target_entity_id = MOVEMENT, movement.pk
+            if new:  # la `version` que dejó, con la celda aún bloqueada: revertir la compara
+                cell = InventoryLevel.objects.using(alias).filter(
+                    variant=variant, warehouse=warehouse
+                )
+                row.normalized["version"] = cell.values_list("version", flat=True).get()
         except stock.Stale as error:
             _stale(row, error.on_hand)
         except (
@@ -217,7 +230,7 @@ def _apply_row(alias: str, ctx: TenantContext, job: DataImport, row: DataImportR
             stock.KeyReused,
         ) as error:
             row.action, row.errors = Action.ERROR, [REFUSED[type(error)]]
-    fields = ["action", "errors", "target_entity_type", "target_entity_id"]
+    fields = ["action", "errors", "normalized", "target_entity_type", "target_entity_id"]
     row.save(using=alias, update_fields=fields)
 
 
@@ -247,4 +260,70 @@ def apply(ctx: TenantContext, *, import_id: UUID) -> DataImport:
     job.applied_at, job.summary = timezone.now(), {**job.summary, "result": result}
     job.save(using=alias, update_fields=["status", "applied_by_user_id", "applied_at", "summary"])
     record(ctx, "inventory.import_applied", Entity("data_import", job.pk), metadata=result)
+    return job
+
+
+class NotApplied(Exception):
+    """Solo se revierte una importación aplicada."""
+
+
+REVERT_REFUSED = {**REFUSED, stock.InsufficientStock: "Hay más reservadas que el saldo de antes."}
+TOO_MANY = f"El saldo de antes pasa de {QUANTITY_MAX}, el tope de un ajuste: corrígelo a mano."
+
+
+def _revert_row(
+    ctx: TenantContext, job: DataImport, row: DataImportRow, done: InventoryMovement
+) -> str:
+    """Devuelve la celda al saldo de antes de la fila: `reverted`, `stale` o `failed`. Con la
+    celda sin escribir desde la importación (`expected_version`), un `ADJUSTMENT` al saldo de antes
+    registra justo el delta contrario, y su repetición se reconoce por el saldo que deja."""
+    before, after = done.on_hand_after - done.quantity, done.on_hand_after
+    key = f"{stock.IMPORT_KEY}{job.pk}:{row.row_number}{REVERT_KEY}"
+    wanted = stock.Wanted(
+        done.variant_id,
+        done.warehouse_id,
+        stock.Type.ADJUSTMENT,
+        before,
+        REVERT_REASON,
+        key,
+        expected_version=row.normalized.get("version", 0),  # sin ella (otro CRM): STALE
+        reference_type=stock.Reference.IMPORT,
+        reference_id=job.pk,
+    )
+    try:
+        if before > QUANTITY_MAX:
+            row.action, row.errors = Action.ERROR, [TOO_MANY]
+        else:
+            stock.move(ctx, wanted)
+            return "reverted"
+    except stock.Stale as error:
+        message = f"La celda se movió después de la importación (dejó {after}, ahora hay "
+        row.action, row.errors = Action.STALE, [f"{message}{error.on_hand}): no se revierte."]
+    except tuple(REFUSED) as error:
+        row.action, row.errors = Action.ERROR, [REVERT_REFUSED[type(error)]]
+    row.save(using=require_scope(ctx), update_fields=["action", "errors"])
+    return "stale" if row.action == Action.STALE else "failed"
+
+
+def revert(ctx: TenantContext, *, import_id: UUID) -> DataImport:
+    """Revierte una importación aplicada y la audita. Una revertida se devuelve tal cual.
+    `DataImport.DoesNotExist` como `apply`; `NotApplied` si no está aplicada."""
+    alias = require_scope(ctx)
+    found = DataImport.objects.using(alias).select_for_update().filter(kind=Kind.STOCK)
+    job: DataImport = found.get(pk=import_id)
+    if job.status == DataImport.Status.REVERTED:
+        return job  # ya revertida: revertir otra vez no cambia nada
+    if job.status != DataImport.Status.APPLIED:
+        raise NotApplied(job.status)
+    moved = DataImportRow.objects.using(alias).filter(
+        data_import=job, action__in=[Action.CREATE, Action.UPDATE], target_entity_type=MOVEMENT
+    )
+    rows = {row.target_entity_id: row for row in moved}
+    movements = InventoryMovement.objects.using(alias).filter(pk__in=list(rows))
+    result = dict.fromkeys(("reverted", "stale", "failed"), 0)
+    for done in sorted(movements, key=lambda m: (m.variant_id, m.warehouse_id)):  # F3-09
+        result[_revert_row(ctx, job, rows[done.pk], done)] += 1
+    job.status, job.summary = DataImport.Status.REVERTED, {**job.summary, "revert": result}
+    job.save(using=alias, update_fields=["status", "summary"])
+    record(ctx, "inventory.import_reverted", Entity("data_import", job.pk), metadata=result)
     return job

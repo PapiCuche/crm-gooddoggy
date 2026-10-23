@@ -19,6 +19,7 @@ import {
   inventoryImportsTemplate,
   useInventoryImportsApply,
   useInventoryImportsCreate,
+  useInventoryImportsRevert,
 } from "@/lib/api/client";
 import type { StockImport } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
@@ -143,7 +144,8 @@ function Counts({ items }: { items: [string, number, boolean?][] }) {
 // El archivo se lee en el navegador al enviarlo y viaja en base64 en el JSON; no se guarda en
 // el navegador (la escritura no queda en la caché: `gcTime: 0` y `reset`). Aplicar otra vez la
 // misma importación no repite ajustes (la API la aplica una vez): tras perder una respuesta,
-// reintentar es seguro y enseña el mismo resultado.
+// reintentar es seguro y enseña el mismo resultado. En el resultado, «Revertir importación»
+// (`…/{id}/revert/`, F3-24) devuelve las celdas al saldo de antes, también con confirmación.
 export function StockImport() {
   const t = useTranslations("stockImport");
   const errors = useTranslations("errors.api");
@@ -157,7 +159,7 @@ export function StockImport() {
   const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState<Problem | "gone" | null>(null);
   const [reading, setReading] = useState(false);
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<"apply" | "revert" | null>(null);
   const [announce, setAnnounce] = useState("");
   const sending = useRef(false);
   const input = useRef<HTMLInputElement>(null);
@@ -167,12 +169,14 @@ export function StockImport() {
   const fileId = useId();
   const upload = useInventoryImportsCreate({ mutation: { networkMode: "always", gcTime: 0 } });
   const apply = useInventoryImportsApply({ mutation: { networkMode: "always", gcTime: 0 } });
-  const ended = upload.error?.status === 401 || apply.error?.status === 401; // `Providers` → login
-  const busy = reading || upload.isPending || apply.isPending || ended;
+  const revert = useInventoryImportsRevert({ mutation: { networkMode: "always", gcTime: 0 } });
+  const writes = [upload, apply, revert];
+  const ended = writes.some((write) => write.error?.status === 401); // `Providers` → login
+  const busy = reading || writes.some((write) => write.isPending) || ended;
   useLayoutEffect(() => {
     if (!busy) sending.current = false;
   });
-  for (const error of [upload.error, apply.error]) {
+  for (const { error } of writes) {
     if (error?.status === 403 && !denied) setDenied(true);
   }
 
@@ -181,12 +185,12 @@ export function StockImport() {
     if (shown.current !== step) (step.name === "pick" ? input : heading).current?.focus();
     shown.current = step;
   }, [step]);
-  const opened = useRef(false);
+  const opened = useRef<Step | null>(null); // el paso en que se abrió la confirmación
   useEffect(() => {
     if (asking) cancel.current?.focus();
-    else if (opened.current) trigger.current?.focus();
-    opened.current = asking;
-  }, [asking]);
+    else if (opened.current === step) trigger.current?.focus(); // cancelada: el mismo paso
+    opened.current = asking ? step : null;
+  }, [asking, step]);
 
   async function send(event: FormEvent) {
     event.preventDefault();
@@ -217,30 +221,47 @@ export function StockImport() {
   }
 
   function confirm() {
-    if (sending.current || step.name !== "preview") return;
+    if (sending.current || step.name === "pick") return;
     sending.current = true;
+    const onError = (error: ApiError) => {
+      if (error.status !== 404) return;
+      setAsking(null);
+      setStep({ name: "pick" });
+      setProblem("gone");
+    };
+    const importId = step.job.id;
+    if (asking === "revert") {
+      revert.mutate(
+        { orgSlug: slug, importId, data: { confirm: true } },
+        {
+          onSuccess: (job) => {
+            setAsking(null);
+            setStep({ name: "result", job });
+            setAnnounce(t("undone", { reverted: job.revert?.reverted ?? 0 }));
+          },
+          onError,
+        },
+      );
+      return;
+    }
     apply.mutate(
-      { orgSlug: slug, importId: step.job.id },
+      { orgSlug: slug, importId },
       {
         onSuccess: (job) => {
-          setAsking(false);
+          setAsking(null);
           setStep({ name: "result", job });
           setAnnounce(t("done", { applied: job.result?.applied ?? 0 }));
         },
-        onError: (error) => {
-          if (error.status !== 404) return;
-          setAsking(false);
-          setStep({ name: "pick" });
-          setProblem("gone");
-        },
+        onError,
       },
     );
   }
 
   function restart() {
     apply.reset();
+    revert.reset();
     setProblem(null);
-    setAsking(false);
+    setAsking(null);
     setAnnounce("");
     setStep({ name: "pick" });
   }
@@ -313,22 +334,35 @@ export function StockImport() {
   } else {
     const { job } = step;
     const changes = job.new_count + job.update_count;
-    const result = job.result;
-    const wrong = job.error_rows + (result ? result.stale + result.failed : 0);
+    const { result, revert: undone } = job;
+    const wrong =
+      job.error_rows +
+      (result ? result.stale + result.failed : 0) +
+      (undone ? undone.stale + undone.failed : 0);
     const read = READ_AS.get(job.encoding);
-    const applyError =
-      apply.error && ![401, 403, 404].includes(apply.error.status) ? apply.error : null;
+    const reverting = asking === "revert";
+    const failed = (reverting ? revert : apply).error;
+    const writeError = failed && ![401, 403, 404].includes(failed.status) ? failed : null;
+    const label = reverting ? t("revert") : t("apply", { count: changes });
     body = (
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-1">
           <h2 ref={heading} tabIndex={-1} className="text-xl font-semibold outline-none">
-            {result ? t("resultTitle") : t("previewTitle")}
+            {undone ? t("revertedTitle") : result ? t("resultTitle") : t("previewTitle")}
           </h2>
           <p className="text-muted wrap-anywhere">
             {t("fileLine", { name: job.file_name, rows: job.total_rows })}
           </p>
         </div>
-        {result ? (
+        {undone ? (
+          <Counts
+            items={[
+              [t("count.reverted"), undone.reverted],
+              [t("count.STALE"), undone.stale, true],
+              [t("count.ERROR"), undone.failed, true],
+            ]}
+          />
+        ) : result ? (
           <Counts
             items={[
               [t("count.applied"), result.applied],
@@ -352,7 +386,11 @@ export function StockImport() {
             {t("duplicate")}
           </p>
         ) : null}
-        {result?.stale ? <p className="text-sm">{t("staleHint")}</p> : null}
+        {undone?.stale ? (
+          <p className="text-sm">{t("revertStaleHint")}</p>
+        ) : !undone && result?.stale ? (
+          <p className="text-sm">{t("staleHint")}</p>
+        ) : null}
         {read || job.ignored_columns.length ? (
           <p className="text-muted text-sm wrap-anywhere">
             {read ? `${t(read)} ` : ""}
@@ -363,8 +401,19 @@ export function StockImport() {
         ) : null}
         <div className="flex flex-wrap items-start gap-3">
           {!result && changes > 0 && !asking ? (
-            <Button ref={trigger} variant="primary" size="lg" onClick={() => setAsking(true)}>
-              {t("apply", { count: changes })}
+            <Button ref={trigger} variant="primary" size="lg" onClick={() => setAsking("apply")}>
+              {label}
+            </Button>
+          ) : null}
+          {job.status === "APPLIED" && (result?.applied ?? 0) > 0 && !asking ? (
+            <Button
+              ref={trigger}
+              variant="ghost"
+              size="lg"
+              className="border-border border"
+              onClick={() => setAsking("revert")}
+            >
+              {t("revert")}
             </Button>
           ) : null}
           {wrong > 0 ? (
@@ -384,16 +433,18 @@ export function StockImport() {
         {asking ? (
           <div
             role="group"
-            aria-label={t("apply", { count: changes })}
+            aria-label={label}
             aria-describedby={`${fileId}-ask`}
             className="border-foreground/20 bg-surface flex flex-col items-start gap-3 rounded-lg border p-4"
           >
             <p id={`${fileId}-ask`} className="text-sm">
-              {t("ask", { count: changes, errors: job.error_rows })}
+              {reverting
+                ? t("revertAsk", { count: result?.applied ?? 0 })
+                : t("ask", { count: changes, errors: job.error_rows })}
             </p>
-            {applyError ? (
+            {writeError ? (
               <p role="alert" className="text-danger text-sm">
-                {errors(apiErrorKey(applyError))} {t("retryHint")}
+                {errors(apiErrorKey(writeError))} {t(reverting ? "revertRetryHint" : "retryHint")}
               </p>
             ) : null}
             <div className="flex flex-wrap gap-2">
@@ -402,12 +453,14 @@ export function StockImport() {
                 variant="ghost"
                 size="lg"
                 aria-disabled={busy}
-                onClick={() => sending.current || setAsking(false)}
+                onClick={() => sending.current || setAsking(null)}
               >
                 {t("cancel")}
               </Button>
               <Button variant="primary" size="lg" aria-disabled={busy} onClick={confirm}>
-                {busy ? t("applying") : t("confirm")}
+                {reverting
+                  ? t(busy ? "reverting" : "confirmRevert")
+                  : t(busy ? "applying" : "confirm")}
               </Button>
             </div>
           </div>

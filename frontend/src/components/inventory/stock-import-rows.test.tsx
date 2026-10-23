@@ -25,6 +25,7 @@ const job: StockImport = {
   created_at: "2026-10-23T10:00:00Z",
   applied_at: null,
   result: null,
+  revert: null,
 };
 const row = (
   n: number,

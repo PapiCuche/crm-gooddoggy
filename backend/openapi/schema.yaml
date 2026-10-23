@@ -1681,6 +1681,73 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/inventory/imports/{import_id}/revert/:
+    post:
+      operationId: inventory_imports_revert
+      description: 'Revierte una importación aplicada: cada celda que movió vuelve
+        al saldo de antes con otro ajuste en el ledger, que no se edita. Una celda
+        con algún movimiento después de la importación (aunque vuelva al mismo saldo)
+        queda `STALE` y no se toca. Revertir otra vez no cambia nada. 409 `IMPORT_NOT_APPLIED`
+        si no está aplicada.'
+      parameters:
+      - in: path
+        name: import_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockImportRevertRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockImport'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/imports/{import_id}/rows/:
     get:
       operationId: inventory_imports_rows_list
@@ -4522,6 +4589,7 @@ components:
       - VALIDATED
       - APPLYING
       - APPLIED
+      - REVERTED
       - FAILED
       - CANCELLED
       type: string
@@ -4531,6 +4599,7 @@ components:
         * `VALIDATED` - Validated
         * `APPLYING` - Applying
         * `APPLIED` - Applied
+        * `REVERTED` - Reverted
         * `FAILED` - Failed
         * `CANCELLED` - Cancelled
     Invitation:
@@ -5801,6 +5870,11 @@ components:
           - $ref: '#/components/schemas/StockImportResult'
           nullable: true
           description: Al aplicarla.
+        revert:
+          allOf:
+          - $ref: '#/components/schemas/StockImportRevertResult'
+          nullable: true
+          description: Al revertirla.
       required:
       - applied_at
       - created_at
@@ -5812,6 +5886,7 @@ components:
       - ignored_columns
       - new_count
       - result
+      - revert
       - status
       - total_rows
       - unchanged_count
@@ -5851,6 +5926,29 @@ components:
       - failed
       - stale
       - unchanged
+    StockImportRevertRequest:
+      type: object
+      properties:
+        confirm:
+          type: boolean
+          description: '`true`: lo que confirma quien revierte.'
+      required:
+      - confirm
+    StockImportRevertResult:
+      type: object
+      properties:
+        reverted:
+          type: integer
+          description: Celdas devueltas al saldo de antes.
+        stale:
+          type: integer
+          description: 'Celdas que cambiaron después: no se tocan.'
+        failed:
+          type: integer
+      required:
+      - failed
+      - reverted
+      - stale
     StockImportRow:
       type: object
       properties:

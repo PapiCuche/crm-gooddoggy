@@ -23,11 +23,13 @@ from apps.imports.models import DataImport, DataImportRow
 from apps.inventory import imports
 from apps.inventory.api.views import _tenant
 from apps.inventory.selectors import stock_import_rows, stock_imports
+from core.api.errors import ApiError
 from core.api.schema import errors
 
 BODY_MAX = csvfile.MAX_BYTES * 4 // 3 + 4096  # el archivo en base64 y el resto del JSON
 TOO_BIG = f"El archivo pasa de {csvfile.MAX_BYTES // 1024} KB: divídelo."
 CSV: dict[Any, Any] = {(200, "text/csv"): OpenApiTypes.BINARY}
+NOT_APPLIED = "Solo se revierte una importación aplicada."
 PERMISSION = "inventory.adjust"  # un lote de ajustes; `products.import` es del catálogo
 
 
@@ -36,6 +38,12 @@ class StockImportResultSerializer(serializers.Serializer[Any]):
     unchanged = serializers.IntegerField()
     stale = serializers.IntegerField(help_text="Celdas que cambiaron desde la previsualización.")
     failed = serializers.IntegerField(help_text="Filas válidas que fallaron al aplicar.")
+
+
+class StockImportRevertResultSerializer(serializers.Serializer[Any]):
+    reverted = serializers.IntegerField(help_text="Celdas devueltas al saldo de antes.")
+    stale = serializers.IntegerField(help_text="Celdas que cambiaron después: no se tocan.")
+    failed = serializers.IntegerField()
 
 
 class StockImportSerializer(serializers.Serializer[Any]):
@@ -63,6 +71,9 @@ class StockImportSerializer(serializers.Serializer[Any]):
     applied_at = serializers.DateTimeField(allow_null=True)
     result = StockImportResultSerializer(
         source="summary.result", allow_null=True, help_text="Al aplicarla."
+    )
+    revert = StockImportRevertResultSerializer(
+        source="summary.revert", allow_null=True, help_text="Al revertirla."
     )
 
 
@@ -191,6 +202,39 @@ class StockImportApplyView(APIView):
             job = imports.apply(_tenant(), import_id=import_id)
         except DataImport.DoesNotExist:
             raise NotFound from None
+        return Response(StockImportSerializer(job).data)
+
+
+class StockImportRevertSerializer(serializers.Serializer[Any]):
+    confirm = serializers.BooleanField(help_text="`true`: lo que confirma quien revierte.")
+
+    def validate_confirm(self, value: bool) -> bool:
+        if not value:
+            raise serializers.ValidationError("Confirma la reversión.")
+        return value
+
+
+class StockImportRevertView(APIView):
+    required_permissions = {"POST": PERMISSION}
+
+    @extend_schema(
+        operation_id="inventory_imports_revert",
+        tags=["inventory"],
+        request=StockImportRevertSerializer,
+        responses={200: StockImportSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Revierte una importación aplicada: cada celda que movió vuelve al saldo de "
+        "antes con otro ajuste en el ledger, que no se edita. Una celda con algún movimiento "
+        "después de la importación (aunque vuelva al mismo saldo) queda `STALE` y no se toca. "
+        "Revertir otra vez no cambia nada. 409 `IMPORT_NOT_APPLIED` si no está aplicada.",
+    )
+    def post(self, request: Request, import_id: UUID, **kwargs: Any) -> Response:
+        StockImportRevertSerializer(data=request.data).is_valid(raise_exception=True)
+        try:
+            job = imports.revert(_tenant(), import_id=import_id)
+        except DataImport.DoesNotExist:
+            raise NotFound from None
+        except imports.NotApplied:
+            raise ApiError("IMPORT_NOT_APPLIED", 409, NOT_APPLIED) from None
         return Response(StockImportSerializer(job).data)
 
 
