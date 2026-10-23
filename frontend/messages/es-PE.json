@@ -1061,6 +1061,17 @@
     "ownerNone": "Sin responsable",
     "branch": "Sucursal: {name} ({code})",
     "branchNone": "Sin sucursal",
+    "tags": {
+      "label": "Etiquetas",
+      "inactive": "desactivada",
+      "none": "Sin etiquetas.",
+      "filter": "Etiqueta",
+      "any": "Todas las etiquetas",
+      "option": "{name}{active, select, false { (desactivada)} other {}}",
+      "loading": "Cargando etiquetas…",
+      "denied": "No tienes permiso para ver las etiquetas.",
+      "emptyFiltered": "Ningún cliente que puedas ver lleva la etiqueta «{name}»."
+    },
     "create": {
       "open": "Crear cliente",
       "title": "Nuevo cliente",

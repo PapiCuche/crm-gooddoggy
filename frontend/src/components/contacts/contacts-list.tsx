@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { Choice } from "@/components/catalog/product-create";
+import { useReads } from "@/components/inventory/cell-picker";
 import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import { contactsList, getContactsListQueryKey } from "@/lib/api/client";
 import type { Contact } from "@/lib/api/model";
@@ -13,17 +15,27 @@ import { ContactCreate } from "./contact-create";
 import { ContactDeleteAction } from "./contact-delete-action";
 import { ContactEditAction } from "./contact-edit-action";
 import { useContactNames } from "./contact-names";
+import { TagList, useTagCatalog } from "./contact-tags";
 
 // Clientes (F4-04): los contactos que devuelve `GET /api/v1/o/{slug}/contacts/` (F4-02), los
 // del alcance de `contacts.view`, por orden de creación. La lista, sus estados y su foco son
 // los de `CursorList`. El nombre abre la ficha (F4-06); editar y borrar (F4-05), en cada fila.
-// Quién puede verlos, crearlos o cambiarlos lo decide la API.
+// Cada fila lleva sus etiquetas y la lista se filtra por una (F4-12). Quién puede verlos,
+// crearlos o cambiarlos lo decide la API.
 export function ContactsList() {
   const t = useTranslations("contacts");
   const { organization, permissions } = useTenant();
   const slug = organization.slug;
   const held = (code: string) => permissions.some((grant) => grant.code === code);
-  const listKey = [...getContactsListQueryKey(slug), "pages"];
+  const tags = useTranslations("contacts.tags");
+  const { failed, retry } = useReads();
+  // El filtro por etiqueta (`?tag=`): lo elegido que ya no está en el catálogo no cuenta.
+  const catalog = useTagCatalog(slug, held("contacts.view"));
+  const [tagId, setTagId] = useState("");
+  const tag = catalog.data?.find((row) => row.id === tagId);
+  const filters = tag ? { tag: tag.id } : {};
+  // Cada filtro es su propia lista; el filtro viaja también con «Cargar más».
+  const listKey = [...getContactsListQueryKey(slug, filters), "pages"];
   const { owner, branch } = useContactNames("contacts");
   // Lo que respondió la última escritura. Un cliente que ya no está a su alcance (`alert`) se
   // explica aquí y no en su fila, que desaparece cuando llega la lista nueva.
@@ -63,7 +75,28 @@ export function ContactsList() {
       listKey={listKey}
       keep={editing}
       fetchPage={(cursor, signal) =>
-        contactsList(slug, cursor ? { cursor } : undefined, { signal })
+        contactsList(slug, { ...filters, ...(cursor ? { cursor } : {}) }, { signal })
+      }
+      controls={
+        <div className="flex flex-col gap-2 sm:max-w-xs">
+          <Choice
+            label={tags("filter")}
+            value={tag ? tagId : ""}
+            hint={
+              failed(catalog, tags("denied")) ?? (catalog.isPending ? tags("loading") : undefined)
+            }
+            busy={false}
+            onChange={setTagId}
+            options={[
+              ["", tags("any")],
+              ...(catalog.data ?? []).map(({ id, name, is_active }): [string, string] => [
+                id,
+                tags("option", { name, active: String(is_active) }),
+              ]),
+            ]}
+          />
+          {retry(catalog)}
+        </div>
       }
       notice={
         writes ? (
@@ -83,7 +116,11 @@ export function ContactsList() {
           </>
         ) : null
       }
-      empty={<p className="text-muted">{t("empty")}</p>}
+      empty={
+        <p className="text-muted wrap-anywhere">
+          {tag ? tags("emptyFiltered", { name: tag.name }) : t("empty")}
+        </p>
+      }
       rowClassName="grid gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
     >
       {(contact, rows) => {
@@ -111,6 +148,7 @@ export function ContactsList() {
                   {contact.primary_email}
                 </span>
               ) : null}
+              <TagList tags={contact.tags} className="mt-1.5" />
             </div>
             <p className="text-muted flex flex-wrap gap-x-3 text-sm sm:flex-col sm:items-end">
               <span className="wrap-anywhere">{owner(contact)}</span>
