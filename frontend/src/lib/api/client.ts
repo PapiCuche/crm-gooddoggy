@@ -2963,7 +2963,7 @@ export const getContactsListUrl = (orgSlug: string, params?: ContactsListParams)
 };
 
 /**
- * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016).
+ * Los contactos vivos dentro del alcance de `contacts.view`, paginados por creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente se pide con el mismo `q`. 400: `q` repetido, de más de 254 caracteres o que no es una línea de texto imprimible.
  */
 export const contactsList = async (
   orgSlug: string,
