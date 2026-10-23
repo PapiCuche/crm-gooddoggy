@@ -20,7 +20,9 @@ from typing import Any
 from uuid import UUID
 
 from django.apps import apps
+from django.contrib.postgres.expressions import ArraySubquery
 from django.db import transaction
+from django.db.models import OuterRef
 from django.utils.text import slugify
 
 from apps.access import names
@@ -53,6 +55,22 @@ def covers(held: Iterable[Scope | None], wanted: Scope | None) -> bool:
     if wanted is None:
         return None in held
     return any(scope in _COVERED_BY[wanted] for scope in held)
+
+
+_BY_PLACE = frozenset({Scope.TEAM, Scope.BRANCH})
+
+
+def _places(alias: str, members: Collection[UUID]) -> list[tuple[set[UUID], set[UUID]]]:
+    """Equipos y sucursal de cada miembro, leídos bajo el bloqueo de RBAC: los cambios de equipo
+    y de sucursal lo toman también (D-F2-13), así que no cambian mientras se decide."""
+    memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
+    belongs = apps.get_model("organizations", "TeamMember")._default_manager.using(alias)
+    teams = ArraySubquery(belongs.filter(membership_id=OuterRef("pk")).values("team_id"))
+    rows = memberships.using(alias).filter(pk__in=members).annotate(teams=teams)
+    return [
+        (set(team_ids), {branch_id} if branch_id else set())
+        for team_ids, branch_id in rows.values_list("teams", "default_branch_id")
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +107,20 @@ class _Actor:
                 raise AccessDenied(Denied.ESCALATION)
         if not self.is_owner and any(BY_CODE[code].is_sensitive for code in wanted):
             raise AccessDenied(Denied.SENSITIVE)
+
+    def must_cover_where(
+        self, grants: Iterable[tuple[str, str | None]], members: Collection[UUID]
+    ) -> None:
+        """D-F2-16: cada concesión `TEAM` o `BRANCH` que esos miembros ganan o pierden se cubre en
+        sus equipos o en su sucursal, como `must_cover_in` (D-F2-13). Se llama después de
+        `must_cover`; las demás concesiones no dependen del lugar. Sin equipo o sin sucursal no
+        hay lugar que cubrir: `TEAM` o `BRANCH` valen ahí como `OWN`, y basta `must_cover`."""
+        scoped = [(code, Scope(scope)) for code, scope in grants if scope in _BY_PLACE]
+        if not scoped:
+            return
+        for teams, branches in _places(self.alias, members):
+            for code, scope in scoped:
+                self.must_cover_in([code], scope, teams if scope == Scope.TEAM else branches)
 
     def holds(self, role: Role) -> bool:
         assigned = MembershipRole.objects.using(self.alias)
@@ -211,7 +243,9 @@ def _managing(
         status, branch_id = _member(actor.alias, membership_id)
         held = RolePermission.objects.using(actor.alias)
         grants = held.filter(role__assignments__membership_id=membership_id)
-        actor.must_cover(grants.values_list("permission_id", "scope"))
+        pairs = list(grants.values_list("permission_id", "scope"))
+        actor.must_cover(pairs)
+        actor.must_cover_where(pairs, [membership_id])  # D-F2-16: como para quitárselos
         yield actor, membership_id, status, branch_id
 
 
@@ -225,6 +259,8 @@ def ensure_can_invite(ctx: TenantContext, *, role_ids: Collection[UUID]) -> None
     Permisos `users.invite` y `users.manage`, y el actor cubre todas las concesiones de todos
     los roles, como para asignarlos: nadie da por invitación lo que no podría dar asignando, y
     lo sensible, solo un Owner. Un rol de otra organización no existe: `UnknownRole`.
+    Quien acepta entra sin equipo ni sucursal: no hay lugar que cubrir (D-F2-16) mientras la
+    aceptación (D-F2-14) no dé uno.
 
     Si no deniega, el bloqueo del rol Owner dura hasta el final del `tenant_scope`: quien llama
     escribe la invitación a continuación, en ese mismo scope, y los topes que cuenta sobre la
@@ -407,7 +443,9 @@ def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str
 
     Repetir la misma concesión no hace nada. Cambiar un alcance exige cubrir el que había y el
     nuevo: reducirlo es retirar parte de una concesión, y retirar exige lo mismo que conceder
-    (como PO-1). Las concesiones del rol Owner no se editan, sea quien sea el actor.
+    (como PO-1). Las concesiones del rol Owner no se editan, sea quien sea el actor. Un alcance
+    `TEAM` o `BRANCH`, el viejo o el nuevo, se cubre en los equipos o la sucursal de cada
+    titular del rol (D-F2-16).
     """
     wanted = Scope(scope) if scope is not None else None
     if (wanted is not None) != definition(code).supports_scope:
@@ -420,7 +458,10 @@ def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str
             raise AccessDenied(Denied.OWNER_ROLE)
         grants = RolePermission.objects.using(actor.alias).filter(role=role, permission_id=code)
         held = list(grants.values_list("scope", flat=True))
-        actor.must_cover([(code, wanted), *((code, old) for old in held)])
+        pairs = [(code, wanted), *((code, old) for old in held)]
+        actor.must_cover(pairs)
+        holders = MembershipRole.objects.using(actor.alias).filter(role=role)
+        actor.must_cover_where(pairs, holders.values_list("membership_id", flat=True))
         if held == [wanted]:
             return
         entity = Entity("role", role.pk, role.name)
@@ -438,8 +479,9 @@ def grant_permission(ctx: TenantContext, *, role_id: UUID, code: str, scope: str
 
 def revoke_permission(ctx: TenantContext, *, role_id: UUID, code: str) -> None:
     """Retira `code` a un rol (F2-33). Exige lo mismo que concederlo (como PO-1): cubrir la
-    concesión con su alcance y, si es sensible, ser Owner. Las concesiones del rol Owner no se
-    editan. Si el rol no tiene esa concesión (también al repetir la llamada), `DoesNotExist`.
+    concesión con su alcance, en el lugar de cada titular si es `TEAM` o `BRANCH` (D-F2-16), y, si
+    es sensible, ser Owner. Las concesiones del rol Owner no se editan. Si el rol no la tiene
+    (también al repetir la llamada), `DoesNotExist`.
     """
     with _change(ctx, "roles.manage") as actor:
         role = Role.objects.using(actor.alias).get(pk=role_id)
@@ -451,20 +493,26 @@ def revoke_permission(ctx: TenantContext, *, role_id: UUID, code: str) -> None:
             raise RolePermission.DoesNotExist
         grant = RolePermission.objects.using(actor.alias).get(role=role, permission_id=code)
         actor.must_cover([(code, grant.scope)])
+        holders = MembershipRole.objects.using(actor.alias).filter(role=role)
+        members = holders.values_list("membership_id", flat=True)
+        actor.must_cover_where([(code, grant.scope)], members)
         grant.delete(using=actor.alias)
         changes = {"permission": [code, None], "scope": [grant.scope, None]}
         record(ctx, "role.permission_revoked", Entity("role", role.pk, role.name), changes)
 
 
 def assign_role(ctx: TenantContext, *, membership_id: UUID, role_id: UUID) -> None:
-    """Asigna un rol a otra membresía de la organización. Repetirlo no hace nada."""
+    """Asigna un rol a otra membresía de la organización. Repetirlo no hace nada. Sus concesiones
+    `TEAM` o `BRANCH` se cubren en los equipos o la sucursal del miembro (D-F2-16)."""
     membership_id = UUID(str(membership_id))  # también si llega como texto: SELF compara UUID
     with _change(ctx, "users.manage") as actor:
         if membership_id == actor.ectx.membership_id:
             raise AccessDenied(Denied.SELF)
         role = Role.objects.using(actor.alias).get(pk=role_id)
         _member(actor.alias, membership_id)
-        actor.must_cover(role.grants.using(actor.alias).values_list("permission_id", "scope"))
+        pairs = list(role.grants.using(actor.alias).values_list("permission_id", "scope"))
+        actor.must_cover(pairs)
+        actor.must_cover_where(pairs, [membership_id])  # D-F2-16
         _, created = MembershipRole.objects.using(actor.alias).get_or_create(
             membership_id=membership_id, role=role
         )
@@ -484,7 +532,9 @@ def remove_role(ctx: TenantContext, *, membership_id: UUID, role_id: UUID) -> No
         assignment = MembershipRole.objects.using(actor.alias).select_related("role")
         found = assignment.get(membership_id=membership_id, role_id=role_id)
         role = found.role
-        actor.must_cover(role.grants.using(actor.alias).values_list("permission_id", "scope"))
+        pairs = list(role.grants.using(actor.alias).values_list("permission_id", "scope"))
+        actor.must_cover(pairs)
+        actor.must_cover_where(pairs, [membership_id])
         if role.pk == actor.owner.pk:
             _owner_remains(actor.alias, actor.owner, membership_id)
         found.delete(using=actor.alias)
