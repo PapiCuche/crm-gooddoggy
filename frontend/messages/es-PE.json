@@ -724,6 +724,21 @@
     "brands": {
       "manage": "Administrar marcas"
     },
+    "prices": {
+      "view": "Ver precios de las listas generales",
+      "view_wholesale": "Ver precios mayoristas",
+      "view_distributor": "Ver precios de distribuidor",
+      "view_internal": "Ver precios internos",
+      "manage": "Administrar listas y precios",
+      "bulk_update": "Cambiar precios en bloque"
+    },
+    "product_cost": {
+      "view": "Ver costos y márgenes",
+      "manage": "Administrar costos"
+    },
+    "promotions": {
+      "manage": "Administrar promociones"
+    },
     "inventory": {
       "view": "Ver el inventario",
       "manage": "Administrar el inventario",
