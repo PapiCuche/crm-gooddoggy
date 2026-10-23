@@ -4191,7 +4191,7 @@ components:
         document_type:
           nullable: true
           oneOf:
-          - $ref: '#/components/schemas/DocumentTypeEnum'
+          - $ref: '#/components/schemas/ContactDocumentTypeEnum'
           - $ref: '#/components/schemas/NullEnum'
         document_number:
           type: string
@@ -4206,7 +4206,7 @@ components:
           format: uuid
           nullable: true
         source:
-          $ref: '#/components/schemas/SourceEnum'
+          $ref: '#/components/schemas/ContactSourceEnum'
         created_by_user_id:
           type: string
           format: uuid
@@ -4236,7 +4236,7 @@ components:
       - source
       - updated_at
       - version
-    DocumentTypeEnum:
+    ContactDocumentTypeEnum:
       enum:
       - DNI
       - CE
@@ -4248,6 +4248,24 @@ components:
         * `CE` - Ce
         * `RUC` - Ruc
         * `PASSPORT` - Passport
+    ContactSourceEnum:
+      enum:
+      - INBOUND_MESSAGE
+      - WALK_IN
+      - REFERRAL
+      - IMPORT
+      - MANUAL
+      - CAMPAIGN
+      - AI
+      type: string
+      description: |-
+        * `INBOUND_MESSAGE` - Inbound Message
+        * `WALK_IN` - Walk In
+        * `REFERRAL` - Referral
+        * `IMPORT` - Import
+        * `MANUAL` - Manual
+        * `CAMPAIGN` - Campaign
+        * `AI` - Ai
     Error:
       type: object
       properties:
@@ -5503,24 +5521,6 @@ components:
           $ref: '#/components/schemas/User'
       required:
       - user
-    SourceEnum:
-      enum:
-      - INBOUND_MESSAGE
-      - WALK_IN
-      - REFERRAL
-      - IMPORT
-      - MANUAL
-      - CAMPAIGN
-      - AI
-      type: string
-      description: |-
-        * `INBOUND_MESSAGE` - Inbound Message
-        * `WALK_IN` - Walk In
-        * `REFERRAL` - Referral
-        * `IMPORT` - Import
-        * `MANUAL` - Manual
-        * `CAMPAIGN` - Campaign
-        * `AI` - Ai
     StockImport:
       type: object
       properties:

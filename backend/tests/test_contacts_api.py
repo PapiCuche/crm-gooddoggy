@@ -24,6 +24,7 @@ from tests.test_branches import branch
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx, join
 from tests.test_self_context import reply, signed
+from tests.test_team_member_put import put
 from tests.test_team_members import add
 from tests.test_teams import team
 
@@ -157,6 +158,18 @@ def test_team_widens_nothing_beyond_own_until_d_f4_01(crm: SimpleNamespace) -> N
     assert listed(sam) == names(crm, "sam")
     for key in ("owned", "lima"):
         assert sam.get(f"{CONTACTS}{crm.ids[key]}/").status_code == 404
+
+
+def test_a_team_manager_without_contacts_view_cannot_place_a_template_supervisor(
+    crm: SimpleNamespace,
+) -> None:
+    """D-F2-13: quien pone a alguien en un equipo cubre lo que gana ahí. El Supervisor de la
+    plantilla gana `contacts.view` `TEAM`; un miembro sin rol, nada."""
+    give(crm.a, crm.m["bea"], {"teams.manage": None, "users.view": None})
+    noa = join(crm.a, make_user(email="noa@example.com")).pk
+    support, bea = team(crm.a, "soporte"), signed(crm.bea)
+    assert reply(put(bea, support.pk, crm.m["sam"], {})) == DENIED
+    assert put(bea, support.pk, noa, {}).status_code == 201
 
 
 def test_branch_sees_its_branch_plus_own(crm: SimpleNamespace) -> None:

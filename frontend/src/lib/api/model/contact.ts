@@ -5,9 +5,9 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
-import type { DocumentTypeEnum } from "./documentTypeEnum";
+import type { ContactDocumentTypeEnum } from "./contactDocumentTypeEnum";
+import type { ContactSourceEnum } from "./contactSourceEnum";
 import type { NullEnum } from "./nullEnum";
-import type { SourceEnum } from "./sourceEnum";
 
 /**
  * Los datos del propio contacto, también los personales: solo los ve quien lo tiene en su
@@ -25,7 +25,7 @@ export interface Contact {
   primary_phone_e164: string | null;
   /** @nullable */
   primary_email: string | null;
-  document_type: DocumentTypeEnum | NullEnum | null;
+  document_type: ContactDocumentTypeEnum | NullEnum | null;
   /** @nullable */
   document_number: string | null;
   /**
@@ -35,7 +35,7 @@ export interface Contact {
   owner_user_id: string | null;
   /** @nullable */
   branch_id: string | null;
-  source: SourceEnum;
+  source: ContactSourceEnum;
   /** @nullable */
   created_by_user_id: string | null;
   created_at: string;

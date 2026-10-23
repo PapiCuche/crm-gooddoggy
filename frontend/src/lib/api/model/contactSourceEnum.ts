@@ -15,9 +15,9 @@
  * * `CAMPAIGN` - Campaign
  * * `AI` - Ai
  */
-export type SourceEnum = (typeof SourceEnum)[keyof typeof SourceEnum];
+export type ContactSourceEnum = (typeof ContactSourceEnum)[keyof typeof ContactSourceEnum];
 
-export const SourceEnum = {
+export const ContactSourceEnum = {
   INBOUND_MESSAGE: "INBOUND_MESSAGE",
   WALK_IN: "WALK_IN",
   REFERRAL: "REFERRAL",

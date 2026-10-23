@@ -726,10 +726,10 @@
       "manage": "Administrar almacenes"
     },
     "contacts": {
-      "view": "Ver clientes",
-      "create": "Crear clientes",
-      "update": "Editar clientes",
-      "delete": "Borrar clientes"
+      "view": "Ver contactos",
+      "create": "Crear contactos",
+      "update": "Editar contactos",
+      "delete": "Borrar contactos"
     }
   },
   "account": {

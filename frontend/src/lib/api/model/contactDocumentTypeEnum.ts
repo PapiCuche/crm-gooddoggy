@@ -12,9 +12,10 @@
  * * `RUC` - Ruc
  * * `PASSPORT` - Passport
  */
-export type DocumentTypeEnum = (typeof DocumentTypeEnum)[keyof typeof DocumentTypeEnum];
+export type ContactDocumentTypeEnum =
+  (typeof ContactDocumentTypeEnum)[keyof typeof ContactDocumentTypeEnum];
 
-export const DocumentTypeEnum = {
+export const ContactDocumentTypeEnum = {
   DNI: "DNI",
   CE: "CE",
   RUC: "RUC",
