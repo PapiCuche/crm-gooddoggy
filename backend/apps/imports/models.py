@@ -22,6 +22,7 @@ class DataImport(TenantModel):
         VALIDATED = "VALIDATED"
         APPLYING = "APPLYING"
         APPLIED = "APPLIED"
+        REVERTED = "REVERTED"  # con movimientos compensatorios (F3-24)
         FAILED = "FAILED"
         CANCELLED = "CANCELLED"
 
@@ -65,6 +66,7 @@ class DataImport(TenantModel):
                         "VALIDATED",
                         "APPLYING",
                         "APPLIED",
+                        "REVERTED",
                         "FAILED",
                         "CANCELLED",
                     ]

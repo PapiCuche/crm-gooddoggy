@@ -15,6 +15,11 @@ urlpatterns = [
         name="stock-import-apply",
     ),
     path(
+        "inventory/imports/<uuid:import_id>/revert/",
+        imports.StockImportRevertView.as_view(),
+        name="stock-import-revert",
+    ),
+    path(
         "inventory/imports/<uuid:import_id>/errors/",
         imports.StockImportErrorsView.as_view(),
         name="stock-import-errors",

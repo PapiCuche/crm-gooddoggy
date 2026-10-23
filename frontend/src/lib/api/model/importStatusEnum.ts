@@ -12,6 +12,7 @@
  * * `VALIDATED` - Validated
  * * `APPLYING` - Applying
  * * `APPLIED` - Applied
+ * * `REVERTED` - Reverted
  * * `FAILED` - Failed
  * * `CANCELLED` - Cancelled
  */
@@ -23,6 +24,7 @@ export const ImportStatusEnum = {
   VALIDATED: "VALIDATED",
   APPLYING: "APPLYING",
   APPLIED: "APPLIED",
+  REVERTED: "REVERTED",
   FAILED: "FAILED",
   CANCELLED: "CANCELLED",
 } as const;

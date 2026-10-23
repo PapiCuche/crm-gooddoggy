@@ -7,6 +7,7 @@
  */
 import type { ImportStatusEnum } from "./importStatusEnum";
 import type { StockImportResult } from "./stockImportResult";
+import type { StockImportRevertResult } from "./stockImportRevertResult";
 
 export interface StockImport {
   id: string;
@@ -34,4 +35,6 @@ export interface StockImport {
   applied_at: string | null;
   /** Al aplicarla. */
   result: StockImportResult | null;
+  /** Al revertirla. */
+  revert: StockImportRevertResult | null;
 }

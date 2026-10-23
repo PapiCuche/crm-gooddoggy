@@ -100,6 +100,7 @@ import type {
   Session,
   StockImport,
   StockImportCreateRequest,
+  StockImportRevertRequest,
   Team,
   TeamCreateRequest,
   TeamMember,
@@ -3831,6 +3832,115 @@ export function useInventoryImportsErrors<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getInventoryImportsRevertUrl = (orgSlug: string, importId: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/imports/${importId}/revert/`;
+};
+
+/**
+ * Revierte una importación aplicada: cada celda que movió vuelve al saldo de antes con otro ajuste en el ledger, que no se edita. Una celda que cambió después de la importación queda `STALE` y no se toca. Revertir otra vez no cambia nada. 409 `IMPORT_NOT_APPLIED` si no está aplicada.
+ */
+export const inventoryImportsRevert = async (
+  orgSlug: string,
+  importId: string,
+  stockImportRevertRequest: StockImportRevertRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<StockImport> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<StockImport>(getInventoryImportsRevertUrl(orgSlug, importId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(stockImportRevertRequest),
+  });
+};
+
+export const getInventoryImportsRevertMutationKey = () => ["inventoryImportsRevert"] as const;
+
+export const getInventoryImportsRevertMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inventoryImportsRevert>>,
+    TError,
+    InventoryImportsRevertMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inventoryImportsRevert>>,
+  TError,
+  InventoryImportsRevertMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInventoryImportsRevertMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inventoryImportsRevert>>,
+    InventoryImportsRevertMutationVariables
+  > = (props) => {
+    const { orgSlug, importId, data } = props ?? {};
+
+    return inventoryImportsRevert(orgSlug, importId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InventoryImportsRevertMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryImportsRevert>>
+>;
+export type InventoryImportsRevertMutationBody = StockImportRevertRequest;
+export type InventoryImportsRevertMutationError = ErrorType<Error>;
+export type InventoryImportsRevertMutationVariables = {
+  orgSlug: string;
+  importId: string;
+  data: StockImportRevertRequest;
+};
+
+export const useInventoryImportsRevert = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof inventoryImportsRevert>>,
+      TError,
+      InventoryImportsRevertMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof inventoryImportsRevert>>,
+  TError,
+  InventoryImportsRevertMutationVariables,
+  TContext
+> => {
+  return useMutation(getInventoryImportsRevertMutationOptions(options), queryClient);
+};
 
 export const getInventoryImportsRowsListUrl = (
   orgSlug: string,

@@ -121,6 +121,8 @@ export * from "./session";
 export * from "./stockImport";
 export * from "./stockImportCreateRequest";
 export * from "./stockImportResult";
+export * from "./stockImportRevertRequest";
+export * from "./stockImportRevertResult";
 export * from "./stockImportRow";
 export * from "./team";
 export * from "./teamCreateRequest";

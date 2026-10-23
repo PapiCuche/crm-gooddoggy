@@ -459,7 +459,7 @@
 
 **`sync_jobs`** — `kind` (TEMPLATES_SYNC/AI_MODELS_SYNC/CHANNEL_PROFILE_SYNC/HEALTHCHECK), `target_type/id`, `status`, `started_at`, `finished_at`, `result` JSONB.
 
-**`data_imports`** — `kind` (CATALOG/PRICES/STOCK/CONTACTS), `file_id`, `status` (UPLOADED/VALIDATING/VALIDATED/APPLYING/APPLIED/FAILED/CANCELLED), `total_rows`, `valid_rows`, `error_rows`, `new_count`, `update_count`, `summary` JSONB, `created_by_user_id`, `applied_by_user_id`, `applied_at`.
+**`data_imports`** — `kind` (CATALOG/PRICES/STOCK/CONTACTS), `file_id`, `status` (UPLOADED/VALIDATING/VALIDATED/APPLYING/APPLIED/REVERTED/FAILED/CANCELLED), `total_rows`, `valid_rows`, `error_rows`, `new_count`, `update_count`, `summary` JSONB, `created_by_user_id`, `applied_by_user_id`, `applied_at`.
 
 **`data_import_rows`** — `import_id`, `row_number`, `raw` JSONB, `normalized` JSONB, `action` (CREATE/UPDATE/UNCHANGED/SKIP/ERROR/STALE), `errors` JSONB, `target_entity_type/id`.
 
