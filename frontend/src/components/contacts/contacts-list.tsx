@@ -2,11 +2,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { everyPage } from "@/components/catalog/categories-tree";
-import { CursorList } from "@/components/lists/cursor-list";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import {
   branchesList,
   contactsList,
@@ -18,10 +18,13 @@ import {
 import type { Contact } from "@/lib/api/model";
 
 import { ContactCreate } from "./contact-create";
+import { ContactDeleteAction } from "./contact-delete-action";
+import { ContactEditAction } from "./contact-edit-action";
 
 // Clientes (F4-04): los contactos que devuelve `GET /api/v1/o/{slug}/contacts/` (F4-02), los
 // del alcance de `contacts.view`, por orden de creación. La lista, sus estados y su foco son
-// los de `CursorList`. Quién puede verlos o crearlos lo decide la API.
+// los de `CursorList`. Editar y borrar (F4-05), en cada fila. Quién puede verlos, crearlos o
+// cambiarlos lo decide la API.
 export function ContactsList() {
   const t = useTranslations("contacts");
   const { organization, permissions, user } = useTenant();
@@ -54,7 +57,26 @@ export function ContactsList() {
   // pueden no estar todavía cuando el directorio termina.
   const naming = people.isLoading;
   const places = new Map(branches.data?.map((row) => [row.id, row]));
-  const [done, setDone] = useState<string | null>(null);
+  // Lo que respondió la última escritura. Un cliente que ya no está a su alcance (`alert`) se
+  // explica aquí y no en su fila, que desaparece cuando llega la lista nueva.
+  const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
+  const list = useRef<CursorListHandle>(null);
+  const ask = () => setSaid(null);
+  function stale(name: string, here: boolean) {
+    setSaid({ text: t("stale", { name }), alert: true });
+    list.current?.refetch();
+    if (here) list.current?.focusHeading();
+  }
+  function done(text: string, here = false) {
+    setSaid({ text });
+    if (here) list.current?.focusHeading(); // borrado: la fila se fue y el foco no tiene dónde
+  }
+  const actions = { slug, listKey, onAsk: ask, onStale: stale };
+  // Comodidad: cada escritura se ofrece a quien la API dijo que tiene su permiso, con cualquier
+  // alcance; si un cliente concreto queda fuera, la API responde 404 y se dice.
+  const canEdit = held("contacts.update");
+  const canDelete = held("contacts.delete");
+  const writes = canEdit || canDelete || held("contacts.create");
 
   function owner({ owner_user_id: id }: Contact): string {
     if (!id) return t("ownerNone");
@@ -71,6 +93,7 @@ export function ContactsList() {
 
   return (
     <CursorList<Contact>
+      ref={list}
       section="contacts"
       organization={organization.name}
       listKey={listKey}
@@ -78,19 +101,20 @@ export function ContactsList() {
         contactsList(slug, cursor ? { cursor } : undefined, { signal })
       }
       notice={
-        // Comodidad: crear se ofrece a quien la API dijo que tiene `contacts.create`.
-        held("contacts.create") ? (
+        writes ? (
           <>
-            <ContactCreate
-              slug={slug}
-              listKey={listKey}
-              onAsk={() => setDone(null)}
-              onDone={setDone}
-            />
+            {held("contacts.create") ? (
+              <ContactCreate slug={slug} listKey={listKey} onAsk={ask} onDone={done} />
+            ) : null}
             {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
-            <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
-              {done ?? ""}
+            <p role="status" className={said && !said.alert ? "text-sm wrap-anywhere" : "sr-only"}>
+              {said && !said.alert ? said.text : ""}
             </p>
+            {said?.alert ? (
+              <p role="alert" className="text-danger wrap-anywhere">
+                {said.text}
+              </p>
+            ) : null}
           </>
         ) : null
       }
@@ -120,6 +144,17 @@ export function ContactsList() {
               <span className="wrap-anywhere">{owner(contact)}</span>
               {place ? <span className="wrap-anywhere">{place}</span> : null}
             </p>
+            {canEdit || canDelete ? (
+              // Abiertos, el formulario o la confirmación ocupan la fila entera.
+              <div className="flex flex-wrap items-start gap-2 sm:col-span-2">
+                {canEdit ? (
+                  <ContactEditAction {...actions} contact={contact} onDone={done} />
+                ) : null}
+                {canDelete ? (
+                  <ContactDeleteAction {...actions} contact={contact} onDeleted={done} />
+                ) : null}
+              </div>
+            ) : null}
           </>
         );
       }}
