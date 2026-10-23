@@ -1270,6 +1270,216 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/inventory/levels/:
+    get:
+      operationId: inventory_levels_list
+      description: El saldo de cada variante en cada almacén que tuvo movimientos,
+        paginado por creación (ADR-016).
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo los de esa variante.
+      - in: query
+        name: warehouse_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo los de ese almacén.
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLevelList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/movements/:
+    get:
+      operationId: inventory_movements_list
+      description: 'El ledger: los movimientos, del más reciente al más antiguo (ADR-016).'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo los de esa variante.
+      - in: query
+        name: warehouse_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo los de ese almacén.
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMovementList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: inventory_movements_create
+      description: 'Registra un ingreso, una salida o un ajuste (lo contado) y deja
+        el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento,
+        que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`
+        o `IDEMPOTENCY_KEY_REUSED`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MovementCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movement'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movement'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/invitations/:
     get:
       operationId: invitations_list
@@ -3231,6 +3441,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    delete:
+      operationId: warehouses_delete
+      description: 'Borra el almacén (borrado lógico) y libera su código. 409 `WAREHOUSE_HAS_STOCK`:
+        tiene existencias. 404: no es de la organización o ya está borrado.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: warehouse_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
 components:
   schemas:
     ActiveOrSuspendedEnum:
@@ -3609,6 +3866,34 @@ components:
       required:
       - email
       - role_ids
+    Level:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        variant_id:
+          type: string
+          format: uuid
+        warehouse_id:
+          type: string
+          format: uuid
+        on_hand:
+          type: integer
+          description: Las unidades que hay.
+        reserved:
+          type: integer
+          description: Las apartadas para cotizaciones y pedidos.
+        available:
+          type: integer
+          description: '`on_hand - reserved`: las que se pueden vender.'
+      required:
+      - available
+      - id
+      - on_hand
+      - reserved
+      - variant_id
+      - warehouse_id
     LoginMfaRequest:
       type: object
       properties:
@@ -3913,6 +4198,109 @@ components:
       - enabled
       - enabled_at
       - enrollment_expires_in
+    Movement:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        variant_id:
+          type: string
+          format: uuid
+        warehouse_id:
+          type: string
+          format: uuid
+        movement_type:
+          $ref: '#/components/schemas/MovementTypeEnum'
+        quantity:
+          type: integer
+          description: El cambio en `on_hand`, con su signo.
+        on_hand_after:
+          type: integer
+        reserved_after:
+          type: integer
+        reason:
+          type: string
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - created_by_user_id
+      - id
+      - movement_type
+      - on_hand_after
+      - quantity
+      - reason
+      - reserved_after
+      - variant_id
+      - warehouse_id
+    MovementCreateMovementTypeEnum:
+      enum:
+      - RECEIPT
+      - ISSUE
+      - ADJUSTMENT
+      type: string
+      description: |-
+        * `RECEIPT` - RECEIPT
+        * `ISSUE` - ISSUE
+        * `ADJUSTMENT` - ADJUSTMENT
+    MovementCreateRequest:
+      type: object
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+        warehouse_id:
+          type: string
+          format: uuid
+        movement_type:
+          $ref: '#/components/schemas/MovementCreateMovementTypeEnum'
+        quantity:
+          type: integer
+          maximum: 1000000
+          minimum: 0
+          description: Lo que entra o sale (desde 1) o, en un ajuste, lo contado.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 255
+        idempotency_key:
+          type: string
+          minLength: 1
+          description: 'Única por movimiento: repetir la petición no lo duplica.'
+          maxLength: 100
+      required:
+      - idempotency_key
+      - movement_type
+      - quantity
+      - reason
+      - variant_id
+      - warehouse_id
+    MovementTypeEnum:
+      enum:
+      - RECEIPT
+      - ISSUE
+      - ADJUSTMENT
+      - TRANSFER_OUT
+      - TRANSFER_IN
+      - RESERVE
+      - RELEASE
+      - SALE
+      type: string
+      description: |-
+        * `RECEIPT` - Receipt
+        * `ISSUE` - Issue
+        * `ADJUSTMENT` - Adjustment
+        * `TRANSFER_OUT` - Transfer Out
+        * `TRANSFER_IN` - Transfer In
+        * `RESERVE` - Reserve
+        * `RELEASE` - Release
+        * `SALE` - Sale
     NullEnum:
       enum:
       - null
@@ -4000,6 +4388,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedLevelList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Level'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedMemberList:
       type: object
       required:
@@ -4010,6 +4412,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Member'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedMovementList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movement'
         next:
           type: string
           nullable: true

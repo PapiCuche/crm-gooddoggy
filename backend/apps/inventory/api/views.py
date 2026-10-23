@@ -1,4 +1,4 @@
-"""Rutas de tenant del inventario: `…/warehouses/` (F3-08, E04-01)."""
+"""Rutas de tenant de los almacenes: `…/warehouses/` (F3-08 y F3-11, E04-01)."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -21,6 +21,7 @@ from core.tenancy import context
 
 CODE_IN_USE = "Ya hay un almacén con ese código en la organización."
 UNKNOWN = "No existe en esta organización."
+HAS_STOCK = "El almacén tiene existencias: sácalas o ajústalas a cero antes."
 SELLABLE = "Si su stock cuenta para la venta (el que verán la IA y el cliente)."
 
 
@@ -108,7 +109,7 @@ IMMUTABLE = "No se puede cambiar: crea otro almacén si hace falta."
 
 
 class WarehouseView(APIView):
-    required_permissions = {"PATCH": "warehouses.manage"}
+    required_permissions = {"PATCH": "warehouses.manage", "DELETE": "warehouses.manage"}
 
     @extend_schema(
         operation_id="warehouses_update",
@@ -135,3 +136,20 @@ class WarehouseView(APIView):
         except Warehouse.DoesNotExist:
             raise NotFound from None
         return Response(WarehouseSerializer(warehouse).data)
+
+    @extend_schema(
+        operation_id="warehouses_delete",
+        tags=["inventory"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Borra el almacén (borrado lógico) y libera su código. 409 "
+        "`WAREHOUSE_HAS_STOCK`: tiene existencias. 404: no es de la organización o ya está "
+        "borrado.",
+    )
+    def delete(self, request: Request, warehouse_id: UUID, **kwargs: Any) -> Response:
+        try:
+            commands.delete_warehouse(_tenant(), warehouse_id=warehouse_id)
+        except Warehouse.DoesNotExist:
+            raise NotFound from None
+        except commands.WarehouseHasStock:
+            raise ApiError("WAREHOUSE_HAS_STOCK", 409, HAS_STOCK) from None
+        return Response(status=204)

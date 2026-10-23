@@ -141,6 +141,8 @@ def race(org: UUID, user: Any, wants: list[Any], then: str = "") -> list[Any]:
             with tenant_scope(ctx(org, user)) as tenant:
                 if isinstance(wants[index], str):
                     outcome[index] = connection.cursor().execute(wants[index])
+                elif callable(wants[index]):  # F3-11: otro comando
+                    outcome[index] = wants[index](tenant)
                 else:
                     outcome[index] = stock.move(tenant, wants[index])
                 if index == 0:
