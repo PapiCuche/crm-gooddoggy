@@ -83,8 +83,11 @@ def _parts(archive: zipfile.ZipFile) -> None:
 
 def _content(data: bytes, part: zipfile.ZipInfo) -> bytes:
     """Lo que guarda la parte: hasta un byte más de lo que declara, nunca el flujo entero."""
-    name, extra = struct.unpack_from("<HH", data, part.header_offset + 26)
-    begin = part.header_offset + 30 + name + extra
+    at = part.header_offset
+    if at < 0 or data[at : at + 4] != ZIP:  # su cabecera local, dentro del archivo
+        raise Unreadable(DAMAGED)
+    name, extra = struct.unpack_from("<HH", data, at + 26)
+    begin = at + 30 + name + extra
     raw = data[begin : begin + part.compress_size]
     if part.compress_type == zipfile.ZIP_STORED:
         content, ended = raw, True
@@ -92,7 +95,8 @@ def _content(data: bytes, part: zipfile.ZipInfo) -> bytes:
         inflate = zlib.decompressobj(-zlib.MAX_WBITS)
         content = inflate.decompress(raw, part.file_size + 1)
         ended = inflate.eof
-    if not ended or len(content) != part.file_size or zlib.crc32(content) != part.CRC:
+    whole = len(raw) == part.compress_size  # no acaba fuera del archivo
+    if not (ended and whole) or len(content) != part.file_size or zlib.crc32(content) != part.CRC:
         raise Unreadable(DAMAGED)
     return content
 

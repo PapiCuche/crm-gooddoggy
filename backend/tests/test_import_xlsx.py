@@ -319,6 +319,13 @@ def test_a_stream_must_end_exactly_where_it_declares_with_its_crc() -> None:
         assert refused(restream(stream, size, crc)) == xlsxfile.DAMAGED
 
 
+def test_a_part_that_runs_past_the_end_of_the_file_is_damaged() -> None:
+    data = bytearray(handmade(parts={"xl/extra.xml": "<x/>"}))
+    unsigned = bytes(data).replace(b"PK\x03\x04", b"PK\x00\x00")  # sin firma en la cabecera local
+    struct.pack_into("<I", data, data.rindex(b"PK\x01\x02") + 20, 15 << 20)  # su tamaño comprimido
+    assert refused(bytes(data)) == refused(unsigned) == xlsxfile.DAMAGED
+
+
 def test_a_part_that_is_not_plain_zip_is_refused() -> None:
     assert xlsxfile.read(plus("xl/extra.xml", zipfile.ZIP_STORED), ALIASES).rows == []
     for method in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
