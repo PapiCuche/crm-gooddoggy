@@ -1,7 +1,7 @@
 """Comandos de listas de precios (F3-40, E03-01): crear y cambiar.
 
-No comprueban permisos: los declarará la API (`prices.manage`, F3-40b); fuera de `apps.pricing`
-nadie los importa (contrato de import-linter). Validan lo que guardan y auditan cada cambio,
+No comprueban permisos: los declara la API (`prices.manage`, F3-40b), la única que los importa
+(contrato de import-linter). Validan lo que guardan y auditan cada cambio,
 también el de la lista que deja de ser la predeterminada. El código y la moneda no cambian. Una
 sola predeterminada por moneda, activa y con `prices.view` (03 §H, 04 §K.2): la primera lista así
 de una moneda lo es, y elegir otra la cambia en la misma transacción.
