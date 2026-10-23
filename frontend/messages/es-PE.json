@@ -1079,6 +1079,33 @@
       "denied": "No tienes permiso para crear clientes.",
       "done": "Cliente «{name}» creado.",
       "doneStale": "Cliente «{name}» creado, pero la lista no se pudo actualizar. Recarga la página para verlo."
+    },
+    "stale": "«{name}» ya no está entre los clientes que puedes cambiar: se borró o quedó fuera de tu alcance. La lista se volvió a cargar.",
+    "edit": {
+      "trigger": "Editar",
+      "triggerLabel": "Editar el cliente {name}",
+      "title": "Editar el cliente {name}",
+      "display_name": "Nombre para mostrar",
+      "display_nameRequired": "Escribe el nombre para mostrar.",
+      "display_nameInvalid": "El nombre para mostrar no es válido: una línea de hasta 200 caracteres con alguna letra o cifra.",
+      "submit": "Guardar",
+      "busy": "Guardando…",
+      "conflict_reloaded": "Otra persona cambió este cliente mientras lo editabas. Ahora ves lo que guardó: revisa y repite tu cambio.",
+      "conflict_failed": "Otra persona cambió este cliente mientras lo editabas, y no se pudo cargar lo nuevo. Recarga la página y repite tu cambio.",
+      "denied": "No tienes permiso para editar clientes.",
+      "done": "Cliente «{name}» guardado.",
+      "doneStale": "Cliente «{name}» guardado, pero la lista no se pudo actualizar. Recarga la página para verlo."
+    },
+    "delete": {
+      "trigger": "Borrar",
+      "label": "Borrar el cliente {name}",
+      "ask": "¿Borrar el cliente «{name}»? Deja de aparecer en la lista.",
+      "confirm": "Borrar",
+      "busy": "Borrando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para borrar clientes.",
+      "done": "Cliente «{name}» borrado.",
+      "doneStale": "Cliente «{name}» borrado, pero la lista no se pudo actualizar. Recarga la página."
     }
   },
   "stock": {
