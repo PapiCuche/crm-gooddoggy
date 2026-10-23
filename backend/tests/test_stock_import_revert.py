@@ -9,7 +9,7 @@ from django.test import Client
 
 from apps.imports.models import DataImport
 from apps.inventory import imports
-from apps.inventory.models import InventoryLevel
+from apps.inventory.models import InventoryLevel, InventoryMovement, Warehouse
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization, test_self_context
 from tests.factories import make_user
@@ -76,8 +76,33 @@ def test_revert_puts_back_the_untouched_cells_and_keeps_both_movements(
     done = rows(world.a, job)
     actions = [done[n].action for n in range(2, 7)]
     assert actions == ["UPDATE", "CREATE", "STALE", "UNCHANGED", "ERROR"]
-    assert done[4].errors == ["El saldo cambió después de la importación: era 4, ahora 3."]
+    assert done[4].errors == [
+        "La celda se movió después de la importación (dejó 4, ahora hay 3): no se revierte."
+    ]
     assert migrator.execute(AUDIT).fetchall() == [(job.pk, body["revert"])]
+    with tenant_scope(ctx(world.a)):
+        back = InventoryMovement.objects.get(idempotency_key=f"{key}:2:revert")
+    assert back.reason == "Reversión de una importación de stock"
+
+
+@pytest.mark.parametrize("counts", [(12, 8), (20,)], ids=["recount-then-receipt", "same-count"])
+def test_a_cell_counted_after_the_import_is_stale_even_at_the_same_balance(
+    ana: Client, world: Any, counts: tuple[int, ...]
+) -> None:
+    """Contaron 12 y entraron 8 (o el recuento confirmó 20): el saldo es el que dejó la
+    importación, pero volver a 10 borraría un recuento real."""
+    here = cell(world.a)
+    move(world.a, world.ana, wanted(here, "RECEIPT", 10))
+    job = preview(world.a, world.ana, HEADER + "IP16,ALM,20\n")
+    apply(ana, job)
+    move(world.a, world.ana, wanted(here, "ADJUSTMENT", counts[0]))
+    if len(counts) > 1:
+        move(world.a, world.ana, wanted(here, "RECEIPT", counts[1]))
+    assert revert(ana, job).json()["revert"] == {"reverted": 0, "stale": 1, "failed": 0}
+    assert level(world.a, here) == (20, 0, 20)
+    assert rows(world.a, job)[2].errors == [
+        "La celda se movió después de la importación (dejó 20, ahora hay 20): no se revierte."
+    ]
 
 
 def test_reverting_again_creates_no_movement(
@@ -93,6 +118,32 @@ def test_reverting_again_creates_no_movement(
     assert revert(ana, job).json()["revert"] == {"reverted": 1, "stale": 0, "failed": 0}
     assert len(ledger(world.a)) == 2 and level(world.a, here) == (0, 0, 0)
     assert len(migrator.execute(AUDIT).fetchall()) == 2
+
+
+def test_applying_again_keeps_the_version_the_import_left(
+    ana: Client, world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """Repetir la aplicación (estado perdido) devuelve el ajuste de entonces: la celda que se
+    movió después sigue contando como movida al revertir."""
+    here = cell(world.a)
+    job = preview(world.a, world.ana, HEADER + "IP16,ALM,4\n")
+    apply(ana, job)
+    move(world.a, world.ana, wanted(here, "ADJUSTMENT", 4))
+    migrator.execute("UPDATE data_imports SET status = 'VALIDATED'")
+    assert apply(ana, job).json()["result"]["applied"] == 1
+    assert revert(ana, job).json()["revert"] == {"reverted": 0, "stale": 1, "failed": 0}
+    assert level(world.a, here) == (4, 0, 4)
+
+
+def test_a_row_applied_without_its_version_is_stale(
+    ana: Client, world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    here = cell(world.a)
+    job = preview(world.a, world.ana, HEADER + "IP16,ALM,4\n")
+    apply(ana, job)
+    migrator.execute("UPDATE data_import_rows SET normalized = normalized - 'version'")
+    assert revert(ana, job).json()["revert"] == {"reverted": 0, "stale": 1, "failed": 0}
+    assert level(world.a, here) == (4, 0, 4)
 
 
 def test_only_an_applied_import_is_reverted_and_only_when_confirmed(
@@ -188,3 +239,29 @@ def test_a_revert_and_another_import_of_the_same_cells_do_not_deadlock(
     assert outcome[0].summary["revert"]["reverted"] == 2
     assert outcome[1].summary["result"]["stale"] == 2
     assert (level(world.a, (low, here)), level(world.a, (high, here))) == ((1, 0, 1), (1, 0, 1))
+
+
+@pytest.mark.parametrize("held", [0, 1], ids=["low-variant-held", "high-variant-held"])
+def test_a_revert_and_an_apply_in_two_warehouses_do_not_deadlock(
+    world: Any, migrator: psycopg.Connection[Any], held: int
+) -> None:
+    """Las celdas (A, almacén alto) y (B, almacén bajo): por almacén irían al revés. Con el saldo
+    de B retenido, una reversión que empiece por el almacén se interbloquea con la aplicación;
+    con el de A, una aplicación que empiece por el almacén, con la reversión."""
+    low, first = cell(world.a, "A1")
+    high = cell(world.a, "B2")[0]
+    with tenant_scope(ctx(world.a)):
+        branch = Warehouse.objects.get(pk=first).branch_id
+        other = Warehouse.objects.create(branch_id=branch, code="OTRO", name="Otro").pk
+    small, big = (("ALM", first), ("OTRO", other))[:: 1 if first < other else -1]
+    text = HEADER + f"A1,{big[0]},{{n}}\nB2,{small[0]},{{n}}\n"
+    one = preview(world.a, world.ana, text.format(n=5))
+    with tenant_scope(ctx(world.a, world.ana)) as tenant:
+        imports.apply(tenant, import_id=one.pk)
+    two = preview(world.a, world.ana, text.format(n=7))
+    other_apply = lambda tenant: imports.apply(tenant, import_id=two.pk)  # noqa: E731
+    outcome = _held(migrator, world, (undo(one), other_apply), (low, high)[held])
+    assert not any(isinstance(done, str) for done in outcome), outcome
+    assert outcome[0].summary["revert"]["reverted"] == 2
+    assert outcome[1].summary["result"]["stale"] == 2
+    assert (level(world.a, (low, big[1])), level(world.a, (high, small[1]))) == ((0, 0, 0),) * 2

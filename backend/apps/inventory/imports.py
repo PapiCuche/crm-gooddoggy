@@ -13,8 +13,9 @@ repetir no crea movimientos (la clave). Las filas van por variante y almacén as
 orden de bloqueo de F3-09: dos importaciones a la vez no se interbloquean.
 
 Revertir (F3-24) devuelve cada celda que la importación movió al saldo de antes con otro
-`ADJUSTMENT` (`reference_type = IMPORT`, la clave de su fila con `REVERT_KEY`), solo si la celda
-sigue como la dejó la importación (`expected_on_hand`); si no, la fila queda `STALE` y no se toca.
+`ADJUSTMENT` (`reference_type = IMPORT`, la clave de su fila con `REVERT_KEY`), solo si nadie la
+escribió después: su `version` es la que dejó la importación (`expected_version`; un recuento que
+la devolvió al mismo saldo también la cambia). Si no, la fila queda `STALE` y no se toca.
 Nada del ledger se edita ni se borra: quedan los dos movimientos. Mismo orden de bloqueo que al
 aplicar; revertir otra vez no crea movimientos (el estado y la clave).
 
@@ -213,8 +214,13 @@ def _apply_row(alias: str, ctx: TenantContext, job: DataImport, row: DataImportR
         wanted = stock.Wanted(variant, warehouse, *adjust, row.normalized["on_hand_seen"])
         wanted = replace(wanted, reference_type=stock.Reference.IMPORT, reference_id=job.pk)
         try:
-            movement, _ = stock.move(ctx, wanted)
+            movement, new = stock.move(ctx, wanted)
             row.target_entity_type, row.target_entity_id = MOVEMENT, movement.pk
+            if new:  # la `version` que dejó, con la celda aún bloqueada: revertir la compara
+                cell = InventoryLevel.objects.using(alias).filter(
+                    variant=variant, warehouse=warehouse
+                )
+                row.normalized["version"] = cell.values_list("version", flat=True).get()
         except stock.Stale as error:
             _stale(row, error.on_hand)
         except (
@@ -224,7 +230,7 @@ def _apply_row(alias: str, ctx: TenantContext, job: DataImport, row: DataImportR
             stock.KeyReused,
         ) as error:
             row.action, row.errors = Action.ERROR, [REFUSED[type(error)]]
-    fields = ["action", "errors", "target_entity_type", "target_entity_id"]
+    fields = ["action", "errors", "normalized", "target_entity_type", "target_entity_id"]
     row.save(using=alias, update_fields=fields)
 
 
@@ -268,21 +274,31 @@ TOO_MANY = f"El saldo de antes pasa de {QUANTITY_MAX}, el tope de un ajuste: cor
 def _revert_row(
     ctx: TenantContext, job: DataImport, row: DataImportRow, done: InventoryMovement
 ) -> str:
-    """Devuelve la celda al saldo de antes de la fila: `reverted`, `stale` o `failed`. Un
-    `ADJUSTMENT` al saldo de antes con `expected_on_hand` = lo que dejó la importación registra
-    justo el delta contrario, y su repetición se reconoce por el saldo que deja (`stock._same`)."""
+    """Devuelve la celda al saldo de antes de la fila: `reverted`, `stale` o `failed`. Con la
+    celda sin escribir desde la importación (`expected_version`), un `ADJUSTMENT` al saldo de antes
+    registra justo el delta contrario, y su repetición se reconoce por el saldo que deja."""
     before, after = done.on_hand_after - done.quantity, done.on_hand_after
     key = f"{stock.IMPORT_KEY}{job.pk}:{row.row_number}{REVERT_KEY}"
-    adjust = stock.Type.ADJUSTMENT, before, REVERT_REASON, key, after, stock.Reference.IMPORT
+    wanted = stock.Wanted(
+        done.variant_id,
+        done.warehouse_id,
+        stock.Type.ADJUSTMENT,
+        before,
+        REVERT_REASON,
+        key,
+        expected_version=row.normalized.get("version", 0),  # sin ella (otro CRM): STALE
+        reference_type=stock.Reference.IMPORT,
+        reference_id=job.pk,
+    )
     try:
         if before > QUANTITY_MAX:
             row.action, row.errors = Action.ERROR, [TOO_MANY]
         else:
-            stock.move(ctx, stock.Wanted(done.variant_id, done.warehouse_id, *adjust, job.pk))
+            stock.move(ctx, wanted)
             return "reverted"
     except stock.Stale as error:
-        message = f"El saldo cambió después de la importación: era {after}, ahora {error.on_hand}."
-        row.action, row.errors = Action.STALE, [message]
+        message = f"La celda se movió después de la importación (dejó {after}, ahora hay "
+        row.action, row.errors = Action.STALE, [f"{message}{error.on_hand}): no se revierte."]
     except tuple(REFUSED) as error:
         row.action, row.errors = Action.ERROR, [REVERT_REFUSED[type(error)]]
     row.save(using=require_scope(ctx), update_fields=["action", "errors"])

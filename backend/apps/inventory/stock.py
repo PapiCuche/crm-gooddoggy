@@ -68,7 +68,8 @@ class KeyReused(Exception):
 
 
 class Stale(Exception):
-    """El saldo de la celda, ya bloqueada, no es `Wanted.expected_on_hand` (F3-21)."""
+    """El saldo de la celda, ya bloqueada, no es `Wanted.expected_on_hand` (F3-21), o su
+    `version` no es `Wanted.expected_version` (F3-24): alguien la escribió después."""
 
     def __init__(self, on_hand: int) -> None:
         super().__init__(on_hand)
@@ -86,6 +87,7 @@ class Wanted:
     reason: str
     idempotency_key: str
     expected_on_hand: int | None = None  # la importación (F3-21): si no es el saldo, `Stale`
+    expected_version: int | None = None  # revertirla (F3-24): si la celda se escribió, `Stale`
     reference_type: str = InventoryMovement.Reference.MANUAL  # o IMPORT, con `reference_id`
     reference_id: UUID | None = None
 
@@ -188,7 +190,9 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
                 return done, False
             if not warehouse[0]:
                 raise WarehouseInactive(wanted.warehouse_id)
-            if wanted.expected_on_hand not in (None, level.on_hand):
+            if wanted.expected_on_hand not in (None, level.on_hand) or (
+                wanted.expected_version not in (None, level.version)
+            ):
                 raise Stale(level.on_hand)
             movement = _apply(alias, ctx, wanted, level)
             label = f"{variant.sku} @ {warehouse[1]}"

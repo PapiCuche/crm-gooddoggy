@@ -223,9 +223,9 @@ class StockImportRevertView(APIView):
         request=StockImportRevertSerializer,
         responses={200: StockImportSerializer, **errors(400, 401, 403, 404, 409)},
         description="Revierte una importación aplicada: cada celda que movió vuelve al saldo de "
-        "antes con otro ajuste en el ledger, que no se edita. Una celda que cambió después de "
-        "la importación queda `STALE` y no se toca. Revertir otra vez no cambia nada. 409 "
-        "`IMPORT_NOT_APPLIED` si no está aplicada.",
+        "antes con otro ajuste en el ledger, que no se edita. Una celda con algún movimiento "
+        "después de la importación (aunque vuelva al mismo saldo) queda `STALE` y no se toca. "
+        "Revertir otra vez no cambia nada. 409 `IMPORT_NOT_APPLIED` si no está aplicada.",
     )
     def post(self, request: Request, import_id: UUID, **kwargs: Any) -> Response:
         StockImportRevertSerializer(data=request.data).is_valid(raise_exception=True)
