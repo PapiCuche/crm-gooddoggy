@@ -3047,6 +3047,229 @@ export const useInventoryImportsCreate = <TError = ErrorType<Error>, TContext = 
   return useMutation(getInventoryImportsCreateMutationOptions(options), queryClient);
 };
 
+export const getInventoryImportsApplyUrl = (orgSlug: string, importId: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/imports/${importId}/apply/`;
+};
+
+/**
+ * Confirma la importación: cada fila válida deja su celda con la cantidad del archivo (un ajuste en el ledger). Una celda que cambió desde la previsualización queda `STALE` y no se toca. Aplicar otra vez no cambia nada.
+ */
+export const inventoryImportsApply = async (
+  orgSlug: string,
+  importId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<StockImport> => {
+  return apiFetch<StockImport>(getInventoryImportsApplyUrl(orgSlug, importId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getInventoryImportsApplyMutationKey = () => ["inventoryImportsApply"] as const;
+
+export const getInventoryImportsApplyMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inventoryImportsApply>>,
+    TError,
+    InventoryImportsApplyMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inventoryImportsApply>>,
+  TError,
+  InventoryImportsApplyMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInventoryImportsApplyMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inventoryImportsApply>>,
+    InventoryImportsApplyMutationVariables
+  > = (props) => {
+    const { orgSlug, importId } = props ?? {};
+
+    return inventoryImportsApply(orgSlug, importId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InventoryImportsApplyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryImportsApply>>
+>;
+
+export type InventoryImportsApplyMutationError = ErrorType<Error>;
+export type InventoryImportsApplyMutationVariables = { orgSlug: string; importId: string };
+
+export const useInventoryImportsApply = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof inventoryImportsApply>>,
+      TError,
+      InventoryImportsApplyMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof inventoryImportsApply>>,
+  TError,
+  InventoryImportsApplyMutationVariables,
+  TContext
+> => {
+  return useMutation(getInventoryImportsApplyMutationOptions(options), queryClient);
+};
+
+export const getInventoryImportsErrorsUrl = (orgSlug: string, importId: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/imports/${importId}/errors/`;
+};
+
+/**
+ * Las filas con `ERROR` o `STALE`, en CSV, con sus errores.
+ */
+export const inventoryImportsErrors = async (
+  orgSlug: string,
+  importId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Blob> => {
+  return apiFetch<Blob>(getInventoryImportsErrorsUrl(orgSlug, importId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getInventoryImportsErrorsQueryKey = (orgSlug: string, importId: string) => {
+  return [`/api/v1/o/${orgSlug}/inventory/imports/${importId}/errors/`] as const;
+};
+
+export const getInventoryImportsErrorsQueryOptions = <
+  TData = Awaited<ReturnType<typeof inventoryImportsErrors>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  importId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryImportsErrors>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getInventoryImportsErrorsQueryKey(orgSlug, importId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof inventoryImportsErrors>>> = ({ signal }) =>
+    inventoryImportsErrors(orgSlug, importId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && importId !== null && importId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof inventoryImportsErrors>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type InventoryImportsErrorsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryImportsErrors>>
+>;
+export type InventoryImportsErrorsQueryError = ErrorType<Error>;
+
+export function useInventoryImportsErrors<
+  TData = Awaited<ReturnType<typeof inventoryImportsErrors>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  importId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryImportsErrors>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryImportsErrors>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryImportsErrors>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryImportsErrors<
+  TData = Awaited<ReturnType<typeof inventoryImportsErrors>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  importId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryImportsErrors>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryImportsErrors>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryImportsErrors>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryImportsErrors<
+  TData = Awaited<ReturnType<typeof inventoryImportsErrors>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  importId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryImportsErrors>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useInventoryImportsErrors<
+  TData = Awaited<ReturnType<typeof inventoryImportsErrors>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  importId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryImportsErrors>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getInventoryImportsErrorsQueryOptions(orgSlug, importId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
 export const getInventoryImportsRowsListUrl = (
   orgSlug: string,
   importId: string,

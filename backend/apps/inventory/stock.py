@@ -25,12 +25,13 @@ from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
 from core.text import line
 
-Type = InventoryMovement.Type
+Type, Reference = InventoryMovement.Type, InventoryMovement.Reference
 KINDS = (Type.RECEIPT, Type.ISSUE, Type.ADJUSTMENT)  # las que registra una persona (F3-09)
 QUANTITY_MAX, REASON_MAX = 1_000_000, 255
 ON_HAND_MAX = 2_147_483_647  # `inventory_levels.on_hand` es INT (F3-12)
 KEY = re.compile(r"[A-Za-z0-9._:-]{8,100}")
 KEY_TAKEN = "inventory_movements_key_uq"
+IMPORT_KEY = "import:"  # el prefijo de las claves que derivan las importaciones (F3-21)
 ACTIONS = {Type.RECEIPT: "received", Type.ISSUE: "issued", Type.ADJUSTMENT: "adjusted"}
 _WAREHOUSE = (  # el almacén vivo, con `FOR KEY SHARE`: no se borra mientras se mueve su stock
     "SELECT is_active, code FROM warehouses "
@@ -63,6 +64,14 @@ class KeyReused(Exception):
     """La clave de idempotencia ya se usó para otro movimiento."""
 
 
+class Stale(Exception):
+    """El saldo de la celda, ya bloqueada, no es `Wanted.expected_on_hand` (F3-21)."""
+
+    def __init__(self, on_hand: int) -> None:
+        super().__init__(on_hand)
+        self.on_hand = on_hand
+
+
 @dataclass(frozen=True, slots=True)
 class Wanted:
     """Lo que se pide. `quantity`: lo que entra o sale, o, en un ajuste, lo contado."""
@@ -73,6 +82,9 @@ class Wanted:
     quantity: int
     reason: str
     idempotency_key: str
+    expected_on_hand: int | None = None  # la importación (F3-21): si no es el saldo, `Stale`
+    reference_type: str = InventoryMovement.Reference.MANUAL  # o IMPORT, con `reference_id`
+    reference_id: UUID | None = None
 
 
 def reason(value: str) -> str:
@@ -83,19 +95,28 @@ def reason(value: str) -> str:
 
 
 def idempotency_key(value: str) -> str:
-    if not KEY.fullmatch(value):
-        raise ValueError("de 8 a 100 letras ASCII, cifras y . _ : -")
+    """La clave de quien registra un movimiento: nunca una de las que derivan las importaciones,
+    que nadie debe poder ocupar antes (F3-21)."""
+    if not KEY.fullmatch(value) or value.startswith(IMPORT_KEY):
+        raise ValueError(f"de 8 a 100 letras ASCII, cifras y . _ : -, sin empezar por {IMPORT_KEY}")
     return value
 
 
 def _check(wanted: Wanted) -> None:
     low = 0 if wanted.movement_type == Type.ADJUSTMENT else 1
+    if wanted.reference_type not in (Reference.MANUAL, Reference.IMPORT):
+        raise ValueError("reference_type: MANUAL o IMPORT")
     if wanted.movement_type not in KINDS:
         raise ValueError(f"movement_type: uno de {', '.join(KINDS)}")
     if not (isinstance(wanted.quantity, int) and low <= wanted.quantity <= QUANTITY_MAX):
         raise ValueError(f"quantity: un entero entre {low} y {QUANTITY_MAX}")
     reason(wanted.reason)
-    idempotency_key(wanted.idempotency_key)
+    if wanted.reference_type == Reference.MANUAL:
+        idempotency_key(wanted.idempotency_key)
+    elif not (
+        KEY.fullmatch(wanted.idempotency_key) and wanted.idempotency_key.startswith(IMPORT_KEY)
+    ):
+        raise ValueError(f"idempotency_key: {IMPORT_KEY}… en una importación")
 
 
 def _same(movement: InventoryMovement, wanted: Wanted) -> bool:
@@ -110,6 +131,8 @@ def _same(movement: InventoryMovement, wanted: Wanted) -> bool:
         and movement.movement_type == wanted.movement_type
         and amount == asked
         and movement.reason == reason(wanted.reason)
+        and (movement.reference_type, movement.reference_id)
+        == (wanted.reference_type, wanted.reference_id)
     )
 
 
@@ -145,8 +168,8 @@ def _locked_level(alias: str, ctx: TenantContext, wanted: Wanted) -> InventoryLe
 def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
     """Registra el movimiento y deja el saldo como queda, en la misma transacción, y lo audita.
     Devuelve el movimiento y si es nuevo: la misma clave con lo mismo devuelve el de entonces
-    sin escribir nada. `BadReference`, `WarehouseInactive`, `InsufficientStock`, `StockLimit` o
-    `KeyReused` sin escribir nada."""
+    sin escribir nada. `BadReference`, `WarehouseInactive`, `Stale`, `InsufficientStock`,
+    `StockLimit` o `KeyReused` sin escribir nada."""
     alias = require_scope(ctx)
     _check(wanted)
     try:
@@ -162,6 +185,8 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
                 return done, False
             if not warehouse[0]:
                 raise WarehouseInactive(wanted.warehouse_id)
+            if wanted.expected_on_hand not in (None, level.on_hand):
+                raise Stale(level.on_hand)
             movement = _apply(alias, ctx, wanted, level)
             label = f"{variant.sku} @ {warehouse[1]}"
             changes = {"on_hand": [level.on_hand - movement.quantity, level.on_hand]}
@@ -201,6 +226,8 @@ def _apply(
         on_hand_after=level.on_hand,
         reserved_after=level.reserved,
         reason=reason(wanted.reason),
+        reference_type=wanted.reference_type,
+        reference_id=wanted.reference_id,
         idempotency_key=wanted.idempotency_key,
         created_by_type=ctx.actor_type,
         created_by_user_id=user,

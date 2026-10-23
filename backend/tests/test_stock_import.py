@@ -59,6 +59,8 @@ def test_upload_and_read_the_preview(ana: Client, world: Any) -> None:
         "duplicate_of": None,
         "encoding": "utf-8",
         "ignored_columns": ["notas"],
+        "applied_at": None,
+        "result": None,
     }
     found = rows(ana, job["id"]).json()["results"]
     assert [(r["row_number"], r["action"]) for r in found] == [

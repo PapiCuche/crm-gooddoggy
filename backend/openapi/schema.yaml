@@ -1324,6 +1324,100 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/inventory/imports/{import_id}/apply/:
+    post:
+      operationId: inventory_imports_apply
+      description: 'Confirma la importación: cada fila válida deja su celda con la
+        cantidad del archivo (un ajuste en el ledger). Una celda que cambió desde
+        la previsualización queda `STALE` y no se toca. Aplicar otra vez no cambia
+        nada.'
+      parameters:
+      - in: path
+        name: import_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockImport'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/imports/{import_id}/errors/:
+    get:
+      operationId: inventory_imports_errors
+      description: Las filas con `ERROR` o `STALE`, en CSV, con sus errores.
+      parameters:
+      - in: path
+        name: import_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/imports/{import_id}/rows/:
     get:
       operationId: inventory_imports_rows_list
@@ -5231,7 +5325,17 @@ components:
         created_at:
           type: string
           format: date-time
+        applied_at:
+          type: string
+          format: date-time
+          nullable: true
+        result:
+          allOf:
+          - $ref: '#/components/schemas/StockImportResult'
+          nullable: true
+          description: Al aplicarla.
       required:
+      - applied_at
       - created_at
       - duplicate_of
       - encoding
@@ -5240,6 +5344,7 @@ components:
       - id
       - ignored_columns
       - new_count
+      - result
       - status
       - total_rows
       - unchanged_count
@@ -5260,6 +5365,25 @@ components:
       required:
       - content
       - file_name
+    StockImportResult:
+      type: object
+      properties:
+        applied:
+          type: integer
+          description: Filas con su ajuste en el ledger.
+        unchanged:
+          type: integer
+        stale:
+          type: integer
+          description: Celdas que cambiaron desde la previsualización.
+        failed:
+          type: integer
+          description: Filas válidas que fallaron al aplicar.
+      required:
+      - applied
+      - failed
+      - stale
+      - unchanged
     StockImportRow:
       type: object
       properties:

@@ -2,7 +2,13 @@
 
 Previsualizar no cambia el stock: lee el archivo (`apps.imports.csvfile`), valida cada fila
 contra lo que hay y guarda la importación con sus filas y el `on_hand` que vio en cada celda.
-Aplicar (F3-21) calculará el ajuste contra el `on_hand` de ese momento, con la celda bloqueada.
+
+Aplicar (F3-21) es síncrono, en la transacción de la petición: bloquea la importación (dos
+aplicaciones a la vez van de una en una) y lleva cada fila a `stock.move` como un `ADJUSTMENT`
+con la cantidad del archivo, `expected_on_hand` = lo visto y una clave derivada de la importación
+y de la línea. Con la celda bloqueada, si el saldo cambió la fila queda `STALE` y no se aplica;
+repetir no crea movimientos (la clave). Las filas van por variante y almacén ascendentes, el
+orden de bloqueo de F3-09: dos importaciones a la vez no se interbloquean.
 
 No comprueba permisos: los declara la API (`inventory.adjust`), la única que lo importa. Ningún
 almacén tiene hoy otra autoridad que el CRM: cuando exista la marca de almacén del conector
@@ -11,12 +17,17 @@ almacén tiene hoy otra autoridad que el CRM: cuando exista la marca de almacén
 
 import hashlib
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any
+from uuid import UUID
+
+from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.catalog.selectors import live_variants
 from apps.imports import csvfile
 from apps.imports.models import DataImport, DataImportRow
+from apps.inventory import stock
 from apps.inventory.models import InventoryLevel, Warehouse
 from apps.inventory.stock import QUANTITY_MAX
 from core.tenancy.context import TenantContext
@@ -29,6 +40,15 @@ COLUMNS = {  # columna → alias de la cabecera (sin tildes ni mayúsculas, ver 
     "cantidad": ("cantidad", "quantity", "stock", "on_hand"),
 }
 NAME_MAX = 255
+REASON, MOVEMENT = "Importación de stock", "inventory_movement"
+REFUSED: dict[
+    type[Exception], str
+] = {  # lo que pudo cambiar desde la previsualización y deja la fila en ERROR
+    stock.BadReference: "La variante o el almacén ya no existen.",
+    stock.WarehouseInactive: "Almacén: está desactivado.",
+    stock.InsufficientStock: "Cantidad: ahora hay más reservadas que eso.",
+    stock.KeyReused: "Su clave ya registró otro movimiento.",  # no debería pasar: `IMPORT_KEY`
+}
 
 
 def template() -> bytes:
@@ -161,4 +181,68 @@ def preview(ctx: TenantContext, *, file_name: str, data: bytes) -> DataImport:
     DataImportRow.objects.using(alias).bulk_create(rows)
     counts = {"rows": job.total_rows, "errors": job.error_rows, "repeated": before is not None}
     record(ctx, "inventory.import_uploaded", Entity("data_import", job.pk), metadata=counts)
+    return job
+
+
+def _stale(row: DataImportRow, on_hand: int) -> None:
+    row.action = Action.STALE
+    seen = row.normalized["on_hand_seen"]
+    row.errors = [f"El saldo cambió desde la previsualización: era {seen}, ahora {on_hand}."]
+
+
+def _apply_row(alias: str, ctx: TenantContext, job: DataImport, row: DataImportRow) -> None:
+    variant, warehouse = UUID(row.normalized["variant_id"]), UUID(row.normalized["warehouse_id"])
+    if row.action == Action.UNCHANGED:  # sin movimiento; sin escribir, no hace falta bloquear
+        cell = InventoryLevel.objects.using(alias).filter(variant=variant, warehouse=warehouse)
+        on_hand = cell.values_list("on_hand", flat=True).first() or 0
+        if on_hand == row.normalized["on_hand_seen"]:
+            return
+        _stale(row, on_hand)
+    else:
+        key = f"{stock.IMPORT_KEY}{job.pk}:{row.row_number}"
+        adjust = stock.Type.ADJUSTMENT, row.normalized["quantity"], REASON, key
+        wanted = stock.Wanted(variant, warehouse, *adjust, row.normalized["on_hand_seen"])
+        wanted = replace(wanted, reference_type=stock.Reference.IMPORT, reference_id=job.pk)
+        try:
+            movement, _ = stock.move(ctx, wanted)
+            row.target_entity_type, row.target_entity_id = MOVEMENT, movement.pk
+        except stock.Stale as error:
+            _stale(row, error.on_hand)
+        except (
+            stock.BadReference,
+            stock.WarehouseInactive,
+            stock.InsufficientStock,
+            stock.KeyReused,
+        ) as error:
+            row.action, row.errors = Action.ERROR, [REFUSED[type(error)]]
+    fields = ["action", "errors", "target_entity_type", "target_entity_id"]
+    row.save(using=alias, update_fields=fields)
+
+
+def apply(ctx: TenantContext, *, import_id: UUID) -> DataImport:
+    """Aplica una importación previsualizada y la audita. Una aplicada se devuelve tal cual.
+    `DataImport.DoesNotExist` si no es una importación de stock de la organización."""
+    alias = require_scope(ctx)
+    found = DataImport.objects.using(alias).select_for_update().filter(kind=Kind.STOCK)
+    job: DataImport = found.get(pk=import_id)
+    if job.status != DataImport.Status.VALIDATED:
+        return job  # ya aplicada: aplicar otra vez no cambia nada
+    pending = DataImportRow.objects.using(alias).filter(
+        data_import=job, action__in=[Action.CREATE, Action.UPDATE, Action.UNCHANGED]
+    )
+    for row in sorted(
+        pending, key=lambda r: (r.normalized["variant_id"], r.normalized["warehouse_id"])
+    ):
+        _apply_row(alias, ctx, job, row)
+    done = DataImportRow.objects.using(alias).filter(data_import=job)
+    result = {
+        "applied": done.filter(target_entity_id__isnull=False).count(),
+        "unchanged": done.filter(action=Action.UNCHANGED).count(),
+        "stale": done.filter(action=Action.STALE).count(),
+        "failed": done.filter(action=Action.ERROR).count() - job.error_rows,
+    }
+    job.status, job.applied_by_user_id = DataImport.Status.APPLIED, ctx.user_id
+    job.applied_at, job.summary = timezone.now(), {**job.summary, "result": result}
+    job.save(using=alias, update_fields=["status", "applied_by_user_id", "applied_at", "summary"])
+    record(ctx, "inventory.import_applied", Entity("data_import", job.pk), metadata=result)
     return job
