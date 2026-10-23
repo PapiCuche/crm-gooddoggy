@@ -43,6 +43,15 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("products.import", "products"),
     PermissionDef("categories.manage", "products"),
     PermissionDef("brands.manage", "products"),
+    PermissionDef("prices.view", "prices"),  # F3-40: los precios
+    PermissionDef("prices.view_wholesale", "prices"),
+    PermissionDef("prices.view_distributor", "prices"),
+    PermissionDef("prices.view_internal", "prices"),
+    PermissionDef("prices.manage", "prices", is_sensitive=True),
+    PermissionDef("prices.bulk_update", "prices", is_sensitive=True),
+    PermissionDef("product_cost.view", "prices", is_sensitive=True),
+    PermissionDef("product_cost.manage", "prices", is_sensitive=True),
+    PermissionDef("promotions.manage", "prices"),
     PermissionDef("inventory.view", "inventory"),
     PermissionDef("inventory.manage", "inventory"),
     PermissionDef("inventory.adjust", "inventory"),
@@ -96,6 +105,13 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "products.import",
             "categories.manage",
             "brands.manage",
+            "prices.view",  # todos menos los costos (⚙️ en la matriz)
+            "prices.view_wholesale",
+            "prices.view_distributor",
+            "prices.view_internal",
+            "prices.manage",
+            "prices.bulk_update",
+            "promotions.manage",
             "inventory.view",
             "inventory.manage",
             "inventory.adjust",
@@ -112,14 +128,22 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
         "supervisor",
         "Supervisor",
         _unscoped(
-            "organization.view", "users.view", "teams.view", "products.view", "inventory.view"
+            "organization.view",
+            "users.view",
+            "teams.view",
+            "products.view",
+            "prices.view",
+            "prices.view_wholesale",
+            "inventory.view",
         )
         | {"contacts.view": Scope.TEAM},
     ),
     RoleTemplate(
         "seller",
         "Vendedor",
-        _unscoped("organization.view", "products.view", "inventory.view", "contacts.create")
+        _unscoped(
+            "organization.view", "products.view", "prices.view", "inventory.view", "contacts.create"
+        )
         | {"contacts.view": Scope.OWN, "contacts.update": Scope.OWN},
     ),
 )

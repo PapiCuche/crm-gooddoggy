@@ -103,13 +103,14 @@ source_modules = ["core"]
 forbidden_modules = ["config", "apps"]
 
 [[tool.importlinter.contracts]]
-name = "Capas (module-dependencies §1): inventory > catalog | contacts (L3) > provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files | imports (L1) > core (L0)"
+name = "Capas (module-dependencies §1): inventory | pricing > catalog | contacts (L3) > provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files | imports (L1) > core (L0)"
 type = "layers"
 layers = [
     # L3: dominio de negocio (module-dependencies §1). inventory depende de catalog (§2): almacenes
     # y stock (Fase 3). catalog, el catálogo (Fase 3); contacts, los clientes (Fase 4):
-    # independientes entre sí, no se importan.
-    "apps.inventory",
+    # independientes entre sí, no se importan. pricing, los precios (F3-40): sobre catalog, en la
+    # misma fila que inventory, sin importarse entre sí.
+    "apps.inventory | apps.pricing",
     "apps.catalog | apps.contacts",
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",
@@ -143,6 +144,12 @@ name = "Comandos del inventario: solo su API los importa (F3-08, F3-09, F3-20)"
 type = "protected"
 protected_modules = ["apps.inventory.warehouses", "apps.inventory.stock", "apps.inventory.imports"]
 allowed_importers = ["apps.inventory.api", "apps.inventory.imports"]  # la importación usa `stock`
+
+[[tool.importlinter.contracts]]
+name = "Comandos de precios: fuera de apps.pricing nadie los importa (F3-40; su API, F3-40b)"
+type = "protected"
+protected_modules = ["apps.pricing.price_lists"]
+allowed_importers = ["apps.pricing"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de contactos: solo su API los importa (F4-01, F4-11)"

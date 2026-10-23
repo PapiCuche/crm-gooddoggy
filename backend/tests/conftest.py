@@ -39,6 +39,7 @@ TENANT_TABLES = ("data_import_rows", "data_imports", *TENANT_TABLES)  # F3-20: a
 # F4-01: delante, porque referencia a las membresías y a las sucursales.
 TENANT_TABLES = ("contacts", *TENANT_TABLES)
 TENANT_TABLES = ("notes", *TENANT_TABLES)  # F4-09: delante, referencia a los contactos
+TENANT_TABLES = ("price_lists", *TENANT_TABLES)  # F3-40: delante, referencia a las membresías
 TENANT_TABLES = ("tags", *TENANT_TABLES)  # F4-11
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
