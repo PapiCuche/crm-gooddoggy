@@ -120,6 +120,7 @@ def test_the_name_contains_the_text_without_case(
     for q in ("quisp", "MARÍA", "maría quispe", "  María   Quispe  ", "ía q"):
         assert found(ana, q) == {people.maria}, q
     assert found(ana, "Maria") == set()  # los acentos sí cuentan
+    assert found(ana, "Borrado") == set()  # un contacto borrado nunca aparece
     assert found(ana, "huamán") == {people.rosa}
 
 
