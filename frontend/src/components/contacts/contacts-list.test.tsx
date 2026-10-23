@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Contact, SelfContext } from "@/lib/api/model";
-import { mockApi, renderApp } from "@/test-utils";
+import { mockApi as mockRoutes, renderApp } from "@/test-utils";
 
 import { ContactsList } from "./contacts-list";
 
@@ -12,6 +12,10 @@ const LIST = "GET /api/v1/o/acme/contacts/";
 const CREATE = "POST /api/v1/o/acme/contacts/";
 const MEMBERS = "GET /api/v1/o/acme/members/?limit=200";
 const BRANCHES = "GET /api/v1/o/acme/branches/?limit=200";
+const TAGS = "GET /api/v1/o/acme/tags/?limit=200";
+// El filtro lee el catálogo de etiquetas (F4-12): vacío, salvo que el test diga otra cosa.
+const mockApi = (routes: Parameters<typeof mockRoutes>[0]) =>
+  mockRoutes({ [TAGS]: page([]), ...routes });
 const grants = (...codes: string[]) => codes.map((code) => ({ code, scopes: [] }));
 // Solo ve: sin `contacts.create`, como el Supervisor de la plantilla.
 const viewer: SelfContext = {
@@ -117,15 +121,17 @@ describe("ContactsList", () => {
     expect(within(third!).getByText("Sin sucursal")).toBeVisible();
     expect(screen.getByText("3 clientes en la lista")).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
-    expect(api).toHaveBeenCalledTimes(3);
+    expect(api).toHaveBeenCalledTimes(4); // con el catálogo de etiquetas del filtro
   });
 
   it("sin `users.view` ni `organization.view` no pide nada más; un directorio negado no rompe", async () => {
     const api = mockApi({ [LIST]: page([luis]) });
     screenOf(viewer);
     expect(await screen.findByText("Responsable: otro miembro")).toBeVisible();
-    expect(api).toHaveBeenCalledTimes(1);
-    expect(String(api.mock.calls[0]![0])).toBe("/api/v1/o/acme/contacts/");
+    expect(api.mock.calls.map(([url]) => String(url)).sort()).toEqual([
+      "/api/v1/o/acme/contacts/",
+      "/api/v1/o/acme/tags/?limit=200",
+    ]);
     vi.unstubAllGlobals();
     mockApi({
       [LIST]: page([luis]),
@@ -186,7 +192,7 @@ describe("ContactsList", () => {
     press("Cargar más");
     expect(await screen.findByText("Luis Paz")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();
-    expect(api).toHaveBeenCalledTimes(2);
+    expect(api).toHaveBeenCalledTimes(3);
   });
 
   it("cargando, vacío, error con reintento y sin permiso", async () => {

@@ -30,6 +30,7 @@ const writer = tenant("contacts.view", "contacts.update", "users.view");
 const rosa = {
   ...{ id: ID, display_name: "Rosa Díaz", first_name: "Rosa", last_name: "Díaz", version: 1 },
   ...{ created_at: "2026-10-23T10:00:00Z", updated_at: "2026-10-23T10:00:00Z", source: "MANUAL" },
+  tags: [] as Contact["tags"],
 } as Contact;
 const note = (id: string, changes: Partial<Note> = {}): Note => ({
   ...{ id, contact_id: ID, body: `Nota ${id}`, is_pinned: false, author_user_id: "u1" },

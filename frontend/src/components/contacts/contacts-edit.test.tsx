@@ -42,6 +42,8 @@ function server(initial: Contact[]) {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (method === "GET" && url === LIST) return reply({ status: 200, body: { results: rows } });
+    if (url === "/api/v1/o/acme/tags/?limit=200")
+      return reply({ status: 200, body: { results: [] } });
     const row = rows.find((one) => url === `${LIST}${one.id}/`);
     if (!row) return reply({ status: 404, body: { code: "NOT_FOUND" } });
     if (method === "DELETE") {
@@ -462,7 +464,7 @@ describe("ContactsList: editar y borrar", () => {
     await screen.findByText("Rosa Díaz");
     press("Editar el cliente Rosa Díaz");
     api.answerOnce({ status: 403, body: { code: "PERMISSION_DENIED" } });
-    await act(() => view.client.invalidateQueries());
+    await act(() => view.client.invalidateQueries({ queryKey: [LIST] })); // no el catálogo
     await screen.findByText("No tienes permiso para ver los clientes de esta organización.");
     api.drop("c1");
     await act(() => view.client.refetchQueries());
