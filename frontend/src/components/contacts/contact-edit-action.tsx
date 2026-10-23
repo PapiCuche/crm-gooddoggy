@@ -178,6 +178,7 @@ export function ContactEditAction({
             }
             if (documentType !== (from.document_type ?? "")) {
               data.document_type = documentType || null;
+              data.document_number = values.document_number || null; // juntos: el error, al número
             }
             if (Object.keys(data).length === 0) return show(false); // nada que cambiar
             update.mutate({

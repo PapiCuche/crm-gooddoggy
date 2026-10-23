@@ -51,6 +51,7 @@ export function ContactDeleteAction({
         // Sigue «Borrando…» hasta que la lista vuelve sin la fila. Si releerla falla, se dice.
         await queryClient.invalidateQueries({ queryKey: listKey });
         const stale = queryClient.getQueryState(listKey)?.status === "error";
+        setAsking(null); // la confirmación se cierra también si la lista no se pudo releer
         onDeleted(
           t(stale ? "doneStale" : "done", { name: asking ?? contact.display_name }),
           here(),

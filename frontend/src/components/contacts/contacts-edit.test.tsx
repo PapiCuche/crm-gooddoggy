@@ -187,7 +187,8 @@ describe("ContactsList: editar y borrar", () => {
   it("dos pestañas con el mismo cliente: la segunda recibe el aviso, se recarga y no pisa", async () => {
     const api = server([rosa]);
     const first = within(screenOf(editor).container);
-    const second = within(screenOf(editor).container);
+    const tab2 = screenOf(editor);
+    const second = within(tab2.container);
     await first.findByText("Rosa Díaz");
     await second.findByText("Rosa Díaz");
     press("Editar el cliente Rosa Díaz", second.getByRole("list"));
@@ -195,6 +196,8 @@ describe("ContactsList: editar y borrar", () => {
     fill({ "Teléfono (opcional)": "+51911111111" }, first);
     press("Guardar", form(first));
     await waitFor(() => expect(first.queryByRole("form")).toBeNull());
+    await tab2.client.invalidateQueries(); // al volver a la pestaña, la lista se relee debajo
+    await second.findByText("+51911111111"); // la fila ya lo muestra; el formulario, no
     fill({ "Nombre para mostrar": "Rosa D." }, second); // abierta con la versión 1
     press("Guardar", form(second));
     // El formulario se monta de nuevo con lo recargado: se busca otra vez cada vez.
