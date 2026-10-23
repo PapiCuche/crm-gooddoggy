@@ -149,10 +149,14 @@ def test_out_of_scope_deleted_foreign_or_missing_are_the_same_404(crm: SimpleNam
 
 
 def test_team_widens_nothing_beyond_own_until_d_f4_01(crm: SimpleNamespace) -> None:
-    """sam comparte equipo con vera, pero con `TEAM` solo ve lo suyo (phase-4.md, D-F4-01)."""
+    """sam comparte equipo con vera y tiene sucursal, pero con `TEAM` solo ve lo suyo
+    (phase-4.md, D-F4-01): ni lo del equipo ni lo de su sucursal."""
+    with tenant_scope(ctx(crm.a)):
+        OrganizationMembership.objects.filter(pk=crm.m["sam"]).update(default_branch=crm.lima)
     sam = signed(crm.sam)
     assert listed(sam) == names(crm, "sam")
-    assert sam.get(f"{CONTACTS}{crm.ids['owned']}/").status_code == 404
+    for key in ("owned", "lima"):
+        assert sam.get(f"{CONTACTS}{crm.ids[key]}/").status_code == 404
 
 
 def test_branch_sees_its_branch_plus_own(crm: SimpleNamespace) -> None:
