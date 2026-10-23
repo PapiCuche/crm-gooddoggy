@@ -12,10 +12,12 @@ def warehouses() -> QuerySet[Warehouse]:
 
 
 def levels() -> QuerySet[InventoryLevel]:
-    """Los saldos de la organización, una fila por variante y almacén con movimientos."""
-    return InventoryLevel.objects.all()
+    """Los saldos de la organización, una fila por variante y almacén con movimientos, con su
+    variante en la misma consulta, también si está borrada (su saldo sigue ahí)."""
+    return InventoryLevel.objects.select_related("variant")
 
 
 def movements() -> QuerySet[InventoryMovement]:
-    """El ledger de la organización: solo se añade."""
-    return InventoryMovement.objects.all()
+    """El ledger de la organización: solo se añade. Con su variante en la misma consulta, también
+    si está borrada: el ledger la conserva."""
+    return InventoryMovement.objects.select_related("variant")

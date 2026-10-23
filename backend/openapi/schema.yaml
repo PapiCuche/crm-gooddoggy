@@ -1274,7 +1274,7 @@ paths:
     get:
       operationId: inventory_levels_list
       description: El saldo de cada variante en cada almacén que tuvo movimientos,
-        paginado por creación (ADR-016).
+        con su SKU y su nombre, paginado por creación (ADR-016).
       parameters:
       - name: cursor
         in: query
@@ -1282,6 +1282,12 @@ paths:
         description: El `next` de la página anterior. Sin él, la primera página.
         schema:
           type: string
+      - in: query
+        name: has_stock
+        schema:
+          type: boolean
+        description: '`true`: solo las filas con existencias (`on_hand > 0`); `false`:
+          solo las que se quedaron en cero.'
       - name: limit
         in: query
         required: false
@@ -1346,7 +1352,8 @@ paths:
   /api/v1/o/{org_slug}/inventory/movements/:
     get:
       operationId: inventory_movements_list
-      description: 'El ledger: los movimientos, del más reciente al más antiguo (ADR-016).'
+      description: 'El ledger: los movimientos, con el SKU y el nombre de su variante,
+        del más reciente al más antiguo (ADR-016).'
       parameters:
       - name: cursor
         in: query
@@ -3883,6 +3890,10 @@ components:
         variant_id:
           type: string
           format: uuid
+        variant:
+          allOf:
+          - $ref: '#/components/schemas/VariantLabel'
+          readOnly: true
         warehouse_id:
           type: string
           format: uuid
@@ -3900,6 +3911,7 @@ components:
       - id
       - on_hand
       - reserved
+      - variant
       - variant_id
       - warehouse_id
     LoginMfaRequest:
@@ -4215,6 +4227,10 @@ components:
         variant_id:
           type: string
           format: uuid
+        variant:
+          allOf:
+          - $ref: '#/components/schemas/VariantLabel'
+          readOnly: true
         warehouse_id:
           type: string
           format: uuid
@@ -4245,6 +4261,7 @@ components:
       - quantity
       - reason
       - reserved_after
+      - variant
       - variant_id
       - warehouse_id
     MovementCreateMovementTypeEnum:
@@ -5156,6 +5173,31 @@ components:
         condition:
           $ref: '#/components/schemas/ConditionEnum'
       required:
+      - sku
+    VariantLabel:
+      type: object
+      description: Lo justo para nombrar la variante de una fila, sin pedirla aparte.
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+          description: El del producto y, si la tiene, su etiqueta.
+        product_id:
+          type: string
+          format: uuid
+        is_deleted:
+          type: boolean
+          readOnly: true
+          description: 'Borrada en el catálogo: su saldo y su historial siguen aquí.'
+      required:
+      - id
+      - is_deleted
+      - name
+      - product_id
       - sku
     VariantStatusEnum:
       enum:

@@ -10,10 +10,11 @@ import { cn } from "@/lib/utils";
 
 import { placed, useCellPicker } from "./cell-picker";
 
-// El historial de movimientos (F3-17): el ledger de la variante elegida, en un almacén o en
-// todos, del más reciente al más antiguo (`GET …/inventory/movements/`, F3-11), página a página
-// con `CursorList`. Sin variante elegida no se pide nada: la API solo devuelve `variant_id`, y
-// una fila sin nombre no le sirve a nadie. Quién lo ve lo decide la API (`inventory.view`).
+// El historial de movimientos (F3-17): el ledger, del más reciente al más antiguo (`GET
+// …/inventory/movements/`, F3-11), página a página con `CursorList`: de toda la organización, de
+// un almacén, de una variante o de los dos. Cada fila nombra su variante con el SKU que trae la
+// API (F3-19), también si ya se borró del catálogo. Quién lo ve lo decide la API
+// (`inventory.view`).
 export function MovementsHistory() {
   const t = useTranslations("ledger");
   const format = useFormatter();
@@ -33,13 +34,11 @@ export function MovementsHistory() {
       section="ledger"
       organization={organization.name}
       listKey={listKey}
-      fetchPage={async (cursor, signal) =>
-        variant
-          ? inventoryMovementsList(slug, { ...filters, ...(cursor ? { cursor } : {}) }, { signal })
-          : { results: [], next: null }
+      fetchPage={(cursor, signal) =>
+        inventoryMovementsList(slug, { ...filters, ...(cursor ? { cursor } : {}) }, { signal })
       }
       controls={controls}
-      empty={<p className="text-muted">{t(variant ? "empty" : "pick")}</p>}
+      empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
     >
       {(movement) => {
@@ -49,7 +48,14 @@ export function MovementsHistory() {
           <>
             <p className="flex min-w-0 flex-col leading-snug">
               <span className="font-medium">{t(`types.${movement.movement_type}`)}</span>
-              <span className="wrap-anywhere">{movement.reason}</span>
+              <span className="wrap-anywhere">
+                {t("variantLabel", {
+                  name: movement.variant.name,
+                  sku: movement.variant.sku,
+                  deleted: String(movement.variant.is_deleted),
+                })}
+              </span>
+              <span className="text-muted text-sm wrap-anywhere">{movement.reason}</span>
               <span className="text-muted text-sm wrap-anywhere">
                 {where ? t("warehouse", placed(where)) : t("unknownWarehouse")}
               </span>

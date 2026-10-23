@@ -94,6 +94,8 @@ Políticas adicionales (no binarias): discount_policies, price_lists.required_pe
 | Reportes | `reports.sales.view`, `reports.support.view`, `reports.marketing.view`, `reports.ai.view`, `dashboard.admin.view`, `data.export`★ |
 | Auditoría/papelera | `audit.view`★, `trash.view`, `trash.restore`, `trash.purge`★ |
 
+> **Lectura de inventario (decisión del mantenedor, 2026-10-22, F3-19):** `inventory.view` incluye leer, de cada fila de existencias o movimientos, el SKU, el nombre del producto y de la variante y los identificadores necesarios para navegar y filtrar, aunque el rol no tenga `products.view`. No concede costos, márgenes, proveedores, precios ni editar el catálogo.
+
 ### Matriz de roles plantilla (se clonan por organización y son editables salvo Owner)
 
 | Permiso / grupo | Owner | Admin | Supervisor | Vendedor | Soporte | Marketing | Consulta |

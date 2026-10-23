@@ -4,7 +4,8 @@ E04-02 y E04-03)."""
 from typing import Any
 
 from django.db.models import QuerySet
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -27,15 +28,43 @@ class CellFilterSerializer(serializers.Serializer[Any]):
     warehouse_id = serializers.UUIDField(required=False, help_text="Solo los de ese almacén.")
 
 
-def _cell(request: Request) -> dict[str, Any]:
-    wanted = CellFilterSerializer(data=request.query_params.dict())
+class LevelFilterSerializer(CellFilterSerializer):
+    has_stock = serializers.BooleanField(
+        required=False,
+        help_text="`true`: solo las filas con existencias (`on_hand > 0`); `false`: solo las "
+        "que se quedaron en cero.",
+    )
+
+
+def _filters(request: Request, serializer: type[CellFilterSerializer]) -> dict[str, Any]:
+    wanted = serializer(data=request.query_params.dict())
     wanted.is_valid(raise_exception=True)
-    return dict(wanted.validated_data)
+    filters = dict(wanted.validated_data)
+    if "has_stock" in filters:
+        filters["on_hand__gt" if filters.pop("has_stock") else "on_hand"] = 0
+    return filters
+
+
+class VariantLabelSerializer(serializers.Serializer[Any]):
+    """Lo justo para nombrar la variante de una fila, sin pedirla aparte."""
+
+    id = serializers.UUIDField()
+    sku = serializers.CharField()
+    name = serializers.CharField(help_text="El del producto y, si la tiene, su etiqueta.")
+    product_id = serializers.UUIDField()
+    is_deleted = serializers.SerializerMethodField(
+        help_text="Borrada en el catálogo: su saldo y su historial siguen aquí."
+    )
+
+    @extend_schema_field(OpenApiTypes.BOOL)
+    def get_is_deleted(self, variant: Any) -> bool:
+        return variant.deleted_at is not None
 
 
 class LevelSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     variant_id = serializers.UUIDField()
+    variant = VariantLabelSerializer(read_only=True)
     warehouse_id = serializers.UUIDField()
     on_hand = serializers.IntegerField(help_text="Las unidades que hay.")
     reserved = serializers.IntegerField(help_text="Las apartadas para cotizaciones y pedidos.")
@@ -48,10 +77,10 @@ class LevelSerializer(serializers.Serializer[Any]):
     get=extend_schema(
         operation_id="inventory_levels_list",
         tags=["inventory"],
-        parameters=[CellFilterSerializer],
+        parameters=[LevelFilterSerializer],
         responses={200: LevelSerializer(many=True), **errors(400, 401, 403, 404)},
-        description="El saldo de cada variante en cada almacén que tuvo movimientos, paginado "
-        "por creación (ADR-016).",
+        description="El saldo de cada variante en cada almacén que tuvo movimientos, con su SKU "
+        "y su nombre, paginado por creación (ADR-016).",
     )
 )
 class LevelsView(generics.ListAPIView):
@@ -59,12 +88,13 @@ class LevelsView(generics.ListAPIView):
     serializer_class = LevelSerializer
 
     def get_queryset(self) -> QuerySet[InventoryLevel]:
-        return levels().filter(**_cell(self.request))
+        return levels().filter(**_filters(self.request, LevelFilterSerializer))
 
 
 class MovementSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     variant_id = serializers.UUIDField()
+    variant = VariantLabelSerializer(read_only=True)
     warehouse_id = serializers.UUIDField()
     movement_type = serializers.ChoiceField(choices=InventoryMovement.Type.choices)
     quantity = serializers.IntegerField(help_text="El cambio en `on_hand`, con su signo.")
@@ -107,7 +137,8 @@ class MovementCreateSerializer(serializers.Serializer[Any]):
         tags=["inventory"],
         parameters=[CellFilterSerializer],
         responses={200: MovementSerializer(many=True), **errors(400, 401, 403, 404)},
-        description="El ledger: los movimientos, del más reciente al más antiguo (ADR-016).",
+        description="El ledger: los movimientos, con el SKU y el nombre de su variante, del más "
+        "reciente al más antiguo (ADR-016).",
     ),
     post=extend_schema(
         operation_id="inventory_movements_create",
@@ -130,7 +161,7 @@ class MovementsView(generics.ListAPIView):
     ordering = "-id"  # UUIDv7: el orden en que se registraron
 
     def get_queryset(self) -> QuerySet[InventoryMovement]:
-        return movements().filter(**_cell(self.request))
+        return movements().filter(**_filters(self.request, CellFilterSerializer))
 
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = MovementCreateSerializer(data=request.data)

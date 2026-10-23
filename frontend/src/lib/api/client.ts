@@ -2953,7 +2953,7 @@ export const getInventoryLevelsListUrl = (orgSlug: string, params?: InventoryLev
 };
 
 /**
- * El saldo de cada variante en cada almacén que tuvo movimientos, paginado por creación (ADR-016).
+ * El saldo de cada variante en cada almacén que tuvo movimientos, con su SKU y su nombre, paginado por creación (ADR-016).
  */
 export const inventoryLevelsList = async (
   orgSlug: string,
@@ -3110,7 +3110,7 @@ export const getInventoryMovementsListUrl = (
 };
 
 /**
- * El ledger: los movimientos, del más reciente al más antiguo (ADR-016).
+ * El ledger: los movimientos, con el SKU y el nombre de su variante, del más reciente al más antiguo (ADR-016).
  */
 export const inventoryMovementsList = async (
   orgSlug: string,

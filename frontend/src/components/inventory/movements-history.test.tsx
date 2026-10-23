@@ -9,6 +9,7 @@ import { MovementsHistory } from "./movements-history";
 
 const API = "/api/v1/o/acme";
 const LEDGER = `GET ${API}/inventory/movements/?variant_id=v1`;
+const EVERYTHING = `GET ${API}/inventory/movements/`;
 const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
@@ -22,6 +23,7 @@ const page = (results: unknown[], next: string | null = null) => ({
 });
 const movement = (id: string, movement_type: string, quantity: number, after: number) => ({
   ...{ id, variant_id: "v1", warehouse_id: "w1", movement_type, quantity, reason: `Motivo ${id}` },
+  variant: { id: "v1", name: "Collar", sku: "C-1", product_id: "p1", is_deleted: false },
   ...{ on_hand_after: after, reserved_after: 0, created_by_user_id: "u1" },
   created_at: "2026-10-22T15:30:00Z",
 });
@@ -48,18 +50,27 @@ const choose = (label: string, value: string) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("MovementsHistory", () => {
-  it("sin variante no pide nada; con ella, el ledger con tipo, cambio, saldo, motivo y almacén", async () => {
+  it("sin elegir nada, todo el ledger; cada fila nombra su variante, también si se borró", async () => {
+    const gone = { id: "v9", name: "Bolsa", sku: "B-9", product_id: "p9", is_deleted: true };
     const api = mockApi({
       ...CATALOG,
+      [EVERYTHING]: page([
+        { ...movement("m5", "RECEIPT", 2, 2), variant_id: "v9", variant: gone },
+        movement("m2", "ISSUE", -3, 12),
+      ]),
       [LEDGER]: page([movement("m2", "ISSUE", -3, 12), movement("m1", "RECEIPT", 15, 15)]),
     });
     screenOf();
-    expect(await screen.findByText(/Elige un producto y su variante/)).toBeVisible();
-    await waitFor(() => expect(screen.getByLabelText("Producto")).toHaveLength(2));
+    const everything = await screen.findByRole("list", { name: "Movimientos" });
+    const [bag, collar] = within(everything).getAllByRole("listitem");
+    expect(within(bag!).getByText("Bolsa · B-9, borrada del catálogo")).toBeVisible();
+    expect(within(collar!).getByText("Collar · C-1")).toBeVisible();
     expect(screen.getByLabelText("Almacén")).toHaveDisplayValue("Todos los almacenes");
-    expect(ledgerCalls(api)).toEqual([]);
+    expect(ledgerCalls(api)).toEqual([`${API}/inventory/movements/`]); // una sola petición
+    await waitFor(() => expect(screen.getByLabelText("Producto")).toHaveLength(2));
     choose("Producto", "p1");
-    const list = await screen.findByRole("list", { name: "Movimientos" });
+    expect(await screen.findByText("Motivo m1")).toBeVisible();
+    const list = screen.getByRole("list", { name: "Movimientos" });
     const [issue, receipt] = within(list).getAllByRole("listitem");
     for (const text of ["Salida", "Motivo m2", "Central (CEN)", "−3", "Quedan 12"]) {
       expect(within(issue!).getByText(text)).toBeVisible();
@@ -76,16 +87,18 @@ describe("MovementsHistory", () => {
     const both = `GET ${API}/inventory/movements/?variant_id=v1&warehouse_id=w2`;
     const api = mockApi({
       ...CATALOG,
+      [EVERYTHING]: page([]),
       [LEDGER]: page([]),
       [both]: page([{ ...movement("m3", "ADJUSTMENT", 0, 4), warehouse_id: "w2" }], "c2"),
       [`${both}&cursor=c2`]: page([{ ...movement("m4", "RECEIPT", 4, 4), warehouse_id: "w2" }]),
     });
     screenOf();
     await waitFor(() => expect(screen.getByLabelText("Producto")).toHaveLength(2));
+    expect(await screen.findByText("Todavía no hay movimientos con estos filtros.")).toBeVisible();
     choose("Producto", "p1");
-    expect(
-      await screen.findByText("Esta variante todavía no tiene movimientos aquí."),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(ledgerCalls(api)).toContain(`${API}/inventory/movements/?variant_id=v1`),
+    );
     choose("Almacén", "w2");
     expect(await screen.findByText("Ajuste")).toBeVisible();
     const list = screen.getByRole("list", { name: "Movimientos" });
@@ -98,10 +111,9 @@ describe("MovementsHistory", () => {
   });
 
   it("sin permiso, la API decide y la pantalla lo explica", async () => {
-    mockApi({ ...CATALOG, [LEDGER]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
+    mockApi({ ...CATALOG, [EVERYTHING]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
     screenOf();
     await waitFor(() => expect(screen.getByLabelText("Producto")).toHaveLength(2));
-    choose("Producto", "p1");
     expect(await screen.findByText(/No tienes permiso para ver el inventario/)).toBeVisible();
     expect(screen.getByLabelText("Producto")).toBeVisible(); // los controles siguen
   });
