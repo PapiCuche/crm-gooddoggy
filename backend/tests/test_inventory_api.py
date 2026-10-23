@@ -6,8 +6,12 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.db import connection
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
+from apps.catalog.models import ProductVariant
 from apps.inventory.models import InventoryLevel, Warehouse
 from apps.inventory.warehouses import delete_warehouse
 from core.tenancy.scope import tenant_scope
@@ -128,3 +132,71 @@ def test_permissions_and_isolation(world: Any) -> None:
     move(world.b, None, wanted(cell(world.b, "B"), "RECEIPT", 7))
     assert [row["on_hand"] for row in viewer.get(LEVELS).json()["results"]] == [1]
     assert [row["quantity"] for row in viewer.get(MOVEMENTS).json()["results"]] == [1]
+
+
+def test_inventory_view_alone_reads_only_what_identifies_the_stock(world: Any) -> None:
+    """Decisión del mantenedor (2026-10-22): `inventory.view` basta para leer el SKU y el nombre
+    de las variantes con stock, también en un rol a medida sin `products.view`. Nada más: ni el
+    catálogo, ni costos, ni precios; y nunca filas de otra organización."""
+    viewer, mine, theirs = signed(world.ana), cell(world.a), cell(world.b, "B")
+    give(world.a, world.membership, VIEW)  # rol a medida: solo `inventory.view`
+    move(world.a, world.ana, wanted(mine, "RECEIPT", 2))
+    move(world.b, None, wanted(theirs, "RECEIPT", 9))
+    assert viewer.get("/api/v1/o/org-a/products/").status_code == 403  # el catálogo, no
+    for url in (LEVELS, MOVEMENTS):
+        (row,) = viewer.get(url).json()["results"]  # la de org-b no llega
+        assert set(row["variant"]) == {"id", "sku", "name", "product_id", "is_deleted"}
+        assert (row["variant"]["sku"], row["variant"]["name"]) == ("IP16", "IP16")
+        assert not {"cost", "price", "margin", "supplier"} & {*row, *row["variant"]}
+        assert viewer.get(url, {"variant_id": str(theirs[0])}).json()["results"] == []
+
+
+def test_each_row_names_its_variant_without_a_query_per_row(ana: Client, world: Any) -> None:
+    """F3-19: el SKU y el nombre de la variante llegan con cada fila, en la misma consulta."""
+    first = cell(world.a)
+    created = post(ana, first, "RECEIPT", quantity=4).json()
+    assert created["variant"] == {
+        "id": str(first[0]),
+        "sku": "IP16",
+        "name": "IP16",
+        "product_id": created["variant"]["product_id"],
+        "is_deleted": False,
+    }
+
+    def queries(url: str) -> tuple[int, list[dict[str, Any]]]:
+        with CaptureQueriesContext(connection) as captured:
+            response = ana.get(url, {"warehouse_id": str(first[1])})
+        assert response.status_code == 200, response.content
+        return len(captured), response.json()["results"]
+
+    few = {url: queries(url)[0] for url in (LEVELS, MOVEMENTS)}
+    for index in range(5):
+        post(ana, cell(world.a, f"SKU{index}"), "RECEIPT", quantity=index + 1)
+    for url in (LEVELS, MOVEMENTS):
+        count, rows = queries(url)
+        assert count == few[url] and len(rows) == 6  # seis filas, las mismas consultas que una
+        assert {row["variant"]["sku"] for row in rows} == {"IP16", *(f"SKU{i}" for i in range(5))}
+        assert all(row["variant"]["id"] == row["variant_id"] for row in rows)
+    with tenant_scope(ctx(world.a)):  # borrada en el catálogo: sigue, marcada
+        ProductVariant.objects.filter(pk=first[0]).update(deleted_at=timezone.now())
+    for url in (LEVELS, MOVEMENTS):
+        rows = ana.get(url, {"variant_id": str(first[0])}).json()["results"]
+        assert [row["variant"]["is_deleted"] for row in rows] == [True]
+
+
+def test_levels_with_or_without_stock(ana: Client, world: Any) -> None:
+    here, other = cell(world.a), cell(world.a, "OTRA")
+    post(ana, here, "RECEIPT", quantity=2)
+    post(ana, other, "RECEIPT")
+    post(ana, other, "ISSUE")  # se queda en cero: la fila sigue
+
+    def skus(**filters: str) -> list[str]:
+        rows = ana.get(LEVELS, {"warehouse_id": str(here[1]), **filters}).json()["results"]
+        return sorted(row["variant"]["sku"] for row in rows)
+
+    assert skus() == ["IP16", "OTRA"]
+    assert skus(has_stock="true") == ["IP16"]
+    assert skus(has_stock="false") == ["OTRA"]
+    refused = ana.get(LEVELS, {"has_stock": "quizá"})
+    assert refused.status_code == 400 and list(refused.json()["fields"]) == ["has_stock"]
+    assert ana.get(MOVEMENTS, {"has_stock": "true"}).status_code == 200  # no es del ledger

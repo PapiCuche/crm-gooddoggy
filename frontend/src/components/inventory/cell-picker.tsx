@@ -57,6 +57,7 @@ export function useReads() {
 // usan las existencias y el historial. Almacenes, productos y variantes se piden enteros
 // (`everyPage`): la API de productos no busca, así que la búsqueda es del navegador. Nada queda
 // entre visitas (`gcTime: 0`). `anyWarehouse`: «Todos los almacenes» también vale (F3-17).
+// `choose` elige una variante desde fuera, p. ej. una fila del almacén (F3-19).
 export function useCellPicker(slug: string, anyWarehouse = false) {
   const t = useTranslations("stock");
   const { failed, retry } = useReads();
@@ -96,7 +97,11 @@ export function useCellPicker(slug: string, anyWarehouse = false) {
     (row) => row.id === productId || plain(row.name).includes(wanted),
   );
   const hint = (read: Read & { isPending: boolean }, denied: string) =>
-    failed(read, denied) ?? (read.isPending ? t("loading") : undefined);
+    failed(read, denied) ?? (read.isPending ? t("loadingOptions") : undefined);
+  const choose = (picked: { id: string; product_id: string }) => {
+    setProductId(picked.product_id);
+    setVariantId(picked.id);
+  };
 
   const controls = (
     <fieldset className="grid gap-4 sm:grid-cols-2">
@@ -162,5 +167,5 @@ export function useCellPicker(slug: string, anyWarehouse = false) {
       </div>
     </fieldset>
   );
-  return { warehouses, products, warehouse, variant, controls };
+  return { warehouses, products, warehouse, variant, controls, choose };
 }

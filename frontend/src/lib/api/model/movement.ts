@@ -6,10 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MovementTypeEnum } from "./movementTypeEnum";
+import type { VariantLabel } from "./variantLabel";
 
 export interface Movement {
   id: string;
   variant_id: string;
+  readonly variant: VariantLabel;
   warehouse_id: string;
   movement_type: MovementTypeEnum;
   /** El cambio en `on_hand`, con su signo. */

@@ -12,6 +12,10 @@ export type InventoryLevelsListParams = {
    */
   cursor?: string;
   /**
+   * `true`: solo las filas con existencias (`on_hand > 0`); `false`: solo las que se quedaron en cero.
+   */
+  has_stock?: boolean;
+  /**
    * Filas por página.
    * @minimum 1
    * @maximum 200

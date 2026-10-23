@@ -5,10 +5,12 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
+import type { VariantLabel } from "./variantLabel";
 
 export interface Level {
   id: string;
   variant_id: string;
+  readonly variant: VariantLabel;
   warehouse_id: string;
   /** Las unidades que hay. */
   on_hand: number;

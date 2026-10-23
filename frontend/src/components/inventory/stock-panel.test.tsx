@@ -12,6 +12,8 @@ const WAREHOUSES = `GET ${API}/warehouses/?limit=200`;
 const PRODUCTS = `GET ${API}/products/?limit=200`;
 const VARIANTS = (id: string) => `GET ${API}/products/${id}/variants/?limit=200`;
 const LEVELS = (id: string) => `GET ${API}/inventory/levels/?limit=200&variant_id=${id}`;
+const STOCK = (id: string, more = "&has_stock=true") =>
+  `GET ${API}/inventory/levels/?warehouse_id=${id}${more}`;
 const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
@@ -19,7 +21,10 @@ const tenant: SelfContext = {
   roles: [],
   permissions: [{ code: "inventory.view", scopes: [] }],
 };
-const page = (results: unknown[]) => ({ status: 200, body: { results, next: null } });
+const page = (results: unknown[], next: string | null = null) => ({
+  status: 200,
+  body: { results, next },
+});
 const warehouse = (id: string, name: string, code: string, is_active = true) => ({
   ...{ id, name, code, is_active, branch_id: "b1", type: "WAREHOUSE", is_sellable: true },
 });
@@ -31,9 +36,13 @@ const variant = (id: string, name: string, sku: string) => ({
   ...{ id, name, sku, label: "", barcode: "", condition: "NEW", status: "ACTIVE" },
   ...{ is_default: true, ai_visible: false },
 });
-const level = (warehouse_id: string, on_hand: number, reserved: number) => ({
-  ...{ id: `l-${warehouse_id}`, variant_id: "v1", warehouse_id, on_hand, reserved },
-  available: on_hand - reserved,
+const label = (id: string, name: string, sku: string, product_id: string, is_deleted = false) => ({
+  ...{ id, name, sku, product_id, is_deleted },
+});
+const COLLAR = label("v1", "Collar", "COL-1", "p2");
+const level = (warehouse_id: string, on_hand: number, reserved: number, variant = COLLAR) => ({
+  ...{ id: `l-${warehouse_id}-${variant.id}`, variant_id: variant.id, variant, warehouse_id },
+  ...{ on_hand, reserved, available: on_hand - reserved },
 });
 const ROUTES = {
   [WAREHOUSES]: page([warehouse("w1", "Central", "CEN"), warehouse("w2", "Surco", "SUR", false)]),
@@ -42,6 +51,8 @@ const ROUTES = {
   [VARIANTS("p1")]: page([variant("v2", "Baño M", "B-M"), variant("v3", "Baño L", "B-L")]),
   [LEVELS("v1")]: page([level("w2", 3, 0), level("w1", 10, 4)]),
   [LEVELS("v3")]: page([]),
+  [STOCK("w1")]: page([level("w1", 10, 4)]),
+  [STOCK("w2")]: page([]),
 };
 
 const screenOf = () =>
@@ -88,7 +99,7 @@ describe("StockPanel", () => {
     expect(field("Variante")).toHaveValue("v1");
     expect(options("Variante")).toEqual(["Elige una variante", "Collar · COL-1"]);
     expect(figures(here.parentElement!)).toEqual(["10", "4", "6"]);
-    const all = within(screen.getByRole("list"));
+    const all = within(screen.getByRole("list", { name: "En todos los almacenes" }));
     const [surco, central] = all.getAllByRole("listitem");
     expect(surco).toHaveTextContent("Surco (SUR), inactivo");
     expect(figures(surco!)).toEqual(["3", "0", "3"]);
@@ -105,7 +116,7 @@ describe("StockPanel", () => {
     pick("Producto", "p1");
     await waitFor(() => expect(options("Variante")).toHaveLength(3));
     expect(field("Variante")).toHaveValue("");
-    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /^Baño/ })).toBeNull();
     pick("Variante", "v3");
     const here = await screen.findByRole("heading", { name: "Baño L en Surco" });
     expect(figures(here.parentElement!)).toEqual(["0", "0", "0"]);
@@ -125,6 +136,62 @@ describe("StockPanel", () => {
     screenOf();
     const create = await screen.findByRole("link", { name: "Crear un producto" });
     expect(create).toHaveAttribute("href", "/o/acme/catalogo/productos");
+  });
+
+  it("con solo el almacén, todo su stock con SKU y nombre; una fila abre su celda", async () => {
+    const BAG = label("v4", "Bolsa", "BOL-9", "p9", true);
+    const api = mockApi({
+      ...ROUTES,
+      [STOCK("w1")]: page([level("w1", 10, 4), level("w1", 2, 0, BAG)], "c2"),
+      [STOCK("w1", "&has_stock=true&cursor=c2")]: page([
+        level("w1", 1, 1, label("v2", "Baño M", "B-M", "p1")),
+      ]),
+      [STOCK("w1", "")]: page([level("w1", 0, 0, label("v3", "Baño L", "B-L", "p1"))]),
+    });
+    screenOf();
+    await waitFor(() => expect(options("Almacén")).toHaveLength(3));
+    expect(screen.getByText("Elige un almacén para ver todo lo que tiene.")).toBeVisible();
+    pick("Almacén", "w1");
+    const list = await screen.findByRole("list", { name: "Existencias" });
+    expect(screen.getByRole("heading", { name: "Todo lo que hay en Central" })).toBeVisible();
+    const [collar, bag] = within(list).getAllByRole("listitem");
+    expect(within(collar!).getByText("Collar")).toBeVisible();
+    expect(within(collar!).getByText("COL-1")).toBeVisible();
+    expect(figures(collar!)).toEqual(["10", "4", "6"]);
+    expect(within(bag!).getByText("BOL-9 · borrada del catálogo")).toBeVisible();
+    expect(within(bag!).queryByRole("button")).toBeNull(); // borrada: no se elige
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    expect(await within(list).findByText("Baño M")).toBeVisible();
+    const stockCalls = () =>
+      api.mock.calls.map(([url]) => String(url)).filter((url) => url.includes("warehouse_id"));
+    expect(stockCalls()).toEqual([
+      `${API}/inventory/levels/?warehouse_id=w1&has_stock=true`,
+      `${API}/inventory/levels/?warehouse_id=w1&has_stock=true&cursor=c2`,
+    ]);
+    fireEvent.click(screen.getByLabelText(/también las variantes que se quedaron en cero/));
+    expect(await screen.findByText("Baño L")).toBeVisible(); // sin `has_stock`
+    fireEvent.click(screen.getByRole("button", { name: "Ver detalle: Baño L" }));
+    const here = await screen.findByRole("heading", { name: "Baño L en Central" });
+    expect(field("Producto")).toHaveValue("p1");
+    expect(field("Variante")).toHaveValue("v3");
+    expect(here.closest("[tabindex='-1']")).toHaveFocus();
+  });
+
+  it("con `inventory.adjust`, la fila abre también su formulario; sin filas lo dice", async () => {
+    mockApi(ROUTES);
+    const adjust = { code: "inventory.adjust", scopes: [] };
+    renderApp(
+      <TenantProvider value={{ ...tenant, permissions: [...tenant.permissions, adjust] }}>
+        <StockPanel />
+      </TenantProvider>,
+    );
+    await waitFor(() => expect(options("Almacén")).toHaveLength(3));
+    pick("Almacén", "w2");
+    expect(await screen.findByText("Este almacén no tiene existencias.")).toBeVisible();
+    pick("Almacén", "w1");
+    fireEvent.click(await screen.findByRole("button", { name: "Ver y registrar: Collar" }));
+    expect(await screen.findByRole("heading", { name: "Collar en Central" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Registrar movimiento" })).toBeVisible();
   });
 
   it("explica las negativas y los fallos por `code`, y reintenta", async () => {

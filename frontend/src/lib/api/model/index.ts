@@ -119,6 +119,7 @@ export * from "./testAccounts";
 export * from "./user";
 export * from "./variant";
 export * from "./variantCreateRequest";
+export * from "./variantLabel";
 export * from "./variantsListParams";
 export * from "./variantStatusEnum";
 export * from "./warehouse";
