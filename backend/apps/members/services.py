@@ -1,6 +1,6 @@
 """Administración de miembros (F2-19, E01-07, ADR-017): suspender y reactivar una membresía,
-asignarle una sucursal (F2-69), invitar a alguien a la organización (F2-80, ADR-020) y
-revocar una invitación (F2-82).
+asignarle una sucursal (F2-69), ponerla en un equipo o quitarla (F2-58, F2-59, D-F2-13),
+invitar a alguien a la organización (F2-80, ADR-020) y revocar una invitación (F2-82).
 
 Orquesta `access` (las reglas de RBAC), `organizations` (la membresía) y `accounts` (las
 sesiones), que no se importan entre sí. Primero las reglas, que toman el bloqueo de RBAC de la
@@ -9,6 +9,7 @@ sesiones del usuario (ADR-003 §2). Todo en un savepoint del `tenant_scope` de q
 """
 
 from collections.abc import Collection
+from typing import Any
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
@@ -17,11 +18,14 @@ from django.db import transaction
 from apps.access.services import (
     ensure_can_invite,
     ensure_can_manage_member,
+    ensure_can_move_member,
+    ensure_can_place_in_team,
     ensure_can_revoke_invitation,
 )
 from apps.accounts.emails import canonical_email
 from apps.accounts.services import revoke_sessions
 from apps.organizations import services as organizations
+from apps.organizations import teams
 from apps.organizations.services import (
     BranchRef,
     InvitationRef,
@@ -64,14 +68,41 @@ def set_member_branch(
     """Deja a otra membresía con esa sucursal, o sin ninguna. Devuelve la que queda.
 
     Las reglas son las de suspender: `users.manage`, nadie cambia la suya y el actor cubre los
-    roles del miembro, porque su sucursal es lo que alcanza una concesión con alcance `BRANCH`.
+    roles del miembro, porque su sucursal es lo que alcanza una concesión con alcance `BRANCH`;
+    cada una de esas, en la sucursal de origen y en la de destino (D-F2-13).
     Lanza `AccessDenied`, `DoesNotExist` (la membresía no es de esta organización) o
     `UnknownBranch` (la sucursal no lo es). Si lanza, no escribe.
     """
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
-        ensure_can_manage_member(ctx, membership_id=membership_id, leaving=False)
+        ensure_can_move_member(ctx, membership_id=membership_id, branch_id=branch_id)
         return set_membership_branch(ctx, membership_id=membership_id, branch_id=branch_id)
+
+
+def put_team_member(
+    ctx: TenantContext, *, team_id: UUID, membership_id: UUID, **fields: Any
+) -> tuple[Any, bool]:
+    """Pone a otra membresía en un equipo, o cambia su papel en él (F2-58). Devuelve el
+    integrante y si es nuevo, como `organizations.teams.put_team_member`.
+
+    Primero las reglas (D-F2-13): `teams.manage` y `users.view` releídos bajo el bloqueo de RBAC,
+    y el actor cubre sobre ese equipo cada concesión con alcance `TEAM` del miembro. Lanza
+    `AccessDenied` y lo que lanza el comando (`OwnTeamMembership`, `DoesNotExist`, `ValueError`).
+    Si lanza, no escribe.
+    """
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        ensure_can_place_in_team(ctx, team_id=team_id, membership_id=membership_id)
+        return teams.put_team_member(ctx, team_id=team_id, membership_id=membership_id, **fields)
+
+
+def remove_team_member(ctx: TenantContext, *, team_id: UUID, membership_id: UUID) -> None:
+    """Quita a otra membresía de un equipo (F2-59). Las reglas son las de ponerla: salir del
+    equipo reduce lo que alcanza, y quitar exige lo mismo que conceder (PO-1)."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        ensure_can_place_in_team(ctx, team_id=team_id, membership_id=membership_id)
+        teams.remove_team_member(ctx, team_id=team_id, membership_id=membership_id)
 
 
 def invite(ctx: TenantContext, *, email: str, role_ids: Collection[UUID]) -> InvitationRef:

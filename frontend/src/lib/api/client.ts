@@ -7166,7 +7166,7 @@ export const getTeamMembersPutUrl = (orgSlug: string, teamId: string, membership
 };
 
 /**
- * Incorpora a la membresía al equipo (201; `MEMBER` y activa si no se envían) o, si ya estaba, cambia lo que se envía (200). Repetir la petición no escribe nada. 403: sin los dos permisos, o la membresía es la de quien hace la petición. 404: el equipo o la membresía no son de la organización.
+ * Incorpora a la membresía al equipo (201; `MEMBER` y activa si no se envían) o, si ya estaba, cambia lo que se envía (200). Repetir la petición no escribe nada. 403: sin los dos permisos, la membresía es la de quien hace la petición, o tiene un permiso con alcance de equipo que el actor no cubre en ese equipo. 404: el equipo o la membresía no son de la organización. 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
  */
 export const teamMembersPut = async (
   orgSlug: string,
@@ -7275,7 +7275,7 @@ export const getTeamMembersRemoveUrl = (orgSlug: string, teamId: string, members
 };
 
 /**
- * Quita a la membresía del equipo. 403: sin los dos permisos, o la membresía es la de quien hace la petición. 404: el equipo o la membresía no son de la organización, o la membresía no está en el equipo (también al repetir la petición).
+ * Quita a la membresía del equipo. 403: sin los dos permisos, la membresía es la de quien hace la petición, o tiene un permiso con alcance de equipo que el actor no cubre en ese equipo. 404: el equipo o la membresía no son de la organización, o la membresía no está en el equipo (también al repetir la petición). 409 `LAST_OWNER`: la organización no tiene rol Owner y no admite ningún cambio.
  */
 export const teamMembersRemove = async (
   orgSlug: string,

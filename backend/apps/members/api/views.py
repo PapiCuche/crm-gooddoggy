@@ -1,6 +1,6 @@
 """Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19), su
-sucursal (F2-69) y las invitaciones a la organización: invitar (F2-80), listarlas (F2-81) y
-revocar una (F2-82)."""
+sucursal (F2-69), sus equipos (F2-58, F2-59, D-F2-13) y las invitaciones a la organización:
+invitar (F2-80), listarlas (F2-81) y revocar una (F2-82)."""
 
 from typing import Any
 from uuid import UUID
@@ -8,6 +8,7 @@ from uuid import UUID
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -19,10 +20,13 @@ from apps.members.services import (
     SUSPENDED,
     InvalidEmail,
     invite,
+    put_team_member,
+    remove_team_member,
     revoke_invitation,
     set_member_branch,
     set_member_status,
 )
+from apps.organizations.api.views import TeamMemberPutSerializer, TeamMemberSerializer
 from apps.organizations.selectors import invitations
 from apps.organizations.services import (
     INVITATION_ROLES_MAX,
@@ -35,6 +39,7 @@ from apps.organizations.services import (
     UnknownBranch,
     shown_status,
 )
+from apps.organizations.teams import OwnTeamMembership
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -132,6 +137,70 @@ class MemberBranchView(APIView):
             raise serializers.ValidationError({"branch_id": [UNKNOWN_BRANCH]}) from None
         row = {"id": membership_id, "default_branch": branch._asdict() if branch else None}
         return Response(MemberBranchSerializer(row).data)
+
+
+class TeamMemberView(APIView):
+    """Un integrante de un equipo: `PUT` deja a esa membresía en el equipo (F2-58) y `DELETE` la
+    quita (F2-59). Cambian a quién alcanza una concesión con alcance `TEAM` y tratan con una
+    persona: exigen `teams.manage` y `users.view`, y que el actor cubra sobre ese equipo cada
+    concesión con alcance `TEAM` del miembro (D-F2-13)."""
+
+    required_permissions = {
+        "PUT": ("teams.manage", "users.view"),
+        "DELETE": ("teams.manage", "users.view"),
+    }
+
+    @extend_schema(
+        operation_id="team_members_put",
+        tags=["teams"],
+        request=TeamMemberPutSerializer,
+        responses={
+            200: TeamMemberSerializer,
+            201: TeamMemberSerializer,
+            **errors(400, 401, 403, 404, 409),
+        },
+        description="Incorpora a la membresía al equipo (201; `MEMBER` y activa si no se "
+        "envían) o, si ya estaba, cambia lo que se envía (200). Repetir la petición no escribe "
+        "nada. 403: sin los dos permisos, la membresía es la de quien hace la petición, o tiene "
+        "un permiso con alcance de equipo que el actor no cubre en ese equipo. 404: el equipo o "
+        "la membresía no son de la organización. 409 `LAST_OWNER`: la organización no tiene rol "
+        "Owner y no admite ningún cambio.",
+    )
+    def put(self, request: Request, team_id: UUID, membership_id: UUID, **kwargs: Any) -> Response:
+        wanted = TeamMemberPutSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                member, new = put_team_member(
+                    tenant, team_id=team_id, membership_id=membership_id, **wanted.validated_data
+                )
+        except OwnTeamMembership:
+            raise PermissionDenied from None
+        return Response(TeamMemberSerializer(member).data, status=201 if new else 200)
+
+    @extend_schema(
+        operation_id="team_members_remove",
+        tags=["teams"],
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Quita a la membresía del equipo. 403: sin los dos permisos, la membresía "
+        "es la de quien hace la petición, o tiene un permiso con alcance de equipo que el actor "
+        "no cubre en ese equipo. 404: el equipo o la membresía no son de la organización, o la "
+        "membresía no está en el equipo (también al repetir la petición). 409 `LAST_OWNER`: la "
+        "organización no tiene rol Owner y no admite ningún cambio.",
+    )
+    def delete(
+        self, request: Request, team_id: UUID, membership_id: UUID, **kwargs: Any
+    ) -> Response:
+        tenant = context.current()
+        assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        try:
+            with rbac_errors():
+                remove_team_member(tenant, team_id=team_id, membership_id=membership_id)
+        except OwnTeamMembership:
+            raise PermissionDenied from None
+        return Response(status=204)
 
 
 class InviteSerializer(serializers.Serializer[Any]):
