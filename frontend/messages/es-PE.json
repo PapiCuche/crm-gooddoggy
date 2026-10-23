@@ -1162,7 +1162,19 @@
       "empty": "Este cliente todavía no tiene notas.",
       "denied": "No tienes permiso para ver las notas de este cliente.",
       "pinned": "Fijada",
-      "editedBy": "editada por {name}"
+      "editedBy": "editada por {name}",
+      "new": "Nueva nota",
+      "body": "Nota",
+      "hint": "Hasta 5000 caracteres. Se guarda como texto, con sus saltos de línea.",
+      "required": "Escribe la nota.",
+      "invalid": "La nota no es válida: solo texto, de 1 a 5000 caracteres, sin caracteres de control.",
+      "pin": "Fijar la nota",
+      "add": "Añadir nota",
+      "adding": "Añadiendo…",
+      "contactGone": "No puedes añadir notas a este cliente: quedó fuera de tu alcance o se borró.",
+      "writeDenied": "No tienes permiso para escribir notas de este cliente.",
+      "done": "Nota añadida.",
+      "doneStale": "Nota añadida, pero las notas no se pudieron actualizar. Recarga la página."
     }
   },
   "stock": {

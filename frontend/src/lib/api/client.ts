@@ -76,6 +76,7 @@ import type {
   PaginatedMemberList,
   PaginatedMovementList,
   PaginatedNoteList,
+  PaginatedPriceListList,
   PaginatedProductList,
   PaginatedRoleList,
   PaginatedStockImportRowList,
@@ -91,6 +92,7 @@ import type {
   PatchedCategoryUpdateRequest,
   PatchedContactUpdateRequest,
   PatchedNoteUpdateRequest,
+  PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedTagUpdateRequest,
@@ -98,6 +100,9 @@ import type {
   PatchedVariantUpdateRequest,
   PatchedWarehouseUpdateRequest,
   PermissionCatalog,
+  PriceList,
+  PriceListCreateRequest,
+  PriceListsListParams,
   Product,
   ProductCreateRequest,
   ProductsListParams,
@@ -6383,6 +6388,493 @@ export function usePermissionsList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getPriceListsListUrl = (orgSlug: string, params?: PriceListsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/pricing/price-lists/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/pricing/price-lists/`;
+};
+
+/**
+ * Las listas que el actor puede ver (su `required_permission`, o todas con `prices.manage`), activas o no. Paginado por creación (ADR-016).
+ */
+export const priceListsList = async (
+  orgSlug: string,
+  params?: PriceListsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedPriceListList> => {
+  return apiFetch<PaginatedPriceListList>(getPriceListsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPriceListsListQueryKey = (orgSlug: string, params?: PriceListsListParams) => {
+  return [`/api/v1/o/${orgSlug}/pricing/price-lists/`, ...(params ? [params] : [])] as const;
+};
+
+export const getPriceListsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof priceListsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PriceListsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPriceListsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof priceListsList>>> = ({ signal }) =>
+    priceListsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof priceListsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PriceListsListQueryResult = NonNullable<Awaited<ReturnType<typeof priceListsList>>>;
+export type PriceListsListQueryError = ErrorType<Error>;
+
+export function usePriceListsList<
+  TData = Awaited<ReturnType<typeof priceListsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | PriceListsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceListsList>>,
+          TError,
+          Awaited<ReturnType<typeof priceListsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceListsList<
+  TData = Awaited<ReturnType<typeof priceListsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PriceListsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceListsList>>,
+          TError,
+          Awaited<ReturnType<typeof priceListsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceListsList<
+  TData = Awaited<ReturnType<typeof priceListsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PriceListsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePriceListsList<
+  TData = Awaited<ReturnType<typeof priceListsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PriceListsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPriceListsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getPriceListsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/price-lists/`;
+};
+
+/**
+ * Crea una lista. Es la predeterminada de su moneda si se pide (la anterior deja de serlo) o, sin `is_default`, si es la primera activa con `prices.view`; solo una así puede serlo (400 en `is_default`). 409 `PRICE_LIST_CODE_TAKEN`.
+ */
+export const priceListsCreate = async (
+  orgSlug: string,
+  priceListCreateRequest: PriceListCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PriceList> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<PriceList>(getPriceListsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(priceListCreateRequest),
+  });
+};
+
+export const getPriceListsCreateMutationKey = () => ["priceListsCreate"] as const;
+
+export const getPriceListsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof priceListsCreate>>,
+    TError,
+    PriceListsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof priceListsCreate>>,
+  TError,
+  PriceListsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPriceListsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof priceListsCreate>>,
+    PriceListsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return priceListsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PriceListsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof priceListsCreate>>
+>;
+export type PriceListsCreateMutationBody = PriceListCreateRequest;
+export type PriceListsCreateMutationError = ErrorType<Error>;
+export type PriceListsCreateMutationVariables = { orgSlug: string; data: PriceListCreateRequest };
+
+export const usePriceListsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof priceListsCreate>>,
+      TError,
+      PriceListsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof priceListsCreate>>,
+  TError,
+  PriceListsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPriceListsCreateMutationOptions(options), queryClient);
+};
+
+export const getPriceListsRetrieveUrl = (orgSlug: string, priceListId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/price-lists/${priceListId}/`;
+};
+
+/**
+ * Una lista. 404: no existe, no es de la organización o el actor no la ve.
+ */
+export const priceListsRetrieve = async (
+  orgSlug: string,
+  priceListId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PriceList> => {
+  return apiFetch<PriceList>(getPriceListsRetrieveUrl(orgSlug, priceListId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPriceListsRetrieveQueryKey = (orgSlug: string, priceListId: string) => {
+  return [`/api/v1/o/${orgSlug}/pricing/price-lists/${priceListId}/`] as const;
+};
+
+export const getPriceListsRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof priceListsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  priceListId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPriceListsRetrieveQueryKey(orgSlug, priceListId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof priceListsRetrieve>>> = ({ signal }) =>
+    priceListsRetrieve(orgSlug, priceListId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      priceListId !== null &&
+      priceListId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof priceListsRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PriceListsRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof priceListsRetrieve>>
+>;
+export type PriceListsRetrieveQueryError = ErrorType<Error>;
+
+export function usePriceListsRetrieve<
+  TData = Awaited<ReturnType<typeof priceListsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  priceListId: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceListsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof priceListsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceListsRetrieve<
+  TData = Awaited<ReturnType<typeof priceListsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  priceListId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceListsRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceListsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof priceListsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceListsRetrieve<
+  TData = Awaited<ReturnType<typeof priceListsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  priceListId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePriceListsRetrieve<
+  TData = Awaited<ReturnType<typeof priceListsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  priceListId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof priceListsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPriceListsRetrieveQueryOptions(orgSlug, priceListId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getPriceListsUpdateUrl = (orgSlug: string, priceListId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/price-lists/${priceListId}/`;
+};
+
+/**
+ * Cambia lo que se envía. `code` o `currency` dan 400 en ese campo: no cambian. `is_default=true` la hace la predeterminada de su moneda (la anterior deja de serlo); debe estar activa y pedir `prices.view` (400 en `is_default`). 409 `PRICE_LIST_IS_DEFAULT`: la predeterminada no se desactiva, no deja de serlo ni cambia de `required_permission`; antes hay que elegir otra.
+ */
+export const priceListsUpdate = async (
+  orgSlug: string,
+  priceListId: string,
+  patchedPriceListUpdateRequest?: PatchedPriceListUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PriceList> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<PriceList>(getPriceListsUpdateUrl(orgSlug, priceListId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedPriceListUpdateRequest),
+  });
+};
+
+export const getPriceListsUpdateMutationKey = () => ["priceListsUpdate"] as const;
+
+export const getPriceListsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof priceListsUpdate>>,
+    TError,
+    PriceListsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof priceListsUpdate>>,
+  TError,
+  PriceListsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPriceListsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof priceListsUpdate>>,
+    PriceListsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, priceListId, data } = props ?? {};
+
+    return priceListsUpdate(orgSlug, priceListId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PriceListsUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof priceListsUpdate>>
+>;
+export type PriceListsUpdateMutationBody = PatchedPriceListUpdateRequest | undefined;
+export type PriceListsUpdateMutationError = ErrorType<Error>;
+export type PriceListsUpdateMutationVariables = {
+  orgSlug: string;
+  priceListId: string;
+  data?: PatchedPriceListUpdateRequest;
+};
+
+export const usePriceListsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof priceListsUpdate>>,
+      TError,
+      PriceListsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof priceListsUpdate>>,
+  TError,
+  PriceListsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPriceListsUpdateMutationOptions(options), queryClient);
+};
 
 export const getProductsListUrl = (orgSlug: string, params?: ProductsListParams) => {
   const normalizedParams = new URLSearchParams();
