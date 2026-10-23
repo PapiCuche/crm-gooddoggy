@@ -90,6 +90,7 @@ def test_the_creator_owns_the_contact_in_their_branch_and_organization(
         "source": "WALK_IN",
         "created_by_user_id": mine,
         "version": 1,
+        "tags": [],  # F4-11
     }
     found = "SELECT organization_id FROM contacts WHERE id = %s"
     assert migrator.execute(found, [body["id"]]).fetchone() == (crm.a,)

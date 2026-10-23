@@ -1,7 +1,10 @@
-"""Rutas de tenant de las etiquetas de contactos (F4-11, E05-03): el catálogo `…/tags/`.
+"""Rutas de tenant de las etiquetas de contactos (F4-11, E05-03): el catálogo `…/tags/` y
+`…/contacts/{id}/tags/{tag_id}/` para ponerla o quitarla.
 
-Lo lee quien ve contactos (`contacts.view`, con cualquier alcance: la política de `Tag` deja
-verlas todas) y lo cambia `settings.manage` (03 §H, «Organización»).
+El catálogo lo lee quien ve contactos (`contacts.view`, con cualquier alcance: la política de
+`Tag` deja verlas todas) y lo cambia `settings.manage` (03 §H, «Organización»). Etiquetar es
+editar el contacto: `contacts.view` y `contacts.update`, cuyo alcance se cruza sobre la fila
+bloqueada, como en `PATCH`. Fuera de él, 404.
 """
 
 from typing import Any
@@ -15,21 +18,25 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.contacts.api.views import _message, _tenant
-from apps.contacts.models import Tag
+from apps.contacts.api.views import ContactsQuery, _message, _tenant
+from apps.contacts.models import Contact, Tag
 from apps.contacts.selectors import tags
 from apps.contacts.tags import (
     NAME_MAX,
+    TagInactive,
     TagNameTaken,
     create_tag,
     tag_color,
+    tag_contact,
     tag_name,
+    untag_contact,
     update_tag,
 )
 from core.api.errors import ApiError
 from core.api.schema import errors
 
 TAKEN = "Ya existe una etiqueta con ese nombre en la organización."
+INACTIVE = "La etiqueta está desactivada: no se pone en más contactos."
 COLOR_HELP = "`#RRGGBB`; se guarda en minúsculas."
 
 
@@ -40,7 +47,9 @@ class TagSerializer(serializers.Serializer[Any]):
     applies_to = serializers.ChoiceField(
         choices=Tag.Target.choices, help_text="Por ahora, CONTACT."
     )
-    is_active = serializers.BooleanField(help_text="Una desactivada no se pone en más contactos.")
+    is_active = serializers.BooleanField(
+        help_text="Una desactivada sigue en los contactos que la llevan, pero no se pone en otros."
+    )
 
 
 class TagWriteSerializer(serializers.Serializer[Any]):
@@ -122,3 +131,52 @@ class TagView(APIView):
         except TagNameTaken:
             raise ApiError("TAG_NAME_TAKEN", 409, TAKEN) from None
         return Response(TagSerializer(tag).data)
+
+
+@extend_schema_view(
+    put=extend_schema(
+        operation_id="contacts_tag",
+        tags=["contacts"],
+        request=None,
+        responses={204: None, **errors(401, 403, 404, 409)},
+        description="Pone la etiqueta en el contacto; si ya la lleva, nada. Exige "
+        "`contacts.view` y `contacts.update`: fuera del alcance de uno u otro, o una etiqueta "
+        "que no es de la organización, 404. 409 `TAG_INACTIVE`: la etiqueta está desactivada.",
+    ),
+    delete=extend_schema(
+        operation_id="contacts_untag",
+        tags=["contacts"],
+        responses={204: None, **errors(401, 403, 404)},
+        description="Quita la etiqueta del contacto, activa o no; si no la lleva, nada. Los "
+        "mismos permisos y 404 que ponerla.",
+    ),
+)
+class ContactTagView(ContactsQuery, generics.GenericAPIView):
+    required_permissions = {
+        "PUT": ("contacts.view", "contacts.update"),
+        "DELETE": ("contacts.view", "contacts.update"),
+    }
+    lookup_url_kwarg = "contact_id"
+
+    def get_queryset(self) -> QuerySet[Contact]:
+        # Bloqueada hasta el final de la petición, como en `PATCH`: ni un cambio de responsable
+        # se cuela tras decidir el alcance, ni dos peticiones al mismo contacto se cruzan.
+        return super().get_queryset().select_for_update(no_key=True)
+
+    def put(self, request: Request, contact_id: UUID, tag_id: UUID, **kwargs: Any) -> Response:
+        found = self.get_object()
+        try:
+            tag_contact(_tenant(), contact=found, tag_id=tag_id)
+        except Tag.DoesNotExist:
+            raise NotFound from None
+        except TagInactive:
+            raise ApiError("TAG_INACTIVE", 409, INACTIVE) from None
+        return Response(status=204)
+
+    def delete(self, request: Request, contact_id: UUID, tag_id: UUID, **kwargs: Any) -> Response:
+        found = self.get_object()
+        try:
+            untag_contact(_tenant(), contact=found, tag_id=tag_id)
+        except Tag.DoesNotExist:
+            raise NotFound from None
+        return Response(status=204)

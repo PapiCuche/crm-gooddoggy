@@ -1274,9 +1274,10 @@ paths:
     get:
       operationId: contacts_list
       description: 'Los contactos vivos dentro del alcance de `contacts.view`, paginados
-        por creación (ADR-016). `q` filtra sin cambiar el orden; la página siguiente
-        se pide con el mismo `q`. 400: `q` repetido, de más de 254 caracteres o que
-        no es una línea de texto imprimible.'
+        por creación (ADR-016). `q` y `tag` filtran sin cambiar el orden; la página
+        siguiente se pide con los mismos. 400: `q` o `tag` repetidos, `q` de más de
+        254 caracteres o que no es una línea de texto imprimible, `tag` que no es
+        un UUID.'
       parameters:
       - name: cursor
         in: query
@@ -1308,6 +1309,12 @@ paths:
           E.164. Si no: el nombre contiene el texto o el correo empieza por él, sin
           distinguir mayúsculas. Unas cifras sin `+` no son un teléfono. Vacío: sin
           filtro.'
+      - in: query
+        name: tag
+        schema:
+          type: string
+          format: uuid
+        description: Solo los que llevan esa etiqueta (F4-11), activa o no.
       tags:
       - contacts
       security:
@@ -1816,6 +1823,108 @@ paths:
         name: org_slug
         schema:
           type: string
+        required: true
+      tags:
+      - contacts
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/contacts/{contact_id}/tags/{tag_id}/:
+    put:
+      operationId: contacts_tag
+      description: 'Pone la etiqueta en el contacto; si ya la lleva, nada. Exige `contacts.view`
+        y `contacts.update`: fuera del alcance de uno u otro, o una etiqueta que no
+        es de la organización, 404. 409 `TAG_INACTIVE`: la etiqueta está desactivada.'
+      parameters:
+      - in: path
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - contacts
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: contacts_untag
+      description: Quita la etiqueta del contacto, activa o no; si no la lleva, nada.
+        Los mismos permisos y 404 que ponerla.
+      parameters:
+      - in: path
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: tag_id
+        schema:
+          type: string
+          format: uuid
         required: true
       tags:
       - contacts
@@ -5166,6 +5275,11 @@ components:
         version:
           type: integer
           description: Sube con cada cambio.
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContactTag'
+          description: Por nombre. Etiquetar no cambia `version`.
       required:
       - branch_id
       - created_at
@@ -5180,6 +5294,7 @@ components:
       - primary_email
       - primary_phone_e164
       - source
+      - tags
       - updated_at
       - version
     ContactAssignmentRequest:
@@ -5267,6 +5382,26 @@ components:
         * `MANUAL` - Manual
         * `CAMPAIGN` - Campaign
         * `AI` - Ai
+    ContactTag:
+      type: object
+      description: Una etiqueta que lleva el contacto (F4-11), también si se desactivó
+        después.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          type: string
+          description: '`#rrggbb`.'
+        is_active:
+          type: boolean
+      required:
+      - color
+      - id
+      - is_active
+      - name
     Error:
       type: object
       properties:
@@ -7042,7 +7177,8 @@ components:
             * `CONTACT` - Contact
         is_active:
           type: boolean
-          description: Una desactivada no se pone en más contactos.
+          description: Una desactivada sigue en los contactos que la llevan, pero
+            no se pone en otros.
       required:
       - applies_to
       - color

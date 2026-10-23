@@ -19,6 +19,6 @@ export interface Tag {
    * * `CONTACT` - Contact
    */
   applies_to: TagAppliesToEnum;
-  /** Una desactivada no se pone en más contactos. */
+  /** Una desactivada sigue en los contactos que la llevan, pero no se pone en otros. */
   is_active: boolean;
 }

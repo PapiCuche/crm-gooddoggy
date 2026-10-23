@@ -12,6 +12,11 @@ urlpatterns = [
     ),
     path("contacts/<uuid:contact_id>/notes/", notes.NotesView.as_view(), name="notes"),
     path("contacts/<uuid:contact_id>/notes/<uuid:note_id>/", notes.NoteView.as_view(), name="note"),
+    path(  # F4-11
+        "contacts/<uuid:contact_id>/tags/<uuid:tag_id>/",
+        tags.ContactTagView.as_view(),
+        name="contact-tag",
+    ),
     path("tags/", tags.TagsView.as_view(), name="tags"),
     path("tags/<uuid:tag_id>/", tags.TagView.as_view(), name="tag"),
 ]
