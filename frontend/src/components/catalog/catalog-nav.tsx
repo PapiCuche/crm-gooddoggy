@@ -17,13 +17,13 @@ const PAGES = [
 // Navegación entre las páginas del catálogo (F3-05), encima de cada una.
 export const CatalogNav = () => <SectionNav section="catalog" pages={PAGES} />;
 
-// Las pestañas de una entrada del menú con varias páginas (catálogo, inventario, precios): `section` es
+// Las pestañas de una entrada del menú con varias páginas (catálogo, inventario, precios, clientes): `section` es
 // su espacio de mensajes en `shell`, con `label` y el nombre de cada página.
 export function SectionNav({
   section,
   pages,
 }: {
-  section: "catalog" | "inventory" | "prices";
+  section: "catalog" | "inventory" | "prices" | "contacts";
   pages: readonly { key: string; path: string }[];
 }) {
   const t = useTranslations(`shell.${section}`);
