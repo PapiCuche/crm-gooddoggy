@@ -23,7 +23,7 @@ export type FormField<Name extends string> = {
   invalid: string; // lo que se dice si la API no acepta el campo
   required?: string; // lo que se dice si falta; sin él, el campo es opcional
   hint?: string;
-  inputMode?: "tel" | "numeric" | "email";
+  inputMode?: "tel" | "numeric" | "decimal" | "email";
   valid?: (value: string) => boolean; // lo que la pantalla comprueba antes de enviar lo escrito
   // Una clave que se escribe tal cual (un slug): el teclado del móvil no pone mayúscula inicial
   // ni corrige, y la API no tiene que rechazar lo que el usuario no escribió.

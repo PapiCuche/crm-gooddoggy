@@ -1592,6 +1592,42 @@
     "reason": {
       "NO_PRICE": "Sin precio",
       "VARIANT_UNAVAILABLE": "No está a la venta: la variante o su producto no están activos"
+    },
+    "stale": "La lista o la variante ya no está disponible (se desactivó, se borró o ya no la ves). La vista se volvió a cargar.",
+    "form": {
+      "open": "Cambiar precio",
+      "openLabel": "Cambiar precio de {name}",
+      "title": "Nuevo precio de {name}",
+      "amount": "Importe en soles, IGV incluido",
+      "amountHint": "El vigente es {amount}. Con punto y como mucho 2 decimales, por ejemplo 4399.50.",
+      "amountHintFirst": "Todavía no tiene precio en esta lista. Con punto y como mucho 2 decimales, por ejemplo 4399.50.",
+      "amountRequired": "Escribe el importe.",
+      "amountInvalid": "El importe es un número mayor que cero, con punto y como mucho 2 decimales.",
+      "reason": "Motivo",
+      "reasonHint": "De 3 a 500 caracteres. Queda en el historial del precio.",
+      "reasonRequired": "Escribe el motivo.",
+      "reasonInvalid": "El motivo tiene de 3 a 500 caracteres, sin HTML.",
+      "since": "Desde",
+      "now": "Ahora",
+      "later": "Una fecha y hora futura",
+      "at": "Fecha y hora",
+      "atHint": "En la hora de la organización ({zone}).",
+      "atRequired": "Elige la fecha y la hora.",
+      "atInvalid": "La fecha y la hora no son válidas.",
+      "atPast": "Tiene que ser una fecha y hora futura.",
+      "diff": "Diferencia con el vigente: {amount} ({percent})",
+      "diffNext": "Diferencia con el programado que regirá entonces: {amount} ({percent})",
+      "first": "Será su primer precio en esta lista.",
+      "unchanged": "Es el precio que ya rige en ese momento: no se cambió nada.",
+      "alreadyScheduled": "Ya hay un precio que empieza en ese instante: elige otro.",
+      "conflict": "Otro cambio de precio de esta variante en esta lista llegó antes. Cancela, revisa la tabla y vuelve a intentarlo.",
+      "denied": "No tienes permiso para cambiar precios.",
+      "save": "Guardar precio",
+      "schedule": "Programar precio",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "done": "Precio de {sku} guardado: {amount} desde ahora.",
+      "scheduled": "Precio de {sku} programado: {amount} desde el {at}."
     }
   }
 }

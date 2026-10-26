@@ -2,13 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useFormatter, useTimeZone, useTranslations } from "next-intl";
-import { useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { everyPage } from "@/components/catalog/categories-tree";
 import { Choice } from "@/components/catalog/product-create";
 import { useReads } from "@/components/inventory/cell-picker";
-import { CursorList } from "@/components/lists/cursor-list";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
 import {
   getPriceListPricesListQueryKey,
   getPriceListsListQueryKey,
@@ -19,6 +19,7 @@ import {
 } from "@/lib/api/client";
 import type { ListPrice } from "@/lib/api/model";
 
+import { PriceForm } from "./price-form";
 import { stamp, ZONE } from "./zoned";
 
 // Una fila por variante: la API no da `id` a la fila, así que es el de la variante.
@@ -27,10 +28,16 @@ type Row = ListPrice & { id: string };
 // Los precios de una lista (F3-45): `GET …/pricing/price-lists/{id}/prices/` (F3-44), una fila
 // por variante viva con su precio vigente, el próximo y lo que resuelve `PricingService`. Nada
 // se calcula aquí: el importe es el de la API (ADR-006). Se elige la lista entre las activas
-// que el actor ve (la ruta de una inactiva es un 404) y se filtra por producto.
+// que el actor ve (la ruta de una inactiva es un 404) y se filtra por producto. Con
+// `prices.manage`, cada fila ofrece «Cambiar precio»; el historial (F3-44b) irá a su lado.
 export function ListPrices() {
   const t = useTranslations("prices");
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Comodidad: «Cambiar precio» se ofrece a quien la API dijo que tiene `prices.manage`.
+  const canManage = permissions.some((grant) => grant.code === "prices.manage");
+  const list = useRef<CursorListHandle>(null);
+  // Lo que respondió la última escritura; un 404 (`alert`) se explica aquí.
+  const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
   const slug = organization.slug;
   const { failed, retry } = useReads();
   const [chosen, setChosen] = useState("");
@@ -69,8 +76,27 @@ export function ListPrices() {
     );
   }
 
+  const form = (row: Row) => (
+    <PriceForm
+      slug={slug}
+      listId={listId}
+      listKey={listKey}
+      row={row}
+      onAsk={() => setSaid(null)}
+      onDone={(text) => setSaid({ text })}
+      onStale={(here) => {
+        // La lista se desactivó o dejó de verse, o la variante ya no está: se pide todo otra vez.
+        setSaid({ text: t("stale"), alert: true });
+        void lists.refetch();
+        list.current?.refetch();
+        if (here) list.current?.focusHeading();
+      }}
+    />
+  );
+
   return (
     <CursorList<Row>
+      ref={list}
       section="prices"
       organization={organization.name}
       listKey={listKey}
@@ -115,17 +141,32 @@ export function ListPrices() {
           </div>
         </fieldset>
       }
+      notice={
+        canManage ? (
+          <>
+            {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
+            <p role="status" className={said && !said.alert ? "text-sm wrap-anywhere" : "sr-only"}>
+              {said && !said.alert ? said.text : ""}
+            </p>
+            {said?.alert ? (
+              <p role="alert" className="text-danger">
+                {said.text}
+              </p>
+            ) : null}
+          </>
+        ) : null
+      }
       empty={empty}
       rowClassName="grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] sm:items-start"
     >
-      {(row) => <PriceRow row={row} />}
+      {(row) => <PriceRow row={row} action={canManage ? form(row) : null} />}
     </CursorList>
   );
 }
 
 // Una variante: quién es a la izquierda; su precio, desde cuándo, hasta cuándo y el próximo a
 // la derecha (debajo en el móvil). Fechas en la zona de la organización.
-function PriceRow({ row }: { row: Row }) {
+function PriceRow({ row, action }: { row: Row; action: ReactNode }) {
   const t = useTranslations("prices");
   const format = useFormatter();
   const { variant, current, next, resolution } = row;
@@ -170,6 +211,7 @@ function PriceRow({ row }: { row: Row }) {
           </p>
         ) : null}
       </div>
+      {action ? <div className="sm:col-span-2">{action}</div> : null}
     </>
   );
 }
