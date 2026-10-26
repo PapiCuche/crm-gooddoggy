@@ -1628,6 +1628,25 @@
       "cancel": "Cancelar",
       "done": "Precio de {sku} guardado: {amount} desde ahora.",
       "scheduled": "Precio de {sku} programado: {amount} desde el {at}."
+    },
+    "history": {
+      "open": "Historial",
+      "openLabel": "Historial de {name}",
+      "title": "Historial de precios",
+      "subtitle": "{name} · Lista {list}",
+      "close": "Cerrar el historial",
+      "list": "Cambios de precio, del más reciente al más antiguo",
+      "loading": "Cargando el historial…",
+      "empty": "Esta variante todavía no tiene cambios de precio en esta lista.",
+      "denied": "No tienes permiso para ver el historial de precios o el catálogo.",
+      "gone": "La variante o la lista ya no está disponible. Cierra el panel y vuelve a cargar la tabla.",
+      "more": "Cargar más",
+      "loadingMore": "Cargando más…",
+      "you": "Tú",
+      "other": "Otro miembro",
+      "system": "Sistema",
+      "none": "Sin precio",
+      "since": "Programado: rige desde el {at}"
     }
   }
 }

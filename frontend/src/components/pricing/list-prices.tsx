@@ -20,6 +20,7 @@ import {
 import type { ListPrice } from "@/lib/api/model";
 
 import { PriceForm } from "./price-form";
+import { PriceHistory } from "./price-history";
 import { stamp, ZONE } from "./zoned";
 
 // Una fila por variante: la API no da `id` a la fila, así que es el de la variante.
@@ -29,7 +30,7 @@ type Row = ListPrice & { id: string };
 // por variante viva con su precio vigente, el próximo y lo que resuelve `PricingService`. Nada
 // se calcula aquí: el importe es el de la API (ADR-006). Se elige la lista entre las activas
 // que el actor ve (la ruta de una inactiva es un 404) y se filtra por producto. Con
-// `prices.manage`, cada fila ofrece «Cambiar precio»; el historial (F3-44b) irá a su lado.
+// `prices.manage`, cada fila ofrece «Cambiar precio» y, a su lado, «Historial» (F3-45c).
 export function ListPrices() {
   const t = useTranslations("prices");
   const { organization, permissions } = useTenant();
@@ -159,7 +160,24 @@ export function ListPrices() {
       empty={empty}
       rowClassName="grid gap-x-6 gap-y-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] sm:items-start"
     >
-      {(row) => <PriceRow row={row} action={canManage ? form(row) : null} />}
+      {(row) => (
+        <PriceRow
+          row={row}
+          action={
+            canManage ? (
+              <div className="flex flex-wrap items-start gap-2">
+                {form(row)}
+                <PriceHistory
+                  slug={slug}
+                  listId={listId}
+                  listName={priceList?.name ?? ""}
+                  row={row}
+                />
+              </div>
+            ) : null
+          }
+        />
+      )}
     </CursorList>
   );
 }
