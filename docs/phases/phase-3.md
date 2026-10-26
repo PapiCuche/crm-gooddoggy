@@ -54,6 +54,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-41 | [#399](https://github.com/PapiCuche/crm-gooddoggy/issues/399) Precios: la pantalla de listas de precios | `feature/f3-pricing-lists-screen` | #398, #409 | frontend |
 | F3-42 | [#400](https://github.com/PapiCuche/crm-gooddoggy/issues/400) Precios: precio de una variante en una lista, con vigencia, motivo e historial (tabla y servicio) | `feature/f3-pricing-prices` | #398, #311 | backend |
 | F3-43 | [#401](https://github.com/PapiCuche/crm-gooddoggy/issues/401) Precios: PricingService, el precio vigente y hasta cuándo (motor y su suite de tests) | `feature/f3-pricing-engine` | #400 | backend |
+| F3-50 | [#431](https://github.com/PapiCuche/crm-gooddoggy/issues/431) Security: filelock 4.2.4 (CVE-2026-112940, CVE-2026-112913, CVE-2026-112907) | `chore/deps-filelock-4-2-4` | — | backend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
