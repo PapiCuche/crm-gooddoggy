@@ -14,4 +14,9 @@ urlpatterns = [
         prices.ListPricesView.as_view(),
         name="price-list-prices",
     ),
+    path(
+        "pricing/variants/<uuid:variant_id>/price-history/",
+        prices.PriceHistoryView.as_view(),
+        name="variant-price-history",
+    ),
 ]

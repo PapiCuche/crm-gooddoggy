@@ -77,6 +77,7 @@ import type {
   PaginatedMemberList,
   PaginatedMovementList,
   PaginatedNoteList,
+  PaginatedPriceList,
   PaginatedPriceListList,
   PaginatedProductList,
   PaginatedRoleList,
@@ -130,6 +131,7 @@ import type {
   TestAccounts,
   Variant,
   VariantCreateRequest,
+  VariantPriceHistoryListParams,
   VariantsListParams,
   Warehouse,
   WarehouseCreateRequest,
@@ -7325,6 +7327,177 @@ export const usePriceListPricesCreate = <TError = ErrorType<Error>, TContext = u
 > => {
   return useMutation(getPriceListPricesCreateMutationOptions(options), queryClient);
 };
+
+export const getVariantPriceHistoryListUrl = (
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/price-history/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/price-history/`;
+};
+
+/**
+ * Los precios de la variante en las listas que el actor ve, activas o no, del más nuevo al más antiguo (ADR-016), con su motivo y su autor. La variante borrada conserva su historial. 404: la variante o la lista de `price_list_id` no existe, es de otra organización o el actor no la ve.
+ */
+export const variantPriceHistoryList = async (
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedPriceList> => {
+  return apiFetch<PaginatedPriceList>(getVariantPriceHistoryListUrl(orgSlug, variantId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getVariantPriceHistoryListQueryKey = (
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/price-history/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getVariantPriceHistoryListQueryOptions = <
+  TData = Awaited<ReturnType<typeof variantPriceHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof variantPriceHistoryList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getVariantPriceHistoryListQueryKey(orgSlug, variantId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof variantPriceHistoryList>>> = ({
+    signal,
+  }) => variantPriceHistoryList(orgSlug, variantId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && variantId !== null && variantId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof variantPriceHistoryList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type VariantPriceHistoryListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof variantPriceHistoryList>>
+>;
+export type VariantPriceHistoryListQueryError = ErrorType<Error>;
+
+export function useVariantPriceHistoryList<
+  TData = Awaited<ReturnType<typeof variantPriceHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params: undefined | VariantPriceHistoryListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof variantPriceHistoryList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof variantPriceHistoryList>>,
+          TError,
+          Awaited<ReturnType<typeof variantPriceHistoryList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useVariantPriceHistoryList<
+  TData = Awaited<ReturnType<typeof variantPriceHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof variantPriceHistoryList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof variantPriceHistoryList>>,
+          TError,
+          Awaited<ReturnType<typeof variantPriceHistoryList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useVariantPriceHistoryList<
+  TData = Awaited<ReturnType<typeof variantPriceHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof variantPriceHistoryList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useVariantPriceHistoryList<
+  TData = Awaited<ReturnType<typeof variantPriceHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: VariantPriceHistoryListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof variantPriceHistoryList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getVariantPriceHistoryListQueryOptions(orgSlug, variantId, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getProductsListUrl = (orgSlug: string, params?: ProductsListParams) => {
   const normalizedParams = new URLSearchParams();

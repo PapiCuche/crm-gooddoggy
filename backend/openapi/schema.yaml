@@ -3466,6 +3466,81 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pricing/variants/{variant_id}/price-history/:
+    get:
+      operationId: variant_price_history_list
+      description: 'Los precios de la variante en las listas que el actor ve, activas
+        o no, del más nuevo al más antiguo (ADR-016), con su motivo y su autor. La
+        variante borrada conserva su historial. 404: la variante o la lista de `price_list_id`
+        no existe, es de otra organización o el actor no la ve.'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: price_list_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo el de esa lista. 404 si el actor no la ve.
+      - in: path
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPriceList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/products/:
     get:
       operationId: products_list
@@ -6418,6 +6493,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Note'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedPriceList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Price'
         next:
           type: string
           nullable: true
