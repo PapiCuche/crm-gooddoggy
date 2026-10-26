@@ -1,7 +1,8 @@
 """Los precios de una lista (F3-44; E03-02, E03-03, E03-06; ADR-006 §2 y §3). `GET` pide
-`prices.view`, `products.view` y la lista visible para el actor y activa (si no, 404); `POST` pide `prices.manage`
-y responde la fila creada sin resolverla otra vez: en la misma transacción `at=None` no la vería
-(empieza en `clock_timestamp()`). Importes en string decimal; ningún campo de costo ni de margen.
+`prices.view`, `products.view` y la lista visible para el actor y activa (si no, 404); `POST`
+pide `prices.manage` y responde la fila creada sin resolverla otra vez: en la misma transacción
+`at=None` no la vería (empieza en `clock_timestamp()`). Importes en string decimal; ningún campo
+de costo ni de margen.
 """
 
 from typing import Any
