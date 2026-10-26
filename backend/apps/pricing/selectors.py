@@ -56,6 +56,17 @@ def next_price(variant_id: UUID, price_list_id: UUID, after: datetime) -> Produc
     return found
 
 
+def next_prices(
+    variant_ids: Iterable[UUID], price_list_id: UUID, after: datetime
+) -> QuerySet[ProductPrice]:
+    """`next_price` para varias variantes de una lista, en una consulta: como mucho uno por
+    variante (`DISTINCT ON`)."""
+    rows = ProductPrice.objects.filter(variant_id__in=variant_ids, price_list_id=price_list_id)
+    return (
+        rows.filter(starts_at__gt=after).order_by("variant_id", "starts_at").distinct("variant_id")
+    )
+
+
 def price_history(ectx: ExecutionContext, variant_id: UUID) -> QuerySet[ProductPrice]:
     """El historial de una variante en las listas que el actor ve, por lista y del más nuevo al
     más antiguo, con el motivo y `created_by_user_id`: el nombre del autor lo resuelve quien

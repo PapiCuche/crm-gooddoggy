@@ -218,6 +218,7 @@ SPECTACULAR_SETTINGS = {
         "PriceListPaymentConditionEnum": "apps.pricing.models.PaymentCondition",
         "PricePermissionEnum": "apps.pricing.models.READ_PERMISSIONS",
         "PriceListCurrencyEnum": "apps.pricing.price_lists.CURRENCIES",
+        "PriceResolutionReasonEnum": "apps.pricing.services.Reason",  # F3-44
     },
 }
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
