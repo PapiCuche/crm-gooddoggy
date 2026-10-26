@@ -252,6 +252,23 @@ describe("navegación del shell", () => {
     expect(link).toHaveAttribute("href", "/o/acme/precios/listas");
   });
 
+  it("la raíz de una sección (`/precios`, los precios de una lista) también es de su entrada", async () => {
+    route.pathname = "/o/acme/precios";
+    const all = ["inventory.view", "prices.view"].map((code) => ({ code, scopes: [] }));
+    expect((await links(all)).slice(1)).toEqual([
+      ["/o/acme/inventario/existencias", null],
+      ["/o/acme/precios/listas", "true"],
+    ]);
+    expect(document.title).toBe("Precios · Acme SAC · Good Doggy CRM");
+    const [prices, inventory, catalog] = ["prices", "inventory", "catalog"].map((key) =>
+      NAVIGATION.find((item) => item.key === key)!,
+    );
+    expect(holds(prices!, "/o/acme", "/o/acme/precioss")).toBe(false);
+    expect(holds(prices!, "/o/otra", "/o/acme/precios")).toBe(false);
+    expect(holds(inventory!, "/o/acme", "/o/acme/precios")).toBe(false);
+    expect(holds(catalog!, "/o/acme", "/o/acme/catalogo")).toBe(true);
+  });
+
   it("CatalogNav enlaza las páginas del catálogo y marca la abierta, también con la barra final", () => {
     route.pathname = "/o/acme/catalogo/categorias/";
     renderApp(
