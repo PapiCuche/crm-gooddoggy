@@ -68,9 +68,10 @@ def next_prices(
 
 
 def price_history(ectx: ExecutionContext, variant_id: UUID) -> QuerySet[ProductPrice]:
-    """El historial de una variante en las listas que el actor ve, por lista y del más nuevo al
-    más antiguo, con el motivo y `created_by_user_id`: el nombre del autor lo resuelve quien
-    tenga `users.view`, como en el resto de pantallas (no se filtra con `prices.view`)."""
+    """El historial de una variante en las listas que el actor ve (la ruta lo pagina por `-id`;
+    este orden solo vale sin paginar), con el motivo y `created_by_user_id`: el nombre del autor
+    lo resuelve quien tenga `users.view`, como en el resto de pantallas (no se filtra con
+    `prices.view`)."""
     rows = ProductPrice.objects.filter(
         variant_id=variant_id, price_list_id__in=visible_price_lists(ectx).values("id")
     )

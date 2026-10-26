@@ -23,8 +23,8 @@ from apps.catalog.selectors import live_variants
 from apps.pricing import prices as commands
 from apps.pricing import services
 from apps.pricing.api.views import _tenant, _visible
-from apps.pricing.models import PriceList
-from apps.pricing.selectors import next_prices, prices_at
+from apps.pricing.models import PriceList, ProductPrice
+from apps.pricing.selectors import next_prices, price_history, prices_at
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.money import AMOUNT, amount_text, parse_amount
@@ -144,8 +144,16 @@ class ProductFilterSerializer(serializers.Serializer[Any]):
     product_id = serializers.UUIDField(required=False, help_text="Solo las de ese producto.")
 
 
-def _filter(request: Request) -> dict[str, Any]:
-    wanted = ProductFilterSerializer(data=request.query_params.dict())
+class PriceListFilterSerializer(serializers.Serializer[Any]):
+    price_list_id = serializers.UUIDField(
+        required=False, help_text="Solo el de esa lista. 404 si el actor no la ve."
+    )
+
+
+def _filter(
+    request: Request, by: type[serializers.Serializer[Any]] = ProductFilterSerializer
+) -> dict[str, Any]:
+    wanted = by(data=request.query_params.dict())
     wanted.is_valid(raise_exception=True)
     return dict(wanted.validated_data)
 
@@ -227,3 +235,38 @@ class ListPricesView(generics.ListAPIView):
         except commands.PriceConflict:
             raise ApiError("PRICE_CONFLICT", 409, CONFLICT) from None
         return Response(PriceSerializer(price).data, status=201)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="variant_price_history_list",
+        tags=["pricing"],
+        parameters=[PriceListFilterSerializer],
+        responses={200: PriceSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Los precios de la variante en las listas que el actor ve, activas o no, del "
+        "más nuevo al más antiguo (ADR-016), con su motivo y su autor. La variante borrada "
+        "conserva su historial. 404: la variante o la lista de `price_list_id` no existe, es de "
+        "otra organización o el actor no la ve.",
+    ),
+)
+class PriceHistoryView(generics.ListAPIView):
+    """El historial de una variante (F3-44b, E03-04). Pide también `products.view`, como los
+    precios de una lista: revela la variante. El autor solo por `created_by_user_id`."""
+
+    required_permissions = {"GET": ("prices.manage", "products.view")}
+    serializer_class = PriceSerializer
+    ordering = "-id"
+
+    def get_queryset(self) -> QuerySet[ProductPrice]:
+        variant_id = self.kwargs["variant_id"]
+        wanted = _filter(self.request, PriceListFilterSerializer)
+        if not ProductVariant.objects.filter(pk=variant_id).exists():  # viva o borrada
+            raise NotFound
+        ectx = request_context(self.request)
+        assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        rows = price_history(ectx, variant_id).select_related("previous_price")
+        if "price_list_id" in wanted:
+            if not _visible(self.request).filter(pk=wanted["price_list_id"]).exists():
+                raise NotFound
+            rows = rows.filter(price_list_id=wanted["price_list_id"])
+        return rows
