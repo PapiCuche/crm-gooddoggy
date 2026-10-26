@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -7,6 +7,7 @@ import type { ListPrice, PriceList, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
 import { ListPrices } from "./list-prices";
+import { startProblem } from "./price-form";
 
 const API = "/api/v1/o/acme";
 const LISTS = `GET ${API}/pricing/price-lists/?limit=200`;
@@ -90,7 +91,10 @@ const rows = async () =>
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("ListPrices", () => {
   it("se abre en la predeterminada y solo ofrece las listas activas, por orden", async () => {
@@ -204,5 +208,191 @@ describe("ListPrices", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "No tienes permiso para ver las listas de precios",
     );
+  });
+});
+
+const POST = `POST ${API}/pricing/price-lists/p1/prices/`;
+const owner = { ...seller, permissions: grants("prices.view", "products.view", "prices.manage") };
+const created = (amount: string, starts_at = "2026-10-26T15:00:00Z") => ({
+  status: 201,
+  body: { id: "x1", variant_id: "v1", price_list_id: "p1", amount, starts_at },
+});
+const form = () => screen.getByRole("form");
+const field = (label: string) => within(form()).getByLabelText(label);
+const AMOUNT = "Importe en soles, IGV incluido";
+function press(name: string | RegExp) {
+  const button = screen.getByRole("button", { name });
+  button.focus(); // como una pulsación real: el botón recibe el foco antes del clic
+  fireEvent.click(button);
+}
+const fill = (values: Record<string, string>) => {
+  for (const [label, value] of Object.entries(values)) {
+    fireEvent.input(field(label), { target: { value } });
+  }
+};
+const posted = (api: ReturnType<typeof mockApi>) =>
+  api.mock.calls
+    .filter(([, init]) => init?.method === "POST")
+    .map(([, init]) => JSON.parse(String(init?.body)));
+const gets = (api: ReturnType<typeof mockApi>, url: string) =>
+  api.mock.calls.filter(
+    ([called, init]) => init?.method === "GET" && `GET ${String(called)}` === url,
+  ).length;
+async function opened(routes: Parameters<typeof mockApi>[0] = {}, row: ListPrice = priced) {
+  const api = mockApi({ ...catalog, [PRICES("p1")]: page([row]), ...routes });
+  screenOf(owner);
+  await rows();
+  press("Cambiar precio de Laptop 15 pulgadas (LAP-15-512)");
+  return api;
+}
+
+describe("PriceForm", () => {
+  it("sin `prices.manage` no hay botones; con él, uno por fila", async () => {
+    mockApi({ ...catalog, [PRICES("p1")]: page([priced, unpriced]) });
+    screenOf(owner);
+    expect(await screen.findAllByRole("button", { name: /^Cambiar precio de/ })).toHaveLength(2);
+  });
+
+  it("comprueba el importe antes de enviar y enseña la diferencia con el vigente", async () => {
+    const api = await opened();
+    expect(field(AMOUNT)).toHaveFocus();
+    expect(field(AMOUNT)).toHaveAttribute("inputmode", "decimal");
+    for (const wrong of ["4399.555", "0", "4.399,50", "4399.", "1234567890123"]) {
+      fill({ [AMOUNT]: wrong, Motivo: "Promoción" });
+      press("Guardar precio");
+      expect(await within(form()).findByText(/con punto y como mucho 2 decimales\./)).toBeVisible();
+    }
+    fill({ [AMOUNT]: "4399.5" });
+    expect(form()).toHaveTextContent(/Diferencia con el vigente: -S\/\s199\.50 \(-4\.3\s?%\)/);
+    fill({ [AMOUNT]: "4800" });
+    expect(form()).toHaveTextContent(/Diferencia con el vigente: \+S\/\s201\.00 \(\+4\.4\s?%\)/);
+    fill({ Motivo: "ab" });
+    press("Guardar precio");
+    expect(await within(form()).findByText(/De 3 a 500|de 3 a 500/)).toBeVisible();
+    expect(posted(api)).toEqual([]);
+  });
+
+  it("guarda desde ahora con el importe en string, una vez por pulsación, y vuelve a pedir la página", async () => {
+    const api = await opened({ [POST]: created("4399.50") });
+    fill({ [AMOUNT]: "4399.5", Motivo: "  Promoción  " });
+    // Enter mantenido no se repite.
+    const held = new KeyboardEvent("keydown", {
+      key: "Enter",
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    field(AMOUNT).dispatchEvent(held);
+    expect(held.defaultPrevented).toBe(true);
+    fireEvent.submit(form());
+    fireEvent.submit(form());
+    expect(
+      await screen.findByText(/Precio de LAP-15-512 guardado: S\/\s4,399\.50 desde ahora\./),
+    ).toBeVisible();
+    expect(posted(api)).toEqual([{ variant_id: "v1", amount: "4399.5", reason: "Promoción" }]);
+    expect(gets(api, PRICES("p1"))).toBe(2);
+    expect(screen.queryByRole("form")).toBeNull();
+  });
+
+  it("programa en la hora de la organización y no acepta una fecha pasada", async () => {
+    const api = await opened({ [POST]: created("4299.00", "2099-11-01T05:00:00Z") });
+    fill({ [AMOUNT]: "4299", Motivo: "Campaña" });
+    fireEvent.click(within(form()).getByLabelText("Una fecha y hora futura"));
+    press("Programar precio");
+    expect(await within(form()).findByText("Elige la fecha y la hora.")).toBeVisible();
+    fireEvent.change(field("Fecha y hora"), { target: { value: "2020-01-01T10:00" } });
+    press("Programar precio");
+    expect(await within(form()).findByText("Tiene que ser una fecha y hora futura.")).toBeVisible();
+    expect(posted(api)).toEqual([]);
+    fireEvent.change(field("Fecha y hora"), { target: { value: "2099-11-01T00:00" } });
+    press("Programar precio");
+    expect(
+      await screen.findByText(/programado: S\/\s4,299\.00 desde el 01\/11\/2099 00:00\./),
+    ).toBeVisible();
+    expect(posted(api)[0]).toMatchObject({ amount: "4299", starts_at: "2099-11-01T05:00:00.000Z" });
+  });
+
+  it.each([
+    ["PRICE_UNCHANGED", "Es el precio que ya rige en ese momento"],
+    ["PRICE_ALREADY_SCHEDULED", "Ya hay un precio que empieza en ese instante"],
+    ["PRICE_CONFLICT", "Otro cambio de precio de esta variante en esta lista llegó antes"],
+  ])("un 409 %s se explica con su texto y vuelve a pedir la tabla", async (code, text) => {
+    const api = await opened({ [POST]: { status: 409, body: { code } } });
+    fill({ [AMOUNT]: "4599", Motivo: "Sin cambio" });
+    press("Guardar precio");
+    expect(await within(form()).findByRole("alert")).toHaveTextContent(text);
+    // El de «ya rige» es del importe: va junto a él.
+    expect(field(AMOUNT).getAttribute("aria-invalid")).toBe(
+      code === "PRICE_UNCHANGED" ? "true" : null,
+    );
+    await waitFor(() => expect(gets(api, PRICES("p1"))).toBe(2));
+  });
+
+  it("un 400 se enseña junto a su campo; el de `starts_at`, en el formulario", async () => {
+    const replies = [
+      { status: 400, body: { code: "VALIDATION_ERROR", fields: { reason: ["x"] } } },
+      { status: 400, body: { code: "VALIDATION_ERROR", fields: { starts_at: ["x"] } } },
+    ];
+    await opened({ [POST]: () => replies.shift()! });
+    fill({ [AMOUNT]: "4399", Motivo: "Promoción" });
+    press("Guardar precio");
+    expect(await within(form()).findByText(/El motivo tiene de 3 a 500/)).toBeVisible();
+    fill({ Motivo: "Promoción!" });
+    press("Guardar precio");
+    expect(
+      await within(form()).findByText("Tiene que ser una fecha y hora futura."),
+    ).toHaveAttribute("role", "alert");
+  });
+
+  it("un 404 cierra el formulario, lo explica y vuelve a pedir listas y precios", async () => {
+    const api = await opened({ [POST]: { status: 404, body: { code: "NOT_FOUND" } } });
+    fill({ [AMOUNT]: "4399", Motivo: "Promoción" });
+    press("Guardar precio");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/ya no está disponible/);
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Precios de una lista" })).toHaveFocus();
+    await waitFor(() => expect(gets(api, PRICES("p1"))).toBe(2));
+    expect(gets(api, LISTS)).toBe(2);
+  });
+
+  it("cuenta en céntimos, sin `float`, y cancelar devuelve el foco al botón", async () => {
+    await opened({}, { ...priced, current: { ...priced.current!, amount: "4.36" } });
+    fill({ [AMOUNT]: "4.35" });
+    expect(form()).toHaveTextContent(/Diferencia con el vigente: -S\/\s0\.01 \(-0\.2\s?%\)/);
+    press("Cancelar");
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Cambiar precio de/ })).toHaveFocus();
+  });
+
+  it("lee «Desde» en hora de Lima y compara con el precio que regirá entonces", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-26T15:00:00Z")); // 10:00 en Lima
+    const api = await opened({ [POST]: created("4199.00", "2026-10-26T17:00:00Z") });
+    fill({ [AMOUNT]: "4199", Motivo: "abc" });
+    fireEvent.click(within(form()).getByLabelText("Una fecha y hora futura"));
+    expect(field("Fecha y hora")).toHaveAttribute("max", "9999-12-31T23:59");
+    // Después del próximo cambio (01/11 00:00), la base es el programado.
+    fireEvent.change(field("Fecha y hora"), { target: { value: "2026-11-02T10:00" } });
+    expect(form()).toHaveTextContent(
+      /Diferencia con el programado que regirá entonces: -S\/\s100\.00 \(-2\.3\s?%\)/,
+    );
+    // Dos horas más tarde en Lima: futuro, aunque leído en UTC ya habría pasado.
+    fireEvent.change(field("Fecha y hora"), { target: { value: "2026-10-26T12:00" } });
+    expect(form()).toHaveTextContent(/Diferencia con el vigente: -S\/\s400\.00/);
+    press("Programar precio");
+    expect(
+      await screen.findByText(/programado: S\/\s4,199\.00 desde el 26\/10\/2026 12:00\./),
+    ).toBeVisible();
+    expect(posted(api)).toEqual([
+      { variant_id: "v1", amount: "4199", reason: "abc", starts_at: "2026-10-26T17:00:00.000Z" },
+    ]);
+  });
+
+  it("un «Desde» ilegible (año de cinco cifras) no se envía", () => {
+    const now = new Date("2026-10-26T15:00:00Z");
+    expect(startProblem("20266-01-01T10:00", "America/Lima", now)).toBe("atInvalid");
+    expect(startProblem("", "America/Lima", now)).toBe("atRequired");
+    expect(startProblem("2026-10-26T09:59", "America/Lima", now)).toBe("atPast");
+    expect(startProblem("2026-10-26T10:01", "America/Lima", now)).toBeNull();
   });
 });
