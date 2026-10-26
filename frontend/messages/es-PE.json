@@ -53,7 +53,8 @@
     },
     "prices": {
       "label": "Secciones de precios",
-      "lists": "Listas"
+      "lists": "Listas",
+      "prices": "Precios"
     },
     "contacts": {
       "label": "Secciones de clientes",
@@ -1560,6 +1561,37 @@
       "denied": "No tienes permiso para administrar listas de precios.",
       "done": "Lista «{name}» {created, select, true {creada} other {guardada}}.",
       "doneStale": "Lista «{name}» {created, select, true {creada} other {guardada}}, pero la vista no se pudo actualizar. Recarga la página para verla."
+    }
+  },
+  "prices": {
+    "eyebrow": "Good Doggy / Precios",
+    "title": "Precios de una lista",
+    "intro": "El precio que rige ahora en cada variante de {organization}, desde cuándo, hasta cuándo vale y el próximo cambio programado.",
+    "loading": "Cargando los precios…",
+    "denied": "No tienes permiso para ver los precios de esta lista o el catálogo.",
+    "count": "{count, plural, =0 {Sin variantes en la vista} one {# variante en la vista} other {# variantes en la vista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "empty": "Esta organización todavía no tiene variantes en el catálogo.",
+    "emptyProduct": "Ese producto no tiene variantes a la venta en el catálogo.",
+    "choose": "Qué precios ver",
+    "list": "Lista de precios",
+    "listOption": "{name}{default, select, true { (predeterminada)} other {}}",
+    "loadingLists": "Cargando las listas…",
+    "noLists": "No hay ninguna lista de precios activa que puedas ver.",
+    "listsDenied": "No tienes permiso para ver las listas de precios de esta organización.",
+    "product": "Producto",
+    "anyProduct": "Todos los productos",
+    "productsDenied": "No tienes permiso para ver el catálogo.",
+    "taxIncluded": "IGV incl.",
+    "since": "Vigente desde el {at}",
+    "until": "Vale hasta el {at}",
+    "untilOpen": "Vale sin fecha de fin",
+    "next": "Próximo cambio: {amount} desde el {at}",
+    "listPrice": "Precio en la lista: {amount}",
+    "reason": {
+      "NO_PRICE": "Sin precio",
+      "VARIANT_UNAVAILABLE": "No está a la venta: la variante o su producto no están activos"
     }
   }
 }

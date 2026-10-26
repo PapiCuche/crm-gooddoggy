@@ -51,9 +51,11 @@ export function visibleItems<Item extends Pick<NavigationItem, "permission" | "a
   return items.filter((item) => needs(item).every((code) => held.has(code)) && some(item));
 }
 
-// Si la ruta `path` es de la entrada: su página, o una de su sección. `base`: `/o/{slug}`.
+// Si la ruta `path` es de la entrada: su página, la raíz de su sección (`/precios`) o una página
+// bajo ella. `base`: `/o/{slug}`.
 export function holds(item: NavigationItem, base: string, path: string): boolean {
+  const section = item.section && base + item.section;
   return (
-    path === base + item.path || (!!item.section && path.startsWith(`${base}${item.section}/`))
+    path === base + item.path || (!!section && (path === section || path.startsWith(`${section}/`)))
   );
 }
