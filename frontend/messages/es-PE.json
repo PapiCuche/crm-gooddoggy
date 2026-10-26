@@ -1070,7 +1070,22 @@
       "option": "{name}{active, select, false { (desactivada)} other {}}",
       "loading": "Cargando etiquetas…",
       "denied": "No tienes permiso para ver las etiquetas.",
-      "emptyFiltered": "Ningún cliente que puedas ver lleva la etiqueta «{name}»."
+      "emptyFiltered": "Ningún cliente que puedas ver lleva la etiqueta «{name}».",
+      "add": "Añadir etiqueta",
+      "choose": "Elige una etiqueta",
+      "required": "Elige la etiqueta que quieres poner.",
+      "noneLeft": "No quedan etiquetas activas por poner.",
+      "addButton": "Añadir",
+      "adding": "Añadiendo…",
+      "remove": "Quitar",
+      "removeLabel": "Quitar la etiqueta «{name}»",
+      "removing": "Quitando…",
+      "added": "Etiqueta «{name}» puesta.",
+      "removed": "Etiqueta «{name}» quitada.",
+      "doneStale": "Hecho, pero la ficha no se pudo actualizar. Recarga la página.",
+      "inactiveError": "La etiqueta «{name}» está desactivada: ya no se pone en más clientes.",
+      "stale": "Ya no puedes cambiar las etiquetas de este cliente: se borró o quedó fuera de tu alcance de edición. La ficha se volvió a cargar.",
+      "writeDenied": "No tienes permiso para cambiar las etiquetas de este cliente."
     },
     "create": {
       "open": "Crear cliente",
