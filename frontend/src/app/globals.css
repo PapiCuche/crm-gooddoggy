@@ -94,3 +94,26 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Diálogo del step-up (<dialog> centrado): ocasional, así que entra con un fundido y una escala
+   leve desde 0.97, no desde cero. Al cerrarse desaparece sin esperar. */
+.step-up-dialog[open] {
+  opacity: 1;
+  scale: 1;
+  transition:
+    opacity 160ms var(--ease-out),
+    scale 160ms var(--ease-out),
+    overlay 160ms allow-discrete,
+    display 160ms allow-discrete;
+  @starting-style {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+.step-up-dialog[open]::backdrop {
+  opacity: 1;
+  transition: opacity 160ms var(--ease-out);
+  @starting-style {
+    opacity: 0;
+  }
+}
