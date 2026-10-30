@@ -1,16 +1,10 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
 import { useTimeZone, useTranslations } from "next-intl";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  getPromotionsListQueryKey,
-  promotionsCancel,
-  promotionsPublish,
-  promotionsRetrieve,
-} from "@/lib/api/client";
+import { promotionsCancel, promotionsPublish, promotionsRetrieve } from "@/lib/api/client";
 import type { Promotion } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
@@ -43,7 +37,6 @@ export function PromotionPanel({
   const t = useTranslations("promotions");
   const errors = useTranslations("errors");
   const zone = useTimeZone() ?? ZONE;
-  const queryClient = useQueryClient();
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const confirmHeading = useRef<HTMLParagraphElement>(null);
@@ -73,7 +66,6 @@ export function PromotionPanel({
       const failure = error as ApiError;
       setSaid({ text: errors(`api.${apiErrorKey(failure)}`), alert: true });
       if (failure.status === 409 || failure.status === 404) {
-        // Otro la cambió antes: se muestra su estado de ahora.
         try {
           onChanged(await promotionsRetrieve(slug, p.id));
         } catch {}
@@ -81,7 +73,6 @@ export function PromotionPanel({
     } finally {
       setBusy(false);
       setAsk(null);
-      void queryClient.invalidateQueries({ queryKey: getPromotionsListQueryKey(slug) });
       heading.current?.focus();
     }
   }
@@ -134,7 +125,7 @@ export function PromotionPanel({
               {t(`status.${p.status}`)} ·{" "}
               <span className="tabular-nums">{discount(p.discount_type, p.value, p.currency)}</span>
             </p>
-            <p className="text-muted text-sm tabular-nums">{t("window", { from, to })}</p>
+            <p className="text-muted text-sm tabular-nums">{t("window", { from, to, zone })}</p>
           </div>
           <Button
             variant="ghost"
@@ -145,7 +136,6 @@ export function PromotionPanel({
             <span aria-hidden>×</span>
           </Button>
         </div>
-        {/* Montado desde el principio: un lector de pantalla anuncia lo que cambia. */}
         <p
           role={said?.alert ? "alert" : "status"}
           className={said ? (said.alert ? "text-danger text-sm" : "text-sm") : "sr-only"}
@@ -158,7 +148,14 @@ export function PromotionPanel({
               <span className="font-medium">
                 {t(ask === "publish" ? "panel.publish" : "panel.cancel")}:{" "}
               </span>
-              {ask === "publish" ? t("panel.publishAsk", { from, to }) : t("panel.cancelAsk")}
+              {ask === "publish"
+                ? t(
+                    new Date(p.starts_at) <= new Date()
+                      ? "panel.publishNowAsk"
+                      : "panel.publishAsk",
+                    { from, to, zone },
+                  )
+                : t(p.status === "DRAFT" ? "panel.discardAsk" : "panel.cancelAsk")}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -167,9 +164,7 @@ export function PromotionPanel({
                 aria-disabled={busy}
                 onClick={() => busy || void run(ask)}
               >
-                {busy
-                  ? t("panel.busy")
-                  : t(ask === "publish" ? "panel.publishConfirm" : "panel.cancelConfirm")}
+                {t(ask === "publish" ? "panel.publishConfirm" : "panel.cancelConfirm")}
               </Button>
               <Button
                 variant="ghost"
@@ -183,22 +178,22 @@ export function PromotionPanel({
           </div>
         ) : canManage && p.status !== "CANCELLED" ? (
           <div className="flex flex-wrap gap-2">
-            {p.status === "DRAFT" ? (
-              <Button variant="primary" className={button} onClick={() => setAsk("publish")}>
-                {t("panel.publish")}
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              className={`${button} border-border border`}
-              onClick={() => setAsk("cancel")}
-            >
-              {t("panel.cancel")}
-            </Button>
+            {(["publish", "cancel"] as const)
+              .filter((action) => action === "cancel" || p.status === "DRAFT")
+              .map((action) => (
+                <Button
+                  key={action}
+                  variant={action === "publish" ? "primary" : "ghost"}
+                  className={`${button} ${action === "cancel" ? "border-border border" : ""}`}
+                  onClick={() => setAsk(action)}
+                >
+                  {t(`panel.${action}`)}
+                </Button>
+              ))}
           </div>
         ) : null}
-        {field(t("panel.terms"), p.terms || t("panel.none"))}
-        {field(t("panel.description"), p.description || t("panel.none"))}
+        {field(t("panel.terms"), p.terms || "—")}
+        {field(t("panel.description"), p.description || "—")}
         <div className="flex flex-col gap-1">
           <h3 className="text-muted text-[13px] tracking-wide uppercase">{t("panel.targets")}</h3>
           <ul className="flex flex-col gap-1 text-sm">

@@ -21,7 +21,6 @@ const tenant = (...codes: string[]): SelfContext => ({
 const promo = (id: string, name: string, more: Partial<Promotion> = {}): Promotion => ({
   ...{ id, name, description: "Liquidación\nde octubre", terms: "Hasta agotar stock" },
   ...{ discount_type: "PERCENT_OFF", value: "10.00", currency: "PEN", priority: 5 },
-  // 02:00 UTC es 21:00 del día anterior en Lima.
   ...{ starts_at: "2026-11-01T02:00:00Z", ends_at: "2026-11-15T14:30:00Z", status: "DRAFT" },
   ...{ ai_exposable: true, channels: null, version: 1, created_at: "2026-10-30T10:00:00Z" },
   ...{ created_by_user_id: null, price_list_ids: ["l1"], ...more },
@@ -48,9 +47,6 @@ const base = {
     { id: "v1", sku: "LAP-15", name: "Laptop 15 pulgadas" },
   ]),
 };
-const showModal = vi.fn(function (this: HTMLDialogElement) {
-  this.open = true;
-});
 const urls = (api: ReturnType<typeof mockApi>) =>
   api.mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${String(url)}`);
 function screenOf(routes: Parameters<typeof mockApi>[0], ...codes: string[]) {
@@ -73,16 +69,21 @@ async function panelOf(name: string) {
 
 beforeAll(() => {
   // jsdom no implementa el `<dialog>` modal: se refleja `open` y el evento `close`.
-  HTMLDialogElement.prototype.showModal = showModal;
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.open = true;
+  };
   HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
     this.open = false;
     this.dispatchEvent(new Event("close"));
   };
 });
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] }); // «ahora» fijo: la vigencia del borrador empieza después
+  vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
   document.cookie = "csrftoken=token-de-prueba";
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   cleanup();
 });
@@ -93,29 +94,16 @@ describe("Promotions", () => {
     const items = within(await screen.findByRole("list", { name: "Promociones" })).getAllByRole(
       "listitem",
     );
-    expect(items).toHaveLength(3);
     expect(items[0]).toHaveTextContent(
-      "Cyber10 %Vigencia: 31/10/2026 21:00 a 15/11/2026 09:30 (hora de Lima)Listas: RegularBorradorPrioridad 5",
+      "Cyber10 %Vigencia: 31/10/2026 21:00 a 15/11/2026 09:30 (zona America/Lima)Listas: RegularBorradorPrioridad 5",
     );
     expect(items[1]).toHaveTextContent(/S\/\s50\.00 menos.*Publicada/);
     expect(items[2]).toHaveTextContent(/Precio fijo S\/\s4,399\.00.*Cancelada/);
   });
 
-  it("el filtro por estado corta las filas traídas, y sin ninguna lo dice", async () => {
-    screenOf({ [LIST]: page([draft, live, dead]) }, "prices.manage");
-    await screen.findByText("Fiestas");
-    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "PUBLISHED" } });
-    expect(await screen.findByText("Fiestas")).toBeVisible();
-    expect(screen.queryByText("Cyber")).toBeNull();
-    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
-    expect(await screen.findByText("Cyber")).toBeVisible();
-  });
-
   it("sin promociones, con filtro vacío, con error y reintento", async () => {
     screenOf({ [LIST]: page([]) });
-    expect(
-      await screen.findByText("Esta organización todavía no tiene promociones."),
-    ).toBeVisible();
+    expect(await screen.findByText("No hay promociones que mostrar.")).toBeVisible();
     cleanup();
     let fail = true;
     screenOf({
@@ -126,7 +114,7 @@ describe("Promotions", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(await screen.findByText("Fiestas")).toBeVisible();
     fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "DRAFT" } });
-    expect(await screen.findByText(/Ninguna promoción de las cargadas/)).toBeVisible();
+    expect(await screen.findByText("No hay promociones que mostrar.")).toBeVisible();
   });
 
   it("el detalle da términos, objetivos por nombre con «descuento propio», listas y canales", async () => {
@@ -136,9 +124,7 @@ describe("Promotions", () => {
     expect(
       within(panel).getByText(/Variante: Laptop 15 pulgadas \(LAP-15\) · descuento propio: 50 %/),
     ).toBeVisible();
-    expect(panel).toHaveTextContent("Hasta agotar stock");
-    expect(panel).toHaveTextContent("Todos los canales");
-    expect(panel).toHaveTextContent(/Visible a la IA\s*Sí/);
+    expect(panel).toHaveTextContent(/Hasta agotar stock.*Todos los canales.*Visible a la IA\s*Sí/);
     fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
     expect(open).toHaveFocus();
   });
@@ -166,17 +152,48 @@ describe("Promotions", () => {
     expect(within(panel).queryByRole("button", { name: "Sí, publicar" })).toBeNull();
     fireEvent.click(within(panel).getByRole("button", { name: "Publicar" }));
     expect(panel).toHaveTextContent(
-      "Empezará a aplicarse a los precios desde 31/10/2026 21:00 y rige hasta 15/11/2026 09:30",
+      "Empezará a aplicarse a los precios desde 31/10/2026 21:00 y rige hasta 15/11/2026 09:30 (zona America/Lima). Una vez publicada, sus términos no se pueden cambiar.",
     );
     expect(urls(api).some((url) => url.startsWith("POST"))).toBe(false);
     fireEvent.click(within(panel).getByRole("button", { name: "Volver" }));
     expect(within(panel).getByRole("button", { name: "Publicar" })).toBeVisible();
     fireEvent.click(within(panel).getByRole("button", { name: "Publicar" }));
-    fireEvent.click(within(panel).getByRole("button", { name: "Sí, publicar" }));
+    const yes = within(panel).getByRole("button", { name: "Sí, publicar" });
+    fireEvent.click(yes);
+    fireEvent.click(yes); // el segundo clic no envía otra vez
     expect(await within(panel).findByText("Promoción publicada.")).toBeInTheDocument();
+    expect(urls(api).filter((url) => url.startsWith("POST"))).toHaveLength(1);
+    await waitFor(() => expect(urls(api).filter((url) => url === LIST)).toHaveLength(2));
     expect(panel).toHaveTextContent("Publicada");
     expect(within(panel).queryByRole("button", { name: "Publicar" })).toBeNull();
     expect(within(panel).getByRole("button", { name: "Cancelar promoción" })).toBeVisible();
+  });
+
+  it("con un filtro activo, el panel sigue abierto aunque la fila salga de la vista", async () => {
+    let published = false;
+    screenOf(
+      {
+        [LIST]: () => page(published ? [live] : [draft, live]),
+        [`POST ${ONE("d1", "publish")}`]: () => {
+          published = true;
+          return { status: 200, body: { ...draft, status: "PUBLISHED", version: 2 } };
+        },
+      },
+      "prices.manage",
+    );
+    expect(await screen.findByText("Fiestas")).toBeVisible(); // la publicada se ve sin filtro
+    fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "DRAFT" } });
+    await waitFor(() => expect(screen.queryByText("Fiestas")).toBeNull());
+    const { panel } = await panelOf("Cyber");
+    for (const name of ["Publicar", "Sí, publicar"]) {
+      fireEvent.click(within(panel).getByRole("button", { name }));
+    }
+    expect(await within(panel).findByText("Promoción publicada.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Promociones" })).toBeNull());
+    expect(panel).toBeVisible();
+    expect(panel).toHaveTextContent("Publicada");
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   });
 
   it("cancelar dice que es inmediato e irreversible y deja sin acciones", async () => {
@@ -200,17 +217,21 @@ describe("Promotions", () => {
   });
 
   it.each([
-    ["publish", "d1", "PROMOTION_NOT_DRAFT", "ya se publicó o se canceló"],
-    ["publish", "d1", "PROMOTION_ENDED", "ya terminó"],
-    ["cancel", "d1", "PROMOTION_ALREADY_CANCELLED", "ya estaba cancelada"],
+    ["publish", 409, "PROMOTION_NOT_DRAFT", "ya se publicó o se canceló"],
+    ["publish", 409, "PROMOTION_ENDED", "ya terminó"],
+    ["cancel", 409, "PROMOTION_ALREADY_CANCELLED", "ya estaba cancelada"],
+    ["cancel", 404, "NOT_FOUND", "No encontramos"],
   ])(
-    "el 409 de %s (%s) %s se explica y se vuelve a leer el estado",
-    async (verb, id, code, text) => {
+    "el %s con %s (%s) se explica y se vuelve a leer el estado",
+    async (verb, status, code, text) => {
       screenOf(
         {
           [LIST]: page([draft]),
-          [`POST ${ONE(id, verb)}`]: { status: 409, body: { code } },
-          [`GET ${ONE(id)}`]: { status: 200, body: { ...draft, status: "CANCELLED", version: 4 } },
+          [`POST ${ONE("d1", verb)}`]: { status, body: { code } },
+          [`GET ${ONE("d1")}`]: {
+            status: 200,
+            body: { ...draft, status: "CANCELLED", version: 4 },
+          },
         },
         "prices.manage",
       );

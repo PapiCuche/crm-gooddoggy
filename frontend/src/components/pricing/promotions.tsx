@@ -31,9 +31,10 @@ export function Promotions() {
   const zone = useTimeZone() ?? ZONE;
   const { organization, permissions } = useTenant();
   const slug = organization.slug;
-  // Comodidad: las acciones se ofrecen a quien la API dijo que tiene `prices.manage`.
   const canManage = permissions.some((grant) => grant.code === "prices.manage");
   const list = useRef<CursorListHandle>(null);
+  const [opened, setOpened] = useState<Promotion | null>(null); // el panel vive fuera de las filas
+  const trigger = useRef<HTMLElement | null>(null);
   const [status, setStatus] = useState<"" | PromotionStatusEnum>("");
   const lists = useQuery({
     queryKey: [...getPriceListsListQueryKey(slug), "all", "names"],
@@ -46,8 +47,13 @@ export function Promotions() {
     gcTime: 0,
   });
   const listNames = lists.data ?? new Map<string, string>();
-  const money = (amount: string, currency: string) =>
-    format.number(Number(amount), { style: "currency", currency });
+  const money = (amount: string, currency: string) => {
+    try {
+      return format.number(Number(amount), { style: "currency", currency });
+    } catch {
+      return `${amount} ${currency}`; // una moneda que Intl no conoce no tumba la pantalla
+    }
+  };
   const discount = (type: Promotion["discount_type"], value: string, currency: string) =>
     t(`discount.${type}`, {
       value: type === "PERCENT_OFF" ? format.number(Number(value)) : money(value, currency),
@@ -64,55 +70,73 @@ export function Promotions() {
         return { ...page, results: page.results.filter((row) => !status || row.status === status) };
       }}
       controls={
-        <Choice
-          label={t("filter")}
-          value={status}
-          busy={false}
-          onChange={(value) => setStatus(value as typeof status)}
-          options={[
-            ["", t("all")],
-            ...STATUSES.map((one): [string, string] => [one, t(`status.${one}`)]),
-          ]}
-        />
+        <>
+          <Choice
+            label={t("filter")}
+            value={status}
+            busy={false}
+            onChange={(value) => setStatus(value as typeof status)}
+            options={[
+              ["", t("all")],
+              ...STATUSES.map((one): [string, string] => [one, t(`status.${one}`)]),
+            ]}
+          />
+          {opened ? (
+            <PromotionPanel
+              slug={slug}
+              promotion={opened}
+              canManage={canManage}
+              listNames={listNames}
+              discount={discount}
+              onChanged={(next) => {
+                setOpened(next);
+                list.current?.refetch(); // una sola relectura de la lista
+              }}
+              onClose={() => {
+                setOpened(null);
+                if (trigger.current?.isConnected) trigger.current.focus();
+                else list.current?.focusHeading();
+              }}
+            />
+          ) : null}
+        </>
       }
-      empty={<p className="text-muted">{t(status ? "emptyFilter" : "empty")}</p>}
+      empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
     >
       {(row) => (
         <Row
           promotion={row}
-          slug={slug}
-          canManage={canManage}
           listNames={listNames}
           discount={discount}
-          window={t("window", { from: stamp(row.starts_at, zone), to: stamp(row.ends_at, zone) })}
-          onChanged={() => list.current?.refetch()}
+          window={t("window", {
+            ...{ from: stamp(row.starts_at, zone), to: stamp(row.ends_at, zone), zone },
+          })}
+          onOpen={(button) => {
+            trigger.current = button;
+            setOpened(row);
+          }}
         />
       )}
     </CursorList>
   );
 }
 
-type RowProps = Pick<
-  Parameters<typeof PromotionPanel>[0],
-  "slug" | "canManage" | "listNames" | "discount"
-> & { promotion: Promotion; window: string; onChanged: () => void };
+type RowProps = Pick<Parameters<typeof PromotionPanel>[0], "listNames" | "discount"> & {
+  promotion: Promotion;
+  window: string;
+  onOpen: (button: HTMLButtonElement) => void;
+};
 
-// Una fila y, si se abre, su panel. Lo que respondió una acción (el estado nuevo) manda sobre
-// la fila hasta que la lista, vuelta a pedir, trae una versión igual o más nueva.
-function Row({ promotion, window, onChanged, ...rest }: RowProps) {
+function Row({ promotion: p, window, onOpen, listNames, discount }: RowProps) {
   const t = useTranslations("promotions");
-  const [open, setOpen] = useState(false);
-  const [fresh, setFresh] = useState<Promotion | null>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const p = fresh && fresh.version > promotion.version ? fresh : promotion;
-  const names = p.price_list_ids.map((id) => rest.listNames.get(id) ?? `#${id.slice(0, 8)}`);
+  const names = p.price_list_ids.map((id) => listNames.get(id) ?? `#${id.slice(0, 8)}`);
   return (
     <>
       <p className="flex min-w-0 flex-col leading-snug">
         <span className="font-medium wrap-anywhere">{p.name}</span>
         <span className="text-sm tabular-nums">
-          {rest.discount(p.discount_type, p.value, p.currency)}
+          {discount(p.discount_type, p.value, p.currency)}
         </span>
         <span className="text-muted text-sm tabular-nums">{window}</span>
         <span className="text-muted text-sm wrap-anywhere">
@@ -120,7 +144,6 @@ function Row({ promotion, window, onChanged, ...rest }: RowProps) {
         </span>
       </p>
       <p className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm sm:flex-col sm:items-end">
-        {/* Con texto, no solo con color: el estado se lee igual sin distinguir colores. */}
         <span
           className={cn(
             "rounded-full border px-2.5 py-0.5 font-medium",
@@ -133,31 +156,16 @@ function Row({ promotion, window, onChanged, ...rest }: RowProps) {
         </span>
         <span className="text-muted tabular-nums">{t("priority", { priority: p.priority })}</span>
         <Button
-          ref={trigger}
           variant="ghost"
           className="border-border min-h-11 border sm:min-h-9"
           aria-haspopup="dialog"
           aria-label={t("openLabel", { name: p.name })}
           onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
-          onClick={() => setOpen(true)}
+          onClick={(event) => onOpen(event.currentTarget)}
         >
           {t("open")}
         </Button>
       </p>
-      {open ? (
-        <PromotionPanel
-          {...rest}
-          promotion={p}
-          onChanged={(next) => {
-            setFresh(next);
-            onChanged();
-          }}
-          onClose={() => {
-            setOpen(false);
-            trigger.current?.focus();
-          }}
-        />
-      ) : null}
     </>
   );
 }

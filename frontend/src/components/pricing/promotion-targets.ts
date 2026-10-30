@@ -11,11 +11,10 @@ import {
 import type { PromotionItem } from "@/lib/api/model";
 
 export const KINDS = ["variant_id", "product_id", "category_id", "brand_id"] as const;
-// A lo sumo tantas peticiones de variantes: una variante solo se lee por su producto.
+// Tope de peticiones de variantes: una variante solo se lee por su producto.
 const VARIANT_READS = 25;
 
-// Los nombres de los objetivos (la API solo da ids), leídos de los listados del catálogo; si
-// no llegan, la pantalla usa el código corto.
+// Los nombres de los objetivos (la API solo da ids), de los listados del catálogo.
 export function useTargetNames(slug: string, items: readonly PromotionItem[]) {
   const wanted = new Set(items.flatMap((item) => KINDS.map((kind) => item[kind]).filter(Boolean)));
   const query = useQuery({
@@ -41,9 +40,7 @@ export function useTargetNames(slug: string, items: readonly PromotionItem[]) {
           try {
             const page = await variantsList(slug, product.id, { limit: 200 }, { signal });
             page.results.forEach((v) => names.set(v.id, `${v.name} (${v.sku})`));
-          } catch {
-            // Una lectura que falla deja sus ids sin nombre: se avisa al final.
-          }
+          } catch {}
         }
       }
       return { names, failed: [...wanted].some((id) => !names.has(id as string)) };

@@ -252,10 +252,10 @@ describe("navegación del shell", () => {
     expect(link).toHaveAttribute("href", "/o/acme/precios/listas");
   });
 
-  it("la pestaña «Promociones» pide `prices.view`", () => {
-    const tabs = (code: string) => {
+  it("la pestaña «Promociones» pide `prices.view` y `products.view`", () => {
+    const tabs = (...codes: string[]) => {
       cleanup();
-      const permissions = [{ code, scopes: [] }];
+      const permissions = codes.map((code) => ({ code, scopes: [] }));
       renderApp(
         <TenantProvider value={{ ...ana, permissions }}>
           <PricingNav />
@@ -263,8 +263,11 @@ describe("navegación del shell", () => {
       );
       return screen.queryByRole("link", { name: "Promociones" });
     };
-    expect(tabs("prices.view")).toHaveAttribute("href", "/o/acme/precios/promociones");
-    expect(tabs("prices.view_wholesale")).toBeNull();
+    expect(tabs("prices.view", "products.view")).toHaveAttribute(
+      "href",
+      "/o/acme/precios/promociones",
+    );
+    expect(tabs("prices.view")).toBeNull();
   });
 
   it("la raíz de una sección (`/precios`, los precios de una lista) también es de su entrada", async () => {

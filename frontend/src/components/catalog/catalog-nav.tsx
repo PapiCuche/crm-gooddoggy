@@ -24,13 +24,13 @@ export function SectionNav({
   pages,
 }: {
   section: "catalog" | "inventory" | "prices" | "contacts";
-  pages: readonly { key: string; path: string; permission?: string }[];
+  pages: readonly { key: string; path: string; permission?: string | readonly string[] }[];
 }) {
   const t = useTranslations(`shell.${section}`);
   const { organization, permissions } = useTenant();
   // Una página con `permission` solo se ofrece a quien lo tiene (la API sigue decidiendo).
-  const shown = pages.filter(
-    (p) => !p.permission || permissions.some((g) => g.code === p.permission),
+  const shown = pages.filter((p) =>
+    [p.permission ?? []].flat().every((code) => permissions.some((g) => g.code === code)),
   );
   const pathname = usePathname().replace(/\/$/, "");
   return (

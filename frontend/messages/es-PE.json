@@ -1681,8 +1681,7 @@
     "count": "{count, plural, =0 {Sin promociones en la vista} one {# promoción en la vista} other {# promociones en la vista}}",
     "more": "Cargar más",
     "loadingMore": "Cargando más…",
-    "empty": "Esta organización todavía no tiene promociones.",
-    "emptyFilter": "Ninguna promoción de las cargadas está en ese estado.",
+    "empty": "No hay promociones que mostrar.",
     "filter": "Estado",
     "all": "Todas",
     "status": {
@@ -1695,7 +1694,7 @@
       "AMOUNT_OFF": "{value} menos",
       "FIXED_PRICE": "Precio fijo {value}"
     },
-    "window": "Vigencia: {from} a {to} (hora de Lima)",
+    "window": "Vigencia: {from} a {to} (zona {zone})",
     "lists": "Listas: {names}",
     "priority": "Prioridad {priority}",
     "open": "Ver detalle",
@@ -1704,7 +1703,6 @@
       "close": "Cerrar",
       "terms": "Términos",
       "description": "Descripción",
-      "none": "Sin texto",
       "targets": "A qué se aplica",
       "override": "descuento propio: {value}",
       "variant": "Variante",
@@ -1719,14 +1717,16 @@
       "no": "No",
       "publish": "Publicar",
       "cancel": "Cancelar promoción",
-      "publishAsk": "Empezará a aplicarse a los precios desde {from} y rige hasta {to} (hora de Lima). Después no se podrán cambiar sus términos.",
+      "publishAsk": "Empezará a aplicarse a los precios desde {from} y rige hasta {to} (zona {zone}). Una vez publicada, sus términos no se pueden cambiar.",
       "cancelAsk": "Dejará de aplicarse de inmediato y no se puede reactivar.",
       "publishConfirm": "Sí, publicar",
       "cancelConfirm": "Sí, cancelar promoción",
       "back": "Volver",
       "published": "Promoción publicada.",
       "cancelled": "Promoción cancelada.",
-      "namesFailed": "No se pudieron leer algunos nombres: se muestra un código corto."
+      "namesFailed": "No se pudieron leer algunos nombres: se muestra un código corto.",
+      "publishNowAsk": "Se aplicará de inmediato a los precios y rige hasta {to} (zona {zone}). Una vez publicada, sus términos no se pueden cambiar.",
+      "discardAsk": "Se descartará el borrador: no llegó a aplicarse y no se puede reactivar."
     }
   }
 }
