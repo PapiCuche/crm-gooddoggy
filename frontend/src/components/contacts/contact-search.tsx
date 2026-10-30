@@ -10,10 +10,13 @@ import { Button } from "@/components/ui/button";
 export const SEARCH_DELAY = 300;
 const MAX = 254; // el máximo de `q` en la API
 
-// Lo que se pide a la API: el texto sin espacios en los extremos, si llega al mínimo (2
-// caracteres, o 1 si empieza por «+» o es una cifra); si no, nada y la lista sigue entera.
+// Lo que se pide a la API: el texto sin caracteres de control ni invisibles (la API los rechaza),
+// sin espacios en los extremos y de 254 caracteres como mucho (por puntos de código, no por
+// unidades UTF-16); si llega al mínimo (2 caracteres, o 1 si empieza por «+» o es una cifra).
+// Si no, nada y la lista sigue entera. La caja sigue enseñando lo escrito, sin tocar.
 export function searchTerm(text: string) {
-  const term = text.trim();
+  const clean = text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim();
+  const term = Array.from(clean).slice(0, MAX).join("").trimEnd();
   return Array.from(term).length >= (/^[+\d]/.test(term) ? 1 : 2) ? term : "";
 }
 
@@ -55,6 +58,13 @@ export function useContactSearch() {
     return () => clearTimeout(timer);
   }, [composing, wanted, pushed]);
 
+  // Al salir de la caja (también al pulsar un enlace, que la desenfoca antes): lo pendiente pasa
+  // a la URL ya. Si no, la escritura de la espera cancelaría la navegación que está empezando.
+  // Salir termina una composición: si falta su `compositionend`, no bloquea la búsqueda.
+  function flush() {
+    setComposing(false);
+    if (!composing && wanted !== pushed) commit(wanted);
+  }
   function clear() {
     setDraft("");
     commit("");
@@ -67,6 +77,7 @@ export function useContactSearch() {
     input,
     change: setDraft,
     compose: setComposing,
+    flush,
     clear,
   };
 }
@@ -84,7 +95,8 @@ export function ContactSearch({ search }: { search: ReturnType<typeof useContact
   const id = useId();
   const { draft, input, short } = search;
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Escape" || draft === "") return;
+    // Con una composición abierta, Escape la cancela: no borra la caja.
+    if (event.key !== "Escape" || event.nativeEvent.isComposing || draft === "") return;
     event.preventDefault();
     search.clear();
   }
@@ -108,6 +120,7 @@ export function ContactSearch({ search }: { search: ReturnType<typeof useContact
           onChange={(event) => search.change(event.target.value)}
           onCompositionStart={() => search.compose(true)}
           onCompositionEnd={() => search.compose(false)}
+          onBlur={search.flush}
           onKeyDown={onKeyDown}
         />
         {draft === "" ? null : (

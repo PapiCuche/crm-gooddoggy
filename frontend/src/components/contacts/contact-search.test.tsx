@@ -53,6 +53,17 @@ const get = (path: string) => `GET ${LIST}${path}`;
 // Las peticiones de la lista (no el catálogo de etiquetas), como se pidieron.
 const asked = (fetchMock: ReturnType<typeof api>) =>
   fetchMock.mock.calls.map(([url]) => String(url)).filter((url) => url.startsWith(LIST));
+// Cualquier petición responde con una lista (vacía el catálogo de etiquetas): para los textos
+// que no se pueden nombrar en una ruta.
+const answerAll = () => {
+  const fetchMock = mockApi({});
+  fetchMock.mockImplementation(async (input) =>
+    String(input).includes("/tags/")
+      ? new Response(JSON.stringify(page([]).body))
+      : new Response(JSON.stringify({ results: [ana], next: null })),
+  );
+  return fetchMock;
+};
 const queryOf = (url: string) => new URL(url, "http://x").searchParams;
 
 const show = (url = PATH) => {
@@ -92,6 +103,7 @@ describe("búsqueda de clientes (F4-13)", () => {
     await screen.findByText("Rosa Díaz");
     expect(box()).toHaveAttribute("type", "search");
     expect(box()).toHaveClass("h-11", "text-[16px]"); // 44 px; sin ampliación en iOS
+    expect(box()).toHaveAttribute("maxlength", "254"); // el máximo de `q` en la API
     expect(box()).toHaveAccessibleDescription(/nombre, el correo o el teléfono/);
     expect(screen.getByRole("search", { name: "Buscar y filtrar clientes" })).toContainElement(
       box(),
@@ -153,6 +165,7 @@ describe("búsqueda de clientes (F4-13)", () => {
     expect(rows()).toHaveLength(1);
     expect(asked(fetchMock).at(-1)).toBe(`${LIST}?q=%2B51987`);
     expect(box()).toHaveValue("  +51987 "); // lo escrito no se toca mientras se escribe
+    expect(window.location.search).toBe("?q=%2B51987"); // la URL, sin espacios (ni «++51987+»)
   });
 
   it("se combina con la etiqueta y las dos viajan con «Cargar más»", async () => {
@@ -196,8 +209,11 @@ describe("búsqueda de clientes (F4-13)", () => {
     type("ana");
     await wait(300);
     await screen.findByText("1 cliente en la lista");
-    box().focus();
-    fireEvent.click(screen.getByRole("button", { name: "Borrar la búsqueda" }));
+    // Como una pulsación real: el foco está en el botón, que desaparece al borrar.
+    const button = screen.getByRole("button", { name: "Borrar la búsqueda" });
+    button.focus();
+    expect(box()).not.toHaveFocus();
+    fireEvent.click(button);
     expect(box()).toHaveValue("");
     expect(box()).toHaveFocus();
     expect(window.location.search).toBe("");
@@ -335,6 +351,100 @@ describe("búsqueda de clientes (F4-13)", () => {
     await wait(60);
     expect(await screen.findByText("Ana Luna")).toBeVisible();
     expect(asked(fetchMock)).toHaveLength(2);
+  });
+
+  it("al salir de la caja, lo pendiente pasa a la URL sin esperar (no pisa una navegación)", async () => {
+    api({ [get("")]: page([rosa]), [get("?q=ana")]: page([ana]) });
+    show();
+    await screen.findByText("Rosa Díaz");
+    vi.mocked(window.history.replaceState).mockClear(); // la de `show` no cuenta
+    type("ana");
+    expect(window.location.search).toBe("");
+    fireEvent.blur(box()); // pulsar un enlace desenfoca antes del clic
+    expect(window.location.search).toBe("?q=ana");
+    expect(await screen.findByText("Ana Luna")).toBeVisible();
+    fireEvent.blur(box()); // sin nada pendiente, no vuelve a escribir
+    expect(window.history.replaceState).toHaveBeenCalledTimes(1);
+  });
+
+  it("salir en mitad de una composición no escribe a medias, pero la desbloquea", async () => {
+    api({ [get("")]: page([rosa]), [get("?q=ni")]: page([ana]) });
+    show();
+    await screen.findByText("Rosa Díaz");
+    fireEvent.compositionStart(box());
+    type("ni");
+    fireEvent.blur(box());
+    expect(window.location.search).toBe(""); // a medias: nada
+    await wait(350); // sin `compositionend`, la espera sigue su curso
+    expect(window.location.search).toBe("?q=ni");
+    expect(await screen.findByText("Ana Luna")).toBeVisible();
+  });
+
+  it("Escape en mitad de una composición no borra la caja", async () => {
+    api({ [get("")]: page([rosa]) });
+    show();
+    await screen.findByText("Rosa Díaz");
+    fireEvent.compositionStart(box());
+    type("にほ");
+    fireEvent.keyDown(box(), { key: "Escape", isComposing: true });
+    expect(box()).toHaveValue("にほ");
+    expect(window.location.search).toBe("");
+  });
+
+  it("un `?q=` de la URL con más de 254 caracteres, de control o invisibles se limpia al pedirlo", async () => {
+    const long = "é".repeat(300);
+    const fetchMock = answerAll();
+    show(`${PATH}?q=${encodeURIComponent(long)}`);
+    await screen.findByText("Ana Luna");
+    expect(Array.from(queryOf(asked(fetchMock)[0]!).get("q")!)).toHaveLength(254);
+    expect(box()).toHaveValue(long); // la caja enseña lo que había
+    fetchMock.mockClear();
+    const dirty = "an\u0000a\u200b\u202e n\n";
+    act(() => window.history.replaceState(null, "", `${PATH}?q=${encodeURIComponent(dirty)}`));
+    await screen.findByText("Ana Luna");
+    expect(queryOf(asked(fetchMock).at(-1)!).get("q")).toBe("ana n");
+    fetchMock.mockClear();
+    act(() => window.history.replaceState(null, "", `${PATH}?q=%E2%80%8B%E2%80%8B`));
+    await wait(50);
+    expect(asked(fetchMock).at(-1)).toBe(LIST); // solo invisibles: no es una búsqueda
+  });
+
+  it("un «+» solo se pide; un carácter fuera del plano básico cuenta como uno", async () => {
+    const fetchMock = answerAll();
+    show();
+    await screen.findByText("Ana Luna");
+    type("😀");
+    await wait(400);
+    expect(asked(fetchMock)).toEqual([LIST]); // un emoji es un carácter: falta uno
+    expect(box()).toHaveAccessibleDescription("Escribe al menos 2 letras para buscar.");
+    type("😀😀");
+    await wait(300);
+    await screen.findByText("Ana Luna");
+    expect(queryOf(asked(fetchMock).at(-1)!).get("q")).toBe("😀😀");
+    type("+");
+    await wait(300);
+    await screen.findByText("Ana Luna");
+    expect(asked(fetchMock).at(-1)).toBe(`${LIST}?q=%2B`);
+  });
+
+  it("un `?q=` con espacios en los extremos se pide recortado", async () => {
+    const fetchMock = api({ [get("?q=ana")]: page([ana]) });
+    show(`${PATH}?q=%20ana%20`);
+    expect(await screen.findByText("Ana Luna")).toBeVisible();
+    expect(asked(fetchMock)).toEqual([`${LIST}?q=ana`]);
+  });
+
+  it("al escribir en la URL conserva el resto de la dirección: otros parámetros y el ancla", async () => {
+    api({ [get("")]: page([rosa]), [get("?q=ana")]: page([ana]) });
+    show(`${PATH}?x=1#arriba`);
+    await screen.findByText("Rosa Díaz");
+    type("ana");
+    await wait(300);
+    expect(window.location.search).toBe("?x=1&q=ana");
+    expect(window.location.hash).toBe("#arriba");
+    fireEvent.click(await screen.findByRole("button", { name: "Borrar la búsqueda" }));
+    expect(window.location.search).toBe("?x=1");
+    expect(window.location.hash).toBe("#arriba");
   });
 
   it("el foco se queda en la caja mientras se escribe y llega la lista", async () => {
