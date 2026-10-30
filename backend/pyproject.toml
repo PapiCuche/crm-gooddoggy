@@ -153,6 +153,12 @@ protected_modules = ["apps.pricing.price_lists", "apps.pricing.prices", "apps.pr
 allowed_importers = ["apps.pricing.api"]
 
 [[tool.importlinter.contracts]]
+name = "CostService: solo la vista de costos de su API importa apps.pricing.costs (F3-46, ADR-006 §1)"
+type = "protected"
+protected_modules = ["apps.pricing.costs"]
+allowed_importers = ["apps.pricing.api"]
+
+[[tool.importlinter.contracts]]
 name = "pricing-authority: fuera de apps.pricing nadie lee sus modelos; se pregunta a services (ADR-006 §2, F3-43)"
 type = "protected"
 protected_modules = ["apps.pricing.models", "apps.pricing.selectors"]
@@ -167,6 +173,12 @@ forbidden_modules = [
     "apps.pricing.price_lists",
     "apps.pricing.promotions",
 ]
+
+[[tool.importlinter.contracts]]
+name = "El motor de precios no lee costos: ni services ni selectors importan costs (F3-46, ADR-006 §2)"
+type = "forbidden"
+source_modules = ["apps.pricing.services", "apps.pricing.selectors"]
+forbidden_modules = ["apps.pricing.costs"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de contactos: solo su API los importa (F4-01, F4-11)"

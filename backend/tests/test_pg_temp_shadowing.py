@@ -21,6 +21,7 @@ FUNCTIONS = (
     "public.promotions_guard()",
     "public.promotions_born_draft()",
     "public.promotion_children_guard()",
+    "public.variant_costs_immutable()",
 )
 
 
