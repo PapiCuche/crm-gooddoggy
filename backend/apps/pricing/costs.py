@@ -7,12 +7,12 @@ importa (contrato de import-linter). El motor de precios (`services`, `selectors
 (`cost.changed`) es el único registro y lleva el importe anterior y el nuevo.
 
 `set_cost` sigue a `set_price`: bloqueo consultivo por variante (lo primero), "ahora" después
-(`clock_timestamp()`), cierra el costo que rige e inserta el nuevo desde ese instante. No hay costos
-retroactivos ni programados, ni un cambio que deje el mismo importe. La `EXCLUDE` es la última
-barrera: un solape que llegue a la base es `CostConflict`, nunca un 500.
+(`clock_timestamp()`), cierra el costo que rige e inserta el nuevo desde ese instante. No hay
+costos retroactivos ni programados, ni un cambio que deje el mismo importe. Una fila con fecha
+futura (reservada a IMPORT y PURCHASE) bloquea `set_cost` con `CostConflict` hasta que empiece. La
+`EXCLUDE` es la última barrera: un solape que llegue a la base es `CostConflict`, nunca un 500.
 """
 
-import re
 from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
@@ -24,15 +24,13 @@ from django.db.models import DateTimeField, Func, Q, QuerySet
 from apps.audit.services import Entity, record
 from apps.catalog.selectors import live_variants
 from apps.pricing.models import COST_OVERLAP, CostSource, VariantCost
+from apps.pricing.text import change_reason
 from core.money import amount_text, parse_amount
 from core.money import currency as check_currency
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
-from core.text import line
 
-REASON_MIN, REASON_MAX = 3, 500
 CLOCK = Func(function="clock_timestamp", output_field=DateTimeField())  # el instante real
-TAG = re.compile(r"<[A-Za-z/!?]")  # el comienzo de una etiqueta o un comentario HTML
 
 
 class CostUnchanged(Exception):
@@ -40,15 +38,30 @@ class CostUnchanged(Exception):
 
 
 class CostConflict(Exception):
-    """La `EXCLUDE` rechazó un solape: otro cambio de la variante llegó antes (409)."""
+    """La `EXCLUDE` rechazó un solape (409): otro cambio de la variante llegó antes, o hay un costo
+    con fecha futura (reservado a IMPORT y PURCHASE), que bloquea `set_cost` hasta que empiece."""
+
+    def __init__(self) -> None:
+        super().__init__("variant_costs: la vigencia se solapa con otro costo de la variante")
 
 
-def change_reason(value: str) -> str:
-    """El motivo como se guarda: una línea de 3 a 500 caracteres, sin etiquetas HTML."""
-    text = line(value, REASON_MAX)
-    if len(text) < REASON_MIN or TAG.search(text):
-        raise ValueError(f"de {REASON_MIN} a {REASON_MAX} caracteres, sin HTML")
-    return text
+class CostTooSoon(Exception):
+    """El costo vigente empezó en este mismo instante: se reintenta (409)."""
+
+
+class CostRejected(Exception):
+    """La base rechazó la fila. Sin su mensaje: lleva el importe y el motivo (ADR-006 §1)."""
+
+    def __init__(self) -> None:
+        super().__init__("variant_costs: la base rechazó el costo")
+
+
+def _now(alias: str) -> datetime:
+    """El instante real, no el inicio de la transacción: se lee con el bloqueo ya tomado."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute("SELECT clock_timestamp()")
+        now: datetime = cursor.fetchone()[0]
+    return now
 
 
 def set_cost(
@@ -61,7 +74,7 @@ def set_cost(
 ) -> VariantCost:
     """Fija el costo desde ahora (IGV incluido, origen MANUAL) y lo audita (`cost.changed`).
     `ValueError` por el importe, la moneda o el motivo, `ProductVariant.DoesNotExist` (borrada),
-    `CostUnchanged` o `CostConflict`, siempre sin escribir nada."""
+    `CostUnchanged`, `CostTooSoon`, `CostConflict` o `CostRejected`, siempre sin escribir nada."""
     alias, value, why = require_scope(ctx), parse_amount(amount), change_reason(reason)
     money = check_currency(currency)
     if value <= 0:
@@ -73,8 +86,7 @@ def set_cost(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                     [f"variant_costs:{ctx.organization_id}:{variant_id}"],
                 )
-                cursor.execute("SELECT clock_timestamp()")  # con el bloqueo ya tomado
-                now: datetime = cursor.fetchone()[0]
+            now = _now(alias)  # con el bloqueo ya tomado
             variant = live_variants().using(alias).get(pk=variant_id)
             costs = VariantCost.objects.using(alias).filter(variant_id=variant_id)
             current: VariantCost | None = (
@@ -82,6 +94,8 @@ def set_cost(
                 .select_for_update(no_key=True)
                 .first()
             )
+            if current is not None and current.starts_at >= now:
+                raise CostTooSoon(variant_id)
             if current is not None and (current.amount, current.currency) == (value, money):
                 raise CostUnchanged(variant_id)
             if current is not None:
@@ -112,8 +126,8 @@ def set_cost(
             )
     except IntegrityError as error:
         if COST_OVERLAP in str(error):
-            raise CostConflict(variant_id) from None
-        raise
+            raise CostConflict from None
+        raise CostRejected from None  # el mensaje de un CHECK trae la fila entera
     return cost
 
 

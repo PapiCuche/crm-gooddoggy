@@ -25,6 +25,7 @@ from apps.pricing import services
 from apps.pricing.api.views import _tenant, _visible
 from apps.pricing.models import PriceList, ProductPrice
 from apps.pricing.selectors import next_prices, price_history, prices_at
+from apps.pricing.text import REASON_MAX, REASON_MIN, change_reason
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.money import AMOUNT, amount_text, parse_amount
@@ -130,13 +131,13 @@ class PriceSetSerializer(serializers.Serializer[Any]):
     starts_at = Instant(
         required=False, help_text="Desde cuándo rige: ahora o después, nunca antes. Sin él, ahora."
     )
-    reason = serializers.CharField(max_length=commands.REASON_MAX, help_text="Sin HTML.")
+    reason = serializers.CharField(max_length=REASON_MAX, help_text="Sin HTML.")
 
     def validate_reason(self, value: str) -> str:
         try:
-            return commands.change_reason(value)
+            return change_reason(value)
         except ValueError:  # el mensaje nunca repite el motivo
-            reason = f"De {commands.REASON_MIN} a {commands.REASON_MAX} caracteres, sin HTML."
+            reason = f"De {REASON_MIN} a {REASON_MAX} caracteres, sin HTML."
             raise serializers.ValidationError(reason) from None
 
 

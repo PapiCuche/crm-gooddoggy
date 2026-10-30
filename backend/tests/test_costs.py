@@ -5,6 +5,7 @@ import pathlib
 import tomllib
 from datetime import datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -140,6 +141,7 @@ def test_current_costs_uses_a_constant_number_of_queries(world: Any) -> None:
     one, found_one = count(skus[:1])
     many, found_many = count(skus)
     assert one == many == 1
+    assert found_one.keys() == {skus[0]}  # solo la pedida, aunque otras tengan costo
     assert found_one[skus[0]].amount == Decimal("6.00")
     assert len(found_many) == 30 and skus[40] not in found_many  # sin costo: no aparece
     with tenant_scope(ctx(world.b)) as tenant:
@@ -266,27 +268,111 @@ def test_an_overlap_that_reaches_the_database_is_a_conflict(world: Any) -> None:
     assert [amount for amount, *_ in rows(world.a)] == [Decimal("50")]
 
 
+def test_a_database_rejection_says_nothing_of_the_row(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El mensaje de un CHECK trae la fila entera (importe y motivo): no sale de `set_cost`."""
+    sku = variant(world.a)
+    monkeypatch.setattr(costs, "CostSource", SimpleNamespace(MANUAL="OTRO"))
+    with pytest.raises(costs.CostRejected) as caught:
+        put(world, sku, "77.31", reason="Motivo reservado")
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    for secret in ("77.31", "Motivo reservado", "OTRO"):
+        assert secret not in str(caught.value)
+    assert rows(world.a) == []
+
+
+def test_a_cost_that_began_in_this_very_instant_is_a_typed_error(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sku = variant(world.a)
+    ruling = put(world, sku, "10")
+    monkeypatch.setattr(costs, "_now", lambda alias: ruling.starts_at)
+    with pytest.raises(costs.CostTooSoon):
+        put(world, sku, "11")
+    assert [amount for amount, *_ in rows(world.a)] == [Decimal("10.00")]
+
+
+def test_a_future_dated_row_blocks_set_cost_until_it_starts(world: Any) -> None:
+    """Las filas con fecha futura son de IMPORT y PURCHASE: no rigen y `set_cost` da conflicto."""
+    sku = variant(world.a)
+    later = timezone.now() + 3 * DAY
+    with tenant_scope(ctx(world.a)):
+        VariantCost.objects.create(
+            variant_id=sku,
+            amount=9,
+            currency="PEN",
+            source="IMPORT",
+            change_reason="futuro",
+            starts_at=later,
+        )
+    with pytest.raises(costs.CostConflict, match="se solapa"):
+        put(world, sku, "10")
+    with tenant_scope(ctx(world.a)) as tenant:
+        assert costs.current_costs(tenant, [sku]) == {}  # aún no rige
+    assert len(rows(world.a)) == 1
+
+
 def test_the_sensitive_permissions_exist_in_the_catalog() -> None:
     sensitive = {p.code: p.is_sensitive for p in PERMISSIONS if p.code.startswith("product_cost.")}
     assert sensitive == {"product_cost.view": True, "product_cost.manage": True}
 
 
-def test_only_costs_touches_variant_costs() -> None:
+def literal(node: ast.AST) -> str:
+    """El texto que forma una expresión de literales: `+`, f-strings y constantes."""
+    match node:
+        case ast.Constant():
+            return str(node.value)
+        case ast.JoinedStr():
+            return "".join(literal(part) for part in node.values)
+        case ast.FormattedValue():
+            return literal(node.value)
+        case ast.BinOp(op=ast.Add()):
+            return literal(node.left) + literal(node.right)
+    return ""
+
+
+def names_variant_costs(source: str) -> bool:
+    """¿Nombra el código el modelo o la tabla? Por nombre, atributo, importación o texto (también
+    unido con `+` o dentro de un f-string), sin distinguir mayúsculas."""
+    for node in ast.walk(ast.parse(source)):
+        found = [literal(node), *(getattr(node, a, "") or "" for a in ("id", "attr", "name"))]
+        if any(w in f.lower() for f in found for w in ("variantcost", "variant_cost")):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("root", ["apps", "core", "config"])
+def test_only_costs_touches_variant_costs(root: str) -> None:
     """Ni el motor ni ningún otro módulo nombra el modelo ni la tabla: solo `costs` (y su
     definición y sus migraciones)."""
     allowed = {"apps/pricing/costs.py", "apps/pricing/models.py"}
-    found: list[str] = []
-    for path in (BACKEND / "apps").rglob("*.py"):
-        name = str(path.relative_to(BACKEND))
-        if "/migrations/" in name or name in allowed:
-            continue
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            text = node.value if isinstance(node, ast.Constant) else getattr(node, "id", "")
-            names = [alias.name for alias in getattr(node, "names", [])]
-            if "VariantCost" in names or "variant_costs" in str(text) or text == "VariantCost":
-                found.append(name)
+    found = [
+        str(path.relative_to(BACKEND))
+        for path in (BACKEND / root).rglob("*.py")
+        if "/migrations/" not in str(path)
+        and str(path.relative_to(BACKEND)) not in allowed
+        and names_variant_costs(path.read_text())
+    ]
     assert found == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from apps.pricing.models import VariantCost",
+        "from apps.pricing import models as m\nm.VariantCost.objects.all()",
+        "apps.get_model('pricing.VariantCost')",
+        "apps.get_model('pricing', 'variantcost')",
+        "cursor.execute('SELECT amount FROM variant_costs')",
+        "cursor.execute('SELECT * FROM variant_' + 'costs')",
+        "cursor.execute(f'SELECT * FROM variant_{\"cost\"}s')",
+        "x = VariantCost",
+    ],
+)
+def test_the_checker_catches_every_way_to_reach_the_table(source: str) -> None:
+    assert names_variant_costs(source)
+    assert not names_variant_costs("from apps.pricing.models import ProductPrice")
 
 
 def test_the_import_contracts_keep_costs_away_from_the_engine() -> None:
