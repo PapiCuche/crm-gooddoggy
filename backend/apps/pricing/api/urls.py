@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.pricing.api import costs, prices, promotions, views
+from apps.pricing.api import costs, margins, prices, promotions, views
 
 urlpatterns = [
     path("pricing/price-lists/", views.PriceListsView.as_view(), name="price-lists"),
@@ -13,6 +13,11 @@ urlpatterns = [
         "pricing/price-lists/<uuid:price_list_id>/prices/",
         prices.ListPricesView.as_view(),
         name="price-list-prices",
+    ),
+    path(
+        "pricing/price-lists/<uuid:price_list_id>/margins/",
+        margins.MarginsView.as_view(),
+        name="price-list-margins",
     ),
     path(
         "pricing/variants/<uuid:variant_id>/price-history/",

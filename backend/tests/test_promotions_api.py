@@ -186,7 +186,7 @@ def bad_cases(team: Any) -> list[tuple[str, dict[str, Any]]]:
         "organization_id": [str(uuid4())],
         "currency": [5, "pen1", None],
         "discount_type": ["X", 5, None],
-        "value": [10, 10.5, "abc", "0", "101", None, True],
+        "value": [10, 10.5, "abc", "0", "101", None, True, " 10 "],
         "starts_at": [5, "ayer", "2026-04-01T00:00:00", None],
         "ends_at": [5, "2026-04-01T00:00:00", "2026-03-01T00:00:00Z", D1.isoformat()],
         "channels": ["WEB", [5], ["WEB", "WEB"], [], ["a"] * 11, {"a": 1}],

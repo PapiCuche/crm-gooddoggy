@@ -3423,6 +3423,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/margins/:
+    get:
+      operationId: price_list_margins_list
+      description: 'Las variantes vivas por creación (ADR-016), con el precio final,
+        el costo vigente y el margen. Pide un segundo factor reciente: 403 `STEP_UP_REQUIRED`.
+        La primera lectura de la sesión deja `cost.viewed`. 404: lista oculta o inactiva.'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: price_list_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: query
+        name: product_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo las de ese producto.
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedListMarginList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/prices/:
     get:
       operationId: price_list_prices_list
@@ -6512,6 +6586,51 @@ components:
       - variant
       - variant_id
       - warehouse_id
+    ListMargin:
+      type: object
+      properties:
+        variant:
+          $ref: '#/components/schemas/PriceVariant'
+        price:
+          allOf:
+          - $ref: '#/components/schemas/MarginSide'
+          nullable: true
+          description: Lo que paga el cliente (con la promoción que rige).
+        cost:
+          allOf:
+          - $ref: '#/components/schemas/MarginSide'
+          nullable: true
+          description: El costo vigente.
+        margin:
+          allOf:
+          - $ref: '#/components/schemas/MarginFigure'
+          nullable: true
+          description: '`null` si `reason` no es `null`.'
+        reason:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/ListMarginReasonEnum'
+          - $ref: '#/components/schemas/NullEnum'
+      required:
+      - cost
+      - margin
+      - price
+      - reason
+      - variant
+    ListMarginReasonEnum:
+      enum:
+      - VARIANT_UNAVAILABLE
+      - NO_PRICE
+      - NO_COST
+      - CURRENCY_MISMATCH
+      - TAX_MISMATCH
+      type: string
+      description: |-
+        * `VARIANT_UNAVAILABLE` - VARIANT_UNAVAILABLE
+        * `NO_PRICE` - NO_PRICE
+        * `NO_COST` - NO_COST
+        * `CURRENCY_MISMATCH` - CURRENCY_MISMATCH
+        * `TAX_MISMATCH` - TAX_MISMATCH
     ListPrice:
       type: object
       properties:
@@ -6571,6 +6690,33 @@ components:
       required:
       - email
       - password
+    MarginFigure:
+      type: object
+      properties:
+        amount:
+          type: string
+          description: Precio menos costo; negativo si se vende con pérdida.
+        percent:
+          type: string
+          description: Sobre el precio, con un decimal (`20.4`).
+      required:
+      - amount
+      - percent
+    MarginSide:
+      type: object
+      properties:
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+        currency:
+          type: string
+        tax_included:
+          type: boolean
+          nullable: true
+      required:
+      - amount
+      - currency
+      - tax_included
     Member:
       type: object
       properties:
@@ -7151,6 +7297,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Level'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedListMarginList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ListMargin'
         next:
           type: string
           nullable: true
