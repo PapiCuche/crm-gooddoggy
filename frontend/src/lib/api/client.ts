@@ -61,6 +61,8 @@ import type {
   MfaEnrollmentStartRequest,
   MfaRegenerateRequest,
   MfaStatus,
+  MfaStepUpRequest,
+  MfaStepUpResult,
   Movement,
   MovementCreateRequest,
   Note,
@@ -530,7 +532,9 @@ export const getAuthMfaStatusUrl = () => {
 /**
  * El estado del segundo factor de la cuenta de la sesión: si tiene un dispositivo
  * confirmado y desde cuándo, si dejó un alta empezada que aún se puede confirmar, y
- * cuántos códigos de respaldo le quedan. Nunca el secreto ni los códigos.
+ * cuántos códigos de respaldo le quedan y, si esta sesión verificó el segundo factor hace
+ * menos de 15 minutos, los segundos que le quedan al step-up (`step_up_expires_in`; `null`
+ * si no). Nunca el secreto ni los códigos.
  */
 export const authMfaStatus = async (
   options?: Parameters<typeof apiFetch>[1],
@@ -850,6 +854,110 @@ export const useAuthMfaDisable = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getAuthMfaDisableMutationOptions(options), queryClient);
+};
+
+export const getAuthMfaStepUpUrl = () => {
+  return `/api/v1/auth/mfa/step-up/`;
+};
+
+/**
+ * Vuelve a verificar el segundo factor con un código (de la aplicación o de respaldo): la
+ * sesión queda verificada 15 minutos, con otro ID. 400 en `code`: no vale, sin decir por
+ * qué. 401: la sesión se revocó. 409 `MFA_NOT_ENABLED`: sin segundo factor. 429: demasiados
+ * códigos fallidos de la cuenta en 24 horas.
+ */
+export const authMfaStepUp = async (
+  mfaStepUpRequest: MfaStepUpRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MfaStepUpResult> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<MfaStepUpResult>(getAuthMfaStepUpUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(mfaStepUpRequest),
+  });
+};
+
+export const getAuthMfaStepUpMutationKey = () => ["authMfaStepUp"] as const;
+
+export const getAuthMfaStepUpMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof authMfaStepUp>>,
+    TError,
+    AuthMfaStepUpMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof authMfaStepUp>>,
+  TError,
+  AuthMfaStepUpMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAuthMfaStepUpMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof authMfaStepUp>>,
+    AuthMfaStepUpMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return authMfaStepUp(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AuthMfaStepUpMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaStepUp>>>;
+export type AuthMfaStepUpMutationBody = MfaStepUpRequest;
+export type AuthMfaStepUpMutationError = ErrorType<Error>;
+export type AuthMfaStepUpMutationVariables = { data: MfaStepUpRequest };
+
+export const useAuthMfaStepUp = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof authMfaStepUp>>,
+      TError,
+      AuthMfaStepUpMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof authMfaStepUp>>,
+  TError,
+  AuthMfaStepUpMutationVariables,
+  TContext
+> => {
+  return useMutation(getAuthMfaStepUpMutationOptions(options), queryClient);
 };
 
 export const getAuthMfaTotpStartUrl = () => {

@@ -21,4 +21,9 @@ export interface MfaStatus {
   enrollment_expires_in: number | null;
   /** Códigos de respaldo que quedan sin gastar. */
   backup_codes_left: number;
+  /**
+   * Segundos que le quedan al step-up de esta sesión; `null` si no hay uno vigente.
+   * @nullable
+   */
+  step_up_expires_in: number | null;
 }

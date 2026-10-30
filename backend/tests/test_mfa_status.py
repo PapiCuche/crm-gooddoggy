@@ -26,7 +26,13 @@ real_stack, browser = test_auth_api.real_stack, test_auth_api.browser
 clock = test_mfa_second_factor.clock
 pytestmark = pytest.mark.usefixtures("tenant_db")
 STATUS = "/api/v1/auth/mfa/"
-NONE = {"enabled": False, "enabled_at": None, "enrollment_expires_in": None, "backup_codes_left": 0}
+NONE = {
+    "enabled": False,
+    "enabled_at": None,
+    "enrollment_expires_in": None,
+    "backup_codes_left": 0,
+    "step_up_expires_in": None,  # F2-125: sin un step-up vigente en esta sesión
+}
 
 
 def state(client: Client) -> dict[str, Any]:
@@ -48,7 +54,12 @@ def test_it_follows_the_account_from_nothing_to_an_enrolment_to_a_confirmed_devi
     secret = base64.b32decode(start(browser).json()["secret"])
     pending = state(browser)
     assert 590 <= pending.pop("enrollment_expires_in") <= 600  # los diez minutos del alta
-    assert pending == {"enabled": False, "enabled_at": None, "backup_codes_left": 0}
+    assert pending == {
+        "enabled": False,
+        "enabled_at": None,
+        "backup_codes_left": 0,
+        "step_up_expires_in": None,
+    }
     migrator.execute(OLDER, ["9 minutes 30 seconds"])
     assert 25 <= state(browser)["enrollment_expires_in"] <= 30
     migrator.execute(OLDER, ["10 minutes"])
@@ -66,6 +77,7 @@ def test_it_follows_the_account_from_nothing_to_an_enrolment_to_a_confirmed_devi
         q["sql"].lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE")) for q in queries
     )
     confirmed = MfaDevice.objects.get().confirmed_at
+    assert 890 <= enabled.pop("step_up_expires_in") <= 900  # entró con el segundo paso: vigente
     assert confirmed is not None and enabled == {
         "enabled": True,
         "enabled_at": confirmed.isoformat().replace("+00:00", "Z"),

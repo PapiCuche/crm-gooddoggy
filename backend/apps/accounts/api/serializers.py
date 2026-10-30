@@ -80,6 +80,10 @@ class MfaStatusSerializer(serializers.Serializer[Any]):
     backup_codes_left = serializers.IntegerField(
         help_text="Códigos de respaldo que quedan sin gastar."
     )
+    step_up_expires_in = serializers.IntegerField(
+        allow_null=True,
+        help_text="Segundos que le quedan al step-up de esta sesión; `null` si no hay uno vigente.",
+    )
 
 
 class LoginPendingSerializer(serializers.Serializer[Any]):
@@ -92,6 +96,16 @@ class LoginMfaSerializer(serializers.Serializer[Any]):
     code = serializers.CharField(
         max_length=32,
         help_text="El código de la aplicación de autenticación, o un código de respaldo.",
+    )
+
+
+class MfaStepUpSerializer(LoginMfaSerializer):
+    pass
+
+
+class MfaStepUpResultSerializer(serializers.Serializer[Any]):
+    step_up_expires_in = serializers.IntegerField(
+        help_text="Segundos que vale la verificación desde ahora (15 minutos)."
     )
 
 

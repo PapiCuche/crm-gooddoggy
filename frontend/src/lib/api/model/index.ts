@@ -73,6 +73,8 @@ export * from "./mfaEnrollmentConfirmRequest";
 export * from "./mfaEnrollmentStartRequest";
 export * from "./mfaRegenerateRequest";
 export * from "./mfaStatus";
+export * from "./mfaStepUpRequest";
+export * from "./mfaStepUpResult";
 export * from "./movement";
 export * from "./movementCreateMovementTypeEnum";
 export * from "./movementCreateRequest";

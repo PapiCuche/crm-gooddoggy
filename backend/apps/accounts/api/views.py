@@ -11,7 +11,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import mfa, mfa_codes, mfa_disable, recovery, second_step, services
+from apps.accounts import mfa, mfa_codes, mfa_disable, mfa_step_up, recovery, second_step, services
 from apps.accounts.api.serializers import (
     LoginMfaSerializer,
     LoginPendingSerializer,
@@ -23,6 +23,8 @@ from apps.accounts.api.serializers import (
     MfaEnrollmentStartSerializer,
     MfaRegenerateSerializer,
     MfaStatusSerializer,
+    MfaStepUpResultSerializer,
+    MfaStepUpSerializer,
     PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     SessionSerializer,
@@ -190,8 +192,10 @@ class MfaView(APIView):
     def get(self, request: Request) -> Response:
         """El estado del segundo factor de la cuenta de la sesión: si tiene un dispositivo
         confirmado y desde cuándo, si dejó un alta empezada que aún se puede confirmar, y
-        cuántos códigos de respaldo le quedan. Nunca el secreto ni los códigos."""
-        return Response(MfaStatusSerializer(mfa.status(request.user)).data)
+        cuántos códigos de respaldo le quedan y, si esta sesión verificó el segundo factor hace
+        menos de 15 minutos, los segundos que le quedan al step-up (`step_up_expires_in`; `null`
+        si no). Nunca el secreto ni los códigos."""
+        return Response(MfaStatusSerializer(mfa.status(request.user, request.session)).data)
 
 
 class MfaDisableView(APIView):
@@ -222,6 +226,30 @@ class MfaDisableView(APIView):
             wrong = serializers.ErrorDetail("El código no vale.", code="invalid")
             raise serializers.ValidationError({"code": [wrong]}) from None
         return Response(status=204)
+
+
+class MfaStepUpView(APIView):
+    permission_classes = [Authenticated]
+
+    @extend_schema(
+        operation_id="auth_mfa_step_up",
+        tags=["auth"],
+        request=MfaStepUpSerializer,
+        responses={200: MfaStepUpResultSerializer, **errors(400, 401, 403, 409, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Vuelve a verificar el segundo factor con un código (de la aplicación o de respaldo): la
+        sesión queda verificada 15 minutos, con otro ID. 400 en `code`: no vale, sin decir por
+        qué. 401: la sesión se revocó. 409 `MFA_NOT_ENABLED`: sin segundo factor. 429: demasiados
+        códigos fallidos de la cuenta en 24 horas."""
+        sent = MfaStepUpSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            left = mfa_step_up.verify(request._request, **sent.validated_data)
+        except mfa.WrongCode:
+            wrong = serializers.ErrorDetail("El código no vale.", code="invalid")
+            raise serializers.ValidationError({"code": [wrong]}) from None
+        return Response(MfaStepUpResultSerializer({"step_up_expires_in": left}).data)
 
 
 class MfaBackupCodesView(APIView):
