@@ -291,30 +291,34 @@ const inCache = (client: ReturnType<typeof renderApp>["client"], text: string) =
       .map((q) => q.state.data),
   ).includes(text);
 
+function harness(first: SelfContext) {
+  let setTenant: (next: SelfContext) => void = () => {};
+  function Harness() {
+    const [tenant, set] = useState(first);
+    setTenant = set;
+    return (
+      <TenantProvider value={tenant}>
+        <ListPrices />
+      </TenantProvider>
+    );
+  }
+  return { ...renderApp(<Harness />), change: (next: SelfContext) => act(() => setTenant(next)) };
+}
+
 describe("ListPrices: costos que no deben quedarse", () => {
   it("al perder product_cost.view quita los costos y recuperarlo exige activar el interruptor", async () => {
     mockApi({ ...base(["LAP-1"]), [MARGINS]: page([margin("LAP-1", "LAP-1", {})]) });
-    let setTenant: (next: SelfContext) => void = () => {};
-    function Harness() {
-      const [tenant, set] = useState(seller("product_cost.view"));
-      setTenant = set;
-      return (
-        <TenantProvider value={tenant}>
-          <ListPrices />
-        </TenantProvider>
-      );
-    }
-    const { client } = renderApp(<Harness />);
+    const { client, change } = harness(seller("product_cost.view"));
     const remove = vi.spyOn(client, "removeQueries");
     const item = await row("LAP-1");
     fireEvent.click(await switchOf());
     await within(item).findByText("S/ 3,500.00");
-    act(() => setTenant(seller()));
+    change(seller());
     expect(item).not.toHaveTextContent("3,500.00");
     expect(screen.queryByRole("switch")).toBeNull();
     expect(remove).toHaveBeenCalled();
     expect(inCache(client, "3500")).toBe(false);
-    act(() => setTenant(seller("product_cost.view")));
+    change(seller("product_cost.view"));
     expect(await switchOf()).not.toBeChecked();
     expect(item).not.toHaveTextContent("3,500.00");
   });
@@ -424,5 +428,253 @@ describe("ListPrices: costos que no deben quedarse", () => {
     );
     expect(first).not.toHaveTextContent("3,500.00");
     expect(inCache(client, "3500")).toBe(false);
+  });
+});
+
+const COSTS = `${API}/pricing/variants/LAP-1/costs/`;
+const cost = (id: string, amount: string, more: Record<string, unknown> = {}) => ({
+  ...{ id, amount, currency: "PEN", tax_included: true, source: "MANUAL" },
+  ...{ change_reason: `Motivo ${id}`, starts_at: "2026-10-20T15:30:00Z", ends_at: null },
+  created_by_user_id: "u1",
+  ...more,
+});
+const manager = () => seller("product_cost.view", "product_cost.manage");
+const costScreen = async (routes: Parameters<typeof mockApi>[0] = {}) => {
+  const api = mockApi({
+    ...base(["LAP-1"]),
+    [MARGINS]: page([margin("LAP-1", "LAP-1", {})]),
+    ...routes,
+  });
+  const view = screenOf(manager());
+  const item = await row("LAP-1");
+  fireEvent.click(await switchOf());
+  await within(item).findByText("S/ 3,500.00");
+  return { api, item, ...view };
+};
+const fill = (amount: string, reason = "Compra de mayo") => {
+  fireEvent.change(screen.getByLabelText(/^Costo en soles/), { target: { value: amount } });
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: reason } });
+};
+const save = () => fireEvent.click(screen.getByRole("button", { name: "Guardar costo" }));
+function holdPost(api: ReturnType<typeof mockApi>) {
+  let go = () => {};
+  const fetched = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") await new Promise<void>((resolve) => (go = resolve));
+    return api(input, init);
+  });
+  vi.stubGlobal("fetch", fetched);
+  return { fetched, release: () => act(async () => go()) };
+}
+
+describe("ListPrices: registrar costo e historial", () => {
+  it("registra un costo con step-up, vuelve a pedir los márgenes y devuelve el foco", async () => {
+    let posts = 0;
+    let margins = 0;
+    const { api, item } = await costScreen({
+      [MARGINS]: () => {
+        margins += 1;
+        const gain = margins === 1 ? "899.00" : "1000.00";
+        return page([margin("LAP-1", "LAP-1", { margin: { amount: gain, percent: "20.4" } })]);
+      },
+      [`POST ${COSTS}`]: () => {
+        posts += 1;
+        return posts === 1
+          ? { status: 403, body: { code: "STEP_UP_REQUIRED" } }
+          : { status: 201, body: cost("c2", "3399.00") };
+      },
+      [STEP_UP]: { status: 200, body: { step_up_expires_in: 900 } },
+    });
+    const open = within(item).getByRole("button", { name: /^Registrar costo de/ });
+    fireEvent.click(open);
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    expect(screen.getByLabelText(/^Costo en soles/)).toHaveAccessibleDescription(
+      /vigente es S\/\s3,500\.00/,
+    );
+    fill("3399.00");
+    save();
+    fireEvent.change(await screen.findByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verificar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const sent = requested(api, "/costs/").filter(([, init]) => init?.method === "POST");
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(String(sent[1]?.[1]?.body))).toEqual({
+      amount: "3399.00",
+      reason: "Compra de mayo",
+    });
+    expect(await within(item).findByText("S/ 1,000.00")).toBeVisible();
+    expect(item).toHaveTextContent("Costo de LAP-1 registrado.");
+    expect(item).not.toHaveTextContent("3,399"); // el importe no queda en el DOM
+    await waitFor(() => expect(open).toHaveFocus());
+  });
+
+  it.each([
+    [409, "COST_UNCHANGED", /ya rige/],
+    [409, "COST_CONFLICT", /llegó antes/],
+    [409, "COST_TOO_SOON", /hace un instante/],
+    [400, "COST_REJECTED", /rechazó el costo/],
+  ])("un %i %s se explica en el formulario, que sigue abierto", async (status, code, text) => {
+    await costScreen({ [`POST ${COSTS}`]: { status, body: { code } } });
+    fireEvent.click(screen.getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    fill("3500.00");
+    save();
+    expect(await screen.findAllByText(text)).not.toHaveLength(0);
+    expect(screen.getByRole("dialog", { name: "Registrar costo" })).toBeVisible();
+    if (code === "COST_UNCHANGED") {
+      expect(screen.getByLabelText(/^Costo en soles/)).toHaveAccessibleDescription(text);
+    }
+  });
+
+  it("un importe inválido no se envía y cancelar el código deja el formulario como estaba", async () => {
+    const { api } = await costScreen({
+      [`POST ${COSTS}`]: { status: 403, body: { code: "STEP_UP_REQUIRED" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    expect(screen.getByLabelText(/^Costo en soles/)).toHaveAttribute("autocomplete", "off");
+    expect(screen.getByLabelText("Motivo")).toHaveAttribute("autocomplete", "off");
+    fill("3,500");
+    save();
+    expect(await screen.findByText(/número mayor que cero/)).toBeVisible();
+    fill("3500.00", "ab");
+    save();
+    expect(await screen.findByText(/de 3 a 500 caracteres, sin HTML/i)).toBeVisible();
+    expect(requested(api, "/costs/")).toHaveLength(0);
+    fill("3500");
+    save();
+    await screen.findByLabelText(/^Código/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Cancelar" }).at(-1)!); // el del código
+    await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+    expect(screen.getByLabelText(/^Costo en soles/)).toHaveValue("3500");
+    expect(screen.queryByText(/identidad/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull(); // cancelar el código no es un error
+  });
+
+  it("pulsar «Guardar costo» dos veces envía un solo POST", async () => {
+    const { api } = await costScreen({
+      [`POST ${COSTS}`]: () => ({ status: 201, body: cost("c2", "3399.00") }),
+    });
+    const { fetched, release } = holdPost(api);
+    fireEvent.click(screen.getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    fill("3399.00");
+    save();
+    fireEvent.click(await screen.findByRole("button", { name: "Guardando…" }));
+    await waitFor(() => expect(requested(fetched, "/costs/")).toHaveLength(1));
+    await release();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(requested(fetched, "/costs/")).toHaveLength(1);
+  });
+
+  it("el historial enseña el vigente y los costos, con «Cargar más» por cursor", async () => {
+    const { item, client } = await costScreen({
+      [`GET ${COSTS}`]: {
+        status: 200,
+        body: { current: cost("c1", "3500.00"), results: [cost("c1", "3500.00")], next: "c2" },
+      },
+      [`GET ${COSTS}?cursor=c2`]: {
+        status: 200,
+        body: {
+          current: cost("c1", "3500.00"),
+          results: [cost("c0", "3000.00", { source: "IMPORT", created_by_user_id: null })],
+          next: null,
+        },
+      },
+    });
+    const open = within(item).getByRole("button", { name: /^Historial de costos de/ });
+    fireEvent.click(open);
+    const panel = await screen.findByRole("dialog", { name: "Historial de costos" });
+    const list = await within(panel).findByRole("list", { name: /^Costos, del más reciente/ });
+    expect(panel).toHaveTextContent("Costo vigente: S/ 3,500.00");
+    expect(list).toHaveTextContent(/S\/\s3,500\.00 · 20\/10\/2026 10:30 · Tú · Manual · Motivo c1/);
+    fireEvent.click(within(panel).getByRole("button", { name: "Cargar más" }));
+    await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
+    expect(list).toHaveTextContent(/S\/\s3,000\.00 · .* · Sistema · Importación · Motivo c0/);
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar el historial de costos" }));
+    await waitFor(() => expect(open).toHaveFocus());
+    expect(
+      client
+        .getQueryCache()
+        .findAll({ predicate: isCostQuery })
+        .filter((q) => q.state.data && JSON.stringify(q.state.data).includes("Motivo")),
+    ).toHaveLength(0);
+  });
+
+  it("apagar el interruptor con el historial abierto lo cierra y borra sus costos de la caché", async () => {
+    const history = {
+      current: cost("c1", "3500.00"),
+      results: [cost("c1", "3500.00")],
+      next: null,
+    };
+    const { item, client } = await costScreen({ [`GET ${COSTS}`]: { status: 200, body: history } });
+    fireEvent.click(within(item).getByRole("button", { name: /^Historial de costos de/ }));
+    await screen.findByText("Costo vigente: S/ 3,500.00");
+    expect(inCache(client, "Motivo c1")).toBe(true);
+    // `isCostQuery` alcanza la consulta del historial, además de los márgenes.
+    expect(client.getQueryCache().findAll({ predicate: isCostQuery })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("switch", { name: "Ver costos y margen" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(item).queryByRole("button")).toBeNull();
+    expect(inCache(client, "Motivo c1")).toBe(false);
+    expect(inCache(client, "3500")).toBe(false);
+  });
+
+  it("un POST que termina con el interruptor apagado no vuelve a pedir ni a guardar costos", async () => {
+    let asked = 0;
+    const { api, item, client } = await costScreen({
+      [MARGINS]: () =>
+        ++asked === 1
+          ? page([margin("LAP-1", "LAP-1", {})])
+          : { status: 403, body: { code: "STEP_UP_REQUIRED" } },
+      [`POST ${COSTS}`]: { status: 201, body: cost("c2", "3399.00") },
+    });
+    const { fetched, release } = holdPost(api);
+    fireEvent.click(within(item).getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    fill("3399.00");
+    save();
+    await waitFor(() => expect(requested(fetched, "/costs/")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("switch", { name: "Ver costos y margen" })); // apaga
+    await release();
+    await new Promise((go) => setTimeout(go, 30));
+    expect(requested(fetched, "margins")).toHaveLength(0); // nada se vuelve a pedir
+    expect(screen.queryByRole("dialog")).toBeNull(); // ni se abre el diálogo del código
+    expect(inCache(client, "3500")).toBe(false);
+    fireEvent.click(screen.getByRole("switch", { name: "Ver costos y margen" })); // enciende
+    await screen.findByRole("dialog", { name: "Confirma que eres tú" }); // pide el código otra vez
+    expect(item).not.toHaveTextContent("3,500.00");
+    expect(requested(fetched, "margins")).toHaveLength(1);
+  });
+
+  it("un segundo Escape mientras se envía no cierra el formulario y el error tardío se ve", async () => {
+    const { api, item } = await costScreen({
+      [`POST ${COSTS}`]: { status: 409, body: { code: "COST_CONFLICT" } },
+    });
+    const { release } = holdPost(api);
+    fireEvent.click(within(item).getByRole("button", { name: /^Registrar costo de/ }));
+    const form = (await screen.findByRole("dialog", {
+      name: "Registrar costo",
+    })) as HTMLDialogElement;
+    fill("3399.00");
+    save();
+    await screen.findByRole("button", { name: "Guardando…" });
+    act(() => form.close()); // lo que hace Escape cuando no se puede cancelar
+    expect(form.open).toBe(true);
+    await release();
+    expect(await screen.findByText(/llegó antes/)).toBeVisible();
+  });
+
+  it("al perder product_cost.manage se cierran el formulario y el panel y el foco va al interruptor", async () => {
+    mockApi({ ...base(["LAP-1"]), [MARGINS]: page([margin("LAP-1", "LAP-1", {})]) });
+    const { change } = harness(manager());
+    const item = await row("LAP-1");
+    fireEvent.click(await switchOf());
+    fireEvent.click(await within(item).findByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    (document.activeElement as HTMLElement).blur(); // el foco estaba dentro de lo que desaparece
+    change(seller("product_cost.view"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(item).queryByRole("button")).toBeNull();
+    await waitFor(() => expect(screen.getByRole("switch")).toHaveFocus());
   });
 });

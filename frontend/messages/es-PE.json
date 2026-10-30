@@ -1693,6 +1693,57 @@
         "CURRENCY_MISMATCH": "Sin margen: el precio y el costo están en monedas distintas",
         "TAX_MISMATCH": "Sin margen: uno incluye IGV y el otro no"
       }
+    },
+    "costs": {
+      "form": {
+        "open": "Registrar costo",
+        "openLabel": "Registrar costo de {name}",
+        "title": "Nuevo costo de {name}",
+        "heading": "Registrar costo",
+        "amount": "Costo en soles, IGV incluido",
+        "amountHint": "El vigente es {amount}. Con punto y como mucho 2 decimales, por ejemplo 3500.00.",
+        "amountHintFirst": "Todavía no tiene costo. Con punto y como mucho 2 decimales, por ejemplo 3500.00.",
+        "amountRequired": "Escribe el costo.",
+        "amountInvalid": "El costo es un número mayor que cero, con punto y como mucho 2 decimales.",
+        "reason": "Motivo",
+        "reasonHint": "De 3 a 500 caracteres. Queda en el historial del costo.",
+        "reasonRequired": "Escribe el motivo.",
+        "reasonInvalid": "El motivo tiene de 3 a 500 caracteres, sin HTML.",
+        "unchanged": "Es el costo que ya rige: no se cambió nada.",
+        "conflict": "Otro cambio de costo de esta variante llegó antes. Cancela, revisa y vuelve a intentarlo.",
+        "tooSoon": "El costo vigente empezó hace un instante. Espera un momento y vuelve a intentarlo.",
+        "rejected": "La base de datos rechazó el costo. Revisa el importe y vuelve a intentarlo.",
+        "stepUp": "Hace falta confirmar de nuevo tu segundo factor. Vuelve a intentarlo.",
+        "denied": "No tienes permiso para registrar costos.",
+        "save": "Guardar costo",
+        "busy": "Guardando…",
+        "cancel": "Cancelar",
+        "done": "Costo de {sku} registrado."
+      },
+      "history": {
+        "open": "Historial de costos",
+        "openLabel": "Historial de costos de {name}",
+        "title": "Historial de costos",
+        "close": "Cerrar el historial de costos",
+        "list": "Costos, del más reciente al más antiguo",
+        "loading": "Cargando el historial…",
+        "current": "Costo vigente: {amount}",
+        "noCurrent": "Todavía no tiene costo vigente.",
+        "empty": "Esta variante todavía no tiene costos registrados.",
+        "declined": "Sin confirmar tu identidad, el historial sigue oculto.",
+        "denied": "No tienes permiso para ver los costos o el catálogo.",
+        "gone": "La variante ya no está disponible. Cierra el panel y vuelve a cargar la tabla.",
+        "more": "Cargar más",
+        "loadingMore": "Cargando más…",
+        "you": "Tú",
+        "other": "Otro miembro",
+        "system": "Sistema",
+        "source": {
+          "MANUAL": "Manual",
+          "IMPORT": "Importación",
+          "PURCHASE": "Compra"
+        }
+      }
     }
   },
   "promotions": {

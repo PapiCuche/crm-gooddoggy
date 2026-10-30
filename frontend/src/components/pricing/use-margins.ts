@@ -19,6 +19,20 @@ const COST_ROUTE = /\/pricing\/(price-lists\/[^/]+\/margins|variants\/[^/]+\/cos
 export const isCostQuery = ({ queryKey }: { queryKey: QueryKey }) =>
   typeof queryKey[0] === "string" && COST_ROUTE.test(queryKey[0]);
 
+// Si desaparece lo que tenía el foco (diálogo o panel de costos), el foco va al interruptor.
+export function useFocusSwitch(showing: boolean) {
+  const was = useRef(false);
+  useEffect(() => {
+    if (was.current && !showing) {
+      requestAnimationFrame(() => {
+        if (document.activeElement !== document.body) return;
+        document.querySelector<HTMLElement>("[data-margins-switch]")?.focus();
+      });
+    }
+    was.current = showing;
+  }, [showing]);
+}
+
 // «Ver costos y margen» (F3-47): pide `…/margins/` de la lista elegida, con step-up, solo mientras
 // el interruptor está activo y la persona tiene `product_cost.view`. Al apagarlo, a los 15 minutos
 // o al salir de la pantalla, los costos se QUITAN de la caché de TanStack Query (`removeQueries`),
@@ -94,6 +108,9 @@ export function useMargins(args: {
   return {
     active,
     declined,
+    // Solo las consultas ACTIVAS: apagado o sin permiso no se pide ni se cachea nada.
+    refresh: () =>
+      void queryClient.invalidateQueries({ predicate: isCostQuery, refetchType: "active" }),
     dialog,
     query,
     rows: active ? query.data : undefined,
