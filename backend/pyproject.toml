@@ -70,6 +70,7 @@ module = [
     "apps.access.permissions", "core.api.authentication", "core.api.errors",
     "core.api.permissions", "tests.test_access_api", "tests.test_api_conventions",
     "core.api.pagination", "tests.test_pagination", "tests.test_mfa_step_up",
+    "tests.test_step_up_check",
 ]
 disallow_subclassing_any = false
 
