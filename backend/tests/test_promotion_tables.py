@@ -80,18 +80,17 @@ def promo(
         "priority": 0,
         "currency": "PEN",
     }
+    wanted = {**wanted, **fields}
+    status = wanted.pop("status")  # los objetivos y listas solo entran en un borrador (0004)
     with tenant_scope(ctx(org)):
         made = Promotion.objects.create(
-            discount_type=kind,
-            value=Decimal(value),
-            starts_at=starts,
-            ends_at=ends,
-            **{**wanted, **fields},
+            discount_type=kind, value=Decimal(value), starts_at=starts, ends_at=ends, **wanted
         )
         for target in targets:
             PromotionItem.objects.create(promotion=made, **target)
         for listed in lists:
             PromotionPriceList.objects.create(promotion=made, price_list_id=listed)
+        Promotion.objects.filter(pk=made.pk).update(status=status)
     return UUID(str(made.pk))
 
 
@@ -149,7 +148,7 @@ def test_another_organization_promotion_never_applies_and_rls_hides_it(
 
 def test_composite_foreign_keys_refuse_another_organizations_rows(world: Any, shop: Any) -> None:
     _, foreign = stock(world.b)
-    mine = promo(world.a, [shop.listed], [{"variant_id": shop.variant}])
+    mine = promo(world.a, [shop.listed], [{"variant_id": shop.variant}], status="DRAFT")
     other_list = price_list(world.b, "AJENA")
     cases = [
         (PromotionItem, {"promotion_id": mine, "variant_id": foreign}, "promo_items_variant_fk"),
@@ -199,7 +198,7 @@ def test_promotion_check_constraints(world: Any, values: dict[str, Any], name: s
 def test_a_percent_of_exactly_100_is_a_valid_row_and_an_item_needs_exactly_one_target(
     world: Any, shop: Any
 ) -> None:
-    made = promo(world.a, [shop.listed], [], "PERCENT_OFF", "100")
+    made = promo(world.a, [shop.listed], [], "PERCENT_OFF", "100", status="DRAFT")
     both = {"variant_id": shop.variant, "brand_id": shop.make}
     for values in ({}, both, {"variant_id": shop.variant, "override_value": Decimal("0")}):
         with pytest.raises(IntegrityError, match="promo_items_"), tenant_scope(ctx(world.a)):
