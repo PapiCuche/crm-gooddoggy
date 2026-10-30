@@ -12,9 +12,10 @@ aplica la promoción es `PricingService`: rige entre `starts_at` y `ends_at` sin
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from decimal import Decimal
+from itertools import islice
 from typing import Any
 from uuid import UUID
 
@@ -88,10 +89,23 @@ def _amount(field: str, kind: str, value: str | Decimal) -> Decimal:
     return number
 
 
+def _bounded(field: str, value: Any, limit: int) -> list[Any]:
+    """Una colección de 1 a `limit` elementos, leída solo hasta `limit + 1`: ni un `str` ni algo
+    que no se recorre."""
+    if isinstance(value, str | bytes | Mapping) or not isinstance(value, Iterable):
+        raise Invalid(field, "una lista")
+    found = list(islice(value, limit + 1))
+    if not found or len(found) > limit:
+        raise Invalid(field, f"de 1 a {limit} elementos")
+    return found
+
+
 def _channels(value: Iterable[str] | None) -> list[str] | None:
     if value is None:
         return None
-    wanted = [item.strip() if isinstance(item, str) else item for item in value]
+    wanted = [
+        i.strip() if isinstance(i, str) else i for i in _bounded("channels", value, CHANNELS_MAX)
+    ]
     try:
         checked = [check_channel(item) for item in wanted]
     except ValueError as error:
@@ -101,9 +115,10 @@ def _channels(value: Iterable[str] | None) -> list[str] | None:
     return checked
 
 
-def _lists(alias: str, ids: list[UUID], money: str) -> list[UUID]:
-    if not ids or len(ids) > LISTS_MAX or len(set(ids)) != len(ids):
-        raise Invalid("price_list_ids", f"de 1 a {LISTS_MAX} listas distintas")
+def _lists(alias: str, listed: Iterable[UUID], money: str) -> list[UUID]:
+    ids = _bounded("price_list_ids", listed, LISTS_MAX)
+    if len(set(ids)) != len(ids):
+        raise Invalid("price_list_ids", "listas distintas")
     found = PriceList.objects.using(alias).filter(deleted_at__isnull=True, pk__in=ids)
     rows = {row.pk: row for row in found}
     if len(rows) != len(ids):
@@ -113,11 +128,11 @@ def _lists(alias: str, ids: list[UUID], money: str) -> list[UUID]:
     return ids
 
 
-def _items(alias: str, kind: str, items: list[dict[str, Any]]) -> list[tuple[str, UUID, Any]]:
-    if not items or len(items) > ITEMS_MAX:
-        raise Invalid("items", f"de 1 a {ITEMS_MAX} objetivos")
+def _items(alias: str, kind: str, given: Iterable[Any]) -> list[tuple[str, UUID, Any]]:
     wanted: list[tuple[str, UUID, Any]] = []
-    for item in items:
+    for item in _bounded("items", given, ITEMS_MAX):
+        if not isinstance(item, Mapping):
+            raise Invalid("items", "cada objetivo es un objeto")
         targets = [key for key in TARGETS if item.get(key) is not None]
         if len(targets) != 1 or not set(item) <= {*TARGETS, "override_value"}:
             raise Invalid(
@@ -166,9 +181,13 @@ def create_promotion(
     if discount_type not in DiscountType.values:
         raise Invalid("discount_type", "FIXED_PRICE, PERCENT_OFF o AMOUNT_OFF")
     try:
-        label, money = clean_name(name, NAME_MAX), check_currency(currency)
+        label = clean_name(name, NAME_MAX)
     except ValueError as error:
-        raise Invalid("name" if "nombre" in str(error) else "currency", str(error)) from None
+        raise Invalid("name", str(error)) from None
+    try:
+        money = check_currency(currency)
+    except ValueError as error:
+        raise Invalid("currency", str(error)) from None
     if starts_at.tzinfo is None or ends_at.tzinfo is None or ends_at <= starts_at:
         raise Invalid("ends_at", "con zona horaria y después de `starts_at`")
     if abs(priority) > PRIORITY_MAX:

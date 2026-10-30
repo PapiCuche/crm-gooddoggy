@@ -6,6 +6,7 @@ el motor aplicando la promoción solo en su ventana."""
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from itertools import count
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -14,16 +15,17 @@ import pytest
 from django.db import DatabaseError, IntegrityError, connection
 from django.utils import timezone
 
+from apps.catalog.models import Brand, Category, Product
 from apps.pricing import promotions as commands
 from apps.pricing import services
-from apps.pricing.models import Promotion, PromotionItem, PromotionPriceList
+from apps.pricing.models import PriceList, Promotion, PromotionItem, PromotionPriceList
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_prices import price_list
-from tests.test_pricing_engine import item, public_ai
-from tests.test_promotion_tables import brand, final, shop, stock
+from tests.test_pricing_engine import T0, item, public_ai, row
+from tests.test_promotion_tables import NOW, brand, final, promo, shop, stock, tree
 
 world, _shop = test_authorization.world, shop
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -139,6 +141,16 @@ CASES: list[tuple[str, Bad]] = [
     ("discount_type", lambda s: {"discount_type": "PERCENT"}),
     ("name", lambda s: {"name": "  "}),
     ("terms", lambda s: {"terms": "<script>alert(1)</script>"}),
+    *(("terms", lambda s, t=t: {"terms": f"x {t}"}) for t in ("</x>", "<!-- c", "<?x")),
+    ("name", lambda s: {"name": "a\nb"}),
+    ("name", lambda s: {"name": "x" * 201}),
+    ("channels", lambda s: {"channels": "WEB"}),
+    ("price_list_ids", lambda s: {"price_list_ids": str(s.listed)}),
+    ("items", lambda s: {"items": "x"}),
+    ("items", lambda s: {"items": ["x"]}),
+    ("channels", lambda s: {"channels": (f"c{n}" for n in count())}),  # sin fin: se corta
+    ("price_list_ids", lambda s: {"price_list_ids": (uuid4() for _ in count())}),
+    ("items", lambda s: {"items": ({"brand_id": uuid4()} for _ in count())}),
     ("currency", lambda s: {"currency": "pen"}),
     ("ends_at", lambda s: {"starts_at": LATER, "ends_at": LATER}),
     ("ends_at", lambda s: {"starts_at": LATER.replace(tzinfo=None)}),
@@ -313,3 +325,117 @@ def test_a_channel_is_text_without_nul_or_outer_spaces_when_stored_and_when_aske
             final(world.a, shop.viewer, shop.variant, shop.listed, timezone.now(), channel=bad)
         with pytest.raises(ValueError, match="channel"):
             public_ai(world.a, services.PriceQuery(shop.variant, shop.listed, channel=bad))
+
+
+def test_exactly_the_maximum_is_valid_and_one_more_is_not(world: Any, shop: Any) -> None:
+    lists = [price_list(world.a, f"M{n}") for n in range(commands.LISTS_MAX)]
+    variants = [stock(world.a)[1] for _ in range(commands.ITEMS_MAX)]
+    channels = [f"c{n}" for n in range(commands.CHANNELS_MAX)]
+    items = [{"variant_id": v} for v in variants]
+    assert create(world, shop, price_list_ids=lists, items=items, channels=channels).pk
+    for field, more in (
+        ("price_list_ids", [*lists, shop.listed]),
+        ("items", [*items, {"variant_id": shop.variant}]),
+        ("channels", [*channels, "extra"]),
+    ):
+        with pytest.raises(commands.Invalid) as error:
+            create(world, shop, **{field: more})
+        assert error.value.field == field
+
+
+def test_deleted_and_foreign_targets_and_lists_are_not_found(world: Any, shop: Any) -> None:
+    other_brand, (other_product, _) = brand(world.a, "otra"), stock(world.a)
+    (other_category,) = tree(world.a, "gone")
+    gone = price_list(world.a, "BORRADA")
+    with tenant_scope(ctx(world.a)):
+        for model, pk in ((PriceList, gone), (Brand, other_brand), (Category, other_category)):
+            model.objects.filter(pk=pk).update(deleted_at=timezone.now())
+        Product.objects.filter(pk=other_product).update(deleted_at=timezone.now())
+    foreign = {
+        "category_id": tree(world.b, "ajena")[0],
+        "brand_id": brand(world.b, "ajena"),
+        "product_id": stock(world.b)[0],
+    }
+    deleted = {"category_id": other_category, "brand_id": other_brand, "product_id": other_product}
+    for target in (*foreign.items(), *deleted.items()):
+        with pytest.raises(commands.Invalid, match="no existe") as error:
+            create(world, shop, items=[dict([target])])
+        assert error.value.field == "items"
+    with pytest.raises(commands.Invalid, match="no existe"):
+        create(world, shop, price_list_ids=[gone])
+
+
+def test_a_temp_table_cannot_shadow_the_guards_lookup(world: Any, shop: Any) -> None:
+    """`crm_app` puede crear tablas temporales, que `search_path` mira primero: una `promotions`
+    falsa con una fila en borrador no debe dejar insertar en una publicada."""
+    made = create(world, shop)
+    move(world, commands.publish_promotion, made)
+    for model, values in (
+        (PromotionItem, {"brand_id": shop.make}),
+        (PromotionPriceList, {"price_list_id": shop.listed}),
+    ):
+        with pytest.raises(IntegrityError, match="solo una promoción en borrador admite cambios"):
+            with tenant_scope(ctx(world.a)):
+                run("CREATE TEMP TABLE promotions (id uuid, organization_id uuid, status text)")
+                run(f"INSERT INTO pg_temp.promotions VALUES ('{made.pk}', '{world.a}', 'DRAFT')")  # noqa: S608
+                model.objects.create(promotion_id=made.pk, **values)
+
+
+def test_a_promotion_cannot_be_born_published(world: Any, shop: Any) -> None:
+    with pytest.raises(IntegrityError, match="nace en borrador"), tenant_scope(ctx(world.a)):
+        Promotion.objects.create(
+            name="x",
+            discount_type="AMOUNT_OFF",
+            value=1,
+            currency="PEN",
+            starts_at=timezone.now(),
+            ends_at=timezone.now() + DAY,
+            status="PUBLISHED",
+        )
+
+
+def test_a_child_insert_and_a_publish_at_once_are_consistent_in_both_orders(
+    world: Any, shop: Any
+) -> None:
+    def child(tenant: Any, made: Promotion) -> PromotionItem:
+        return PromotionItem.objects.create(promotion_id=made.pk, brand_id=shop.make)  # type: ignore[no-any-return]
+
+    def count_items(made: Promotion) -> int:
+        with tenant_scope(ctx(world.a)):
+            return PromotionItem.objects.filter(promotion=made, brand_id=shop.make).count()
+
+    pub = commands.publish_promotion
+    early = create(world, shop)  # el hijo entra primero: la publicación espera y lo ve
+    first, second = race(
+        world.a,
+        world.ana,
+        [lambda t: child(t, early), lambda t: pub(t, promotion_id=early.pk)],
+    )
+    assert isinstance(first, PromotionItem) and second.status == "PUBLISHED"
+    assert (count_items(early), state(world, early)[0]) == (1, "PUBLISHED")
+    late = create(world, shop)  # la publicación primero: el hijo espera y, al confirmar, falla
+    first, second = race(
+        world.a,
+        world.ana,
+        [lambda t: pub(t, promotion_id=late.pk), lambda t: child(t, late)],
+    )
+    assert first.status == "PUBLISHED" and second == "IntegrityError"
+    assert (count_items(late), state(world, late)[0]) == (0, "PUBLISHED")
+
+
+def test_a_price_ending_after_the_promotion_gives_its_end_and_a_deleted_child_category_is_out(
+    world: Any, shop: Any
+) -> None:
+    solo = stock(world.a)[1]
+    made = create(world, shop, items=[{"variant_id": solo}], price_list_ids=[shop.listed])
+    move(world, commands.publish_promotion, made)
+    row(world.a, (solo, shop.listed), "100", T0, made.ends_at + 5 * DAY)
+    inside = final(world.a, shop.viewer, solo, shop.listed, made.starts_at + DAY)
+    assert (inside.promotion_id, inside.valid_until) == (made.pk, made.ends_at)
+    parent = promo(world.a, [shop.listed], [{"category_id": shop.iphone[0]}])
+    assert final(world.a, shop.viewer, shop.variant, shop.listed, NOW).promotion_id == parent
+    with tenant_scope(
+        ctx(world.a)
+    ):  # la categoría del producto se borra: la del padre no lo alcanza
+        Category.objects.filter(pk=shop.iphone[1]).update(deleted_at=timezone.now())
+    assert final(world.a, shop.viewer, shop.variant, shop.listed, NOW).promotion_id is None

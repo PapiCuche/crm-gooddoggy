@@ -29,7 +29,7 @@ def _privileges(grant: bool) -> Any:
 # se insertan mientras la promoción es DRAFT (`FOR SHARE`: publicar espera a quien inserta).
 GUARD = """
 CREATE FUNCTION promotions_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
     IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
         OLD.status = 'DRAFT' AND NEW.status IN ('PUBLISHED', 'CANCELLED')
@@ -51,13 +51,25 @@ BEGIN
     RETURN NEW;
 END
 $fn$;
+CREATE FUNCTION promotions_born_draft() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+BEGIN
+    IF NEW.status IN ('PUBLISHED', 'CANCELLED') THEN
+        RAISE EXCEPTION 'promotions_guard: una promoción nace en borrador'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END
+$fn$;
+CREATE TRIGGER promotions_born_draft BEFORE INSERT ON promotions
+    FOR EACH ROW EXECUTE FUNCTION promotions_born_draft();
 CREATE TRIGGER promotions_guard BEFORE UPDATE ON promotions
     FOR EACH ROW EXECUTE FUNCTION promotions_guard();
 
 CREATE FUNCTION promotion_children_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
-    PERFORM 1 FROM promotions
+    PERFORM 1 FROM public.promotions
         WHERE organization_id = NEW.organization_id AND id = NEW.promotion_id AND status = 'DRAFT'
         FOR SHARE;
     IF NOT FOUND THEN
@@ -76,6 +88,8 @@ UNGUARD = """
 DROP TRIGGER IF EXISTS promotion_price_lists_guard ON promotion_price_lists;
 DROP TRIGGER IF EXISTS promotion_items_guard ON promotion_items;
 DROP TRIGGER IF EXISTS promotions_guard ON promotions;
+DROP TRIGGER IF EXISTS promotions_born_draft ON promotions;
+DROP FUNCTION IF EXISTS promotions_born_draft();
 DROP FUNCTION IF EXISTS promotion_children_guard();
 DROP FUNCTION IF EXISTS promotions_guard();
 """
