@@ -15,6 +15,7 @@ VIEW, WHOLESALE, DISTRIBUTOR, INTERNAL = (
 )
 READ_PERMISSIONS = (VIEW, WHOLESALE, DISTRIBUTOR, INTERNAL)
 OVERLAP = "product_prices_no_overlap_ex"  # la `EXCLUDE`: su violación es un 409, nunca un 500
+COST_OVERLAP = "variant_costs_no_overlap_ex"  # la de los costos (F3-46)
 
 
 class Kind(models.TextChoices):
@@ -176,6 +177,73 @@ class ProductPrice(TenantModel):
 
     def __str__(self) -> str:
         return f"{self.amount} {self.currency}"
+
+
+class CostSource(models.TextChoices):
+    MANUAL = "MANUAL"
+    IMPORT = "IMPORT"  # reservados: hoy solo se escribe MANUAL
+    PURCHASE = "PURCHASE"
+
+
+class VariantCost(TenantModel):
+    """El costo de una variante durante `[starts_at, ends_at)` (§E.8, ADR-006 §1). Tabla aparte de
+    los precios a propósito: solo `apps.pricing.costs` la lee (contrato de import-linter). Misma
+    inmutabilidad que `ProductPrice` [INM]; la `EXCLUDE` impide costos solapados de una variante."""
+
+    id = uuid7_primary_key()
+    variant = models.ForeignKey(  # misma organización: FKs compuestas en la migración
+        "catalog.ProductVariant",
+        models.PROTECT,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    tax_included = models.BooleanField(default=True)  # IGV incluido, como el precio (D-PRC-1)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField(null=True, blank=True)  # NULL: sin fin
+    source = models.CharField(max_length=16, choices=CostSource.choices)
+    change_reason = models.CharField(max_length=500)
+    created_by_user_id = models.UUIDField(null=True, blank=True)  # FK compuesta a membresías
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "variant_costs"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0), name="variant_costs_amount_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__isnull=True)
+                | models.Q(ends_at__gt=models.F("starts_at")),
+                name="variant_costs_validity_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(source__in=CostSource.values), name="variant_costs_source_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(currency__regex=r"^[A-Z]{3}$"),
+                name="variant_costs_currency_ck",
+            ),
+            ExclusionConstraint(
+                name=COST_OVERLAP,
+                index_type="gist",
+                expressions=[
+                    ("organization_id", RangeOperators.EQUAL),
+                    ("variant", RangeOperators.EQUAL),
+                    (
+                        models.Func(
+                            "starts_at", "ends_at", models.Value("[)"), function="TSTZRANGE"
+                        ),
+                        RangeOperators.OVERLAPS,
+                    ),
+                ],
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.currency  # el importe no se imprime: ni en el admin ni en un log
 
 
 class DiscountType(models.TextChoices):
