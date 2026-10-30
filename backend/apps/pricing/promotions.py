@@ -72,7 +72,7 @@ class PromotionEnded(Exception):
     """Ya pasó su `ends_at`: publicarla no serviría de nada (409 `PROMOTION_ENDED`)."""
 
 
-# Invisibles que falsean lo que se lee (inversión bidireccional, marca de orden de bytes, etiquetas).
+# Invisibles que falsean lo que se lee (inversión bidireccional, orden de bytes, etiquetas).
 # Se dejan pasar el unión y el no-unión de ancho cero y el guion blando: los usan los emoji
 # compuestos (familia, profesión) y el texto en otros alfabetos.
 SPOOFING = frozenset(
