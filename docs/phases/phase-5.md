@@ -20,8 +20,8 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | ID | Issue | Rama | Depende de | Tipo |
 |---|---|---|---|---|
 | F5-01 | [#476](https://github.com/PapiCuche/crm-gooddoggy/issues/476) Pipeline: tablas y semilla del pipeline por defecto (sin API) | `feature/f5-pipelines-table` | — | backend |
-| F5-01b | _(issue por crear)_ Pipeline: comandos de motivos de pérdida (sin API) | `feature/f5-lost-reason-commands` | F5-01 | backend |
-| F5-01c | _(issue por crear)_ Pipeline: comandos de pipelines y etapas (sin API) | `feature/f5-pipeline-commands` | F5-01b | backend |
+| F5-01b | [#479](https://github.com/PapiCuche/crm-gooddoggy/issues/479) Pipeline: comandos de motivos de pérdida (sin API) | `feature/f5-lost-reason-commands` | #476 | backend |
+| F5-01c | [#480](https://github.com/PapiCuche/crm-gooddoggy/issues/480) Pipeline: comandos de pipelines y etapas (sin API) | `feature/f5-pipeline-commands` | #479 | backend |
 
 Siguen, en este orden: permisos `pipelines.manage` y API (F5-02), oportunidades (F5-03 y F5-04), pantallas (F5-05 en adelante).
 
