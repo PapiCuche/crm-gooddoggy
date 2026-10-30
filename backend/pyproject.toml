@@ -188,6 +188,12 @@ protected_modules = ["apps.contacts.commands", "apps.contacts.notes", "apps.cont
 allowed_importers = ["apps.contacts.api"]
 
 [[tool.importlinter.contracts]]
+name = "Comandos de pipelines: solo su API los importa (F5-01)"
+type = "protected"
+protected_modules = ["apps.deals.commands"]
+allowed_importers = ["apps.deals.api"]
+
+[[tool.importlinter.contracts]]
 name = "Comandos de sucursales: solo la API de organizations los importa (F2-44)"
 type = "protected"
 protected_modules = ["apps.organizations.branches"]
