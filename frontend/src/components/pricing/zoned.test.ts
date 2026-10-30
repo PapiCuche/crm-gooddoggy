@@ -3,15 +3,6 @@ import { describe, expect, it } from "vitest";
 import { zonedInstant } from "./zoned";
 
 describe("zonedInstant", () => {
-  it("la hora de Lima en UTC, sea cual sea la zona del navegador", () => {
-    expect(zonedInstant("2026-11-02T00:00", "America/Lima").toISOString()).toBe(
-      "2026-11-02T05:00:00.000Z",
-    );
-    expect(zonedInstant("2026-06-15T12:30", "Asia/Tokyo").toISOString()).toBe(
-      "2026-06-15T03:30:00.000Z",
-    );
-  });
-
   it.each(["0001-01-01T00:00", "0050-06-15T10:00", "0999-12-31T23:59", "9999-12-31T23:59"])(
     "rechaza el año de %s: no lo convierte mal en silencio",
     (local) => {

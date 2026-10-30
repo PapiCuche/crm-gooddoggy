@@ -93,7 +93,13 @@ export function Promotions() {
             <PromotionForm
               slug={slug}
               priceLists={(lists.data ?? []).filter((row) => row.is_active)}
-              listsState={lists.data ? "ready" : lists.isError ? "error" : "loading"}
+              listsState={
+                lists.data
+                  ? "ready"
+                  : lists.isError || lists.fetchStatus === "paused"
+                    ? "error"
+                    : "loading"
+              }
               onRetry={() => void lists.refetch()}
               onClose={() => {
                 setCreating(false);

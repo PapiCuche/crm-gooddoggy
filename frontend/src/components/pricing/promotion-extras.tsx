@@ -76,7 +76,8 @@ export function PromotionExtras(props: {
             onChange({ draft: event.target.value });
           }}
           onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
+            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
+              return; // IME
             event.preventDefault(); // Enter agrega el canal, no envía el formulario
             if (!event.repeat) add();
           }}

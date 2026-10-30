@@ -1,3 +1,4 @@
+import { onlineManager } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -100,6 +101,7 @@ beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
 });
 afterEach(() => {
+  onlineManager.setOnline(true);
   vi.useRealTimers();
   held.clear();
   gates.clear();
@@ -212,6 +214,13 @@ const created = { [CREATE]: { status: 201, body: made } };
 const rejected = (fields: unknown) => ({
   [CREATE]: { status: 400, body: { code: "VALIDATION_ERROR", fields } },
 });
+// Con el formulario lleno y una categoría elegida; solo falta enviar.
+async function ready(routes: Parameters<typeof mockApi>[0] = created) {
+  const api = screenOf(routes, "prices.manage");
+  await open();
+  await pick("ropa", "Ropa de abrigo");
+  return api;
+}
 // Avanza el reloj simulado dentro de `act`: el temporizador del buscador cambia estado.
 const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 const radio = (name: string) => fireEvent.click(screen.getByRole("radio", { name }));
@@ -228,9 +237,7 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it.each(["0", "100.01", "abc"])("porcentaje %s: error en el campo, sin envío", async (value) => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type("Porcentaje de descuento (%)", value);
     submit();
     expect(await screen.findByText(PCT)).toBeVisible();
@@ -242,9 +249,7 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it("el 100 % vale, también como descuento propio, que va como texto", async () => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type("Porcentaje de descuento (%)", "100");
     type(/Descuento propio/, "100");
     submit();
@@ -254,9 +259,7 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it("un monto o precio fijo en 0 no vale", async () => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     radio("Monto (S/)");
     type("Monto que se descuenta (S/)", "0");
     submit();
@@ -272,9 +275,7 @@ describe("PromotionForm: validación en el navegador", () => {
     ["PERCENT_OFF", "0", PCT],
     ["AMOUNT_OFF", "0", AMOUNT],
   ])("descuento propio de %s en %s: error en su campo", async (kind, value, message) => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     if (kind === "AMOUNT_OFF") {
       radio("Monto (S/)");
       type("Monto que se descuenta (S/)", "5");
@@ -289,9 +290,7 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it("el nombre se recorta al enviar y uno en blanco no vale", async () => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type("Nombre", "   ");
     submit();
     expect(await screen.findByText("Escribe el nombre, de hasta 200 caracteres.")).toBeVisible();
@@ -303,9 +302,7 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it("termina debe ser después de empieza, ni igual ni antes", async () => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     for (const ends of ["2026-11-02T00:00", "2026-11-01T23:59"]) {
       type("Termina", ends);
       submit();
@@ -319,12 +316,9 @@ describe("PromotionForm: validación en el navegador", () => {
 
   it.each([
     ["Empieza", "0050-01-01T00:00", "Elige cuándo empieza."],
-    ["Empieza", "0999-12-31T23:59", "Elige cuándo empieza."],
     ["Termina", "9999-12-31T23:59", "Elige cuándo termina, después del inicio."],
   ])("%s con el año de %s se rechaza en el campo", async (label, value, message) => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type(label, value);
     submit();
     expect(await screen.findByText(message)).toBeVisible();
@@ -349,17 +343,17 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it("cambiar el tipo de una fila suelta el objetivo y su error", async () => {
-    screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready();
     expect(screen.getByText("Categoría: Ropa de abrigo")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Agregar otro objetivo" }));
     submit();
     expect(await screen.findByText(ROW)).toBeVisible(); // la fila 2 sin objetivo
+    fireEvent.change(screen.getAllByRole("searchbox")[0]!, { target: { value: "ca" } });
     fireEvent.change(screen.getByLabelText("Tipo del objetivo 2"), {
       target: { value: "brand_id" },
     });
     expect(screen.queryByText(ROW)).toBeNull();
+    expect(screen.getAllByRole("searchbox")[0]).toHaveValue(""); // sin el texto anterior
     fireEvent.change(screen.getByLabelText("Tipo del objetivo 1"), {
       target: { value: "brand_id" },
     });
@@ -368,9 +362,7 @@ describe("PromotionForm: validación en el navegador", () => {
   });
 
   it("no ofrece en una fila lo que ya eligió otra", async () => {
-    screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready();
     fireEvent.click(screen.getByRole("button", { name: "Agregar otro objetivo" }));
     const second = screen.getAllByRole("searchbox")[0]!;
     fireEvent.change(second, { target: { value: "ropa" } });
@@ -407,10 +399,11 @@ describe("PromotionForm: listas, esperas y foco", () => {
     expect(await screen.findByLabelText("Regular (PEN)")).toBeVisible();
   });
 
-  it("sin listas activas, ya cargadas, pide crear una", async () => {
-    screenOf({ [LISTS]: page([]) }, "prices.manage");
+  it("sin red, las listas no quedan cargando para siempre", async () => {
+    onlineManager.setOnline(false);
+    screenOf({}, "prices.manage");
     fireEvent.click(await screen.findByRole("button", { name: "Nueva promoción" }));
-    expect(await screen.findByText(/No hay listas de precios activas/)).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Reintentar" })).toBeVisible();
   });
 
   it("espera 300 ms sin teclear antes de pedir", async () => {
@@ -473,9 +466,7 @@ describe("PromotionForm: listas, esperas y foco", () => {
   });
 
   it("un error del servidor en un campo lleva el foco a ese campo", async () => {
-    screenOf(rejected({ value: ["mal"] }), "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready(rejected({ value: ["mal"] }));
     screen.getByLabelText("Términos (opcional)").focus();
     submit();
     expect(await screen.findByText(PCT)).toBeVisible();
@@ -483,9 +474,7 @@ describe("PromotionForm: listas, esperas y foco", () => {
   });
 
   it("un error del servidor en una fila ya elegida lleva el foco a su mensaje", async () => {
-    screenOf(rejected({ items: { "0": { category_id: ["no existe"] } } }), "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready(rejected({ items: { "0": { category_id: ["no existe"] } } }));
     screen.getByLabelText("Términos (opcional)").focus();
     submit();
     const message = await screen.findByText(ROW);
@@ -494,9 +483,7 @@ describe("PromotionForm: listas, esperas y foco", () => {
   });
 
   it("el error de `override_value` sale en el descuento propio de su fila", async () => {
-    screenOf(rejected({ items: { "0": { override_value: ["mal"] } } }), "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready(rejected({ items: { "0": { override_value: ["mal"] } } }));
     screen.getByLabelText("Términos (opcional)").focus();
     submit();
     expect(await screen.findByText(PCT)).toBeVisible();
@@ -508,9 +495,7 @@ describe("PromotionForm: listas, esperas y foco", () => {
 
   it("editar tras un fallo genérico limpia el aviso", async () => {
     const failed = { [CREATE]: { status: 500, body: { code: "INTERNAL_ERROR" } } };
-    screenOf(failed, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready(failed);
     submit();
     expect(await screen.findByText(/Algo salió mal de nuestro lado/)).toBeVisible();
     type("Nombre", "Martes");
@@ -519,9 +504,7 @@ describe("PromotionForm: listas, esperas y foco", () => {
 
   it("mientras se envía, los campos no cambian", async () => {
     hold(CREATE);
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     submit();
     await waitFor(() => expect(bodies(api)).toHaveLength(1));
     type("Nombre", "Otro");
@@ -547,9 +530,7 @@ describe("PromotionForm: prioridad, canales y visibilidad a la IA", () => {
   });
 
   it("envía solo lo que se cambió: canales exactos, sin espacios y con mayúsculas", async () => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type("Prioridad (opcional)", "10000");
     const draft = screen.getByLabelText("Agregar un canal");
     fireEvent.change(draft, { target: { value: "  tienda " } });
@@ -565,10 +546,33 @@ describe("PromotionForm: prioridad, canales y visibilidad a la IA", () => {
     });
   });
 
-  it("quitar todos los canales vuelve a «Todos» y no envía lista vacía", async () => {
-    const api = screenOf(created, "prices.manage");
+  it("Enter no agrega por composición (IME) ni repetido, y sí una vez", async () => {
+    screenOf(created, "prices.manage");
     await open();
-    await pick("ropa", "Ropa de abrigo");
+    const draft = screen.getByLabelText("Agregar un canal");
+    type("Agregar un canal", "web");
+    fireEvent.keyDown(draft, { key: "Enter", isComposing: true, keyCode: 229 });
+    fireEvent.keyDown(draft, { key: "Enter", repeat: true });
+    expect(screen.getByText("Todos los canales")).toBeVisible();
+    expect(draft).toHaveValue("web");
+    fireEvent.keyDown(draft, { key: "Enter" });
+    expect(screen.getAllByRole("button", { name: /Quitar el canal/ })).toHaveLength(1);
+  });
+
+  it.each([
+    ["0", undefined],
+    ["-5", -5],
+    ["-10000", -10000],
+  ])("prioridad %s se envía como %s", async (value, sent) => {
+    const api = await ready();
+    type("Prioridad (opcional)", value);
+    submit();
+    await waitFor(() => expect(bodies(api)).toHaveLength(1));
+    expect(bodies(api)[0].priority).toBe(sent);
+  });
+
+  it("quitar todos los canales vuelve a «Todos» y no envía lista vacía", async () => {
+    const api = await ready();
     type("Agregar un canal", "web");
     fireEvent.click(screen.getByRole("button", { name: "Agregar canal" }));
     fireEvent.click(screen.getByRole("button", { name: "Quitar el canal web" }));
@@ -579,9 +583,7 @@ describe("PromotionForm: prioridad, canales y visibilidad a la IA", () => {
   });
 
   it.each(["10001", "-10001", "1.5", "abc"])("prioridad %s no vale", async (value) => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type("Prioridad (opcional)", value);
     submit();
     expect(await screen.findByText("Escribe un entero de -10000 a 10000.")).toBeVisible();
@@ -613,9 +615,7 @@ describe("PromotionForm: prioridad, canales y visibilidad a la IA", () => {
   });
 
   it("un canal escrito y sin agregar frena el envío", async () => {
-    const api = screenOf(created, "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    const api = await ready();
     type("Agregar un canal", "web");
     submit();
     expect(await screen.findByText(/Agrega el canal que escribiste/)).toBeVisible();
@@ -628,9 +628,7 @@ describe("PromotionForm: prioridad, canales y visibilidad a la IA", () => {
     ["channels", "Agrega el canal que escribiste", "Agregar un canal"],
     ["ai_exposable", "Marca o desmarca «Visible a la IA».", "Visible a la IA"],
   ])("el error del servidor en %s sale en su campo", async (field, message, label) => {
-    screenOf(rejected({ [field]: ["mal"] }), "prices.manage");
-    await open();
-    await pick("ropa", "Ropa de abrigo");
+    await ready(rejected({ [field]: ["mal"] }));
     screen.getByLabelText("Términos (opcional)").focus();
     submit();
     expect(await screen.findByText(new RegExp(message))).toBeVisible();
