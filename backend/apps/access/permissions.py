@@ -2,8 +2,9 @@
 
 `HasPermission` y `ScopeFilter` son los valores por defecto de DRF (`config.settings.base`).
 Una vista de tenant declara el permiso de cada método en `required_permissions` (un código, o
-una tupla de códigos si los exige todos); vista sin declaración, método sin declarar, declaración
-que no se entiende o petición sin contexto de tenant: denegado.
+una tupla de códigos si los exige todos) y, si es sensible, los métodos que piden MFA de hace 15
+minutos como mucho en `step_up_methods` (ADR-003 §4; 403 `STEP_UP_REQUIRED`). Vista sin
+declaración, método sin declarar, declaración que no se entiende o sin tenant: denegado.
 
 El contexto es el que resolvió el middleware (`core.tenancy.context`), nunca `request.user`
 ni datos del cliente. Las vistas de plataforma son las rutas fuera de `/api/v1/o/<slug>/`:
@@ -31,6 +32,7 @@ from apps.access.selectors import (
     scoped,
 )
 from core.api.errors import ApiError
+from core.api.step_up import require_recent_mfa
 from core.tenancy import context
 
 
@@ -45,6 +47,18 @@ def required_codes(request: Any, view: Any) -> tuple[str, ...]:
     if isinstance(codes, tuple) and all(isinstance(code, str) for code in codes):
         return codes
     return ()
+
+
+def needs_step_up(request: Any, view: Any) -> bool:
+    """La vista pide MFA reciente para este método (`step_up_methods`, HEAD usa GET). Una
+    declaración que no es un conjunto de métodos en texto la pide para todos: ante la duda, pide."""
+    declared = getattr(view, "step_up_methods", None)
+    if declared is None:
+        return False
+    well_formed = isinstance(declared, set | frozenset | tuple | list)
+    well_formed = well_formed and all(isinstance(name, str) for name in declared)
+    method = "GET" if request.method == "HEAD" else request.method
+    return not well_formed or method in {name.upper() for name in declared}
 
 
 def request_context(request: Any) -> ExecutionContext | None:
@@ -73,7 +87,11 @@ class HasPermission(BasePermission):
         if ectx is None or not codes:
             return False
         held = [has_permission(ectx, code) for code in codes]  # un código desconocido falla
-        return all(held)  # todos, no alguno
+        if not all(held):  # todos, no alguno
+            return False
+        if needs_step_up(request, view):  # después de los permisos: quien no puede, no se entera
+            require_recent_mfa(request)
+        return True
 
     def has_object_permission(self, request: Any, view: Any, obj: Model) -> bool:
         ectx, codes = request_context(request), required_codes(request, view)

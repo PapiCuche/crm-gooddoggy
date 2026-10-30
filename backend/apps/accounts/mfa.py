@@ -27,6 +27,7 @@ from apps.accounts.services import EPOCH, client_of, rate_limited, revoke_sessio
 from apps.audit import platform
 from apps.audit.services import Entity, Result
 from core import mail, sealed
+from core.api import step_up
 from core.api.errors import NOT_AUTHENTICATED, ApiError
 from core.observability import reporting
 
@@ -39,7 +40,7 @@ ALREADY_ENABLED = "MFA_ALREADY_ENABLED"
 STARTED = "auth.mfa.enrollment_started"  # ADR-023 §10 dejó el nombre a este work item
 ENABLED = "auth.mfa.enabled"
 NOT_STARTED = "MFA_ENROLLMENT_NOT_STARTED"
-MFA_AT = "mfa_at"  # en la sesión: cuándo se verificó el segundo factor (ADR-003 §4, step-up)
+MFA_AT = step_up.MFA_AT  # en la sesión: cuándo se verificó el segundo factor (ADR-003 §4)
 ENABLED_SUBJECT = "Tu cuenta de Good Doggy CRM tiene un segundo factor"
 ENABLED_BODY = """Hola:
 
@@ -283,13 +284,14 @@ class Status:
     enabled_at: datetime | None
     enrollment_expires_in: int | None  # segundos que le quedan a un alta empezada; si no, `None`
     backup_codes_left: int
+    step_up_expires_in: int | None = None  # segundos que le quedan al step-up vigente de la sesión
 
 
-def status(user: User) -> Status:
+def status(user: User, session: Any = None) -> Status:
     """El estado del segundo factor de `user`, para su propia pantalla (ADR-023 §1, §4 y §6):
     si tiene un dispositivo confirmado y desde cuándo, si dejó un alta empezada que todavía se
-    puede confirmar, y cuántos códigos de respaldo le quedan sin gastar. Nunca cuáles, ni el
-    secreto. Solo lee."""
+    puede confirmar, y cuántos códigos de respaldo le quedan sin gastar. Con la `session`, los
+    segundos del step-up vigente (F2-125). Nunca cuáles códigos ni el secreto. Solo lee."""
     device = MfaDevice.objects.filter(user=user, type=MfaDevice.Type.TOTP).first()
     if device is None:
         return Status(False, None, None, 0)
@@ -297,7 +299,8 @@ def status(user: User) -> Status:
         left = int((device.created_at + PENDING_FOR - timezone.now()).total_seconds())
         return Status(False, None, left if left > 0 else None, 0)
     unspent = MfaBackupCode.objects.filter(user=user, used_at__isnull=True).count()
-    return Status(True, device.confirmed_at, None, unspent)
+    verified = None if session is None else step_up.seconds_left(session)
+    return Status(True, device.confirmed_at, None, unspent, verified)
 
 
 def notice_address(user_id: str) -> str | None:
