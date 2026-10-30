@@ -80,14 +80,15 @@ def _variant(variant_id: UUID) -> ProductVariant:
     return found
 
 
-def _viewed(request: Request, variant: ProductVariant) -> None:
-    """Audita `cost.viewed` la primera vez que esta sesión lee el costo de la variante."""
+def viewed(request: Request, entity: Entity) -> None:
+    """Audita `cost.viewed` la primera vez que esta sesión lee costos de esa entidad (una variante,
+    o la lista de precios de los márgenes). Sin importes."""
     seen = request.session.get(SEEN)
     seen = [s for s in seen if isinstance(s, str)] if isinstance(seen, list) else []
-    key = str(variant.pk)
+    key = str(entity.id)
     if key in seen:
         return
-    record(_tenant(), "cost.viewed", Entity("variant", variant.pk, variant.sku))
+    record(_tenant(), "cost.viewed", entity)
     if len(seen) < SEEN_MAX:
         request.session[SEEN] = [*seen, key]
 
@@ -128,7 +129,7 @@ class CostsView(generics.ListAPIView):
         variant = _variant(kwargs["variant_id"])
         page = self.paginate_queryset(self.filter_queryset(self.get_queryset())) or []
         ruling = costs.current_costs(_tenant(), [variant.pk]).get(variant.pk)
-        _viewed(request, variant)
+        viewed(request, Entity("variant", variant.pk, variant.sku))
         body = self.get_paginated_response(CostSerializer(page, many=True).data).data
         return Response({"current": CostSerializer(ruling).data if ruling else None, **body})
 
