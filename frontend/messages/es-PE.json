@@ -1116,6 +1116,15 @@
       "stale": "Ya no puedes cambiar las etiquetas de este cliente: se borró o quedó fuera de tu alcance de edición. La ficha se volvió a cargar.",
       "writeDenied": "No tienes permiso para cambiar las etiquetas de este cliente."
     },
+    "search": {
+      "label": "Buscar cliente",
+      "hint": "Escribe parte del nombre, el correo o el teléfono con su código de país (+51…).",
+      "short": "Escribe al menos 2 letras para buscar.",
+      "clear": "Borrar la búsqueda",
+      "landmark": "Buscar y filtrar clientes",
+      "none": "Ningún cliente que puedas ver coincide con «{query}».",
+      "noneTagged": "Ningún cliente que puedas ver lleva la etiqueta «{tag}» y coincide con «{query}»."
+    },
     "create": {
       "open": "Crear cliente",
       "title": "Nuevo cliente",
