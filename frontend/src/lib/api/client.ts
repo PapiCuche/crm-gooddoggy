@@ -93,6 +93,7 @@ import type {
   PaginatedTeamList,
   PaginatedTeamMemberList,
   PaginatedVariantList,
+  PaginatedVariantMatchList,
   PaginatedWarehouseList,
   PasswordResetConfirmRequest,
   PasswordResetRequestRequest,
@@ -143,6 +144,7 @@ import type {
   VariantCreateRequest,
   VariantPriceHistoryListParams,
   VariantsListParams,
+  VariantsSearchParams,
   Warehouse,
   WarehouseCreateRequest,
   WarehousesListParams,
@@ -2236,8 +2238,7 @@ export const getBrandsListUrl = (orgSlug: string, params?: BrandsListParams) => 
 };
 
 /**
- * Las marcas de la organización, sin las borradas. Paginado por orden de creación
- * (ADR-016). `POST` crea una.
+ * `q` filtra los marcas cuyo nombre lo contiene y `ids` deja solo esos identificadores; se combinan, no cambian el orden y la página siguiente se pide con los mismos. 400: `q` o `ids` repetidos, `q` de más de 254 caracteres o que no es una línea imprimible, `ids` con algo que no es un UUID o más de 50.
  */
 export const brandsList = async (
   orgSlug: string,
@@ -2666,7 +2667,7 @@ export const getCategoriesListUrl = (orgSlug: string, params?: CategoriesListPar
 };
 
 /**
- * Las categorías de la organización, sin las borradas, paginadas por creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por `path`).
+ * Las categorías de la organización, sin las borradas, paginadas por creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por `path`). `q` filtra los categorías cuyo nombre lo contiene y `ids` deja solo esos identificadores; se combinan, no cambian el orden y la página siguiente se pide con los mismos. 400: `q` o `ids` repetidos, `q` de más de 254 caracteres o que no es una línea imprimible, `ids` con algo que no es un UUID o más de 50.
  */
 export const categoriesList = async (
   orgSlug: string,
@@ -8440,7 +8441,7 @@ export const getProductsListUrl = (orgSlug: string, params?: ProductsListParams)
 };
 
 /**
- * Los productos vivos de la organización, paginados por creación (ADR-016).
+ * Los productos vivos de la organización, paginados por creación (ADR-016). `q` filtra los productos cuyo nombre lo contiene y `ids` deja solo esos identificadores; se combinan, no cambian el orden y la página siguiente se pide con los mismos. 400: `q` o `ids` repetidos, `q` de más de 254 caracteres o que no es una línea imprimible, `ids` con algo que no es un UUID o más de 50.
  */
 export const productsList = async (
   orgSlug: string,
@@ -10988,6 +10989,145 @@ export const useTeamMembersRemove = <TError = ErrorType<Error>, TContext = unkno
 > => {
   return useMutation(getTeamMembersRemoveMutationOptions(options), queryClient);
 };
+
+export const getVariantsSearchUrl = (orgSlug: string, params?: VariantsSearchParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/variants/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/variants/`;
+};
+
+/**
+ * Busca variantes vivas de productos vivos entre todos los productos, paginadas por creación (ADR-016). `q` casa con el nombre de la variante, su SKU, su código de barras o el nombre del producto (contiene, sin distinguir mayúsculas); `ids` resuelve hasta 50 variantes en una llamada. Se exige `q` no vacío o `ids`: no hay listado completo entre productos (400 si faltan los dos). Los que no existen, son de otra organización o están borrados no aparecen. 400 también: `q` o `ids` repetidos, `q` de más de 254 caracteres o que no es una línea imprimible, `ids` con algo que no es un UUID o más de 50.
+ */
+export const variantsSearch = async (
+  orgSlug: string,
+  params?: VariantsSearchParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedVariantMatchList> => {
+  return apiFetch<PaginatedVariantMatchList>(getVariantsSearchUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getVariantsSearchQueryKey = (orgSlug: string, params?: VariantsSearchParams) => {
+  return [`/api/v1/o/${orgSlug}/variants/`, ...(params ? [params] : [])] as const;
+};
+
+export const getVariantsSearchQueryOptions = <
+  TData = Awaited<ReturnType<typeof variantsSearch>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: VariantsSearchParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsSearch>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getVariantsSearchQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof variantsSearch>>> = ({ signal }) =>
+    variantsSearch(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof variantsSearch>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type VariantsSearchQueryResult = NonNullable<Awaited<ReturnType<typeof variantsSearch>>>;
+export type VariantsSearchQueryError = ErrorType<Error>;
+
+export function useVariantsSearch<
+  TData = Awaited<ReturnType<typeof variantsSearch>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | VariantsSearchParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsSearch>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof variantsSearch>>,
+          TError,
+          Awaited<ReturnType<typeof variantsSearch>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useVariantsSearch<
+  TData = Awaited<ReturnType<typeof variantsSearch>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: VariantsSearchParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsSearch>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof variantsSearch>>,
+          TError,
+          Awaited<ReturnType<typeof variantsSearch>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useVariantsSearch<
+  TData = Awaited<ReturnType<typeof variantsSearch>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: VariantsSearchParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsSearch>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useVariantsSearch<
+  TData = Awaited<ReturnType<typeof variantsSearch>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: VariantsSearchParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof variantsSearch>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getVariantsSearchQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getWarehousesListUrl = (orgSlug: string, params?: WarehousesListParams) => {
   const normalizedParams = new URLSearchParams();

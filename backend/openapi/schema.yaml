@@ -875,9 +875,11 @@ paths:
   /api/v1/o/{org_slug}/brands/:
     get:
       operationId: brands_list
-      description: |-
-        Las marcas de la organización, sin las borradas. Paginado por orden de creación
-        (ADR-016). `POST` crea una.
+      description: '`q` filtra los marcas cuyo nombre lo contiene y `ids` deja solo
+        esos identificadores; se combinan, no cambian el orden y la página siguiente
+        se pide con los mismos. 400: `q` o `ids` repetidos, `q` de más de 254 caracteres
+        o que no es una línea imprimible, `ids` con algo que no es un UUID o más de
+        50.'
       parameters:
       - name: cursor
         in: query
@@ -885,6 +887,14 @@ paths:
         description: El `next` de la página anterior. Sin él, la primera página.
         schema:
           type: string
+      - in: query
+        name: ids
+        schema:
+          type: string
+          maxLength: 1850
+        description: Hasta 50 identificadores UUID separados por comas, para resolver
+          varios en una llamada. Los que no existen, son de otra organización o están
+          borrados no aparecen.
       - name: limit
         in: query
         required: false
@@ -899,6 +909,13 @@ paths:
         schema:
           type: string
         required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 254
+        description: 'El texto que contiene, sin distinguir mayúsculas (hasta 254
+          caracteres, una línea; `%`, `_` y `\` son literales). Vacío: sin filtro.'
       tags:
       - catalog
       security:
@@ -1098,9 +1115,13 @@ paths:
   /api/v1/o/{org_slug}/categories/:
     get:
       operationId: categories_list
-      description: Las categorías de la organización, sin las borradas, paginadas
+      description: 'Las categorías de la organización, sin las borradas, paginadas
         por creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por
-        `path`).
+        `path`). `q` filtra los categorías cuyo nombre lo contiene y `ids` deja solo
+        esos identificadores; se combinan, no cambian el orden y la página siguiente
+        se pide con los mismos. 400: `q` o `ids` repetidos, `q` de más de 254 caracteres
+        o que no es una línea imprimible, `ids` con algo que no es un UUID o más de
+        50.'
       parameters:
       - name: cursor
         in: query
@@ -1108,6 +1129,14 @@ paths:
         description: El `next` de la página anterior. Sin él, la primera página.
         schema:
           type: string
+      - in: query
+        name: ids
+        schema:
+          type: string
+          maxLength: 1850
+        description: Hasta 50 identificadores UUID separados por comas, para resolver
+          varios en una llamada. Los que no existen, son de otra organización o están
+          borrados no aparecen.
       - name: limit
         in: query
         required: false
@@ -1122,6 +1151,13 @@ paths:
         schema:
           type: string
         required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 254
+        description: 'El texto que contiene, sin distinguir mayúsculas (hasta 254
+          caracteres, una línea; `%`, `_` y `\` son literales). Vacío: sin filtro.'
       tags:
       - catalog
       security:
@@ -3994,8 +4030,12 @@ paths:
   /api/v1/o/{org_slug}/products/:
     get:
       operationId: products_list
-      description: Los productos vivos de la organización, paginados por creación
-        (ADR-016).
+      description: 'Los productos vivos de la organización, paginados por creación
+        (ADR-016). `q` filtra los productos cuyo nombre lo contiene y `ids` deja solo
+        esos identificadores; se combinan, no cambian el orden y la página siguiente
+        se pide con los mismos. 400: `q` o `ids` repetidos, `q` de más de 254 caracteres
+        o que no es una línea imprimible, `ids` con algo que no es un UUID o más de
+        50.'
       parameters:
       - name: cursor
         in: query
@@ -4003,6 +4043,14 @@ paths:
         description: El `next` de la página anterior. Sin él, la primera página.
         schema:
           type: string
+      - in: query
+        name: ids
+        schema:
+          type: string
+          maxLength: 1850
+        description: Hasta 50 identificadores UUID separados por comas, para resolver
+          varios en una llamada. Los que no existen, son de otra organización o están
+          borrados no aparecen.
       - name: limit
         in: query
         required: false
@@ -4017,6 +4065,13 @@ paths:
         schema:
           type: string
         required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 254
+        description: 'El texto que contiene, sin distinguir mayúsculas (hasta 254
+          caracteres, una línea; `%`, `_` y `\` son literales). Vacío: sin filtro.'
       tags:
       - catalog
       security:
@@ -5390,6 +5445,88 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/variants/:
+    get:
+      operationId: variants_search
+      description: 'Busca variantes vivas de productos vivos entre todos los productos,
+        paginadas por creación (ADR-016). `q` casa con el nombre de la variante, su
+        SKU, su código de barras o el nombre del producto (contiene, sin distinguir
+        mayúsculas); `ids` resuelve hasta 50 variantes en una llamada. Se exige `q`
+        no vacío o `ids`: no hay listado completo entre productos (400 si faltan los
+        dos). Los que no existen, son de otra organización o están borrados no aparecen.
+        400 también: `q` o `ids` repetidos, `q` de más de 254 caracteres o que no
+        es una línea imprimible, `ids` con algo que no es un UUID o más de 50.'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - in: query
+        name: ids
+        schema:
+          type: string
+          maxLength: 1850
+        description: Hasta 50 identificadores UUID separados por comas, para resolver
+          varios en una llamada. Los que no existen, son de otra organización o están
+          borrados no aparecen.
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 254
+        description: 'El texto que contiene, sin distinguir mayúsculas (hasta 254
+          caracteres, una línea; `%`, `_` y `\` son literales). Vacío: sin filtro.'
+      tags:
+      - catalog
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedVariantMatchList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -7214,6 +7351,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedVariantMatchList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantMatch'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedWarehouseList:
       type: object
       required:
@@ -8672,6 +8823,31 @@ components:
       - is_deleted
       - name
       - product_id
+      - sku
+    VariantMatch:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: El nombre del producto más la etiqueta.
+        sku:
+          type: string
+        barcode:
+          type: string
+        product_id:
+          type: string
+          format: uuid
+        product_name:
+          type: string
+      required:
+      - barcode
+      - id
+      - name
+      - product_id
+      - product_name
       - sku
     VariantStatusEnum:
       enum:
