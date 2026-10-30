@@ -60,6 +60,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-45b | [#434](https://github.com/PapiCuche/crm-gooddoggy/issues/434) Precios: «Cambiar precio» desde la fila (fijar y programar) | `feature/f3-pricing-price-form` | #403 | frontend |
 | F3-45c | [#435](https://github.com/PapiCuche/crm-gooddoggy/issues/435) Precios: el panel de historial de un precio | `feature/f3-pricing-history-panel` | #434, #426 | frontend |
 | F3-50 | [#431](https://github.com/PapiCuche/crm-gooddoggy/issues/431) Security: filelock 4.2.4 (CVE-2026-112940, CVE-2026-112913, CVE-2026-112907) | `chore/deps-filelock-4-2-4` | — | backend |
+| F3-51 | [#444](https://github.com/PapiCuche/crm-gooddoggy/issues/444) Security: msgpack 1.2.4 (CVE-2026-114613) | `chore/deps-msgpack-1-2-3` | — | backend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
