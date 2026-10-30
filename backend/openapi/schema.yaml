@@ -3523,6 +3523,162 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pricing/promotions/:
+    get:
+      operationId: promotions_list
+      description: Con `prices.manage` todas; si no, las publicadas cuyas listas ve
+        el actor.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPromotionList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: promotions_create
+      description: Crea una promoción en borrador; no se aplica hasta publicarla.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromotionCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Promotion'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/promotions/{promotion_id}/:
+    get:
+      operationId: promotions_retrieve
+      description: Una promoción con sus objetivos y listas.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: promotion_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Promotion'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pricing/variants/{variant_id}/price-history/:
     get:
       operationId: variant_price_history_list
@@ -5697,6 +5853,16 @@ components:
       - price_id
       - starts_at
       - tax_included
+    DiscountTypeEnum:
+      enum:
+      - FIXED_PRICE
+      - PERCENT_OFF
+      - AMOUNT_OFF
+      type: string
+      description: |-
+        * `FIXED_PRICE` - Fixed Price
+        * `PERCENT_OFF` - Percent Off
+        * `AMOUNT_OFF` - Amount Off
     Error:
       type: object
       properties:
@@ -6621,6 +6787,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedPromotionList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Promotion'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedRoleList:
       type: object
       required:
@@ -7382,6 +7562,195 @@ components:
       description: |-
         * `PHYSICAL` - Physical
         * `SERVICE` - Service
+    Promotion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        terms:
+          type: string
+        discount_type:
+          $ref: '#/components/schemas/DiscountTypeEnum'
+        value:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+        currency:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/PromotionStatusEnum'
+        priority:
+          type: integer
+        ai_exposable:
+          type: boolean
+        channels:
+          type: array
+          items:
+            type: string
+          nullable: true
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PromotionItem'
+        price_list_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+      - ai_exposable
+      - channels
+      - created_at
+      - created_by_user_id
+      - currency
+      - description
+      - discount_type
+      - ends_at
+      - id
+      - items
+      - name
+      - price_list_ids
+      - priority
+      - starts_at
+      - status
+      - terms
+      - value
+      - version
+    PromotionCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        terms:
+          type: string
+          maxLength: 2000
+        discount_type:
+          $ref: '#/components/schemas/DiscountTypeEnum'
+        value:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          minLength: 1
+        currency:
+          type: string
+          minLength: 1
+          maxLength: 3
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        priority:
+          type: integer
+        ai_exposable:
+          type: boolean
+        channels:
+          type: array
+          items:
+            type: string
+            minLength: 1
+          nullable: true
+          maxItems: 10
+        price_list_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 20
+          minItems: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PromotionItemRequest'
+      required:
+      - discount_type
+      - ends_at
+      - items
+      - name
+      - price_list_ids
+      - starts_at
+      - value
+    PromotionItem:
+      type: object
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        override_value:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          nullable: true
+    PromotionItemRequest:
+      type: object
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        override_value:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          nullable: true
+          minLength: 1
+    PromotionStatusEnum:
+      enum:
+      - DRAFT
+      - PUBLISHED
+      - CANCELLED
+      type: string
+      description: |-
+        * `DRAFT` - Draft
+        * `PUBLISHED` - Published
+        * `CANCELLED` - Cancelled
     RevokedEnum:
       enum:
       - REVOKED

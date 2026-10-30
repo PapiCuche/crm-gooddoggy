@@ -193,6 +193,7 @@ SPECTACULAR_SETTINGS = {
     # Un nombre por enumeración: sin esto la primera `status` del contrato sería `StatusEnum`.
     "ENUM_NAME_OVERRIDES": {
         "MembershipStatusEnum": MEMBERSHIP_STATUSES,
+        "PromotionStatusEnum": "apps.pricing.models.PromotionStatus",  # F3-48d
         "ActiveOrSuspendedEnum": ["ACTIVE", "SUSPENDED"],  # los dos que la API cambia (F2-19)
         "ScopesEnum": "apps.access.catalog.Scope",  # un alcance: `scopes` (F2-11), `scope` (F2-22)
         # `Team.Strategy` (F2-50): otra lista con el mismo nombre de campo no le cambia el nombre.

@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from uuid import UUID
 
-from django.db.models import Q, QuerySet
+from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from apps.access.selectors import ExecutionContext, has_permission
 from apps.pricing.models import (
@@ -112,3 +112,20 @@ def promotions_from(
 def promotion_items(promotion_ids: Iterable[UUID]) -> QuerySet[PromotionItem]:
     """Los objetivos de varias promociones, en una consulta."""
     return PromotionItem.objects.filter(promotion_id__in=promotion_ids)
+
+
+def visible_promotions(ectx: ExecutionContext) -> QuerySet[Promotion]:
+    """Las promociones no borradas que el actor puede ver: todas con `prices.manage`; si no, solo
+    las publicadas cuyas listas ve todas (una oculta la oculta, como si no existiera)."""
+    rows = Promotion.objects.filter(deleted_at__isnull=True)
+    if has_permission(ectx, MANAGE):
+        return rows
+    hidden = PromotionPriceList.objects.filter(promotion_id=OuterRef("pk")).exclude(
+        price_list_id__in=visible_price_lists(ectx).values("id")
+    )
+    return rows.filter(status="PUBLISHED").exclude(Exists(hidden))
+
+
+def promotion_lists(promotion_ids: Iterable[UUID]) -> QuerySet[PromotionPriceList]:
+    """Las listas de varias promociones, en una consulta."""
+    return PromotionPriceList.objects.filter(promotion_id__in=promotion_ids)

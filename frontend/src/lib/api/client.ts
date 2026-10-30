@@ -82,6 +82,7 @@ import type {
   PaginatedPriceList,
   PaginatedPriceListList,
   PaginatedProductList,
+  PaginatedPromotionList,
   PaginatedRoleList,
   PaginatedStockImportRowList,
   PaginatedTagList,
@@ -113,6 +114,9 @@ import type {
   Product,
   ProductCreateRequest,
   ProductsListParams,
+  Promotion,
+  PromotionCreateRequest,
+  PromotionsListParams,
   Role,
   RoleCreateRequest,
   RolesListParams,
@@ -7435,6 +7439,384 @@ export const usePriceListPricesCreate = <TError = ErrorType<Error>, TContext = u
 > => {
   return useMutation(getPriceListPricesCreateMutationOptions(options), queryClient);
 };
+
+export const getPromotionsListUrl = (orgSlug: string, params?: PromotionsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/pricing/promotions/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/pricing/promotions/`;
+};
+
+/**
+ * Con `prices.manage` todas; si no, las publicadas cuyas listas ve el actor.
+ */
+export const promotionsList = async (
+  orgSlug: string,
+  params?: PromotionsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedPromotionList> => {
+  return apiFetch<PaginatedPromotionList>(getPromotionsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPromotionsListQueryKey = (orgSlug: string, params?: PromotionsListParams) => {
+  return [`/api/v1/o/${orgSlug}/pricing/promotions/`, ...(params ? [params] : [])] as const;
+};
+
+export const getPromotionsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof promotionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PromotionsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPromotionsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof promotionsList>>> = ({ signal }) =>
+    promotionsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof promotionsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PromotionsListQueryResult = NonNullable<Awaited<ReturnType<typeof promotionsList>>>;
+export type PromotionsListQueryError = ErrorType<Error>;
+
+export function usePromotionsList<
+  TData = Awaited<ReturnType<typeof promotionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | PromotionsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof promotionsList>>,
+          TError,
+          Awaited<ReturnType<typeof promotionsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePromotionsList<
+  TData = Awaited<ReturnType<typeof promotionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PromotionsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof promotionsList>>,
+          TError,
+          Awaited<ReturnType<typeof promotionsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePromotionsList<
+  TData = Awaited<ReturnType<typeof promotionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PromotionsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePromotionsList<
+  TData = Awaited<ReturnType<typeof promotionsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PromotionsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPromotionsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getPromotionsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/promotions/`;
+};
+
+/**
+ * Crea una promoción en borrador; no se aplica hasta publicarla.
+ */
+export const promotionsCreate = async (
+  orgSlug: string,
+  promotionCreateRequest: PromotionCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Promotion> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Promotion>(getPromotionsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(promotionCreateRequest),
+  });
+};
+
+export const getPromotionsCreateMutationKey = () => ["promotionsCreate"] as const;
+
+export const getPromotionsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof promotionsCreate>>,
+    TError,
+    PromotionsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof promotionsCreate>>,
+  TError,
+  PromotionsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPromotionsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof promotionsCreate>>,
+    PromotionsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return promotionsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PromotionsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof promotionsCreate>>
+>;
+export type PromotionsCreateMutationBody = PromotionCreateRequest;
+export type PromotionsCreateMutationError = ErrorType<Error>;
+export type PromotionsCreateMutationVariables = { orgSlug: string; data: PromotionCreateRequest };
+
+export const usePromotionsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof promotionsCreate>>,
+      TError,
+      PromotionsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof promotionsCreate>>,
+  TError,
+  PromotionsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPromotionsCreateMutationOptions(options), queryClient);
+};
+
+export const getPromotionsRetrieveUrl = (orgSlug: string, promotionId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/promotions/${promotionId}/`;
+};
+
+/**
+ * Una promoción con sus objetivos y listas.
+ */
+export const promotionsRetrieve = async (
+  orgSlug: string,
+  promotionId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Promotion> => {
+  return apiFetch<Promotion>(getPromotionsRetrieveUrl(orgSlug, promotionId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPromotionsRetrieveQueryKey = (orgSlug: string, promotionId: string) => {
+  return [`/api/v1/o/${orgSlug}/pricing/promotions/${promotionId}/`] as const;
+};
+
+export const getPromotionsRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof promotionsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  promotionId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPromotionsRetrieveQueryKey(orgSlug, promotionId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof promotionsRetrieve>>> = ({ signal }) =>
+    promotionsRetrieve(orgSlug, promotionId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      promotionId !== null &&
+      promotionId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof promotionsRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PromotionsRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof promotionsRetrieve>>
+>;
+export type PromotionsRetrieveQueryError = ErrorType<Error>;
+
+export function usePromotionsRetrieve<
+  TData = Awaited<ReturnType<typeof promotionsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  promotionId: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof promotionsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof promotionsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePromotionsRetrieve<
+  TData = Awaited<ReturnType<typeof promotionsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  promotionId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof promotionsRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof promotionsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof promotionsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePromotionsRetrieve<
+  TData = Awaited<ReturnType<typeof promotionsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  promotionId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePromotionsRetrieve<
+  TData = Awaited<ReturnType<typeof promotionsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  promotionId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof promotionsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPromotionsRetrieveQueryOptions(orgSlug, promotionId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getVariantPriceHistoryListUrl = (
   orgSlug: string,
