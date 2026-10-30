@@ -370,7 +370,7 @@ describe("PriceForm", () => {
     const api = await opened({ [POST]: created("4199.00", "2026-10-26T17:00:00Z") });
     fill({ [AMOUNT]: "4199", Motivo: "abc" });
     fireEvent.click(within(form()).getByLabelText("Una fecha y hora futura"));
-    expect(field("Fecha y hora")).toHaveAttribute("max", "9999-12-31T23:59");
+    expect(field("Fecha y hora")).toHaveAttribute("max", "9998-12-31T23:59");
     // Después del próximo cambio (01/11 00:00), la base es el programado.
     fireEvent.change(field("Fecha y hora"), { target: { value: "2026-11-02T10:00" } });
     expect(form()).toHaveTextContent(

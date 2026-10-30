@@ -11,7 +11,8 @@ import type { DiscountTypeEnum, PriceList, Promotion } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
-import { validAmount } from "./price-form";
+import { PromotionExtras } from "./promotion-extras";
+import { type Extra, validPriority, validValue } from "./promotion-rules";
 import { KINDS } from "./promotion-targets";
 import { type Kind, type Target, TargetPicker } from "./target-picker";
 import { ZONE, zonedInstant } from "./zoned";
@@ -20,21 +21,25 @@ const TYPES = ["PERCENT_OFF", "AMOUNT_OFF", "FIXED_PRICE"] as const;
 const [ITEMS_MAX, LISTS_MAX] = [100, 20]; // los límites de la API
 type Row = { key: number; kind: Kind; target: Target | null; own: string };
 type Problems = Record<string, true>; // por clave: `name`, `row.0`, `own.1`…
-type Form = Record<"name" | "description" | "terms" | "value" | "starts" | "ends", string> & {
-  type: DiscountTypeEnum;
-  lists: string[] | null; // `null`: sin tocar, rige la predeterminada
-  rows: Row[];
-};
+type Form = Record<"name" | "description" | "terms" | "value" | "starts" | "ends", string> &
+  Extra & {
+    type: DiscountTypeEnum;
+    lists: string[] | null; // `null`: sin tocar, rige la predeterminada
+    rows: Row[];
+  };
 const FRESH: Form = {
   ...{ name: "", description: "", terms: "", value: "", starts: "", ends: "" },
   ...{ type: "PERCENT_OFF", lists: null, rows: [] },
+  ...{ priority: "", channels: [], draft: "", ai: false },
 };
 const SERVER_KEY: Record<string, string> = {
   ...{ name: "name", description: "description", terms: "terms", discount_type: "type" },
   ...{ value: "value", currency: "lists", price_list_ids: "lists" },
-  ...{ starts_at: "starts", ends_at: "ends" },
+  ...{ starts_at: "starts", ends_at: "ends", priority: "priority", channels: "channels" },
+  ...{ ai_exposable: "ai" },
 };
-const DATE = { type: "datetime-local", max: "9999-12-31T23:59" };
+// Los años que `zonedInstant` convierte bien: 1000 a 9998.
+const DATE = { type: "datetime-local", min: "1000-01-01T00:00", max: "9998-12-31T23:59" };
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -66,6 +71,8 @@ function serverProblems(fields: Record<string, unknown> = {}): Problems {
 export function PromotionForm(props: {
   slug: string;
   priceLists: PriceList[]; // las activas
+  listsState: "loading" | "error" | "ready"; // sin «ready» no se sabe si hay listas
+  onRetry: () => void;
   onCreated: (promotion: Promotion) => void;
   onClose: () => void;
 }) {
@@ -82,6 +89,7 @@ export function PromotionForm(props: {
     rows: [{ key: 0, kind: "category_id", target: null, own: "" }],
   }));
   const [bad, setBad] = useState<Problems>({});
+  const [attempt, setAttempt] = useState(0); // cada envío con errores vuelve a llevar el foco
   const write = usePromotionsCreate({
     mutation: {
       networkMode: "always",
@@ -103,7 +111,7 @@ export function PromotionForm(props: {
   useEffect(() => {
     if (flagged)
       dialog.current?.querySelector<HTMLElement>("[aria-invalid],[data-problem]")?.focus();
-  }, [flagged, failure]);
+  }, [flagged, failure, attempt]);
 
   const chosen = form.lists ?? priceLists.filter((list) => list.is_default).map((l) => l.id);
   const picked = priceLists.filter((list) => chosen.includes(list.id));
@@ -120,21 +128,23 @@ export function PromotionForm(props: {
     patch({ rows: form.rows.map((one) => (one.key === key ? { ...one, ...change } : one)) });
 
   function submit() {
-    if (sending.current) return;
+    if (sending.current || props.listsState !== "ready") return;
     const found: Problems = {};
     const at = (local: string) => zonedInstant(local, zone);
     const [from, to] = [at(form.starts), at(form.ends)];
     if (!form.name.trim()) found.name = true;
-    if (!validAmount(form.value)) found.value = true;
+    if (!validValue(form.type, form.value)) found.value = true;
+    if (!validPriority(form.priority)) found.priority = true;
+    if (form.draft.trim()) found.channels = true; // escrito y sin agregar
     if (!form.starts || Number.isNaN(from.getTime())) found.starts = true;
     if (!form.ends || Number.isNaN(to.getTime()) || to <= from) found.ends = true;
     if (!chosen.length || new Set(picked.map((l) => l.currency)).size > 1) found.lists = true;
     form.rows.forEach((one, index) => {
       if (!one.target) found[`row.${index}`] = true;
-      if (one.own && !validAmount(one.own)) found[`own.${index}`] = true;
+      if (one.own && !validValue(form.type, one.own)) found[`own.${index}`] = true;
     });
     setBad(found);
-    if (Object.keys(found).length) return;
+    if (Object.keys(found).length) return setAttempt((n) => n + 1);
     sending.current = true;
     write.mutate({
       orgSlug: slug,
@@ -142,6 +152,9 @@ export function PromotionForm(props: {
         ...{ name: form.name.trim(), discount_type: form.type, value: form.value, currency },
         ...{ starts_at: from.toISOString(), ends_at: to.toISOString() },
         price_list_ids: chosen,
+        ...(Number(form.priority) && { priority: Number(form.priority) }),
+        ...(form.channels.length && { channels: form.channels }),
+        ...(form.ai && { ai_exposable: true }),
         ...(form.description.trim() && { description: form.description.trim() }),
         ...(form.terms.trim() && { terms: form.terms.trim() }),
         items: form.rows.map((one) => ({
@@ -187,12 +200,34 @@ export function PromotionForm(props: {
       label={name === "value" ? t(`valueLabel.${form.type}`, { unit: unit() }) : t(name)}
       value={form[name]}
       maxLength={name === "name" ? 200 : 15}
-      error={say(name, name)}
+      error={say(name, name === "value" && form.type === "PERCENT_OFF" ? "percent" : name)}
       onChange={(event) => patch({ [name]: event.target.value })}
       {...more}
     />
   );
   const button = "min-h-11 sm:min-h-9";
+  // Lo ya elegido en las otras filas no se ofrece otra vez (la API decide los repetidos).
+  const taken = (key: number) =>
+    new Set(form.rows.flatMap((one) => (one.key !== key && one.target ? [one.target.id] : [])));
+  let listsBody: ReactNode = <p className="text-muted text-sm">{t("noLists")}</p>;
+  if (props.listsState === "loading")
+    listsBody = <p className="text-muted text-sm">{t("listsLoading")}</p>;
+  else if (props.listsState === "error")
+    listsBody = (
+      <div className="flex flex-col items-start gap-2">
+        <p role="alert" className="text-danger text-sm">
+          {t("listsFailed")}
+        </p>
+        <Button
+          type="button"
+          variant="ghost"
+          className={`${button} border-border border`}
+          onClick={props.onRetry}
+        >
+          {t("retry")}
+        </Button>
+      </div>
+    );
 
   return (
     <dialog
@@ -244,27 +279,25 @@ export function PromotionForm(props: {
           <legend className="text-sm font-medium">{t("lists")}</legend>
           {group(
             "lists",
-            priceLists.length ? (
-              priceLists.map((list) => (
-                <label key={list.id} className={`flex items-center gap-2 text-sm ${button}`}>
-                  <input
-                    type="checkbox"
-                    className="size-4 shrink-0"
-                    checked={chosen.includes(list.id)}
-                    onChange={() =>
-                      patch({
-                        lists: chosen.includes(list.id)
-                          ? chosen.filter((one) => one !== list.id)
-                          : [...chosen, list.id].slice(0, LISTS_MAX),
-                      })
-                    }
-                  />
-                  {list.name} ({list.currency})
-                </label>
-              ))
-            ) : (
-              <p className="text-muted text-sm">{t("noLists")}</p>
-            ),
+            props.listsState === "ready" && priceLists.length
+              ? priceLists.map((list) => (
+                  <label key={list.id} className={`flex items-center gap-2 text-sm ${button}`}>
+                    <input
+                      type="checkbox"
+                      className="size-4 shrink-0"
+                      checked={chosen.includes(list.id)}
+                      onChange={() =>
+                        patch({
+                          lists: chosen.includes(list.id)
+                            ? chosen.filter((one) => one !== list.id)
+                            : [...chosen, list.id].slice(0, LISTS_MAX),
+                        })
+                      }
+                    />
+                    {list.name} ({list.currency})
+                  </label>
+                ))
+              : listsBody,
           )}
         </fieldset>
         <fieldset className="flex flex-col gap-3">
@@ -284,10 +317,12 @@ export function PromotionForm(props: {
                   options={KINDS.map((kind): [string, string] => [kind, t(`kinds.${kind}`)])}
                 />
                 <TargetPicker
+                  key={one.kind} // otro tipo, otro buscador: sin texto ni resultados del anterior
                   slug={slug}
                   kind={one.kind}
                   label={t(`kinds.${one.kind}`)}
                   picked={one.target}
+                  taken={taken(one.key)}
                   error={say(`row.${index}`, "row")}
                   onPick={(target) => row(one.key, { target })}
                 />
@@ -297,7 +332,7 @@ export function PromotionForm(props: {
                   inputMode="decimal"
                   maxLength={15}
                   hint={t("ownHint")}
-                  error={say(`own.${index}`, "own")}
+                  error={say(`own.${index}`, form.type === "PERCENT_OFF" ? "percent" : "own")}
                   onChange={(event) => row(one.key, { own: event.target.value })}
                 />
                 <Button
@@ -334,6 +369,7 @@ export function PromotionForm(props: {
             {t("addTarget")}
           </Button>
         </fieldset>
+        <PromotionExtras value={form} problems={problems} onChange={patch} />
         {generic ? (
           <p role="alert" className="text-danger text-sm">
             {failure.code === "PERMISSION_DENIED"
@@ -353,7 +389,12 @@ export function PromotionForm(props: {
           >
             {t("cancel")}
           </Button>
-          <Button type="submit" variant="primary" className={button} aria-disabled={busy}>
+          <Button
+            type="submit"
+            variant="primary"
+            className={button}
+            aria-disabled={busy || props.listsState !== "ready"}
+          >
             {busy ? t("busy") : t("submit")}
           </Button>
         </div>

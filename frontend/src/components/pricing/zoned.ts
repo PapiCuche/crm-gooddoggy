@@ -18,10 +18,12 @@ export function stamp(iso: string, zone: string, year = true) {
 }
 
 // «aaaa-mm-ddThh:mm» de un `datetime-local`: el instante en que esa hora de pared ocurre en
-// `zone`. Dos pasadas: la segunda corrige el desfase si la zona cambia de hora entre medias.
+// `zone`, o `Invalid Date` si no se lee o su año no está entre 1000 y 9998. Dos pasadas: la segunda corrige el desfase si la zona cambia de hora entre medias.
 export function zonedInstant(local: string, zone: string): Date {
   const wall = Date.parse(`${local.slice(0, 16)}:00Z`);
-  if (Number.isNaN(wall)) return new Date(NaN); // ilegible: quien llama lo rechaza
+  // Ilegible, o un año que `Date.UTC` no convierte (0-99 pasan a 19xx; 9999 se desborda).
+  const year = /^\d{4}-/.test(local) ? Number(local.slice(0, 4)) : NaN;
+  if (Number.isNaN(wall) || !(year >= 1000 && year <= 9998)) return new Date(NaN);
   const offset = (at: number) => {
     const w = wallClock(new Date(at), zone);
     return Date.UTC(+w.year, +w.month - 1, +w.day, +w.hour, +w.minute, +w.second) - at;
