@@ -1670,6 +1670,29 @@
       "system": "Sistema",
       "none": "Sin precio",
       "since": "Programado: rige desde el {at}"
+    },
+    "margins": {
+      "switch": "Ver costos y margen",
+      "hint": "Pide confirmar tu segundo factor. Mientras esté activo, los costos se ven en esta pantalla; al apagarlo se borran.",
+      "igv": "Costo y margen se calculan sobre importes con IGV incluido. Los costos se ocultan solos a los 15 minutos.",
+      "loading": "Cargando costos y márgenes…",
+      "declined": "Sin confirmar tu identidad, los costos siguen ocultos.",
+      "denied": "No tienes permiso para ver los costos de esta lista.",
+      "stepUp": "Hace falta confirmar de nuevo tu segundo factor. Vuelve a activar el interruptor.",
+      "gone": "La lista ya no está disponible. Elige otra.",
+      "cost": "Costo",
+      "marginAmount": "Margen S/",
+      "marginPercent": "Margen %",
+      "loss": "Pérdida",
+      "capLow": "< -{limit} %",
+      "capHigh": "> {limit} %",
+      "reason": {
+        "NO_PRICE": "Sin margen: la variante no tiene precio",
+        "VARIANT_UNAVAILABLE": "Sin margen: no está a la venta",
+        "NO_COST": "Sin margen: falta registrar su costo",
+        "CURRENCY_MISMATCH": "Sin margen: el precio y el costo están en monedas distintas",
+        "TAX_MISMATCH": "Sin margen: uno incluye IGV y el otro no"
+      }
     }
   },
   "promotions": {
