@@ -494,7 +494,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Repetir** la misma concesión responde 204 y no escribe, si el actor pasa las reglas: quien no cubre lo que el rol ya tiene recibe 403 también al repetirlo, y así la respuesta no le dice qué alcance tiene el rol.
 - **Errores:** 400 `VALIDATION_ERROR` en `scope` si el alcance no es uno de los cuatro o no corresponde al permiso; 403 `PERMISSION_DENIED` sin decir la regla (y sin `roles.manage`, antes de mirar el cuerpo); 404 si el rol no es de la organización o el permiso no está en el catálogo; 409 `LAST_OWNER` si la organización no tiene rol Owner.
 - **Auditoría de tenant:** `role.permission_granted` al conceder y `role.permission_scope_changed` al cambiar el alcance, con el antes y el después, en la misma transacción.
-- **Sin step-up MFA** al delegar un permiso sensible: MFA no existe todavía (E01-03).
+- **Sin step-up MFA** al delegar un permiso sensible todavía: la pieza existe (`step_up_methods`, F2-125) y esta ruta la adoptará en su work item.
 
 `DELETE` en la misma ruta retira el permiso al rol. Responde 204 sin cuerpo y exige `roles.manage`.
 
@@ -515,7 +515,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Repetir:** asignar un rol que ya tiene responde 204 y no escribe. Quitar un rol que no tiene responde 404.
 - **Errores:** 403 `PERMISSION_DENIED` (sin el permiso, uno mismo o un rol que el actor no cubre; no dice cuál); 404 si el miembro o el rol no son de la organización; 409 `LAST_OWNER` al quitar el rol Owner al último Owner activo y, en las dos operaciones, si la organización no tiene rol Owner (OBS-F2-05C-4). Para quien tiene `users.manage`, un 403 significa que el miembro y el rol existen, y al quitar, que el miembro lo tiene.
 - **Estado del miembro:** no se mira. Se puede asignar o quitar un rol a una membresía invitada, suspendida o dada de baja. Reactivar vuelve a exigir cubrir sus roles (ADR-017 §2); la aceptación de invitaciones (E01-06) debe decidir lo mismo.
-- **Pendiente:** el step-up MFA que ADR-003 §5 exige para delegar un permiso sensible llega con MFA (E01-03) y se aplicará a esta ruta.
+- **Pendiente:** el step-up MFA que ADR-003 §5 exige para delegar un permiso sensible ya existe (F2-125) y se aplicará a esta ruta en su work item.
 - **Auditoría de tenant:** `membership.role_assigned` y `membership.role_removed`, que escriben los servicios en la misma transacción.
 - `access.permissions.rbac_errors()` da a esas negativas la forma del contrato; lo usa también la suspensión de miembros.
 
@@ -748,7 +748,7 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **`enabled`** y **`enabled_at`**: si tiene un dispositivo confirmado, y desde cuándo (`null` si no).
 - **`enrollment_expires_in`**: los segundos que le quedan a un alta empezada para confirmarse, o `null` si no hay ninguna que se pueda confirmar: no se empezó, caducó a los 10 minutos, se agotó con cinco códigos que no valen (ADR-024) o ya está confirmada. Son segundos enteros, hacia abajo, y nunca cero: en el último segundo ya dice `null`, aunque la confirmación la acepta hasta los 600 justos. Los fallos anotados (`failed_codes`) no lo cambian ni se dicen.
 - **`backup_codes_left`**: cuántos códigos de respaldo quedan sin gastar. Nunca cuáles (ADR-023 §6); cero sin dispositivo confirmado.
-- **Lo que no dice:** el secreto, un código o su hash; si la política de alguna organización exige el segundo factor (`MFA_ENFORCEMENT`, aún sin construir); cuándo se verificó por última vez en esta sesión (`mfa_at`, para el step-up); el estado de otra persona.
+- **Lo que no dice:** el secreto, un código o su hash; si la política de alguna organización exige el segundo factor (`MFA_ENFORCEMENT`, aún sin construir); el estado de otra persona. Los segundos que le quedan al step-up de **esta** sesión sí (`step_up_expires_in`, F2-125, abajo).
 - **Con una sesión robada** se ve, además de si la cuenta tiene segundo factor, si hay un alta empezada y cuánto le queda: el momento de gastar los cinco intentos de ADR-024. Preguntarlo no cuenta en ningún límite (un 409 de la confirmación sí cuenta en el del acceso, F2-100). El tope no cambia: cinco por cada alta que la dueña empiece.
 - La respuesta no se guarda en caché, como toda la API.
 
@@ -775,6 +775,14 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Lo que no cambia:** la sesión que lo pide sigue con su ID, y las demás sesiones de la cuenta no se cierran.
 - **Lo que no hace:** no enseña otra vez los códigos ya generados (solo se guardan sus hashes); no avisa por correo; no hay pantalla.
 - **Para la pantalla:** no enviar dos veces la petición. La segunda, con el mismo código TOTP, recibe 400 en `code` (ese paso ya se gastó) y cuenta en los dos límites, aunque la primera haya regenerado los códigos; con un código de otro paso regenera otra vez, y los diez de la primera respuesta ya no valen: solo valen los de la última regeneración.
+
+## MFA: step-up, volver a verificar el segundo factor (F2-125, ADR-023 §7, ADR-003 §4)
+
+- **La prueba es `mfa_at` en la sesión** (segundos Unix, tras la cookie HttpOnly): solo la escriben el segundo paso del acceso, el alta del factor y esta ruta; no se lee de cabeceras, cookies ni cuerpo, y una sesión nueva no la hereda. Un valor que no es entero o es del futuro no vale. Quitar el factor la borra.
+- **`POST /api/v1/auth/mfa/step-up/`** con `{code}` (`apps.accounts.mfa_step_up.verify`): sesión y CSRF, sin contraseña; vale un código de la aplicación o de respaldo. 200 `{step_up_expires_in: 900}`. Comprueba con `second_factor.verify`: cuenta en el tope por cuenta compartido (no en el límite por dirección) y gasta el código con la cuenta bloqueada.
+- **Si vale,** audita `auth.mfa.step_up` con `{"method": ...}` (sin esa fila, 500 y el código no se gasta) y la sesión cambia de ID y anota `mfa_at`. **Errores:** 400 en `code` (siempre igual, con su fila `DENIED`); 409 `MFA_NOT_ENABLED` sin dispositivo confirmado (`MFA_ENFORCEMENT` no exime); 401 si la sesión se revocó o cerró con la petición en curso (no se gasta nada); 429 con el tope alcanzado, también para el código correcto.
+- **`core.api.step_up`** (en `core`: `access` y `accounts` no se importan) tiene `require_recent_mfa(request, max_age=15 min)`; vale hasta el segundo 900 inclusive. Una vista de tenant declara `step_up_methods = {"GET", "POST"}` junto a `required_permissions` y `HasPermission` lo aplica **después** de los permisos (HEAD pide lo de GET): 403 `STEP_UP_REQUIRED` con un `message`, el mismo para la cuenta sin segundo factor (le dice que lo active). Una declaración que no es un conjunto de métodos lo pide para todos.
+- **`GET /api/v1/auth/mfa/`** gana `step_up_expires_in` (segundos que le quedan a esta sesión, o `null`). Ninguna ruta lo usa todavía (costos F3-46, edición masiva); la pantalla es F2-126.
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
 

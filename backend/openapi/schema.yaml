@@ -143,7 +143,9 @@ paths:
       description: |-
         El estado del segundo factor de la cuenta de la sesión: si tiene un dispositivo
         confirmado y desde cuándo, si dejó un alta empezada que aún se puede confirmar, y
-        cuántos códigos de respaldo le quedan. Nunca el secreto ni los códigos.
+        cuántos códigos de respaldo le quedan y, si esta sesión verificó el segundo factor hace
+        menos de 15 minutos, los segundos que le quedan al step-up (`step_up_expires_in`; `null`
+        si no). Nunca el secreto ni los códigos.
       tags:
       - auth
       security:
@@ -243,6 +245,61 @@ paths:
       responses:
         '204':
           description: No response body
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/auth/mfa/step-up/:
+    post:
+      operationId: auth_mfa_step_up
+      description: |-
+        Vuelve a verificar el segundo factor con un código (de la aplicación o de respaldo): la
+        sesión queda verificada 15 minutos, con otro ID. 400 en `code`: no vale, sin decir por
+        qué. 401: la sesión se revocó. 409 `MFA_NOT_ENABLED`: sin segundo factor. 429: demasiados
+        códigos fallidos de la cuenta en 24 horas.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaStepUpRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaStepUpResult'
+          description: ''
         '400':
           content:
             application/json:
@@ -6147,11 +6204,36 @@ components:
         backup_codes_left:
           type: integer
           description: Códigos de respaldo que quedan sin gastar.
+        step_up_expires_in:
+          type: integer
+          nullable: true
+          description: Segundos que le quedan al step-up de esta sesión; `null` si
+            no hay uno vigente.
       required:
       - backup_codes_left
       - enabled
       - enabled_at
       - enrollment_expires_in
+      - step_up_expires_in
+    MfaStepUpRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: El código de la aplicación de autenticación, o un código de
+            respaldo.
+          maxLength: 32
+      required:
+      - code
+    MfaStepUpResult:
+      type: object
+      properties:
+        step_up_expires_in:
+          type: integer
+          description: Segundos que vale la verificación desde ahora (15 minutos).
+      required:
+      - step_up_expires_in
     Movement:
       type: object
       properties:

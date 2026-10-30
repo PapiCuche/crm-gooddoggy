@@ -36,6 +36,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/auth/mfa/",
         "/api/v1/auth/mfa/backup-codes/",
         "/api/v1/auth/mfa/disable/",
+        "/api/v1/auth/mfa/step-up/",
         "/api/v1/auth/mfa/totp/",
         "/api/v1/auth/mfa/totp/confirm/",
         "/api/v1/auth/session/",
