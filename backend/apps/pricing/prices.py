@@ -14,7 +14,6 @@ desactiva su lista no lo ofrece el motor (F3-43). La `EXCLUDE` es la última bar
 llegue a la base es `PriceConflict` (409), nunca un 500.
 """
 
-import re
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -25,14 +24,11 @@ from django.db.models import Q
 from apps.audit.services import Entity, record
 from apps.catalog.selectors import live_variants
 from apps.pricing.models import OVERLAP, PriceList, ProductPrice
+from apps.pricing.text import change_reason
 from core.money import amount_text, parse_amount
 from core.outbox import emit
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
-from core.text import line
-
-REASON_MIN, REASON_MAX = 3, 500
-TAG = re.compile(r"<[A-Za-z/!?]")  # el comienzo de una etiqueta o un comentario HTML
 
 
 class RetroactivePrice(ValueError):
@@ -49,14 +45,6 @@ class PriceUnchanged(Exception):
 
 class PriceConflict(Exception):
     """La `EXCLUDE` rechazó un solape: otro cambio del par llegó antes (409 `PRICE_CONFLICT`)."""
-
-
-def change_reason(value: str) -> str:
-    """El motivo como se guarda: una línea de 3 a 500 caracteres, sin etiquetas HTML."""
-    text = line(value, REASON_MAX)
-    if len(text) < REASON_MIN or TAG.search(text):
-        raise ValueError(f"de {REASON_MIN} a {REASON_MAX} caracteres, sin HTML")
-    return text
 
 
 def _lock(alias: str, ctx: TenantContext, variant_id: UUID, price_list_id: UUID) -> None:
