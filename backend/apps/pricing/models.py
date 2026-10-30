@@ -1,7 +1,7 @@
 """Precios (Fase 3, E03; modelo de datos §E.8, ADR-006). Tablas tenant-owned con FORCE RLS."""
 
 from django.contrib.postgres.constraints import ExclusionConstraint
-from django.contrib.postgres.fields import RangeOperators
+from django.contrib.postgres.fields import ArrayField, RangeOperators
 from django.db import models
 
 from core.db.models import TenantModel, uuid7_primary_key
@@ -176,3 +176,191 @@ class ProductPrice(TenantModel):
 
     def __str__(self) -> str:
         return f"{self.amount} {self.currency}"
+
+
+class DiscountType(models.TextChoices):
+    FIXED_PRICE = "FIXED_PRICE"
+    PERCENT_OFF = "PERCENT_OFF"
+    AMOUNT_OFF = "AMOUNT_OFF"
+
+
+class PromotionStatus(models.TextChoices):
+    DRAFT = "DRAFT"
+    PUBLISHED = "PUBLISHED"
+    CANCELLED = "CANCELLED"
+
+
+class Promotion(TenantModel):
+    """Una promoción (§E.8, ADR-006 §2). «Activa» no se guarda: es PUBLISHED con `at` en
+    `[starts_at, ends_at)`, sin ningún job. `stackable` es siempre `false` en el MVP (D-PRC-3).
+    `channels` NULL: todos. Borrado lógico."""
+
+    DiscountType = DiscountType
+    Status = PromotionStatus
+
+    id = uuid7_primary_key()
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    terms = models.TextField(blank=True)  # el texto para el cliente y la IA
+    discount_type = models.CharField(max_length=12, choices=DiscountType.choices)
+    value = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3)
+    starts_at = models.DateTimeField()
+    ends_at = models.DateTimeField()  # no hay promociones eternas
+    status = models.CharField(max_length=10, choices=PromotionStatus.choices, default="DRAFT")
+    priority = models.IntegerField(default=0)
+    stackable = models.BooleanField(default=False)
+    ai_exposable = models.BooleanField(default=False)
+    channels = ArrayField(models.CharField(max_length=30), null=True, blank=True)
+    created_by_user_id = models.UUIDField(null=True, blank=True)  # FKs compuestas a membresías
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_user_id = models.UUIDField(null=True, blank=True)
+    version = models.IntegerField(default=1)  # [V]
+
+    class Meta:
+        db_table = "promotions"
+        indexes = [
+            models.Index(
+                fields=["organization_id", "status", "starts_at"], name="promotions_live_idx"
+            )
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "id"], name="promotions_org_id_uq"),
+            models.CheckConstraint(
+                condition=models.Q(discount_type__in=DiscountType.values),
+                name="promotions_type_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=PromotionStatus.values), name="promotions_status_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(currency__regex=r"^[A-Z]{3}$"), name="promotions_currency_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ends_at__gt=models.F("starts_at")),
+                name="promotions_validity_ck",
+            ),
+            models.CheckConstraint(  # un porcentaje en (0, 100]; los demás, un importe positivo
+                condition=models.Q(value__gt=0)
+                & (~models.Q(discount_type="PERCENT_OFF") | models.Q(value__lte=100)),
+                name="promotions_value_ck",
+            ),
+            models.CheckConstraint(  # D-PRC-3: nada se apila en el MVP
+                condition=models.Q(stackable=False), name="promotions_stackable_ck"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class PromotionItem(TenantModel):
+    """A qué aplica una promoción: exactamente uno de variante, producto, categoría o marca.
+    `override_value` reemplaza el `value` de la promoción para este objetivo."""
+
+    id = uuid7_primary_key()
+    promotion = models.ForeignKey(
+        Promotion, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    variant = models.ForeignKey(
+        "catalog.ProductVariant",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    product = models.ForeignKey(
+        "catalog.Product",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    category = models.ForeignKey(
+        "catalog.Category",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    brand = models.ForeignKey(
+        "catalog.Brand",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    override_value = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        db_table = "promotion_items"
+        indexes = [
+            models.Index(fields=["organization_id", "promotion"], name="promo_items_promotion_idx"),
+            *(
+                models.Index(
+                    fields=["organization_id", target],
+                    condition=models.Q(**{f"{target}__isnull": False}),
+                    name=f"promo_items_{target}_idx",
+                )
+                for target in ("variant", "product", "category", "brand")
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(  # exactamente un objetivo
+                condition=(
+                    models.Q(variant__isnull=False, product__isnull=True, category__isnull=True)
+                    & models.Q(brand__isnull=True)
+                )
+                | (
+                    models.Q(variant__isnull=True, product__isnull=False, category__isnull=True)
+                    & models.Q(brand__isnull=True)
+                )
+                | (
+                    models.Q(variant__isnull=True, product__isnull=True, category__isnull=False)
+                    & models.Q(brand__isnull=True)
+                )
+                | (
+                    models.Q(variant__isnull=True, product__isnull=True, category__isnull=True)
+                    & models.Q(brand__isnull=False)
+                ),
+                name="promo_items_one_target_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(override_value__isnull=True) | models.Q(override_value__gt=0),
+                name="promo_items_override_ck",
+            ),
+        ]
+
+
+class PromotionPriceList(TenantModel):
+    """Sobre qué listas aplica una promoción."""
+
+    id = uuid7_primary_key()
+    promotion = models.ForeignKey(
+        Promotion, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    price_list = models.ForeignKey(
+        PriceList, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+
+    class Meta:
+        db_table = "promotion_price_lists"
+        indexes = [
+            models.Index(fields=["organization_id", "price_list"], name="promo_lists_list_idx")
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "promotion", "price_list"], name="promo_lists_pair_uq"
+            ),
+        ]
