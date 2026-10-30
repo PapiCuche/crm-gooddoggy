@@ -46,6 +46,16 @@ CHANNEL_MAX = 30  # el ancho de `promotions.channels`: PostgreSQL trunca en sile
 ACTIVE = "ACTIVE"  # el de la variante y el del producto
 
 
+def check_channel(value: object) -> str:
+    """Un canal como se guarda y se consulta: texto de 1 a `CHANNEL_MAX` caracteres, sin espacios
+    exteriores ni NUL (PostgreSQL lo rechaza con un error que aborta la transacción)."""
+    if not isinstance(value, str) or not value or value != value.strip() or "\x00" in value:
+        raise ValueError("channel: texto sin espacios exteriores ni NUL")
+    if len(value) > CHANNEL_MAX:
+        raise ValueError(f"channel de como mucho {CHANNEL_MAX} caracteres")
+    return value
+
+
 class Audience(StrEnum):
     HUMAN = "HUMAN"  # una persona: la lista por su `required_permission` o `prices.manage`
     PUBLIC_AI = "PUBLIC_AI"  # un agente de IA de cara al cliente (Fase 8): `ai_exposable`
@@ -226,8 +236,8 @@ def resolve_many(
     """`resolve` para una página de variantes en la misma lista e instante, en el orden en que
     llegan (sin repetidas), en un canal si se dice. Las mismas consultas para una variante que
     para cien."""
-    if channel is not None and len(channel) > CHANNEL_MAX:
-        raise ValueError(f"channel de como mucho {CHANNEL_MAX} caracteres")
+    if channel is not None:
+        check_channel(channel)
     audience = Audience(audience)  # "PUBLIC_AI" como texto también; otro valor, `ValueError`
     tenant = ctx.tenant if isinstance(ctx, ExecutionContext) else ctx
     alias = require_scope(tenant)

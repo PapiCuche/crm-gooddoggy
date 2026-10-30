@@ -146,9 +146,9 @@ protected_modules = ["apps.inventory.warehouses", "apps.inventory.stock", "apps.
 allowed_importers = ["apps.inventory.api", "apps.inventory.imports"]  # la importación usa `stock`
 
 [[tool.importlinter.contracts]]
-name = "Comandos de precios: solo su API los importa (F3-40, F3-40b, F3-42)"
+name = "Comandos de precios: solo su API los importa (F3-40, F3-40b, F3-42, F3-48c)"
 type = "protected"
-protected_modules = ["apps.pricing.price_lists", "apps.pricing.prices"]
+protected_modules = ["apps.pricing.price_lists", "apps.pricing.prices", "apps.pricing.promotions"]
 allowed_importers = ["apps.pricing.api"]
 
 [[tool.importlinter.contracts]]
@@ -161,7 +161,11 @@ allowed_importers = ["apps.pricing"]
 name = "El motor de precios solo lee: apps.pricing.services no importa sus comandos (F3-43)"
 type = "forbidden"
 source_modules = ["apps.pricing.services"]
-forbidden_modules = ["apps.pricing.prices", "apps.pricing.price_lists"]
+forbidden_modules = [
+    "apps.pricing.prices",
+    "apps.pricing.price_lists",
+    "apps.pricing.promotions",
+]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de contactos: solo su API los importa (F4-01, F4-11)"
