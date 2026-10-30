@@ -1749,6 +1749,66 @@
       "namesFailed": "No se pudieron leer algunos nombres: se muestra un código corto.",
       "publishNowAsk": "Se aplicará de inmediato a los precios y rige hasta {to} (zona {zone}). Una vez publicada, sus términos no se pueden cambiar.",
       "discardAsk": "Se descartará el borrador: no llegó a aplicarse y no se puede reactivar."
+    },
+    "form": {
+      "open": "Nueva promoción",
+      "created": "Promoción creada en borrador.",
+      "title": "Nueva promoción",
+      "name": "Nombre",
+      "description": "Descripción (opcional)",
+      "terms": "Términos (opcional)",
+      "type": "Tipo de descuento",
+      "types": {
+        "PERCENT_OFF": "Porcentaje ({unit})",
+        "AMOUNT_OFF": "Monto ({unit})",
+        "FIXED_PRICE": "Precio fijo ({unit})"
+      },
+      "valueLabel": {
+        "PERCENT_OFF": "Porcentaje de descuento ({unit})",
+        "AMOUNT_OFF": "Monto que se descuenta ({unit})",
+        "FIXED_PRICE": "Precio fijo ({unit})"
+      },
+      "starts": "Empieza",
+      "ends": "Termina",
+      "zoneHint": "Hora de la organización (zona {zone}).",
+      "lists": "Listas de precios",
+      "noLists": "No hay listas de precios activas: crea una primero.",
+      "targets": "A qué se aplica",
+      "kind": "Tipo del objetivo {n}",
+      "kinds": {
+        "variant_id": "Variante",
+        "product_id": "Producto",
+        "category_id": "Categoría",
+        "brand_id": "Marca"
+      },
+      "own": "Descuento propio, opcional ({unit})",
+      "ownHint": "Si lo dejas vacío, rige el de la promoción.",
+      "remove": "Quitar el objetivo {n}",
+      "removeTarget": "Quitar",
+      "addTarget": "Agregar otro objetivo",
+      "searchPlaceholder": "Escribe al menos 2 letras",
+      "searching": "Buscando…",
+      "searchFailed": "No se pudo buscar. Prueba otra vez.",
+      "results": "{count, plural, =0 {Sin resultados.} one {# resultado; elige uno.} other {# resultados; elige uno.}}",
+      "change": "Cambiar {label}",
+      "changeTarget": "Cambiar",
+      "denied": "No tienes permiso para crear promociones.",
+      "cancel": "Cancelar",
+      "submit": "Crear promoción",
+      "busy": "Creando…",
+      "err": {
+        "name": "Escribe el nombre, de hasta 200 caracteres.",
+        "description": "Revisa la descripción: hasta 2000 caracteres.",
+        "terms": "Revisa los términos: hasta 2000 caracteres.",
+        "type": "Elige un tipo de descuento.",
+        "value": "Escribe un número mayor que 0, con hasta 2 decimales.",
+        "starts": "Elige cuándo empieza.",
+        "ends": "Elige cuándo termina, después del inicio.",
+        "lists": "Elige de 1 a 20 listas de precios, todas de la misma moneda.",
+        "items": "Agrega de 1 a 100 objetivos que existan, sin repetir.",
+        "row": "Elige un objetivo que exista, sin repetir.",
+        "own": "Escribe un número mayor que 0, con hasta 2 decimales."
+      }
     }
   }
 }
