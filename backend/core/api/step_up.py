@@ -7,6 +7,7 @@ la hereda. Una marca del futuro, o que no es un entero, no vale. Las vistas de t
 con `step_up_methods` (`HasPermission`); `require_recent_mfa` es la comprobación suelta.
 """
 
+import math
 import time
 from typing import Any
 
@@ -33,11 +34,12 @@ def age(session: Any, *, now: float | None = None) -> float | None:
 
 
 def seconds_left(session: Any, max_age: int = MAX_AGE, *, now: float | None = None) -> int | None:
-    """Segundos que le quedan a la verificación de `session`; `None` si no hay una vigente."""
+    """Segundos que le quedan a la verificación de `session`, redondeados hacia arriba (0 solo en
+    el instante en que vence); `None` si no hay una vigente."""
     elapsed = age(session, now=now)
     if elapsed is None or elapsed > max_age:
         return None
-    return int(max_age - elapsed)
+    return math.ceil(max_age - elapsed)
 
 
 def require_recent_mfa(request: Any, max_age: int = MAX_AGE) -> None:

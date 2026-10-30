@@ -150,4 +150,6 @@ class AccessConfig(AppConfig):
     label = "access"
 
     def ready(self) -> None:
+        from apps.access import checks  # noqa: F401 — registra la comprobación de step-up
+
         post_migrate.connect(sync_permissions, sender=self, dispatch_uid="access_permissions")
