@@ -80,21 +80,28 @@ export function MarginSwitch({ costs }: { costs: Costs }) {
   );
 }
 
+// Importe con moneda. `format.number` no lanza con una moneda inválida (la registra y devuelve el
+// número solo), así que se comprueba antes: una moneda que Intl no conoce no tumba la fila.
+export function moneyText(
+  format: ReturnType<typeof useFormatter>,
+  amount: string,
+  currency: string,
+) {
+  try {
+    new Intl.NumberFormat("es-PE", { style: "currency", currency });
+  } catch {
+    return `${amount} ${currency}`;
+  }
+  return format.number(Number(amount) || 0, { style: "currency", currency }); // `|| 0`: sin «-0»
+}
+
 // Costo, margen en importe y margen en % de una fila. Un margen negativo se marca con texto
 // («Pérdida») y con color, no solo con color. Sin margen, `reason` dice por qué. Importes con IGV
 // incluido, como los guarda la API.
 export function MarginCells({ margin, waiting }: { margin?: ListMargin; waiting: boolean }) {
   const t = useTranslations("prices.margins");
   const format = useFormatter();
-  const money = (amount: string, currency: string) => {
-    try {
-      // `format.number` no lanza con una moneda inválida: lo registra y devuelve el número solo.
-      new Intl.NumberFormat("es-PE", { style: "currency", currency });
-    } catch {
-      return `${amount} ${currency}`; // una moneda que Intl no conoce no tumba la fila
-    }
-    return format.number(Number(amount) || 0, { style: "currency", currency }); // `|| 0`: sin «-0»
-  };
+  const money = (amount: string, currency: string) => moneyText(format, amount, currency);
   const figure = margin?.margin;
   const side = margin?.price;
   const loss = !!figure && (Number(figure.amount) < 0 || Number(figure.percent) < 0);

@@ -19,6 +19,8 @@ import {
 } from "@/lib/api/client";
 import type { ListMargin, ListPrice } from "@/lib/api/model";
 
+import { CostForm } from "./cost-form";
+import { CostHistory } from "./cost-history";
 import { MarginCells, MarginSwitch } from "./margins";
 import { PriceForm } from "./price-form";
 import { PriceHistory } from "./price-history";
@@ -43,6 +45,7 @@ export function ListPrices() {
   const canViewCosts = ["product_cost.view", "prices.view", "products.view"].every((code) =>
     permissions.some((grant) => grant.code === code),
   );
+  const canManageCosts = permissions.some((grant) => grant.code === "product_cost.manage");
   const list = useRef<CursorListHandle>(null);
   // Lo que respondió la última escritura; un 404 (`alert`) se explica aquí.
   const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
@@ -178,7 +181,20 @@ export function ListPrices() {
           row={row}
           costs={
             costs.active ? (
-              <MarginCells margin={margins.get(row.id)} waiting={costs.query.isPending} />
+              <>
+                <MarginCells margin={margins.get(row.id)} waiting={costs.query.isPending} />
+                {canManageCosts ? (
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
+                    <CostForm
+                      slug={slug}
+                      variant={row.variant}
+                      current={margins.get(row.id)?.cost?.amount ?? null}
+                      onSaved={() => void costs.query.refetch()}
+                    />
+                    <CostHistory slug={slug} variant={row.variant} />
+                  </div>
+                ) : null}
+              </>
             ) : null
           }
           action={

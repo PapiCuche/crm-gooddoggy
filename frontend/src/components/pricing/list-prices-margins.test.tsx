@@ -426,3 +426,208 @@ describe("ListPrices: costos que no deben quedarse", () => {
     expect(inCache(client, "3500")).toBe(false);
   });
 });
+
+const COSTS = `${API}/pricing/variants/LAP-1/costs/`;
+const cost = (id: string, amount: string, more: Record<string, unknown> = {}) => ({
+  ...{ id, amount, currency: "PEN", tax_included: true, source: "MANUAL" },
+  ...{ change_reason: `Motivo ${id}`, starts_at: "2026-10-20T15:30:00Z", ends_at: null },
+  created_by_user_id: "u1",
+  ...more,
+});
+const manager = () => seller("product_cost.view", "product_cost.manage");
+const costScreen = async (routes: Parameters<typeof mockApi>[0] = {}) => {
+  const api = mockApi({
+    ...base(["LAP-1"]),
+    [MARGINS]: page([margin("LAP-1", "LAP-1", {})]),
+    ...routes,
+  });
+  const view = screenOf(manager());
+  const item = await row("LAP-1");
+  fireEvent.click(await switchOf());
+  await within(item).findByText("S/ 3,500.00");
+  return { api, item, ...view };
+};
+const fill = (amount: string, reason = "Compra de mayo") => {
+  fireEvent.change(screen.getByLabelText(/^Costo en soles/), { target: { value: amount } });
+  fireEvent.change(screen.getByLabelText("Motivo"), { target: { value: reason } });
+};
+const save = () => fireEvent.click(screen.getByRole("button", { name: "Guardar costo" }));
+
+describe("ListPrices: registrar costo e historial", () => {
+  it("las acciones de costo solo salen con product_cost.manage y con el interruptor activo", async () => {
+    mockApi({ ...base(["LAP-1"]), [MARGINS]: page([margin("LAP-1", "LAP-1", {})]) });
+    screenOf(manager());
+    const item = await row("LAP-1");
+    expect(within(item).queryByRole("button")).toBeNull(); // apagado: sin costos, sin acciones
+    fireEvent.click(await switchOf());
+    expect(await within(item).findByRole("button", { name: /^Registrar costo de/ })).toBeVisible();
+    expect(within(item).getByRole("button", { name: /^Historial de costos de/ })).toBeVisible();
+  });
+
+  it("quien solo ve costos no tiene «Registrar costo» ni el historial", async () => {
+    mockApi({ ...base(["LAP-1"]), [MARGINS]: page([margin("LAP-1", "LAP-1", {})]) });
+    screenOf(seller("product_cost.view"));
+    const item = await row("LAP-1");
+    fireEvent.click(await switchOf());
+    await within(item).findByText("S/ 3,500.00");
+    expect(within(item).queryByRole("button")).toBeNull();
+  });
+
+  it("registra un costo con step-up, vuelve a pedir los márgenes y devuelve el foco", async () => {
+    let posts = 0;
+    let margins = 0;
+    const { api, item } = await costScreen({
+      [MARGINS]: () => {
+        margins += 1;
+        const gain = margins === 1 ? "899.00" : "1000.00";
+        return page([margin("LAP-1", "LAP-1", { margin: { amount: gain, percent: "20.4" } })]);
+      },
+      [`POST ${COSTS}`]: () => {
+        posts += 1;
+        return posts === 1
+          ? { status: 403, body: { code: "STEP_UP_REQUIRED" } }
+          : { status: 201, body: cost("c2", "3399.00") };
+      },
+      [STEP_UP]: { status: 200, body: { step_up_expires_in: 900 } },
+    });
+    const open = within(item).getByRole("button", { name: /^Registrar costo de/ });
+    fireEvent.click(open);
+    const form = await screen.findByRole("dialog", { name: "Registrar costo" });
+    expect(screen.getByLabelText(/^Costo en soles/)).toHaveAccessibleDescription(
+      /vigente es S\/\s3,500\.00/,
+    );
+    fill("3399.00");
+    save();
+    fireEvent.change(await screen.findByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verificar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const sent = requested(api, "/costs/").filter(([, init]) => init?.method === "POST");
+    expect(sent).toHaveLength(2);
+    expect(JSON.parse(String(sent[1]?.[1]?.body))).toEqual({
+      amount: "3399.00",
+      reason: "Compra de mayo",
+    });
+    expect(form).not.toBeVisible();
+    expect(await within(item).findByText("S/ 1,000.00")).toBeVisible();
+    expect(item).toHaveTextContent("Costo de LAP-1 registrado: S/ 3,399.00 desde ahora.");
+    await waitFor(() => expect(open).toHaveFocus());
+  });
+
+  it.each([
+    [409, "COST_UNCHANGED", /ya rige/],
+    [409, "COST_CONFLICT", /llegó antes/],
+    [409, "COST_TOO_SOON", /hace un instante/],
+    [400, "COST_REJECTED", /rechazó el costo/],
+  ])("un %i %s se explica en el formulario, que sigue abierto", async (status, code, text) => {
+    await costScreen({ [`POST ${COSTS}`]: { status, body: { code } } });
+    fireEvent.click(screen.getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    fill("3500.00");
+    save();
+    expect(await screen.findAllByText(text)).not.toHaveLength(0);
+    expect(screen.getByRole("dialog", { name: "Registrar costo" })).toBeVisible();
+  });
+
+  it("un importe inválido no se envía y cancelar el código deja el formulario como estaba", async () => {
+    const { api } = await costScreen({
+      [`POST ${COSTS}`]: { status: 403, body: { code: "STEP_UP_REQUIRED" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    fill("3,500");
+    save();
+    expect(await screen.findByText(/número mayor que cero/)).toBeVisible();
+    expect(requested(api, "/costs/")).toHaveLength(0);
+    fill("3500");
+    save();
+    await screen.findByLabelText(/^Código/);
+    fireEvent.click(screen.getAllByRole("button", { name: "Cancelar" }).at(-1)!); // el del código
+    await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1));
+    expect(screen.getByLabelText(/^Costo en soles/)).toHaveValue("3500");
+    expect(screen.queryByText(/identidad/)).toBeNull();
+  });
+
+  it("pulsar «Guardar costo» dos veces envía un solo POST", async () => {
+    let release = () => {};
+    const { api } = await costScreen({
+      [`POST ${COSTS}`]: () => ({ status: 201, body: cost("c2", "3399.00") }),
+    });
+    const fetched = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") await new Promise<void>((resolve) => (release = resolve));
+      return api(input, init);
+    });
+    vi.stubGlobal("fetch", fetched);
+    fireEvent.click(screen.getByRole("button", { name: /^Registrar costo de/ }));
+    await screen.findByRole("dialog", { name: "Registrar costo" });
+    fill("3399.00");
+    save();
+    fireEvent.click(await screen.findByRole("button", { name: "Guardando…" }));
+    await waitFor(() => expect(requested(fetched, "/costs/")).toHaveLength(1));
+    await act(async () => release());
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(requested(fetched, "/costs/")).toHaveLength(1);
+  });
+
+  it("el historial enseña el vigente y los costos, con «Cargar más» por cursor", async () => {
+    const { item, client } = await costScreen({
+      [`GET ${COSTS}`]: {
+        status: 200,
+        body: { current: cost("c1", "3500.00"), results: [cost("c1", "3500.00")], next: "c2" },
+      },
+      [`GET ${COSTS}?cursor=c2`]: {
+        status: 200,
+        body: {
+          current: cost("c1", "3500.00"),
+          results: [cost("c0", "3000.00", { source: "IMPORT", created_by_user_id: null })],
+          next: null,
+        },
+      },
+    });
+    const open = within(item).getByRole("button", { name: /^Historial de costos de/ });
+    fireEvent.click(open);
+    const panel = await screen.findByRole("dialog", { name: "Historial de costos" });
+    const list = await within(panel).findByRole("list", { name: /^Costos, del más reciente/ });
+    expect(panel).toHaveTextContent("Costo vigente: S/ 3,500.00");
+    expect(list).toHaveTextContent(/S\/\s3,500\.00 · 20\/10\/2026 10:30 · Tú · Manual · Motivo c1/);
+    fireEvent.click(within(panel).getByRole("button", { name: "Cargar más" }));
+    await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
+    expect(list).toHaveTextContent(/S\/\s3,000\.00 · .* · Sistema · Importación · Motivo c0/);
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar el historial de costos" }));
+    await waitFor(() => expect(open).toHaveFocus());
+    expect(
+      client
+        .getQueryCache()
+        .findAll({ predicate: isCostQuery })
+        .filter((q) => q.state.data && JSON.stringify(q.state.data).includes("Motivo")),
+    ).toHaveLength(0);
+  });
+
+  it("el historial pide el código y, si se cancela, no enseña costos", async () => {
+    const { item } = await costScreen({
+      [`GET ${COSTS}`]: { status: 403, body: { code: "STEP_UP_REQUIRED" } },
+    });
+    fireEvent.click(within(item).getByRole("button", { name: /^Historial de costos de/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancelar" }));
+    expect(await screen.findByText(/historial sigue oculto/)).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Historial de costos" })).toBeVisible();
+  });
+
+  it("apagar el interruptor con el historial abierto lo cierra y borra sus costos de la caché", async () => {
+    const history = {
+      current: cost("c1", "3500.00"),
+      results: [cost("c1", "3500.00")],
+      next: null,
+    };
+    const { item, client } = await costScreen({ [`GET ${COSTS}`]: { status: 200, body: history } });
+    fireEvent.click(within(item).getByRole("button", { name: /^Historial de costos de/ }));
+    await screen.findByText("Costo vigente: S/ 3,500.00");
+    expect(inCache(client, "Motivo c1")).toBe(true);
+    // `isCostQuery` alcanza la consulta del historial, además de los márgenes.
+    expect(client.getQueryCache().findAll({ predicate: isCostQuery })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("switch", { name: "Ver costos y margen" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(within(item).queryByRole("button")).toBeNull();
+    expect(inCache(client, "Motivo c1")).toBe(false);
+    expect(inCache(client, "3500")).toBe(false);
+  });
+});
