@@ -43,6 +43,7 @@ export function MarginSwitch({ costs }: { costs: Costs }) {
         <input
           type="checkbox"
           role="switch"
+          data-margins-switch
           className="peer sr-only"
           checked={active}
           aria-busy={active && query.isFetching}

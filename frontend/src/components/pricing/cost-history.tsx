@@ -222,8 +222,7 @@ function Panel({
           </Button>
         </div>
         {body}
-        {isStepUpCancelled(history.error) ||
-        (history.isError && !history.data && status !== 401 && status !== 403 && status !== 404) ? (
+        {history.isError && !history.data && ![401, 403, 404].includes(status ?? 0) ? (
           <Button
             variant="ghost"
             className="border-border min-h-11 w-fit border"

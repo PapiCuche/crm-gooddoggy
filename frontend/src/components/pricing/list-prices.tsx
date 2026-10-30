@@ -24,7 +24,7 @@ import { CostHistory } from "./cost-history";
 import { MarginCells, MarginSwitch } from "./margins";
 import { PriceForm } from "./price-form";
 import { PriceHistory } from "./price-history";
-import { useMargins } from "./use-margins";
+import { useFocusSwitch, useMargins } from "./use-margins";
 import { stamp, ZONE } from "./zoned";
 
 // Una fila por variante: la API no da `id` a la fila, así que es el de la variante.
@@ -74,6 +74,7 @@ export function ListPrices() {
   const params = productId ? { product_id: productId } : {};
   const listKey = [...getPriceListPricesListQueryKey(slug, listId, params), "pages"];
   const costs = useMargins({ slug, listId, productId, allowed: canViewCosts });
+  useFocusSwitch(costs.active && canManageCosts);
   const margins = useMemo(
     () => new Map(costs.rows?.map((one): [string, ListMargin] => [one.variant.id, one])),
     [costs.rows],
@@ -188,8 +189,8 @@ export function ListPrices() {
                     <CostForm
                       slug={slug}
                       variant={row.variant}
-                      current={margins.get(row.id)?.cost?.amount ?? null}
-                      onSaved={() => void costs.query.refetch()}
+                      current={margins.get(row.id)?.cost ?? null}
+                      onSaved={costs.refresh}
                     />
                     <CostHistory slug={slug} variant={row.variant} />
                   </div>

@@ -1718,7 +1718,7 @@
         "save": "Guardar costo",
         "busy": "Guardando…",
         "cancel": "Cancelar",
-        "done": "Costo de {sku} registrado: {amount} desde ahora."
+        "done": "Costo de {sku} registrado."
       },
       "history": {
         "open": "Historial de costos",

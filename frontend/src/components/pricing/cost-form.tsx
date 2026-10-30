@@ -7,9 +7,10 @@ import { FieldsForm } from "@/components/forms/fields-form";
 import { isStepUpCancelled, useStepUp } from "@/components/security/use-step-up";
 import { Button } from "@/components/ui/button";
 import { costCreate } from "@/lib/api/client";
-import type { PriceVariant } from "@/lib/api/model";
+import type { MarginSide, PriceVariant } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
+import { moneyText } from "./margins";
 import { validAmount } from "./price-form";
 
 // Devuelve el foco a la fila tras repintar: el botón puede ser otro nodo que el que abrió.
@@ -19,8 +20,8 @@ export const focusAfterPaint = (selector: string) =>
 type Props = {
   slug: string;
   variant: PriceVariant;
-  current: string | null; // el costo vigente, si ya se leyó
-  onSaved: () => void; // los márgenes se piden otra vez
+  current: MarginSide | null; // el costo vigente, si ya se leyó
+  onSaved: () => void; // los márgenes se piden otra vez (solo si siguen a la vista)
 };
 
 // «Registrar costo» de una variante (F3-47, `product_cost.manage`): importe y motivo en un
@@ -30,6 +31,7 @@ type Props = {
 export function CostForm({ slug, variant, current, onSaved }: Props) {
   const t = useTranslations("prices.costs.form");
   const format = useFormatter();
+  const pending = useRef(false); // síncrono: `close` llega antes de pintar
   const { withStepUp, dialog: stepUp } = useStepUp();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<{ pending: boolean; error: ApiError | null }>({
@@ -39,24 +41,26 @@ export function CostForm({ slug, variant, current, onSaved }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   const name = `${variant.product_name} ${variant.name} (${variant.sku})`;
-  const money = (amount: string) =>
-    format.number(Number(amount), { style: "currency", currency: "PEN" });
   useEffect(() => {
     if (open && !dialog.current?.open) dialog.current?.showModal();
   }, [open]);
 
   function send(values: { amount: string; reason: string }) {
+    pending.current = true;
     setState({ pending: true, error: null });
     withStepUp(() => costCreate(slug, variant.id, values)).then(
-      (cost) => {
+      () => {
+        pending.current = false;
         setState({ pending: false, error: null });
-        setSaved(t("done", { sku: variant.sku, amount: money(cost.amount) }));
+        setSaved(t("done", { sku: variant.sku })); // sin el importe: no queda en el DOM
         dialog.current?.close(); // `close` devuelve el foco a la fila
         onSaved();
       },
       // Cancelar el código no es un fallo: el formulario sigue como estaba.
-      (error: ApiError) =>
-        setState({ pending: false, error: isStepUpCancelled(error) ? null : error }),
+      (error: ApiError) => {
+        pending.current = false;
+        setState({ pending: false, error: isStepUpCancelled(error) ? null : error });
+      },
     );
   }
 
@@ -86,8 +90,10 @@ export function CostForm({ slug, variant, current, onSaved }: Props) {
           aria-labelledby={id}
           className="step-up-dialog bg-surface text-foreground border-border m-auto w-[calc(100%-2rem)] max-w-md rounded-[14px] border p-0 backdrop:bg-black/40"
           // Escape no cierra mientras se envía (ni mientras se pide el código).
-          onCancel={(event) => state.pending && event.preventDefault()}
+          onCancel={(event) => pending.current && event.preventDefault()}
           onClose={() => {
+            // Un segundo Escape cierra sin `cancel` (Chrome): se reabre hasta que responda.
+            if (pending.current) return dialog.current?.showModal();
             setOpen(false);
             focusAfterPaint(`[data-cost-form="${variant.id}"]`);
           }}
@@ -108,7 +114,9 @@ export function CostForm({ slug, variant, current, onSaved }: Props) {
               {
                 ...{ name: "amount", max: 15, label: t("amount"), inputMode: "decimal" },
                 ...{ required: t("amountRequired"), invalid: t("amountInvalid") },
-                hint: current ? t("amountHint", { amount: money(current) }) : t("amountHintFirst"),
+                hint: current
+                  ? t("amountHint", { amount: moneyText(format, current.amount, current.currency) })
+                  : t("amountHintFirst"),
                 valid: validAmount,
               },
               {
@@ -124,12 +132,13 @@ export function CostForm({ slug, variant, current, onSaved }: Props) {
             send={send}
             taken={(error) => {
               const field = error.code === "COST_UNCHANGED" ? "amount" : undefined;
-              const text = {
+              const texts: Record<string, string> = {
                 ...{ COST_UNCHANGED: t("unchanged"), COST_CONFLICT: t("conflict") },
                 ...{ COST_TOO_SOON: t("tooSoon"), COST_REJECTED: t("rejected") },
                 STEP_UP_REQUIRED: t("stepUp"),
-              }[error.code as "COST_UNCHANGED"];
-              return text ? { field, text } : null;
+              };
+              // `hasOwn`: un código como «toString» no devuelve una función del prototipo.
+              return Object.hasOwn(texts, error.code) ? { field, text: texts[error.code]! } : null;
             }}
             denied={t("denied")}
             labels={{ submit: t("save"), busy: t("busy"), cancel: t("cancel") }}
