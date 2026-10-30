@@ -1,9 +1,11 @@
 """Lecturas del catálogo. Filtran por organización (RLS y `TenantManager`), no por permiso: el
 permiso lo exige quien las sirve (`HasPermission`)."""
 
+from collections.abc import Iterable
+from typing import Any
 from uuid import UUID
 
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from apps.catalog.models import Brand, Category, Product, ProductVariant
 
@@ -37,3 +39,20 @@ def live_variants() -> QuerySet[ProductVariant]:
     `tracks_inventory`)."""
     live = ProductVariant.objects.filter(deleted_at__isnull=True, product__deleted_at__isnull=True)
     return live.select_related("product")
+
+
+def search(found: QuerySet[Any], text: str, fields: Iterable[str]) -> QuerySet[Any]:
+    """Los de `found` cuyo alguno de `fields` contiene `text`, sin distinguir mayúsculas (F3-48i);
+    vacío, todos. `icontains` escapa `%`, `_` y `\\`: son literales. Solo filtra: el orden sigue
+    siendo el de la paginación y lo que `found` no tenía (otra organización, borrado) no sale."""
+    if not text:
+        return found
+    wanted = Q()
+    for field in fields:
+        wanted |= Q(**{f"{field}__icontains": text})
+    return found.filter(wanted)
+
+
+def only_ids(found: QuerySet[Any], ids: Iterable[UUID]) -> QuerySet[Any]:
+    """Los de `found` con alguno de esos identificadores; el que no está en `found` no aparece."""
+    return found.filter(pk__in=list(ids))

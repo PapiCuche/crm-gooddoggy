@@ -12,6 +12,8 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.access.permissions import ScopeFilter
+from apps.catalog.api.search import CatalogSearch, CatalogSearchSerializer
 from apps.catalog.brands import (
     NAME_MAX,
     BrandInUse,
@@ -57,12 +59,18 @@ from apps.catalog.products import (
     update_variant,
 )
 from apps.catalog.products import NAME_MAX as PRODUCT_NAME_MAX
-from apps.catalog.selectors import brands, categories, products, variants
+from apps.catalog.selectors import brands, categories, live_variants, products, variants
 from apps.catalog.slugs import SLUG_MAX, NoSlug, clean_slug
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
 
+SEARCH_HELP = (
+    "`q` filtra los {} cuyo nombre lo contiene y `ids` deja solo esos identificadores; se "
+    "combinan, no cambian el orden y la página siguiente se pide con los mismos. 400: `q` o "
+    "`ids` repetidos, `q` de más de 254 caracteres o que no es una línea imprimible, `ids` con "
+    "algo que no es un UUID o más de 50."
+)
 TAKEN = "Ya existe una marca con ese slug en la organización."
 
 
@@ -115,7 +123,9 @@ def _tenant() -> Any:
     get=extend_schema(
         operation_id="brands_list",
         tags=["catalog"],
+        parameters=[CatalogSearchSerializer],
         responses={200: BrandSerializer(many=True), **errors(400, 401, 403, 404)},
+        description=SEARCH_HELP.format("marcas"),
     ),
     post=extend_schema(
         operation_id="brands_create",
@@ -132,6 +142,8 @@ class BrandsView(generics.ListAPIView):
 
     required_permissions = {"GET": "products.view", "POST": "brands.manage"}
     serializer_class = BrandSerializer
+    filter_backends = [ScopeFilter, CatalogSearch]  # en este orden
+    search_fields = ("name",)
 
     def get_queryset(self) -> QuerySet[Brand]:
         return brands()
@@ -239,9 +251,11 @@ def _bad_parent(error: BadParent) -> serializers.ValidationError:
     get=extend_schema(
         operation_id="categories_list",
         tags=["catalog"],
+        parameters=[CatalogSearchSerializer],
         responses={200: CategorySerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las categorías de la organización, sin las borradas, paginadas por "
-        "creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por `path`).",
+        "creación (ADR-016). El árbol se arma con `parent_id` (o ordenando por `path`). "
+        + SEARCH_HELP.format("categorías"),
     ),
     post=extend_schema(
         operation_id="categories_create",
@@ -255,6 +269,8 @@ def _bad_parent(error: BadParent) -> serializers.ValidationError:
 class CategoriesView(generics.ListAPIView):
     required_permissions = {"GET": "products.view", "POST": "categories.manage"}
     serializer_class = CategorySerializer
+    filter_backends = [ScopeFilter, CatalogSearch]  # en este orden
+    search_fields = ("name",)
 
     def get_queryset(self) -> QuerySet[Category]:
         return categories()
@@ -448,8 +464,10 @@ def _reference_error(error: BadReference) -> serializers.ValidationError:
     get=extend_schema(
         operation_id="products_list",
         tags=["catalog"],
+        parameters=[CatalogSearchSerializer],
         responses={200: ProductSerializer(many=True), **errors(400, 401, 403, 404)},
-        description="Los productos vivos de la organización, paginados por creación (ADR-016).",
+        description="Los productos vivos de la organización, paginados por creación (ADR-016). "
+        + SEARCH_HELP.format("productos"),
     ),
     post=extend_schema(
         operation_id="products_create",
@@ -463,6 +481,8 @@ def _reference_error(error: BadReference) -> serializers.ValidationError:
 class ProductsView(generics.ListAPIView):
     required_permissions = {"GET": "products.view", "POST": "products.manage"}
     serializer_class = ProductSerializer
+    filter_backends = [ScopeFilter, CatalogSearch]  # en este orden
+    search_fields = ("name",)
 
     def get_queryset(self) -> QuerySet[Product]:
         return products()
@@ -616,3 +636,39 @@ class VariantView(APIView):
         except VariantsHeld:
             raise ApiError("VARIANT_HAS_STOCK", 409, VARIANT_HELD) from None
         return Response(status=204)
+
+
+class VariantMatchSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    name = serializers.CharField(help_text="El nombre del producto más la etiqueta.")
+    sku = serializers.CharField()
+    barcode = serializers.CharField(allow_blank=True)
+    product_id = serializers.UUIDField()
+    product_name = serializers.CharField(source="product.name")
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="variants_search",
+        tags=["catalog"],
+        parameters=[CatalogSearchSerializer],
+        responses={200: VariantMatchSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Busca variantes vivas de productos vivos entre todos los productos, "
+        "paginadas por creación (ADR-016). `q` casa con el nombre de la variante, su SKU, su "
+        "código de barras o el nombre del producto (contiene, sin distinguir mayúsculas); `ids` "
+        "resuelve hasta 50 variantes en una llamada. Se exige `q` no vacío o `ids`: no hay "
+        "listado completo entre productos (400 si faltan los dos). Los que no existen, son de "
+        "otra organización o están borrados no aparecen. 400 también: `q` o `ids` repetidos, "
+        "`q` de más de 254 caracteres o que no es una línea imprimible, `ids` con algo que no "
+        "es un UUID o más de 50.",
+    )
+)
+class VariantSearchView(generics.ListAPIView):
+    required_permissions = {"GET": "products.view"}
+    serializer_class = VariantMatchSerializer
+    filter_backends = [ScopeFilter, CatalogSearch]  # en este orden
+    search_required = True
+    search_fields = ("name", "sku", "barcode", "product__name")
+
+    def get_queryset(self) -> QuerySet[ProductVariant]:
+        return live_variants()

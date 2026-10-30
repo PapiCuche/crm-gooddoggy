@@ -12,9 +12,19 @@ export type ProductsListParams = {
    */
   cursor?: string;
   /**
+   * Hasta 50 identificadores UUID separados por comas, para resolver varios en una llamada. Los que no existen, son de otra organización o están borrados no aparecen.
+   * @maxLength 1850
+   */
+  ids?: string;
+  /**
    * Filas por página.
    * @minimum 1
    * @maximum 200
    */
   limit?: number;
+  /**
+   * El texto que contiene, sin distinguir mayúsculas (hasta 254 caracteres, una línea; `%`, `_` y `\` son literales). Vacío: sin filtro.
+   * @maxLength 254
+   */
+  q?: string;
 };
