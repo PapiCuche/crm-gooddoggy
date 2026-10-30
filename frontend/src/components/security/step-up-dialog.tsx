@@ -22,7 +22,8 @@ type Props = { onVerified: () => void; onCancel: () => void };
 
 // Pide el código del segundo factor (ADR-003 §4, ADR-023 §7) y llama a `POST /auth/mfa/step-up/`.
 // Es un `<dialog>` modal nativo: atrapa el foco, Escape cancela y la página queda inerte. El
-// código vive solo en el campo (sin estado ni caché: `gcTime: 0`) y se va con el diálogo. Quien
+// código vive solo en el campo y en la petición: tras responder, `reset()` lo borra de la caché
+// de mutaciones (`variables`), también con el diálogo abierto tras un fallo. Quien
 // lo monta (`useStepUp`) decide qué pasa al verificar o cancelar; aquí no se reintenta nada.
 export function StepUpDialog({ onVerified, onCancel }: Props) {
   const t = useTranslations("stepUp");
@@ -62,8 +63,12 @@ export function StepUpDialog({ onVerified, onCancel }: Props) {
     mutate(
       { data: { code } },
       {
-        onSuccess: onVerified,
+        onSuccess: () => {
+          reset(); // el código no queda en la caché de mutaciones
+          onVerified();
+        },
         onError: (error) => {
+          reset(); // ni tras un fallo: el diálogo sigue abierto y `variables` lo guardaría
           if (error.code === "MFA_NOT_ENABLED") setNoFactor(true);
           else setPhase({ name: "failed", error });
         },

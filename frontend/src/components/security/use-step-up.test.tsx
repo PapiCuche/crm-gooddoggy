@@ -13,6 +13,7 @@ type Reply = { status: number; body?: unknown; headers?: Record<string, string> 
 
 let run: (() => Promise<string>) & ReturnType<typeof vi.fn>;
 let outcome: { value?: string; error?: unknown; done: boolean };
+let view: ReturnType<typeof renderApp>;
 
 function Probe() {
   const { withStepUp, dialog } = useStepUp();
@@ -41,10 +42,25 @@ const posts = (api: ReturnType<typeof mockApi>) =>
 
 async function ask(reply: Reply | (() => Reply) = OK) {
   const api = mockApi({ [STEP_UP]: reply });
-  renderApp(<Probe />);
+  view = renderApp(<Probe />);
   fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
   await screen.findByRole("dialog");
   return api;
+}
+// Un step-up que no responde hasta que el test lo suelta: la petición queda «en vuelo».
+async function hold() {
+  let release = () => {};
+  const fetchMock = vi.fn(
+    () =>
+      new Promise<Response>((resolve) => {
+        release = () => resolve(new Response(JSON.stringify(OK.body), { status: 200 }));
+      }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  view = renderApp(<Probe />);
+  fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+  await screen.findByRole("dialog");
+  return { fetchMock, release: () => act(release) };
 }
 function type(code: string) {
   fireEvent.change(screen.getByLabelText(/^Código/), { target: { value: code } });
@@ -218,5 +234,48 @@ describe("useStepUp", () => {
     type("123456");
     await waitFor(() => expect(second).toHaveBeenCalledTimes(2));
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("un código que falló no queda en la caché de mutaciones con el diálogo abierto", async () => {
+    await ask({ status: 400, body: { code: "VALIDATION_ERROR", fields: { code: [] } } });
+    type("987654");
+    await screen.findByRole("alert");
+    await waitFor(() => {
+      const kept = view.client
+        .getMutationCache()
+        .getAll()
+        .map((one) => one.state.variables);
+      expect(JSON.stringify(kept)).not.toContain("987654");
+    });
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("desmontar con el diálogo abierto cancela y no reintenta", async () => {
+    await ask();
+    view.unmount();
+    await waitFor(() => expect(isStepUpCancelled(outcome.error)).toBe(true));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("pulsar «Verificar» dos veces envía una sola petición", async () => {
+    const { fetchMock, release } = await hold();
+    fireEvent.change(screen.getByLabelText(/^Código/), { target: { value: "123456" } });
+    const verify = screen.getByRole("button", { name: "Verificar" });
+    fireEvent.click(verify);
+    fireEvent.click(screen.getByRole("button", { name: "Verificando…" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await release();
+    await waitFor(() => expect(outcome.value).toBe("hecho"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelar con el step-up en vuelo rechaza y no repite la acción", async () => {
+    const { release } = await hold();
+    type("123456");
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(isStepUpCancelled(outcome.error)).toBe(true));
+    await release(); // llega tarde: nadie lo espera
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(isStepUpCancelled(outcome.error)).toBe(true);
   });
 });
