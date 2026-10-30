@@ -9,11 +9,12 @@ Los pasos de ADR-006 §2 que ya tienen datos, en este orden: (1) la organizació
 `tenant_scope`; (3) la lista, la pedida o la predeterminada de la moneda, activa y que la
 audiencia ve, si no `ListNotVisible`; (2) la variante viva y `ACTIVE`, con su producto `ACTIVE`
 (y `ai_visible` en los dos para la IA pública), si no `VARIANT_UNAVAILABLE`; (4) el precio que
-rige en `[starts_at, ends_at)`, si no `NO_PRICE`; (5) sin promociones hasta F3-48. La lista va
-antes que la variante: quien no ve la lista no aprende nada de la variante.
+rige en `[starts_at, ends_at)`, si no `NO_PRICE`; (5 a 7) la promoción que
+rige (`discounts`). La lista va antes que la variante: quien no ve la lista no aprende nada de
+la variante.
 
-Consultas: la lista, las variantes y sus precios (y `now()` si no llega `at`), sea cual sea el
-número de variantes.
+Consultas: la lista, las variantes, sus precios y las promociones (y `now()` si no llega `at`);
+con alguna promoción, también sus objetivos y las categorías: sea cual sea el número de variantes.
 """
 
 from collections.abc import Iterable
@@ -28,13 +29,20 @@ from django.db import connections
 from django.db.models import QuerySet
 
 from apps.access.selectors import ExecutionContext
-from apps.catalog.selectors import live_variants
+from apps.catalog.selectors import categories, live_variants
+from apps.pricing import discounts
 from apps.pricing.models import PriceList, ProductPrice
-from apps.pricing.selectors import prices_at, visible_price_lists
+from apps.pricing.selectors import (
+    prices_at,
+    promotion_items,
+    promotions_from,
+    visible_price_lists,
+)
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
 CURRENCY = "PEN"  # D-PRC-2: la moneda de la organización hasta que haya multimoneda
+CHANNEL_MAX = 30  # el ancho de `promotions.channels`: PostgreSQL trunca en silencio lo que pase
 ACTIVE = "ACTIVE"  # el de la variante y el del producto
 
 
@@ -59,6 +67,17 @@ class PriceQuery:
     price_list_id: UUID | None = None  # sin ella: la predeterminada de la moneda
     at: datetime | None = None  # sin él: el `now()` de la transacción; con zona horaria
     audience: Audience = Audience.HUMAN
+    channel: str | None = None  # sin él: solo las promociones de todos los canales
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionApplied:
+    """La promoción que rige, lo que se cita al cliente y a la IA. Nada más de ella."""
+
+    id: UUID
+    name: str
+    terms: str
+    ends_at: datetime
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -73,7 +92,7 @@ class PriceResolution:
     currency: str
     tax_included: bool | None = None
     base_amount: Decimal | None = None
-    promotion: None = None  # F3-48
+    promotion: PromotionApplied | None = None
     final_amount: Decimal | None = None
     savings: Decimal | None = None
     valid_until: datetime | None = None  # el fin del precio; NULL: sin fin conocido
@@ -123,7 +142,12 @@ def _sellable(variant: Any, audience: Audience) -> bool:
 
 
 def _resolution(
-    variant_id: UUID, price_list: PriceList, at: datetime, price: ProductPrice | None, why: Reason
+    variant_id: UUID,
+    price_list: PriceList,
+    at: datetime,
+    price: ProductPrice | None,
+    why: Reason,
+    discount: tuple[discounts.Applied | None, datetime | None] | None = None,
 ) -> PriceResolution:
     empty = PriceResolution(
         found=False,
@@ -135,7 +159,9 @@ def _resolution(
     )
     if price is None:
         return empty
-    final = price.amount  # sin promociones hasta F3-48
+    applied, until = discount if discount else (None, price.ends_at)
+    final = applied.final_amount if applied else price.amount
+    promotion = applied.promotion if applied else None
     return replace(
         empty,
         found=True,
@@ -144,9 +170,48 @@ def _resolution(
         base_amount=price.amount,
         final_amount=final,
         savings=price.amount - final,
-        valid_until=price.ends_at,
+        valid_until=until,
         price_id=price.pk,
+        promotion=(
+            PromotionApplied(promotion.pk, promotion.name, promotion.terms, promotion.ends_at)
+            if promotion
+            else None
+        ),
+        promotion_id=promotion.pk if promotion else None,
     )
+
+
+def _candidates(
+    alias: str, price_list: PriceList, when: datetime, channel: str | None, audience: Audience
+) -> list[discounts.Candidate]:
+    rows = list(
+        promotions_from(when, price_list, channel, ai_only=audience is Audience.PUBLIC_AI).using(
+            alias
+        )
+    )
+    items: dict[UUID, list[Any]] = {row.pk: [] for row in rows}
+    for item in promotion_items(items).using(alias):
+        items[item.promotion_id].append(item)
+    return [discounts.Candidate(row, tuple(items[row.pk])) for row in rows]
+
+
+def _targets(
+    alias: str, found: Iterable[Any], candidates: list[discounts.Candidate]
+) -> dict[UUID, discounts.Target]:
+    """Lo que alcanza a cada variante; las categorías de los objetivos y las de los productos,
+    en una consulta, y de ahí las antecesoras por `path`."""
+    wanted = {i.category_id for c in candidates for i in c.items if i.category_id}
+    variants = list(found)
+    wanted |= {v.product.category_id for v in variants if v.product.category_id}
+    paths = {c.pk: c.path for c in categories().using(alias).filter(pk__in=wanted)}
+    targets = {}
+    for variant in variants:
+        own = paths.get(variant.product.category_id, "")
+        near = {pk: len(path) for pk, path in paths.items() if own.startswith(path)}
+        targets[variant.pk] = discounts.Target(
+            variant.pk, variant.product_id, variant.product.brand_id, near
+        )
+    return targets
 
 
 def resolve_many(
@@ -156,9 +221,13 @@ def resolve_many(
     at: datetime | None = None,
     *,
     audience: Audience = Audience.HUMAN,
+    channel: str | None = None,
 ) -> dict[UUID, PriceResolution]:
     """`resolve` para una página de variantes en la misma lista e instante, en el orden en que
-    llegan (sin repetidas). Las mismas consultas para una variante que para cien."""
+    llegan (sin repetidas), en un canal si se dice. Las mismas consultas para una variante que
+    para cien."""
+    if channel is not None and len(channel) > CHANNEL_MAX:
+        raise ValueError(f"channel de como mucho {CHANNEL_MAX} caracteres")
     audience = Audience(audience)  # "PUBLIC_AI" como texto también; otro valor, `ValueError`
     tenant = ctx.tenant if isinstance(ctx, ExecutionContext) else ctx
     alias = require_scope(tenant)
@@ -168,6 +237,19 @@ def resolve_many(
     found = live_variants().using(alias).filter(pk__in=wanted)
     sellable = {variant.pk for variant in found if _sellable(variant, audience)}
     ruling = {p.variant_id: p for p in prices_at(sellable, price_list.pk, when).using(alias)}
+    candidates = _candidates(alias, price_list, when, channel, audience) if ruling else []
+    targets = (
+        _targets(alias, [v for v in found if v.pk in ruling], candidates) if candidates else {}
+    )
+
+    def discount(pk: UUID) -> tuple[discounts.Applied | None, datetime | None] | None:
+        if pk not in targets:
+            return None
+        base = ruling[pk].amount
+        won = discounts.select(candidates, targets[pk], when, base)
+        until = discounts.valid_until(candidates, targets[pk], when, base, won, ruling[pk].ends_at)
+        return won, until
+
     return {
         pk: _resolution(
             pk,
@@ -175,6 +257,7 @@ def resolve_many(
             when,
             ruling.get(pk),
             Reason.NO_PRICE if pk in sellable else Reason.VARIANT_UNAVAILABLE,
+            discount(pk),
         )
         for pk in wanted
     }
@@ -185,6 +268,11 @@ def resolve(ctx: ExecutionContext | TenantContext, query: PriceQuery) -> PriceRe
     `ExecutionContext`; la IA pública (`PUBLIC_AI`) basta con el `TenantContext`. `ValueError` si
     `at` no tiene zona horaria; `ListNotVisible` si no hay lista que ver."""
     page = resolve_many(
-        ctx, [query.variant_id], query.price_list_id, query.at, audience=query.audience
+        ctx,
+        [query.variant_id],
+        query.price_list_id,
+        query.at,
+        audience=query.audience,
+        channel=query.channel,
     )
     return page[UUID(str(query.variant_id))]

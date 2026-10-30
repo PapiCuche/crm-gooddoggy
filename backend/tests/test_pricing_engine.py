@@ -364,5 +364,5 @@ def test_resolve_many_answers_like_resolve_in_constant_queries(world: Any) -> No
                 services.resolve_many(ectx, page[:size], listed, at)
         return len(queries)
 
-    assert count(1, T0) == count(15, T0) == 3  # la lista, las variantes, sus precios
-    assert count(1, None) == count(15, None) == 4  # y `now()`
+    assert count(1, T0) == count(15, T0) == 4  # la lista, las variantes, sus precios, promociones
+    assert count(1, None) == count(15, None) == 5  # y `now()`
