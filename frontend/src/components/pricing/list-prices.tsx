@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useFormatter, useTimeZone, useTranslations } from "next-intl";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { everyPage } from "@/components/catalog/categories-tree";
@@ -17,10 +17,12 @@ import {
   priceListsList,
   productsList,
 } from "@/lib/api/client";
-import type { ListPrice } from "@/lib/api/model";
+import type { ListMargin, ListPrice } from "@/lib/api/model";
 
+import { MarginCells, MarginSwitch } from "./margins";
 import { PriceForm } from "./price-form";
 import { PriceHistory } from "./price-history";
+import { useMargins } from "./use-margins";
 import { stamp, ZONE } from "./zoned";
 
 // Una fila por variante: la API no da `id` a la fila, así que es el de la variante.
@@ -30,12 +32,14 @@ type Row = ListPrice & { id: string };
 // por variante viva con su precio vigente, el próximo y lo que resuelve `PricingService`. Nada
 // se calcula aquí: el importe es el de la API (ADR-006). Se elige la lista entre las activas
 // que el actor ve (la ruta de una inactiva es un 404) y se filtra por producto. Con
-// `prices.manage`, cada fila ofrece «Cambiar precio» y, a su lado, «Historial» (F3-45c).
+// `prices.manage`, cada fila ofrece «Cambiar precio» y, a su lado, «Historial» (F3-45c). Con
+// `product_cost.view`, «Ver costos y margen» (F3-47) añade costo y margen a cada fila.
 export function ListPrices() {
   const t = useTranslations("prices");
   const { organization, permissions } = useTenant();
   // Comodidad: «Cambiar precio» se ofrece a quien la API dijo que tiene `prices.manage`.
   const canManage = permissions.some((grant) => grant.code === "prices.manage");
+  const canViewCosts = permissions.some((grant) => grant.code === "product_cost.view");
   const list = useRef<CursorListHandle>(null);
   // Lo que respondió la última escritura; un 404 (`alert`) se explica aquí.
   const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
@@ -63,6 +67,11 @@ export function ListPrices() {
   const listId = priceList?.id ?? "";
   const params = productId ? { product_id: productId } : {};
   const listKey = [...getPriceListPricesListQueryKey(slug, listId, params), "pages"];
+  const costs = useMargins({ slug, listId, productId, allowed: canViewCosts });
+  const margins = useMemo(
+    () => new Map(costs.rows?.map((one): [string, ListMargin] => [one.variant.id, one])),
+    [costs.rows],
+  );
 
   let empty = <p className="text-muted">{t(productId ? "emptyProduct" : "empty")}</p>;
   if (!priceList) {
@@ -140,6 +149,7 @@ export function ListPrices() {
             />
             {retry(products)}
           </div>
+          {canViewCosts ? <MarginSwitch costs={costs} /> : null}
         </fieldset>
       }
       notice={
@@ -163,6 +173,11 @@ export function ListPrices() {
       {(row) => (
         <PriceRow
           row={row}
+          costs={
+            costs.active ? (
+              <MarginCells margin={margins.get(row.id)} waiting={costs.query.isPending} />
+            ) : null
+          }
           action={
             canManage ? (
               <div className="flex flex-wrap items-start gap-2">
@@ -184,7 +199,7 @@ export function ListPrices() {
 
 // Una variante: quién es a la izquierda; su precio, desde cuándo, hasta cuándo y el próximo a
 // la derecha (debajo en el móvil). Fechas en la zona de la organización.
-function PriceRow({ row, action }: { row: Row; action: ReactNode }) {
+function PriceRow({ row, action, costs }: { row: Row; action: ReactNode; costs: ReactNode }) {
   const t = useTranslations("prices");
   const format = useFormatter();
   const { variant, current, next, resolution } = row;
@@ -228,6 +243,7 @@ function PriceRow({ row, action }: { row: Row; action: ReactNode }) {
             {t("next", { amount: money(next.amount), at: when(next.starts_at, false) })}
           </p>
         ) : null}
+        {costs}
       </div>
       {action ? <div className="sm:col-span-2">{action}</div> : null}
     </>
