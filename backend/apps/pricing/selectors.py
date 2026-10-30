@@ -116,12 +116,13 @@ def promotion_items(promotion_ids: Iterable[UUID]) -> QuerySet[PromotionItem]:
 
 def visible_promotions(ectx: ExecutionContext) -> QuerySet[Promotion]:
     """Las promociones no borradas que el actor puede ver: todas con `prices.manage`; si no, solo
-    las publicadas cuyas listas ve todas (una oculta la oculta, como si no existiera)."""
+    las publicadas cuyas listas ve todas y están activas (una oculta o inactiva la oculta, como
+    si no existiera, igual que `…/price-lists/{id}/prices/`)."""
     rows = Promotion.objects.filter(deleted_at__isnull=True)
     if has_permission(ectx, MANAGE):
         return rows
     hidden = PromotionPriceList.objects.filter(promotion_id=OuterRef("pk")).exclude(
-        price_list_id__in=visible_price_lists(ectx).values("id")
+        price_list_id__in=visible_price_lists(ectx).filter(is_active=True).values("id")
     )
     return rows.filter(status="PUBLISHED").exclude(Exists(hidden))
 

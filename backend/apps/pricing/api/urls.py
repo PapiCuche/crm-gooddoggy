@@ -25,4 +25,14 @@ urlpatterns = [
         promotions.PromotionView.as_view(),
         name="promotion",
     ),
+    path(
+        "pricing/promotions/<uuid:promotion_id>/publish/",
+        promotions.PromotionPublishView.as_view(),
+        name="promotion-publish",
+    ),
+    path(
+        "pricing/promotions/<uuid:promotion_id>/cancel/",
+        promotions.PromotionCancelView.as_view(),
+        name="promotion-cancel",
+    ),
 ]
