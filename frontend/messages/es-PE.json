@@ -1820,11 +1820,19 @@
         "AMOUNT_OFF": "Monto que se descuenta ({unit})",
         "FIXED_PRICE": "Precio fijo ({unit})"
       },
+      "valueHint": {
+        "PERCENT_OFF": "De 0 a 100, con hasta 2 decimales.",
+        "AMOUNT_OFF": "Lo que se resta al precio, con hasta 2 decimales.",
+        "FIXED_PRICE": "El precio final, con hasta 2 decimales."
+      },
       "starts": "Empieza",
       "ends": "Termina",
       "zoneHint": "Hora de la organización (zona {zone}).",
       "lists": "Listas de precios",
       "noLists": "No hay listas de precios activas: crea una primero.",
+      "listsLoading": "Cargando las listas de precios…",
+      "listsFailed": "No se pudieron cargar las listas de precios.",
+      "retry": "Reintentar",
       "targets": "A qué se aplica",
       "kind": "Tipo del objetivo {n}",
       "kinds": {
@@ -1835,6 +1843,16 @@
       },
       "own": "Descuento propio, opcional ({unit})",
       "ownHint": "Si lo dejas vacío, rige el de la promoción.",
+      "priority": "Prioridad (opcional)",
+      "priorityHint": "Entero de -10000 a 10000; vacío es 0. Si dos promociones coinciden, rige la de mayor prioridad y, si empatan, la de menor precio.",
+      "channels": "Canales",
+      "allChannels": "Todos los canales",
+      "channelDraft": "Agregar un canal",
+      "channelsHint": "Sin canales rige en todos. Hasta 10, de hasta 30 caracteres; las mayúsculas cuentan.",
+      "addChannel": "Agregar canal",
+      "removeChannel": "Quitar el canal {name}",
+      "ai": "Visible a la IA",
+      "aiHint": "Permite que el asistente de IA la mencione a los clientes. Aún no tiene efecto.",
       "remove": "Quitar el objetivo {n}",
       "removeTarget": "Quitar",
       "addTarget": "Agregar otro objetivo",
@@ -1859,6 +1877,10 @@
         "lists": "Elige de 1 a 20 listas de precios, todas de la misma moneda.",
         "items": "Agrega de 1 a 100 objetivos que existan, sin repetir.",
         "row": "Elige un objetivo que exista, sin repetir.",
+        "percent": "Escribe un porcentaje mayor que 0 y hasta 100, con hasta 2 decimales.",
+        "priority": "Escribe un entero de -10000 a 10000.",
+        "channels": "Agrega el canal que escribiste (de hasta 30 caracteres, distinto de los demás, hasta 10) o bórralo.",
+        "ai": "Marca o desmarca «Visible a la IA».",
         "own": "Escribe un número mayor que 0, con hasta 2 decimales."
       }
     }

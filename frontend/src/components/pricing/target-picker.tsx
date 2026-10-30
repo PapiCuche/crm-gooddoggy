@@ -41,10 +41,12 @@ export function TargetPicker(props: {
   kind: Kind;
   label: string;
   picked: Target | null;
+  taken?: ReadonlySet<string>; // los ya elegidos en otras filas: no se ofrecen
   error?: string;
   onPick: (target: Target | null) => void;
 }) {
   const { slug, kind, label, picked, error, onPick } = props;
+  const taken = props.taken;
   const t = useTranslations("promotions.form");
   const id = useId();
   const [typed, setTyped] = useState("");
@@ -60,11 +62,12 @@ export function TargetPicker(props: {
     retry: false,
   });
   const waiting = typed.trim() !== q || found.isFetching;
+  const shown = (found.data ?? []).filter((row) => !taken?.has(row.id));
   let status = "";
   if (!picked && typed.trim().length >= 2) {
     if (waiting) status = t("searching");
     else if (found.isError) status = t("searchFailed");
-    else status = t("results", { count: found.data?.length ?? 0 });
+    else status = t("results", { count: shown.length });
   }
 
   if (picked) {
@@ -88,7 +91,7 @@ export function TargetPicker(props: {
           </Button>
         </div>
         {error ? (
-          <p role="alert" className="text-danger text-sm">
+          <p data-problem tabIndex={-1} role="alert" className="text-danger text-sm">
             {error}
           </p>
         ) : null}
@@ -108,20 +111,23 @@ export function TargetPicker(props: {
         maxLength={100}
         placeholder={t("searchPlaceholder")}
         aria-invalid={error ? true : undefined}
-        aria-describedby={`${id}-status`}
+        aria-describedby={`${id}-status${error ? ` ${id}-error` : ""}`}
         className="bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger h-11 rounded-[10px] border px-3 text-[16px]"
         onChange={(event) => setTyped(event.target.value)}
+        onKeyDown={(event) => event.key === "Enter" && event.preventDefault()} // no envía el formulario
       />
-      <p
-        id={`${id}-status`}
-        role={error ? "alert" : "status"}
-        className={error ? "text-danger text-sm" : "text-muted text-sm"}
-      >
-        {error ?? status}
+      {/* Siempre `status`, siempre montado: cambiar de rol en un elemento no se anuncia bien. */}
+      <p id={`${id}-status`} role="status" className="text-muted text-sm">
+        {status}
       </p>
-      {!waiting && found.data?.length ? (
+      {error ? (
+        <p id={`${id}-error`} role="alert" className="text-danger text-sm">
+          {error}
+        </p>
+      ) : null}
+      {!waiting && shown.length ? (
         <ul className="flex flex-col gap-1">
-          {found.data.map((row) => (
+          {shown.map((row) => (
             <li key={row.id}>
               <Button
                 type="button"

@@ -199,7 +199,7 @@ export function PriceForm(props: {
                       type="datetime-local"
                       value={at}
                       min={localValue(new Date(), zone)}
-                      max="9999-12-31T23:59"
+                      max="9998-12-31T23:59"
                       aria-invalid={atError || write.error?.fields?.starts_at ? true : undefined}
                       aria-describedby={`${id}-at-note`}
                       className="bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger h-11 rounded-[10px] border px-3 text-[16px]"
