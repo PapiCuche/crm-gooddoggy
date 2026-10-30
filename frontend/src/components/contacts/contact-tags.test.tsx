@@ -1,7 +1,10 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ notFound: () => {} }));
+vi.mock("next/navigation", () => ({
+  notFound: () => {},
+  useSearchParams: () => new URLSearchParams(), // la lista lee `?q=` (F4-13)
+}));
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Contact, SelfContext, Tag } from "@/lib/api/model";
