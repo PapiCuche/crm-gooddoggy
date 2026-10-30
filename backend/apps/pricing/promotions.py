@@ -72,15 +72,26 @@ class PromotionEnded(Exception):
     """Ya pasó su `ends_at`: publicarla no serviría de nada (409 `PROMOTION_ENDED`)."""
 
 
+# Invisibles que falsean lo que se lee (inversión bidireccional, marca de orden de bytes, etiquetas).
+# Se dejan pasar el unión y el no-unión de ancho cero y el guion blando: los usan los emoji
+# compuestos (familia, profesión) y el texto en otros alfabetos.
+SPOOFING = frozenset(
+    [*range(0x202A, 0x202F), *range(0x2066, 0x206A), 0x200E, 0x200F, 0x061C, 0xFEFF]
+    + list(range(0xE0000, 0xE0080))
+)
+
+
 def _plain(char: str) -> bool:
     """Un carácter que se puede guardar en un texto libre: ni control (salvo salto y tabulador) ni
-    de formato (la inversión bidireccional) ni separador de línea o párrafo."""
+    invisible que falsea la lectura ni separador de línea o párrafo."""
     kind = unicodedata.category(char)
-    return not (kind in ("Cf", "Zl", "Zp") or (kind == "Cc" and char not in "\n\t"))
+    return not (
+        ord(char) in SPOOFING or kind in ("Zl", "Zp") or (kind == "Cc" and char not in "\n\t")
+    )
 
 
 def _text(field: str, value: str, limit: int) -> str:
-    text = value.strip()
+    text = value.replace("\r\n", "\n").replace("\r", "\n").strip()
     if len(text) > limit or TAG.search(text) or not all(map(_plain, text)):
         raise Invalid(field, f"hasta {limit} caracteres, sin HTML ni caracteres de control")
     return text

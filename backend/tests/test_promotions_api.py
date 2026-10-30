@@ -181,7 +181,7 @@ def bad_cases(team: Any) -> list[tuple[str, dict[str, Any]]]:
         "ai_exposable": ["true", 1, 0, None],
         "name": [5, True, None, "  ", "a" * 201, {}],
         "description": [5, None, "<script>", "a\x07b", "a\u202eb", "a\u2028b", "a\x00b"],
-        "terms": [5, None, "a\rb", "a\x1bb", "a\u200fb", "a\u2029b"],
+        "terms": [5, None, "a\x1bb", "a\u200fb", "a\u2029b", "a\U000e0041b", "a\ufeffb"],
         "overide_value": [5],
         "organization_id": [str(uuid4())],
         "currency": [5, "pen1", None],
@@ -301,3 +301,10 @@ def test_a_null_channel_list_is_every_channel(team: Any) -> None:
 def test_a_text_keeps_its_line_breaks_and_tabs(team: Any) -> None:
     made = create(team.a, team, terms="Uno\n\tDos", description="Ñandú\ttab")
     assert (made.json()["terms"], made.json()["description"]) == ("Uno\n\tDos", "Ñandú\ttab")
+
+
+def test_a_text_keeps_composed_emoji_and_turns_windows_breaks_into_line_feeds(team: Any) -> None:
+    family = "Oferta 👨‍👩‍👧 ¡Ñandú! con­guion‌blando"
+    made = create(team.a, team, terms="Uno\r\nDos\rTres", description=family)
+    assert made.status_code == 201
+    assert (made.json()["terms"], made.json()["description"]) == ("Uno\nDos\nTres", family)
