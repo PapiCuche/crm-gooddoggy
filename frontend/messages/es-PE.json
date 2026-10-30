@@ -1678,6 +1678,7 @@
       "loading": "Cargando costos y márgenes…",
       "declined": "Sin confirmar tu identidad, los costos siguen ocultos.",
       "denied": "No tienes permiso para ver los costos de esta lista.",
+      "stepUp": "Hace falta confirmar de nuevo tu segundo factor. Vuelve a activar el interruptor.",
       "gone": "La lista ya no está disponible. Elige otra.",
       "cost": "Costo",
       "marginAmount": "Margen S/",

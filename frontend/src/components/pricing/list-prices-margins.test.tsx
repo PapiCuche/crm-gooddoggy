@@ -1,4 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -178,7 +179,6 @@ describe("ListPrices con costos y margen", () => {
   });
 
   it("sin margen, el motivo en español en lugar de las cifras", async () => {
-    const none = { price: null, margin: null };
     const reasons = {
       NO_PRICE: "Sin margen: la variante no tiene precio",
       VARIANT_UNAVAILABLE: "Sin margen: no está a la venta",
@@ -186,24 +186,25 @@ describe("ListPrices con costos y margen", () => {
       CURRENCY_MISMATCH: "Sin margen: el precio y el costo están en monedas distintas",
       TAX_MISMATCH: "Sin margen: uno incluye IGV y el otro no",
     } as const;
-    const skus = Object.keys(reasons).map((reason, index) => `R-${index}`);
+    const codes = Object.keys(reasons) as (keyof typeof reasons)[];
+    const skus = codes.map((_, index) => `R-${index}`);
+    const none = (reason: string) => ({
+      price: null,
+      margin: null,
+      reason,
+      cost: reason === "NO_COST" ? null : side("1.00"),
+    });
     mockApi({
       ...base(skus),
       [MARGINS]: page(
-        Object.keys(reasons).map((reason, index) =>
-          margin(`R-${index}`, `R-${index}`, {
-            ...none,
-            ...(reason === "NO_COST" ? { cost: null } : {}),
-            reason: reason as keyof typeof reasons,
-          }),
-        ),
+        codes.map((c, i) => margin(skus[i]!, skus[i]!, none(c) as Partial<ListMargin>)),
       ),
     });
     screenOf(seller("product_cost.view"));
     const items = await Promise.all(skus.map(row));
     fireEvent.click(await switchOf());
-    for (const [index, text] of Object.values(reasons).entries()) {
-      await waitFor(() => expect(items[index]).toHaveTextContent(text));
+    for (const [index, code] of codes.entries()) {
+      await waitFor(() => expect(items[index]).toHaveTextContent(reasons[code]));
     }
     expect(items[2]).toHaveTextContent(/Costo\s*—/);
     expect(items[0]).not.toHaveTextContent(/Margen %/);
@@ -260,16 +261,168 @@ describe("ListPrices con costos y margen", () => {
   });
 
   it("un 403 que no es de step-up se explica con un mensaje", async () => {
+    const denied = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    mockApi({ ...base(["LAP-1"]), [MARGINS]: denied });
+    screenOf(seller("product_cost.view"));
+    fireEvent.click(await switchOf());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/No tienes permiso para ver/);
+  });
+});
+
+// Los márgenes se contestan cuando el test lo suelta; la respuesta se decide al pedirla.
+function gated(api: ReturnType<typeof mockApi>) {
+  const gates: (() => void)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const reply = api(input, init);
+      if (String(input).includes("/margins/")) await new Promise<void>((go) => gates.push(go));
+      return reply;
+    }),
+  );
+  return gates;
+}
+const withCost = (amount: string) => page([margin("LAP-1", "LAP-1", { cost: side(amount) })]);
+const inCache = (client: ReturnType<typeof renderApp>["client"], text: string) =>
+  JSON.stringify(
+    client
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.state.data),
+  ).includes(text);
+
+describe("ListPrices: costos que no deben quedarse", () => {
+  it("al perder product_cost.view quita los costos y recuperarlo exige activar el interruptor", async () => {
+    mockApi({ ...base(["LAP-1"]), [MARGINS]: page([margin("LAP-1", "LAP-1", {})]) });
+    let setTenant: (next: SelfContext) => void = () => {};
+    function Harness() {
+      const [tenant, set] = useState(seller("product_cost.view"));
+      setTenant = set;
+      return (
+        <TenantProvider value={tenant}>
+          <ListPrices />
+        </TenantProvider>
+      );
+    }
+    const { client } = renderApp(<Harness />);
+    const remove = vi.spyOn(client, "removeQueries");
+    const item = await row("LAP-1");
+    fireEvent.click(await switchOf());
+    await within(item).findByText("S/ 3,500.00");
+    act(() => setTenant(seller()));
+    expect(item).not.toHaveTextContent("3,500.00");
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(remove).toHaveBeenCalled();
+    expect(inCache(client, "3500")).toBe(false);
+    act(() => setTenant(seller("product_cost.view")));
+    expect(await switchOf()).not.toBeChecked();
+    expect(item).not.toHaveTextContent("3,500.00");
+  });
+
+  it("sin los tres permisos de la ruta de márgenes no hay interruptor", async () => {
+    mockApi({ ...base(["LAP-1"]) });
+    const tenant = seller("product_cost.view");
+    screenOf({ ...tenant, permissions: grants("product_cost.view", "prices.view") });
+    await row("LAP-1");
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+
+  it("con la caché llena pero el interruptor apagado, la vista no enseña costos", async () => {
+    mockApi({ ...base(["LAP-1"]) });
+    const { client } = screenOf(seller("product_cost.view"));
+    const item = await row("LAP-1");
+    const key = ["/api/v1/o/acme/pricing/price-lists/p1/margins/", {}, "all"];
+    client.setQueryData(key, [margin("LAP-1", "LAP-1", {})]);
+    await switchOf();
+    expect(item).not.toHaveTextContent("3,500.00");
+    expect(item).not.toHaveTextContent("Margen");
+  });
+
+  it("un reloj que salta 20 minutos (portátil dormido) apaga al volver a la pestaña", async () => {
+    mockApi({ ...base(["LAP-1"]), [MARGINS]: page([margin("LAP-1", "LAP-1", {})]) });
+    const { client } = screenOf(seller("product_cost.view"));
+    const item = await row("LAP-1");
+    const toggle = await switchOf();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+    fireEvent.click(toggle);
+    await within(item).findByText("S/ 3,500.00");
+    vi.setSystemTime(Date.now() + 20 * 60_000); // los temporizadores no corrieron
+    expect(toggle).toBeChecked();
+    await act(async () => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(toggle).not.toBeChecked();
+    expect(inCache(client, "3500")).toBe(false);
+  });
+
+  it("una respuesta que llega tarde, tras apagar, no vuelve a llenar la caché", async () => {
+    const gates = gated(mockApi({ ...base(["LAP-1"]), [MARGINS]: withCost("3500.00") }));
+    const { client } = screenOf(seller("product_cost.view"));
+    const item = await row("LAP-1");
+    const toggle = await switchOf();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(gates).toHaveLength(1));
+    fireEvent.click(toggle);
+    await act(async () => gates[0]!());
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(inCache(client, "3500")).toBe(false);
+    expect(item).not.toHaveTextContent("3,500.00");
+  });
+
+  it("apagar y encender deprisa, con respuestas en desorden, se queda con la última", async () => {
+    let n = 0;
+    const gates = gated(
+      mockApi({ ...base(["LAP-1"]), [MARGINS]: () => withCost(n++ === 0 ? "1111.00" : "2222.00") }),
+    );
+    const { client } = screenOf(seller("product_cost.view"));
+    const item = await row("LAP-1");
+    const toggle = await switchOf();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(gates).toHaveLength(1));
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(gates).toHaveLength(2));
+    await act(async () => gates[1]!());
+    await within(item).findByText("S/ 2,222.00");
+    await act(async () => gates[0]!()); // la vieja llega después
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(item).toHaveTextContent("2,222.00");
+    expect(inCache(client, "1111")).toBe(false);
+  });
+
+  it("al cambiar de lista con el interruptor activo, los costos de la anterior se van de la caché", async () => {
+    const other = { ...regular, id: "p2", code: "MAYOR", name: "Mayorista", is_default: false };
     mockApi({
       ...base(["LAP-1"]),
-      [MARGINS]: { status: 403, body: { code: "PERMISSION_DENIED" } },
+      [`GET ${API}/pricing/price-lists/?limit=200`]: page([regular, other]),
+      [`GET ${API}/pricing/price-lists/p2/prices/`]: page([priceRow("LAP-1", "LAP-1")]),
+      [MARGINS]: withCost("1234.00"),
+      [MARGINS.replace("p1", "p2")]: withCost("5678.00"),
     });
-    screenOf(seller("product_cost.view"));
-    await row("LAP-1");
+    const { client } = screenOf(seller("product_cost.view"));
+    const item = await row("LAP-1");
     fireEvent.click(await switchOf());
+    await within(item).findByText("S/ 1,234.00");
+    fireEvent.change(screen.getByLabelText("Lista de precios"), { target: { value: "p2" } });
+    await within(await row("LAP-1")).findByText("S/ 5,678.00");
+    await waitFor(() => expect(inCache(client, "1234")).toBe(false)); // `gcTime: 0`
+  });
+
+  it("si la segunda página pide el código, no se ven costos a medias; y repetirlo no es «sin permiso»", async () => {
+    const cursor = `${MARGINS}&cursor=c2`;
+    mockApi({
+      ...base(["LAP-1", "LAP-2"]),
+      [MARGINS]: { status: 200, body: { results: [margin("LAP-1", "LAP-1", {})], next: "c2" } },
+      [cursor]: { status: 403, body: { code: "STEP_UP_REQUIRED" } },
+      [STEP_UP]: { status: 200, body: { step_up_expires_in: 900 } },
+    });
+    const { client } = screenOf(seller("product_cost.view"));
+    const [first] = [await row("LAP-1"), await row("LAP-2")];
+    fireEvent.click(await switchOf());
+    fireEvent.change(await screen.findByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Verificar" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "No tienes permiso para ver los costos",
+      /confirmar de nuevo tu segundo factor/,
     );
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(first).not.toHaveTextContent("3,500.00");
+    expect(inCache(client, "3500")).toBe(false);
   });
 });

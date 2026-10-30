@@ -10,7 +10,9 @@ import { getPriceListMarginsListQueryKey, priceListMarginsList } from "@/lib/api
 import type { ListMargin } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
-// El segundo factor vale 15 minutos (ADR-003 §4): los costos no se quedan más en el navegador.
+// Lo que se garantiza: los costos se quedan como mucho 15 minutos en el navegador desde que se
+// activa el interruptor (no desde que se verificó el segundo factor, que el servidor puede haber
+// aceptado antes y que esta pantalla no ve). Apagarlo, perder el permiso o salir los quita antes.
 export const COST_MINUTES = 15;
 // Las dos rutas que traen un costo: los márgenes de una lista y los costos de una variante.
 const COST_ROUTE = /\/pricing\/(price-lists\/[^/]+\/margins|variants\/[^/]+\/costs)\/$/;
@@ -66,6 +68,12 @@ export function useMargins(args: {
     refetchOnWindowFocus: false,
   });
 
+  // Sin el permiso (cambió a mitad de la sesión) no queda ningún costo, y volver a tenerlo exige
+  // activar el interruptor otra vez.
+  if (!allowed && on) setOn(false);
+  useEffect(() => {
+    if (!allowed) queryClient.removeQueries({ predicate: isCostQuery });
+  }, [allowed, queryClient]);
   useEffect(() => {
     if (!active) return;
     deadline.current = Date.now() + COST_MINUTES * 60_000;

@@ -39,7 +39,10 @@ export function ListPrices() {
   const { organization, permissions } = useTenant();
   // Comodidad: «Cambiar precio» se ofrece a quien la API dijo que tiene `prices.manage`.
   const canManage = permissions.some((grant) => grant.code === "prices.manage");
-  const canViewCosts = permissions.some((grant) => grant.code === "product_cost.view");
+  // Los tres permisos que pide la ruta de márgenes: sin ellos el interruptor siempre daría 403.
+  const canViewCosts = ["product_cost.view", "prices.view", "products.view"].every((code) =>
+    permissions.some((grant) => grant.code === code),
+  );
   const list = useRef<CursorListHandle>(null);
   // Lo que respondió la última escritura; un 404 (`alert`) se explica aquí.
   const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);

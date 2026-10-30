@@ -24,16 +24,16 @@ export function MarginSwitch({ costs }: { costs: Costs }) {
   const { active, declined, query } = costs;
   const noteId = useId();
   const status = query.error?.status;
+  const stepUp = query.error?.code === "STEP_UP_REQUIRED";
   let note: { text: string; alert: boolean } | null = null;
   if (declined) note = { text: t("declined"), alert: false };
   else if (active && query.isError && status !== 401) {
-    const known = status === 403 || status === 404;
-    note = {
-      text: known
-        ? t(status === 403 ? "denied" : "gone")
-        : errors(`api.${apiErrorKey(query.error)}`),
-      alert: true,
-    };
+    let key = "";
+    if (stepUp)
+      key = "stepUp"; // un segundo STEP_UP_REQUIRED tras verificar no es falta de permiso
+    else if (status === 403) key = "denied";
+    else if (status === 404) key = "gone";
+    note = { text: key ? t(key) : errors(`api.${apiErrorKey(query.error)}`), alert: true };
   } else if (active && query.isPending && query.fetchStatus !== "idle") {
     note = { text: t("loading"), alert: false };
   }
@@ -67,7 +67,7 @@ export function MarginSwitch({ costs }: { costs: Costs }) {
         {note?.text ?? ""}
       </p>
       {costs.dialog}
-      {note?.alert && status !== 403 && status !== 404 ? (
+      {note?.alert && (stepUp || (status !== 403 && status !== 404)) ? (
         <Button
           variant="ghost"
           className="border-border min-h-11 w-fit border sm:min-h-9"
@@ -86,8 +86,15 @@ export function MarginSwitch({ costs }: { costs: Costs }) {
 export function MarginCells({ margin, waiting }: { margin?: ListMargin; waiting: boolean }) {
   const t = useTranslations("prices.margins");
   const format = useFormatter();
-  const money = (amount: string, currency: string) =>
-    format.number(Number(amount) || 0, { style: "currency", currency }); // `|| 0`: sin «-0»
+  const money = (amount: string, currency: string) => {
+    try {
+      // `format.number` no lanza con una moneda inválida: lo registra y devuelve el número solo.
+      new Intl.NumberFormat("es-PE", { style: "currency", currency });
+    } catch {
+      return `${amount} ${currency}`; // una moneda que Intl no conoce no tumba la fila
+    }
+    return format.number(Number(amount) || 0, { style: "currency", currency }); // `|| 0`: sin «-0»
+  };
   const figure = margin?.margin;
   const side = margin?.price;
   const loss = !!figure && (Number(figure.amount) < 0 || Number(figure.percent) < 0);
