@@ -93,6 +93,8 @@ export function Promotions() {
             <PromotionForm
               slug={slug}
               priceLists={(lists.data ?? []).filter((row) => row.is_active)}
+              listsState={lists.data ? "ready" : lists.isError ? "error" : "loading"}
+              onRetry={() => void lists.refetch()}
               onClose={() => {
                 setCreating(false);
                 requestAnimationFrame(() => create.current?.focus());
