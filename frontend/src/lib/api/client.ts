@@ -7457,7 +7457,7 @@ export const getPromotionsListUrl = (orgSlug: string, params?: PromotionsListPar
 };
 
 /**
- * Con `prices.manage` todas; si no, las publicadas cuyas listas ve el actor.
+ * Con `prices.manage` todas; si no, las publicadas cuyas listas, activas, ve el actor.
  */
 export const promotionsList = async (
   orgSlug: string,
@@ -7817,6 +7817,172 @@ export function usePromotionsRetrieve<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getPromotionsCancelUrl = (orgSlug: string, promotionId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/promotions/${promotionId}/cancel/`;
+};
+
+/**
+ * Cancela una promoción en borrador o publicada: deja de aplicarse al instante. 409 `PROMOTION_ALREADY_CANCELLED`.
+ */
+export const promotionsCancel = async (
+  orgSlug: string,
+  promotionId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Promotion> => {
+  return apiFetch<Promotion>(getPromotionsCancelUrl(orgSlug, promotionId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPromotionsCancelMutationKey = () => ["promotionsCancel"] as const;
+
+export const getPromotionsCancelMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof promotionsCancel>>,
+    TError,
+    PromotionsCancelMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof promotionsCancel>>,
+  TError,
+  PromotionsCancelMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPromotionsCancelMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof promotionsCancel>>,
+    PromotionsCancelMutationVariables
+  > = (props) => {
+    const { orgSlug, promotionId } = props ?? {};
+
+    return promotionsCancel(orgSlug, promotionId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PromotionsCancelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof promotionsCancel>>
+>;
+
+export type PromotionsCancelMutationError = ErrorType<Error>;
+export type PromotionsCancelMutationVariables = { orgSlug: string; promotionId: string };
+
+export const usePromotionsCancel = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof promotionsCancel>>,
+      TError,
+      PromotionsCancelMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof promotionsCancel>>,
+  TError,
+  PromotionsCancelMutationVariables,
+  TContext
+> => {
+  return useMutation(getPromotionsCancelMutationOptions(options), queryClient);
+};
+
+export const getPromotionsPublishUrl = (orgSlug: string, promotionId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/promotions/${promotionId}/publish/`;
+};
+
+/**
+ * Publica una promoción en borrador: `PricingService` la aplica entre `starts_at` y `ends_at`. 409 `PROMOTION_NOT_DRAFT` (ya publicada o cancelada) o `PROMOTION_ENDED`.
+ */
+export const promotionsPublish = async (
+  orgSlug: string,
+  promotionId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Promotion> => {
+  return apiFetch<Promotion>(getPromotionsPublishUrl(orgSlug, promotionId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPromotionsPublishMutationKey = () => ["promotionsPublish"] as const;
+
+export const getPromotionsPublishMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof promotionsPublish>>,
+    TError,
+    PromotionsPublishMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof promotionsPublish>>,
+  TError,
+  PromotionsPublishMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPromotionsPublishMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof promotionsPublish>>,
+    PromotionsPublishMutationVariables
+  > = (props) => {
+    const { orgSlug, promotionId } = props ?? {};
+
+    return promotionsPublish(orgSlug, promotionId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PromotionsPublishMutationResult = NonNullable<
+  Awaited<ReturnType<typeof promotionsPublish>>
+>;
+
+export type PromotionsPublishMutationError = ErrorType<Error>;
+export type PromotionsPublishMutationVariables = { orgSlug: string; promotionId: string };
+
+export const usePromotionsPublish = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof promotionsPublish>>,
+      TError,
+      PromotionsPublishMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof promotionsPublish>>,
+  TError,
+  PromotionsPublishMutationVariables,
+  TContext
+> => {
+  return useMutation(getPromotionsPublishMutationOptions(options), queryClient);
+};
 
 export const getVariantPriceHistoryListUrl = (
   orgSlug: string,

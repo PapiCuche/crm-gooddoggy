@@ -1,11 +1,14 @@
-"""Las promociones (F3-48d, E03-05; ADR-006 §2): `…/pricing/promotions/`. Leer pide `prices.view`
-y ve las publicadas cuyas listas ve el actor, o todas con `prices.manage`; crear (siempre en
-borrador) pide `prices.manage`. Lo que el actor no ve da el 404 de lo que no existe. Importes en
-string decimal; ningún campo de costo ni de margen. La organización sale del contexto. Estricto:
-un tipo que no es el del campo (`"5"` por 5, `1` por `true`) es 400, nunca se convierte.
+"""Las promociones (F3-48d/e, E03-05; ADR-006 §2): `…/pricing/promotions/`. Leer pide
+`prices.view` y `products.view` (como las rutas de precios: revela variantes y productos) y ve las
+publicadas cuyas listas, activas, ve el actor, o todas con `prices.manage`; crear (siempre en
+borrador), publicar y cancelar piden `prices.manage`. Lo que el actor no ve da el 404 de lo que no
+existe. Importes en string decimal; ningún campo de costo ni de margen. La organización sale del
+contexto. Estricto: un campo desconocido es 400 con su nombre, y un tipo que no es el del campo
+(`"5"` por 5, `1` por `true`) es 400, nunca se convierte.
 """
 
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -23,7 +26,13 @@ from apps.pricing.api.prices import Amount, Instant
 from apps.pricing.api.views import _tenant
 from apps.pricing.models import DiscountType, Promotion, PromotionStatus
 from apps.pricing.selectors import promotion_items, promotion_lists, visible_promotions
+from core.api.errors import ApiError
 from core.api.schema import errors
+
+NOT_DRAFT = "Solo se publica una promoción en borrador."
+CANCELLED = "La promoción ya está cancelada."
+ENDED = "Ya pasó su fin: no se puede publicar."
+UNKNOWN = "Campo desconocido."
 
 
 class Strict:
@@ -53,7 +62,19 @@ class Flag(Strict, serializers.BooleanField):
     kind = (bool,)
 
 
-class PromotionItemSerializer(serializers.Serializer[Any]):
+class Closed:
+    """Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+    pierde en silencio)."""
+
+    def to_internal_value(self, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            extra = {str(key): [UNKNOWN] for key in data if key not in self.fields}  # type: ignore[attr-defined]
+            if extra:
+                raise serializers.ValidationError(extra)
+        return super().to_internal_value(data)  # type: ignore[misc]
+
+
+class PromotionItemSerializer(Closed, serializers.Serializer[Any]):
     variant_id = Id(required=False, allow_null=True)
     product_id = Id(required=False, allow_null=True)
     category_id = Id(required=False, allow_null=True)
@@ -82,7 +103,7 @@ class PromotionSerializer(serializers.Serializer[Any]):
     price_list_ids = serializers.ListField(child=serializers.UUIDField(), source="listed")
 
 
-class PromotionCreateSerializer(serializers.Serializer[Any]):
+class PromotionCreateSerializer(Closed, serializers.Serializer[Any]):
     name = Text(max_length=commands.NAME_MAX)
     description = Text(max_length=commands.TEXT_MAX, required=False, allow_blank=True)
     terms = Text(max_length=commands.TEXT_MAX, required=False, allow_blank=True)
@@ -124,7 +145,8 @@ def _visible(request: Request) -> QuerySet[Promotion]:
         operation_id="promotions_list",
         tags=["pricing"],
         responses={200: PromotionSerializer(many=True), **errors(400, 401, 403, 404)},
-        description="Con `prices.manage` todas; si no, las publicadas cuyas listas ve el actor.",
+        description="Con `prices.manage` todas; si no, las publicadas cuyas listas, activas, ve "
+        "el actor.",
     ),
     post=extend_schema(
         operation_id="promotions_create",
@@ -135,7 +157,7 @@ def _visible(request: Request) -> QuerySet[Promotion]:
     ),
 )
 class PromotionsView(generics.ListAPIView):
-    required_permissions = {"GET": "prices.view", "POST": "prices.manage"}
+    required_permissions = {"GET": ("prices.view", "products.view"), "POST": "prices.manage"}
     serializer_class = PromotionSerializer
 
     def get_queryset(self) -> QuerySet[Promotion]:
@@ -156,7 +178,7 @@ class PromotionsView(generics.ListAPIView):
 
 
 class PromotionView(APIView):
-    required_permissions = {"GET": "prices.view"}
+    required_permissions = {"GET": ("prices.view", "products.view")}
 
     @extend_schema(
         operation_id="promotions_retrieve",
@@ -169,3 +191,49 @@ class PromotionView(APIView):
         if found is None:
             raise NotFound
         return Response(PromotionSerializer(_loaded([found])[0]).data)
+
+
+def _moved(run: Any, promotion_id: UUID) -> Response:
+    """El comando de cambio de estado, con sus fallos como respuesta; el cuerpo, el del detalle."""
+    try:
+        moved: Promotion = run(_tenant(), promotion_id=promotion_id)
+    except Promotion.DoesNotExist:
+        raise NotFound from None
+    except commands.PromotionStateConflict as error:
+        if error.status == PromotionStatus.CANCELLED and run is commands.cancel_promotion:
+            raise ApiError("PROMOTION_ALREADY_CANCELLED", 409, CANCELLED) from None
+        raise ApiError("PROMOTION_NOT_DRAFT", 409, NOT_DRAFT) from None
+    except commands.PromotionEnded:
+        raise ApiError("PROMOTION_ENDED", 409, ENDED) from None
+    return Response(PromotionSerializer(_loaded([moved])[0]).data)
+
+
+class PromotionPublishView(APIView):
+    required_permissions = {"POST": "prices.manage"}
+
+    @extend_schema(
+        operation_id="promotions_publish",
+        tags=["pricing"],
+        request=None,
+        responses={200: PromotionSerializer, **errors(401, 403, 404, 409)},
+        description="Publica una promoción en borrador: `PricingService` la aplica entre "
+        "`starts_at` y `ends_at`. 409 `PROMOTION_NOT_DRAFT` (ya publicada o cancelada) o "
+        "`PROMOTION_ENDED`.",
+    )
+    def post(self, request: Request, promotion_id: UUID, **kwargs: Any) -> Response:
+        return _moved(commands.publish_promotion, promotion_id)
+
+
+class PromotionCancelView(APIView):
+    required_permissions = {"POST": "prices.manage"}
+
+    @extend_schema(
+        operation_id="promotions_cancel",
+        tags=["pricing"],
+        request=None,
+        responses={200: PromotionSerializer, **errors(401, 403, 404, 409)},
+        description="Cancela una promoción en borrador o publicada: deja de aplicarse al "
+        "instante. 409 `PROMOTION_ALREADY_CANCELLED`.",
+    )
+    def post(self, request: Request, promotion_id: UUID, **kwargs: Any) -> Response:
+        return _moved(commands.cancel_promotion, promotion_id)

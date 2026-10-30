@@ -3526,8 +3526,8 @@ paths:
   /api/v1/o/{org_slug}/pricing/promotions/:
     get:
       operationId: promotions_list
-      description: Con `prices.manage` todas; si no, las publicadas cuyas listas ve
-        el actor.
+      description: Con `prices.manage` todas; si no, las publicadas cuyas listas,
+        activas, ve el actor.
       parameters:
       - name: cursor
         in: query
@@ -3674,6 +3674,111 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/promotions/{promotion_id}/cancel/:
+    post:
+      operationId: promotions_cancel
+      description: 'Cancela una promoción en borrador o publicada: deja de aplicarse
+        al instante. 409 `PROMOTION_ALREADY_CANCELLED`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: promotion_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Promotion'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/promotions/{promotion_id}/publish/:
+    post:
+      operationId: promotions_publish
+      description: 'Publica una promoción en borrador: `PricingService` la aplica
+        entre `starts_at` y `ends_at`. 409 `PROMOTION_NOT_DRAFT` (ya publicada o cancelada)
+        o `PROMOTION_ENDED`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: promotion_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Promotion'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -7637,6 +7742,9 @@ components:
       - version
     PromotionCreateRequest:
       type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
       properties:
         name:
           type: string
@@ -7696,6 +7804,9 @@ components:
       - value
     PromotionItem:
       type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
       properties:
         variant_id:
           type: string
@@ -7719,6 +7830,9 @@ components:
           nullable: true
     PromotionItemRequest:
       type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
       properties:
         variant_id:
           type: string

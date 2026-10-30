@@ -4,6 +4,7 @@ sesión, motor de autorización y PostgreSQL con el rol `crm_app`. Los comandos 
 
 import json
 from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,7 +15,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.accounts.models import User
-from apps.pricing.models import PriceList, Promotion
+from apps.pricing.models import PriceList, Promotion, PromotionItem, PromotionPriceList
 from core.tenancy.scope import tenant_scope
 from tests import test_price_lists_api, test_self_context
 from tests.factories import make_user
@@ -113,6 +114,11 @@ def test_roles_and_the_anonymous(team: Any) -> None:
     blind = make_user(email="ciega@example.com")  # sin `prices.view` ninguna ruta se abre
     give(team.org, join(team.org, blind).pk, {"products.view": None})
     assert [reply(signed(blind).get(path)) for path in (PROMOS, one)] == [DENIED, DENIED]
+    half = make_user(
+        email="media@example.com"
+    )  # `prices.view` sin `products.view`: revela objetivos
+    give(team.org, join(team.org, half).pk, {"prices.view": None})
+    assert [reply(signed(half).get(path)) for path in (PROMOS, one)] == [DENIED, DENIED]
     assert reply(create(signed(blind), team)) == DENIED
     nobody = Client()
     codes = [nobody.get(PROMOS), nobody.get(one), create(nobody, team)]
@@ -133,12 +139,16 @@ def test_a_viewer_sees_only_published_promotions_whose_lists_are_all_visible(
     with tenant_scope(ctx(team.org)):
         PriceList.objects.filter(pk=gone_list).update(deleted_at=timezone.now())
     gone = promo(team.org, [team.regular, gone_list], target)
+    off_list = price_list(team.org, "APAGADA")
+    off = promo(team.org, [team.regular, off_list], target)
+    with tenant_scope(ctx(team.org)):
+        PriceList.objects.filter(pk=off_list).update(is_active=False)
     mine = ids(team.v)
     assert mine == [str(shown)]
-    for hide in (both, hidden, draft, cancelled, gone):
+    for hide in (both, hidden, draft, cancelled, gone, off):
         assert reply(team.v.get(f"{PROMOS}{hide}/")) == NOT_FOUND
     assert team.v.get(f"{PROMOS}{shown}/").status_code == 200
-    assert len(ids(team.a)) == 6 == len(ids(team.x))  # `prices.manage`: todas, en cualquier estado
+    assert len(ids(team.a)) == 7 == len(ids(team.x))  # `prices.manage`: todas, en cualquier estado
     assert team.a.get(f"{PROMOS}{draft}/").status_code == 200
     migrator.execute("UPDATE promotions SET deleted_at = now() WHERE id = %s", [shown])
     assert ids(team.v) == [] and reply(team.a.get(f"{PROMOS}{shown}/")) == NOT_FOUND
@@ -157,7 +167,8 @@ def test_another_organization_is_not_found_and_cannot_be_targeted(
     ):
         refused = create(team.a, team, **fields)
         assert (refused.status_code, set(refused.json()["fields"])) == (400, set(fields))
-    ours = create(team.a, team, organization_id=str(orgs["B"])).json()  # el cuerpo no manda
+    assert create(team.a, team, organization_id=str(orgs["B"])).status_code == 400  # no se admite
+    ours = create(team.a, team).json()
     for org, mine in (("A", ours["id"]), ("B", str(theirs))):
         with tenant_scope(ctx(orgs[org])):
             assert [str(pk) for pk in Promotion.objects.values_list("pk", flat=True)] == [mine]
@@ -169,20 +180,37 @@ def bad_cases(team: Any) -> list[tuple[str, dict[str, Any]]]:
         "priority": ["5", True, 5.5, 5.0, None, 10_001, [5]],
         "ai_exposable": ["true", 1, 0, None],
         "name": [5, True, None, "  ", "a" * 201, {}],
-        "description": [5, None, "<script>"],
-        "terms": [5, None],
+        "description": [5, None, "<script>", "a\x07b", "a\u202eb", "a\u2028b", "a\x00b"],
+        "terms": [5, None, "a\rb", "a\x1bb", "a\u200fb", "a\u2029b"],
+        "overide_value": [5],
+        "organization_id": [str(uuid4())],
         "currency": [5, "pen1", None],
         "discount_type": ["X", 5, None],
         "value": [10, 10.5, "abc", "0", "101", None, True],
         "starts_at": [5, "ayer", "2026-04-01T00:00:00", None],
         "ends_at": [5, "2026-04-01T00:00:00", "2026-03-01T00:00:00Z", D1.isoformat()],
         "channels": ["WEB", [5], ["WEB", "WEB"], [], ["a"] * 11, {"a": 1}],
-        "price_list_ids": [ok, 5, [5], ["no"], [], [str(uuid4())], [ok, ok], [ok] * 21],
+        "price_list_ids": [
+            ok,
+            5,
+            [5],
+            ["no"],
+            [],
+            [str(uuid4())],
+            [ok, ok],
+            [ok] * 21,
+            [uuid4().int],
+        ],
         "items": ["x", {}, [], [5], [{}], [{"variant_id": 5}], [{"category_id": "no"}]],
     }
     cases["items"] += [[one | {"override_value": 5}], [one | {"override_value": "0"}]]
     cases["items"] += [[one | {"variant_id": str(team.variant)}], [one, one], [one] * 101]
     cases["items"] += [[{"variant_id": str(uuid4())}], [{"category_id": 123456}]]
+    cases["items"] += [
+        [{"variant_id": uuid4().int}],
+        [one | {"overide_value": "5"}],
+        [one | {"x": 1}],
+    ]
     return [(field, {field: value}) for field, values in cases.items() for value in values]
 
 
@@ -227,3 +255,49 @@ def test_a_created_draft_is_not_applied_by_pricing_service(team: Any) -> None:
         assert Promotion.objects.get(pk=made.json()["id"]).status == "DRAFT"
     twin = promo(team.org, [team.regular], [{"variant_id": team.variant}])  # el control
     assert str(final(team.org, viewer, team.variant, team.regular, NOW).promotion_id) == str(twin)
+
+
+def test_an_unknown_key_is_named_in_the_400_at_the_top_and_inside_an_item(team: Any) -> None:
+    top = create(team.a, team, overide_value="5").json()
+    assert top["code"] == "VALIDATION_ERROR" and list(top["fields"]) == ["overide_value"]
+    item = [{"category_id": str(team.category), "overide_value": "5"}]
+    nested = create(team.a, team, items=item).json()["fields"]["items"]
+    assert list(nested) == ["0"] and list(nested["0"]) == ["overide_value"]
+    assert stored(team) == 0
+
+
+def test_items_and_lists_come_back_by_id_whatever_their_insertion_order(team: Any) -> None:
+    cats = tree(team.org, "audio", "bocinas", "portatiles")
+    lists = [team.regular, price_list(team.org, "B"), price_list(team.org, "C")]
+    keys = sorted(uuid4() for _ in range(3))  # se insertan de mayor a menor
+    with tenant_scope(ctx(team.org)):
+        made = Promotion.objects.create(
+            name="P",
+            currency="PEN",
+            discount_type="PERCENT_OFF",
+            value=Decimal(5),
+            starts_at=D1,
+            ends_at=D8,
+        )
+        for key, cat, one in reversed(list(zip(keys, cats, lists, strict=True))):
+            PromotionItem.objects.create(id=key, promotion=made, category_id=cat)
+            PromotionPriceList.objects.create(id=key, promotion=made, price_list_id=one)
+        Promotion.objects.filter(pk=made.pk).update(status="PUBLISHED")
+    expected = dict(zip(keys, zip(cats, lists, strict=True), strict=True))
+    for shown in (
+        team.a.get(f"{PROMOS}{made.pk}/").json(),
+        team.a.get(PROMOS).json()["results"][0],
+    ):
+        assert [i["category_id"] for i in shown["items"]] == [str(expected[k][0]) for k in keys]
+        assert shown["price_list_ids"] == [str(expected[k][1]) for k in keys]
+
+
+def test_a_null_channel_list_is_every_channel(team: Any) -> None:
+    made = create(team.a, team, channels=None)
+    assert made.status_code == 201 and made.json()["channels"] is None
+    assert create(team.a, team).json()["channels"] is None  # sin enviarlo, igual
+
+
+def test_a_text_keeps_its_line_breaks_and_tabs(team: Any) -> None:
+    made = create(team.a, team, terms="Uno\n\tDos", description="Ñandú\ttab")
+    assert (made.json()["terms"], made.json()["description"]) == ("Uno\n\tDos", "Ñandú\ttab")

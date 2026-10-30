@@ -12,6 +12,7 @@ aplica la promoción es `PricingService`: rige entre `starts_at` y `ends_at` sin
 """
 
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -71,10 +72,17 @@ class PromotionEnded(Exception):
     """Ya pasó su `ends_at`: publicarla no serviría de nada (409 `PROMOTION_ENDED`)."""
 
 
+def _plain(char: str) -> bool:
+    """Un carácter que se puede guardar en un texto libre: ni control (salvo salto y tabulador) ni
+    de formato (la inversión bidireccional) ni separador de línea o párrafo."""
+    kind = unicodedata.category(char)
+    return not (kind in ("Cf", "Zl", "Zp") or (kind == "Cc" and char not in "\n\t"))
+
+
 def _text(field: str, value: str, limit: int) -> str:
     text = value.strip()
-    if len(text) > limit or "\x00" in text or TAG.search(text):
-        raise Invalid(field, f"hasta {limit} caracteres, sin HTML")
+    if len(text) > limit or TAG.search(text) or not all(map(_plain, text)):
+        raise Invalid(field, f"hasta {limit} caracteres, sin HTML ni caracteres de control")
     return text
 
 
