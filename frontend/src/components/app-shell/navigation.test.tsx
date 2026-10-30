@@ -252,6 +252,24 @@ describe("navegación del shell", () => {
     expect(link).toHaveAttribute("href", "/o/acme/precios/listas");
   });
 
+  it("la pestaña «Promociones» pide `prices.view` y `products.view`", () => {
+    const tabs = (...codes: string[]) => {
+      cleanup();
+      const permissions = codes.map((code) => ({ code, scopes: [] }));
+      renderApp(
+        <TenantProvider value={{ ...ana, permissions }}>
+          <PricingNav />
+        </TenantProvider>,
+      );
+      return screen.queryByRole("link", { name: "Promociones" });
+    };
+    expect(tabs("prices.view", "products.view")).toHaveAttribute(
+      "href",
+      "/o/acme/precios/promociones",
+    );
+    expect(tabs("prices.view")).toBeNull();
+  });
+
   it("la raíz de una sección (`/precios`, los precios de una lista) también es de su entrada", async () => {
     route.pathname = "/o/acme/precios";
     const all = ["inventory.view", "prices.view"].map((code) => ({ code, scopes: [] }));

@@ -1,0 +1,171 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { useFormatter, useTimeZone, useTranslations } from "next-intl";
+import { useRef, useState } from "react";
+
+import { useTenant } from "@/components/app-shell/tenant-context";
+import { everyPage } from "@/components/catalog/categories-tree";
+import { Choice } from "@/components/catalog/product-create";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
+import { Button } from "@/components/ui/button";
+import {
+  getPriceListsListQueryKey,
+  getPromotionsListQueryKey,
+  priceListsList,
+  promotionsList,
+} from "@/lib/api/client";
+import type { Promotion, PromotionStatusEnum } from "@/lib/api/model";
+import { cn } from "@/lib/utils";
+
+import { PromotionPanel } from "./promotion-panel";
+import { stamp, ZONE } from "./zoned";
+
+const STATUSES = ["DRAFT", "PUBLISHED", "CANCELLED"] as const;
+
+// Las promociones (F3-48f): `GET …/pricing/promotions/`, por cursor. La API no filtra por estado:
+// el filtro corta las filas traídas. Nada se calcula aquí (ADR-006).
+export function Promotions() {
+  const t = useTranslations("promotions");
+  const format = useFormatter();
+  const zone = useTimeZone() ?? ZONE;
+  const { organization, permissions } = useTenant();
+  const slug = organization.slug;
+  const canManage = permissions.some((grant) => grant.code === "prices.manage");
+  const list = useRef<CursorListHandle>(null);
+  const [opened, setOpened] = useState<Promotion | null>(null); // el panel vive fuera de las filas
+  const trigger = useRef<HTMLElement | null>(null);
+  const [status, setStatus] = useState<"" | PromotionStatusEnum>("");
+  const lists = useQuery({
+    queryKey: [...getPriceListsListQueryKey(slug), "all", "names"],
+    queryFn: async ({ signal }) =>
+      new Map(
+        (await everyPage((params) => priceListsList(slug, params, { signal }))).map(
+          (row) => [row.id, row.name] as const,
+        ),
+      ),
+    gcTime: 0,
+  });
+  const listNames = lists.data ?? new Map<string, string>();
+  const money = (amount: string, currency: string) => {
+    try {
+      return format.number(Number(amount), { style: "currency", currency });
+    } catch {
+      return `${amount} ${currency}`; // una moneda que Intl no conoce no tumba la pantalla
+    }
+  };
+  const discount = (type: Promotion["discount_type"], value: string, currency: string) =>
+    t(`discount.${type}`, {
+      value: type === "PERCENT_OFF" ? format.number(Number(value)) : money(value, currency),
+    });
+
+  return (
+    <CursorList<Promotion>
+      ref={list}
+      section="promotions"
+      organization={organization.name}
+      listKey={[...getPromotionsListQueryKey(slug), "pages", status]}
+      fetchPage={async (cursor, signal) => {
+        const page = await promotionsList(slug, cursor ? { cursor } : undefined, { signal });
+        return { ...page, results: page.results.filter((row) => !status || row.status === status) };
+      }}
+      controls={
+        <>
+          <Choice
+            label={t("filter")}
+            value={status}
+            busy={false}
+            onChange={(value) => setStatus(value as typeof status)}
+            options={[
+              ["", t("all")],
+              ...STATUSES.map((one): [string, string] => [one, t(`status.${one}`)]),
+            ]}
+          />
+          {opened ? (
+            <PromotionPanel
+              slug={slug}
+              promotion={opened}
+              canManage={canManage}
+              listNames={listNames}
+              discount={discount}
+              onChanged={(next) => {
+                setOpened(next);
+                list.current?.refetch(); // una sola relectura de la lista
+              }}
+              onClose={() => {
+                setOpened(null);
+                if (trigger.current?.isConnected) trigger.current.focus();
+                else list.current?.focusHeading();
+              }}
+            />
+          ) : null}
+        </>
+      }
+      empty={<p className="text-muted">{t("empty")}</p>}
+      rowClassName="grid gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
+    >
+      {(row) => (
+        <Row
+          promotion={row}
+          listNames={listNames}
+          discount={discount}
+          window={t("window", {
+            ...{ from: stamp(row.starts_at, zone), to: stamp(row.ends_at, zone), zone },
+          })}
+          onOpen={(button) => {
+            trigger.current = button;
+            setOpened(row);
+          }}
+        />
+      )}
+    </CursorList>
+  );
+}
+
+type RowProps = Pick<Parameters<typeof PromotionPanel>[0], "listNames" | "discount"> & {
+  promotion: Promotion;
+  window: string;
+  onOpen: (button: HTMLButtonElement) => void;
+};
+
+function Row({ promotion: p, window, onOpen, listNames, discount }: RowProps) {
+  const t = useTranslations("promotions");
+  const names = p.price_list_ids.map((id) => listNames.get(id) ?? `#${id.slice(0, 8)}`);
+  return (
+    <>
+      <p className="flex min-w-0 flex-col leading-snug">
+        <span className="font-medium wrap-anywhere">{p.name}</span>
+        <span className="text-sm tabular-nums">
+          {discount(p.discount_type, p.value, p.currency)}
+        </span>
+        <span className="text-muted text-sm tabular-nums">{window}</span>
+        <span className="text-muted text-sm wrap-anywhere">
+          {t("lists", { names: names.join(", ") })}
+        </span>
+      </p>
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm sm:flex-col sm:items-end">
+        <span
+          className={cn(
+            "rounded-full border px-2.5 py-0.5 font-medium",
+            p.status === "PUBLISHED" && "border-success text-success",
+            p.status === "CANCELLED" && "border-border text-muted line-through",
+            p.status === "DRAFT" && "border-foreground/40",
+          )}
+        >
+          {t(`status.${p.status}`)}
+        </span>
+        <span className="text-muted tabular-nums">{t("priority", { priority: p.priority })}</span>
+        <Button
+          variant="ghost"
+          className="border-border min-h-11 border sm:min-h-9"
+          aria-haspopup="dialog"
+          aria-label={t("openLabel", { name: p.name })}
+          onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
+          onClick={(event) => onOpen(event.currentTarget)}
+        >
+          {t("open")}
+        </Button>
+      </p>
+    </>
+  );
+}
