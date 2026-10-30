@@ -2,7 +2,8 @@
 nunca `float`. Puras: no dependen de ningún módulo."""
 
 import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
+from enum import StrEnum
 
 AMOUNT = re.compile(r"[0-9]{1,12}(\.[0-9]{1,2})?")  # NUMERIC(14,2), sin signo ni exponente
 CURRENCY = re.compile(r"[A-Z]{3}")  # ISO 4217
@@ -36,3 +37,18 @@ def currency(value: str) -> str:
 def amount_text(value: Decimal) -> str:
     """Cómo viaja un importe por la API: string con dos decimales (`"4399.00"`)."""
     return f"{value.quantize(CENT):f}"
+
+
+class Rounding(StrEnum):
+    """La regla de redondeo de un importe calculado (ADR-006 §2, paso 7)."""
+
+    CENTS = "CENTS"  # a céntimos
+    INTEGER = "INTEGER"  # a sol entero
+
+
+def round_amount(value: Decimal, rule: Rounding = Rounding.CENTS) -> Decimal:
+    """Redondea un importe calculado con `ROUND_HALF_UP` (el .5 exacto sube), siempre con dos
+    decimales: `INTEGER` deja `4399.00`, no `4399`. Solo para importes calculados; lo que escribe
+    una persona lo valida `parse_amount`, no lo redondea."""
+    step = Decimal(1) if rule is Rounding.INTEGER else CENT
+    return value.quantize(step, rounding=ROUND_HALF_UP).quantize(CENT)
