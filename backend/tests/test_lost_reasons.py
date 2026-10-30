@@ -1,5 +1,5 @@
 """F5-01: los comandos de motivos de pérdida y el contrato de import-linter de `apps.deals`, con
-PostgreSQL real y el rol `crm_app`. Sin API: llega con F5-02. Pipelines y etapas, con F5-01b."""
+PostgreSQL real y el rol `crm_app`. Sin API: llega con F5-02. Pipelines y etapas, con F5-01c."""
 
 import json
 import tomllib

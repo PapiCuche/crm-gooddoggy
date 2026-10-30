@@ -1096,3 +1096,5 @@ docker build -t crm-backend backend/
 ```
 
 Imagen `python:3.14.7-slim` multi-stage, dependencias de `uv.lock` (`--frozen`, sin dev), usuario no root `10001`, `HEALTHCHECK` sobre `/health/live`, servidor `uvicorn` con `--proxy-headers` (proxies de confianza en `FORWARDED_ALLOW_IPS`, obligatoria: ver «Dirección del cliente y proxy de confianza»).
+- **Comandos (F5-01b, F5-01c):** `apps.deals.commands`: `create_lost_reason` y `update_lost_reason`; `create_pipeline` (con sus etapas, una WON, al menos una LOST y una OPEN), `update_pipeline` (con la `version`; `is_default=True` cambia el predeterminado en la misma transacción), `add_stage`, `update_stage` y `reorder_stages`. Auditan `pipeline.*`, `stage.*` y `lost_reason.*`; sin cambios no escriben. Sin permisos ni API todavía (F5-02).
+
