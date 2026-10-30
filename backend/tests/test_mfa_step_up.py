@@ -165,7 +165,9 @@ def test_the_window_is_15_minutes_inclusive_and_a_mark_from_the_future_does_not_
     held.now = mark + 900
     assert browser.get(STATUS).json()["step_up_expires_in"] == 0  # el último segundo
     held.now = mark + 100.5
-    assert browser.get(STATUS).json()["step_up_expires_in"] == 799
+    assert browser.get(STATUS).json()["step_up_expires_in"] == 800  # hacia arriba
+    held.now = mark + 899.5  # aún vale: no puede leerse 0
+    assert browser.get(STATUS).json()["step_up_expires_in"] == 1
 
 
 def test_the_check_reads_only_the_session_never_a_header_cookie_or_body(world: Any) -> None:
@@ -177,7 +179,7 @@ def test_the_check_reads_only_the_session_never_a_header_cookie_or_body(world: A
     assert required(send(browser, "POST", ORG + "sensitive/", {"mfa_at": int(time.time())}))
 
 
-@pytest.mark.parametrize("junk", [None, "123", 1.5, True, "", [], {}])
+@pytest.mark.parametrize("junk", [None, "123", 1.5, float(int(time.time())), True, "", [], {}])
 def test_a_mark_that_is_not_an_integer_is_not_a_verification(world: Any, junk: Any) -> None:
     browser, _ = ready(world)
     session = browser.session
@@ -191,6 +193,9 @@ def test_the_marks_of_a_session_are_read_with_the_helpers() -> None:
     assert step_up.age(held, now=1000.5) == 0.5 and step_up.age({}, now=1) is None
     assert step_up.age({mfa.MFA_AT: True}, now=2) is None and step_up.age(held, now=999) is None
     assert step_up.seconds_left(held, now=1000) == 900
+    assert step_up.seconds_left(held, now=1899.5) == 1  # el último segundo no lee 0
+    assert step_up.seconds_left(held, now=1900.5) is None
+    assert step_up.seconds_left({mfa.MFA_AT: 1000.0}, now=1000) is None  # marca float
     left = step_up.seconds_left
     assert (left(held, now=1900), left(held, now=1901)) == (0, None)
     assert (left(held, 60, now=1060), left(held, 60, now=1061)) == (0, None)
