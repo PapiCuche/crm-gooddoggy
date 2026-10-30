@@ -65,6 +65,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-48e | [#448](https://github.com/PapiCuche/crm-gooddoggy/issues/448) Precios: rutas de promociones, publicar y cancelar | `feature/f3-pricing-promotions-state-api` | #447 | backend + API |
 | F3-50 | [#431](https://github.com/PapiCuche/crm-gooddoggy/issues/431) Security: filelock 4.2.4 (CVE-2026-112940, CVE-2026-112913, CVE-2026-112907) | `chore/deps-filelock-4-2-4` | — | backend |
 | F3-51 | [#444](https://github.com/PapiCuche/crm-gooddoggy/issues/444) Security: msgpack 1.2.4 (CVE-2026-114613) | `chore/deps-msgpack-1-2-3` | — | backend |
+| F3-52 | [#450](https://github.com/PapiCuche/crm-gooddoggy/issues/450) Security: `pg_temp` al final del `search_path` de las funciones SQL. Decisión: `REVOKE TEMPORARY ... FROM crm_app` no se aplica; los tests de #441 y de la auditoría de plataforma crean tablas temporales como `crm_app` a propósito y las funciones ya cualifican `public.` | `fix/pg-temp-search-path-triggers` | — | backend |
 
 Siguen, en este orden: categorías en árbol (API y pantalla), productos con opciones y variantes, SKU y alias, fotos, precios, almacenes y movimientos, reservas con su test de concurrencia, importación.
 
