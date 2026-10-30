@@ -8,7 +8,14 @@ from uuid import UUID
 from django.db.models import Q, QuerySet
 
 from apps.access.selectors import ExecutionContext, has_permission
-from apps.pricing.models import READ_PERMISSIONS, PriceList, ProductPrice
+from apps.pricing.models import (
+    READ_PERMISSIONS,
+    PriceList,
+    ProductPrice,
+    Promotion,
+    PromotionItem,
+    PromotionPriceList,
+)
 
 MANAGE = "prices.manage"
 
@@ -76,3 +83,32 @@ def price_history(ectx: ExecutionContext, variant_id: UUID) -> QuerySet[ProductP
         variant_id=variant_id, price_list_id__in=visible_price_lists(ectx).values("id")
     )
     return rows.order_by("price_list_id", "-starts_at")
+
+
+def promotions_from(
+    at: datetime, price_list: PriceList, channel: str | None, *, ai_only: bool
+) -> QuerySet[Promotion]:
+    """Las promociones publicadas y no borradas que aplican a la lista (y su moneda) y al canal y
+    que no han terminado en `at`: las vigentes y las que empiezan después (el motor mira cuándo
+    cambia la respuesta). Sin canal, solo las de todos los canales. Sin comprobar la visibilidad
+    de la lista: la decide el motor."""
+    rows = Promotion.objects.filter(
+        status="PUBLISHED",
+        deleted_at__isnull=True,
+        ends_at__gt=at,
+        currency=price_list.currency,
+        id__in=PromotionPriceList.objects.filter(price_list_id=price_list.pk).values(
+            "promotion_id"
+        ),
+    )
+    rows = rows.filter(
+        Q(channels__isnull=True) | Q(channels__contains=[channel])
+        if channel
+        else Q(channels__isnull=True)
+    )
+    return rows.filter(ai_exposable=True) if ai_only else rows
+
+
+def promotion_items(promotion_ids: Iterable[UUID]) -> QuerySet[PromotionItem]:
+    """Los objetivos de varias promociones, en una consulta."""
+    return PromotionItem.objects.filter(promotion_id__in=promotion_ids)
