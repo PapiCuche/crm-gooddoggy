@@ -54,7 +54,8 @@
     "prices": {
       "label": "Secciones de precios",
       "lists": "Listas",
-      "prices": "Precios"
+      "prices": "Precios",
+      "promotions": "Promociones"
     },
     "contacts": {
       "label": "Secciones de clientes",
@@ -203,7 +204,10 @@
       "CATEGORY_HAS_CHILDREN": "Esta categoría tiene subcategorías. Muévelas o bórralas antes de borrarla.",
       "CATEGORY_IN_USE": "Hay productos en esta categoría. Cámbialos de categoría antes de borrarla.",
       "IMPORT_NOT_APPLIED": "Solo se revierte una importación aplicada.",
-      "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos."
+      "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos.",
+      "PROMOTION_NOT_DRAFT": "Solo se publica una promoción en borrador, y esta ya se publicó o se canceló.",
+      "PROMOTION_ALREADY_CANCELLED": "La promoción ya estaba cancelada.",
+      "PROMOTION_ENDED": "La vigencia de la promoción ya terminó: no se puede publicar."
     }
   },
   "auth": {
@@ -1666,6 +1670,63 @@
       "system": "Sistema",
       "none": "Sin precio",
       "since": "Programado: rige desde el {at}"
+    }
+  },
+  "promotions": {
+    "eyebrow": "Good Doggy / Precios",
+    "title": "Promociones",
+    "intro": "Las promociones de {organization}. Quien gestiona precios ve también los borradores y las canceladas.",
+    "loading": "Cargando promociones…",
+    "denied": "No tienes permiso para ver las promociones de esta organización.",
+    "count": "{count, plural, =0 {Sin promociones en la vista} one {# promoción en la vista} other {# promociones en la vista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "empty": "No hay promociones que mostrar.",
+    "filter": "Estado",
+    "all": "Todas",
+    "status": {
+      "DRAFT": "Borrador",
+      "PUBLISHED": "Publicada",
+      "CANCELLED": "Cancelada"
+    },
+    "discount": {
+      "PERCENT_OFF": "{value} %",
+      "AMOUNT_OFF": "{value} menos",
+      "FIXED_PRICE": "Precio fijo {value}"
+    },
+    "window": "Vigencia: {from} a {to} (zona {zone})",
+    "lists": "Listas: {names}",
+    "priority": "Prioridad {priority}",
+    "open": "Ver detalle",
+    "openLabel": "Ver el detalle de la promoción {name}",
+    "panel": {
+      "close": "Cerrar",
+      "terms": "Términos",
+      "description": "Descripción",
+      "targets": "A qué se aplica",
+      "override": "descuento propio: {value}",
+      "variant": "Variante",
+      "product": "Producto",
+      "category": "Categoría",
+      "brand": "Marca",
+      "lists": "Listas de precios",
+      "channels": "Canales",
+      "allChannels": "Todos los canales",
+      "ai": "Visible a la IA",
+      "yes": "Sí",
+      "no": "No",
+      "publish": "Publicar",
+      "cancel": "Cancelar promoción",
+      "publishAsk": "Empezará a aplicarse a los precios desde {from} y rige hasta {to} (zona {zone}). Una vez publicada, sus términos no se pueden cambiar.",
+      "cancelAsk": "Dejará de aplicarse de inmediato y no se puede reactivar.",
+      "publishConfirm": "Sí, publicar",
+      "cancelConfirm": "Sí, cancelar promoción",
+      "back": "Volver",
+      "published": "Promoción publicada.",
+      "cancelled": "Promoción cancelada.",
+      "namesFailed": "No se pudieron leer algunos nombres: se muestra un código corto.",
+      "publishNowAsk": "Se aplicará de inmediato a los precios y rige hasta {to} (zona {zone}). Una vez publicada, sus términos no se pueden cambiar.",
+      "discardAsk": "Se descartará el borrador: no llegó a aplicarse y no se puede reactivar."
     }
   }
 }
