@@ -110,8 +110,9 @@ layers = [
     # L3: dominio de negocio (module-dependencies §1). inventory depende de catalog (§2): almacenes
     # y stock (Fase 3). catalog, el catálogo (Fase 3); contacts, los clientes (Fase 4):
     # independientes entre sí, no se importan. pricing, los precios (F3-40): sobre catalog, en la
-    # misma fila que inventory, sin importarse entre sí.
-    "apps.inventory | apps.pricing",
+    # misma fila que inventory, sin importarse entre sí. deals, los pipelines (F5-01): sobre
+    # contacts (las oportunidades, F5-03, referenciarán contactos), nunca al revés.
+    "apps.inventory | apps.pricing | apps.deals",
     "apps.catalog | apps.contacts",
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",

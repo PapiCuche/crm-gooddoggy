@@ -23,6 +23,7 @@ from apps.accounts.emails import canonical_email
 from apps.audit import platform
 from apps.audit.services import Entity, Result, record
 from apps.organizations.bootstrap import clean, create_organization, organization_exists
+from apps.provisioning.seeds import run_seeds
 from core.ids import new_id
 from core.tenancy.context import TenantContext, TenantContextError
 from core.tenancy.scope import tenant_scope
@@ -96,6 +97,7 @@ def bootstrap_organization(
             user_id, created = owner_account(email, owner_password)
             membership = create_organization(ctx, slug=slug, name=name, owner_user_id=user_id)
             install_initial_owner(ctx, membership_id=membership.pk)
+            run_seeds(ctx)  # lo que cada módulo de negocio necesita desde el primer día
             done = {"owner_user_id": user_id, "user_created": created}
             record(
                 ctx,

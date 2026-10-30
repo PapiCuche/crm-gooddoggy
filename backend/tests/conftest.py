@@ -45,6 +45,8 @@ TENANT_TABLES = ("contact_tags", *TENANT_TABLES)  # F4-11b: a contactos, etiquet
 TENANT_TABLES = ("product_prices", *TENANT_TABLES)  # F3-42: delante de las listas y variantes
 TENANT_TABLES = ("variant_costs", *TENANT_TABLES)  # F3-46: delante de las variantes
 TENANT_TABLES = ("promotion_items", "promotion_price_lists", "promotions", *TENANT_TABLES)  # F3-48
+# F5-01: delante, porque referencian a las membresías (y las etapas, a los pipelines)
+TENANT_TABLES = ("pipeline_stages", "pipelines", "lost_reasons", *TENANT_TABLES)
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
