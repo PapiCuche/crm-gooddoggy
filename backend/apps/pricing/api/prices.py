@@ -45,6 +45,8 @@ class Amount(serializers.CharField):
     def to_internal_value(self, data: Any) -> Any:
         if not isinstance(data, str):
             raise serializers.ValidationError('Un string decimal, como "4399.00".')
+        if data != data.strip():  # `parse_amount` recorta: aquí, ni un espacio de más
+            raise serializers.ValidationError("Sin espacios al principio ni al final.")
         try:
             value = parse_amount(data)
         except ValueError:

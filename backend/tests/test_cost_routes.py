@@ -174,6 +174,7 @@ def test_what_is_not_there_is_the_same_404_for_every_reason(
         ({"amount": "-5"}, "amount"),
         ({"amount": "1.234"}, "amount"),
         ({"amount": "1e3"}, "amount"),
+        ({"amount": " 3500 "}, "amount"),
         ({"amount": "1" * 13}, "amount"),
         ({"reason": 12345}, "reason"),
         ({"reason": "ab"}, "reason"),
@@ -322,14 +323,15 @@ def test_the_openapi_contract_shows_costs_only_in_the_cost_routes() -> None:
         for method, operation in operations.items():
             found = names(operation)
             exposing[f"{method} {path}"] = found
-            if path.endswith("/costs/"):
-                continue
             leaked = {
                 n
                 for n in found
-                if any(w in n.lower() for w in ("cost", "costo", "margin", "margen"))
+                if any(w in n.lower() for w in ("cost", "costo", "margin", "margen", "purchase"))
             }
+            if path.endswith(("/costs/", "/margins/")):  # las únicas rutas que juntan o dan costos
+                continue
             assert not leaked, (path, method, leaked)
+            assert not path.endswith("/margins/")
     assert {k for k, v in exposing.items() if "change_reason" in v and k.endswith("/costs/")} == {
         "get /api/v1/o/{org_slug}/pricing/variants/{variant_id}/costs/",
         "post /api/v1/o/{org_slug}/pricing/variants/{variant_id}/costs/",
@@ -339,6 +341,8 @@ def test_the_openapi_contract_shows_costs_only_in_the_cost_routes() -> None:
         k for k, v in exposing.items() if "change_reason" in v and not k.endswith("/costs/")
     } == {k for k in exposing if "price" in k and "change_reason" in exposing[k]}
     assert set(components["Cost"]["properties"]) == set(COST.split())
+    margins = {k for k, v in exposing.items() if "margin" in v}
+    assert margins == {"get /api/v1/o/{org_slug}/pricing/price-lists/{price_list_id}/margins/"}
 
 
 def test_step_up_is_enforced_on_the_cost_view_and_the_check_stays_green() -> None:

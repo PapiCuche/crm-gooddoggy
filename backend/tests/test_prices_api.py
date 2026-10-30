@@ -157,7 +157,9 @@ def test_the_errors_of_the_contract(team: Any, monkeypatch: Any) -> None:
     regular, sku = price_list(team.org, is_default=True), item(team.org)
     past = (timezone.now() - timedelta(hours=1)).isoformat()
     # 4399.5 es un número JSON: ya perdió los céntimos antes de llegar
-    amounts: list[dict[str, Any]] = [{"amount": a} for a in (4399.5, "4399.999", "0", "-1", "1e3")]
+    amounts: list[dict[str, Any]] = [
+        {"amount": a} for a in (4399.5, "4399.999", "0", "-1", "1e3", " 4399 ", "4399\n")
+    ]
     reasons = [{"reason": r} for r in ("<b>Oferta</b>", "ab")]
     starts = [{"starts_at": t} for t in (past, "2030-01-01T00:00:00")]  # pasado, sin zona
     for bad in [*amounts, *reasons, *starts, {"variant_id": "x"}]:
