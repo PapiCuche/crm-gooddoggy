@@ -18,6 +18,7 @@ import {
 import type { Promotion, PromotionStatusEnum } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
+import { PromotionForm } from "./promotion-form";
 import { PromotionPanel } from "./promotion-panel";
 import { stamp, ZONE } from "./zoned";
 
@@ -34,18 +35,16 @@ export function Promotions() {
   const canManage = permissions.some((grant) => grant.code === "prices.manage");
   const list = useRef<CursorListHandle>(null);
   const [opened, setOpened] = useState<Promotion | null>(null); // el panel vive fuera de las filas
+  const [creating, setCreating] = useState(false);
+  const [said, setSaid] = useState("");
+  const create = useRef<HTMLButtonElement>(null);
   const [status, setStatus] = useState<"" | PromotionStatusEnum>("");
   const lists = useQuery({
     queryKey: [...getPriceListsListQueryKey(slug), "all", "names"],
-    queryFn: async ({ signal }) =>
-      new Map(
-        (await everyPage((params) => priceListsList(slug, params, { signal }))).map(
-          (row) => [row.id, row.name] as const,
-        ),
-      ),
+    queryFn: ({ signal }) => everyPage((params) => priceListsList(slug, params, { signal })),
     gcTime: 0,
   });
-  const listNames = lists.data ?? new Map<string, string>();
+  const listNames = new Map((lists.data ?? []).map((row) => [row.id, row.name] as const));
   const money = (amount: string, currency: string) => {
     try {
       return format.number(Number(amount), { style: "currency", currency });
@@ -70,6 +69,42 @@ export function Promotions() {
       }}
       controls={
         <>
+          {canManage ? (
+            <>
+              <Button
+                ref={create}
+                variant="accent"
+                className="min-h-11 sm:min-h-9"
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setSaid("");
+                  setCreating(true);
+                }}
+              >
+                {t("form.open")}
+              </Button>
+              {/* Montado desde el principio: un lector de pantalla lo anuncia al cambiar. */}
+              <p role="status" className={said ? "text-sm" : "sr-only"}>
+                {said}
+              </p>
+            </>
+          ) : null}
+          {creating ? (
+            <PromotionForm
+              slug={slug}
+              priceLists={(lists.data ?? []).filter((row) => row.is_active)}
+              onClose={() => {
+                setCreating(false);
+                requestAnimationFrame(() => create.current?.focus());
+              }}
+              onCreated={(made) => {
+                setCreating(false);
+                setSaid(t("form.created"));
+                list.current?.refetch();
+                setOpened(made); // el detalle, para publicarla
+              }}
+            />
+          ) : null}
           <Choice
             label={t("filter")}
             value={status}
