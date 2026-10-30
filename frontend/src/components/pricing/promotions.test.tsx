@@ -126,7 +126,7 @@ describe("Promotions", () => {
     ).toBeVisible();
     expect(panel).toHaveTextContent(/Hasta agotar stock.*Todos los canales.*Visible a la IA\s*Sí/);
     fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
-    expect(open).toHaveFocus();
+    await waitFor(() => expect(open).toHaveFocus());
   });
 
   it("sin `prices.manage` no hay acciones; un objetivo sin nombre muestra un código corto", async () => {
@@ -193,7 +193,7 @@ describe("Promotions", () => {
     expect(panel).toBeVisible();
     expect(panel).toHaveTextContent("Publicada");
     fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
-    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
   });
 
   it("cancelar dice que es inmediato e irreversible y deja sin acciones", async () => {

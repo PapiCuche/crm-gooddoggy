@@ -64,6 +64,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F3-48d | [#447](https://github.com/PapiCuche/crm-gooddoggy/issues/447) Precios: rutas de promociones, lista, detalle y crear | `feature/f3-pricing-promotions-read-create-api` | #441 | backend + API |
 | F3-48e | [#448](https://github.com/PapiCuche/crm-gooddoggy/issues/448) Precios: rutas de promociones, publicar y cancelar | `feature/f3-pricing-promotions-state-api` | #447 | backend + API |
 | F3-48f | [#460](https://github.com/PapiCuche/crm-gooddoggy/issues/460) Precios: pantalla de promociones, lista y detalle con publicar y cancelar | `feature/f3-pricing-promotions-screen` | #448 | frontend |
+| F3-48h | [#464](https://github.com/PapiCuche/crm-gooddoggy/issues/464) Precios: el foco vuelve a la fila al cerrar el panel de una promoción | `fix/promotion-panel-focus` | #460 | frontend |
 | F3-46 | [#404](https://github.com/PapiCuche/crm-gooddoggy/issues/404) Precios: costos de una variante (tabla y CostService) | `feature/f3-pricing-costs` | #402 | backend |
 | F3-46c | [#454](https://github.com/PapiCuche/crm-gooddoggy/issues/454) Precios: rutas de costos de una variante (ver y registrar, con step-up) | `feature/f3-pricing-costs-api` | #404, #453 | backend + API |
 | F3-46d | [#455](https://github.com/PapiCuche/crm-gooddoggy/issues/455) Precios: márgenes de una lista de precios (solo con costo y step-up) | `feature/f3-pricing-margins-api` | #404, #453, #454 | backend + API |

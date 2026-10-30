@@ -34,7 +34,6 @@ export function Promotions() {
   const canManage = permissions.some((grant) => grant.code === "prices.manage");
   const list = useRef<CursorListHandle>(null);
   const [opened, setOpened] = useState<Promotion | null>(null); // el panel vive fuera de las filas
-  const trigger = useRef<HTMLElement | null>(null);
   const [status, setStatus] = useState<"" | PromotionStatusEnum>("");
   const lists = useQuery({
     queryKey: [...getPriceListsListQueryKey(slug), "all", "names"],
@@ -93,9 +92,14 @@ export function Promotions() {
                 list.current?.refetch(); // una sola relectura de la lista
               }}
               onClose={() => {
+                const id = opened.id;
                 setOpened(null);
-                if (trigger.current?.isConnected) trigger.current.focus();
-                else list.current?.focusHeading();
+                // La fila puede haberse vuelto a pintar tras la relectura: se busca por su id.
+                requestAnimationFrame(() => {
+                  const row = document.querySelector<HTMLElement>(`[data-promotion="${id}"]`);
+                  if (row) row.focus();
+                  else list.current?.focusHeading();
+                });
               }}
             />
           ) : null}
@@ -112,10 +116,7 @@ export function Promotions() {
           window={t("window", {
             ...{ from: stamp(row.starts_at, zone), to: stamp(row.ends_at, zone), zone },
           })}
-          onOpen={(button) => {
-            trigger.current = button;
-            setOpened(row);
-          }}
+          onOpen={() => setOpened(row)}
         />
       )}
     </CursorList>
@@ -125,7 +126,7 @@ export function Promotions() {
 type RowProps = Pick<Parameters<typeof PromotionPanel>[0], "listNames" | "discount"> & {
   promotion: Promotion;
   window: string;
-  onOpen: (button: HTMLButtonElement) => void;
+  onOpen: () => void;
 };
 
 function Row({ promotion: p, window, onOpen, listNames, discount }: RowProps) {
@@ -159,9 +160,10 @@ function Row({ promotion: p, window, onOpen, listNames, discount }: RowProps) {
           variant="ghost"
           className="border-border min-h-11 border sm:min-h-9"
           aria-haspopup="dialog"
+          data-promotion={p.id}
           aria-label={t("openLabel", { name: p.name })}
           onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
-          onClick={(event) => onOpen(event.currentTarget)}
+          onClick={onOpen}
         >
           {t("open")}
         </Button>
