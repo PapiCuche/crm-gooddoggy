@@ -770,6 +770,25 @@
       "assign": "Asignar contactos"
     }
   },
+  "stepUp": {
+    "title": "Confirma que eres tú",
+    "intro": "Esta acción pide un código reciente de tu segundo factor. Escribe el código de 6 dígitos que muestra tu aplicación de autenticación.",
+    "introRecovery": "Escribe uno de tus códigos de respaldo. Cada uno sirve una sola vez.",
+    "code": "Código de la aplicación",
+    "recoveryCode": "Código de respaldo",
+    "useRecovery": "Usar un código de respaldo",
+    "useApp": "Usar el código de la aplicación",
+    "codeRequired": "Escribe el código.",
+    "codeInvalid": "Ese código no vale. Prueba con el que muestra ahora tu aplicación.",
+    "recoveryInvalid": "Ese código de respaldo no vale o ya se usó. Prueba con otro.",
+    "submit": "Verificar",
+    "submitting": "Verificando…",
+    "cancel": "Cancelar",
+    "stalled": "El servidor tarda demasiado en responder. Inténtalo de nuevo.",
+    "noFactor": "Esta acción pide la verificación en dos pasos y tu cuenta aún no la tiene. Actívala primero en la seguridad de tu cuenta.",
+    "enable": "Ir a la seguridad de la cuenta",
+    "close": "Cerrar"
+  },
   "account": {
     "pageTitle": "Seguridad de la cuenta",
     "eyebrow": "Good Doggy / Cuenta",

@@ -146,6 +146,7 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F2-123 | [#346](https://github.com/PapiCuche/crm-gooddoggy/issues/346) Access: what who places a member in a team or a branch must cover (D-F2-13) | `feature/f2-scoped-grant-coverage` | — | backend |
 | F2-124 | [#362](https://github.com/PapiCuche/crm-gooddoggy/issues/362) Access: assigning roles covers scoped grants by place (D-F2-16) | `feature/f2-role-grant-coverage-by-place` | #346 | backend |
 | F2-125 | [#397](https://github.com/PapiCuche/crm-gooddoggy/issues/397) MFA step-up: verify the second factor again, route and 15-minute check | `feature/f2-mfa-step-up` | #266, #268 | backend |
+| F2-126 | [#456](https://github.com/PapiCuche/crm-gooddoggy/issues/456) Step-up: the dialog that asks for the second-factor code and retries the action once | `feature/f2-step-up-dialog` | #397 | frontend |
 | F2-24 | [#104](https://github.com/PapiCuche/crm-gooddoggy/issues/104) Shared cursor list for management screens | `chore/f2-shared-cursor-list` | #91, #99 | frontend |
 
 Mergeados: #37 … #39, #41, #42, #50 y #51. Lo que queda:
