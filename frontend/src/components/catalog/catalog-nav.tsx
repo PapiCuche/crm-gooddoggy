@@ -24,15 +24,19 @@ export function SectionNav({
   pages,
 }: {
   section: "catalog" | "inventory" | "prices" | "contacts";
-  pages: readonly { key: string; path: string }[];
+  pages: readonly { key: string; path: string; permission?: string }[];
 }) {
   const t = useTranslations(`shell.${section}`);
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Una página con `permission` solo se ofrece a quien lo tiene (la API sigue decidiendo).
+  const shown = pages.filter(
+    (p) => !p.permission || permissions.some((g) => g.code === p.permission),
+  );
   const pathname = usePathname().replace(/\/$/, "");
   return (
     <nav aria-label={t("label")} className="mb-6">
       <ul className="flex flex-wrap gap-2">
-        {pages.map((page) => {
+        {shown.map((page) => {
           const href = `/o/${organization.slug}${page.path}`;
           const current = pathname === href;
           return (
