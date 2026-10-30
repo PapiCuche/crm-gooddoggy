@@ -3784,6 +3784,138 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pricing/variants/{variant_id}/costs/:
+    get:
+      operationId: cost_history_list
+      description: 'El costo vigente y su historial, del más nuevo al más antiguo,
+        con su motivo y su autor. Pide un segundo factor reciente: 403 `STEP_UP_REQUIRED`.
+        La primera lectura de la sesión deja `cost.viewed` en la auditoría. 404: la
+        variante no existe, es de otra organización o está borrada.'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostPage'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: cost_create
+      description: Fija el costo de la variante desde ahora. 409 `COST_UNCHANGED`,
+        `COST_CONFLICT` o `COST_TOO_SOON`; 400 `COST_REJECTED`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: variant_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostSetRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cost'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pricing/variants/{variant_id}/price-history/:
     get:
       operationId: variant_price_history_list
@@ -5931,6 +6063,98 @@ components:
       - id
       - is_active
       - name
+    Cost:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          description: IGV incluido.
+        currency:
+          type: string
+        tax_included:
+          type: boolean
+        source:
+          $ref: '#/components/schemas/CostSourceEnum'
+        change_reason:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: '`null`: es el que rige.'
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Quién lo fijó; `null` si no fue una persona. El nombre lo resuelve
+            `users.view`.
+      required:
+      - amount
+      - change_reason
+      - created_by_user_id
+      - currency
+      - ends_at
+      - id
+      - source
+      - starts_at
+      - tax_included
+    CostPage:
+      type: object
+      properties:
+        current:
+          allOf:
+          - $ref: '#/components/schemas/Cost'
+          nullable: true
+          description: El que rige ahora; `null` si no hay.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cost'
+          description: El historial, del más nuevo al más antiguo.
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+      required:
+      - current
+      - next
+      - results
+    CostSetRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          minLength: 1
+          description: IGV incluido. Mayor que cero.
+        reason:
+          type: string
+          minLength: 1
+          description: Sin HTML.
+          maxLength: 500
+      required:
+      - amount
+      - reason
+    CostSourceEnum:
+      enum:
+      - MANUAL
+      - IMPORT
+      - PURCHASE
+      type: string
+      description: |-
+        * `MANUAL` - Manual
+        * `IMPORT` - Import
+        * `PURCHASE` - Purchase
     CurrentPrice:
       type: object
       properties:

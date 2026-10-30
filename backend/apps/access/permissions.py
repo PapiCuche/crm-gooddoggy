@@ -32,7 +32,7 @@ from apps.access.selectors import (
     scoped,
 )
 from core.api.errors import ApiError
-from core.api.step_up import require_recent_mfa
+from core.api.step_up import require_recent_mfa, seconds_left
 from core.tenancy import context
 
 
@@ -114,6 +114,23 @@ class IsMember(BasePermission):
         return request_context(request) is not None and request.method in ("GET", "HEAD")
 
 
+def hidden(
+    request: Any, view: Any, ectx: ExecutionContext, queryset: QuerySet[Any]
+) -> QuerySet[Any]:
+    """Las filas que la vista declara en `hidden_unless` ({permiso: Q}) se excluyen salvo que el
+    actor tenga el permiso y un segundo factor de hace 15 minutos como mucho (ADR-003 §4): no se
+    muestran ni se cuentan, y ningún filtro ni cursor las alcanza. Una declaración que no es un
+    mapa se ignora: no hay filas ocultas que reclamar."""
+    declared = getattr(view, "hidden_unless", None)
+    if not isinstance(declared, Mapping):
+        return queryset
+    recent = seconds_left(request.session) is not None
+    for code, rows in declared.items():
+        if not (recent and has_permission(ectx, code)):
+            queryset = queryset.exclude(rows)
+    return queryset
+
+
 class ScopeFilter(BaseFilterBackend):
     """Listados y `get_object()`: solo las filas dentro del alcance, filtradas en SQL."""
 
@@ -123,7 +140,7 @@ class ScopeFilter(BaseFilterBackend):
             return queryset.none()
         for code in codes:  # las filas que todos los permisos dejan ver
             queryset = scoped(ectx, code, queryset)
-        return queryset
+        return hidden(request, view, ectx, queryset)
 
 
 @contextmanager
