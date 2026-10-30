@@ -11,7 +11,7 @@ from rest_framework import generics, serializers
 from rest_framework.exceptions import ValidationError
 
 from apps.audit.models import ACTOR_TYPES, AuditLog
-from apps.audit.selectors import entries
+from apps.audit.selectors import COST_ROWS, entries
 from apps.audit.services import Result
 from core.api.schema import errors
 from core.outbox import NAME, TYPE
@@ -97,6 +97,9 @@ class AuditLogView(generics.ListAPIView[AuditLog]):
     ese campo no puede tener, o repetido."""
 
     required_permissions = {"GET": "audit.view"}
+    # Las filas de costos llevan importes: `ScopeFilter` las oculta salvo a quien tiene
+    # `product_cost.view` y un segundo factor reciente (F3-46c). `entries()` las oculta por defecto.
+    hidden_unless = {"product_cost.view": COST_ROWS}
     serializer_class = AuditEntrySerializer
     ordering = "-id"  # UUIDv7: el orden en que se escribieron
 
@@ -111,4 +114,4 @@ class AuditLogView(generics.ListAPIView[AuditLog]):
         twice = {name: ["Una sola vez."] for name in names if len(params.getlist(name)) > 1}
         if twice:
             raise ValidationError(twice)
-        return entries().filter(**filters.validated_data)
+        return entries(with_costs=True).filter(**filters.validated_data)

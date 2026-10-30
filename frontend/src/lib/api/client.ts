@@ -37,6 +37,10 @@ import type {
   ContactCreateRequest,
   ContactNotesListParams,
   ContactsListParams,
+  Cost,
+  CostHistoryListParams,
+  CostPage,
+  CostSetRequest,
   Error,
   GrantScopeRequest,
   InventoryImportsRowsListParams,
@@ -7982,6 +7986,270 @@ export const usePromotionsPublish = <TError = ErrorType<Error>, TContext = unkno
   TContext
 > => {
   return useMutation(getPromotionsPublishMutationOptions(options), queryClient);
+};
+
+export const getCostHistoryListUrl = (
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/costs/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/costs/`;
+};
+
+/**
+ * El costo vigente y su historial, del más nuevo al más antiguo, con su motivo y su autor. Pide un segundo factor reciente: 403 `STEP_UP_REQUIRED`. La primera lectura de la sesión deja `cost.viewed` en la auditoría. 404: la variante no existe, es de otra organización o está borrada.
+ */
+export const costHistoryList = async (
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<CostPage> => {
+  return apiFetch<CostPage>(getCostHistoryListUrl(orgSlug, variantId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getCostHistoryListQueryKey = (
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/costs/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getCostHistoryListQueryOptions = <
+  TData = Awaited<ReturnType<typeof costHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof costHistoryList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getCostHistoryListQueryKey(orgSlug, variantId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof costHistoryList>>> = ({ signal }) =>
+    costHistoryList(orgSlug, variantId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && variantId !== null && variantId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof costHistoryList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type CostHistoryListQueryResult = NonNullable<Awaited<ReturnType<typeof costHistoryList>>>;
+export type CostHistoryListQueryError = ErrorType<Error>;
+
+export function useCostHistoryList<
+  TData = Awaited<ReturnType<typeof costHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params: undefined | CostHistoryListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof costHistoryList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof costHistoryList>>,
+          TError,
+          Awaited<ReturnType<typeof costHistoryList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useCostHistoryList<
+  TData = Awaited<ReturnType<typeof costHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof costHistoryList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof costHistoryList>>,
+          TError,
+          Awaited<ReturnType<typeof costHistoryList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useCostHistoryList<
+  TData = Awaited<ReturnType<typeof costHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof costHistoryList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useCostHistoryList<
+  TData = Awaited<ReturnType<typeof costHistoryList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  variantId: string,
+  params?: CostHistoryListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof costHistoryList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getCostHistoryListQueryOptions(orgSlug, variantId, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getCostCreateUrl = (orgSlug: string, variantId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/variants/${variantId}/costs/`;
+};
+
+/**
+ * Fija el costo de la variante desde ahora. 409 `COST_UNCHANGED`, `COST_CONFLICT` o `COST_TOO_SOON`; 400 `COST_REJECTED`.
+ */
+export const costCreate = async (
+  orgSlug: string,
+  variantId: string,
+  costSetRequest: CostSetRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Cost> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Cost>(getCostCreateUrl(orgSlug, variantId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(costSetRequest),
+  });
+};
+
+export const getCostCreateMutationKey = () => ["costCreate"] as const;
+
+export const getCostCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof costCreate>>,
+    TError,
+    CostCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof costCreate>>,
+  TError,
+  CostCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getCostCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof costCreate>>,
+    CostCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, variantId, data } = props ?? {};
+
+    return costCreate(orgSlug, variantId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CostCreateMutationResult = NonNullable<Awaited<ReturnType<typeof costCreate>>>;
+export type CostCreateMutationBody = CostSetRequest;
+export type CostCreateMutationError = ErrorType<Error>;
+export type CostCreateMutationVariables = {
+  orgSlug: string;
+  variantId: string;
+  data: CostSetRequest;
+};
+
+export const useCostCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof costCreate>>,
+      TError,
+      CostCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof costCreate>>,
+  TError,
+  CostCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getCostCreateMutationOptions(options), queryClient);
 };
 
 export const getVariantPriceHistoryListUrl = (

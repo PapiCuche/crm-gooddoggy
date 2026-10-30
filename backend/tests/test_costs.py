@@ -345,8 +345,9 @@ def names_variant_costs(source: str) -> bool:
 @pytest.mark.parametrize("root", ["apps", "core", "config"])
 def test_only_costs_touches_variant_costs(root: str) -> None:
     """Ni el motor ni ningún otro módulo nombra el modelo ni la tabla: solo `costs` (y su
-    definición y sus migraciones)."""
-    allowed = {"apps/pricing/costs.py", "apps/pricing/models.py"}
+    definición y sus migraciones), salvo el filtro de la lectura de la auditoría, que nombra el tipo
+    de entidad de sus filas para ocultarlas (F3-46c)."""
+    allowed = {"apps/pricing/costs.py", "apps/pricing/models.py", "apps/audit/selectors.py"}
     found = [
         str(path.relative_to(BACKEND))
         for path in (BACKEND / root).rglob("*.py")
