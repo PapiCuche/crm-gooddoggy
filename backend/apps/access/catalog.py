@@ -62,9 +62,15 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("contacts.update", "contacts", supports_scope=True),
     PermissionDef("contacts.delete", "contacts", supports_scope=True),
     PermissionDef("contacts.assign", "contacts"),  # sin alcance: lo decide `contacts.view`
-    # F5-02: de las oportunidades, por ahora solo estos dos. `opportunities.view` lee los
-    # pipelines y los motivos de pérdida (configuración de la organización: cualquier alcance).
+    # F5-02: `opportunities.view` lee los pipelines y los motivos de pérdida (configuración de
+    # la organización: cualquier alcance). F5-04: el resto de 03 §H; ninguno es sensible.
     PermissionDef("opportunities.view", "opportunities", supports_scope=True),
+    PermissionDef("opportunities.create", "opportunities"),
+    PermissionDef("opportunities.update", "opportunities", supports_scope=True),
+    PermissionDef("opportunities.assign", "opportunities"),  # sin alcance: lo decide `.view`
+    PermissionDef("opportunities.delete", "opportunities", supports_scope=True),
+    PermissionDef("opportunities.mark_won", "opportunities", supports_scope=True),
+    PermissionDef("opportunities.mark_lost", "opportunities", supports_scope=True),
     PermissionDef("pipelines.manage", "opportunities"),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
@@ -78,6 +84,12 @@ class RoleTemplate:
     name: str
     grants: dict[str, Scope | None]
     is_owner_role: bool = False
+
+
+# F5-04: las acciones con alcance de las oportunidades; Supervisor y Vendedor operan las suyas
+# (ver, cambiar, ganar, perder) y solo el Administrador borra (03 §H: «leads / opportunities»).
+OPPORTUNITY_OPERATE = ("view", "update", "mark_won", "mark_lost")
+OPPORTUNITY_SCOPED = (*OPPORTUNITY_OPERATE, "delete")
 
 
 def _unscoped(*codes: str) -> dict[str, Scope | None]:
@@ -123,10 +135,17 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "warehouses.manage",
             "contacts.create",
             "contacts.assign",
+            "opportunities.create",  # F5-04: «leads / opportunities» ORG en 03 §H
+            "opportunities.assign",
             "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
         )
         | dict.fromkeys(
-            ("contacts.view", "contacts.update", "contacts.delete", "opportunities.view"),
+            (
+                "contacts.view",
+                "contacts.update",
+                "contacts.delete",
+                *(f"opportunities.{action}" for action in OPPORTUNITY_SCOPED),
+            ),
             Scope.ORGANIZATION,
         ),
     ),
@@ -141,19 +160,27 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "prices.view",
             "prices.view_wholesale",
             "inventory.view",
+            "opportunities.create",  # F5-04: crea y reparte las de su equipo, no borra
+            "opportunities.assign",
         )
-        | {"contacts.view": Scope.TEAM, "opportunities.view": Scope.TEAM},
+        | {"contacts.view": Scope.TEAM}
+        | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE},  # F5-04, 03 §H
     ),
     RoleTemplate(
         "seller",
         "Vendedor",
         _unscoped(
-            "organization.view", "products.view", "prices.view", "inventory.view", "contacts.create"
+            "organization.view",
+            "products.view",
+            "prices.view",
+            "inventory.view",
+            "contacts.create",
+            "opportunities.create",
         )
         | {
             "contacts.view": Scope.OWN,
             "contacts.update": Scope.OWN,
-            "opportunities.view": Scope.OWN,
-        },
+        }
+        | {f"opportunities.{a}": Scope.OWN for a in OPPORTUNITY_OPERATE},
     ),
 )
