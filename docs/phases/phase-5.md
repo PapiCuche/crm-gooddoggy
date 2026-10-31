@@ -32,7 +32,6 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F5-02e | [#498](https://github.com/PapiCuche/crm-gooddoggy/issues/498) Pipeline: `POST …/stages/` y `PUT …/stages/order/` | `feature/f5-stage-add-order-api` | #489 | backend |
 | F5-04 | [#486](https://github.com/PapiCuche/crm-gooddoggy/issues/486) Oportunidades: permisos, plantillas y política de alcance `AssignedTo` (sin rutas) | `feature/f5-opportunities-api` | #493 | backend |
 | F5-04b | [#505](https://github.com/PapiCuche/crm-gooddoggy/issues/505) Oportunidades: `GET …/opportunities/` (lista por cursor con filtros) | `feature/f5-opportunities-list-api` | F5-04 | backend |
-| F5-04b | — Oportunidades: `GET …/opportunities/` (lista por cursor con filtros) | `feature/f5-opportunities-list-api` | F5-04 | backend |
 | F5-04c | [#506](https://github.com/PapiCuche/crm-gooddoggy/issues/506) Oportunidades: `GET …/opportunities/{id}/` (detalle con líneas e historial) | `feature/f5-opportunities-detail-api` | F5-04b | backend |
 | F5-04c | — Oportunidades: `GET …/opportunities/{id}/` (detalle con líneas e historial) | `feature/f5-opportunities-detail-api` | F5-04b | backend |
 | F5-04d | [#507](https://github.com/PapiCuche/crm-gooddoggy/issues/507) Oportunidades: `POST …/opportunities/` | `feature/f5-opportunities-write-api` | F5-04c | backend |
