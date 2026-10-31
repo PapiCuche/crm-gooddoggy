@@ -7,8 +7,7 @@
  */
 
 /**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
+ * Deja la oportunidad con otro responsable: quién es y la versión que se leyó.
  */
 export interface OpportunityAssignRequest {
   /** El responsable: un miembro activo de la organización. */

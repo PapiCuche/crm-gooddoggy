@@ -12,9 +12,10 @@ from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
-from apps.deals.models import Opportunity
+from apps.deals.models import Opportunity, PipelineStage
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunity_scopes as scopes
+from tests.conftest import migrator_conninfo
 from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
@@ -24,6 +25,7 @@ from tests.test_opportunities_tables import variant
 from tests.test_opportunities_write_api import (
     CREATE_HOSTILE,
     CSRF_FAILED,
+    HUGE,
     NOT_OURS,
     UNAUTHENTICATED,
     acts,
@@ -174,6 +176,8 @@ def test_a_hostile_update_is_a_400_on_its_field_and_writes_nothing(
     response = patch(ana, pk, sent)
     assert fail(response) == (400, "VALIDATION_ERROR", [field]), response.content
     assert rows(migrator) == before and stored(sales, pk).version == 1
+    if isinstance(value, str) and len(value) > 3 and value != HUGE:
+        assert value not in response.text  # no repite lo recibido
 
 
 def test_a_missing_version_is_a_400(sales: SimpleNamespace) -> None:
@@ -210,3 +214,108 @@ def test_updating_what_a_seller_could_not_read_leaks_nothing_through_the_answer(
     body = patch(sam, sales.opps["vera"], {"version": 1, "title": "Del equipo"}).json()
     assert body["contact"]["display_name"] is None  # el contacto es de vera, no del equipo
     assert LIST_FIELDS <= set(body)
+
+
+def test_the_body_is_checked_before_the_row_so_a_bad_one_answers_the_same_everywhere(
+    sales: SimpleNamespace,
+) -> None:
+    """Un cuerpo inválido da el mismo 400, byte a byte, exista la oportunidad o no, esté en el
+    alcance o no; uno válido da 404 para todo lo que no es de quien escribe."""
+    vera = signed(sales.vera)
+    ids = {
+        "in scope": sales.opps["vera"],
+        "out of scope": sales.opps["ana"],
+        "unknown": uuid4(),
+        "deleted": sales.opps["gone"],
+        "other organization": sales.opps["b"],
+    }
+    bad = {key: patch(vera, pk, {"version": 1, "title": ""}) for key, pk in ids.items()}
+    assert {r.status_code for r in bad.values()} == {400}
+    assert len({r.content for r in bad.values()}) == 1
+    good = {key: patch(vera, pk, {"version": 1, "title": "Ok"}) for key, pk in ids.items()}
+    assert {k: r.status_code for k, r in good.items()} == {
+        "in scope": 200, "out of scope": 404, "unknown": 404, "deleted": 404,
+        "other organization": 404,
+    }  # fmt: skip
+    assert len({r.content for k, r in good.items() if k != "in scope"}) == 1
+
+
+def held_patch(
+    user: Any, pk: Any, body: dict[str, Any], hold: str, params: list[Any]
+) -> tuple[bool, tuple[int, Any]]:
+    """Otra transacción cambia la fila y aún no confirma; el `PATCH` espera su bloqueo. Devuelve
+    si esperó y qué respondió tras confirmar."""
+    holder = psycopg.connect(migrator_conninfo(), autocommit=False)
+    holder.execute(hold, params)
+    box: list[tuple[int, Any]] = []
+
+    def run() -> None:
+        try:
+            response = patch(signed(user), pk, body)
+            box.append((response.status_code, response.json().get("code")))
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(timeout=1.5)
+    waited = thread.is_alive()
+    holder.commit()
+    thread.join(timeout=20)
+    holder.close()
+    assert not thread.is_alive()
+    return waited, box[0]
+
+
+REASSIGN = "UPDATE opportunities SET assigned_user_id = %s, version = version + 1 WHERE id = %s"
+
+
+def test_a_reassignment_in_flight_takes_the_row_out_of_the_writers_scope(
+    sales: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """El alcance se decide sobre la fila bloqueada: quien esperaba ya no la ve (404), no recibe un
+    409 que revelaría que existe, y no escribe nada. `OWN` y, con `TEAM`, fuera del equipo."""
+    cases = (
+        (sales.vera, sales.opps["vera"], sales.sam.pk),  # `OWN`: pasa a su compañero
+        (sales.sam, sales.opps["vera"], sales.ana.pk),  # `TEAM`: sale del equipo
+    )
+    for user, pk, to in cases:
+        waited, answer = held_patch(user, pk, {"version": 1, "title": "Robada"}, REASSIGN, [to, pk])
+        assert waited and answer == (404, "NOT_FOUND"), user.email
+        title = migrator.execute("SELECT title FROM opportunities WHERE id = %s", [pk]).fetchone()
+        assert title == ("De vera",)
+        restore = "UPDATE opportunities SET assigned_user_id = %s, version = 1 WHERE id = %s"
+        migrator.execute(restore, [sales.vera.pk, pk])
+
+
+def test_a_deletion_in_flight_is_a_404_for_the_waiting_update(sales: SimpleNamespace) -> None:
+    waited, answer = held_patch(
+        sales.ana, sales.opps["vera"], {"version": 1, "title": "x"},
+        "UPDATE opportunities SET deleted_at = now() WHERE id = %s", [sales.opps["vera"]],
+    )  # fmt: skip
+    assert waited and answer == (404, "NOT_FOUND")
+
+
+def test_a_stage_change_in_flight_is_a_409_never_a_false_404(
+    sales: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """Tras esperar, la fila está en otra etapa o cerrada: el `PATCH` recibe el 409 de versión o
+    de estado, y no un 404 por la unión con la etapa que leyó antes de esperar."""
+    pk, other = sales.opps["vera"], sales.opps["sam"]
+    with tenant_scope(ctx(sales.a)):
+        contacted = PipelineStage.objects.get(code="contactado", pipeline__code="retail").pk
+        won = PipelineStage.objects.get(code="ganado", pipeline__code="retail").pk
+    moved = "UPDATE opportunities SET stage_id = %s, version = version + 1 WHERE id = %s"
+    waited, answer = held_patch(sales.ana, pk, {"version": 1, "title": "x"}, moved, [contacted, pk])
+    assert waited and answer == (409, "STALE_VERSION")
+    closed = (  # ganada por otra petición, aquí sin subir la versión: manda el estado
+        "UPDATE opportunities SET status = 'WON', stage_id = %s, won_at = now(), probability = 100 "
+        "WHERE id = %s"
+    )
+    waited, answer = held_patch(
+        sales.ana, other, {"version": 1, "title": "x"}, closed, [won, other]
+    )
+    assert waited and answer == (409, "OPPORTUNITY_CLOSED")
+    assert migrator.execute("SELECT title FROM opportunities WHERE id = %s", [pk]).fetchone() == (
+        "De vera",
+    )

@@ -6946,7 +6946,7 @@ export const getOpportunitiesListUrl = (orgSlug: string, params?: OpportunitiesL
 };
 
 /**
- * Las oportunidades vivas dentro del alcance de `opportunities.view`, paginadas por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido, un UUID o un `status` que no lo son, `q` que no es una línea de texto imprimible o pasa de 200 caracteres.
+ * Las oportunidades vivas dentro del alcance de `opportunities.view`, paginadas por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los mismos. `status` y `q` vacíos: sin filtro. 400: un filtro repetido, un UUID o un `status` que no lo son, `q` que no es una línea de texto imprimible o pasa de 200 caracteres.
  */
 export const opportunitiesList = async (
   orgSlug: string,
