@@ -9,6 +9,7 @@ from core.db.models import TenantModel, uuid7_primary_key
 CODE = r"^[a-z0-9]+(-[a-z0-9]+)*$"  # `retail`, `mayoristas-lima`
 REASON_CODE = r"^[A-Z][A-Z0-9_]*$"  # `OUT_OF_STOCK`, como la semilla de 02 §E.6
 COLOR = r"^#[0-9a-f]{6}$"  # `#rrggbb`, en minúsculas
+STAGE_ORDER = ("sort_order", "name", "id")  # el orden de las etapas, con desempate estable
 
 
 class Kind(models.TextChoices):

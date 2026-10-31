@@ -58,6 +58,18 @@ class FieldScopes:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class Everyone:
+    """Configuración de la organización (las etiquetas, los pipelines): con el permiso de lectura,
+    cualquier alcance la ve toda. El alcance decide qué registros ajenos se tocan, no ésta."""
+
+    def q(self, scope: Scope, ectx: ExecutionContext) -> Q:
+        return Q()
+
+    def allows(self, scope: Scope, ectx: ExecutionContext, obj: Model) -> bool:
+        return True
+
+
 _REGISTRY: dict[type[Model], ScopePolicy] = {}
 
 

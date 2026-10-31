@@ -102,6 +102,64 @@ def test_lost_reasons(world: SimpleNamespace, migrator: psycopg.Connection[Any])
     assert rows[0][2]["code"] == [None, "PRICE"]
 
 
+# Endurecimiento (F5-02, de la revisión de F5-01b): tipos exactos y nada escrito.
+NOT_TEXTS = [5, None, ["a"], {"a": 1}, b"x", 1.5, True]
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", "False", None, [], {}])
+def test_is_active_is_an_exact_boolean(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any], value: Any
+) -> None:
+    made = run(world, commands.create_lost_reason, name="Precio", code="PRICE")
+    with pytest.raises(ValueError, match="verdadero o falso"):
+        run(world, commands.update_lost_reason, lost_reason_id=made.pk, version=1, is_active=value)
+    assert [a for a, _, _ in audit(migrator)] == ["lost_reason.created"]
+
+
+@pytest.mark.parametrize("value", [True, "1", 1.0, None, [1]])
+def test_the_version_is_an_exact_integer(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any], value: Any
+) -> None:
+    made = run(world, commands.create_lost_reason, name="Precio", code="PRICE")
+    with pytest.raises(ValueError, match="versión"):  # `True` no vale por la versión 1
+        run(world, commands.update_lost_reason, lost_reason_id=made.pk, version=value, name="X")
+    assert [a for a, _, _ in audit(migrator)] == ["lost_reason.created"]
+    done = run(world, commands.update_lost_reason, lost_reason_id=made.pk, version=1, name="Ok")
+    assert done.version == 2
+
+
+@pytest.mark.parametrize("value", NOT_TEXTS)
+def test_a_name_or_code_that_is_not_text_is_a_value_error(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any], value: Any
+) -> None:
+    made = run(world, commands.create_lost_reason, name="Precio", code="PRICE")
+    attempts: list[Callable[[], Any]] = [
+        lambda: run(world, commands.create_lost_reason, name=value, code="OTHER"),
+        lambda: run(world, commands.create_lost_reason, name="Otro", code=value),
+        lambda: run(
+            world, commands.update_lost_reason, lost_reason_id=made.pk, version=1, name=value
+        ),
+    ]
+    for attempt in attempts:
+        with pytest.raises(ValueError):
+            attempt()
+    assert count(migrator, "lost_reasons") == 1
+    assert len(audit(migrator)) == 1
+
+
+def test_the_implicit_order_stops_at_the_column_limit(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    run(world, commands.create_lost_reason, name="Alto", code="HIGH", sort_order=32766)
+    last = run(world, commands.create_lost_reason, name="Tope", code="TOP")
+    assert last.sort_order == 32767  # el último que cabe
+    with pytest.raises(ValueError, match="orden"):
+        run(world, commands.create_lost_reason, name="Pasa", code="OVER")
+    assert count(migrator, "lost_reasons") == 2
+    explicit = run(world, commands.create_lost_reason, name="Indicado", code="SET", sort_order=0)
+    assert explicit.sort_order == 0 and len(audit(migrator)) == 3
+
+
 def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
     config = tomllib.loads((BACKEND / "pyproject.toml").read_text())
     contracts = config["tool"]["importlinter"]["contracts"]
