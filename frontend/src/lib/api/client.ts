@@ -114,6 +114,8 @@ import type {
   PatchedVariantUpdateRequest,
   PatchedWarehouseUpdateRequest,
   PermissionCatalog,
+  Pipeline,
+  PipelineCreateRequest,
   PipelinesListParams,
   Price,
   PriceList,
@@ -6959,6 +6961,110 @@ export function usePipelinesList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getPipelinesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/pipelines/`;
+};
+
+/**
+ * Crea un pipeline con sus etapas, de una vez. Con `pipelines.manage`. Hasta 50 pipelines por organización y 30 etapas por pipeline (400). 409: `PIPELINE_INVARIANT` (sin una WON, una LOST o una OPEN), `CODE_TAKEN`.
+ */
+export const pipelinesCreate = async (
+  orgSlug: string,
+  pipelineCreateRequest: PipelineCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Pipeline> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Pipeline>(getPipelinesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(pipelineCreateRequest),
+  });
+};
+
+export const getPipelinesCreateMutationKey = () => ["pipelinesCreate"] as const;
+
+export const getPipelinesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pipelinesCreate>>,
+    TError,
+    PipelinesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pipelinesCreate>>,
+  TError,
+  PipelinesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPipelinesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pipelinesCreate>>,
+    PipelinesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return pipelinesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PipelinesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pipelinesCreate>>
+>;
+export type PipelinesCreateMutationBody = PipelineCreateRequest;
+export type PipelinesCreateMutationError = ErrorType<Error>;
+export type PipelinesCreateMutationVariables = { orgSlug: string; data: PipelineCreateRequest };
+
+export const usePipelinesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof pipelinesCreate>>,
+      TError,
+      PipelinesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof pipelinesCreate>>,
+  TError,
+  PipelinesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPipelinesCreateMutationOptions(options), queryClient);
+};
 
 export const getPriceListsListUrl = (orgSlug: string, params?: PriceListsListParams) => {
   const normalizedParams = new URLSearchParams();
