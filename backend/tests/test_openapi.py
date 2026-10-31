@@ -50,6 +50,8 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/lost-reasons/",  # F5-02
         "/api/v1/o/{org_slug}/lost-reasons/{lost_reason_id}/",  # F5-02c
         "/api/v1/o/{org_slug}/pipelines/",
+        "/api/v1/o/{org_slug}/pipelines/{pipeline_id}/",  # F5-02d
+        "/api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/{stage_id}/",
         "/api/v1/o/{org_slug}/contacts/",  # F4-02
         "/api/v1/o/{org_slug}/contacts/{contact_id}/",
         "/api/v1/o/{org_slug}/contacts/{contact_id}/assignment/",  # F4-08

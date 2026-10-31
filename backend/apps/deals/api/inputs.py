@@ -179,3 +179,17 @@ class LostReasonUpdateSerializer(Closed, serializers.Serializer[Any]):
     sort_order = Whole(min_value=ORDER[0], max_value=ORDER[1], required=False)
     is_active = Flag(required=False)
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
+
+
+@version_required
+class PipelineUpdateSerializer(Closed, serializers.Serializer[Any]):
+    name = Checked(_name, max_length=NAME_MAX, required=False)
+    kind = Choice(choices=Kind.choices, required=False)
+    sort_order = Whole(min_value=ORDER[0], max_value=ORDER[1], required=False)
+    is_active = Flag(required=False)
+    is_default = Flag(required=False, help_text="`true` quita la marca al anterior.")
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
+
+
+class StageUpdateSerializer(StageFields):
+    """Lo que se puede cambiar de una etapa; el código y el orden no."""
