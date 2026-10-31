@@ -1,7 +1,7 @@
 """Rutas de tenant de las oportunidades: `…/opportunities/` (F5-04, E09-07). Lectura: la
 lista (F5-04b) y el detalle con sus líneas y el historial de etapas (F5-04c). Escritura: crear
-(F5-04d), cambiar (F5-04e), asignar y borrar (F5-04f), mover y reabrir (F5-04g); ganar y
-perder, después.
+(F5-04d), cambiar (F5-04e), asignar y borrar (F5-04f), mover y reabrir (F5-04g), ganar y
+perder (F5-04h).
 
 `opportunities.view` admite alcance (`AssignedTo`: por responsable, `TEAM` incluye a los
 compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las que la
@@ -63,6 +63,7 @@ BAD_REFERENCE = {  # sin repetir el id recibido
     "variant_id": "No es una variante activa de la organización.",
     "assigned_user_id": "No es un miembro activo de la organización.",
     "stage_id": "No es una etapa activa del pipeline de la oportunidad.",
+    "lost_reason_id": "No es un motivo de pérdida activo de la organización.",
 }
 
 
@@ -465,3 +466,42 @@ class OpportunityReopenView(StageCommand):
     wanted = inputs.OpportunityMoveSerializer
     run = staticmethod(stages.reopen_opportunity)
     body = frozenset({"stage_id"})
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="opportunities_win",
+        tags=["deals"],
+        request=inputs.OpportunityWinSerializer,
+        responses={200: OpportunityDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Gana una oportunidad abierta por el importe final (mayor que 0, reemplaza el "
+        "estimado): la lleva a la etapa WON de su pipeline con `won_at` y probabilidad 100. Con "
+        "`opportunities.view` y `opportunities.mark_won`; fuera del alcance: 404. 409: "
+        "`STALE_VERSION`, `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.",
+    ),
+)
+class OpportunityWinView(StageCommand):
+    required_permissions = {"POST": ("opportunities.view", "opportunities.mark_won")}
+    wanted = inputs.OpportunityWinSerializer
+    run = staticmethod(stages.win_opportunity)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="opportunities_lose",
+        tags=["deals"],
+        request=inputs.OpportunityLoseSerializer,
+        responses={200: OpportunityDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Pierde una oportunidad abierta por un motivo activo (obligatorio) y una nota "
+        "opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at` y probabilidad 0. "
+        "Con `opportunities.view` y `opportunities.mark_lost`; fuera del alcance: 404. 400 en "
+        "`lost_reason_id` si el motivo no existe, está borrado, inactivo o es de otra "
+        "organización (el mismo error). 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, "
+        "`MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.",
+    ),
+)
+class OpportunityLoseView(StageCommand):
+    required_permissions = {"POST": ("opportunities.view", "opportunities.mark_lost")}
+    wanted = inputs.OpportunityLoseSerializer
+    run = staticmethod(stages.lose_opportunity)
+    body = frozenset({"lost_reason_id"})

@@ -116,6 +116,13 @@ class OpportunityUpdateSerializer(OpportunityFields):
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
 
 
+def _final(value: str) -> Any:
+    amount = _decimal(value, "importe final")
+    if amount <= 0:
+        raise ValueError("importe final: mayor que 0")
+    return amount
+
+
 class OpportunityAssignSerializer(Closed, serializers.Serializer[Any]):
     assigned_user_id = Id(help_text="El responsable: un miembro activo de la organización.")
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
@@ -124,5 +131,25 @@ class OpportunityAssignSerializer(Closed, serializers.Serializer[Any]):
 class OpportunityMoveSerializer(Closed, serializers.Serializer[Any]):
     stage_id = Id(
         help_text="Una etapa activa del pipeline de la oportunidad (abierta, al reabrir)."
+    )
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
+
+
+class OpportunityWinSerializer(Closed, serializers.Serializer[Any]):
+    amount = Checked(
+        _final, help_text=f"Importe final, mayor que 0; reemplaza el estimado. {AMOUNT}"
+    )
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
+
+
+class OpportunityLoseSerializer(Closed, serializers.Serializer[Any]):
+    lost_reason_id = Id(help_text="Un motivo de pérdida activo de la organización.")
+    note = Checked(
+        lambda v: _line(v, "nota", NOTE_MAX),
+        max_length=NOTE_MAX,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text="Texto libre, una línea; en blanco es ninguna.",
     )
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")

@@ -3716,6 +3716,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/opportunities/{opportunity_id}/lose/:
+    post:
+      operationId: opportunities_lose
+      description: 'Pierde una oportunidad abierta por un motivo activo (obligatorio)
+        y una nota opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at`
+        y probabilidad 0. Con `opportunities.view` y `opportunities.mark_lost`; fuera
+        del alcance: 404. 400 en `lost_reason_id` si el motivo no existe, está borrado,
+        inactivo o es de otra organización (el mismo error). 409: `STALE_VERSION`,
+        `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.'
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityLoseRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/opportunities/{opportunity_id}/move/:
     post:
       operationId: opportunities_move
@@ -3813,6 +3881,73 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/OpportunityMoveRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/opportunities/{opportunity_id}/win/:
+    post:
+      operationId: opportunities_win
+      description: 'Gana una oportunidad abierta por el importe final (mayor que 0,
+        reemplaza el estimado): la lleva a la etapa WON de su pipeline con `won_at`
+        y probabilidad 100. Con `opportunities.view` y `opportunities.mark_won`; fuera
+        del alcance: 404. 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`,
+        `PIPELINE_UNAVAILABLE`.'
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityWinRequest'
         required: true
       security:
       - sessionCookie: []
@@ -8799,6 +8934,29 @@ components:
       - updated_at
       - version
       - won_at
+    OpportunityLoseRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        lost_reason_id:
+          type: string
+          format: uuid
+          description: Un motivo de pérdida activo de la organización.
+        note:
+          type: string
+          nullable: true
+          description: Texto libre, una línea; en blanco es ninguna.
+          maxLength: 1000
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - lost_reason_id
+      - version
     OpportunityMoveRequest:
       type: object
       description: |-
@@ -8817,6 +8975,25 @@ components:
           description: La que se leyó; si no, 409.
       required:
       - stage_id
+      - version
+    OpportunityWinRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        amount:
+          type: string
+          minLength: 1
+          description: Importe final, mayor que 0; reemplaza el estimado. Texto con
+            hasta 12 cifras enteras y 2 decimales, como `1500.50`.
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - amount
       - version
     OrganizationSummary:
       type: object
