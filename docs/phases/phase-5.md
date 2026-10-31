@@ -29,7 +29,6 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F5-02b | [#489](https://github.com/PapiCuche/crm-gooddoggy/issues/489) Pipeline: `POST …/pipelines/` (primera de las escrituras de la API) | `feature/f5-pipelines-write-api` | #483 | backend |
 | F5-02c | [#496](https://github.com/PapiCuche/crm-gooddoggy/issues/496) Pipeline: `POST`/`PATCH` de motivos de pérdida y huecos de la revisión de F5-02 | `feature/f5-lost-reasons-write-api` | #489 | backend |
 | F5-02d | [#497](https://github.com/PapiCuche/crm-gooddoggy/issues/497) Pipeline: `PATCH` de pipelines y de etapas | `feature/f5-pipeline-update-api` | #489 | backend |
-| F5-02c | por crear: Pipeline: `POST`/`PATCH` de motivos de pérdida y huecos de la revisión de F5-02 | `feature/f5-lost-reasons-write-api` | #489 | backend |
 | F5-02e | [#498](https://github.com/PapiCuche/crm-gooddoggy/issues/498) Pipeline: `POST …/stages/` y `PUT …/stages/order/` | `feature/f5-stage-add-order-api` | #489 | backend |
 
 Siguen, en este orden: las escrituras de la API con `pipelines.manage` que siguen en cuatro entregas (motivos de pérdida, `PATCH` de pipelines y etapas, `POST` de etapas y orden: F5-02c a F5-02e), oportunidades (F5-03 y F5-04), pantallas (F5-05 en adelante).
