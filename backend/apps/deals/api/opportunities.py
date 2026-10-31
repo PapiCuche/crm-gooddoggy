@@ -215,8 +215,9 @@ def domain(body: Container[str] | None = None) -> Iterator[None]:
     """Lo que lanzan los comandos, con la forma del contrato: una carrera o un estado que no
     admite el cambio es un 409 con su código; una referencia que no sirve, un 400 en su campo (sin
     repetir el valor); lo que no existe, un 404. `body`: los campos del cuerpo que una referencia
-    puede nombrar; otra (el pipeline de la oportunidad, que ya no está activo) no es del cliente:
-    409 `PIPELINE_UNAVAILABLE`."""
+    puede nombrar. El pipeline de la oportunidad (`pipeline_id`), que no es un campo de esas
+    rutas y ya no está activo, es un 409 `PIPELINE_UNAVAILABLE`; cualquier otra referencia ajena
+    al cuerpo (quien actúa, por ejemplo) no se disfraza de eso: 400 en su campo."""
     try:
         yield
     except ObjectDoesNotExist:
@@ -233,7 +234,7 @@ def domain(body: Container[str] | None = None) -> Iterator[None]:
         message = f"La etapa exige datos que faltan: {', '.join(missing.fields)}."
         raise ApiError("MISSING_FIELDS", 409, message) from None
     except commands.BadReference as bad:
-        if body is not None and bad.field not in body:
+        if body is not None and bad.field == "pipeline_id" and "pipeline_id" not in body:
             raise ApiError("PIPELINE_UNAVAILABLE", 409, UNAVAILABLE) from None
         field = "items" if bad.field == "variant_id" else bad.field  # una línea no es un campo
         message = BAD_REFERENCE.get(bad.field, "No es de la organización.")
