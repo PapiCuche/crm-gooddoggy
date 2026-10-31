@@ -1,9 +1,11 @@
-"""Rutas de tenant de las oportunidades: `…/opportunities/` (F5-04, E09-07). Lectura de la
-lista; el detalle, las escrituras y los cambios de etapa llegan en las entregas siguientes.
+"""Rutas de tenant de las oportunidades: `…/opportunities/` (F5-04, E09-07). Lectura: la
+lista (F5-04b) y el detalle con sus líneas y el historial de etapas (F5-04c); las escrituras y los
+cambios de etapa llegan en las entregas siguientes.
 
 `opportunities.view` admite alcance (`AssignedTo`: por responsable, `TEAM` incluye a los
-compañeros de equipo): `ScopeFilter` deja en el listado solo las que la política permite;
-las de otra organización o borradas no existen.
+compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las que la
+política permite. Fuera del alcance la oportunidad no existe: 404, igual que la de otra
+organización o una borrada.
 
 El contacto sale con `id` y `display_name`, y el nombre solo si quien consulta puede ver ese
 contacto (`contacts.view` y su alcance); si no, `display_name` es `null`: tener las oportunidades
@@ -71,6 +73,36 @@ class OpportunitySerializer(serializers.Serializer[Any]):
     lost_at = serializers.DateTimeField(allow_null=True)
     lost_reason = LostReasonRefSerializer(allow_null=True)
     version = serializers.IntegerField(help_text="Sube con cada cambio.")
+
+
+class ItemSerializer(serializers.Serializer[Any]):
+    variant_id = serializers.UUIDField(help_text="El nombre y el SKU, en el catálogo.")
+    quantity = serializers.IntegerField()
+    estimated_unit_price = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        help_text="Referencial: el precio firme lo fija la cotización.",
+    )
+    notes = serializers.CharField()
+
+
+class HistorySerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    from_stage = StageRefSerializer(allow_null=True, help_text="`null` en el alta.")
+    to_stage = StageRefSerializer()
+    changed_by_user_id = serializers.UUIDField(allow_null=True)
+    changed_at = serializers.DateTimeField()
+    seconds_in_previous_stage = serializers.IntegerField(allow_null=True)
+
+
+class OpportunityDetailSerializer(OpportunitySerializer):
+    source = serializers.ChoiceField(choices=Opportunity.Source.choices)
+    next_action_at = serializers.DateTimeField(allow_null=True)
+    lost_reason_note = serializers.CharField(allow_null=True, help_text="Texto libre.")
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    items = ItemSerializer(many=True, help_text="Por id.")
+    history = HistorySerializer(many=True, help_text="De la primera etapa a la última.")
 
 
 class OpportunitySearchSerializer(serializers.Serializer[Any]):
@@ -150,3 +182,21 @@ class OpportunitiesView(OpportunitiesQuery, generics.ListAPIView):
     required_permissions = {"GET": "opportunities.view"}
     serializer_class = OpportunitySerializer
     filter_backends = [ScopeFilter, OpportunitySearch]  # en este orden
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="opportunities_retrieve",
+        tags=["deals"],
+        responses={200: OpportunityDetailSerializer, **errors(401, 403, 404)},
+        description="Una oportunidad con sus líneas y el historial de sus etapas. 404: no es de "
+        "la organización, está borrada o queda fuera del alcance de `opportunities.view`.",
+    ),
+)
+class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
+    required_permissions = {"GET": "opportunities.view"}
+    serializer_class = OpportunityDetailSerializer
+    lookup_url_kwarg = "opportunity_id"
+
+    def get_queryset(self) -> QuerySet[Opportunity]:
+        return selectors.with_detail(super().get_queryset())

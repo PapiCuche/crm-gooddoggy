@@ -27,4 +27,9 @@ urlpatterns = [
         name="lost-reason",
     ),
     path("opportunities/", opportunities.OpportunitiesView.as_view(), name="opportunities"),
+    path(
+        "opportunities/<uuid:opportunity_id>/",
+        opportunities.OpportunityView.as_view(),
+        name="opportunity",
+    ),
 ]

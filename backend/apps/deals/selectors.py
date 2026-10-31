@@ -9,6 +9,8 @@ from apps.deals.models import (
     STAGE_ORDER,
     LostReason,
     Opportunity,
+    OpportunityItem,
+    OpportunityStageHistory,
     Pipeline,
     PipelineStage,
 )
@@ -67,3 +69,12 @@ def matching(found: QuerySet[Opportunity], text: str) -> QuerySet[Opportunity]:
     if not text:
         return found
     return found.filter(Q(title__icontains=text) | Q(number__icontains=text))
+
+
+def with_detail(found: QuerySet[Opportunity]) -> QuerySet[Opportunity]:
+    """Con sus líneas y su historial de etapas (con los nombres), una consulta más cada uno."""
+    steps = OpportunityStageHistory.objects.select_related("from_stage", "to_stage")
+    return found.prefetch_related(
+        Prefetch("items", OpportunityItem.objects.order_by("id")),
+        Prefetch("history", steps.order_by("changed_at", "id")),
+    )

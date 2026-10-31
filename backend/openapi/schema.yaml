@@ -3440,6 +3440,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/opportunities/{opportunity_id}/:
+    get:
+      operationId: opportunities_retrieve
+      description: 'Una oportunidad con sus líneas y el historial de sus etapas. 404:
+        no es de la organización, está borrada o queda fuera del alcance de `opportunities.view`.'
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/permissions/:
     get:
       operationId: permissions_list
@@ -7175,6 +7221,36 @@ components:
           oneOf:
           - $ref: '#/components/schemas/ScopesEnum'
           - $ref: '#/components/schemas/NullEnum'
+    History:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        from_stage:
+          allOf:
+          - $ref: '#/components/schemas/StageRef'
+          nullable: true
+          description: '`null` en el alta.'
+        to_stage:
+          $ref: '#/components/schemas/StageRef'
+        changed_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        changed_at:
+          type: string
+          format: date-time
+        seconds_in_previous_stage:
+          type: integer
+          nullable: true
+      required:
+      - changed_at
+      - changed_by_user_id
+      - from_stage
+      - id
+      - seconds_in_previous_stage
+      - to_stage
     ImportRowActionEnum:
       enum:
       - CREATE
@@ -7282,6 +7358,27 @@ components:
       required:
       - email
       - role_ids
+    Item:
+      type: object
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+          description: El nombre y el SKU, en el catálogo.
+        quantity:
+          type: integer
+        estimated_unit_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          description: 'Referencial: el precio firme lo fija la cotización.'
+        notes:
+          type: string
+      required:
+      - estimated_unit_price
+      - notes
+      - quantity
+      - variant_id
     Level:
       type: object
       properties:
@@ -8112,6 +8209,133 @@ components:
       - stage_entered_at
       - status
       - title
+      - version
+      - won_at
+    OpportunityDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          description: '`OPP-000123`: único en la organización.'
+        title:
+          type: string
+        contact:
+          $ref: '#/components/schemas/ContactRef'
+        pipeline_id:
+          type: string
+          format: uuid
+        stage:
+          $ref: '#/components/schemas/StageRef'
+        status:
+          allOf:
+          - $ref: '#/components/schemas/StageTypeEnum'
+          description: |-
+            El tipo de la etapa.
+
+            * `OPEN` - Open
+            * `WON` - Won
+            * `LOST` - Lost
+        amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          description: 'Texto: `1500.50`.'
+        currency:
+          type: string
+        probability:
+          type: integer
+          description: De 0 a 100; ganada 100, perdida 0.
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        assigned_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: El responsable.
+        next_action:
+          type: string
+          nullable: true
+          description: Texto libre.
+        expected_close_date:
+          type: string
+          format: date
+          nullable: true
+        stage_entered_at:
+          type: string
+          format: date-time
+        last_activity_at:
+          type: string
+          format: date-time
+        won_at:
+          type: string
+          format: date-time
+          nullable: true
+        lost_at:
+          type: string
+          format: date-time
+          nullable: true
+        lost_reason:
+          allOf:
+          - $ref: '#/components/schemas/LostReasonRef'
+          nullable: true
+        version:
+          type: integer
+          description: Sube con cada cambio.
+        source:
+          $ref: '#/components/schemas/ContactSourceEnum'
+        next_action_at:
+          type: string
+          format: date-time
+          nullable: true
+        lost_reason_note:
+          type: string
+          nullable: true
+          description: Texto libre.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Item'
+          description: Por id.
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/History'
+          description: De la primera etapa a la última.
+      required:
+      - amount
+      - assigned_user_id
+      - contact
+      - created_at
+      - currency
+      - expected_close_date
+      - history
+      - id
+      - items
+      - last_activity_at
+      - lost_at
+      - lost_reason
+      - lost_reason_note
+      - next_action
+      - next_action_at
+      - number
+      - pipeline_id
+      - priority
+      - probability
+      - source
+      - stage
+      - stage_entered_at
+      - status
+      - title
+      - updated_at
       - version
       - won_at
     OrganizationSummary:

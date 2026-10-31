@@ -76,6 +76,7 @@ import type {
   Note,
   NoteWriteRequest,
   OpportunitiesListParams,
+  OpportunityDetail,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
@@ -7057,6 +7058,150 @@ export function useOpportunitiesList<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getOpportunitiesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getOpportunitiesRetrieveUrl = (orgSlug: string, opportunityId: string) => {
+  return `/api/v1/o/${orgSlug}/opportunities/${opportunityId}/`;
+};
+
+/**
+ * Una oportunidad con sus líneas y el historial de sus etapas. 404: no es de la organización, está borrada o queda fuera del alcance de `opportunities.view`.
+ */
+export const opportunitiesRetrieve = async (
+  orgSlug: string,
+  opportunityId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<OpportunityDetail> => {
+  return apiFetch<OpportunityDetail>(getOpportunitiesRetrieveUrl(orgSlug, opportunityId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getOpportunitiesRetrieveQueryKey = (orgSlug: string, opportunityId: string) => {
+  return [`/api/v1/o/${orgSlug}/opportunities/${opportunityId}/`] as const;
+};
+
+export const getOpportunitiesRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  opportunityId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof opportunitiesRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getOpportunitiesRetrieveQueryKey(orgSlug, opportunityId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof opportunitiesRetrieve>>> = ({ signal }) =>
+    opportunitiesRetrieve(orgSlug, opportunityId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      opportunityId !== null &&
+      opportunityId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof opportunitiesRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type OpportunitiesRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesRetrieve>>
+>;
+export type OpportunitiesRetrieveQueryError = ErrorType<Error>;
+
+export function useOpportunitiesRetrieve<
+  TData = Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  opportunityId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof opportunitiesRetrieve>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof opportunitiesRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useOpportunitiesRetrieve<
+  TData = Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  opportunityId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof opportunitiesRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof opportunitiesRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useOpportunitiesRetrieve<
+  TData = Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  opportunityId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof opportunitiesRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useOpportunitiesRetrieve<
+  TData = Awaited<ReturnType<typeof opportunitiesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  opportunityId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof opportunitiesRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getOpportunitiesRetrieveQueryOptions(orgSlug, opportunityId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;
