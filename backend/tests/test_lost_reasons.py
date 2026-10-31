@@ -182,8 +182,8 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
     assert [(c["type"], c["protected_modules"], c["allowed_importers"]) for c in protected] == [
         (  # los comandos de oportunidades usan los validadores de los de pipelines (F5-03b)
             "protected",
-            ["apps.deals.commands", "apps.deals.opportunities"],
-            ["apps.deals.api", "apps.deals.opportunities"],
+            ["apps.deals.commands", "apps.deals.opportunities", "apps.deals.opportunity_stages"],
+            ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages"],
         )
     ]
     layers = next(c for c in contracts if c["type"] == "layers")["layers"]

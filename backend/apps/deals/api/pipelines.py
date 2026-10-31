@@ -38,6 +38,8 @@ INVARIANT = "El pipeline lleva una etapa WON, al menos una LOST y al menos una O
 STALE = "Otra persona lo cambió: vuelve a cargarlo y repite el cambio."
 IS_DEFAULT = "Es el pipeline predeterminado: elige otro como predeterminado antes."
 CODE_TAKEN = "Ya hay uno con ese código."
+OPEN_OPPORTUNITIES = "Tiene oportunidades abiertas: muévelas o ciérralas antes."
+STAGE_IN_USE = "La etapa tiene oportunidades: su tipo no cambia."
 FULL = "{} ya tiene {} {}."
 GENERIC = "Dato no admitido."
 
@@ -65,6 +67,10 @@ def _domain(stages: str = "") -> Iterator[None]:
         raise ApiError("PIPELINE_INVARIANT", 409, INVARIANT) from None
     except commands.CodeTaken:
         raise ApiError("CODE_TAKEN", 409, CODE_TAKEN) from None
+    except commands.OpenOpportunities:
+        raise ApiError("OPEN_OPPORTUNITIES", 409, OPEN_OPPORTUNITIES) from None
+    except commands.StageInUse:
+        raise ApiError("STAGE_IN_USE", 409, STAGE_IN_USE) from None
     except commands.Invalid as error:
         field = stages if stages and error.field in commands.NEW_STAGE else error.field
         raise serializers.ValidationError({field: [inputs.sentence(error)]}) from None
