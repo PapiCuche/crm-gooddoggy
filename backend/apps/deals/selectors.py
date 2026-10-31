@@ -19,5 +19,9 @@ def lost_reasons() -> QuerySet[LostReason]:
     return LostReason.objects.filter(deleted_at__isnull=True)
 
 
+def lost_reason_count() -> int:
+    return LostReason.objects.filter(deleted_at__isnull=True).count()
+
+
 def pipeline_count() -> int:
     return Pipeline.objects.filter(deleted_at__isnull=True).count()

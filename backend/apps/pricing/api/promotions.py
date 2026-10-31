@@ -8,7 +8,6 @@ contexto. Estricto: un campo desconocido es 400 con su nombre, y un tipo que no 
 """
 
 from collections import defaultdict
-from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -28,50 +27,11 @@ from apps.pricing.models import DiscountType, Promotion, PromotionStatus
 from apps.pricing.selectors import promotion_items, promotion_lists, visible_promotions
 from core.api.errors import ApiError
 from core.api.schema import errors
+from core.api.strict import Closed, Flag, Id, Text, Whole
 
 NOT_DRAFT = "Solo se publica una promoción en borrador."
 CANCELLED = "La promoción ya está cancelada."
 ENDED = "Ya pasó su fin: no se puede publicar."
-UNKNOWN = "Campo desconocido."
-
-
-class Strict:
-    """Solo el tipo propio del campo: ni `"5"` ni `1` ni `5.0`, ni un número como texto."""
-
-    kind: tuple[type, ...] = (str,)
-
-    def to_internal_value(self, data: Any) -> Any:
-        if type(data) not in self.kind:
-            self.fail("invalid")  # type: ignore[attr-defined]
-        return super().to_internal_value(data)  # type: ignore[misc]
-
-
-class Text(Strict, serializers.CharField):
-    pass
-
-
-class Id(Strict, serializers.UUIDField):
-    pass
-
-
-class Whole(Strict, serializers.IntegerField):
-    kind = (int,)
-
-
-class Flag(Strict, serializers.BooleanField):
-    kind = (bool,)
-
-
-class Closed:
-    """Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-    pierde en silencio)."""
-
-    def to_internal_value(self, data: Any) -> Any:
-        if isinstance(data, Mapping):
-            extra = {str(key): [UNKNOWN] for key in data if key not in self.fields}  # type: ignore[attr-defined]
-            if extra:
-                raise serializers.ValidationError(extra)
-        return super().to_internal_value(data)  # type: ignore[misc]
 
 
 class PromotionItemSerializer(Closed, serializers.Serializer[Any]):
