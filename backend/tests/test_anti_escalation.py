@@ -77,6 +77,8 @@ ADMIN_REST = (
     "warehouses.manage",
     "contacts.create",  # F4-02: los contactos
     "contacts.assign",  # F4-08
+    "opportunities.create",  # F5-04
+    "opportunities.assign",
     "pipelines.manage",  # F5-02
 )
 SCOPED_REST = (
@@ -84,6 +86,10 @@ SCOPED_REST = (
     "contacts.update",
     "contacts.delete",
     "opportunities.view",
+    "opportunities.update",  # F5-04
+    "opportunities.delete",
+    "opportunities.mark_won",
+    "opportunities.mark_lost",
 )  # con `ORGANIZATION`
 ADMIN = dict.fromkeys(ADMIN_REST) | dict.fromkeys(SCOPED_REST, "ORGANIZATION")
 STATE = (
