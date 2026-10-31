@@ -137,7 +137,10 @@ class OpportunitySearch(BaseFilterBackend):
         params, names = request.query_params, tuple(OpportunitySearchSerializer().fields)
         if repeated := [k for k in names if len(params.getlist(k)) > 1]:
             raise serializers.ValidationError({k: ["Una sola vez."] for k in repeated})
-        wanted = OpportunitySearchSerializer(data={k: params[k] for k in names if k in params})
+        given = {k: params[k] for k in names if k in params}
+        if given.get("status") == "":  # `?status=` es lo mismo que no pedirlo, como `?q=`
+            del given["status"]
+        wanted = OpportunitySearchSerializer(data=given)
         wanted.is_valid(raise_exception=True)
         found: QuerySet[Opportunity] = queryset
         filters = dict(wanted.validated_data)
@@ -174,8 +177,9 @@ class OpportunitiesQuery:
         responses={200: OpportunitySerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las oportunidades vivas dentro del alcance de `opportunities.view`, paginadas "
         "por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los "
-        "mismos. 400: un filtro repetido, un UUID o un `status` que no lo son, `q` que no es una "
-        f"línea de texto imprimible o pasa de {TEXT_MAX} caracteres.",
+        "mismos. `status` y `q` vacíos: sin filtro. 400: un filtro repetido, un UUID o un `status` "
+        f"que no lo son, `q` que no es una línea de texto imprimible o pasa de {TEXT_MAX} "
+        "caracteres.",
     ),
 )
 class OpportunitiesView(OpportunitiesQuery, generics.ListAPIView):
