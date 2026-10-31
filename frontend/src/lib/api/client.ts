@@ -53,6 +53,8 @@ import type {
   LoginMfaRequest,
   LoginPending,
   LoginRequest,
+  LostReason,
+  LostReasonCreateRequest,
   LostReasonsListParams,
   MemberBranch,
   MemberBranchChangeRequest,
@@ -105,6 +107,7 @@ import type {
   PatchedBrandUpdateRequest,
   PatchedCategoryUpdateRequest,
   PatchedContactUpdateRequest,
+  PatchedLostReasonUpdateRequest,
   PatchedNoteUpdateRequest,
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
@@ -6038,6 +6041,219 @@ export function useLostReasonsList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getLostReasonsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/lost-reasons/`;
+};
+
+/**
+ * Crea un motivo, activo. Con `pipelines.manage`. Hasta 100 por organización (400). 409 `CODE_TAKEN`.
+ */
+export const lostReasonsCreate = async (
+  orgSlug: string,
+  lostReasonCreateRequest: LostReasonCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<LostReason> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<LostReason>(getLostReasonsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(lostReasonCreateRequest),
+  });
+};
+
+export const getLostReasonsCreateMutationKey = () => ["lostReasonsCreate"] as const;
+
+export const getLostReasonsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof lostReasonsCreate>>,
+    TError,
+    LostReasonsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof lostReasonsCreate>>,
+  TError,
+  LostReasonsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getLostReasonsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof lostReasonsCreate>>,
+    LostReasonsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return lostReasonsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LostReasonsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof lostReasonsCreate>>
+>;
+export type LostReasonsCreateMutationBody = LostReasonCreateRequest;
+export type LostReasonsCreateMutationError = ErrorType<Error>;
+export type LostReasonsCreateMutationVariables = { orgSlug: string; data: LostReasonCreateRequest };
+
+export const useLostReasonsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof lostReasonsCreate>>,
+      TError,
+      LostReasonsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof lostReasonsCreate>>,
+  TError,
+  LostReasonsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getLostReasonsCreateMutationOptions(options), queryClient);
+};
+
+export const getLostReasonsUpdateUrl = (orgSlug: string, lostReasonId: string) => {
+  return `/api/v1/o/${orgSlug}/lost-reasons/${lostReasonId}/`;
+};
+
+/**
+ * Cambia lo enviado si `version` sigue vigente (409 `STALE_VERSION` si no). El código no cambia. Con `pipelines.manage`.
+ */
+export const lostReasonsUpdate = async (
+  orgSlug: string,
+  lostReasonId: string,
+  patchedLostReasonUpdateRequest: PatchedLostReasonUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<LostReason> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<LostReason>(getLostReasonsUpdateUrl(orgSlug, lostReasonId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedLostReasonUpdateRequest),
+  });
+};
+
+export const getLostReasonsUpdateMutationKey = () => ["lostReasonsUpdate"] as const;
+
+export const getLostReasonsUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof lostReasonsUpdate>>,
+    TError,
+    LostReasonsUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof lostReasonsUpdate>>,
+  TError,
+  LostReasonsUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getLostReasonsUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof lostReasonsUpdate>>,
+    LostReasonsUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, lostReasonId, data } = props ?? {};
+
+    return lostReasonsUpdate(orgSlug, lostReasonId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LostReasonsUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof lostReasonsUpdate>>
+>;
+export type LostReasonsUpdateMutationBody = PatchedLostReasonUpdateRequest;
+export type LostReasonsUpdateMutationError = ErrorType<Error>;
+export type LostReasonsUpdateMutationVariables = {
+  orgSlug: string;
+  lostReasonId: string;
+  data: PatchedLostReasonUpdateRequest;
+};
+
+export const useLostReasonsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof lostReasonsUpdate>>,
+      TError,
+      LostReasonsUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof lostReasonsUpdate>>,
+  TError,
+  LostReasonsUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getLostReasonsUpdateMutationOptions(options), queryClient);
+};
 
 export const getMeContextUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/me/`;

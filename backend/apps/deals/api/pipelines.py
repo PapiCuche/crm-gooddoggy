@@ -11,16 +11,19 @@ nada, y responde con el pipeline y sus etapas como la lectura: quien escribe pue
 pone `inputs`.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
+from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.deals import commands, selectors
 from apps.deals.api import inputs
@@ -32,8 +35,9 @@ from core.tenancy import context
 from core.tenancy.scope import require_scope
 
 INVARIANT = "El pipeline lleva una etapa WON, al menos una LOST y al menos una OPEN, activas."
-CODE_TAKEN = "Ya hay un pipeline con ese código."
-FULL = "La organización ya tiene {} pipelines."
+STALE = "Otra persona lo cambió: vuelve a cargarlo y repite el cambio."
+CODE_TAKEN = "Ya hay uno con ese código."
+FULL = "La organización ya tiene {} {}."
 GENERIC = "Dato no admitido."
 
 
@@ -50,6 +54,10 @@ def _domain(stages: str = "") -> Iterator[None]:
     que lleva las etapas de un pipeline nuevo, donde caen los errores de una etapa."""
     try:
         yield
+    except ObjectDoesNotExist:
+        raise NotFound from None
+    except commands.StaleVersion:
+        raise ApiError("STALE_VERSION", 409, STALE) from None
     except commands.StageInvariant:
         raise ApiError("PIPELINE_INVARIANT", 409, INVARIANT) from None
     except commands.CodeTaken:
@@ -59,6 +67,15 @@ def _domain(stages: str = "") -> Iterator[None]:
         raise serializers.ValidationError({field: [inputs.sentence(error)]}) from None
     except ValueError:  # un comando rechazó algo que el serializador dejó pasar
         raise serializers.ValidationError(GENERIC) from None
+
+
+def _capped(tenant: Any, count: Callable[[], int], limit: int, what: str) -> None:
+    """El tope de una colección de la organización (los comandos no lo ponen), contado con el
+    bloqueo consultivo de pipelines que los comandos vuelven a tomar: dos altas a la vez no lo
+    pasan. Los motivos de pérdida comparten ese bloqueo (es configuración poco escrita)."""
+    lock_pipelines(require_scope(tenant), tenant.organization_id)
+    if count() >= limit:
+        raise serializers.ValidationError(FULL.format(limit, what))
 
 
 def _reply(pipeline_id: UUID, status: int = 200) -> Response:
@@ -136,10 +153,7 @@ class PipelinesView(generics.ListAPIView):
         wanted.is_valid(raise_exception=True)
         tenant = _tenant()
         with _domain(stages="stages"):
-            # El tope se cuenta con el bloqueo de la organización que el comando vuelve a tomar.
-            lock_pipelines(require_scope(tenant), tenant.organization_id)
-            if selectors.pipeline_count() >= inputs.PIPELINES_MAX:
-                raise serializers.ValidationError(FULL.format(inputs.PIPELINES_MAX))
+            _capped(tenant, selectors.pipeline_count, inputs.PIPELINES_MAX, "pipelines")
             made = commands.create_pipeline(tenant, **wanted.validated_data)
         return _reply(made.pk, 201)
 
@@ -152,10 +166,50 @@ class PipelinesView(generics.ListAPIView):
         description="Los motivos de pérdida, activos o no, por creación (ADR-016); `sort_order` "
         "es el que muestra la pantalla. Con `opportunities.view` y cualquier alcance.",
     ),
+    post=extend_schema(
+        operation_id="lost_reasons_create",
+        tags=["deals"],
+        request=inputs.LostReasonCreateSerializer,
+        responses={201: LostReasonSerializer, **errors(400, 401, 403, 404, 409)},
+        description=f"Crea un motivo, activo. Con `pipelines.manage`. Hasta {inputs.REASONS_MAX} "
+        "por organización (400). 409 `CODE_TAKEN`.",
+    ),
 )
 class LostReasonsView(generics.ListAPIView):
-    required_permissions = {"GET": "opportunities.view"}
+    required_permissions = {"GET": "opportunities.view", "POST": "pipelines.manage"}
     serializer_class = LostReasonSerializer
 
     def get_queryset(self) -> QuerySet[LostReason]:
         return selectors.lost_reasons()
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = inputs.LostReasonCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        tenant = _tenant()
+        with _domain():
+            _capped(tenant, selectors.lost_reason_count, inputs.REASONS_MAX, "motivos de pérdida")
+            made = commands.create_lost_reason(tenant, **wanted.validated_data)
+        return Response(LostReasonSerializer(made).data, status=201)
+
+
+class LostReasonView(APIView):
+    required_permissions = {"PATCH": "pipelines.manage"}
+
+    @extend_schema(
+        operation_id="lost_reasons_update",
+        tags=["deals"],
+        request=inputs.LostReasonUpdateSerializer,
+        responses={200: LostReasonSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia lo enviado si `version` sigue vigente (409 `STALE_VERSION` si no). "
+        "El código no cambia. Con `pipelines.manage`.",
+    )
+    def patch(self, request: Request, lost_reason_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.LostReasonUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        fields = dict(wanted.validated_data)
+        version = fields.pop("version")
+        with _domain():
+            reason = commands.update_lost_reason(
+                _tenant(), lost_reason_id=lost_reason_id, version=version, **fields
+            )
+        return Response(LostReasonSerializer(reason).data)

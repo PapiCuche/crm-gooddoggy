@@ -1,10 +1,9 @@
-"""Lo que entra por las rutas de escritura de pipelines y etapas (F5-02b): serializadores
-estrictos (el tipo exacto de cada campo, ninguna clave desconocida) y los topes de tamaño que los
-comandos no ponen (F5-01d los llevará a los comandos): `requires_fields` hasta 4 KB serializado y
-4 niveles, sin NaN, infinitos ni NUL; hasta 30 etapas por pipeline y 50 pipelines por
-organización. Los textos se limpian con el mismo criterio que los comandos, para que un dato
-inválido sea un 400 en su campo.
-"""
+"""Lo que entra por las rutas de escritura de pipelines y motivos de pérdida (F5-02b, F5-02c):
+serializadores estrictos (el tipo exacto de cada campo, ninguna clave desconocida) y los topes de
+tamaño que los comandos no ponen (F5-01d los llevará a los comandos): `requires_fields` hasta 4 KB
+serializado y 4 niveles, sin NaN, infinitos ni NUL; hasta 30 etapas por pipeline, 50 pipelines y
+100 motivos de pérdida por organización. Los textos se limpian con el criterio de los comandos,
+para que un dato inválido sea un 400 en su campo."""
 
 import json
 import math
@@ -12,19 +11,24 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from drf_spectacular.extensions import OpenApiSerializerExtension
 from rest_framework import serializers
 
 from apps.deals.commands import CODE_MAX, DAYS_MAX, NAME_MAX, _code
-from apps.deals.models import CODE, COLOR, Kind, StageType
+from apps.deals.models import CODE, COLOR, REASON_CODE, Kind, StageType
 from core.api.strict import Choice, Closed, Flag, Text, Whole
 from core.text import name as clean_name
 
-STAGES_MAX, PIPELINES_MAX = 30, 50
+STAGES_MAX, PIPELINES_MAX, REASONS_MAX = 30, 50, 100
 FIELDS_BYTES, FIELDS_DEPTH = 4096, 4
 COLOR_RE = re.compile(COLOR)
-ORDER = (-32768, 32767)  # `sort_order` de un pipeline, como lo valida el comando
+ORDER = (-32768, 32767)  # `sort_order` de un pipeline o un motivo, como lo validan los comandos
 SHAPE = f"Un objeto JSON de hasta {FIELDS_DEPTH} niveles, sin NaN, infinitos ni NUL."
 NEW_STAGE_REQUIRED = ("name", "code", "stage_type", "default_probability", "color")
+
+
+def _name(value: str) -> str:
+    return clean_name(value, NAME_MAX)
 
 
 def sentence(error: Exception) -> str:
@@ -90,7 +94,7 @@ class RequiresFields(serializers.DictField):
 class StageFields(Closed, serializers.Serializer[Any]):
     """Los datos de una etapa, todos opcionales; el código y el orden no se cambian."""
 
-    name = Checked(lambda v: clean_name(v, NAME_MAX), max_length=NAME_MAX, required=False)
+    name = Checked(_name, max_length=NAME_MAX, required=False)
     stage_type = Choice(choices=StageType.choices, required=False)
     default_probability = Whole(
         min_value=0, max_value=100, required=False, help_text="WON 100, LOST 0."
@@ -120,7 +124,7 @@ class NewStageSerializer(StageFields):
 
 
 class PipelineCreateSerializer(Closed, serializers.Serializer[Any]):
-    name = Checked(lambda v: clean_name(v, NAME_MAX), max_length=NAME_MAX)
+    name = Checked(_name, max_length=NAME_MAX)
     code = Checked(
         lambda v: _code(v, CODE, str.lower),
         max_length=CODE_MAX,
@@ -139,3 +143,39 @@ class PipelineCreateSerializer(Closed, serializers.Serializer[Any]):
         max_length=STAGES_MAX,
         help_text="En el orden en que se numeran: una WON, al menos una LOST y una OPEN.",
     )
+
+
+def version_required(serializer: type[serializers.Serializer[Any]]) -> Any:
+    """drf-spectacular trata todo `PATCH` como parcial; aquí la `version` sigue obligatoria."""
+
+    class Schema(OpenApiSerializerExtension):
+        target_class = serializer
+
+        def map_serializer(self, auto_schema: Any, direction: Any) -> Any:
+            schema = auto_schema._map_serializer(self.target, direction, bypass_extensions=True)
+            return {**schema, "required": ["version"]}
+
+    return serializer
+
+
+class LostReasonCreateSerializer(Closed, serializers.Serializer[Any]):
+    name = Checked(_name, max_length=NAME_MAX)
+    code = Checked(
+        lambda v: _code(v, REASON_CODE, str.upper),
+        max_length=CODE_MAX,
+        help_text="`MAYÚSCULAS_Y_GUION_BAJO`; único entre los vivos. No cambia.",
+    )
+    sort_order = Whole(
+        min_value=ORDER[0],
+        max_value=ORDER[1],
+        required=False,
+        help_text="Sin él, al final; tras 32767 hay que indicarlo (400).",
+    )
+
+
+@version_required
+class LostReasonUpdateSerializer(Closed, serializers.Serializer[Any]):
+    name = Checked(_name, max_length=NAME_MAX, required=False)
+    sort_order = Whole(min_value=ORDER[0], max_value=ORDER[1], required=False)
+    is_active = Flag(required=False)
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")

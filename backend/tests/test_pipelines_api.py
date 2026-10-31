@@ -1,7 +1,9 @@
 """F5-02: `opportunities.view` y `pipelines.manage`, y la lectura de pipelines (con sus etapas) y
 motivos de pérdida (`…/pipelines/`, `…/lost-reasons/`). Middleware, sesión, motor de autorización
-y PostgreSQL con el rol `crm_app`. Las escrituras llegan con F5-02b."""
+y PostgreSQL con el rol `crm_app`. Las escrituras: `test_pipelines_write_api` y
+`test_lost_reasons_write_api`."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,6 +15,7 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.access.catalog import BY_CODE, ROLE_TEMPLATES, Scope
 from apps.access.scopes import Everyone, policy_for
+from apps.access.selectors import can, execution_context, scoped
 from apps.deals import commands, selectors
 from apps.deals.models import LostReason, Pipeline, PipelineStage
 from core.tenancy.scope import tenant_scope
@@ -235,3 +238,60 @@ def test_stages_with_the_same_order_come_out_by_name_then_id(crm: SimpleNamespac
         assert [s.code for s in found.stages.all()] == expected
     api = read(signed(crm.ana), PIPELINES)["results"][0]["stages"]
     assert [stage["code"] for stage in api] == expected
+
+
+@pytest.mark.parametrize("scope", [Scope.OWN, Scope.TEAM, Scope.BRANCH])
+def test_everyone_allows_and_lists_the_whole_organization_under_any_scope(
+    crm: SimpleNamespace, scope: Scope
+) -> None:
+    pipeline(crm)
+    reason(crm, "PRICE")
+    pipeline(crm, "b", code="solo-b")
+    with tenant_scope(ctx(crm.b, crm.luis)):
+        foreign = Pipeline.objects.get()
+    with tenant_scope(ctx(crm.a, crm.ana)) as tenant:  # ana sin equipos ni sucursal
+        narrow = replace(
+            execution_context(tenant), permissions={"opportunities.view": frozenset({scope})}
+        )
+        for model in (Pipeline, PipelineStage, LostReason):
+            rows = list(model.objects.all())
+            assert rows and all(can(narrow, "opportunities.view", row) for row in rows)
+            listed = scoped(narrow, "opportunities.view", model.objects.all())
+            assert set(listed) == set(rows)  # ni el alcance recorta ni entra otra organización
+        assert not can(narrow, "opportunities.view", foreign)  # lo de B, nunca
+
+
+def test_head_on_the_read_routes_follows_the_same_rules(crm: SimpleNamespace) -> None:
+    pipeline(crm)
+    reason(crm, "PRICE")
+    for url in (PIPELINES, REASONS):
+        assert [signed(user).head(url).status_code for user in (crm.ana, crm.vera)] == [200, 200]
+        assert signed(crm.ana).head(url).content == b""
+        assert signed(crm.bea).head(url).status_code == 403  # sin `opportunities.view`
+        assert signed(crm.luis).head(url).status_code == 404  # no es miembro de A
+        assert Client().head(url).status_code == 401
+
+
+def test_the_lost_reasons_page_by_creation_and_cost_the_same_queries(
+    crm: SimpleNamespace,
+) -> None:
+    ana = signed(crm.ana)
+    for code in ("A1", "A2", "A3"):
+        reason(crm, code, sort_order=9 - len(code))
+    first = read(ana, REASONS, limit=2)
+    assert [row["code"] for row in first["results"]] == ["A1", "A2"] and first["next"]
+    second = read(ana, REASONS, limit=2, cursor=first["next"])
+    assert [row["code"] for row in second["results"]] == ["A3"] and second["next"] is None
+    for bad in ("0", "201", "x"):
+        response = ana.get(REASONS, {"limit": bad})
+        assert response.status_code == 400 and set(response.json()["fields"]) == {"limit"}
+
+    def queries() -> int:
+        with CaptureQueriesContext(connection) as captured:
+            read(ana, REASONS)
+        return len(captured)
+
+    few = queries()
+    for index in range(20):
+        reason(crm, f"B{index}")
+    assert queries() == few

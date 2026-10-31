@@ -25,12 +25,12 @@ from apps.catalog.models import ProductVariant
 from apps.catalog.selectors import live_variants
 from apps.pricing import costs
 from apps.pricing.api.prices import AUTHOR, Amount
-from apps.pricing.api.promotions import Closed, Text
 from apps.pricing.api.views import _tenant
 from apps.pricing.models import CostSource
 from apps.pricing.text import REASON_MAX, REASON_MIN, change_reason
 from core.api.errors import ApiError
 from core.api.schema import errors
+from core.api.strict import Closed, Text
 
 UNCHANGED = "Es el costo que ya rige: no se cambió nada."
 CONFLICT = "Otro cambio de costo de esta variante llegó antes, o hay uno con fecha futura."

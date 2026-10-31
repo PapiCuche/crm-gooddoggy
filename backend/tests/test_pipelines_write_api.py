@@ -296,7 +296,12 @@ def test_hostile_bodies_are_never_a_500(crm: SimpleNamespace, raw: str) -> None:
     assert form.status_code in {403, 415}
 
 
-def http_race(monkeypatch: pytest.MonkeyPatch, bodies: list[dict[str, Any]]) -> list[Any]:
+def http_race(
+    monkeypatch: pytest.MonkeyPatch,
+    bodies: list[dict[str, Any]],
+    method: str = "post",
+    path: str = PIPELINES,
+) -> list[Any]:
     """La primera petición retiene su transacción (tras auditar) y la segunda espera su bloqueo."""
     wrote, release, outcome = threading.Event(), threading.Event(), list[Any]([None, None])
     real = audit_services.record
@@ -313,7 +318,7 @@ def http_race(monkeypatch: pytest.MonkeyPatch, bodies: list[dict[str, Any]]) -> 
 
     def run(index: int) -> None:
         try:
-            response = send(signed(owner), "post", PIPELINES, bodies[index])
+            response = send(signed(owner), method, path, bodies[index])
             outcome[index] = (response.status_code, response.json().get("code"))
         except Exception as error:  # noqa: BLE001 — el resultado lo comprueba cada test
             outcome[index] = type(error).__name__
