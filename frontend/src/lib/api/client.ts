@@ -22,6 +22,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddStageRequest,
   AuditListParams,
   Branch,
   BranchCreateRequest,
@@ -140,6 +141,7 @@ import type {
   RolesListParams,
   SelfContext,
   Session,
+  StageOrderRequest,
   StockImport,
   StockImportCreateRequest,
   StockImportRevertRequest,
@@ -7393,6 +7395,115 @@ export const usePipelinesUpdate = <TError = ErrorType<Error>, TContext = unknown
   return useMutation(getPipelinesUpdateMutationOptions(options), queryClient);
 };
 
+export const getPipelineStagesCreateUrl = (orgSlug: string, pipelineId: string) => {
+  return `/api/v1/o/${orgSlug}/pipelines/${pipelineId}/stages/`;
+};
+
+/**
+ * Añade una etapa (hasta 30 por pipeline, también las inactivas: 400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda WON), `CODE_TAKEN` (en el pipeline).
+ */
+export const pipelineStagesCreate = async (
+  orgSlug: string,
+  pipelineId: string,
+  addStageRequest: AddStageRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Pipeline> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Pipeline>(getPipelineStagesCreateUrl(orgSlug, pipelineId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(addStageRequest),
+  });
+};
+
+export const getPipelineStagesCreateMutationKey = () => ["pipelineStagesCreate"] as const;
+
+export const getPipelineStagesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pipelineStagesCreate>>,
+    TError,
+    PipelineStagesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pipelineStagesCreate>>,
+  TError,
+  PipelineStagesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPipelineStagesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pipelineStagesCreate>>,
+    PipelineStagesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, pipelineId, data } = props ?? {};
+
+    return pipelineStagesCreate(orgSlug, pipelineId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PipelineStagesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pipelineStagesCreate>>
+>;
+export type PipelineStagesCreateMutationBody = AddStageRequest;
+export type PipelineStagesCreateMutationError = ErrorType<Error>;
+export type PipelineStagesCreateMutationVariables = {
+  orgSlug: string;
+  pipelineId: string;
+  data: AddStageRequest;
+};
+
+export const usePipelineStagesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof pipelineStagesCreate>>,
+      TError,
+      PipelineStagesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof pipelineStagesCreate>>,
+  TError,
+  PipelineStagesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPipelineStagesCreateMutationOptions(options), queryClient);
+};
+
 export const getPipelineStagesUpdateUrl = (
   orgSlug: string,
   pipelineId: string,
@@ -7506,6 +7617,115 @@ export const usePipelineStagesUpdate = <TError = ErrorType<Error>, TContext = un
   TContext
 > => {
   return useMutation(getPipelineStagesUpdateMutationOptions(options), queryClient);
+};
+
+export const getPipelineStagesReorderUrl = (orgSlug: string, pipelineId: string) => {
+  return `/api/v1/o/${orgSlug}/pipelines/${pipelineId}/stages/order/`;
+};
+
+/**
+ * Deja las etapas en el orden de `stage_ids`, que las lleva todas (también las inactivas) una vez cada una; si falta, sobra, se repite o es de otro pipeline, 400 en `stage_ids`. Con `pipelines.manage`.
+ */
+export const pipelineStagesReorder = async (
+  orgSlug: string,
+  pipelineId: string,
+  stageOrderRequest: StageOrderRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Pipeline> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Pipeline>(getPipelineStagesReorderUrl(orgSlug, pipelineId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(stageOrderRequest),
+  });
+};
+
+export const getPipelineStagesReorderMutationKey = () => ["pipelineStagesReorder"] as const;
+
+export const getPipelineStagesReorderMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pipelineStagesReorder>>,
+    TError,
+    PipelineStagesReorderMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pipelineStagesReorder>>,
+  TError,
+  PipelineStagesReorderMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPipelineStagesReorderMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pipelineStagesReorder>>,
+    PipelineStagesReorderMutationVariables
+  > = (props) => {
+    const { orgSlug, pipelineId, data } = props ?? {};
+
+    return pipelineStagesReorder(orgSlug, pipelineId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PipelineStagesReorderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pipelineStagesReorder>>
+>;
+export type PipelineStagesReorderMutationBody = StageOrderRequest;
+export type PipelineStagesReorderMutationError = ErrorType<Error>;
+export type PipelineStagesReorderMutationVariables = {
+  orgSlug: string;
+  pipelineId: string;
+  data: StageOrderRequest;
+};
+
+export const usePipelineStagesReorder = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof pipelineStagesReorder>>,
+      TError,
+      PipelineStagesReorderMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof pipelineStagesReorder>>,
+  TError,
+  PipelineStagesReorderMutationVariables,
+  TContext
+> => {
+  return useMutation(getPipelineStagesReorderMutationOptions(options), queryClient);
 };
 
 export const getPriceListsListUrl = (orgSlug: string, params?: PriceListsListParams) => {

@@ -40,7 +40,7 @@ IS_DEFAULT = "Es el pipeline predeterminado: elige otro como predeterminado ante
 CODE_TAKEN = "Ya hay uno con ese código."
 OPEN_OPPORTUNITIES = "Tiene oportunidades abiertas: muévelas o ciérralas antes."
 STAGE_IN_USE = "La etapa tiene oportunidades: su tipo no cambia."
-FULL = "La organización ya tiene {} {}."
+FULL = "{} ya tiene {} {}."
 GENERIC = "Dato no admitido."
 
 
@@ -84,7 +84,7 @@ def _capped(tenant: Any, count: Callable[[], int], limit: int, what: str) -> Non
     pasan. Los motivos de pérdida comparten ese bloqueo (es configuración poco escrita)."""
     lock_pipelines(require_scope(tenant), tenant.organization_id)
     if count() >= limit:
-        raise serializers.ValidationError(FULL.format(limit, what))
+        raise serializers.ValidationError(FULL.format("La organización", limit, what))
 
 
 def _reply(pipeline_id: UUID, status: int = 200) -> Response:
@@ -187,6 +187,53 @@ class PipelineView(APIView):
         version = fields.pop("version")
         with _domain():
             commands.update_pipeline(_tenant(), pipeline_id=pipeline_id, version=version, **fields)
+        return _reply(pipeline_id)
+
+
+class StagesView(APIView):
+    required_permissions = {"POST": "pipelines.manage"}
+
+    @extend_schema(
+        operation_id="pipeline_stages_create",
+        tags=["deals"],
+        request=inputs.AddStageSerializer,
+        responses={201: PipelineSerializer, **errors(400, 401, 403, 404, 409)},
+        description=f"Añade una etapa (hasta {inputs.STAGES_MAX} por pipeline, también las "
+        "inactivas: 400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda "
+        "WON), `CODE_TAKEN` (en el pipeline).",
+    )
+    def post(self, request: Request, pipeline_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.AddStageSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        with _domain():
+            pipeline = selectors.locked_pipeline(pipeline_id)  # el tope, con el pipeline bloqueado
+            if selectors.stage_count(pipeline.pk) >= inputs.STAGES_MAX:
+                raise serializers.ValidationError(
+                    FULL.format("El pipeline", inputs.STAGES_MAX, "etapas")
+                )
+            commands.add_stage(_tenant(), pipeline_id=pipeline.pk, **wanted.validated_data)
+        return _reply(pipeline.pk, 201)
+
+
+class StageOrderView(APIView):
+    required_permissions = {"PUT": "pipelines.manage"}
+
+    @extend_schema(
+        operation_id="pipeline_stages_reorder",
+        tags=["deals"],
+        request=inputs.StageOrderSerializer,
+        responses={200: PipelineSerializer, **errors(400, 401, 403, 404)},
+        description="Deja las etapas en el orden de `stage_ids`, que las lleva todas (también las "
+        "inactivas) una vez cada una; si falta, sobra, se repite o es de otro pipeline, 400 en "
+        "`stage_ids`. Con `pipelines.manage`.",
+    )
+    def put(self, request: Request, pipeline_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.StageOrderSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        with _domain():
+            commands.reorder_stages(
+                _tenant(), pipeline_id=pipeline_id, stage_ids=wanted.validated_data["stage_ids"]
+            )
         return _reply(pipeline_id)
 
 

@@ -16,7 +16,7 @@ from rest_framework import serializers
 
 from apps.deals.commands import CODE_MAX, DAYS_MAX, NAME_MAX, _code
 from apps.deals.models import CODE, COLOR, REASON_CODE, Kind, StageType
-from core.api.strict import Choice, Closed, Flag, Text, Whole
+from core.api.strict import Choice, Closed, Flag, Id, Text, Whole
 from core.text import name as clean_name
 
 STAGES_MAX, PIPELINES_MAX, REASONS_MAX = 30, 50, 100
@@ -193,3 +193,22 @@ class PipelineUpdateSerializer(Closed, serializers.Serializer[Any]):
 
 class StageUpdateSerializer(StageFields):
     """Lo que se puede cambiar de una etapa; el código y el orden no."""
+
+
+class AddStageSerializer(NewStageSerializer):
+    position = Whole(
+        min_value=0,
+        max_value=STAGES_MAX,
+        required=False,
+        help_text="Su lugar entre las etapas (desde 0). Sin él: una OPEN tras la última OPEN; "
+        "otra, al final.",
+    )
+
+
+class StageOrderSerializer(Closed, serializers.Serializer[Any]):
+    stage_ids = serializers.ListField(
+        child=Id(),
+        min_length=1,
+        max_length=STAGES_MAX,
+        help_text="Todas las etapas del pipeline, también las inactivas, una vez cada una.",
+    )
