@@ -17,3 +17,7 @@ def pipelines() -> QuerySet[Pipeline]:
 def lost_reasons() -> QuerySet[LostReason]:
     """Los motivos no borrados, activos o no. El orden lo pone la paginación (ADR-016)."""
     return LostReason.objects.filter(deleted_at__isnull=True)
+
+
+def pipeline_count() -> int:
+    return Pipeline.objects.filter(deleted_at__isnull=True).count()
