@@ -40,11 +40,11 @@ class Checked(Text):
     """Un texto que además cumple la regla del comando; su `ValueError` es un 400 de este campo,
     con el texto de la regla (que no repite lo recibido)."""
 
-    def __init__(self, clean: Callable[[str], str], **kwargs: Any) -> None:
+    def __init__(self, clean: Callable[[str], Any], **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.clean = clean
 
-    def to_internal_value(self, data: Any) -> str:
+    def to_internal_value(self, data: Any) -> Any:
         try:
             return self.clean(super().to_internal_value(data))
         except ValueError as error:
