@@ -3,9 +3,15 @@ permiso y el alcance los aplica quien las sirve (`HasPermission` y `ScopeFilter`
 
 from uuid import UUID
 
-from django.db.models import Prefetch, QuerySet
+from django.db.models import Prefetch, Q, QuerySet
 
-from apps.deals.models import STAGE_ORDER, LostReason, Pipeline, PipelineStage
+from apps.deals.models import (
+    STAGE_ORDER,
+    LostReason,
+    Opportunity,
+    Pipeline,
+    PipelineStage,
+)
 
 
 def pipelines() -> QuerySet[Pipeline]:
@@ -44,3 +50,20 @@ def has_stage(pipeline_id: UUID, stage_id: UUID) -> bool:
 
 def stage_count(pipeline_id: UUID) -> int:
     return PipelineStage.objects.filter(pipeline_id=pipeline_id).count()
+
+
+def opportunities() -> QuerySet[Opportunity]:
+    """Las oportunidades no borradas, con su etapa y su motivo de pérdida en la misma consulta.
+    El orden lo pone la paginación (ADR-016): por `id`, no por número (`OPP-1000000` va después
+    de `OPP-999999` por creación, no como texto)."""
+    return Opportunity.objects.filter(deleted_at__isnull=True).select_related(
+        "stage", "lost_reason"
+    )
+
+
+def matching(found: QuerySet[Opportunity], text: str) -> QuerySet[Opportunity]:
+    """Las de `found` cuyo título o número contienen `text`, sin distinguir mayúsculas (`%`, `_`
+    y `\\` son literales); vacío, todas. Solo filtra."""
+    if not text:
+        return found
+    return found.filter(Q(title__icontains=text) | Q(number__icontains=text))

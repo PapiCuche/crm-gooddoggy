@@ -207,6 +207,7 @@ SPECTACULAR_SETTINGS = {
         "RevokedEnum": ["REVOKED"],  # el único estado que la API pone a una invitación (F2-82)
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
+        "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
         "ProductStatusEnum": "apps.catalog.models.Product.Status",
         "VariantStatusEnum": "apps.catalog.models.ProductVariant.Status",
         "WarehouseTypeEnum": "apps.inventory.models.Warehouse.Type",  # F3-08
