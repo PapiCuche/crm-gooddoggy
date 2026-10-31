@@ -3,11 +3,9 @@
 No comprueban permisos: los declarará la API (`pipelines.manage`, F5-02), la única que los importa
 (contrato de import-linter). Validan lo que guardan y auditan cada cambio (sin datos personales).
 
-Invariantes de un pipeline, que se cumplen al salir de cada comando: exactamente una etapa WON
-(activa), al menos una LOST activa y al menos una OPEN activa. Un pipeline predeterminado por
-organización, vivo y activo. Concurrencia: crear o cambiar pipelines toma un bloqueo consultivo
-por organización (como las listas de precios); las etapas, la fila del pipeline
-(`FOR NO KEY UPDATE`), que serializa cualquier cambio de sus etapas.
+Invariantes tras cada comando: una etapa WON activa, al menos una LOST y una OPEN activas, y un
+pipeline predeterminado vivo y activo por organización. Los pipelines toman un bloqueo consultivo
+por organización; las etapas, la fila del pipeline (`FOR NO KEY UPDATE`).
 """
 
 import re
@@ -72,13 +70,36 @@ def _integer(value: Any, low: int, high: int, what: str) -> None:
         raise ValueError(f"{what}: un entero de {low} a {high}")
 
 
+def _flag(value: Any, what: str) -> bool:
+    """Un booleano de verdad: Django guardaría `"False"` o `0` como `False`, pero las invariantes
+    leen la verdad de Python. Compartido por los comandos de pipelines y etapas."""
+    if not isinstance(value, bool):
+        raise ValueError(f"{what}: verdadero o falso")
+    return value
+
+
+def _text(value: Any, what: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{what}: un texto")
+    return value
+
+
+def _uuid(value: Any, what: str) -> UUID:
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(_text(value, what))
+    except ValueError:
+        raise ValueError(f"{what}: un identificador") from None
+
+
 def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
     """Lo que se envía de una etapa, limpio y validado (solo esos campos)."""
     values = dict(fields)
     if "name" in values:
-        values["name"] = clean_name(values["name"] or "", NAME_MAX)
+        values["name"] = clean_name(_text(values["name"], "nombre"), NAME_MAX)
     if "code" in values:
-        values["code"] = _code(values["code"] or "", CODE, str.lower)
+        values["code"] = _code(_text(values["code"], "código"), CODE, str.lower)
     if "stage_type" in values and values["stage_type"] not in StageType.values:
         raise ValueError("tipo de etapa no admitido")
     if "default_probability" in values:
@@ -86,11 +107,13 @@ def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
     if values.get("stale_after_days") is not None:
         _integer(values["stale_after_days"], 1, DAYS_MAX, "días hasta estancarse")
     if "color" in values:
-        values["color"] = (values["color"] or "").strip().lower()
+        values["color"] = _text(values["color"], "color").strip().lower()
         if not re.fullmatch(COLOR, values["color"]):
             raise ValueError("un color #RRGGBB, como #1f9d55")
     if "requires_fields" in values and not isinstance(values["requires_fields"], dict):
         raise ValueError("requires_fields: un objeto")
+    if "is_active" in values:
+        _flag(values["is_active"], "is_active")
     return values
 
 
@@ -114,6 +137,8 @@ def _check(stages: Iterable[tuple[str, bool]]) -> None:
 
 
 def _new_stage(spec: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(spec, dict):
+        raise ValueError("cada etapa es un objeto")
     if unknown := set(spec) - NEW_STAGE:
         raise ValueError(f"campos de etapa no admitidos: {sorted(unknown)}")
     if missing := {"name", "code", "stage_type", "default_probability", "color"} - set(spec):
@@ -187,11 +212,14 @@ def _drop_default(ctx: TenantContext, alias: str) -> None:
 def _pipeline_values(fields: dict[str, Any]) -> dict[str, Any]:
     values = dict(fields)
     if "name" in values:
-        values["name"] = clean_name(values["name"] or "", NAME_MAX)
+        values["name"] = clean_name(_text(values["name"], "nombre"), NAME_MAX)
     if "kind" in values and values["kind"] not in Pipeline.Kind.values:
         raise ValueError("tipo de pipeline no admitido")
     if "sort_order" in values:
         _integer(values["sort_order"], -32768, 32767, "orden")
+    for flag in ("is_active", "is_default"):
+        if flag in values:
+            _flag(values[flag], flag)
     return values
 
 
@@ -207,17 +235,21 @@ def create_pipeline(
     is_default: bool | None = None,
 ) -> Pipeline:
     """Crea un pipeline con sus etapas en una transacción y lo audita. Las etapas se numeran en el
-    orden recibido. Es el predeterminado si se pide o, sin decirlo, si la organización no tiene
-    otro; pedirlo quita la marca al anterior. `ValueError` si algo no vale, `StageInvariant` si
-    las etapas no cumplen las invariantes (una WON, una LOST, una OPEN), `CodeTaken`; sin escribir
-    nada."""
+    orden recibido. Es el predeterminado si se pide o si la organización no tiene
+    otro, aunque se diga que no; pedirlo quita la marca al anterior. `ValueError` si algo no vale,
+    `StageInvariant` si las etapas no cumplen las invariantes (una WON, una LOST, una OPEN),
+    `CodeTaken`; sin escribir nada."""
     alias = require_scope(ctx)
     if currency not in CURRENCIES:
         raise ValueError(f"solo {', '.join(CURRENCIES)}")
-    values = _pipeline_values({"name": name, "kind": kind, "sort_order": sort_order}) | {
-        "code": _code(code, CODE, str.lower),
+    flags = {} if is_default is None else {"is_default": is_default}
+    values = _pipeline_values({"name": name, "kind": kind, "sort_order": sort_order, **flags}) | {
+        "code": _code(_text(code, "código"), CODE, str.lower),
         "currency": currency,
     }
+    values.pop("is_default", None)
+    if not isinstance(stages, list | tuple):
+        raise ValueError("las etapas son una lista de objetos")
     rows = [_new_stage(spec) for spec in stages]
     if len({row["code"] for row in rows}) != len(rows):
         raise ValueError("códigos de etapa repetidos")
@@ -225,10 +257,10 @@ def create_pipeline(
     try:
         with transaction.atomic(using=alias):
             lock_pipelines(alias, ctx.organization_id)
-            if is_default:
+            had_default = _live(alias).filter(is_default=True).exists()
+            if is_default and had_default:
                 _drop_default(ctx, alias)
-            if is_default is None:
-                is_default = not _live(alias).filter(is_default=True).exists()
+            is_default = bool(is_default) or not had_default  # la primera siempre lo es
             pipeline: Pipeline = Pipeline.objects.using(alias).create(
                 **values, is_default=is_default, created_by_user_id=ctx.user_id,
                 updated_by_user_id=ctx.user_id,
@@ -259,6 +291,8 @@ def update_pipeline(
     if unknown := set(fields) - _PIPELINE_FIELDS:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values = _pipeline_values(fields)
+    pipeline_id = _uuid(pipeline_id, "pipeline")
+    _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
         lock_pipelines(alias, ctx.organization_id)
         pipeline = _locked(alias, pipeline_id)
@@ -290,6 +324,9 @@ def add_stage(
     segunda WON), `CodeTaken` si su código ya está en el pipeline, `ValueError`, `DoesNotExist`."""
     alias = require_scope(ctx)
     values = _new_stage(fields)
+    pipeline_id = _uuid(pipeline_id, "pipeline")
+    if position is not None:
+        _integer(position, 0, 32767, "posición")
     try:
         with transaction.atomic(using=alias):
             pipeline = _locked(alias, pipeline_id)
@@ -322,13 +359,14 @@ def add_stage(
 def update_stage(ctx: TenantContext, *, stage_id: UUID, **fields: Any) -> PipelineStage:
     """Cambia lo que se envía de una etapa y lo audita con el antes y el después (`stage.updated`);
     sin cambios no escribe. La probabilidad de una WON es 100 y la de una LOST, 0: cambiar el tipo
-    pide la probabilidad que le corresponde. `StageInvariant` si el cambio (tipo o desactivar)
-    dejaría al pipeline sin su WON, sin una LOST o sin una OPEN. El código no cambia, ni el orden
-    (`reorder_stages`). `DoesNotExist` si no es de la organización o su pipeline está borrado."""
+    pide la que le corresponde. `StageInvariant` si el cambio dejaría al pipeline sin su WON, sin
+    una LOST o sin una OPEN; desactivar o sacar de OPEN pasa por el gancho de las oportunidades.
+    El código y el orden no cambian aquí. `DoesNotExist` si no es de la organización."""
     alias = require_scope(ctx)
     if unknown := set(fields) - (STAGE_FIELDS | {"is_active"}):
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values = _stage_values(fields)
+    stage_id = _uuid(stage_id, "etapa")
     with transaction.atomic(using=alias):
         owner = PipelineStage.objects.using(alias).values_list("pipeline_id", flat=True)
         pipeline = _locked(alias, owner.get(pk=stage_id))
@@ -340,7 +378,8 @@ def update_stage(ctx: TenantContext, *, stage_id: UUID, **fields: Any) -> Pipeli
                 setattr(stage, field, value)
             _closed_probability(stage.stage_type, stage.default_probability)
             _check((s.stage_type, s.is_active) for s in stages)
-            if "is_active" in changes and not stage.is_active:
+            leaves_open = "stage_type" in changes and changes["stage_type"][0] == "OPEN"
+            if ("is_active" in changes and not stage.is_active) or leaves_open:
                 _no_open_opportunities(alias, pipeline.pk, stage.pk)
             stage.save(using=alias, update_fields=[*changes, "updated_at"])
             record(ctx, "stage.updated", Entity("stage", stage.pk, stage.code), changes)
@@ -354,7 +393,10 @@ def reorder_stages(
     inactivas) una vez cada una, y lo audita (`stage.reordered`, con los códigos antes y después);
     si ya están en ese orden, no escribe. `ValueError` si la lista no es esa; `DoesNotExist`."""
     alias = require_scope(ctx)
-    wanted = [UUID(str(i)) for i in stage_ids]
+    if not isinstance(stage_ids, list | tuple):
+        raise ValueError("las etapas, una lista de identificadores")
+    wanted = [_uuid(i, "etapa") for i in stage_ids]
+    pipeline_id = _uuid(pipeline_id, "pipeline")
     with transaction.atomic(using=alias):
         pipeline = _locked(alias, pipeline_id)
         stages = _stages(alias, pipeline.pk)

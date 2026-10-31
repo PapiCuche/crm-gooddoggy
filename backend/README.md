@@ -1068,6 +1068,10 @@ Logs JSON en stdout (structlog + `logging` estándar, redactados con `core.redac
 - **El backend de correo por defecto de Django es el que no envía nada** (`EMAIL_BACKEND` = `dummy`): lo que no pase por `core.mail`, como el aviso a `ADMINS` del `AdminEmailHandler` de Django, no abre una conexión SMTP con las credenciales configuradas.
 - **Lo que no hay:** HTML, adjuntos, varios destinatarios, plantillas, límite de envío (lo pone cada flujo), detección de rebotes ni configuración de dominio (SPF, DKIM): dependen del proveedor que elija el despliegue.
 
+## Pipeline (Fase 5)
+
+- **Comandos (F5-01b, F5-01c):** `apps.deals.commands`: `create_lost_reason` y `update_lost_reason`; `create_pipeline` (con sus etapas, una WON, al menos una LOST y una OPEN), `update_pipeline` (con la `version`; `is_default=True` cambia el predeterminado en la misma transacción), `add_stage`, `update_stage` y `reorder_stages`. Auditan `pipeline.*`, `stage.*` y `lost_reason.*`; sin cambios no escriben. Sin permisos ni API todavía (F5-02).
+
 ## Object storage y HTTP saliente (F1-08)
 
 `core.storage` (ADR-008): `S3CompatibleStorage` (boto3) / `InMemoryStorage`, claves `org/{organization_id}/…` y URLs firmadas de ≤ 5 min. La tabla `files` es tenant-owned con RLS. `core.http`: HTTPS con allowlist de hosts, IP pública validada al conectar (anti-SSRF) y sin redirecciones. La suite de contrato S3 corre contra Garage v2.4.1 en CI. Diseño: [docs/architecture/storage-http.md](../docs/architecture/storage-http.md).
@@ -1096,5 +1100,3 @@ docker build -t crm-backend backend/
 ```
 
 Imagen `python:3.14.7-slim` multi-stage, dependencias de `uv.lock` (`--frozen`, sin dev), usuario no root `10001`, `HEALTHCHECK` sobre `/health/live`, servidor `uvicorn` con `--proxy-headers` (proxies de confianza en `FORWARDED_ALLOW_IPS`, obligatoria: ver «Dirección del cliente y proxy de confianza»).
-- **Comandos (F5-01b, F5-01c):** `apps.deals.commands`: `create_lost_reason` y `update_lost_reason`; `create_pipeline` (con sus etapas, una WON, al menos una LOST y una OPEN), `update_pipeline` (con la `version`; `is_default=True` cambia el predeterminado en la misma transacción), `add_stage`, `update_stage` y `reorder_stages`. Auditan `pipeline.*`, `stage.*` y `lost_reason.*`; sin cambios no escriben. Sin permisos ni API todavía (F5-02).
-

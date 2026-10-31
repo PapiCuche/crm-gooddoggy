@@ -14,9 +14,10 @@ from apps.deals import commands
 from apps.deals.models import Pipeline, PipelineStage
 from core.tenancy.scope import tenant_scope
 from tests import test_lost_reasons
+from tests.factories import make_user
 from tests.test_inventory_stock import race
 from tests.test_lost_reasons import audit, count, run
-from tests.test_memberships import ctx
+from tests.test_memberships import ctx, join
 
 world = test_lost_reasons.world  # el fixture de las dos organizaciones
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -69,7 +70,6 @@ def test_create_stores_the_pipeline_with_its_stages_and_audits(
     assert made.created_by_user_id == world.ana.pk
     assert order(made) == [("nuevo", 0), ("cotizado", 1), ("ganado", 2), ("perdido", 3)]
     assert stage(made, "cotizado").stale_after_days == 7
-    assert stage(made, "nuevo").requires_fields == {}
     [(action, label, changes)] = audit(migrator)
     assert (action, label) == ("pipeline.created", "retail")
     assert changes["stages"] == [None, ["nuevo", "cotizado", "ganado", "perdido"]]
@@ -97,32 +97,25 @@ def test_create_enforces_the_stage_invariants(
     assert count(migrator, "pipelines") == count(migrator, "pipeline_stages") == 0
 
 
+def stage_with(**fields: Any) -> dict[str, Any]:
+    return {"stages": [*basic(), {**spec("x"), **fields}]}
+
+
 @pytest.mark.parametrize(
     "change",
     [
-        {"code": "Con Espacios"},
-        {"code": "ñandú"},
-        {"kind": "SHOP"},
-        {"currency": "USD"},
-        {"name": " - "},
-        {"stages": [*basic(), spec("nuevo")]},  # código repetido
-        {"stages": [*basic(), {**spec("x"), "stage_type": "DONE"}]},
-        {
-            "stages": [
-                *basic()[:2],
-                spec("ganado", "WON", default_probability=90),
-                spec("p", "LOST"),
-            ]
-        },
-        {"stages": [*basic(), spec("x", default_probability=101)]},
-        {"stages": [*basic(), spec("x", default_probability=True)]},
-        {"stages": [*basic(), spec("x", stale_after_days=0)]},
-        {"stages": [*basic(), spec("x", color="red")]},
-        {"stages": [*basic(), spec("x", requires_fields=[])]},
-        {"stages": [*basic(), {**spec("x"), "pipeline_id": str(uuid4())}]},
-        {"stages": [*basic(), {"name": "X", "code": "x"}]},  # faltan campos
+        {"code": "Con Espacios"}, {"code": "ñandú"}, {"kind": "SHOP"}, {"currency": "USD"},
+        {"name": " - "}, {"stages": [*basic(), spec("nuevo")]},  # código repetido
+        {"name": 5}, {"code": None}, {"kind": ["RETAIL"]}, {"stages": None}, {"stages": "abc"},
+        {"stages": [None]}, {"stages": [*basic(), {"name": "X", "code": "x"}]},  # faltan campos
+        stage_with(stage_type="DONE"), stage_with(default_probability=101),
+        stage_with(default_probability=True), stage_with(stale_after_days=0),
+        stage_with(stale_after_days=32768), stage_with(color="red"), stage_with(color=5),
+        stage_with(requires_fields=[]), stage_with(pipeline_id=str(uuid4())),
+        stage_with(name=5), stage_with(code=5), stage_with(stage_type="LOST"),
+        stage_with(stage_type="WON", default_probability=90),
     ],
-)
+)  # fmt: skip
 def test_create_rejects_what_does_not_hold_and_writes_nothing(
     world: SimpleNamespace, migrator: psycopg.Connection[Any], change: dict[str, Any]
 ) -> None:
@@ -145,8 +138,8 @@ def test_a_taken_code_writes_nothing(
 def test_only_one_default_and_the_swap_is_audited(
     world: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
-    first, second = new(world, "uno"), new(world, "dos")
-    assert (first.is_default, second.is_default) == (True, False)
+    first, second = new(world, "uno", is_default=False), new(world, "dos")
+    assert (first.is_default, second.is_default) == (True, False)  # la primera, aunque diga no
     third = new(world, "tres", is_default=True)  # quita la marca al anterior
     assert defaults(migrator) == ["tres"] and third.is_default
     run(world, commands.update_pipeline, pipeline_id=second.pk, version=1, is_default=True)
@@ -175,11 +168,8 @@ def test_update_checks_the_version_and_audits_the_diff(
     assert same.version == 1  # nada cambia: ni escribe ni audita
     edit = {"name": " Mayoristas ", "kind": "WHOLESALE", "sort_order": 3, "is_active": False}
     changed = run(world, commands.update_pipeline, pipeline_id=other.pk, version=1, **edit)
-    assert (changed.version, changed.is_active, changed.updated_by_user_id) == (
-        2,
-        False,
-        world.ana.pk,
-    )
+    assert (changed.version, changed.is_active) == (2, False)
+    assert changed.updated_by_user_id == world.ana.pk
     with pytest.raises(commands.StaleVersion):  # otra pestaña editaba la versión 1
         run(world, commands.update_pipeline, pipeline_id=other.pk, version=1, name="Pisado")
     for field in ("code", "currency", "organization_id"):
@@ -210,9 +200,9 @@ def test_stages_are_added_in_place_and_audited(
     for bad in (spec("segunda", "WON"), spec("lead"), {**spec("x"), "organization_id": 1}):
         with pytest.raises((commands.StageInvariant, commands.CodeTaken, ValueError)):
             add(**bad)
-    with pytest.raises(ValueError, match="posición"):
-        add(position=99, **spec("x"))
-    assert len(order(made)) == 7
+    for position in (-1, 8, 99, True):  # entre 0 y el número de etapas (7), y un entero
+        with pytest.raises(ValueError, match="posición"):
+            add(position=position, **spec("x"))
     added = [(a, label) for a, label, _ in audit(migrator) if a == "stage.added"]
     assert added == [
         ("stage.added", "contactado"),
@@ -278,7 +268,7 @@ def test_reorder_rewrites_only_what_changes_and_audits(
     assert label == "retail"
     assert changes == {"order": [["nuevo", "cotizado", "ganado", "perdido"],
                                  ["cotizado", "nuevo", "perdido", "ganado"]]}  # fmt: skip
-    for bad in (wanted[:3], [*wanted, wanted[0]], [*wanted[:3], uuid4()], []):
+    for bad in (wanted[:3], [*wanted, wanted[0]], [*wanted[:3], uuid4()], [*wanted, uuid4()], []):
         with pytest.raises(ValueError, match="todas las etapas"):
             run(world, commands.reorder_stages, pipeline_id=made.pk, stage_ids=bad)
     assert order(made)[0] == ("cotizado", 0) and len(audit(migrator)) == 2
@@ -293,11 +283,9 @@ def test_what_belongs_to_a_cannot_be_touched_from_b(world: SimpleNamespace) -> N
         run(world, commands.update_pipeline, org="b", pipeline_id=made.pk, version=1, name="Mío")
     with pytest.raises(Pipeline.DoesNotExist):
         run(world, commands.reorder_stages, org="b", pipeline_id=made.pk, stage_ids=[mine.pk])
-    assert run(world, commands.create_pipeline, org="b", name="B", code="retail", kind="OTHER",
-               stages=basic()).is_default  # el código `retail` es libre en B  # fmt: skip
 
 
-def test_two_defaults_at_once_leave_one(
+def test_two_defaults_at_once_leave_one_and_never_fail_with_an_integrity_error(
     world: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
     def create(code: str) -> Callable[[Any], Pipeline]:
@@ -305,10 +293,17 @@ def test_two_defaults_at_once_leave_one(
             tenant, name=code, code=code, kind="RETAIL", stages=basic(), is_default=True
         )
 
-    first, second = race(world.a, world.ana, [create("uno"), create("dos")])
-    assert isinstance(first, Pipeline) and isinstance(second, Pipeline)
+    def promote(made: Pipeline) -> Callable[[Any], Any]:
+        return lambda tenant: commands.update_pipeline(
+            tenant, pipeline_id=made.pk, version=1, is_default=True
+        )
+
+    first = race(world.a, world.ana, [create("uno"), create("dos")])
     assert defaults(migrator) == ["dos"]  # el segundo esperó al primero y le quitó la marca
-    assert count(migrator, "pipelines") == 2
+    third, fourth = new(world, "tres"), new(world, "cuatro")
+    second = race(world.a, world.ana, [promote(third), promote(fourth)])
+    assert all(isinstance(done, Pipeline) for done in [*first, *second])  # no un `IntegrityError`
+    assert defaults(migrator) == ["cuatro"] and count(migrator, "pipelines") == 4
 
 
 def test_two_reorders_at_once_apply_one_after_the_other(world: SimpleNamespace) -> None:
@@ -337,3 +332,99 @@ def test_two_deactivations_at_once_keep_an_open_stage(world: SimpleNamespace) ->
     first, second = race(world.a, world.ana, [deactivate(ids[0]), deactivate(ids[1])])
     assert isinstance(first, PipelineStage) and second == "StageInvariant"
     assert [stage(made, c).is_active for c in ("nuevo", "cotizado")] == [False, True]
+
+
+def lost(flag: Any) -> dict[str, Any]:
+    return spec("p", "LOST", is_active=flag)
+
+
+def test_flags_must_be_real_booleans_not_what_django_would_coerce(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    made, other = new(world), new(world, "otro")
+    last_lost = stage(made, "perdido").pk
+    for flag in ("False", 0, "True", None):
+        make = {"name": "X", "code": "x", "kind": "OTHER", "stages": basic()}
+        calls: list[tuple[Callable[..., Any], dict[str, Any]]] = [
+            (commands.update_stage, {"stage_id": last_lost, "is_active": flag}),
+            (commands.update_pipeline, {"pipeline_id": other.pk, "version": 1, "is_active": flag}),
+            (commands.update_pipeline, {"pipeline_id": other.pk, "version": 1, "is_default": flag}),
+            (commands.create_pipeline, {**make, "is_default": flag}),
+            (
+                commands.create_pipeline,
+                {**make, "stages": [*basic()[:3], spec("p", "LOST", is_active=flag)]},
+            ),
+        ]
+        for command, fields in calls[:3] if flag is None else calls:
+            with pytest.raises(ValueError, match="verdadero o falso"):
+                run(world, command, **fields)
+    assert stage(made, "perdido").is_active is True
+    assert count(migrator, "pipelines") == 2 and len(audit(migrator)) == 2
+    with tenant_scope(ctx(world.a)):
+        assert Pipeline.objects.get(pk=other.pk).version == 1
+
+
+def test_the_opportunities_hook_runs_when_something_stops_being_open_or_active(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(commands, "_no_open_opportunities", lambda *args: calls.append(args[1:]))
+    new(world, "uno")
+    made = new(world, "dos")
+    nuevo, cotizado = stage(made, "nuevo").pk, stage(made, "cotizado").pk
+
+    def pipeline(version: int, **fields: Any) -> None:
+        run(world, commands.update_pipeline, pipeline_id=made.pk, version=version, **fields)
+
+    def change(stage_id: Any, **fields: Any) -> None:
+        run(world, commands.update_stage, stage_id=stage_id, **fields)
+
+    pipeline(1, name="Otro nombre")
+    change(nuevo, name="Nuevo 2", color="#abcdef")  # nada que vigilar
+    assert calls == []
+    pipeline(2, is_active=False)
+    change(nuevo, is_active=False)
+    assert calls == [(made.pk,), (made.pk, nuevo)]
+    pipeline(3, is_active=True)  # reactivar no
+    change(nuevo, is_active=True)
+    change(cotizado, stage_type="LOST", default_probability=0)  # sale de OPEN
+    change(cotizado, name="Perdida 2")  # y LOST sigue siendo LOST
+    assert calls[2:] == [(made.pk, cotizado)]
+
+
+def test_stage_commands_reject_bad_types_and_foreign_fields(world: SimpleNamespace) -> None:
+    made = new(world)
+    nuevo = stage(made, "nuevo").pk
+    good = {"quote": {"required": True, "tags": ["a", "b"]}}
+    run(world, commands.update_stage, stage_id=nuevo, requires_fields=good)
+    assert stage(made, "nuevo").requires_fields == good
+    edits: list[dict[str, Any]] = [{"name": 5}, {"color": None}, {"requires_fields": []}]
+    for edit in edits:
+        with pytest.raises(ValueError):
+            run(world, commands.update_stage, stage_id=nuevo, **edit)
+    for field in ("code", "organization_id", "sort_order", "pipeline_id"):  # no se cambian aquí
+        with pytest.raises(ValueError, match="no admitidos"):
+            run(world, commands.update_stage, stage_id=nuevo, **{field: "x"})
+    bad_ids: list[tuple[Callable[..., Any], dict[str, Any]]] = [
+        (commands.update_stage, {"stage_id": "no-es-un-uuid", "name": "X"}),
+        (commands.add_stage, {"pipeline_id": None, **spec("x")}),
+        (commands.update_pipeline, {"pipeline_id": 5, "version": 1, "name": "X"}),
+        (commands.reorder_stages, {"pipeline_id": "x", "stage_ids": [nuevo]}),
+        (commands.reorder_stages, {"pipeline_id": made.pk, "stage_ids": ["no-es-un-uuid"]}),
+    ]
+    for command, fields in bad_ids:
+        with pytest.raises(ValueError, match="identificador"):
+            run(world, command, **fields)
+    for stage_ids in (None, "abc", [None], [nuevo, nuevo]):
+        with pytest.raises(ValueError):
+            run(world, commands.reorder_stages, pipeline_id=made.pk, stage_ids=stage_ids)
+    run(world, commands.update_stage, stage_id=nuevo, stale_after_days=32767)  # el tope entra
+
+
+def test_the_actor_who_changes_a_pipeline_is_the_one_recorded(world: SimpleNamespace) -> None:
+    made = new(world)  # lo crea `ana`
+    other = make_user()
+    join(world.a, other)
+    with tenant_scope(ctx(world.a, other)) as tenant:
+        changed = commands.update_pipeline(tenant, pipeline_id=made.pk, version=1, name="Nuevo")
+    assert (changed.created_by_user_id, changed.updated_by_user_id) == (world.ana.pk, other.pk)
