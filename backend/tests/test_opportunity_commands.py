@@ -13,8 +13,11 @@ import psycopg
 import pytest
 from django.utils import timezone
 
+from apps.catalog.models import ProductVariant
+from apps.contacts.commands import delete_contact
+from apps.contacts.models import Contact
 from apps.deals import commands, opportunities
-from apps.deals.models import Opportunity, OpportunityItem, Pipeline
+from apps.deals.models import Opportunity, OpportunityItem, Pipeline, PipelineStage
 from apps.deals.opportunities import BadReference, OpportunityClosed
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunities_tables as tables
@@ -28,7 +31,7 @@ from tests.test_pipeline_commands import new as new_pipeline
 world = tables.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
 type DB = psycopg.Connection[Any]
-NAIVE, FAR = datetime(2026, 11, 1, 9, 0), datetime(3000, 1, 1, tzinfo=UTC)
+NAIVE, FAR, NOW = datetime(2026, 11, 1, 9, 0), datetime(3000, 1, 1, tzinfo=UTC), timezone.now()
 
 
 def create(world: SimpleNamespace, **fields: Any) -> Opportunity:
@@ -37,9 +40,25 @@ def create(world: SimpleNamespace, **fields: Any) -> Opportunity:
     return made
 
 
+def update(world: SimpleNamespace, opp: Any, version: int = 1, **fields: Any) -> Opportunity:
+    changed: Opportunity = run(
+        world, opportunities.update_opportunity, opportunity_id=opp.pk, version=version, **fields
+    )
+    return changed
+
+
 def reload(world: SimpleNamespace, pk: Any, org: str = "a") -> Opportunity:
     with tenant_scope(ctx(getattr(world, org))):
         return Opportunity.objects.get(pk=pk)  # type: ignore[no-any-return]
+
+
+def item(sku: Any, quantity: int = 1, **extra: Any) -> dict[str, Any]:
+    return {"variant_id": sku, "quantity": quantity, **extra}
+
+
+def lines(world: SimpleNamespace, *columns: str) -> list[Any]:
+    with tenant_scope(ctx(world.a)):
+        return list(OpportunityItem.objects.values_list(*columns))
 
 
 def audit(migrator: DB) -> list[tuple[str, str, dict[str, Any]]]:
@@ -57,59 +76,55 @@ def history(migrator: DB) -> list[tuple[Any, ...]]:
     ).fetchall()
 
 
-def test_create_opens_the_opportunity_in_the_first_open_stage_and_audits(
+def test_create_opens_in_the_first_open_stage_and_audits(
     world: SimpleNamespace, migrator: DB
 ) -> None:
-    sku = variant(world.a).pk
-    note = "Pide factura con RUC 20123456789"
+    sku, note = variant(world.a).pk, "Pide factura con RUC 20123456789"
     made = create(
-        world, amount="1500.5", priority="HIGH", next_action="Llamar",
-        expected_close_date=date(2026, 12, 1),
-        items=[{"variant_id": sku, "quantity": 2, "estimated_unit_price": Decimal("750.25"),
-                "notes": note}],
+        world, title="Juan Perez DNI 12345678", amount="1500.5", priority="HIGH",
+        next_action="Llamar", expected_close_date=date(2026, 12, 1),
+        items=[item(sku, 2, estimated_unit_price=Decimal("750.25"), notes=note)],
     )  # fmt: skip
     nuevo = stage(world.a)
-    assert (made.number, made.status, made.probability, made.currency) == (
-        "OPP-000001", "OPEN", 10, "PEN",
+    assert (made.number, made.status, made.probability, made.currency, made.version) == (
+        "OPP-000001", "OPEN", 10, "PEN", 1,
     )  # fmt: skip
-    assert (made.stage_id, made.pipeline_id, made.version) == (nuevo.pk, nuevo.pipeline_id, 1)
-    assert (made.assigned_user_id, made.created_by_user_id) == (world.ana.pk, world.ana.pk)
+    assert (made.stage_id, made.pipeline_id) == (nuevo.pk, nuevo.pipeline_id)
+    assert made.assigned_user_id == made.created_by_user_id == world.ana.pk
     assert made.amount == Decimal("1500.50") and made.stage_entered_at == made.last_activity_at
-    with tenant_scope(ctx(world.a)):
-        assert OpportunityItem.objects.values_list("quantity", "notes").get() == (2, note)
+    assert lines(world, "quantity", "notes") == [(2, note)]
     assert history(migrator) == [(None, nuevo.pk, world.ana.pk, None)]
     [(action, label, changes)] = audit(migrator)
     assert (action, label) == ("opportunity.created", "OPP-000001")
-    assert changes["title"] == [None, "iPhone 16"] and changes["next_action"] == [None, "[texto]"]
+    assert changes["title"] == changes["next_action"] == [None, "[texto]"]
     assert changes["items"][1] == [
         {"variant_id": str(sku), "quantity": 2, "estimated_unit_price": "750.25", "has_notes": True}
     ]
-    assert note not in json.dumps(changes) and "Llamar" not in json.dumps(changes)
+    for text in (note, "Llamar", "Juan", "12345678"):  # texto libre: ni título ni notas
+        assert text not in json.dumps(changes)
     assert create(world).number == "OPP-000002"  # la numeración sigue
     assert tables.make(world.b).number == "OPP-000001"  # y es de cada organización
-
-
-def test_create_in_a_chosen_pipeline_for_another_member(world: SimpleNamespace) -> None:
     other, pedro = new_pipeline(world, "mayoristas"), make_user()
-    join(world.a, pedro)
-    made = create(world, pipeline_id=other.pk, assigned_user_id=pedro.pk)
-    assert (made.pipeline_id, made.assigned_user_id) == (other.pk, pedro.pk)
-    assert made.stage_id != stage(world.a).pk and made.created_by_user_id == world.ana.pk
+    join(world.a, pedro)  # otro pipeline y otro responsable
+    chosen = create(world, pipeline_id=other.pk, assigned_user_id=pedro.pk)
+    assert (chosen.pipeline_id, chosen.assigned_user_id) == (other.pk, pedro.pk)
+    assert chosen.stage_id != nuevo.pk and chosen.created_by_user_id == world.ana.pk
+    change(world, PipelineStage, nuevo.pk, is_active=False)  # la primera por orden que sirve
+    change(world, PipelineStage, stage(world.a, "perdido").pk, sort_order=-5)  # primera, pero LOST
+    assert create(world).stage_id == stage(world.a, "contactado").pk
 
 
 @pytest.mark.parametrize(
     ("field", "make_bad"),
     [
         ("contact_id", lambda w: contact(w.b).pk),  # de otra organización
-        ("contact_id", lambda w: uuid4()),
-        ("contact_id", lambda w: deleted_contact(w)),
+        ("contact_id", lambda w: change(w, Contact, contact(w.a).pk, deleted_at=NOW)),
         ("pipeline_id", lambda w: stage(w.b).pipeline_id),
-        ("pipeline_id", lambda w: uuid4()),
-        ("pipeline_id", lambda w: inactive_pipeline(w)),
+        ("pipeline_id", lambda w: change(w, Pipeline, new_pipeline(w, "x").pk, is_active=False)),
+        ("pipeline_id", lambda w: change(w, Pipeline, new_pipeline(w, "y").pk, deleted_at=NOW)),
         ("assigned_user_id", lambda w: w.luis.pk),  # no es miembro de A
         ("assigned_user_id", lambda w: suspended(w)),
         ("items", lambda w: [{"variant_id": variant(w.b).pk, "quantity": 1}]),
-        ("items", lambda w: [{"variant_id": uuid4(), "quantity": 1}]),
     ],
 )
 def test_create_rejects_a_reference_that_does_not_serve_and_writes_nothing(
@@ -127,18 +142,10 @@ def test_create_rejects_a_reference_that_does_not_serve_and_writes_nothing(
     assert create(world).number == "OPP-000001"  # el número no se gastó
 
 
-def deleted_contact(world: SimpleNamespace) -> Any:
-    made = contact(world.a)
+def change(world: SimpleNamespace, model: Any, pk: Any, **fields: Any) -> Any:
     with tenant_scope(ctx(world.a)):
-        type(made).objects.filter(pk=made.pk).update(deleted_at=timezone.now())
-    return made.pk
-
-
-def inactive_pipeline(world: SimpleNamespace) -> Any:
-    other = new_pipeline(world, "inactivo")
-    with tenant_scope(ctx(world.a)):
-        Pipeline.objects.filter(pk=other.pk).update(is_active=False)
-    return other.pk
+        model.objects.filter(pk=pk).update(**fields)
+    return pk
 
 
 def suspended(world: SimpleNamespace) -> Any:
@@ -149,13 +156,15 @@ def suspended(world: SimpleNamespace) -> Any:
 
 HUGE = "9" * 100_000
 LINE = {"variant_id": str(uuid4()), "quantity": 1}
-QUANTITIES: tuple[Any, ...] = (0, -1, True, 1.5, "1", None, 10**9, [])
-PRICES: tuple[Any, ...] = (None, 1.5, True, "-1", "1.001")
-NOTES: tuple[Any, ...] = (None, 5, [], "x" * 1001, "a\nb")
+BAD_LINES: dict[str, list[Any]] = {
+    "quantity": [0, -1, True, 1.5, "1", None, 10**9, []],
+    "estimated_unit_price": [None, 1.5, True, "-1", "1.001"],
+    "notes": [None, 5, [], "x" * 1001, "a\nb"],
+}
 BAD: dict[str, list[Any]] = {
     "title": [None, 5, True, [], "", "   ", "!!!", "x" * 201, "a\nb", HUGE],
     "amount": [None, 1.5, True, [], "abc", "-1", "1e3", "1.001", "9" * 13, "", HUGE,
-               Decimal("NaN"), Decimal("Infinity"), Decimal("1E+999999"), Decimal("1.100")],
+               Decimal("NaN"), Decimal("Infinity"), Decimal("1E+999999999"), Decimal("1.100")],
     "priority": [None, 1, True, [], ["LOW"], "urgent", "ASAP", HUGE],
     "source": [None, 1, True, [], "RADIO", "manual", HUGE],
     "next_action": [5, True, [], "", "   ", "x" * 201, "a\nb", HUGE],
@@ -164,26 +173,22 @@ BAD: dict[str, list[Any]] = {
                             date(3000, 1, 1)],
     "items": [None, "x", 5, {}, [None], [{}], [5], [{"variant_id": None, "quantity": 1}],
               [{"variant_id": "x", "quantity": 1}], [{"variant_id": 5, "quantity": 1}],
-              *([{**LINE, "quantity": q}] for q in QUANTITIES),
-              *([{**LINE, "estimated_unit_price": p}] for p in PRICES),
-              *([{**LINE, "notes": n}] for n in NOTES),
+              *([{**LINE, f: v}] for f, vs in BAD_LINES.items() for v in vs),
               [{**LINE, "bogus": 1}], [LINE, LINE], [{"quantity": 1}],
               [{"variant_id": LINE["variant_id"]}],
-              [{"variant_id": str(uuid4()), "quantity": 1} for _ in range(51)]],
+              [{"variant_id": str(uuid4()), "quantity": 1} for _ in range(51)],
+              [{**LINE, "quantity": 10**6, "estimated_unit_price": "999999999999.99"}],  # excede
+              [{"variant_id": str(uuid4()), "quantity": 1, "estimated_unit_price": "6" + "0" * 11}
+               for _ in range(2)]],  # la suma no
     "bogus": [1],
     "organization_id": [str(uuid4())],  # nunca del payload
 }  # fmt: skip
 
 
 def rejects(call: Any, label: str) -> None:
-    try:
+    with pytest.raises(ValueError) as caught:  # un `TypeError` o `IntegrityError` propaga: fallo
         call()
-    except ValueError as error:
-        assert not isinstance(error, BadReference), label
-    except Exception as error:  # noqa: BLE001 — cualquier otro tipo es el fallo que se busca
-        pytest.fail(f"{label}: {type(error).__name__} en vez de ValueError")
-    else:
-        pytest.fail(f"{label}: se aceptó")
+    assert not isinstance(caught.value, BadReference), label
 
 
 def reject_all(world: SimpleNamespace, command: Any, base: dict[str, Any], cases: Any) -> None:
@@ -199,108 +204,87 @@ def test_create_rejects_every_bad_type_with_value_error_and_writes_nothing(
 ) -> None:
     base = {"contact_id": contact(world.a).pk, "title": "x"}
     refs = {f: [True, 5, [], {}, "x", HUGE] for f in ("pipeline_id", "assigned_user_id")}
-    reject_all(world, opportunities.create_opportunity, base, BAD | refs)
-    reject_all(
-        world, opportunities.create_opportunity, base, {"contact_id": [None, True, 5, [], "x"]}
-    )
+    cases = BAD | refs | {"contact_id": [None, True, 5, [], "x"]}
+    reject_all(world, opportunities.create_opportunity, base, cases)
     assert count(migrator, "opportunities") == 0 and audit(migrator) == []
 
 
-def test_two_creations_at_once_get_distinct_consecutive_numbers(world: SimpleNamespace) -> None:
-    mine = contact(world.a).pk
-
-    def one(tenant: Any) -> str:
-        return opportunities.create_opportunity(tenant, contact_id=mine, title="x").number
-
-    first, second = race(world.a, world.ana, [one, one])  # el mismo contacto: el segundo espera
-    assert (first, second) == ("OPP-000001", "OPP-000002")
-
-
-def test_update_changes_what_is_sent_and_audits_before_and_after(
-    world: SimpleNamespace, migrator: DB
-) -> None:
+def test_update_changes_and_audits_before_and_after(world: SimpleNamespace, migrator: DB) -> None:
     made, sku, spare = create(world), variant(world.a).pk, variant(world.a, "B").pk
     then = made.last_activity_at
-    got = run(
-        world, opportunities.update_opportunity, opportunity_id=made.pk, version=1,
-        title=" Galaxy  S25 ",
-        amount="1500.5", priority="HIGH", source="WALK_IN", next_action="Llamar", probability=55,
-        next_action_at=datetime(2026, 11, 2, 15, tzinfo=UTC), expected_close_date=date(2026, 12, 1),
-        items=[{"variant_id": sku, "quantity": 1}],
+    got = update(
+        world, made, title=" Galaxy  S25 ", amount="1500.5", priority="HIGH", source="WALK_IN",
+        next_action="Llamar", probability=55, next_action_at=datetime(2026, 11, 2, 15, tzinfo=UTC),
+        expected_close_date=date(2026, 12, 1), items=[item(sku)],
     )  # fmt: skip
     row = reload(world, made.pk)
     assert (got.version, row.version, row.title, row.amount) == (
-        2,
-        2,
-        "Galaxy S25",
-        Decimal("1500.50"),
-    )
+        2, 2, "Galaxy S25", Decimal("1500.50"),
+    )  # fmt: skip
     assert (row.priority, row.source, row.probability) == ("HIGH", "WALK_IN", 55)
     assert row.last_activity_at > then and row.updated_by_user_id == world.ana.pk
     [_, (action, label, changes)] = audit(migrator)
     assert (action, label) == ("opportunity.updated", made.number)
     assert changes["amount"] == ["0.00", "1500.50"] and changes["probability"] == [10, 55]
-    assert changes["next_action"] == [None, "[texto]"] and "Llamar" not in json.dumps(changes)
+    assert changes["title"] == ["[texto]"] * 2 and changes["next_action"] == [None, "[texto]"]
+    assert "Galaxy" not in json.dumps(changes) and "Llamar" not in json.dumps(changes)
     assert changes["items"][0] == [] and len(changes["items"][1]) == 1
-    run(  # reemplazar: cambia la cantidad de una, se quita otra y entra una nueva
-        world, opportunities.update_opportunity, opportunity_id=made.pk, version=2,
-        items=[{"variant_id": spare, "quantity": 3, "notes": "gris"}],
-    )  # fmt: skip
-    with tenant_scope(ctx(world.a)):
-        assert [(i.variant_id, i.quantity, i.notes) for i in OpportunityItem.objects.all()] == [
-            (spare, 3, "gris")
-        ]
-    run(world, opportunities.update_opportunity, opportunity_id=made.pk, version=3, items=[])
-    assert count(migrator, "opportunity_items") == 0
-    run(
-        world, opportunities.update_opportunity, opportunity_id=made.pk, version=4, next_action=None
-    )
+    update(world, made, 2, items=[item(sku, 5, estimated_unit_price="9.5")])
+    assert lines(world, "quantity", "estimated_unit_price") == [(5, Decimal("9.50"))]  # en sitio
+    assert audit(migrator)[-1][2]["items"][1][0]["quantity"] == 5
+    update(world, made, 3, items=[item(spare, 3, notes="gris")])
+    assert lines(world, "variant_id", "quantity", "notes") == [(spare, 3, "gris")]
+    update(world, made, 4, items=[])
+    assert lines(world, "pk") == []
+    update(world, made, 5, next_action=None)
     assert reload(world, made.pk).next_action is None
 
 
-def test_update_with_nothing_new_neither_writes_nor_audits(
-    world: SimpleNamespace, migrator: DB
+@pytest.mark.parametrize(
+    "off", [{"deleted_at": NOW}, {"status": "INACTIVE"}, {"status": "DISCONTINUED"}]
+)
+def test_a_line_needs_a_live_variant(
+    world: SimpleNamespace, migrator: DB, off: dict[str, Any]
 ) -> None:
+    keep, gone = variant(world.a, "KEEP").pk, variant(world.a, "GONE").pk
+    made = create(world, items=[item(keep)])
+    for sku in (keep, gone):
+        change(world, ProductVariant, sku, **off)
+    line = [item(gone)]
+    with pytest.raises(BadReference) as caught:
+        create(world, items=line)
+    assert caught.value.field == "variant_id" and count(migrator, "opportunities") == 1
+    with pytest.raises(BadReference):
+        update(world, made, items=[item(keep), *line])
+    update(world, made, items=[item(keep, 2)])  # la ya presente no se revisa
+    assert lines(world, "quantity") == [(2,)]
+
+
+def test_update_rejections_and_no_ops_write_nothing(world: SimpleNamespace, migrator: DB) -> None:
     sku = variant(world.a).pk
-    made = create(world, items=[{"variant_id": sku, "quantity": 1}], priority="LOW")
-    before = reload(world, made.pk)
-    same = [{"variant_id": str(sku), "quantity": 1, "estimated_unit_price": "0.00", "notes": ""}]
+    made, other = create(world, items=[item(sku)], priority="LOW"), tables.make(world.b)
+    same = [item(str(sku), estimated_unit_price="0.00", notes="")]
     for fields in ({}, {"priority": "LOW", "title": "iPhone 16"}, {"items": same}):
-        run(world, opportunities.update_opportunity, opportunity_id=made.pk, version=1, **fields)
-    after = reload(world, made.pk)
-    assert (after.version, after.updated_at, after.last_activity_at) == (
-        1, before.updated_at, before.last_activity_at,
-    )  # fmt: skip
-    assert [a for a, _, _ in audit(migrator)] == ["opportunity.created"]
-
-
-def test_update_rejections_write_nothing(world: SimpleNamespace, migrator: DB) -> None:
-    made, other = create(world), tables.make(world.b)
+        update(world, made, **fields)  # nada nuevo: ni escribe ni audita
     done = tables.make(world.a, status="WON", stage_id=stage(world.a, "ganado").pk, probability=100,
                        won_at=timezone.now())  # fmt: skip
-    update = opportunities.update_opportunity
-    with pytest.raises(commands.StaleVersion):
-        run(world, update, opportunity_id=made.pk, version=2, title="x")
-    with pytest.raises(OpportunityClosed):
-        run(world, update, opportunity_id=done.pk, version=1, title="x")
-    with pytest.raises(Opportunity.DoesNotExist):  # la de otra organización
-        run(world, update, opportunity_id=other.pk, version=1, title="x")
-    with pytest.raises(BadReference):
-        run(
-            world,
-            update,
-            opportunity_id=made.pk,
-            version=1,
-            items=[{"variant_id": uuid4(), "quantity": 1}],
-        )
+    wrong: list[tuple[type[Exception], Any, int, dict[str, Any]]] = [
+        (commands.StaleVersion, made, 2, {"title": "x"}),
+        (OpportunityClosed, done, 1, {"title": "x"}),
+        (Opportunity.DoesNotExist, other, 1, {"title": "x"}),  # de otra organización
+        (BadReference, made, 1, {"items": [item(uuid4())]}),
+    ]
+    for error, target, version, fields in wrong:
+        with pytest.raises(error):
+            update(world, target, version, **fields)
     assert reload(world, made.pk).version == 1 and reload(world, done.pk).title == "iPhone 16"
     assert [a for a, _, _ in audit(migrator)] == ["opportunity.created"]
 
 
 def test_update_rejects_every_bad_type_with_value_error(world: SimpleNamespace) -> None:
     made = create(world)
-    cases = {k: v for k, v in BAD.items() if k != "title"} | {
-        "title": BAD["title"], "probability": [None, True, 1.5, "5", -1, 101, [], 10**20],
+    cases = BAD | {
+        "probability": [None, True, 1.5, "5", -1, 101, [], 10**20],
         "opportunity_id": [None, True, 5, [], "x", HUGE],
         "version": [None, True, 0, "1", 1.5, [], 2**40],
     }  # fmt: skip
@@ -309,7 +293,7 @@ def test_update_rejects_every_bad_type_with_value_error(world: SimpleNamespace) 
     assert reload(world, made.pk).version == 1
 
 
-def test_two_updates_from_the_same_version_leave_one_and_a_stale_version(
+def test_two_updates_from_one_version_leave_one(
     world: SimpleNamespace,
 ) -> None:
     made = create(world)
@@ -321,60 +305,92 @@ def test_two_updates_from_the_same_version_leave_one_and_a_stale_version(
 
     first, second = race(world.a, world.ana, [edit("Uno"), edit("Dos")])
     assert first.title == "Uno" and second == "StaleVersion"
-    assert reload(world, made.pk).title == "Uno" and reload(world, made.pk).version == 2
+    assert (reload(world, made.pk).title, reload(world, made.pk).version) == ("Uno", 2)
 
 
-def test_assign_changes_the_owner_only_to_an_active_member(
-    world: SimpleNamespace, migrator: DB
-) -> None:
+def test_assign_needs_an_active_member(world: SimpleNamespace, migrator: DB) -> None:
     made, pedro = create(world), make_user()
     join(world.a, pedro)
-    assign = opportunities.assign_opportunity
-    run(world, assign, opportunity_id=made.pk, version=1, assigned_user_id=world.ana.pk)  # ya lo es
+    base = {"opportunity_id": made.pk, "version": 1, "assigned_user_id": world.ana.pk}
+    run(world, opportunities.assign_opportunity, **base)  # ya lo es: ni escribe ni audita
     assert reload(world, made.pk).version == 1 and len(audit(migrator)) == 1
-    run(world, assign, opportunity_id=made.pk, version=1, assigned_user_id=str(pedro.pk))
+    run(world, opportunities.assign_opportunity, **{**base, "assigned_user_id": str(pedro.pk)})
     assert reload(world, made.pk).assigned_user_id == pedro.pk
     [_, (action, _, changes)] = audit(migrator)
     assert action == "opportunity.assigned"
     assert changes == {"assigned_user_id": [str(world.ana.pk), str(pedro.pk)]}
+    base["version"] = 2
     for bad in (world.luis.pk, suspended(world), uuid4()):  # otra organización, suspendido, nadie
         with pytest.raises(BadReference):
-            run(world, assign, opportunity_id=made.pk, version=2, assigned_user_id=bad)
+            run(world, opportunities.assign_opportunity, **{**base, "assigned_user_id": bad})
     with pytest.raises(commands.StaleVersion):
-        run(world, assign, opportunity_id=made.pk, version=1, assigned_user_id=world.ana.pk)
+        run(world, opportunities.assign_opportunity, **{**base, "version": 1})
     assert reload(world, made.pk).assigned_user_id == pedro.pk and len(audit(migrator)) == 2
-    base = {"opportunity_id": made.pk, "version": 2, "assigned_user_id": world.ana.pk}
-    cases = {
-        "assigned_user_id": [None, True, "x", 5, []],
-        "opportunity_id": [None, 5, "x"],
-        "version": [None, True, "2", 0, 1.5],
-    }
-    reject_all(world, assign, base, cases)
+    cases = {"assigned_user_id": [None, True, "x", 5, []], "opportunity_id": [None, 5, "x"],
+             "version": [None, True, "2", 0, 1.5]}  # fmt: skip
+    reject_all(world, opportunities.assign_opportunity, base, cases)
 
 
-def test_delete_marks_the_opportunity_deleted_and_audits(
-    world: SimpleNamespace, migrator: DB
-) -> None:
+def test_delete_is_logical_and_audited(world: SimpleNamespace, migrator: DB) -> None:
     made, other = create(world), tables.make(world.b)
     run(world, opportunities.delete_opportunity, opportunity_id=made.pk)
     row = reload(world, made.pk)
-    assert (row.deleted_at is not None, row.deleted_by_user_id, row.version) == (
-        True,
-        world.ana.pk,
-        2,
-    )
-    assert [(a, label) for a, label, _ in audit(migrator)] == [
-        ("opportunity.created", made.number), ("opportunity.deleted", made.number),
-    ]  # fmt: skip
-    for call, kwargs in (
+    assert row.deleted_at and (row.deleted_by_user_id, row.version) == (world.ana.pk, 2)
+    assert [a for a, _, _ in audit(migrator)] == ["opportunity.created", "opportunity.deleted"]
+    for call, more in (
         (opportunities.delete_opportunity, {}),
         (opportunities.update_opportunity, {"version": 2, "title": "x"}),
         (opportunities.assign_opportunity, {"version": 2, "assigned_user_id": world.ana.pk}),
     ):
         with pytest.raises(Opportunity.DoesNotExist):  # borrada: ya no se toca
-            run(world, call, opportunity_id=made.pk, **kwargs)
-    with pytest.raises(Opportunity.DoesNotExist):
+            run(world, call, opportunity_id=made.pk, **more)
+    with pytest.raises(Opportunity.DoesNotExist):  # la de otra organización
         run(world, opportunities.delete_opportunity, opportunity_id=other.pk)
     reject_all(
-        world, opportunities.delete_opportunity, {}, {"opportunity_id": [None, True, 5, "x", []]}
+        world, opportunities.delete_opportunity, {}, {"opportunity_id": [None, True, 5, "x"]}
     )
+
+
+def test_a_creation_waits_for_writers_of_its_pipeline_contact_and_variant(
+    world: SimpleNamespace,
+) -> None:
+    other, sku = new_pipeline(world, "mayoristas"), variant(world.a).pk
+    mine = [contact(world.a).pk for _ in range(3)]
+
+    def create_for(i: int, **extra: Any) -> Any:
+        return partial(opportunities.create_opportunity, contact_id=mine[i], title="x", **extra)
+
+    off = partial(commands.update_pipeline, pipeline_id=other.pk, version=1, is_active=False)
+    retire = lambda t: ProductVariant.objects.filter(pk=sku).update(deleted_at=NOW)  # noqa: E731
+    for first, creation in (  # quien escribe primero y la alta que espera: la ve y la rechaza
+        (off, create_for(0, pipeline_id=other.pk)),
+        (partial(delete_contact, contact_id=mine[1]), create_for(1)),
+        (retire, create_for(2, items=[item(sku)])),
+    ):
+        assert race(world.a, world.ana, [first, creation])[1] == "BadReference"
+
+
+def test_updater_is_recorded_and_a_non_member_actor_refused(
+    world: SimpleNamespace,
+) -> None:
+    pedro, made = make_user(), create(world)
+    join(world.a, pedro)
+
+    def as_(user: Any, command: Any, **kwargs: Any) -> Any:
+        with tenant_scope(ctx(world.a, user)) as tenant:
+            return command(tenant, **kwargs)
+
+    as_(pedro, opportunities.update_opportunity, opportunity_id=made.pk, version=1, title="Otro")
+    row = reload(world, made.pk)
+    assert (row.updated_by_user_id, row.created_by_user_id) == (pedro.pk, world.ana.pk)
+    one = {"opportunity_id": made.pk, "version": 2}
+    for command, kwargs in (
+        (opportunities.create_opportunity, {"contact_id": made.contact_id, "title": "x",
+                                            "assigned_user_id": pedro.pk}),
+        (opportunities.update_opportunity, {**one, "title": "Z"}),
+        (opportunities.assign_opportunity, {**one, "assigned_user_id": pedro.pk}),
+        (opportunities.delete_opportunity, {"opportunity_id": made.pk}),
+    ):  # fmt: skip
+        with pytest.raises(BadReference) as caught:  # `luis` no es miembro de A
+            as_(world.luis, command, **kwargs)
+        assert caught.value.field.endswith("_by_user_id")

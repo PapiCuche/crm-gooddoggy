@@ -1,11 +1,10 @@
 """Comandos de oportunidades: crear, cambiar, asignar y borrar (F5-03b; E09, modelo de datos §E.6).
 
 No comprueban permisos: los declarará la API (F5-04), la única que los importa (contrato de
-import-linter). Validan los tipos exactos (`ValueError` ante lo que no lo sea, nunca `TypeError` ni
-`IntegrityError`) y auditan con el antes y el después, sin más datos personales que los
-identificadores y el título: ni el texto de la próxima acción ni las notas de las líneas. Sin
-cambios no escriben ni auditan. Bloqueos: contacto y pipeline (`FOR SHARE`: varias altas a la vez,
-pero desactivar el pipeline espera), oportunidad (`FOR NO KEY UPDATE`), membresía del responsable.
+import-linter). Validan los tipos exactos (`ValueError`, nunca `TypeError` ni `IntegrityError`) y
+auditan con el antes y el después; el texto libre (título, próxima acción) se audita como
+`[texto]` y las notas de las líneas no. Sin cambios no escriben ni auditan. Bloqueos: contacto,
+pipeline (`FOR SHARE`) y variantes nuevas (`FOR SHARE`), oportunidad y membresía del responsable.
 """
 
 import datetime as dt
@@ -48,14 +47,17 @@ _REFERENCES = {  # FK compuesta violada → el campo que la causó
     "opportunities_contact_fk": "contact_id",
     "opportunities_assigned_fk": "assigned_user_id",
     "opportunity_items_variant_fk": "variant_id",
+    "opportunities_created_by_fk": "created_by_user_id",  # quien actúa no es miembro
+    "opportunities_updated_by_fk": "updated_by_user_id",
+    "opportunities_deleted_by_fk": "deleted_by_user_id",
 }
+TOP = Decimal("999999999999.99")  # lo que cabe en NUMERIC(14,2): cada línea y su suma
 _EARLIEST, _LATEST = dt.datetime(2000, 1, 1, tzinfo=dt.UTC), dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
 
 
 class BadReference(ValueError):
-    """Una referencia que no es de la organización o no sirve: el contacto (inexistente o
-    borrado), el pipeline (inexistente, borrado o inactivo), el responsable (que no es miembro
-    activo) o una variante. `field` dice cuál."""
+    """Una referencia que no sirve (contacto, pipeline, responsable, variante o quien actúa, que
+    no son de la organización, están borrados, inactivos o no son miembros). `field` dice cuál."""
 
     def __init__(self, field: str) -> None:
         super().__init__(field)
@@ -71,9 +73,7 @@ def _decimal(value: Any, what: str) -> Decimal:
     bad = ValueError(f"{what}: un importe con 12 cifras enteras y 2 decimales")
     if isinstance(value, bool) or not isinstance(value, str | Decimal):
         raise bad
-    if isinstance(value, Decimal) and not (
-        value.is_finite() and -12 <= int(value.as_tuple().exponent) <= 12
-    ):
+    if isinstance(value, Decimal) and not (value.is_finite() and abs(value.adjusted()) <= 12):
         raise bad
     try:
         return parse_amount(value)
@@ -89,10 +89,12 @@ def _line(value: Any, what: str, limit: int) -> str:
 
 
 def _moment(value: Any, what: str) -> dt.datetime:
-    if not isinstance(value, dt.datetime) or value.utcoffset() is None:
-        raise ValueError(f"{what}: una fecha y hora con zona horaria")
-    if not _EARLIEST <= value <= _LATEST:
-        raise ValueError(f"{what}: entre los años 2000 y 2100")
+    if not (
+        isinstance(value, dt.datetime)
+        and value.utcoffset() is not None
+        and _EARLIEST <= value <= _LATEST
+    ):
+        raise ValueError(f"{what}: fecha y hora con zona horaria, entre los años 2000 y 2100")
     return value
 
 
@@ -100,7 +102,7 @@ def _values(fields: dict[str, Any]) -> dict[str, Any]:
     """Lo que se envía de una oportunidad, limpio y validado (solo esos campos)."""
     values = dict(fields)
     if "title" in values:
-        values["title"] = clean_name(_text(values["title"], "título"), TITLE_MAX)
+        values["title"] = clean_name(_line(values["title"], "título", TITLE_MAX), TITLE_MAX)
     if "amount" in values:
         values["amount"] = _decimal(values["amount"], "importe")
     for field, choices in (("priority", Priority.values), ("source", OpportunitySource.values)):
@@ -126,38 +128,47 @@ def _items(raw: Any) -> dict[UUID, dict[str, Any]]:
     if not isinstance(raw, list | tuple) or len(raw) > ITEMS_MAX:
         raise ValueError(f"las líneas, una lista de hasta {ITEMS_MAX} objetos")
     rows: dict[UUID, dict[str, Any]] = {}
+    total = Decimal(0)
     for spec in raw:
-        if not isinstance(spec, dict) or set(spec) - _ITEM:
-            raise ValueError(f"cada línea es un objeto con {sorted(_ITEM)}")
-        if missing := {"variant_id", "quantity"} - set(spec):
-            raise ValueError(f"faltan campos de la línea: {sorted(missing)}")
+        if (
+            not isinstance(spec, dict)
+            or set(spec) - _ITEM
+            or {"variant_id", "quantity"} - set(spec)
+        ):
+            raise ValueError(
+                f"cada línea es un objeto con {sorted(_ITEM)}, y variant_id y quantity"
+            )
         variant = _uuid(spec["variant_id"], "variante")
         if variant in rows:
             raise ValueError("variante repetida")
         _integer(spec["quantity"], 1, QUANTITY_MAX, "cantidad")
+        price = _decimal(spec.get("estimated_unit_price", "0"), "precio")
+        total += spec["quantity"] * price
+        if total > TOP:
+            raise ValueError(f"líneas: cantidad por precio, y su suma, hasta {TOP}")
         rows[variant] = {
             "quantity": spec["quantity"],
-            "estimated_unit_price": _decimal(spec.get("estimated_unit_price", "0"), "precio"),
+            "estimated_unit_price": price,
             "notes": _line(spec.get("notes", ""), "notas", NOTE_MAX),
         }
     return rows
 
 
 def _audited(field: str, value: Any) -> Any:
-    return "[texto]" if field == "next_action" and value is not None else value  # personal
+    return "[texto]" if field in ("title", "next_action") and value is not None else value
 
 
 def _shown(rows: dict[UUID, dict[str, Any]]) -> list[dict[str, Any]]:
     """Las líneas para la auditoría: sin las notas, solo si las hay."""
     return [
-        {
-            "variant_id": str(v),
-            "quantity": r["quantity"],
-            "estimated_unit_price": str(r["estimated_unit_price"]),
-            "has_notes": bool(r["notes"]),
-        }
+        {"variant_id": str(v), "quantity": r["quantity"], "has_notes": bool(r["notes"]),
+         "estimated_unit_price": str(r["estimated_unit_price"])}
         for v, r in sorted(rows.items(), key=lambda pair: str(pair[0]))
-    ]
+    ]  # fmt: skip
+
+
+def _entity(opp: Opportunity) -> Entity:
+    return Entity("opportunity", opp.pk, opp.number)
 
 
 def _reference(error: IntegrityError) -> Exception:
@@ -188,23 +199,27 @@ def _touch(ctx: TenantContext, alias: str, opp: Opportunity, changes: dict[str, 
 def _current_items(alias: str, opp: Opportunity) -> dict[UUID, dict[str, Any]]:
     found = OpportunityItem.objects.using(alias).filter(opportunity_id=opp.pk)
     return {
-        item.variant_id: {
-            "quantity": item.quantity,
-            "notes": item.notes,
-            "estimated_unit_price": item.estimated_unit_price,
-        }
-        for item in found
-    }
+        i.variant_id: {"quantity": i.quantity, "notes": i.notes,
+                       "estimated_unit_price": i.estimated_unit_price}
+        for i in found
+    }  # fmt: skip
 
 
 def _sync_items(
-    alias: str,
-    organization_id: UUID,
-    opp: Opportunity,
-    now: dict[UUID, dict[str, Any]],
-    wanted: dict[UUID, dict[str, Any]],
-) -> None:
-    """Deja las líneas como `wanted`: borra las sobrantes, cambia las distintas y añade el resto."""
+    alias: str, organization_id: UUID, opp: Opportunity,
+    now: dict[UUID, dict[str, Any]], wanted: dict[UUID, dict[str, Any]],
+) -> None:  # fmt: skip
+    """Deja las líneas como `wanted` (borra, cambia, añade); una variante nueva ha de estar viva
+    y activa (`FOR SHARE`: borrarla a la vez espera)."""
+    if added := [v for v in wanted if v not in now]:
+        with connections[alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM public.product_variants WHERE organization_id = %s "
+                "AND id = ANY(%s) AND deleted_at IS NULL AND status = 'ACTIVE' FOR SHARE",
+                [organization_id, added],
+            )
+            if len(cursor.fetchall()) != len(added):
+                raise BadReference("variant_id")
     items = OpportunityItem.objects.using(alias)
     items.filter(opportunity_id=opp.pk).exclude(variant_id__in=wanted).delete()
     for variant, row in wanted.items():
@@ -220,19 +235,14 @@ def _sync_items(
 
 
 def _pipeline(alias: str, organization_id: UUID, pipeline_id: UUID | None) -> Pipeline:
-    """El pipeline vivo y activo (el predeterminado, sin id), con `FOR SHARE`: desactivarlo o
-    cambiar sus etapas (que lo bloquea `FOR NO KEY UPDATE`) espera a esta alta y la ve."""
-    where, args = (
-        ("is_default", [organization_id])
-        if pipeline_id is None
-        else ("id = %s AND is_active", [organization_id, pipeline_id])
-    )
+    """El pipeline vivo y activo (o el predeterminado), `FOR SHARE`: desactivarlo espera al alta."""
+    which = "is_default" if pipeline_id is None else "id = %s AND is_active"
     query = (
-        f"SELECT id FROM public.pipelines WHERE organization_id = %s AND {where} "  # noqa: S608
+        f"SELECT id FROM public.pipelines WHERE organization_id = %s AND {which} "  # noqa: S608
         "AND deleted_at IS NULL FOR SHARE"
     )
     with connections[alias].cursor() as cursor:
-        cursor.execute(query, args)
+        cursor.execute(query, [organization_id, *([] if pipeline_id is None else [pipeline_id])])
         row = cursor.fetchone()
     if row is None:
         raise BadReference("pipeline_id")
@@ -251,11 +261,10 @@ def create_opportunity(
     **fields: Any,
 ) -> Opportunity:
     """Crea una oportunidad abierta de un contacto vivo, con su número, en la primera etapa OPEN
-    activa del pipeline (el predeterminado, sin `pipeline_id`), con la probabilidad de esa etapa,
-    la moneda del pipeline y su primera línea de historial; responsable, quien actúa si no se dice
-    otro (miembro activo). `items`: líneas `{variant_id, quantity, estimated_unit_price?, notes?}`.
-    La audita (`opportunity.created`). `BadReference` con el campo si el contacto, el pipeline, el
-    responsable o una variante no sirven; `ValueError` si algo no vale; sin escribir nada."""
+    activa del pipeline (el predeterminado, sin `pipeline_id`) y su probabilidad, la moneda del
+    pipeline y su primera fila de historial; responsable, quien actúa si no se dice otro (miembro
+    activo). `items`: `{variant_id, quantity, estimated_unit_price?, notes?}` de variantes vivas
+    y activas. Audita `opportunity.created`. `BadReference` con el campo; `ValueError`."""
     alias = require_scope(ctx)
     if unknown := set(fields) - _CREATE:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
@@ -280,37 +289,23 @@ def create_opportunity(
                 raise BadReference("assigned_user_id")
             now = timezone.now()
             opp: Opportunity = Opportunity.objects.using(alias).create(
-                number=next_opportunity_number(ctx),
-                contact_id=contact_id,
-                pipeline=pipeline,
-                stage=stage,
-                status="OPEN",
-                assigned_user_id=owner,
-                currency=pipeline.currency,
-                probability=stage.default_probability,
-                last_activity_at=now,
-                stage_entered_at=now,
-                created_by_user_id=ctx.user_id,
-                updated_by_user_id=ctx.user_id,
-                **values,
-            )
+                number=next_opportunity_number(ctx), contact_id=contact_id, pipeline=pipeline,
+                stage=stage, status="OPEN", assigned_user_id=owner, currency=pipeline.currency,
+                probability=stage.default_probability, last_activity_at=now, stage_entered_at=now,
+                created_by_user_id=ctx.user_id, updated_by_user_id=ctx.user_id, **values,
+            )  # fmt: skip
             OpportunityStageHistory.objects.using(alias).create(
                 opportunity=opp, to_stage=stage, changed_by_user_id=ctx.user_id, changed_at=now
             )
             _sync_items(alias, ctx.organization_id, opp, {}, rows)
             shown = {
-                **values,
-                "contact_id": contact_id,
-                "pipeline_id": pipeline.pk,
-                "stage_id": stage.pk,
-                "status": "OPEN",
-                "assigned_user_id": owner,
-                "currency": pipeline.currency,
-                "probability": stage.default_probability,
-            }
+                **values, "contact_id": contact_id, "pipeline_id": pipeline.pk,
+                "stage_id": stage.pk, "status": "OPEN", "assigned_user_id": owner,
+                "currency": pipeline.currency, "probability": stage.default_probability,
+            }  # fmt: skip
             changes = {k: [None, _audited(k, v)] for k, v in shown.items()}
             changes["items"] = [None, _shown(rows)]
-            record(ctx, "opportunity.created", Entity("opportunity", opp.pk, opp.number), changes)
+            record(ctx, "opportunity.created", _entity(opp), changes)
     except IntegrityError as error:
         raise _reference(error) from None
     return opp
@@ -319,12 +314,9 @@ def create_opportunity(
 def update_opportunity(
     ctx: TenantContext, *, opportunity_id: UUID, version: int, **fields: Any
 ) -> Opportunity:
-    """Cambia lo que se envía de una oportunidad abierta y viva (título, importe, prioridad,
-    origen, próxima acción y su fecha, fecha esperada de cierre, probabilidad y `items`, que
-    reemplaza todas las líneas), si nadie la cambió desde `version`, y lo audita
-    (`opportunity.updated`); sin cambios no escribe. Cuenta como actividad. `DoesNotExist` si no
-    es de la organización o está borrada; `StaleVersion`; `OpportunityClosed` si está ganada o
-    perdida; `BadReference` ante una variante que no sirve; `ValueError`."""
+    """Cambia lo que se envía de una oportunidad abierta y viva (`items` reemplaza las líneas), si
+    nadie la cambió desde `version`, y audita `opportunity.updated`; sin cambios no escribe.
+    `DoesNotExist`; `StaleVersion`; `OpportunityClosed`; `BadReference`; `ValueError`."""
     alias = require_scope(ctx)
     if unknown := set(fields) - _UPDATE:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
@@ -350,9 +342,7 @@ def update_opportunity(
                     _sync_items(alias, ctx.organization_id, opp, now, wanted)
                     changes["items"] = [_shown(now), _shown(wanted)]
                 _touch(ctx, alias, opp, diff)
-                record(
-                    ctx, "opportunity.updated", Entity("opportunity", opp.pk, opp.number), changes
-                )
+                record(ctx, "opportunity.updated", _entity(opp), changes)
     except IntegrityError as error:
         raise _reference(error) from None
     return opp
@@ -378,9 +368,7 @@ def assign_opportunity(
                 if not lock_active_member(owner):
                     raise BadReference("assigned_user_id")
                 _touch(ctx, alias, opp, changes)
-                record(
-                    ctx, "opportunity.assigned", Entity("opportunity", opp.pk, opp.number), changes
-                )
+                record(ctx, "opportunity.assigned", _entity(opp), changes)
     except IntegrityError as error:
         raise _reference(error) from None
     return opp
@@ -391,8 +379,11 @@ def delete_opportunity(ctx: TenantContext, *, opportunity_id: UUID) -> None:
     (`opportunity.deleted`). `DoesNotExist` si no es de la organización o ya está borrada."""
     alias = require_scope(ctx)
     opportunity_id = _uuid(opportunity_id, "oportunidad")
-    with transaction.atomic(using=alias):
-        opp = _locked(alias, opportunity_id)
-        gone = {"deleted_at": [None, timezone.now()], "deleted_by_user_id": [None, ctx.user_id]}
-        _touch(ctx, alias, opp, gone)
-        record(ctx, "opportunity.deleted", Entity("opportunity", opp.pk, opp.number))
+    try:
+        with transaction.atomic(using=alias):
+            opp = _locked(alias, opportunity_id)
+            gone = {"deleted_at": [None, timezone.now()], "deleted_by_user_id": [None, ctx.user_id]}
+            _touch(ctx, alias, opp, gone)
+            record(ctx, "opportunity.deleted", _entity(opp))
+    except IntegrityError as error:
+        raise _reference(error) from None
