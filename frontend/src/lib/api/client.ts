@@ -79,6 +79,7 @@ import type {
   OpportunityAssignRequest,
   OpportunityCreateRequest,
   OpportunityDetail,
+  OpportunityMoveRequest,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
@@ -7619,6 +7620,224 @@ export const useOpportunitiesAssign = <TError = ErrorType<Error>, TContext = unk
   TContext
 > => {
   return useMutation(getOpportunitiesAssignMutationOptions(options), queryClient);
+};
+
+export const getOpportunitiesMoveUrl = (orgSlug: string, opportunityId: string) => {
+  return `/api/v1/o/${orgSlug}/opportunities/${opportunityId}/move/`;
+};
+
+/**
+ * Mueve una oportunidad abierta a otra etapa abierta y activa de su pipeline (también hacia atrás): toma su probabilidad, reinicia su reloj y deja el paso en el historial. Con `opportunities.view` y `opportunities.update`; fuera del alcance: 404. 400 en `stage_id` si no es una etapa activa de ese pipeline. 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, `CLOSING_STAGE` (una etapa WON o LOST: se gana o se pierde), `MISSING_FIELDS` (la etapa exige datos que faltan), `PIPELINE_UNAVAILABLE`. Si ya está en la etapa no escribe.
+ */
+export const opportunitiesMove = async (
+  orgSlug: string,
+  opportunityId: string,
+  opportunityMoveRequest: OpportunityMoveRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<OpportunityDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<OpportunityDetail>(getOpportunitiesMoveUrl(orgSlug, opportunityId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(opportunityMoveRequest),
+  });
+};
+
+export const getOpportunitiesMoveMutationKey = () => ["opportunitiesMove"] as const;
+
+export const getOpportunitiesMoveMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof opportunitiesMove>>,
+    TError,
+    OpportunitiesMoveMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof opportunitiesMove>>,
+  TError,
+  OpportunitiesMoveMutationVariables,
+  TContext
+> => {
+  const mutationKey = getOpportunitiesMoveMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof opportunitiesMove>>,
+    OpportunitiesMoveMutationVariables
+  > = (props) => {
+    const { orgSlug, opportunityId, data } = props ?? {};
+
+    return opportunitiesMove(orgSlug, opportunityId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OpportunitiesMoveMutationResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesMove>>
+>;
+export type OpportunitiesMoveMutationBody = OpportunityMoveRequest;
+export type OpportunitiesMoveMutationError = ErrorType<Error>;
+export type OpportunitiesMoveMutationVariables = {
+  orgSlug: string;
+  opportunityId: string;
+  data: OpportunityMoveRequest;
+};
+
+export const useOpportunitiesMove = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof opportunitiesMove>>,
+      TError,
+      OpportunitiesMoveMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof opportunitiesMove>>,
+  TError,
+  OpportunitiesMoveMutationVariables,
+  TContext
+> => {
+  return useMutation(getOpportunitiesMoveMutationOptions(options), queryClient);
+};
+
+export const getOpportunitiesReopenUrl = (orgSlug: string, opportunityId: string) => {
+  return `/api/v1/o/${orgSlug}/opportunities/${opportunityId}/reopen/`;
+};
+
+/**
+ * Devuelve una oportunidad ganada o perdida a la etapa abierta y activa elegida de su pipeline: borra la fecha de cierre, el motivo y la nota, y conserva el importe. Con `opportunities.view` y `opportunities.update`; fuera del alcance: 404. 400 en `stage_id` si no es una etapa abierta y activa de ese pipeline. 409: `STALE_VERSION`, `NOT_CLOSED` (está abierta), `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.
+ */
+export const opportunitiesReopen = async (
+  orgSlug: string,
+  opportunityId: string,
+  opportunityMoveRequest: OpportunityMoveRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<OpportunityDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<OpportunityDetail>(getOpportunitiesReopenUrl(orgSlug, opportunityId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(opportunityMoveRequest),
+  });
+};
+
+export const getOpportunitiesReopenMutationKey = () => ["opportunitiesReopen"] as const;
+
+export const getOpportunitiesReopenMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof opportunitiesReopen>>,
+    TError,
+    OpportunitiesReopenMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof opportunitiesReopen>>,
+  TError,
+  OpportunitiesReopenMutationVariables,
+  TContext
+> => {
+  const mutationKey = getOpportunitiesReopenMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof opportunitiesReopen>>,
+    OpportunitiesReopenMutationVariables
+  > = (props) => {
+    const { orgSlug, opportunityId, data } = props ?? {};
+
+    return opportunitiesReopen(orgSlug, opportunityId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OpportunitiesReopenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesReopen>>
+>;
+export type OpportunitiesReopenMutationBody = OpportunityMoveRequest;
+export type OpportunitiesReopenMutationError = ErrorType<Error>;
+export type OpportunitiesReopenMutationVariables = {
+  orgSlug: string;
+  opportunityId: string;
+  data: OpportunityMoveRequest;
+};
+
+export const useOpportunitiesReopen = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof opportunitiesReopen>>,
+      TError,
+      OpportunitiesReopenMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof opportunitiesReopen>>,
+  TError,
+  OpportunitiesReopenMutationVariables,
+  TContext
+> => {
+  return useMutation(getOpportunitiesReopenMutationOptions(options), queryClient);
 };
 
 export const getPermissionsListUrl = (orgSlug: string) => {

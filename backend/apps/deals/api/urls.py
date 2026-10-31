@@ -37,4 +37,14 @@ urlpatterns = [
         opportunities.OpportunityAssignView.as_view(),
         name="opportunity-assign",
     ),
+    path(
+        "opportunities/<uuid:opportunity_id>/move/",
+        opportunities.OpportunityMoveView.as_view(),
+        name="opportunity-move",
+    ),
+    path(
+        "opportunities/<uuid:opportunity_id>/reopen/",
+        opportunities.OpportunityReopenView.as_view(),
+        name="opportunity-reopen",
+    ),
 ]
