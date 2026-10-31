@@ -37,7 +37,10 @@ MEMBERS = "organization_memberships (organization_id, user_id)"
 class Migration(migrations.Migration):
     initial = True
 
-    dependencies = []
+    dependencies = [
+        ("core", "0001_tenancy_functions"),
+        ("organizations", "0010_invitations_are_not_deleted"),
+    ]
 
     operations = [
         migrations.CreateModel(

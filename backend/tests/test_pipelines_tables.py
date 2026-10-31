@@ -10,10 +10,12 @@ import psycopg
 import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection
+from django.db.migrations.loader import MigrationLoader
 from django.utils import timezone
 
 from apps.deals.models import LostReason, Pipeline, PipelineStage
 from apps.deals.seed import LOST_REASONS, STAGES, ensure_default_pipeline
+from apps.provisioning import seeds
 from core.tenancy.scope import tenant_scope
 from tests.conftest import migrator_settings
 from tests.factories import make_user
@@ -251,6 +253,62 @@ def test_the_seed_does_not_overwrite_what_the_organization_set_up(
         assert ensure_default_pipeline(tenant) is False  # ya tiene pipeline vivo
     assert [p[0] for p in summary(migrator, world.a)["pipelines"]] == ["mayoristas"]
     assert [r[1] for r in summary(migrator, world.a)["reasons"]] == ["MINE"]  # y ya tuvo motivos
+
+
+def test_an_organization_with_only_deleted_pipelines_gets_the_default(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    old = make_pipeline(world.a, "retail", is_default=True)
+    with tenant_scope(ctx(world.a)):
+        Pipeline.objects.filter(pk=old.pk).update(is_default=False, deleted_at=timezone.now())
+        assert ensure_default_pipeline(ctx(world.a)) is True  # el código `retail` quedó libre
+    assert migrator.execute(
+        "SELECT count(*), count(*) FILTER (WHERE is_default) FROM pipelines "
+        "WHERE organization_id = %s AND deleted_at IS NULL",
+        [world.a],
+    ).fetchone() == (1, 1)
+
+
+def test_the_seed_is_registered_for_new_organizations() -> None:
+    assert ensure_default_pipeline in seeds._SEEDS  # si no, el alta no sembraría nada
+
+
+def test_a_failing_seed_rolls_the_whole_organization_back(
+    migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(tenant: Any) -> None:
+        raise RuntimeError("semilla rota")
+
+    monkeypatch.setattr(seeds, "_SEEDS", [*seeds._SEEDS, boom])
+    with pytest.raises(RuntimeError, match="semilla rota"):
+        bootstrap()
+    for table in ("organizations", "organization_memberships", "users", "pipelines"):
+        assert migrator.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)  # noqa: S608
+
+
+@pytest.mark.parametrize("table", ["pipelines", "lost_reasons"])
+def test_the_organization_foreign_key_rejects_an_organization_that_does_not_exist(
+    table: str,
+) -> None:
+    """Con un tenant inventado, la política de RLS deja pasar la fila y solo la FK la rechaza."""
+    nobody = uuid4()
+    make = {
+        "pipelines": lambda: Pipeline.objects.create(
+            name="X", code="x", kind="RETAIL", currency="PEN"
+        ),
+        "lost_reasons": lambda: LostReason.objects.create(name="X", code="X"),
+    }[table]
+    refused(nobody, f"{table}_organization_fk", make)
+
+
+def test_the_migrations_depend_on_what_they_use() -> None:
+    """Sin `core` ni `organizations` en el grafo, `migrate deals` en una base vacía fallaría, y
+    `migrate organizations zero` dejaría `deals` aplicada sin sus FKs."""
+    graph = MigrationLoader(None).graph
+    for node in (("deals", "0001_pipelines"), ("deals", "0002_default_pipelines")):
+        ancestors = graph.forwards_plan(node)
+        assert ("core", "0001_tenancy_functions") in ancestors
+        assert ("organizations", "0010_invitations_are_not_deleted") in ancestors
 
 
 def test_two_seeds_at_once_leave_one_pipeline(

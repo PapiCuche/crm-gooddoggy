@@ -1,20 +1,19 @@
 """Lo que toda organización tiene desde el primer día (F5-01): el pipeline minorista por defecto y
 los motivos de pérdida habituales (02 §E.6, D-COM-7).
 
-Idempotente y sin permisos: la llama el alta (`apps.provisioning.seeds`, para las organizaciones
-nuevas) y la migración `0002` (para las que ya existían), con los modelos de cada una: los vivos
-o los históricos de la migración. No audita: el alta de la organización ya lo hace y la migración
-no tiene actor. No pisa lo que la organización cambió: solo siembra el pipeline si no tiene
-ninguno vivo y los motivos si nunca tuvo ninguno (ni siquiera borrado).
+Idempotente y sin permisos: la llama el alta (`apps.provisioning.seeds`) para las organizaciones
+nuevas; las que ya existían las siembra la migración `0002`, con su propia copia congelada de
+estos datos. No audita: el alta de la organización ya lo hace. No pisa lo que la organización
+cambió: solo siembra el pipeline si no tiene ninguno vivo y los motivos si nunca tuvo ninguno (ni
+siquiera borrado). Una organización con un pipeline vivo que no es el predeterminado no recibe
+ninguno por aquí: lo evita el servicio de F5-01c, que marca el primero.
 """
 
-from typing import Any
 from uuid import UUID
 
-from django.apps import apps as live_apps
-from django.apps.registry import Apps
 from django.db import connections, transaction
 
+from apps.deals.models import LostReason, Pipeline, PipelineStage
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
@@ -47,39 +46,31 @@ def lock_pipelines(alias: str, organization_id: UUID) -> None:
         )
 
 
-def seed_organization(alias: str, organization_id: UUID, registry: Apps) -> bool:
-    """Siembra una organización con los modelos de `registry`. Devuelve si creó el pipeline."""
-    pipelines, stages, reasons = (
-        registry.get_model("deals", name)._base_manager.using(alias)
-        for name in ("Pipeline", "PipelineStage", "LostReason")
-    )
-    lock_pipelines(alias, organization_id)
-    here: dict[str, Any] = {"organization_id": organization_id}
-    created = not pipelines.filter(**here, deleted_at__isnull=True).exists()
-    if created:
-        pipeline = pipelines.create(
-            **here, name="Ventas minoristas", code="retail", kind="RETAIL", currency="PEN",
-            is_default=True,
-        )  # fmt: skip
-        stages.bulk_create(
-            stages.model(
-                **here, pipeline_id=pipeline.pk, name=name, code=code, sort_order=order,
-                stage_type=kind, default_probability=probability, stale_after_days=stale,
-                color=color,
-            )
-            for order, (name, code, kind, probability, stale, color) in enumerate(STAGES)
-        )  # fmt: skip
-    if not reasons.filter(**here).exists():
-        reasons.bulk_create(
-            reasons.model(**here, name=name, code=code, sort_order=order)
-            for order, (name, code) in enumerate(LOST_REASONS)
-        )
-    return created
-
-
 def ensure_default_pipeline(ctx: TenantContext) -> bool:
     """Deja la organización del contexto con su pipeline predeterminado y sus motivos de
     pérdida. Devuelve si creó el pipeline."""
     alias = require_scope(ctx)
+    here = {"organization_id": ctx.organization_id}
     with transaction.atomic(using=alias):
-        return seed_organization(alias, ctx.organization_id, live_apps)
+        lock_pipelines(alias, ctx.organization_id)
+        pipelines = Pipeline.objects.using(alias)
+        created = not pipelines.filter(deleted_at__isnull=True).exists()
+        if created:
+            pipeline = pipelines.create(
+                name="Ventas minoristas", code="retail", kind="RETAIL", currency="PEN",
+                is_default=True,
+            )  # fmt: skip
+            PipelineStage.objects.using(alias).bulk_create(
+                PipelineStage(
+                    **here, pipeline=pipeline, name=name, code=code, sort_order=order,
+                    stage_type=kind, default_probability=probability, stale_after_days=stale,
+                    color=color,
+                )
+                for order, (name, code, kind, probability, stale, color) in enumerate(STAGES)
+            )  # fmt: skip
+        if not LostReason.objects.using(alias).exists():
+            LostReason.objects.using(alias).bulk_create(
+                LostReason(**here, name=name, code=code, sort_order=order)
+                for order, (name, code) in enumerate(LOST_REASONS)
+            )
+    return created
