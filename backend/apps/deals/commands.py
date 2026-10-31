@@ -54,6 +54,14 @@ class PipelineIsDefault(Exception):
     """Es el predeterminado: no se desactiva ni deja de serlo sin elegir otro."""
 
 
+class Invalid(ValueError):
+    """Un dato que no sirve; `field` es el campo del cuerpo de la API (400)."""
+
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(message)
+        self.field = field
+
+
 class StageInvariant(ValueError):
     """El cambio dejaría el pipeline sin su única etapa WON, sin una LOST o sin una OPEN."""
 
@@ -119,8 +127,9 @@ def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
 
 def _closed_probability(stage_type: str, probability: int) -> None:
     if stage_type in CLOSED and probability != CLOSED[StageType(stage_type)]:
-        raise ValueError(
-            f"una etapa {stage_type} tiene probabilidad {CLOSED[StageType(stage_type)]}"
+        raise Invalid(
+            "default_probability",
+            f"una etapa {stage_type} tiene probabilidad {CLOSED[StageType(stage_type)]}",
         )
 
 
@@ -252,7 +261,7 @@ def create_pipeline(
         raise ValueError("las etapas son una lista de objetos")
     rows = [_new_stage(spec) for spec in stages]
     if len({row["code"] for row in rows}) != len(rows):
-        raise ValueError("códigos de etapa repetidos")
+        raise Invalid("stages", "códigos de etapa repetidos")
     _check((row["stage_type"], row["is_active"]) for row in rows)
     try:
         with transaction.atomic(using=alias):

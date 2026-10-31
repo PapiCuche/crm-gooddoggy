@@ -3316,6 +3316,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    post:
+      operationId: pipelines_create
+      description: 'Crea un pipeline con sus etapas, de una vez. Con `pipelines.manage`.
+        Hasta 50 pipelines por organización y 30 etapas por pipeline (400). 409: `PIPELINE_INVARIANT`
+        (sin una WON, una LOST o una OPEN), `CODE_TAKEN`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PipelineCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pricing/price-lists/:
     get:
       operationId: price_lists_list
@@ -7267,6 +7325,50 @@ components:
         * `RESERVE` - Reserve
         * `RELEASE` - Release
         * `SALE` - Sale
+    NewStageRequest:
+      type: object
+      description: Los datos de una etapa, todos opcionales; el código y el orden
+        no se cambian.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        stage_type:
+          $ref: '#/components/schemas/StageTypeEnum'
+        default_probability:
+          type: integer
+          maximum: 100
+          minimum: 0
+          description: WON 100, LOST 0.
+        stale_after_days:
+          type: integer
+          maximum: 32767
+          minimum: 1
+          nullable: true
+          description: '`null`: nunca.'
+        color:
+          type: string
+          minLength: 1
+          description: '`#rrggbb`.'
+          maxLength: 7
+        requires_fields:
+          type: object
+          additionalProperties: {}
+          description: Objeto JSON de hasta 4096 bytes y 4 niveles.
+        is_active:
+          type: boolean
+        code:
+          type: string
+          minLength: 1
+          description: Minúsculas, cifras y guiones; único en el pipeline. No cambia.
+          maxLength: 30
+      required:
+      - code
+      - color
+      - default_probability
+      - name
+      - stage_type
     NextPrice:
       type: object
       properties:
@@ -8034,6 +8136,50 @@ components:
       - sort_order
       - stages
       - version
+    PipelineCreateRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        code:
+          type: string
+          minLength: 1
+          description: Minúsculas, cifras y guiones; único en la organización. No
+            cambia.
+          maxLength: 30
+        kind:
+          $ref: '#/components/schemas/PipelineKindEnum'
+        currency:
+          allOf:
+          - $ref: '#/components/schemas/PriceListCurrencyEnum'
+          description: |-
+            Solo `PEN`.
+
+            * `PEN` - PEN
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: -32768
+        is_default:
+          type: boolean
+          description: El primer pipeline de la organización lo es aunque se diga
+            que no.
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/NewStageRequest'
+          description: 'En el orden en que se numeran: una WON, al menos una LOST
+            y una OPEN.'
+      required:
+      - code
+      - kind
+      - name
+      - stages
     PipelineKindEnum:
       enum:
       - RETAIL
