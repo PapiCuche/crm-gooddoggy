@@ -179,8 +179,12 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
     config = tomllib.loads((BACKEND / "pyproject.toml").read_text())
     contracts = config["tool"]["importlinter"]["contracts"]
     protected = [c for c in contracts if "apps.deals.commands" in c.get("protected_modules", [])]
-    assert [(c["type"], c["allowed_importers"]) for c in protected] == [
-        ("protected", ["apps.deals.api"])
+    assert [(c["type"], c["protected_modules"], c["allowed_importers"]) for c in protected] == [
+        (  # los comandos de oportunidades usan los validadores de los de pipelines (F5-03b)
+            "protected",
+            ["apps.deals.commands", "apps.deals.opportunities"],
+            ["apps.deals.api", "apps.deals.opportunities"],
+        )
     ]
     layers = next(c for c in contracts if c["type"] == "layers")["layers"]
     assert "apps.inventory | apps.pricing | apps.deals" in layers  # sobre contacts, no al revés

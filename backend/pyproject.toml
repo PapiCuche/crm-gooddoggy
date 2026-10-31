@@ -188,10 +188,10 @@ protected_modules = ["apps.contacts.commands", "apps.contacts.notes", "apps.cont
 allowed_importers = ["apps.contacts.api"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos de pipelines: solo su API los importa (F5-01)"
+name = "Comandos de pipelines y oportunidades: solo su API los importa (F5-01, F5-03b)"
 type = "protected"
-protected_modules = ["apps.deals.commands"]
-allowed_importers = ["apps.deals.api"]
+protected_modules = ["apps.deals.commands", "apps.deals.opportunities"]
+allowed_importers = ["apps.deals.api", "apps.deals.opportunities"]  # esta usa los validadores
 
 [[tool.importlinter.contracts]]
 name = "Comandos de sucursales: solo la API de organizations los importa (F2-44)"
