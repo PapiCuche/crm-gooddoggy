@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.deals.api import pipelines
+from apps.deals.api import opportunities, pipelines
 
 urlpatterns = [
     path("pipelines/", pipelines.PipelinesView.as_view(), name="pipelines"),
@@ -26,4 +26,5 @@ urlpatterns = [
         pipelines.LostReasonView.as_view(),
         name="lost-reason",
     ),
+    path("opportunities/", opportunities.OpportunitiesView.as_view(), name="opportunities"),
 ]

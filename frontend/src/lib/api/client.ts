@@ -75,6 +75,7 @@ import type {
   MovementCreateRequest,
   Note,
   NoteWriteRequest,
+  OpportunitiesListParams,
   OrganizationSummary,
   PaginatedAuditEntryList,
   PaginatedBranchList,
@@ -89,6 +90,7 @@ import type {
   PaginatedMemberList,
   PaginatedMovementList,
   PaginatedNoteList,
+  PaginatedOpportunityList,
   PaginatedPipelineList,
   PaginatedPriceList,
   PaginatedPriceListList,
@@ -6921,6 +6923,147 @@ export const useMembersSetStatus = <TError = ErrorType<Error>, TContext = unknow
 > => {
   return useMutation(getMembersSetStatusMutationOptions(options), queryClient);
 };
+
+export const getOpportunitiesListUrl = (orgSlug: string, params?: OpportunitiesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/opportunities/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/opportunities/`;
+};
+
+/**
+ * Las oportunidades vivas dentro del alcance de `opportunities.view`, paginadas por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido, un UUID o un `status` que no lo son, `q` que no es una línea de texto imprimible o pasa de 200 caracteres.
+ */
+export const opportunitiesList = async (
+  orgSlug: string,
+  params?: OpportunitiesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedOpportunityList> => {
+  return apiFetch<PaginatedOpportunityList>(getOpportunitiesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getOpportunitiesListQueryKey = (orgSlug: string, params?: OpportunitiesListParams) => {
+  return [`/api/v1/o/${orgSlug}/opportunities/`, ...(params ? [params] : [])] as const;
+};
+
+export const getOpportunitiesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof opportunitiesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: OpportunitiesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof opportunitiesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getOpportunitiesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof opportunitiesList>>> = ({ signal }) =>
+    opportunitiesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof opportunitiesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type OpportunitiesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesList>>
+>;
+export type OpportunitiesListQueryError = ErrorType<Error>;
+
+export function useOpportunitiesList<
+  TData = Awaited<ReturnType<typeof opportunitiesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | OpportunitiesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof opportunitiesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof opportunitiesList>>,
+          TError,
+          Awaited<ReturnType<typeof opportunitiesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useOpportunitiesList<
+  TData = Awaited<ReturnType<typeof opportunitiesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: OpportunitiesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof opportunitiesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof opportunitiesList>>,
+          TError,
+          Awaited<ReturnType<typeof opportunitiesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useOpportunitiesList<
+  TData = Awaited<ReturnType<typeof opportunitiesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: OpportunitiesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof opportunitiesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useOpportunitiesList<
+  TData = Awaited<ReturnType<typeof opportunitiesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: OpportunitiesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof opportunitiesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getOpportunitiesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getPermissionsListUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/permissions/`;
