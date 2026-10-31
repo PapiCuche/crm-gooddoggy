@@ -10,8 +10,9 @@ import psycopg
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
-from tests import test_contacts_api, test_self_context
+from tests import test_contacts_api, test_opportunities_tables, test_self_context
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
 from tests.test_pipeline_commands import basic, spec, stage
@@ -305,3 +306,22 @@ def test_concurrent_patches_one_wins_the_version_and_the_invariants_hold(
         "SELECT count(*) FROM pipeline_stages WHERE stage_type = 'OPEN' AND is_active"
     ).fetchone()
     assert live == (1,)
+
+
+def test_opportunities_make_a_deactivation_or_a_type_change_a_409(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    ana, made = signed(crm.ana), pipeline(crm)
+    other = pipeline(crm, code="mayoristas", is_default=False)
+    here, there = stage(made, "nuevo").pk, stage(other, "nuevo").pk
+    test_opportunities_tables.make(crm.a, pipeline_id=other.pk, stage_id=there)  # abierta
+    test_opportunities_tables.make(crm.a, stage_id=here, deleted_at=timezone.now())  # borrada
+    before = snapshot(migrator)
+    refused = [
+        (change(ana, other.pk, is_active=False), "OPEN_OPPORTUNITIES"),
+        (send(ana, "patch", at(other.pk, there), {"is_active": False}), "OPEN_OPPORTUNITIES"),
+        (edit(ana, made, "nuevo", stage_type="LOST", default_probability=0), "STAGE_IN_USE"),
+    ]
+    for response, code in refused:
+        assert (response.status_code, response.json()["code"]) == (409, code)
+    assert snapshot(migrator) == before

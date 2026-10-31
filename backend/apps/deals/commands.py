@@ -22,6 +22,7 @@ from apps.deals.models import (
     COLOR,
     REASON_CODE,
     LostReason,
+    Opportunity,
     Pipeline,
     PipelineStage,
     StageType,
@@ -60,6 +61,15 @@ class Invalid(ValueError):
     def __init__(self, field: str, message: str) -> None:
         super().__init__(message)
         self.field = field
+
+
+class OpenOpportunities(Exception):
+    """El pipeline o la etapa tiene oportunidades abiertas: se mueven antes de desactivarlos."""
+
+
+class StageInUse(Exception):
+    """La etapa tiene oportunidades (abiertas, cerradas o borradas): su tipo no cambia, porque el
+    estado de cada una es el tipo de su etapa."""
 
 
 class StageInvariant(ValueError):
@@ -160,9 +170,21 @@ def _new_stage(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _no_open_opportunities(alias: str, pipeline_id: UUID, stage_id: UUID | None = None) -> None:
-    """Gancho (F5-03): desactivar un pipeline o una etapa con oportunidades abiertas no se permite
-    sin migrarlas (02 §E.6). Aún no existe `opportunities`: no hay nada que comprobar. Cuando
-    exista, lanzará `OpenOpportunities` aquí y se activará su test (decisión en phase-5.md)."""
+    """D-F5-01 (02 §E.6): desactivar un pipeline o una etapa, o sacar una etapa de OPEN, con
+    oportunidades abiertas vivas no se permite sin moverlas. Corre con el pipeline bloqueado
+    (`FOR NO KEY UPDATE`), y las oportunidades que se mueven o se crean lo toman `FOR SHARE`."""
+    found = Opportunity.objects.using(alias).filter(
+        pipeline_id=pipeline_id, status="OPEN", deleted_at__isnull=True
+    )
+    if stage_id is not None:
+        found = found.filter(stage_id=stage_id)
+    if found.exists():
+        raise OpenOpportunities(stage_id or pipeline_id)
+
+
+def _stage_not_in_use(alias: str, stage_id: UUID) -> None:
+    if Opportunity.objects.using(alias).filter(stage_id=stage_id).exists():
+        raise StageInUse(stage_id)  # la FK `(etapa, pipeline, estado)` lo rechazaría igual
 
 
 def _live(alias: str) -> Any:
@@ -390,6 +412,8 @@ def update_stage(ctx: TenantContext, *, stage_id: UUID, **fields: Any) -> Pipeli
             leaves_open = "stage_type" in changes and changes["stage_type"][0] == "OPEN"
             if ("is_active" in changes and not stage.is_active) or leaves_open:
                 _no_open_opportunities(alias, pipeline.pk, stage.pk)
+            if "stage_type" in changes:
+                _stage_not_in_use(alias, stage.pk)
             stage.save(using=alias, update_fields=[*changes, "updated_at"])
             record(ctx, "stage.updated", Entity("stage", stage.pk, stage.code), changes)
     return stage

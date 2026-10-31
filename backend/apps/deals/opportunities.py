@@ -50,6 +50,7 @@ _REFERENCES = {  # FK compuesta violada → el campo que la causó
     "opportunities_created_by_fk": "created_by_user_id",  # quien actúa no es miembro
     "opportunities_updated_by_fk": "updated_by_user_id",
     "opportunities_deleted_by_fk": "deleted_by_user_id",
+    "opp_history_changed_by_fk": "changed_by_user_id",
 }
 TOP = Decimal("999999999999.99")  # lo que cabe en NUMERIC(14,2): cada línea y su suma
 _EARLIEST, _LATEST = dt.datetime(2000, 1, 1, tzinfo=dt.UTC), dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
