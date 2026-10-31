@@ -51,6 +51,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/lost-reasons/{lost_reason_id}/",  # F5-02c
         "/api/v1/o/{org_slug}/opportunities/",  # F5-04b
         "/api/v1/o/{org_slug}/opportunities/{opportunity_id}/",  # F5-04c
+        "/api/v1/o/{org_slug}/opportunities/{opportunity_id}/assign/",  # F5-04f
         "/api/v1/o/{org_slug}/pipelines/",
         "/api/v1/o/{org_slug}/pipelines/{pipeline_id}/",  # F5-02d
         "/api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/",  # F5-02e

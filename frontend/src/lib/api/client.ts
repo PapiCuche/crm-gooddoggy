@@ -76,6 +76,7 @@ import type {
   Note,
   NoteWriteRequest,
   OpportunitiesListParams,
+  OpportunityAssignRequest,
   OpportunityCreateRequest,
   OpportunityDetail,
   OrganizationSummary,
@@ -7426,6 +7427,198 @@ export const useOpportunitiesUpdate = <TError = ErrorType<Error>, TContext = unk
   TContext
 > => {
   return useMutation(getOpportunitiesUpdateMutationOptions(options), queryClient);
+};
+
+export const getOpportunitiesDeleteUrl = (orgSlug: string, opportunityId: string) => {
+  return `/api/v1/o/${orgSlug}/opportunities/${opportunityId}/`;
+};
+
+/**
+ * Borrado lógico, de una abierta o de una cerrada. Con `opportunities.view` y `opportunities.delete`; fuera del alcance de uno u otro, o ya borrada: 404.
+ */
+export const opportunitiesDelete = async (
+  orgSlug: string,
+  opportunityId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getOpportunitiesDeleteUrl(orgSlug, opportunityId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getOpportunitiesDeleteMutationKey = () => ["opportunitiesDelete"] as const;
+
+export const getOpportunitiesDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof opportunitiesDelete>>,
+    TError,
+    OpportunitiesDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof opportunitiesDelete>>,
+  TError,
+  OpportunitiesDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getOpportunitiesDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof opportunitiesDelete>>,
+    OpportunitiesDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, opportunityId } = props ?? {};
+
+    return opportunitiesDelete(orgSlug, opportunityId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OpportunitiesDeleteMutationResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesDelete>>
+>;
+
+export type OpportunitiesDeleteMutationError = ErrorType<Error>;
+export type OpportunitiesDeleteMutationVariables = { orgSlug: string; opportunityId: string };
+
+export const useOpportunitiesDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof opportunitiesDelete>>,
+      TError,
+      OpportunitiesDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof opportunitiesDelete>>,
+  TError,
+  OpportunitiesDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getOpportunitiesDeleteMutationOptions(options), queryClient);
+};
+
+export const getOpportunitiesAssignUrl = (orgSlug: string, opportunityId: string) => {
+  return `/api/v1/o/${orgSlug}/opportunities/${opportunityId}/assign/`;
+};
+
+/**
+ * Deja la oportunidad (abierta o cerrada) con ese responsable si `version` sigue vigente. Con `opportunities.assign` y `opportunities.view`: lo que alcanza lo decide el alcance de `view`; fuera de él, 404. 400 en `assigned_user_id` si no es un miembro activo de la organización. 409 `STALE_VERSION`. Si ya es el responsable no escribe. La respuesta es el detalle, aunque el nuevo responsable saque la oportunidad del alcance de quien asigna.
+ */
+export const opportunitiesAssign = async (
+  orgSlug: string,
+  opportunityId: string,
+  opportunityAssignRequest: OpportunityAssignRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<OpportunityDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<OpportunityDetail>(getOpportunitiesAssignUrl(orgSlug, opportunityId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(opportunityAssignRequest),
+  });
+};
+
+export const getOpportunitiesAssignMutationKey = () => ["opportunitiesAssign"] as const;
+
+export const getOpportunitiesAssignMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof opportunitiesAssign>>,
+    TError,
+    OpportunitiesAssignMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof opportunitiesAssign>>,
+  TError,
+  OpportunitiesAssignMutationVariables,
+  TContext
+> => {
+  const mutationKey = getOpportunitiesAssignMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof opportunitiesAssign>>,
+    OpportunitiesAssignMutationVariables
+  > = (props) => {
+    const { orgSlug, opportunityId, data } = props ?? {};
+
+    return opportunitiesAssign(orgSlug, opportunityId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OpportunitiesAssignMutationResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesAssign>>
+>;
+export type OpportunitiesAssignMutationBody = OpportunityAssignRequest;
+export type OpportunitiesAssignMutationError = ErrorType<Error>;
+export type OpportunitiesAssignMutationVariables = {
+  orgSlug: string;
+  opportunityId: string;
+  data: OpportunityAssignRequest;
+};
+
+export const useOpportunitiesAssign = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof opportunitiesAssign>>,
+      TError,
+      OpportunitiesAssignMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof opportunitiesAssign>>,
+  TError,
+  OpportunitiesAssignMutationVariables,
+  TContext
+> => {
+  return useMutation(getOpportunitiesAssignMutationOptions(options), queryClient);
 };
 
 export const getPermissionsListUrl = (orgSlug: string) => {

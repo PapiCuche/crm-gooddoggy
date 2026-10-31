@@ -1,6 +1,6 @@
 """Rutas de tenant de las oportunidades: `…/opportunities/` (F5-04, E09-07). Lectura: la
 lista (F5-04b) y el detalle con sus líneas y el historial de etapas (F5-04c). Escritura: crear
-(F5-04d) y cambiar (F5-04e); asignar, borrar y los cambios de etapa, después.
+(F5-04d), cambiar (F5-04e), asignar y borrar (F5-04f); los cambios de etapa, después.
 
 `opportunities.view` admite alcance (`AssignedTo`: por responsable, `TEAM` incluye a los
 compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las que la
@@ -56,6 +56,7 @@ BAD_REFERENCE = {  # sin repetir el id recibido
     "contact_id": "No es un contacto de la organización que puedas ver.",
     "pipeline_id": "No es un pipeline activo de la organización.",
     "variant_id": "No es una variante activa de la organización.",
+    "assigned_user_id": "No es un miembro activo de la organización.",
 }
 
 
@@ -300,18 +301,26 @@ class OpportunitiesView(OpportunitiesQuery, generics.ListAPIView):
         "perdida: se reabre antes). No cambia el contacto, el pipeline, la etapa ni el "
         "responsable. Sin cambios no escribe ni sube `version`.",
     ),
+    delete=extend_schema(
+        operation_id="opportunities_delete",
+        tags=["deals"],
+        responses={204: None, **errors(401, 403, 404)},
+        description="Borrado lógico, de una abierta o de una cerrada. Con `opportunities.view` y "
+        "`opportunities.delete`; fuera del alcance de uno u otro, o ya borrada: 404.",
+    ),
 )
 class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
     required_permissions = {
         "GET": "opportunities.view",
         "PATCH": ("opportunities.view", "opportunities.update"),
+        "DELETE": ("opportunities.view", "opportunities.delete"),
     }
     serializer_class = OpportunityDetailSerializer
     lookup_url_kwarg = "opportunity_id"
 
     def get_queryset(self) -> QuerySet[Opportunity]:
         found = super().get_queryset()
-        if self.request.method == "PATCH":
+        if self.request.method in ("PATCH", "DELETE"):
             # El alcance se decide sobre la fila bloqueada hasta el final de la petición: un
             # cambio de responsable (`…/assign/`) no se cuela entre la comprobación y la escritura.
             return found.select_for_update(no_key=True, of=("self",))
@@ -327,4 +336,42 @@ class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
             commands.update_opportunity(
                 _tenant(), opportunity_id=found.pk, version=version, **fields
             )
+        return reply(request, found.pk)
+
+    def delete(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
+        found = self.get_object()
+        with domain():
+            commands.delete_opportunity(_tenant(), opportunity_id=found.pk)
+        return Response(status=204)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="opportunities_assign",
+        tags=["deals"],
+        request=inputs.OpportunityAssignSerializer,
+        responses={200: OpportunityDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Deja la oportunidad (abierta o cerrada) con ese responsable si `version` "
+        "sigue vigente. Con `opportunities.assign` y `opportunities.view`: lo que alcanza lo "
+        "decide el alcance de `view`; fuera de él, 404. 400 en `assigned_user_id` si no es un "
+        "miembro activo de la organización. 409 `STALE_VERSION`. Si ya es el responsable no "
+        "escribe. La respuesta es el detalle, aunque el nuevo responsable saque la oportunidad "
+        "del alcance de quien asigna.",
+    ),
+)
+class OpportunityAssignView(OpportunitiesQuery, generics.GenericAPIView):
+    required_permissions = {"POST": ("opportunities.view", "opportunities.assign")}
+    serializer_class = OpportunityDetailSerializer
+    lookup_url_kwarg = "opportunity_id"
+
+    def get_queryset(self) -> QuerySet[Opportunity]:
+        # La fila queda bloqueada al decidir el alcance, como en el `PATCH`.
+        return super().get_queryset().select_for_update(no_key=True, of=("self",))
+
+    def post(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.OpportunityAssignSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        found = self.get_object()
+        with domain():
+            commands.assign_opportunity(_tenant(), opportunity_id=found.pk, **wanted.validated_data)
         return reply(request, found.pk)

@@ -114,3 +114,8 @@ class OpportunityUpdateSerializer(OpportunityFields):
         min_value=0, max_value=100, required=False, help_text="Mientras esté abierta."
     )
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
+
+
+class OpportunityAssignSerializer(Closed, serializers.Serializer[Any]):
+    assigned_user_id = Id(help_text="El responsable: un miembro activo de la organización.")
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
