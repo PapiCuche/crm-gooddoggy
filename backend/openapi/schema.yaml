@@ -3716,6 +3716,143 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/opportunities/{opportunity_id}/move/:
+    post:
+      operationId: opportunities_move
+      description: 'Mueve una oportunidad abierta a otra etapa abierta y activa de
+        su pipeline (también hacia atrás): toma su probabilidad, reinicia su reloj
+        y deja el paso en el historial. Con `opportunities.view` y `opportunities.update`;
+        fuera del alcance: 404. 400 en `stage_id` si no es una etapa activa de ese
+        pipeline. 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, `CLOSING_STAGE` (una
+        etapa WON o LOST: se gana o se pierde), `MISSING_FIELDS` (la etapa exige datos
+        que faltan), `PIPELINE_UNAVAILABLE`. Si ya está en la etapa no escribe.'
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityMoveRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/opportunities/{opportunity_id}/reopen/:
+    post:
+      operationId: opportunities_reopen
+      description: 'Devuelve una oportunidad ganada o perdida a la etapa abierta y
+        activa elegida de su pipeline: borra la fecha de cierre, el motivo y la nota,
+        y conserva el importe. Con `opportunities.view` y `opportunities.update`;
+        fuera del alcance: 404. 400 en `stage_id` si no es una etapa abierta y activa
+        de ese pipeline. 409: `STALE_VERSION`, `NOT_CLOSED` (está abierta), `MISSING_FIELDS`,
+        `PIPELINE_UNAVAILABLE`.'
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityMoveRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/permissions/:
     get:
       operationId: permissions_list
@@ -8662,6 +8799,25 @@ components:
       - updated_at
       - version
       - won_at
+    OpportunityMoveRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        stage_id:
+          type: string
+          format: uuid
+          description: Una etapa activa del pipeline de la oportunidad (abierta, al
+            reabrir).
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - stage_id
+      - version
     OrganizationSummary:
       type: object
       properties:

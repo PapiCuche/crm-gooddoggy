@@ -111,6 +111,7 @@ export * from "./opportunity";
 export * from "./opportunityAssignRequest";
 export * from "./opportunityCreateRequest";
 export * from "./opportunityDetail";
+export * from "./opportunityMoveRequest";
 export * from "./organizationSummary";
 export * from "./paginatedAuditEntryList";
 export * from "./paginatedBranchList";

@@ -119,3 +119,10 @@ class OpportunityUpdateSerializer(OpportunityFields):
 class OpportunityAssignSerializer(Closed, serializers.Serializer[Any]):
     assigned_user_id = Id(help_text="El responsable: un miembro activo de la organización.")
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
+
+
+class OpportunityMoveSerializer(Closed, serializers.Serializer[Any]):
+    stage_id = Id(
+        help_text="Una etapa activa del pipeline de la oportunidad (abierta, al reabrir)."
+    )
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")

@@ -1,6 +1,7 @@
 """Rutas de tenant de las oportunidades: `…/opportunities/` (F5-04, E09-07). Lectura: la
 lista (F5-04b) y el detalle con sus líneas y el historial de etapas (F5-04c). Escritura: crear
-(F5-04d), cambiar (F5-04e), asignar y borrar (F5-04f); los cambios de etapa, después.
+(F5-04d), cambiar (F5-04e), asignar y borrar (F5-04f), mover y reabrir (F5-04g); ganar y
+perder, después.
 
 `opportunities.view` admite alcance (`AssignedTo`: por responsable, `TEAM` incluye a los
 compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las que la
@@ -21,7 +22,7 @@ id que no existe. Las escrituras responden con el detalle, como lo lee `GET`: qu
 no poder leer.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Container, Iterator
 from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
@@ -40,6 +41,7 @@ from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
 from apps.deals import commands as pipeline_commands
 from apps.deals import opportunities as commands
+from apps.deals import opportunity_stages as stages
 from apps.deals import selectors
 from apps.deals.api import opportunity_inputs as inputs
 from apps.deals.models import Opportunity, StageType
@@ -51,12 +53,16 @@ from core.text import line
 TEXT_MAX = 200  # como el título
 STALE = "Otra persona cambió la oportunidad: vuelve a cargarla y repite el cambio."
 CLOSED = "Está ganada o perdida: reábrela antes de cambiarla."
+CLOSING = "Es una etapa de cierre: se llega ganando o perdiendo."
+NOT_CLOSED = "Está abierta: solo se reabre una ganada o perdida."
+UNAVAILABLE = "El pipeline de la oportunidad no está activo."
 GENERIC = "Dato no admitido."
 BAD_REFERENCE = {  # sin repetir el id recibido
     "contact_id": "No es un contacto de la organización que puedas ver.",
     "pipeline_id": "No es un pipeline activo de la organización.",
     "variant_id": "No es una variante activa de la organización.",
     "assigned_user_id": "No es un miembro activo de la organización.",
+    "stage_id": "No es una etapa activa del pipeline de la oportunidad.",
 }
 
 
@@ -187,6 +193,14 @@ def with_contact_name(found: QuerySet[Opportunity], request: Any) -> QuerySet[Op
     return found.annotate(contact_name=Subquery(visible.values("display_name")[:1]))
 
 
+def locked(found: QuerySet[Opportunity]) -> QuerySet[Opportunity]:
+    """Las filas bloqueadas hasta el final de la petición (`FOR NO KEY UPDATE`), sin los `JOIN` de
+    la etapa y el motivo: tras esperar un bloqueo, PostgreSQL vuelve a comprobar la fila con la
+    unión que ya había leído, y una etapa que cambió mientras esperaba la dejaría fuera (un 404
+    donde corresponde el 409 `STALE_VERSION`). El alcance, en cambio, sí se vuelve a decidir."""
+    return found.select_related(None).select_for_update(no_key=True, of=("self",))
+
+
 def _tenant() -> Any:
     tenant = context.current()
     assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
@@ -194,10 +208,12 @@ def _tenant() -> Any:
 
 
 @contextmanager
-def domain() -> Iterator[None]:
+def domain(body: Container[str] | None = None) -> Iterator[None]:
     """Lo que lanzan los comandos, con la forma del contrato: una carrera o un estado que no
     admite el cambio es un 409 con su código; una referencia que no sirve, un 400 en su campo (sin
-    repetir el valor); lo que no existe, un 404."""
+    repetir el valor); lo que no existe, un 404. `body`: los campos del cuerpo que una referencia
+    puede nombrar; otra (el pipeline de la oportunidad, que ya no está activo) no es del cliente:
+    409 `PIPELINE_UNAVAILABLE`."""
     try:
         yield
     except ObjectDoesNotExist:
@@ -206,7 +222,16 @@ def domain() -> Iterator[None]:
         raise ApiError("STALE_VERSION", 409, STALE) from None
     except commands.OpportunityClosed:
         raise ApiError("OPPORTUNITY_CLOSED", 409, CLOSED) from None
+    except stages.ClosingStage:
+        raise ApiError("CLOSING_STAGE", 409, CLOSING) from None
+    except stages.NotClosed:
+        raise ApiError("NOT_CLOSED", 409, NOT_CLOSED) from None
+    except stages.MissingFields as missing:
+        message = f"La etapa exige datos que faltan: {', '.join(missing.fields)}."
+        raise ApiError("MISSING_FIELDS", 409, message) from None
     except commands.BadReference as bad:
+        if body is not None and bad.field not in body:
+            raise ApiError("PIPELINE_UNAVAILABLE", 409, UNAVAILABLE) from None
         field = "items" if bad.field == "variant_id" else bad.field  # una línea no es un campo
         message = BAD_REFERENCE.get(bad.field, "No es de la organización.")
         raise serializers.ValidationError({field: [message]}) from None
@@ -323,7 +348,7 @@ class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
         if self.request.method in ("PATCH", "DELETE"):
             # El alcance se decide sobre la fila bloqueada hasta el final de la petición: un
             # cambio de responsable (`…/assign/`) no se cuela entre la comprobación y la escritura.
-            return found.select_for_update(no_key=True, of=("self",))
+            return locked(found)
         return selectors.with_detail(found)
 
     def patch(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
@@ -366,7 +391,7 @@ class OpportunityAssignView(OpportunitiesQuery, generics.GenericAPIView):
 
     def get_queryset(self) -> QuerySet[Opportunity]:
         # La fila queda bloqueada al decidir el alcance, como en el `PATCH`.
-        return super().get_queryset().select_for_update(no_key=True, of=("self",))
+        return locked(super().get_queryset())
 
     def post(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.OpportunityAssignSerializer(data=request.data)
@@ -375,3 +400,68 @@ class OpportunityAssignView(OpportunitiesQuery, generics.GenericAPIView):
         with domain():
             commands.assign_opportunity(_tenant(), opportunity_id=found.pk, **wanted.validated_data)
         return reply(request, found.pk)
+
+
+class StageCommand(OpportunitiesQuery, generics.GenericAPIView):
+    """Un cambio de etapa (F5-04g): `POST …/{id}/<acción>/` con `opportunities.view` y el permiso
+    de la acción, sobre la fila bloqueada como el `PATCH`. Cada subclase declara su cuerpo y su
+    comando. Responde con el detalle."""
+
+    serializer_class = OpportunityDetailSerializer
+    lookup_url_kwarg = "opportunity_id"
+    wanted: type[serializers.Serializer[Any]]
+    run: Callable[..., Opportunity]
+    body: frozenset[str] = frozenset()
+
+    def get_queryset(self) -> QuerySet[Opportunity]:
+        return locked(super().get_queryset())
+
+    def post(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
+        wanted = self.wanted(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        found = self.get_object()
+        with domain(self.body):
+            type(self).run(_tenant(), opportunity_id=found.pk, **wanted.validated_data)
+        return reply(request, found.pk)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="opportunities_move",
+        tags=["deals"],
+        request=inputs.OpportunityMoveSerializer,
+        responses={200: OpportunityDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Mueve una oportunidad abierta a otra etapa abierta y activa de su pipeline "
+        "(también hacia atrás): toma su probabilidad, reinicia su reloj y deja el paso en el "
+        "historial. Con `opportunities.view` y `opportunities.update`; fuera del alcance: 404. "
+        "400 en `stage_id` si no es una etapa activa de ese pipeline. 409: `STALE_VERSION`, "
+        "`OPPORTUNITY_CLOSED`, `CLOSING_STAGE` (una etapa WON o LOST: se gana o se pierde), "
+        "`MISSING_FIELDS` (la etapa exige datos que faltan), `PIPELINE_UNAVAILABLE`. Si ya está "
+        "en la etapa no escribe.",
+    ),
+)
+class OpportunityMoveView(StageCommand):
+    required_permissions = {"POST": ("opportunities.view", "opportunities.update")}
+    wanted = inputs.OpportunityMoveSerializer
+    run = staticmethod(stages.move_opportunity)
+    body = frozenset({"stage_id"})
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="opportunities_reopen",
+        tags=["deals"],
+        request=inputs.OpportunityMoveSerializer,
+        responses={200: OpportunityDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Devuelve una oportunidad ganada o perdida a la etapa abierta y activa "
+        "elegida de su pipeline: borra la fecha de cierre, el motivo y la nota, y conserva el "
+        "importe. Con `opportunities.view` y `opportunities.update`; fuera del alcance: 404. "
+        "400 en `stage_id` si no es una etapa abierta y activa de ese pipeline. 409: "
+        "`STALE_VERSION`, `NOT_CLOSED` (está abierta), `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.",
+    ),
+)
+class OpportunityReopenView(StageCommand):
+    required_permissions = {"POST": ("opportunities.view", "opportunities.update")}
+    wanted = inputs.OpportunityMoveSerializer
+    run = staticmethod(stages.reopen_opportunity)
+    body = frozenset({"stage_id"})
