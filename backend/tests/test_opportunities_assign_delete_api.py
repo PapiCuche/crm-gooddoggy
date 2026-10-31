@@ -299,12 +299,12 @@ def test_a_change_in_flight_is_a_409_or_a_404_for_the_waiting_assignment_never_a
         sales.ana, other, {"assigned_user_id": to, "version": 1}, close, [won.pk, other]
     )
     assert waited and answer == (409, "STALE_VERSION")  # cambió de etapa y de versión: 409, no 404
-    # una reasignación en vuelo saca la fila del alcance de quien esperaba: 404, como siempre
+    # una reasignación en vuelo saca la fila del alcance de quien esperaba (sam, `TEAM`): 404
     waited, answer = held_assign(
-        sales.vera,
+        sales.sam,
         pk,
-        {"assigned_user_id": str(sales.vera.pk), "version": 1},
+        {"assigned_user_id": str(sales.sam.pk), "version": 2},
         REASSIGN,
-        [sales.sam.pk, pk],
+        [sales.ana.pk, pk],
     )
     assert waited and answer[0] == 404
