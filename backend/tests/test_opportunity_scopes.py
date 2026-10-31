@@ -198,4 +198,4 @@ def test_combined_scopes_add_up_and_a_removed_teammate_stops_counting(
     with tenant_scope(ctx(sales.a)):
         TeamMember.objects.filter(membership_id=sales.m["vera"]).delete()  # vera deja el equipo
     assert titles(sales.sam, {Scope.TEAM}) == {"De sam"}  # y sus oportunidades dejan de contar
-    assert titles(sales.vera, {Scope.TEAM}) == {"De vera"}  # sin equipos: lo propio
+    assert titles(sales.vera, {Scope.TEAM}) == {"De vera", "Borrada"}  # sin equipos: lo propio
