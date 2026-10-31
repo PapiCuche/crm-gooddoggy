@@ -439,7 +439,7 @@ def create_lost_reason(
                 last = LostReason.objects.using(alias).aggregate(last=Max("sort_order"))["last"]
                 values["sort_order"] = 0 if last is None else last + 1
                 if values["sort_order"] > ORDER_MAX:
-                    raise ValueError(f"orden: el último ya es {ORDER_MAX}; indica uno")
+                    raise Invalid("sort_order", f"orden: el último ya es {ORDER_MAX}; indica uno")
             reason: LostReason = LostReason.objects.using(alias).create(
                 **values, created_by_user_id=ctx.user_id, updated_by_user_id=ctx.user_id
             )

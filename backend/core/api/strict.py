@@ -1,9 +1,8 @@
-"""Campos de serializador estrictos para las rutas que escriben (F5-02b).
+"""Campos de serializador estrictos para las rutas que escriben (F3-48d, F5-02b).
 
 Solo el tipo propio del campo: ni `"5"` por 5 ni `1` por `true`, y un campo que el serializador
-no declara es 400 con su nombre en lugar de perderse en silencio. Son los de
-`apps.pricing.api.promotions` (F3-48d) llevados al núcleo, porque `deals` y `pricing` no se
-importan; las promociones los tomarán de aquí en una entrega posterior."""
+no declara es 400 con su nombre en lugar de perderse en silencio. Nacieron en las promociones;
+viven en el núcleo porque `pricing` y `deals` no se importan."""
 
 from collections.abc import Mapping
 from typing import Any

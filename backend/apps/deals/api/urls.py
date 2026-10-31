@@ -5,4 +5,9 @@ from apps.deals.api import pipelines
 urlpatterns = [
     path("pipelines/", pipelines.PipelinesView.as_view(), name="pipelines"),
     path("lost-reasons/", pipelines.LostReasonsView.as_view(), name="lost-reasons"),
+    path(
+        "lost-reasons/<uuid:lost_reason_id>/",
+        pipelines.LostReasonView.as_view(),
+        name="lost-reason",
+    ),
 ]

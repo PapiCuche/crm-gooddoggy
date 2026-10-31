@@ -147,14 +147,29 @@ def test_a_name_or_code_that_is_not_text_is_a_value_error(
     assert len(audit(migrator)) == 1
 
 
+@pytest.mark.parametrize("value", [True, 32768, -32769, "1", 1.5, None, [0]])
+def test_an_update_checks_the_order_like_a_creation_does(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any], value: Any
+) -> None:
+    made = run(world, commands.create_lost_reason, name="Precio", code="PRICE")
+    with pytest.raises(ValueError, match="orden"):
+        run(world, commands.update_lost_reason, lost_reason_id=made.pk, version=1, sort_order=value)
+    assert [a for a, _, _ in audit(migrator)] == ["lost_reason.created"]
+    done = run(
+        world, commands.update_lost_reason, lost_reason_id=made.pk, version=1, sort_order=-32768
+    )
+    assert done.sort_order == -32768  # los dos extremos que caben
+
+
 def test_the_implicit_order_stops_at_the_column_limit(
     world: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
     run(world, commands.create_lost_reason, name="Alto", code="HIGH", sort_order=32766)
     last = run(world, commands.create_lost_reason, name="Tope", code="TOP")
     assert last.sort_order == 32767  # el último que cabe
-    with pytest.raises(ValueError, match="orden"):
+    with pytest.raises(commands.Invalid, match="orden") as error:
         run(world, commands.create_lost_reason, name="Pasa", code="OVER")
+    assert error.value.field == "sort_order"  # la API lo muestra en su campo
     assert count(migrator, "lost_reasons") == 2
     explicit = run(world, commands.create_lost_reason, name="Indicado", code="SET", sort_order=0)
     assert explicit.sort_order == 0 and len(audit(migrator)) == 3
