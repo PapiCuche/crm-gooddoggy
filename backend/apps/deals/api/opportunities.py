@@ -167,7 +167,10 @@ class OpportunitySearch(BaseFilterBackend):
         params, names = request.query_params, tuple(OpportunitySearchSerializer().fields)
         if repeated := [k for k in names if len(params.getlist(k)) > 1]:
             raise serializers.ValidationError({k: ["Una sola vez."] for k in repeated})
-        wanted = OpportunitySearchSerializer(data={k: params[k] for k in names if k in params})
+        given = {k: params[k] for k in names if k in params}
+        if given.get("status") == "":  # `?status=` es lo mismo que no pedirlo, como `?q=`
+            del given["status"]
+        wanted = OpportunitySearchSerializer(data=given)
         wanted.is_valid(raise_exception=True)
         found: QuerySet[Opportunity] = queryset
         filters = dict(wanted.validated_data)
@@ -185,6 +188,14 @@ def with_contact_name(found: QuerySet[Opportunity], request: Any) -> QuerySet[Op
     assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
     visible = scoped(ectx, "contacts.view", contacts().filter(pk=OuterRef("contact_id")))
     return found.annotate(contact_name=Subquery(visible.values("display_name")[:1]))
+
+
+def locked(found: QuerySet[Opportunity]) -> QuerySet[Opportunity]:
+    """Las filas bloqueadas hasta el final de la petición (`FOR NO KEY UPDATE`), sin los `JOIN` de
+    la etapa y el motivo: tras esperar un bloqueo, PostgreSQL vuelve a comprobar la fila con la
+    unión que ya había leído, y una etapa que cambió mientras esperaba la dejaría fuera (un 404
+    donde corresponde el 409 `STALE_VERSION`). El alcance, en cambio, sí se vuelve a decidir."""
+    return found.select_related(None).select_for_update(no_key=True, of=("self",))
 
 
 def _tenant() -> Any:
@@ -248,8 +259,9 @@ class OpportunitiesQuery:
         responses={200: OpportunitySerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las oportunidades vivas dentro del alcance de `opportunities.view`, paginadas "
         "por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los "
-        "mismos. 400: un filtro repetido, un UUID o un `status` que no lo son, `q` que no es una "
-        f"línea de texto imprimible o pasa de {TEXT_MAX} caracteres.",
+        "mismos. `status` y `q` vacíos: sin filtro. 400: un filtro repetido, un UUID o un `status` "
+        f"que no lo son, `q` que no es una línea de texto imprimible o pasa de {TEXT_MAX} "
+        "caracteres.",
     ),
     post=extend_schema(
         operation_id="opportunities_create",
@@ -323,7 +335,7 @@ class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
         if self.request.method in ("PATCH", "DELETE"):
             # El alcance se decide sobre la fila bloqueada hasta el final de la petición: un
             # cambio de responsable (`…/assign/`) no se cuela entre la comprobación y la escritura.
-            return found.select_for_update(no_key=True, of=("self",))
+            return locked(found)
         return selectors.with_detail(found)
 
     def patch(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
