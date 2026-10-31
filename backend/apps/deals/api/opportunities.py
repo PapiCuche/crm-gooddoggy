@@ -189,6 +189,14 @@ def with_contact_name(found: QuerySet[Opportunity], request: Any) -> QuerySet[Op
     return found.annotate(contact_name=Subquery(visible.values("display_name")[:1]))
 
 
+def locked(found: QuerySet[Opportunity]) -> QuerySet[Opportunity]:
+    """Las filas bloqueadas hasta el final de la petición (`FOR NO KEY UPDATE`), sin los `JOIN` de
+    la etapa y el motivo: tras esperar un bloqueo, PostgreSQL vuelve a comprobar la fila con la
+    unión que ya había leído, y una etapa que cambió mientras esperaba la dejaría fuera (un 404
+    donde corresponde el 409 `STALE_VERSION`). El alcance, en cambio, sí se vuelve a decidir."""
+    return found.select_related(None).select_for_update(no_key=True, of=("self",))
+
+
 def _tenant() -> Any:
     tenant = context.current()
     assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
@@ -318,7 +326,7 @@ class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
         if self.request.method == "PATCH":
             # El alcance se decide sobre la fila bloqueada hasta el final de la petición: un
             # cambio de responsable (`…/assign/`) no se cuela entre la comprobación y la escritura.
-            return found.select_for_update(no_key=True, of=("self",))
+            return locked(found)
         return selectors.with_detail(found)
 
     def patch(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
