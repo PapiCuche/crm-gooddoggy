@@ -36,6 +36,7 @@ from core.tenancy.scope import require_scope
 
 INVARIANT = "El pipeline lleva una etapa WON, al menos una LOST y al menos una OPEN, activas."
 STALE = "Otra persona lo cambió: vuelve a cargarlo y repite el cambio."
+IS_DEFAULT = "Es el pipeline predeterminado: elige otro como predeterminado antes."
 CODE_TAKEN = "Ya hay uno con ese código."
 FULL = "La organización ya tiene {} {}."
 GENERIC = "Dato no admitido."
@@ -58,6 +59,8 @@ def _domain(stages: str = "") -> Iterator[None]:
         raise NotFound from None
     except commands.StaleVersion:
         raise ApiError("STALE_VERSION", 409, STALE) from None
+    except commands.PipelineIsDefault:
+        raise ApiError("PIPELINE_IS_DEFAULT", 409, IS_DEFAULT) from None
     except commands.StageInvariant:
         raise ApiError("PIPELINE_INVARIANT", 409, INVARIANT) from None
     except commands.CodeTaken:
@@ -156,6 +159,52 @@ class PipelinesView(generics.ListAPIView):
             _capped(tenant, selectors.pipeline_count, inputs.PIPELINES_MAX, "pipelines")
             made = commands.create_pipeline(tenant, **wanted.validated_data)
         return _reply(made.pk, 201)
+
+
+class PipelineView(APIView):
+    required_permissions = {"PATCH": "pipelines.manage"}
+
+    @extend_schema(
+        operation_id="pipelines_update",
+        tags=["deals"],
+        request=inputs.PipelineUpdateSerializer,
+        responses={200: PipelineSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia lo enviado si `version` sigue vigente. Con `pipelines.manage`. 409: "
+        "`STALE_VERSION`, `PIPELINE_IS_DEFAULT` (se desactiva el predeterminado o se le quita la "
+        "marca sin elegir otro). El código y la moneda no cambian. `is_default: true` quita la "
+        "marca al anterior.",
+    )
+    def patch(self, request: Request, pipeline_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.PipelineUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        fields = dict(wanted.validated_data)
+        version = fields.pop("version")
+        with _domain():
+            commands.update_pipeline(_tenant(), pipeline_id=pipeline_id, version=version, **fields)
+        return _reply(pipeline_id)
+
+
+class StageView(APIView):
+    required_permissions = {"PATCH": "pipelines.manage"}
+
+    @extend_schema(
+        operation_id="pipeline_stages_update",
+        tags=["deals"],
+        request=inputs.StageUpdateSerializer,
+        responses={200: PipelineSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia lo enviado de una etapa, sin `version`: se apoya en el bloqueo del "
+        "pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`. El código y "
+        "el orden no cambian aquí. Con `pipelines.manage`.",
+    )
+    def patch(self, request: Request, pipeline_id: UUID, stage_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.StageUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        with _domain():
+            pipeline = selectors.locked_pipeline(pipeline_id)  # la etapa es de este pipeline
+            if not selectors.has_stage(pipeline.pk, stage_id):
+                raise NotFound
+            commands.update_stage(_tenant(), stage_id=stage_id, **wanted.validated_data)
+        return _reply(pipeline.pk)
 
 
 @extend_schema_view(

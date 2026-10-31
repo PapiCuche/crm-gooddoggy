@@ -313,7 +313,7 @@ def update_pipeline(
         if pipeline.is_default and not (default and active):
             raise PipelineIsDefault(pipeline_id)
         if default and not active:
-            raise ValueError("un pipeline inactivo no puede ser el predeterminado")
+            raise Invalid("is_default", "un pipeline inactivo no puede ser el predeterminado")
         if "is_active" in changes and not active:
             _no_open_opportunities(alias, pipeline.pk)
         if default and not pipeline.is_default:

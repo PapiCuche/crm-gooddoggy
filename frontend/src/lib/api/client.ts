@@ -109,9 +109,11 @@ import type {
   PatchedContactUpdateRequest,
   PatchedLostReasonUpdateRequest,
   PatchedNoteUpdateRequest,
+  PatchedPipelineUpdateRequest,
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
   PatchedRoleUpdateRequest,
+  PatchedStageUpdateRequest,
   PatchedTagUpdateRequest,
   PatchedTeamUpdateRequest,
   PatchedVariantUpdateRequest,
@@ -7280,6 +7282,230 @@ export const usePipelinesCreate = <TError = ErrorType<Error>, TContext = unknown
   TContext
 > => {
   return useMutation(getPipelinesCreateMutationOptions(options), queryClient);
+};
+
+export const getPipelinesUpdateUrl = (orgSlug: string, pipelineId: string) => {
+  return `/api/v1/o/${orgSlug}/pipelines/${pipelineId}/`;
+};
+
+/**
+ * Cambia lo enviado si `version` sigue vigente. Con `pipelines.manage`. 409: `STALE_VERSION`, `PIPELINE_IS_DEFAULT` (se desactiva el predeterminado o se le quita la marca sin elegir otro). El código y la moneda no cambian. `is_default: true` quita la marca al anterior.
+ */
+export const pipelinesUpdate = async (
+  orgSlug: string,
+  pipelineId: string,
+  patchedPipelineUpdateRequest: PatchedPipelineUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Pipeline> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Pipeline>(getPipelinesUpdateUrl(orgSlug, pipelineId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedPipelineUpdateRequest),
+  });
+};
+
+export const getPipelinesUpdateMutationKey = () => ["pipelinesUpdate"] as const;
+
+export const getPipelinesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pipelinesUpdate>>,
+    TError,
+    PipelinesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pipelinesUpdate>>,
+  TError,
+  PipelinesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPipelinesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pipelinesUpdate>>,
+    PipelinesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, pipelineId, data } = props ?? {};
+
+    return pipelinesUpdate(orgSlug, pipelineId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PipelinesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pipelinesUpdate>>
+>;
+export type PipelinesUpdateMutationBody = PatchedPipelineUpdateRequest;
+export type PipelinesUpdateMutationError = ErrorType<Error>;
+export type PipelinesUpdateMutationVariables = {
+  orgSlug: string;
+  pipelineId: string;
+  data: PatchedPipelineUpdateRequest;
+};
+
+export const usePipelinesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof pipelinesUpdate>>,
+      TError,
+      PipelinesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof pipelinesUpdate>>,
+  TError,
+  PipelinesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPipelinesUpdateMutationOptions(options), queryClient);
+};
+
+export const getPipelineStagesUpdateUrl = (
+  orgSlug: string,
+  pipelineId: string,
+  stageId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/pipelines/${pipelineId}/stages/${stageId}/`;
+};
+
+/**
+ * Cambia lo enviado de una etapa, sin `version`: se apoya en el bloqueo del pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`. El código y el orden no cambian aquí. Con `pipelines.manage`.
+ */
+export const pipelineStagesUpdate = async (
+  orgSlug: string,
+  pipelineId: string,
+  stageId: string,
+  patchedStageUpdateRequest?: PatchedStageUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Pipeline> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Pipeline>(getPipelineStagesUpdateUrl(orgSlug, pipelineId, stageId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedStageUpdateRequest),
+  });
+};
+
+export const getPipelineStagesUpdateMutationKey = () => ["pipelineStagesUpdate"] as const;
+
+export const getPipelineStagesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pipelineStagesUpdate>>,
+    TError,
+    PipelineStagesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pipelineStagesUpdate>>,
+  TError,
+  PipelineStagesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPipelineStagesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pipelineStagesUpdate>>,
+    PipelineStagesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, pipelineId, stageId, data } = props ?? {};
+
+    return pipelineStagesUpdate(orgSlug, pipelineId, stageId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PipelineStagesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pipelineStagesUpdate>>
+>;
+export type PipelineStagesUpdateMutationBody = PatchedStageUpdateRequest | undefined;
+export type PipelineStagesUpdateMutationError = ErrorType<Error>;
+export type PipelineStagesUpdateMutationVariables = {
+  orgSlug: string;
+  pipelineId: string;
+  stageId: string;
+  data?: PatchedStageUpdateRequest;
+};
+
+export const usePipelineStagesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof pipelineStagesUpdate>>,
+      TError,
+      PipelineStagesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof pipelineStagesUpdate>>,
+  TError,
+  PipelineStagesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPipelineStagesUpdateMutationOptions(options), queryClient);
 };
 
 export const getPriceListsListUrl = (orgSlug: string, params?: PriceListsListParams) => {

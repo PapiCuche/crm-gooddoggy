@@ -300,7 +300,7 @@ def http_race(
     monkeypatch: pytest.MonkeyPatch,
     bodies: list[dict[str, Any]],
     method: str = "post",
-    path: str = PIPELINES,
+    path: str | list[str] = PIPELINES,
 ) -> list[Any]:
     """La primera petición retiene su transacción (tras auditar) y la segunda espera su bloqueo."""
     wrote, release, outcome = threading.Event(), threading.Event(), list[Any]([None, None])
@@ -318,7 +318,9 @@ def http_race(
 
     def run(index: int) -> None:
         try:
-            response = send(signed(owner), method, path, bodies[index])
+            response = send(
+                signed(owner), method, path if isinstance(path, str) else path[index], bodies[index]
+            )
             outcome[index] = (response.status_code, response.json().get("code"))
         except Exception as error:  # noqa: BLE001 — el resultado lo comprueba cada test
             outcome[index] = type(error).__name__

@@ -3495,6 +3495,142 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pipelines/{pipeline_id}/:
+    patch:
+      operationId: pipelines_update
+      description: 'Cambia lo enviado si `version` sigue vigente. Con `pipelines.manage`.
+        409: `STALE_VERSION`, `PIPELINE_IS_DEFAULT` (se desactiva el predeterminado
+        o se le quita la marca sin elegir otro). El código y la moneda no cambian.
+        `is_default: true` quita la marca al anterior.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: pipeline_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedPipelineUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/{stage_id}/:
+    patch:
+      operationId: pipeline_stages_update
+      description: 'Cambia lo enviado de una etapa, sin `version`: se apoya en el
+        bloqueo del pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`.
+        El código y el orden no cambian aquí. Con `pipelines.manage`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: pipeline_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: stage_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedStageUpdateRequest'
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pricing/price-lists/:
     get:
       operationId: price_lists_list
@@ -8111,6 +8247,34 @@ components:
           description: La que se leyó; si no, 409.
       required:
       - version
+    PatchedPipelineUpdateRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        kind:
+          $ref: '#/components/schemas/PipelineKindEnum'
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: -32768
+        is_active:
+          type: boolean
+        is_default:
+          type: boolean
+          description: '`true` quita la marca al anterior.'
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     PatchedPriceListUpdateRequest:
       type: object
       properties:
@@ -8173,6 +8337,38 @@ components:
         description:
           type: string
           maxLength: 255
+    PatchedStageUpdateRequest:
+      type: object
+      description: Lo que se puede cambiar de una etapa; el código y el orden no.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        stage_type:
+          $ref: '#/components/schemas/StageTypeEnum'
+        default_probability:
+          type: integer
+          maximum: 100
+          minimum: 0
+          description: WON 100, LOST 0.
+        stale_after_days:
+          type: integer
+          maximum: 32767
+          minimum: 1
+          nullable: true
+          description: '`null`: nunca.'
+        color:
+          type: string
+          minLength: 1
+          description: '`#rrggbb`.'
+          maxLength: 7
+        requires_fields:
+          type: object
+          additionalProperties: {}
+          description: Objeto JSON de hasta 4096 bytes y 4 niveles.
+        is_active:
+          type: boolean
     PatchedTagUpdateRequest:
       type: object
       properties:
