@@ -27,7 +27,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F5-03b | [#492](https://github.com/PapiCuche/crm-gooddoggy/issues/492) Oportunidades: comandos de crear, cambiar, asignar y borrar (sin API) | `feature/f5-opportunity-commands` | F5-03 | backend |
 | F5-03c | [#493](https://github.com/PapiCuche/crm-gooddoggy/issues/493) Oportunidades: comandos de mover, ganar, perder y reabrir, y el gancho de desactivación (sin API) | `feature/f5-opportunity-stage-commands` | F5-03b | backend |
 | F5-02b | [#489](https://github.com/PapiCuche/crm-gooddoggy/issues/489) Pipeline: `POST …/pipelines/` (primera de las escrituras de la API) | `feature/f5-pipelines-write-api` | #483 | backend |
-| F5-02c | por crear: Pipeline: `POST`/`PATCH` de motivos de pérdida y huecos de la revisión de F5-02 | `feature/f5-lost-reasons-write-api` | #489 | backend |
+| F5-02c | [#496](https://github.com/PapiCuche/crm-gooddoggy/issues/496) Pipeline: `POST`/`PATCH` de motivos de pérdida y huecos de la revisión de F5-02 | `feature/f5-lost-reasons-write-api` | #489 | backend |
 
 Siguen, en este orden: el resto de las escrituras de la API con `pipelines.manage` (`PATCH` de pipelines y de etapas, `POST` de etapas y `PUT …/stages/order/`, `POST`/`PATCH` de motivos de pérdida; ver las observaciones de F5-02b), oportunidades (F5-03 y F5-04), pantallas (F5-05 en adelante).
 
