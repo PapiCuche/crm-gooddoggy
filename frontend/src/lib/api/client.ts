@@ -114,6 +114,7 @@ import type {
   PatchedContactUpdateRequest,
   PatchedLostReasonUpdateRequest,
   PatchedNoteUpdateRequest,
+  PatchedOpportunityUpdateRequest,
   PatchedPipelineUpdateRequest,
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
@@ -7317,6 +7318,115 @@ export function useOpportunitiesRetrieve<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getOpportunitiesUpdateUrl = (orgSlug: string, opportunityId: string) => {
+  return `/api/v1/o/${orgSlug}/opportunities/${opportunityId}/`;
+};
+
+/**
+ * Cambia lo enviado de una oportunidad abierta si `version` sigue vigente. Con `opportunities.view` y `opportunities.update`; fuera del alcance de uno u otro: 404. `items` reemplaza todas las líneas. 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED` (ganada o perdida: se reabre antes). No cambia el contacto, el pipeline, la etapa ni el responsable. Sin cambios no escribe ni sube `version`.
+ */
+export const opportunitiesUpdate = async (
+  orgSlug: string,
+  opportunityId: string,
+  patchedOpportunityUpdateRequest: PatchedOpportunityUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<OpportunityDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<OpportunityDetail>(getOpportunitiesUpdateUrl(orgSlug, opportunityId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedOpportunityUpdateRequest),
+  });
+};
+
+export const getOpportunitiesUpdateMutationKey = () => ["opportunitiesUpdate"] as const;
+
+export const getOpportunitiesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof opportunitiesUpdate>>,
+    TError,
+    OpportunitiesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof opportunitiesUpdate>>,
+  TError,
+  OpportunitiesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getOpportunitiesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof opportunitiesUpdate>>,
+    OpportunitiesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, opportunityId, data } = props ?? {};
+
+    return opportunitiesUpdate(orgSlug, opportunityId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OpportunitiesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof opportunitiesUpdate>>
+>;
+export type OpportunitiesUpdateMutationBody = PatchedOpportunityUpdateRequest;
+export type OpportunitiesUpdateMutationError = ErrorType<Error>;
+export type OpportunitiesUpdateMutationVariables = {
+  orgSlug: string;
+  opportunityId: string;
+  data: PatchedOpportunityUpdateRequest;
+};
+
+export const useOpportunitiesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof opportunitiesUpdate>>,
+      TError,
+      OpportunitiesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof opportunitiesUpdate>>,
+  TError,
+  OpportunitiesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getOpportunitiesUpdateMutationOptions(options), queryClient);
+};
 
 export const getPermissionsListUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/permissions/`;

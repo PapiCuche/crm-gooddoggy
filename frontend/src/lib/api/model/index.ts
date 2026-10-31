@@ -146,6 +146,7 @@ export * from "./patchedCategoryUpdateRequest";
 export * from "./patchedContactUpdateRequest";
 export * from "./patchedLostReasonUpdateRequest";
 export * from "./patchedNoteUpdateRequest";
+export * from "./patchedOpportunityUpdateRequest";
 export * from "./patchedPipelineUpdateRequest";
 export * from "./patchedPriceListUpdateRequest";
 export * from "./patchedProductUpdateRequest";

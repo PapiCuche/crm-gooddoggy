@@ -12,7 +12,7 @@ from typing import Any
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.deals.api.inputs import Checked, sentence
+from apps.deals.api.inputs import Checked, sentence, version_required
 from apps.deals.models import Opportunity
 from apps.deals.opportunities import (
     ACTION_MAX,
@@ -105,3 +105,12 @@ class OpportunityCreateSerializer(OpportunityFields):
     pipeline_id = Id(
         required=False, help_text="Un pipeline vivo y activo; sin él, el predeterminado."
     )
+
+
+@version_required
+class OpportunityUpdateSerializer(OpportunityFields):
+    title = Checked(_title, max_length=TITLE_MAX, required=False)
+    probability = Whole(
+        min_value=0, max_value=100, required=False, help_text="Mientras esté abierta."
+    )
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")

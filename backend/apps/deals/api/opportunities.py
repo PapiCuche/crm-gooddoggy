@@ -1,6 +1,6 @@
 """Rutas de tenant de las oportunidades: `…/opportunities/` (F5-04, E09-07). Lectura: la
 lista (F5-04b) y el detalle con sus líneas y el historial de etapas (F5-04c). Escritura: crear
-(F5-04d); cambiar, asignar, borrar y los cambios de etapa llegan en las entregas siguientes.
+(F5-04d) y cambiar (F5-04e); asignar, borrar y los cambios de etapa, después.
 
 `opportunities.view` admite alcance (`AssignedTo`: por responsable, `TEAM` incluye a los
 compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las que la
@@ -189,6 +189,14 @@ def with_contact_name(found: QuerySet[Opportunity], request: Any) -> QuerySet[Op
     return found.annotate(contact_name=Subquery(visible.values("display_name")[:1]))
 
 
+def locked(found: QuerySet[Opportunity]) -> QuerySet[Opportunity]:
+    """Las filas bloqueadas hasta el final de la petición (`FOR NO KEY UPDATE`), sin los `JOIN` de
+    la etapa y el motivo: tras esperar un bloqueo, PostgreSQL vuelve a comprobar la fila con la
+    unión que ya había leído, y una etapa que cambió mientras esperaba la dejaría fuera (un 404
+    donde corresponde el 409 `STALE_VERSION`). El alcance, en cambio, sí se vuelve a decidir."""
+    return found.select_related(None).select_for_update(no_key=True, of=("self",))
+
+
 def _tenant() -> Any:
     tenant = context.current()
     assert tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
@@ -293,11 +301,42 @@ class OpportunitiesView(OpportunitiesQuery, generics.ListAPIView):
         description="Una oportunidad con sus líneas y el historial de sus etapas. 404: no es de "
         "la organización, está borrada o queda fuera del alcance de `opportunities.view`.",
     ),
+    patch=extend_schema(
+        operation_id="opportunities_update",
+        tags=["deals"],
+        request=inputs.OpportunityUpdateSerializer,
+        responses={200: OpportunityDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia lo enviado de una oportunidad abierta si `version` sigue vigente. Con "
+        "`opportunities.view` y `opportunities.update`; fuera del alcance de uno u otro: 404. "
+        "`items` reemplaza todas las líneas. 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED` (ganada o "
+        "perdida: se reabre antes). No cambia el contacto, el pipeline, la etapa ni el "
+        "responsable. Sin cambios no escribe ni sube `version`.",
+    ),
 )
 class OpportunityView(OpportunitiesQuery, generics.RetrieveAPIView):
-    required_permissions = {"GET": "opportunities.view"}
+    required_permissions = {
+        "GET": "opportunities.view",
+        "PATCH": ("opportunities.view", "opportunities.update"),
+    }
     serializer_class = OpportunityDetailSerializer
     lookup_url_kwarg = "opportunity_id"
 
     def get_queryset(self) -> QuerySet[Opportunity]:
-        return selectors.with_detail(super().get_queryset())
+        found = super().get_queryset()
+        if self.request.method == "PATCH":
+            # El alcance se decide sobre la fila bloqueada hasta el final de la petición: un
+            # cambio de responsable (`…/assign/`) no se cuela entre la comprobación y la escritura.
+            return locked(found)
+        return selectors.with_detail(found)
+
+    def patch(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.OpportunityUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        fields = dict(wanted.validated_data)
+        version = fields.pop("version")
+        found = self.get_object()
+        with domain():
+            commands.update_opportunity(
+                _tenant(), opportunity_id=found.pk, version=version, **fields
+            )
+        return reply(request, found.pk)
