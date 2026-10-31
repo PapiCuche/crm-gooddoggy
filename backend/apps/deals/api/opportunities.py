@@ -378,7 +378,7 @@ class OpportunityAssignView(OpportunitiesQuery, generics.GenericAPIView):
 
     def get_queryset(self) -> QuerySet[Opportunity]:
         # La fila queda bloqueada al decidir el alcance, como en el `PATCH`.
-        return super().get_queryset().select_for_update(no_key=True, of=("self",))
+        return locked(super().get_queryset())
 
     def post(self, request: Request, opportunity_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.OpportunityAssignSerializer(data=request.data)

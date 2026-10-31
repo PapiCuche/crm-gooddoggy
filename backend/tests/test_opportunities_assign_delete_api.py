@@ -17,12 +17,13 @@ from apps.deals.models import Opportunity, PipelineStage
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunity_scopes as scopes
+from tests.conftest import migrator_conninfo
 from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx, join
 from tests.test_opportunities_api import OPPS, ids_of
-from tests.test_opportunities_update_api import patch
+from tests.test_opportunities_update_api import REASSIGN, patch
 from tests.test_opportunities_write_api import CSRF_FAILED, UNAUTHENTICATED, acts, fail, rows
 from tests.test_self_context import NOT_FOUND, reply, signed
 from tests.test_team_writes import send
@@ -250,3 +251,60 @@ def test_deleting_needs_delete_and_view_and_follows_their_scopes(
     give(sales.a, sales.m["bea"], {"opportunities.delete": "ORGANIZATION"})
     assert delete(bea, sales.opps["vera"]).status_code == 204
     assert reply(delete(bea, sales.opps["b"])) == missing  # nunca la de otra organización
+
+
+def held_assign(
+    user: Any, pk: Any, body: dict[str, Any], hold: str, params: list[Any]
+) -> tuple[bool, tuple[int, Any]]:
+    """Otra transacción cambia la fila y aún no confirma; la asignación espera su bloqueo."""
+    holder = psycopg.connect(migrator_conninfo(), autocommit=False)
+    holder.execute(hold, params)
+    box: list[tuple[int, Any]] = []
+
+    def run() -> None:
+        try:
+            response = assign(signed(user), pk, body)
+            box.append((response.status_code, response.json().get("code")))
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(timeout=1.5)
+    waited = thread.is_alive()
+    holder.commit()
+    thread.join(timeout=20)
+    holder.close()
+    assert not thread.is_alive()
+    return waited, box[0]
+
+
+def test_a_change_in_flight_is_a_409_or_a_404_for_the_waiting_assignment_never_a_false_one(
+    sales: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """La consulta que bloquea no lleva los `JOIN` de la etapa y el motivo: si la etapa cambia
+    mientras se espera, la fila sigue ahí y la respuesta es el 409 de la versión, no un 404."""
+    pk, to = sales.opps["vera"], str(sales.sam.pk)
+    moved = "UPDATE opportunities SET version = version + 1, probability = 50 WHERE id = %s"
+    waited, answer = held_assign(sales.ana, pk, {"assigned_user_id": to, "version": 1}, moved, [pk])
+    assert waited and answer == (409, "STALE_VERSION")
+    with tenant_scope(ctx(sales.a)):
+        won = PipelineStage.objects.get(code="ganado")
+    close = (
+        "UPDATE opportunities SET status = 'WON', stage_id = %s, won_at = now(), probability = 100,"
+        " version = version + 1 WHERE id = %s"
+    )
+    other = sales.opps["sam"]
+    waited, answer = held_assign(
+        sales.ana, other, {"assigned_user_id": to, "version": 1}, close, [won.pk, other]
+    )
+    assert waited and answer == (409, "STALE_VERSION")  # cambió de etapa y de versión: 409, no 404
+    # una reasignación en vuelo saca la fila del alcance de quien esperaba: 404, como siempre
+    waited, answer = held_assign(
+        sales.vera,
+        pk,
+        {"assigned_user_id": str(sales.vera.pk), "version": 1},
+        REASSIGN,
+        [sales.sam.pk, pk],
+    )
+    assert waited and answer[0] == 404
