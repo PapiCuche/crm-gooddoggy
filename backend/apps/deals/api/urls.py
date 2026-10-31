@@ -32,4 +32,9 @@ urlpatterns = [
         opportunities.OpportunityView.as_view(),
         name="opportunity",
     ),
+    path(
+        "opportunities/<uuid:opportunity_id>/assign/",
+        opportunities.OpportunityAssignView.as_view(),
+        name="opportunity-assign",
+    ),
 ]

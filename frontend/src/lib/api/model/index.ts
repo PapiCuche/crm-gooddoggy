@@ -108,6 +108,7 @@ export * from "./nullEnum";
 export * from "./opportunitiesListParams";
 export * from "./opportunitiesListStatus";
 export * from "./opportunity";
+export * from "./opportunityAssignRequest";
 export * from "./opportunityCreateRequest";
 export * from "./opportunityDetail";
 export * from "./organizationSummary";
