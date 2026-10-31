@@ -3541,6 +3541,72 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    patch:
+      operationId: opportunities_update
+      description: 'Cambia lo enviado de una oportunidad abierta si `version` sigue
+        vigente. Con `opportunities.view` y `opportunities.update`; fuera del alcance
+        de uno u otro: 404. `items` reemplaza todas las líneas. 409: `STALE_VERSION`,
+        `OPPORTUNITY_CLOSED` (ganada o perdida: se reabre antes). No cambia el contacto,
+        el pipeline, la etapa ni el responsable. Sin cambios no escribe ni sube `version`.'
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedOpportunityUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpportunityDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/permissions/:
     get:
       operationId: permissions_list
@@ -9008,6 +9074,57 @@ components:
           type: boolean
         version:
           type: integer
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
+    PatchedOpportunityUpdateRequest:
+      type: object
+      description: Lo que se envía de una oportunidad al crearla o cambiarla.
+      properties:
+        amount:
+          type: string
+          minLength: 1
+          description: Puede ser 0. Texto con hasta 12 cifras enteras y 2 decimales,
+            como `1500.50`.
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        source:
+          $ref: '#/components/schemas/ContactSourceEnum'
+        next_action:
+          type: string
+          nullable: true
+          minLength: 1
+          description: Texto libre.
+          maxLength: 200
+        next_action_at:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria.
+        expected_close_date:
+          type: string
+          nullable: true
+          minLength: 1
+          description: '`AAAA-MM-DD`, entre 2000 y 2100.'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemInputRequest'
+          description: Hasta 50, una por variante; al cambiar, reemplazan todas las
+            líneas.
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        probability:
+          type: integer
+          maximum: 100
+          minimum: 0
+          description: Mientras esté abierta.
+        version:
+          type: integer
+          maximum: 2147483647
           minimum: 1
           description: La que se leyó; si no, 409.
       required:
