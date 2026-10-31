@@ -53,6 +53,7 @@ import type {
   LoginMfaRequest,
   LoginPending,
   LoginRequest,
+  LostReasonsListParams,
   MemberBranch,
   MemberBranchChangeRequest,
   MemberStatus,
@@ -81,9 +82,11 @@ import type {
   PaginatedLevelList,
   PaginatedListMarginList,
   PaginatedListPriceList,
+  PaginatedLostReasonList,
   PaginatedMemberList,
   PaginatedMovementList,
   PaginatedNoteList,
+  PaginatedPipelineList,
   PaginatedPriceList,
   PaginatedPriceListList,
   PaginatedProductList,
@@ -111,6 +114,7 @@ import type {
   PatchedVariantUpdateRequest,
   PatchedWarehouseUpdateRequest,
   PermissionCatalog,
+  PipelinesListParams,
   Price,
   PriceList,
   PriceListCreateRequest,
@@ -5894,6 +5898,145 @@ export const useInvitationsSetStatus = <TError = ErrorType<Error>, TContext = un
   return useMutation(getInvitationsSetStatusMutationOptions(options), queryClient);
 };
 
+export const getLostReasonsListUrl = (orgSlug: string, params?: LostReasonsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/lost-reasons/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/lost-reasons/`;
+};
+
+/**
+ * Los motivos de pérdida, activos o no, por creación (ADR-016); `sort_order` es el que muestra la pantalla. Con `opportunities.view` y cualquier alcance.
+ */
+export const lostReasonsList = async (
+  orgSlug: string,
+  params?: LostReasonsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedLostReasonList> => {
+  return apiFetch<PaginatedLostReasonList>(getLostReasonsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getLostReasonsListQueryKey = (orgSlug: string, params?: LostReasonsListParams) => {
+  return [`/api/v1/o/${orgSlug}/lost-reasons/`, ...(params ? [params] : [])] as const;
+};
+
+export const getLostReasonsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof lostReasonsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: LostReasonsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof lostReasonsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getLostReasonsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof lostReasonsList>>> = ({ signal }) =>
+    lostReasonsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof lostReasonsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type LostReasonsListQueryResult = NonNullable<Awaited<ReturnType<typeof lostReasonsList>>>;
+export type LostReasonsListQueryError = ErrorType<Error>;
+
+export function useLostReasonsList<
+  TData = Awaited<ReturnType<typeof lostReasonsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | LostReasonsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof lostReasonsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof lostReasonsList>>,
+          TError,
+          Awaited<ReturnType<typeof lostReasonsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useLostReasonsList<
+  TData = Awaited<ReturnType<typeof lostReasonsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: LostReasonsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof lostReasonsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof lostReasonsList>>,
+          TError,
+          Awaited<ReturnType<typeof lostReasonsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useLostReasonsList<
+  TData = Awaited<ReturnType<typeof lostReasonsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: LostReasonsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof lostReasonsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useLostReasonsList<
+  TData = Awaited<ReturnType<typeof lostReasonsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: LostReasonsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof lostReasonsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getLostReasonsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
 export const getMeContextUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/me/`;
 };
@@ -6670,6 +6813,145 @@ export function usePermissionsList<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getPermissionsListQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getPipelinesListUrl = (orgSlug: string, params?: PipelinesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/pipelines/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/pipelines/`;
+};
+
+/**
+ * Los pipelines de la organización, activos o no, por creación (ADR-016), cada uno con todas sus etapas en su orden (`sort_order`, nombre, id). Con `opportunities.view` y cualquier alcance.
+ */
+export const pipelinesList = async (
+  orgSlug: string,
+  params?: PipelinesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedPipelineList> => {
+  return apiFetch<PaginatedPipelineList>(getPipelinesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPipelinesListQueryKey = (orgSlug: string, params?: PipelinesListParams) => {
+  return [`/api/v1/o/${orgSlug}/pipelines/`, ...(params ? [params] : [])] as const;
+};
+
+export const getPipelinesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof pipelinesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PipelinesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof pipelinesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPipelinesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof pipelinesList>>> = ({ signal }) =>
+    pipelinesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof pipelinesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PipelinesListQueryResult = NonNullable<Awaited<ReturnType<typeof pipelinesList>>>;
+export type PipelinesListQueryError = ErrorType<Error>;
+
+export function usePipelinesList<
+  TData = Awaited<ReturnType<typeof pipelinesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | PipelinesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof pipelinesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof pipelinesList>>,
+          TError,
+          Awaited<ReturnType<typeof pipelinesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePipelinesList<
+  TData = Awaited<ReturnType<typeof pipelinesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PipelinesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof pipelinesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof pipelinesList>>,
+          TError,
+          Awaited<ReturnType<typeof pipelinesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePipelinesList<
+  TData = Awaited<ReturnType<typeof pipelinesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PipelinesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof pipelinesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePipelinesList<
+  TData = Awaited<ReturnType<typeof pipelinesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: PipelinesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof pipelinesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPipelinesListQueryOptions(orgSlug, params, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

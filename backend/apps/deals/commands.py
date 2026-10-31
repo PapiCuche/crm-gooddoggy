@@ -31,7 +31,7 @@ from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import name as clean_name
 
-NAME_MAX, CODE_MAX, DAYS_MAX = 100, 30, 32767
+NAME_MAX, CODE_MAX, DAYS_MAX, ORDER_MAX = 100, 30, 32767, 32767
 CURRENCIES = ("PEN",)  # D-PRC-2: solo PEN en el MVP; la columna ya admite otras
 CLOSED = {StageType.WON: 100, StageType.LOST: 0}  # la probabilidad de lo cerrado
 STAGE_FIELDS = frozenset(
@@ -418,17 +418,19 @@ def create_lost_reason(
     si ya hay uno vivo con ese código (`MAYÚSCULAS_Y_GUION_BAJO`); sin escribir nada."""
     alias = require_scope(ctx)
     values: dict[str, Any] = {
-        "name": clean_name(name or "", NAME_MAX),
-        "code": _code(code, REASON_CODE, str.upper),
+        "name": clean_name(_text(name, "nombre"), NAME_MAX),
+        "code": _code(_text(code, "código"), REASON_CODE, str.upper),
     }
     if sort_order is not None:
-        _integer(sort_order, -32768, 32767, "orden")
+        _integer(sort_order, -ORDER_MAX - 1, ORDER_MAX, "orden")
         values["sort_order"] = sort_order
     try:
         with transaction.atomic(using=alias):
             if sort_order is None:
                 last = LostReason.objects.using(alias).aggregate(last=Max("sort_order"))["last"]
                 values["sort_order"] = 0 if last is None else last + 1
+                if values["sort_order"] > ORDER_MAX:
+                    raise ValueError(f"orden: el último ya es {ORDER_MAX}; indica uno")
             reason: LostReason = LostReason.objects.using(alias).create(
                 **values, created_by_user_id=ctx.user_id, updated_by_user_id=ctx.user_id
             )
@@ -448,13 +450,16 @@ def update_lost_reason(
     audita con el antes y el después; sin cambios no escribe. `StaleVersion`; `DoesNotExist` si no
     es de la organización o está borrado. El código no cambia."""
     alias = require_scope(ctx)
+    _integer(version, 1, 2**31 - 1, "versión")
     if unknown := set(fields) - _REASON_FIELDS:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values = dict(fields)
     if "name" in values:
-        values["name"] = clean_name(values["name"] or "", NAME_MAX)
+        values["name"] = clean_name(_text(values["name"], "nombre"), NAME_MAX)
+    if "is_active" in values:
+        _flag(values["is_active"], "is_active")
     if "sort_order" in values:
-        _integer(values["sort_order"], -32768, 32767, "orden")
+        _integer(values["sort_order"], -ORDER_MAX - 1, ORDER_MAX, "orden")
     with transaction.atomic(using=alias):
         live = LostReason.objects.using(alias).filter(deleted_at__isnull=True)
         reason: LostReason = live.select_for_update(no_key=True).get(pk=lost_reason_id)

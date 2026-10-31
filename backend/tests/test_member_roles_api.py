@@ -51,6 +51,7 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
         "contacts.update",
         "contacts.view",
         "inventory.view",
+        "opportunities.view",  # F5-02
         "organization.view",
         "prices.view",  # F3-40
         "products.view",

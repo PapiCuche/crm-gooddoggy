@@ -191,7 +191,14 @@ def test_the_permission_catalog_lists_every_permission_by_code(rbac: Any) -> Non
     ]
     assert [row["code"] for row in body["results"]] == sorted(BY_CODE)  # el que usa el motor
     scoped = {row["code"] for row in body["results"] if row["supports_scope"]}
-    assert scoped == {VIEW, EDIT, "contacts.view", "contacts.update", "contacts.delete"}
+    assert scoped == {
+        VIEW,
+        EDIT,
+        "contacts.view",
+        "contacts.update",
+        "contacts.delete",
+        "opportunities.view",  # F5-02
+    }
     sensitive = {row["code"] for row in body["results"] if row["is_sensitive"]}
     assert sensitive == {p.code for p in PERMISSIONS if p.is_sensitive} and sensitive
     assert body == signed(rbac.ana).get(url.format("org-a")).json()  # el mismo para todos

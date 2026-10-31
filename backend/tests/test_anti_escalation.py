@@ -77,8 +77,14 @@ ADMIN_REST = (
     "warehouses.manage",
     "contacts.create",  # F4-02: los contactos
     "contacts.assign",  # F4-08
+    "pipelines.manage",  # F5-02
 )
-SCOPED_REST = ("contacts.view", "contacts.update", "contacts.delete")  # con `ORGANIZATION`
+SCOPED_REST = (
+    "contacts.view",
+    "contacts.update",
+    "contacts.delete",
+    "opportunities.view",
+)  # con `ORGANIZATION`
 ADMIN = dict.fromkeys(ADMIN_REST) | dict.fromkeys(SCOPED_REST, "ORGANIZATION")
 STATE = (
     "SELECT (SELECT count(*) FROM role_permissions), (SELECT count(*) FROM membership_roles), "

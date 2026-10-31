@@ -62,6 +62,10 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("contacts.update", "contacts", supports_scope=True),
     PermissionDef("contacts.delete", "contacts", supports_scope=True),
     PermissionDef("contacts.assign", "contacts"),  # sin alcance: lo decide `contacts.view`
+    # F5-02: de las oportunidades, por ahora solo estos dos. `opportunities.view` lee los
+    # pipelines y los motivos de pérdida (configuración de la organización: cualquier alcance).
+    PermissionDef("opportunities.view", "opportunities", supports_scope=True),
+    PermissionDef("pipelines.manage", "opportunities"),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -119,9 +123,11 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "warehouses.manage",
             "contacts.create",
             "contacts.assign",
+            "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
         )
         | dict.fromkeys(
-            ("contacts.view", "contacts.update", "contacts.delete"), Scope.ORGANIZATION
+            ("contacts.view", "contacts.update", "contacts.delete", "opportunities.view"),
+            Scope.ORGANIZATION,
         ),
     ),
     RoleTemplate(
@@ -136,7 +142,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "prices.view_wholesale",
             "inventory.view",
         )
-        | {"contacts.view": Scope.TEAM},
+        | {"contacts.view": Scope.TEAM, "opportunities.view": Scope.TEAM},
     ),
     RoleTemplate(
         "seller",
@@ -144,6 +150,10 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
         _unscoped(
             "organization.view", "products.view", "prices.view", "inventory.view", "contacts.create"
         )
-        | {"contacts.view": Scope.OWN, "contacts.update": Scope.OWN},
+        | {
+            "contacts.view": Scope.OWN,
+            "contacts.update": Scope.OWN,
+            "opportunities.view": Scope.OWN,
+        },
     ),
 )

@@ -2806,6 +2806,67 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/lost-reasons/:
+    get:
+      operationId: lost_reasons_list
+      description: Los motivos de pérdida, activos o no, por creación (ADR-016); `sort_order`
+        es el que muestra la pantalla. Con `opportunities.view` y cualquier alcance.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLostReasonList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/me/:
     get:
       operationId: me_context
@@ -3174,6 +3235,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PermissionCatalog'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pipelines/:
+    get:
+      operationId: pipelines_list
+      description: Los pipelines de la organización, activos o no, por creación (ADR-016),
+        cada uno con todas sus etapas en su orden (`sort_order`, nombre, id). Con
+        `opportunities.view` y cualquier alcance.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - deals
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedPipelineList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
           description: ''
         '401':
           content:
@@ -6690,6 +6813,30 @@ components:
       required:
       - email
       - password
+    LostReason:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          description: '`MAYÚSCULAS_Y_GUION_BAJO`, único. No cambia.'
+        sort_order:
+          type: integer
+        is_active:
+          type: boolean
+        version:
+          type: integer
+      required:
+      - code
+      - id
+      - is_active
+      - name
+      - sort_order
+      - version
     MarginFigure:
       type: object
       properties:
@@ -7329,6 +7476,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedLostReasonList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/LostReason'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedMemberList:
       type: object
       required:
@@ -7367,6 +7528,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Note'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedPipelineList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pipeline'
         next:
           type: string
           nullable: true
@@ -7820,6 +7995,57 @@ components:
             $ref: '#/components/schemas/Permission'
       required:
       - results
+    Pipeline:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          description: Clave estable, única en la organización. No cambia.
+        kind:
+          $ref: '#/components/schemas/PipelineKindEnum'
+        currency:
+          type: string
+        is_default:
+          type: boolean
+        is_active:
+          type: boolean
+        sort_order:
+          type: integer
+        version:
+          type: integer
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stage'
+          description: Todas, también las inactivas, en su orden.
+      required:
+      - code
+      - currency
+      - id
+      - is_active
+      - is_default
+      - kind
+      - name
+      - sort_order
+      - stages
+      - version
+    PipelineKindEnum:
+      enum:
+      - RETAIL
+      - WHOLESALE
+      - TECH_SERVICE
+      - OTHER
+      type: string
+      description: |-
+        * `RETAIL` - Retail
+        * `WHOLESALE` - Wholesale
+        * `TECH_SERVICE` - Tech Service
+        * `OTHER` - Other
     Price:
       type: object
       properties:
@@ -8528,6 +8754,56 @@ components:
           $ref: '#/components/schemas/User'
       required:
       - user
+    Stage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          description: Clave estable dentro del pipeline. No cambia.
+        sort_order:
+          type: integer
+        stage_type:
+          $ref: '#/components/schemas/StageTypeEnum'
+        default_probability:
+          type: integer
+          description: De 0 a 100; WON 100, LOST 0.
+        stale_after_days:
+          type: integer
+          nullable: true
+          description: '`null`: nunca.'
+        color:
+          type: string
+        requires_fields:
+          type: object
+          additionalProperties: {}
+        is_active:
+          type: boolean
+      required:
+      - code
+      - color
+      - default_probability
+      - id
+      - is_active
+      - name
+      - requires_fields
+      - sort_order
+      - stage_type
+      - stale_after_days
+    StageTypeEnum:
+      enum:
+      - OPEN
+      - WON
+      - LOST
+      type: string
+      description: |-
+        * `OPEN` - Open
+        * `WON` - Won
+        * `LOST` - Lost
     StockImport:
       type: object
       properties:

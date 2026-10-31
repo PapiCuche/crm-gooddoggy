@@ -772,6 +772,12 @@
       "update": "Editar contactos",
       "delete": "Borrar contactos",
       "assign": "Asignar contactos"
+    },
+    "opportunities": {
+      "view": "Ver oportunidades, pipelines y motivos de pérdida"
+    },
+    "pipelines": {
+      "manage": "Administrar pipelines y motivos de pérdida"
     }
   },
   "stepUp": {
