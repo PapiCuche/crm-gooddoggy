@@ -4,7 +4,7 @@ No comprueban permisos: los declarará la API (F5-04), la única que los importa
 import-linter). Validan los tipos exactos (`ValueError`, nunca `TypeError` ni `IntegrityError`) y
 auditan con el antes y el después; el texto libre (título, próxima acción) se audita como
 `[texto]` y las notas de las líneas no. Sin cambios no escriben ni auditan. Bloqueos: contacto,
-pipeline (`FOR SHARE`) y variantes nuevas (`FOR SHARE`), oportunidad y membresía del responsable.
+pipeline y variantes nuevas (`FOR SHARE`, estas por id, como el catálogo), oportunidad, miembro.
 """
 
 import datetime as dt
@@ -95,7 +95,7 @@ def _moment(value: Any, what: str) -> dt.datetime:
         and _EARLIEST <= value <= _LATEST
     ):
         raise ValueError(f"{what}: fecha y hora con zona horaria, entre los años 2000 y 2100")
-    return value
+    return value.astimezone(dt.UTC)  # un desfase extremo (+23:59) no cabe en PostgreSQL
 
 
 def _values(fields: dict[str, Any]) -> dict[str, Any]:
@@ -215,7 +215,8 @@ def _sync_items(
         with connections[alias].cursor() as cursor:
             cursor.execute(
                 "SELECT id FROM public.product_variants WHERE organization_id = %s "
-                "AND id = ANY(%s) AND deleted_at IS NULL AND status = 'ACTIVE' FOR SHARE",
+                "AND id = ANY(%s) AND deleted_at IS NULL AND status = 'ACTIVE' "
+                "ORDER BY id FOR SHARE",
                 [organization_id, added],
             )
             if len(cursor.fetchall()) != len(added):
