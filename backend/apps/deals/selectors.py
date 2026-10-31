@@ -40,3 +40,7 @@ def locked_pipeline(pipeline_id: UUID) -> Pipeline:
 
 def has_stage(pipeline_id: UUID, stage_id: UUID) -> bool:
     return PipelineStage.objects.filter(pipeline_id=pipeline_id, pk=stage_id).exists()
+
+
+def stage_count(pipeline_id: UUID) -> int:
+    return PipelineStage.objects.filter(pipeline_id=pipeline_id).count()

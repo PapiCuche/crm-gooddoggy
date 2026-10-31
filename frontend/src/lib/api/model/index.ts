@@ -7,6 +7,8 @@
  */
 
 export * from "./activeOrSuspendedEnum";
+export * from "./addStageRequest";
+export * from "./addStageRequestRequiresFields";
 export * from "./assignmentStrategyEnum";
 export * from "./auditActorTypeEnum";
 export * from "./auditEntry";
@@ -185,6 +187,7 @@ export * from "./scopesEnum";
 export * from "./selfContext";
 export * from "./session";
 export * from "./stage";
+export * from "./stageOrderRequest";
 export * from "./stageRequiresFields";
 export * from "./stageTypeEnum";
 export * from "./stockImport";

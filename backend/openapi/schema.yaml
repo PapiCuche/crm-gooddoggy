@@ -3561,6 +3561,71 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/:
+    post:
+      operationId: pipeline_stages_create
+      description: 'Añade una etapa (hasta 30 por pipeline, también las inactivas:
+        400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda
+        WON), `CODE_TAKEN` (en el pipeline).'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: pipeline_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddStageRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/{stage_id}/:
     patch:
       operationId: pipeline_stages_update
@@ -3626,6 +3691,65 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/order/:
+    put:
+      operationId: pipeline_stages_reorder
+      description: Deja las etapas en el orden de `stage_ids`, que las lleva todas
+        (también las inactivas) una vez cada una; si falta, sobra, se repite o es
+        de otro pipeline, 400 en `stage_ids`. Con `pipelines.manage`.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: pipeline_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - deals
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StageOrderRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -6277,6 +6401,56 @@ components:
       description: |-
         * `ACTIVE` - ACTIVE
         * `SUSPENDED` - SUSPENDED
+    AddStageRequest:
+      type: object
+      description: Los datos de una etapa, todos opcionales; el código y el orden
+        no se cambian.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        stage_type:
+          $ref: '#/components/schemas/StageTypeEnum'
+        default_probability:
+          type: integer
+          maximum: 100
+          minimum: 0
+          description: WON 100, LOST 0.
+        stale_after_days:
+          type: integer
+          maximum: 32767
+          minimum: 1
+          nullable: true
+          description: '`null`: nunca.'
+        color:
+          type: string
+          minLength: 1
+          description: '`#rrggbb`.'
+          maxLength: 7
+        requires_fields:
+          type: object
+          additionalProperties: {}
+          description: Objeto JSON de hasta 4096 bytes y 4 niveles.
+        is_active:
+          type: boolean
+        code:
+          type: string
+          minLength: 1
+          description: Minúsculas, cifras y guiones; único en el pipeline. No cambia.
+          maxLength: 30
+        position:
+          type: integer
+          maximum: 30
+          minimum: 0
+          description: 'Su lugar entre las etapas (desde 0). Sin él: una OPEN tras
+            la última OPEN; otra, al final.'
+      required:
+      - code
+      - color
+      - default_probability
+      - name
+      - stage_type
     AssignmentStrategyEnum:
       enum:
       - MANUAL
@@ -9303,6 +9477,23 @@ components:
       - sort_order
       - stage_type
       - stale_after_days
+    StageOrderRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        stage_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Todas las etapas del pipeline, también las inactivas, una vez
+            cada una.
+          maxItems: 30
+          minItems: 1
+      required:
+      - stage_ids
     StageTypeEnum:
       enum:
       - OPEN

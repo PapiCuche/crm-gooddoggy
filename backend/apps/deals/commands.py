@@ -352,7 +352,7 @@ def add_stage(
                     opened[-1] + 1 if opened and values["stage_type"] == "OPEN" else len(stages)
                 )
             if not 0 <= position <= len(stages):
-                raise ValueError(f"posición de 0 a {len(stages)}")
+                raise Invalid("position", f"posición de 0 a {len(stages)}")
             stage: PipelineStage = PipelineStage.objects.using(alias).create(
                 pipeline=pipeline, sort_order=position, **values
             )
@@ -411,7 +411,9 @@ def reorder_stages(
         stages = _stages(alias, pipeline.pk)
         by_id = {s.pk: s for s in stages}
         if len(wanted) != len(set(wanted)) or set(wanted) != set(by_id):
-            raise ValueError("el orden lleva todas las etapas del pipeline, una vez cada una")
+            raise Invalid(
+                "stage_ids", "el orden lleva todas las etapas del pipeline, una vez cada una"
+            )
         ordered = [by_id[i] for i in wanted]
         if ordered != stages:
             _renumber(alias, ordered)
