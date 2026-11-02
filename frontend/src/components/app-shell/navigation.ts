@@ -22,6 +22,12 @@ export const NAVIGATION: readonly NavigationItem[] = [
   { key: "branches", path: "/sucursales", permission: "organization.view" },
   { key: "teams", path: "/equipos", permission: "teams.view" },
   { key: "contacts", path: "/clientes", section: "/clientes", permission: "contacts.view" },
+  {
+    key: "opportunities",
+    path: "/oportunidades",
+    section: "/oportunidades",
+    permission: "opportunities.view",
+  },
   { key: "catalog", path: "/catalogo/marcas", section: "/catalogo", permission: "products.view" },
   {
     key: "inventory",

@@ -28,7 +28,8 @@
       "contacts": "Clientes",
       "catalog": "Catálogo",
       "inventory": "Inventario",
-      "prices": "Precios"
+      "prices": "Precios",
+      "opportunities": "Oportunidades"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -1898,6 +1899,68 @@
         "ai": "Marca o desmarca «Visible a la IA».",
         "own": "Escribe un número mayor que 0, con hasta 2 decimales."
       }
+    }
+  },
+  "deals": {
+    "eyebrow": "Good Doggy / Oportunidades",
+    "title": "Oportunidades",
+    "intro": "Las oportunidades de venta de {organization} que puedes ver, por etapa del pipeline.",
+    "loading": "Cargando oportunidades…",
+    "denied": "No tienes permiso para ver las oportunidades de esta organización.",
+    "noPipelines": "Esta organización no tiene pipelines activos.",
+    "empty": "{status, select, OPEN {No hay oportunidades abiertas} WON {Todavía no hay oportunidades ganadas} LOST {Todavía no hay oportunidades perdidas} other {Todavía no hay oportunidades}} en este pipeline.",
+    "emptyFiltered": "Ninguna oportunidad coincide con los filtros.",
+    "count": "{count, plural, =0 {Sin oportunidades en la lista} one {# oportunidad en la lista} other {# oportunidades en la lista}}",
+    "partial": "Hay más oportunidades: los totales de cada columna cuentan solo las cargadas.",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "filters": {
+      "landmark": "Filtros de oportunidades",
+      "pipeline": "Pipeline",
+      "status": "Estado",
+      "owner": "Responsable",
+      "anyOwner": "Todos los responsables",
+      "search": "Buscar",
+      "searchHint": "Por título o número (OPP-…).",
+      "statuses": {
+        "OPEN": "Abiertas",
+        "WON": "Ganadas",
+        "LOST": "Perdidas",
+        "ANY": "Todas"
+      }
+    },
+    "view": {
+      "label": "Vista",
+      "board": "Tablero",
+      "table": "Tabla"
+    },
+    "board": {
+      "label": "Tablero de oportunidades",
+      "column": "{count, plural, =0 {Sin oportunidades} one {# oportunidad} other {# oportunidades}}",
+      "emptyColumn": "Sin oportunidades en esta etapa."
+    },
+    "table": {
+      "label": "Tabla de oportunidades",
+      "number": "Número",
+      "title": "Título",
+      "customer": "Cliente",
+      "stage": "Etapa",
+      "amount": "Importe",
+      "owner": "Responsable",
+      "days": "Días en la etapa",
+      "next": "Próxima acción"
+    },
+    "card": {
+      "noContact": "Cliente no visible",
+      "days": "{days, plural, =0 {Hoy en la etapa} one {# día en la etapa} other {# días en la etapa}}",
+      "next": "Próxima acción: {text}",
+      "noNext": "Sin próxima acción"
+    },
+    "owner": {
+      "you": "Yo",
+      "none": "Sin responsable",
+      "other": "Otro miembro",
+      "pending": "…"
     }
   }
 }
