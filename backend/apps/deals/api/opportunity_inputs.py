@@ -124,6 +124,8 @@ def _final(value: str) -> Any:
 
 
 class OpportunityAssignSerializer(Closed, serializers.Serializer[Any]):
+    """Deja la oportunidad con otro responsable: quién es y la versión que se leyó."""
+
     assigned_user_id = Id(help_text="El responsable: un miembro activo de la organización.")
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
 

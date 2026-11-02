@@ -174,7 +174,10 @@ class OpportunitySearch(BaseFilterBackend):
         params, names = request.query_params, tuple(OpportunitySearchSerializer().fields)
         if repeated := [k for k in names if len(params.getlist(k)) > 1]:
             raise serializers.ValidationError({k: ["Una sola vez."] for k in repeated})
-        wanted = OpportunitySearchSerializer(data={k: params[k] for k in names if k in params})
+        given = {k: params[k] for k in names if k in params}
+        if given.get("status") == "":  # `?status=` es lo mismo que no pedirlo, como `?q=`
+            del given["status"]
+        wanted = OpportunitySearchSerializer(data=given)
         wanted.is_valid(raise_exception=True)
         found: QuerySet[Opportunity] = queryset
         filters = dict(wanted.validated_data)
@@ -213,8 +216,9 @@ def domain(body: Container[str] | None = None) -> Iterator[None]:
     """Lo que lanzan los comandos, con la forma del contrato: una carrera o un estado que no
     admite el cambio es un 409 con su código; una referencia que no sirve, un 400 en su campo (sin
     repetir el valor); lo que no existe, un 404. `body`: los campos del cuerpo que una referencia
-    puede nombrar; otra (el pipeline de la oportunidad, que ya no está activo) no es del cliente:
-    409 `PIPELINE_UNAVAILABLE`."""
+    puede nombrar. El pipeline de la oportunidad (`pipeline_id`), que no es un campo de esas
+    rutas y ya no está activo, es un 409 `PIPELINE_UNAVAILABLE`; cualquier otra referencia ajena
+    al cuerpo (quien actúa, por ejemplo) no se disfraza de eso: 400 en su campo."""
     try:
         yield
     except ObjectDoesNotExist:
@@ -231,7 +235,7 @@ def domain(body: Container[str] | None = None) -> Iterator[None]:
         message = f"La etapa exige datos que faltan: {', '.join(missing.fields)}."
         raise ApiError("MISSING_FIELDS", 409, message) from None
     except commands.BadReference as bad:
-        if body is not None and bad.field not in body:
+        if body is not None and bad.field == "pipeline_id" and "pipeline_id" not in body:
             raise ApiError("PIPELINE_UNAVAILABLE", 409, UNAVAILABLE) from None
         field = "items" if bad.field == "variant_id" else bad.field  # una línea no es un campo
         message = BAD_REFERENCE.get(bad.field, "No es de la organización.")
@@ -274,8 +278,9 @@ class OpportunitiesQuery:
         responses={200: OpportunitySerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las oportunidades vivas dentro del alcance de `opportunities.view`, paginadas "
         "por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los "
-        "mismos. 400: un filtro repetido, un UUID o un `status` que no lo son, `q` que no es una "
-        f"línea de texto imprimible o pasa de {TEXT_MAX} caracteres.",
+        "mismos. `status` y `q` vacíos: sin filtro. 400: un filtro repetido, un UUID o un `status` "
+        f"que no lo son, `q` que no es una línea de texto imprimible o pasa de {TEXT_MAX} "
+        "caracteres.",
     ),
     post=extend_schema(
         operation_id="opportunities_create",

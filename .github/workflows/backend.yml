@@ -120,7 +120,7 @@ jobs:
       run:
         working-directory: backend
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:18.6

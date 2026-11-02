@@ -11,11 +11,14 @@ import psycopg
 import pytest
 from django.db import connection
 from django.test import Client
+from rest_framework.exceptions import ValidationError
 
 from apps.audit.services import record
 from apps.deals import opportunities as commands
 from apps.deals import opportunity_stages as stages
+from apps.deals.api.opportunities import domain
 from apps.deals.models import Opportunity, Pipeline, PipelineStage
+from core.api.errors import ApiError
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunity_scopes as scopes
 from tests.factories import make_user
@@ -349,3 +352,83 @@ def test_a_move_that_changed_the_stage_makes_the_waiting_one_answer_409_not_404(
     )
     assert waited
     assert outcome == {"first": (200, None), "second": (409, "STALE_VERSION")}
+
+
+def valid_body(sales: SimpleNamespace, route: Any) -> dict[str, Any]:
+    """Un cuerpo válido para la oportunidad de vera; para reabrir, la deja cerrada antes."""
+    if route is reopen:
+        close(sales, "vera")
+        return {"stage_id": at(sales, "nuevo"), "version": 1}
+    return {"stage_id": at(sales, "cotizado"), "version": 1}
+
+
+@pytest.mark.parametrize("route", [move, reopen])
+def test_each_stage_route_needs_view_and_update_and_nothing_else_will_do(
+    sales: SimpleNamespace, route: Any
+) -> None:
+    body = valid_body(sales, route)
+    pk = sales.opps["vera"]
+    others = {  # todo lo demás de las oportunidades, sin `update`
+        f"opportunities.{a}": "ORGANIZATION" for a in ("view", "delete", "mark_won", "mark_lost")
+    } | {"opportunities.create": None, "opportunities.assign": None}
+    roles: dict[str, dict[str, str | None]] = {
+        "view": {"opportunities.view": "ORGANIZATION"},
+        "update": {"opportunities.update": "ORGANIZATION"},
+        "everything but update": others,
+        "pipelines": {"pipelines.manage": None, "opportunities.view": "ORGANIZATION"},
+    }
+    for name, grants in roles.items():
+        user = make_user(email=f"{name.replace(' ', '')}-{route.__name__}@example.com")
+        give(sales.a, join(sales.a, user).pk, grants)
+        assert reply(route(signed(user), pk, body)) == DENIED, name
+    assert reply(route(signed(sales.bea), pk, body)) == DENIED  # sin rol
+    assert reply(route(Client(), pk, body)) == UNAUTHENTICATED
+    assert reply(route(signed(sales.luis), pk, body)) == NOT_FOUND  # no es miembro de A
+    both = make_user(email=f"ambos-{route.__name__}@example.com")
+    give(sales.a, join(sales.a, both).pk, {**roles["view"], **roles["update"]})
+    assert route(signed(both), pk, body).status_code == 200  # con los dos, sí
+    url = f"{OPPS}{sales.opps['ana']}/{route.__name__}/"
+    assert reply(signed(sales.ana).post(url, body, "application/json")) == CSRF_FAILED
+
+
+@pytest.mark.parametrize("route", [move, reopen])
+def test_the_body_is_checked_before_the_row_so_a_bad_one_answers_the_same_everywhere(
+    sales: SimpleNamespace, route: Any
+) -> None:
+    """Un cuerpo inválido da el mismo 400, byte a byte, exista la oportunidad o no, esté en el
+    alcance o no; uno válido da 404 para todo lo que no es de quien escribe."""
+    good = valid_body(sales, route)
+    vera = signed(sales.vera)
+    ids = {
+        "in scope": sales.opps["vera"],
+        "out of scope": sales.opps["ana"],
+        "unknown": uuid4(),
+        "deleted": sales.opps["gone"],
+        "other organization": sales.opps["b"],
+    }
+    bad = {key: route(vera, pk, {"stage_id": "x", "version": 1}) for key, pk in ids.items()}
+    assert {r.status_code for r in bad.values()} == {400}
+    assert len({r.content for r in bad.values()}) == 1
+    results = {key: route(vera, pk, good) for key, pk in ids.items()}
+    assert {k: r.status_code for k, r in results.items()} == {
+        "in scope": 200, "out of scope": 404, "unknown": 404, "deleted": 404,
+        "other organization": 404,
+    }  # fmt: skip
+    assert len({r.content for k, r in results.items() if k != "in scope"}) == 1
+
+
+def test_only_the_pipeline_of_the_opportunity_is_reported_as_unavailable() -> None:
+    """`domain()` no disfraza de 409 `PIPELINE_UNAVAILABLE` una referencia que no es del
+    pipeline (quien actúa, la etapa de una ruta sin ese campo): es un 400 en su campo."""
+    body = frozenset({"stage_id"})
+    with pytest.raises(ApiError) as unavailable, domain(body):
+        raise commands.BadReference("pipeline_id")
+    assert (unavailable.value.status_code, unavailable.value.code) == (409, "PIPELINE_UNAVAILABLE")
+    for field in ("updated_by_user_id", "changed_by_user_id", "stage_id"):
+        for known in (body, frozenset()):  # una ruta con el campo y otra sin él
+            with pytest.raises(ValidationError) as bad, domain(known):
+                raise commands.BadReference(field)
+            assert list(bad.value.detail) == [field], (field, known)
+    with pytest.raises(ValidationError) as create, domain():  # sin `body`: es un campo del cliente
+        raise commands.BadReference("pipeline_id")
+    assert list(create.value.detail) == ["pipeline_id"]

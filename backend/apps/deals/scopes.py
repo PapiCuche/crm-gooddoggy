@@ -30,7 +30,11 @@ def teammates(ectx: ExecutionContext) -> QuerySet[TeamMember]:
 @dataclass(frozen=True, slots=True)
 class AssignedTo:
     def q(self, scope: Scope, ectx: ExecutionContext) -> Q:
-        own = Q(assigned_user_id=ectx.tenant.user_id)  # sin usuario: `= NULL` no casa nunca
+        if (
+            ectx.tenant.user_id is None
+        ):  # `assigned_user_id=None` sería `IS NULL`: las sin responsable
+            return Q(pk__in=[])
+        own = Q(assigned_user_id=ectx.tenant.user_id)
         if scope != Scope.TEAM or not ectx.team_ids:
             return own
         return own | Q(assigned_user_id__in=teammates(ectx).values("membership__user_id"))

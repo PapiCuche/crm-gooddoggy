@@ -17,12 +17,13 @@ from apps.deals.models import Opportunity, PipelineStage
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunity_scopes as scopes
+from tests.conftest import migrator_conninfo
 from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx, join
 from tests.test_opportunities_api import OPPS, ids_of
-from tests.test_opportunities_update_api import patch
+from tests.test_opportunities_update_api import REASSIGN, patch
 from tests.test_opportunities_write_api import CSRF_FAILED, UNAUTHENTICATED, acts, fail, rows
 from tests.test_self_context import NOT_FOUND, reply, signed
 from tests.test_team_writes import send
@@ -132,29 +133,40 @@ def test_a_stale_version_is_a_409_and_writes_nothing(
     assert rows(migrator) == before
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        {}, {"version": 1}, {"assigned_user_id": None, "version": 1},
-        {"assigned_user_id": 5, "version": 1}, {"assigned_user_id": "x", "version": 1},
-        {"assigned_user_id": [str(uuid4())], "version": 1}, {"assigned_user_id": "", "version": 1},
-        {"assigned_user_id": str(uuid4())}, {"assigned_user_id": str(uuid4()), "version": None},
-        {"assigned_user_id": str(uuid4()), "version": "1"},
-        {"assigned_user_id": str(uuid4()), "version": True},
-        {"assigned_user_id": str(uuid4()), "version": 0},
-        {"assigned_user_id": str(uuid4()), "version": 2**31},
-        {"assigned_user_id": str(uuid4()), "version": 10**30},
-        {"assigned_user_id": str(uuid4()), "version": 1, "contact_id": str(uuid4())},
-        {"assigned_user_id": str(uuid4()), "version": 1, "organization_id": str(uuid4())},
-        {"assigned_user_id": str(uuid4()), "version": 1, "status": "WON"},
-    ],
-)  # fmt: skip
-def test_a_hostile_assignment_is_a_400_and_writes_nothing(
-    sales: SimpleNamespace, migrator: psycopg.Connection[Any], body: dict[str, Any]
+WHO = "<un miembro activo>"  # se cambia por el id de uno: el caso falla solo por lo suyo
+HOSTILE: list[tuple[dict[str, Any], list[str]]] = [
+    ({}, ["assigned_user_id", "version"]), ({"version": 1}, ["assigned_user_id"]),
+    ({"assigned_user_id": None, "version": 1}, ["assigned_user_id"]),
+    ({"assigned_user_id": 5, "version": 1}, ["assigned_user_id"]),
+    ({"assigned_user_id": "x", "version": 1}, ["assigned_user_id"]),
+    ({"assigned_user_id": [WHO], "version": 1}, ["assigned_user_id"]),
+    ({"assigned_user_id": "", "version": 1}, ["assigned_user_id"]),
+    ({"assigned_user_id": WHO}, ["version"]),
+    ({"assigned_user_id": WHO, "version": None}, ["version"]),
+    ({"assigned_user_id": WHO, "version": "1"}, ["version"]),
+    ({"assigned_user_id": WHO, "version": True}, ["version"]),
+    ({"assigned_user_id": WHO, "version": 0}, ["version"]),
+    ({"assigned_user_id": WHO, "version": 2**31}, ["version"]),
+    ({"assigned_user_id": WHO, "version": 10**30}, ["version"]),
+    ({"assigned_user_id": WHO, "version": 1, "contact_id": str(uuid4())}, ["contact_id"]),
+    ({"assigned_user_id": WHO, "version": 1, "organization_id": str(uuid4())}, ["organization_id"]),
+    ({"assigned_user_id": WHO, "version": 1, "status": "WON"}, ["status"]),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("body", "named"), HOSTILE)
+def test_a_hostile_assignment_is_a_400_on_its_own_field_and_writes_nothing(
+    sales: SimpleNamespace,
+    migrator: psycopg.Connection[Any],
+    body: dict[str, Any],
+    named: list[str],
 ) -> None:
+    """Con un miembro activo de verdad donde no es el defecto: solo el campo malo da el 400."""
+    sent = {k: str(sales.sam.pk) if v == WHO else v for k, v in body.items()}
+    sent = {k: [str(sales.sam.pk)] if v == [WHO] else v for k, v in sent.items()}
     before = rows(migrator)
-    response = assign(signed(sales.ana), sales.opps["vera"], body)
-    assert response.status_code == 400 and response.json()["code"] == "VALIDATION_ERROR"
+    response = assign(signed(sales.ana), sales.opps["vera"], sent)
+    assert fail(response) == (400, "VALIDATION_ERROR", sorted(named)), response.content
     assert rows(migrator) == before and stored(sales, sales.opps["vera"]).version == 1
 
 
@@ -250,3 +262,131 @@ def test_deleting_needs_delete_and_view_and_follows_their_scopes(
     give(sales.a, sales.m["bea"], {"opportunities.delete": "ORGANIZATION"})
     assert delete(bea, sales.opps["vera"]).status_code == 204
     assert reply(delete(bea, sales.opps["b"])) == missing  # nunca la de otra organización
+
+
+def held_call(user: Any, call: Any, hold: str, params: list[Any]) -> tuple[bool, tuple[int, Any]]:
+    """Otra transacción cambia la fila y aún no confirma; la petición `call(cliente)` espera su
+    bloqueo. Devuelve si esperó y qué respondió tras confirmar (`None` si no hay cuerpo)."""
+    holder = psycopg.connect(migrator_conninfo(), autocommit=False)
+    holder.execute(hold, params)
+    box: list[tuple[int, Any]] = []
+
+    def run() -> None:
+        try:
+            response = call(signed(user))
+            box.append(
+                (response.status_code, response.json().get("code") if response.content else None)
+            )
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join(timeout=1.5)
+    waited = thread.is_alive()
+    holder.commit()
+    thread.join(timeout=20)
+    holder.close()
+    assert not thread.is_alive()
+    return waited, box[0]
+
+
+def held_assign(
+    user: Any, pk: Any, body: dict[str, Any], hold: str, params: list[Any]
+) -> tuple[bool, tuple[int, Any]]:
+    return held_call(user, lambda client: assign(client, pk, body), hold, params)
+
+
+def held_delete(user: Any, pk: Any, hold: str, params: list[Any]) -> tuple[bool, tuple[int, Any]]:
+    return held_call(user, lambda client: delete(client, pk), hold, params)
+
+
+def test_a_change_in_flight_is_a_409_or_a_404_for_the_waiting_assignment_never_a_false_one(
+    sales: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """La consulta que bloquea no lleva los `JOIN` de la etapa y el motivo: si la etapa cambia
+    mientras se espera, la fila sigue ahí y la respuesta es el 409 de la versión, no un 404."""
+    pk, to = sales.opps["vera"], str(sales.sam.pk)
+    moved = "UPDATE opportunities SET version = version + 1, probability = 50 WHERE id = %s"
+    waited, answer = held_assign(sales.ana, pk, {"assigned_user_id": to, "version": 1}, moved, [pk])
+    assert waited and answer == (409, "STALE_VERSION")
+    with tenant_scope(ctx(sales.a)):
+        won = PipelineStage.objects.get(code="ganado")
+    close = (
+        "UPDATE opportunities SET status = 'WON', stage_id = %s, won_at = now(), probability = 100,"
+        " version = version + 1 WHERE id = %s"
+    )
+    other = sales.opps["sam"]
+    waited, answer = held_assign(
+        sales.ana, other, {"assigned_user_id": to, "version": 1}, close, [won.pk, other]
+    )
+    assert waited and answer == (409, "STALE_VERSION")  # cambió de etapa y de versión: 409, no 404
+    # una reasignación en vuelo saca la fila del alcance de quien esperaba (sam, `TEAM`): 404
+    waited, answer = held_assign(
+        sales.sam,
+        pk,
+        {"assigned_user_id": str(sales.sam.pk), "version": 2},
+        REASSIGN,
+        [sales.ana.pk, pk],
+    )
+    assert waited and answer[0] == 404
+
+
+def test_a_deletion_waits_for_the_row_and_is_not_confused_by_a_stage_change(
+    sales: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """Sin los `JOIN` de la etapa en la consulta que bloquea, un cambio de etapa en vuelo no deja
+    la fila fuera (404 falso): borrar es borrar, con la versión que sea (`DELETE` no lleva)."""
+    pk = sales.opps["vera"]
+    with tenant_scope(ctx(sales.a)):
+        contacted = PipelineStage.objects.get(code="contactado", pipeline__code="retail").pk
+    moved = "UPDATE opportunities SET stage_id = %s, version = version + 1 WHERE id = %s"
+    waited, answer = held_delete(sales.ana, pk, moved, [contacted, pk])
+    assert waited and answer == (204, None)
+    assert stored_row(migrator, pk)[0] is not None
+
+
+def test_a_deletion_waiting_on_a_reassignment_away_from_the_actor_is_a_404_and_deletes_nothing(
+    sales: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """El alcance de borrar se decide sobre la fila bloqueada: quien esperaba ya no es su
+    responsable y no la borra con un alcance viejo."""
+    give(sales.a, sales.m["vera"], {"opportunities.delete": "OWN"})
+    pk = sales.opps["vera"]
+    waited, answer = held_delete(sales.vera, pk, REASSIGN, [sales.sam.pk, pk])
+    assert waited and answer == (404, "NOT_FOUND")
+    assert stored_row(migrator, pk)[0] is None  # intacta
+
+
+def test_an_assignment_waiting_on_a_deletion_is_a_404(sales: SimpleNamespace) -> None:
+    pk = sales.opps["vera"]
+    body = {"assigned_user_id": str(sales.sam.pk), "version": 1}
+    gone = "UPDATE opportunities SET deleted_at = now() WHERE id = %s"
+    waited, answer = held_assign(sales.ana, pk, body, gone, [pk])
+    assert waited and answer == (404, "NOT_FOUND")
+
+
+def test_the_body_is_checked_before_the_row_so_a_bad_one_answers_the_same_everywhere(
+    sales: SimpleNamespace,
+) -> None:
+    """Un cuerpo inválido da el mismo 400, byte a byte, exista la oportunidad o no, esté en el
+    alcance o no; uno válido da 404 para todo lo que no es de quien asigna."""
+    sam = signed(sales.sam)
+    ids = {
+        "in scope": sales.opps["vera"],
+        "out of scope": sales.opps["ana"],
+        "unknown": uuid4(),
+        "deleted": sales.opps["gone"],
+        "other organization": sales.opps["b"],
+    }
+    bad = {"assigned_user_id": "x", "version": 1}
+    answers = {key: assign(sam, pk, bad) for key, pk in ids.items()}
+    assert {r.status_code for r in answers.values()} == {400}
+    assert len({r.content for r in answers.values()}) == 1
+    good = {"assigned_user_id": str(sales.ana.pk), "version": 1}
+    results = {key: assign(sam, pk, good) for key, pk in ids.items()}
+    assert {k: r.status_code for k, r in results.items()} == {
+        "in scope": 200, "out of scope": 404, "unknown": 404, "deleted": 404,
+        "other organization": 404,
+    }  # fmt: skip
+    assert len({r.content for k, r in results.items() if k != "in scope"}) == 1

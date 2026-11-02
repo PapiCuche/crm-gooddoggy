@@ -16,6 +16,7 @@ from apps.access.selectors import can, execution_context, scoped
 from apps.deals.models import Opportunity
 from apps.deals.scopes import AssignedTo
 from apps.deals.seed import ensure_default_pipeline
+from apps.organizations.models import TeamMember
 from core.tenancy.scope import tenant_scope
 from tests import test_contacts_api
 from tests.test_memberships import ctx
@@ -153,3 +154,48 @@ def test_team_covers_every_team_of_the_actor_inactive_ones_and_nobody_elsewhere(
     with tenant_scope(ctx(sales.a, sales.ana)) as tenant:
         foreign = Opportunity(organization_id=sales.b, assigned_user_id=sales.ana.pk)
         assert not can(narrowed(tenant, Scope.ORGANIZATION), "opportunities.view", foreign)
+
+
+def test_without_a_user_the_policy_lists_and_allows_nothing(sales: SimpleNamespace) -> None:
+    """`assigned_user_id=None` sería `IS NULL` y daría las que no tienen responsable."""
+    nobody: Any = SimpleNamespace(tenant=SimpleNamespace(user_id=None), team_ids=frozenset())
+    with tenant_scope(ctx(sales.a, sales.ana)):
+        everything = list(Opportunity.objects.all())
+        assert any(o.assigned_user_id is None for o in everything)
+        for scope in Scope:
+            assert not Opportunity.objects.filter(AssignedTo().q(scope, nobody)).exists(), scope
+            assert not any(AssignedTo().allows(scope, nobody, o) for o in everything), scope
+
+
+def test_combined_scopes_add_up_and_a_removed_teammate_stops_counting(
+    sales: SimpleNamespace,
+) -> None:
+    def titles(user: Any, scopes: set[Scope]) -> set[str]:
+        with tenant_scope(ctx(sales.a, user)) as tenant:
+            narrow = replace(
+                execution_context(tenant), permissions={"opportunities.view": frozenset(scopes)}
+            )
+            listed_ = set(scoped(narrow, "opportunities.view", Opportunity.objects.all()))
+            assert listed_ == {
+                o for o in Opportunity.objects.all() if can(narrow, "opportunities.view", o)
+            }
+            return {o.title for o in listed_}
+
+    both = {Scope.OWN, Scope.TEAM}
+    assert (
+        titles(sales.sam, both)
+        == titles(sales.sam, {Scope.TEAM})
+        == {"De sam", "De vera", "Borrada"}
+    )
+    assert titles(sales.sam, {Scope.OWN, Scope.BRANCH}) == {"De sam"}
+    assert titles(sales.sam, {Scope.TEAM, Scope.ORGANIZATION}) == {
+        "De vera",
+        "De sam",
+        "De ana",
+        "Sin responsable",
+        "Borrada",
+    }
+    with tenant_scope(ctx(sales.a)):
+        TeamMember.objects.filter(membership_id=sales.m["vera"]).delete()  # vera deja el equipo
+    assert titles(sales.sam, {Scope.TEAM}) == {"De sam"}  # y sus oportunidades dejan de contar
+    assert titles(sales.vera, {Scope.TEAM}) == {"De vera", "Borrada"}  # sin equipos: lo propio

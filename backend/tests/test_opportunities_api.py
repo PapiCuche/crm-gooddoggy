@@ -150,6 +150,13 @@ def test_the_filters_combine_and_each_is_exact(sales: SimpleNamespace) -> None:
     assert ids_of(sam, assigned_user_id=sales.ana.pk) == set()
     assert ids_of(sam, contact_id=sales.ids["plain"]) == set()
     assert ids_of(sam, status="OPEN") == pick(sales, "vera")
+    vera = signed(sales.vera)  # con cualquier combinación, `OWN` no ve lo ajeno
+    assert ids_of(vera, assigned_user_id=sales.sam.pk, status="") == set()
+    assert ids_of(vera, assigned_user_id=sales.sam.pk, q="De sam", status="OPEN") == set()
+    assert ids_of(vera, contact_id=sales.ids["sam"], pipeline_id=nuevo.pipeline_id) == set()
+    assert ids_of(vera, q="De ana", stage_id=nuevo.pk) == set()
+    assert ids_of(vera, q="%") == set() and ids_of(vera, q="_") == set()
+    assert ids_of(vera, status="") == pick(sales, "vera")
 
 
 def test_q_matches_the_title_or_the_number_literally(sales: SimpleNamespace) -> None:
@@ -164,6 +171,21 @@ def test_q_matches_the_title_or_the_number_literally(sales: SimpleNamespace) -> 
     assert ids_of(ana, q="100%") == pick(sales, "ana")  # `%` y `_` son literales
     assert ids_of(ana, q="_especial_") == pick(sales, "ana")
     assert ids_of(ana, q="") == pick(sales, "vera", "sam", "ana", "nobody")
+    assert ids_of(ana, status="") == pick(
+        sales, "vera", "sam", "ana", "nobody"
+    )  # vacío: sin filtro
+    assert ids_of(ana, status="", q="DE VERA") == pick(
+        sales, "vera"
+    )  # y se combina como si faltara
+    with tenant_scope(ctx(sales.a)):
+        Opportunity.objects.filter(pk=sales.opps["vera"]).update(title=r"Ruta C:\datos (a.b+c)")
+        Opportunity.objects.filter(pk=sales.opps["sam"]).update(title=r"Ruta C:\otra")
+    for text, found in (  # la barra y los metacaracteres de patrón valen por sí mismos
+        ("\\", {"vera", "sam"}), (r"C:\datos", {"vera"}), ("(a.b+c)", {"vera"}),
+        (".", {"vera"}), ("a.b", {"vera"}), ("b+c", {"vera"}), ("(", {"vera"}), ("[", set()),
+        (".*", set()), ("^Ruta", set()), ("c$", set()), ("a|b", set()), ("\\d", {"vera"}),
+    ):  # fmt: skip
+        assert ids_of(ana, q=text) == pick(sales, *found), text
     assert ids_of(ana, q="no existe") == set()
     assert ids_of(signed(sales.sam), q="De ana") == set()  # dentro del alcance
 
@@ -174,6 +196,7 @@ def test_q_matches_the_title_or_the_number_literally(sales: SimpleNamespace) -> 
         {"pipeline_id": "x"}, {"stage_id": "1"}, {"assigned_user_id": ""}, {"contact_id": "no"},
         {"status": "won"}, {"status": "X"}, {"q": "a\nb"}, {"q": "a\x00b"}, {"q": "x" * 201},
         {"pipeline_id": ["a", "b"]}, {"q": ["a", "b"]}, {"status": ["OPEN", "OPEN"]},
+        {"status": ["", "OPEN"]}, {"status": ["", ""]},
     ],
 )  # fmt: skip
 def test_a_hostile_filter_is_a_400_never_a_500(sales: SimpleNamespace, bad: dict[str, Any]) -> None:
