@@ -18,6 +18,8 @@ import { cents, OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
 import { useOwners, usePipelines } from "./use-deals";
 
+// El máximo de `q` en esta API es 200 (el de Clientes, 254): por puntos de código, no por unidades UTF-16.
+const forApi = (text: string) => Array.from(searchTerm(text)).slice(0, 200).join("").trimEnd();
 type View = "board" | "table";
 const STATUSES = ["OPEN", "WON", "LOST", ""] as const; // «» : todas
 
@@ -41,7 +43,7 @@ export function OpportunitiesBoard() {
   const [draft, setDraft] = useState("");
   const [term, setTerm] = useState("");
   useEffect(() => {
-    const timer = setTimeout(() => setTerm(searchTerm(draft)), SEARCH_DELAY);
+    const timer = setTimeout(() => setTerm(forApi(draft)), SEARCH_DELAY);
     return () => clearTimeout(timer);
   }, [draft]);
   const [now] = useState(() => Date.now()); // los días en la etapa se cuentan desde la apertura

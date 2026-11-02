@@ -89,6 +89,10 @@ describe("OpportunitiesBoard", () => {
         .getAllByRole("heading", { level: 2 })
         .map((h) => h.textContent),
     ).toEqual(["Nuevo", "Cotizado"]);
+    // 390 px: las columnas se desplazan en horizontal, con parada en cada una; la región, con foco.
+    expect(board).toHaveClass("overflow-x-auto", "snap-x", "snap-mandatory");
+    expect(board).toHaveAttribute("tabindex", "0");
+    expect(column("Nuevo")).toHaveClass("shrink-0", "snap-start");
     const nuevo = column("Nuevo");
     expect(nuevo).toHaveTextContent("1 oportunidad · S/ 1,500.50");
     expect(column("Cotizado")).toHaveTextContent("2 oportunidades · S/ 400.35");
@@ -108,15 +112,6 @@ describe("OpportunitiesBoard", () => {
     expect(screen.getByText("3 oportunidades en la lista")).toBeInTheDocument();
     expect(screen.queryByText(/costo|cost/i)).toBeNull();
     expect(api).toHaveBeenCalledTimes(2); // pipelines y oportunidades; sin directorio
-  });
-
-  it("390 px: las columnas se desplazan en horizontal, con parada en cada una, y la región recibe el foco", async () => {
-    mockApi({ [PIPELINES]: page([sales]), [LIST]: page([rocky]) });
-    show();
-    const board = await screen.findByRole("region", { name: "Tablero de oportunidades" });
-    expect(board).toHaveClass("overflow-x-auto", "snap-x", "snap-mandatory");
-    expect(board).toHaveAttribute("tabindex", "0");
-    expect(column("Nuevo")).toHaveClass("shrink-0", "snap-start");
   });
 
   it("nombra al responsable con el directorio si la API deja leerlo, y lo ofrece en el filtro", async () => {
@@ -171,6 +166,17 @@ describe("OpportunitiesBoard", () => {
     const p2 =
       "/api/v1/o/acme/opportunities/?pipeline_id=p2&status=OPEN&assigned_user_id=u1&q=rocky";
     await waitFor(() => expect(api.mock.calls.map(([url]) => String(url))).toContain(p2));
+  });
+
+  it("la búsqueda manda como mucho 200 caracteres (el máximo de `q`) y nada con una sola letra", async () => {
+    const api = mockApi({ [PIPELINES]: page([sales]), [LIST]: page([rocky]) });
+    show();
+    await screen.findByRole("region", { name: "Tablero de oportunidades" });
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "a" } });
+    fireEvent.change(screen.getByLabelText("Buscar"), { target: { value: "ñ".repeat(250) } });
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(3)); // pipelines, lista y la búsqueda
+    const last = new URL(String(api.mock.calls[2]![0]), "http://x");
+    expect(last.searchParams.get("q")).toHaveLength(200);
   });
 
   it("la tabla enseña la misma lista, con la etapa en una columna, y el botón de vista lo dice", async () => {

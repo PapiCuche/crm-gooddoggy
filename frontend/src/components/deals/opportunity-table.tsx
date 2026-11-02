@@ -30,7 +30,6 @@ export function OpportunityTable({
   const t = useTranslations("deals");
   const format = useFormatter();
   return (
-    // Región desplazable: con el foco, el teclado la recorre. Los lectores de pantalla la anuncian.
     <div role="region" aria-label={t("table.label")} tabIndex={0} className="overflow-x-auto">
       <table className="bg-surface border-border w-full min-w-[56rem] border text-left text-sm">
         <thead className="border-border border-b">
