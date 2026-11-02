@@ -3724,8 +3724,9 @@ paths:
         y una nota opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at`
         y probabilidad 0. Con `opportunities.view` y `opportunities.mark_lost`; fuera
         del alcance: 404. 400 en `lost_reason_id` si el motivo no existe, está borrado,
-        inactivo o es de otra organización (el mismo error). 409: `STALE_VERSION`,
-        `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.'
+        inactivo o es de otra organización (el mismo error); 400 en `note` si el motivo
+        exige nota (`requires_note`) y no hay texto (sin nota, `null` o en blanco).
+        409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.'
       parameters:
       - in: path
         name: opportunity_id
@@ -8059,6 +8060,9 @@ components:
           type: integer
         is_active:
           type: boolean
+        requires_note:
+          type: boolean
+          description: Perder con este motivo exige una nota.
         version:
           type: integer
       required:
@@ -8066,6 +8070,7 @@ components:
       - id
       - is_active
       - name
+      - requires_note
       - sort_order
       - version
     LostReasonCreateRequest:
@@ -8088,6 +8093,9 @@ components:
           maximum: 32767
           minimum: -32768
           description: Sin él, al final; tras 32767 hay que indicarlo (400).
+        requires_note:
+          type: boolean
+          description: Perder con este motivo exige una nota. Sin él, no la exige.
       required:
       - code
       - name
@@ -9516,6 +9524,9 @@ components:
           minimum: -32768
         is_active:
           type: boolean
+        requires_note:
+          type: boolean
+          description: Perder con este motivo exige una nota.
         version:
           type: integer
           maximum: 2147483647

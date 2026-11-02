@@ -64,6 +64,7 @@ BAD_REFERENCE = {  # sin repetir el id recibido
     "assigned_user_id": "No es un miembro activo de la organización.",
     "stage_id": "No es una etapa activa del pipeline de la oportunidad.",
     "lost_reason_id": "No es un motivo de pérdida activo de la organización.",
+    "note": "Este motivo de pérdida exige una nota.",
 }
 
 
@@ -501,12 +502,13 @@ class OpportunityWinView(StageCommand):
         "opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at` y probabilidad 0. "
         "Con `opportunities.view` y `opportunities.mark_lost`; fuera del alcance: 404. 400 en "
         "`lost_reason_id` si el motivo no existe, está borrado, inactivo o es de otra "
-        "organización (el mismo error). 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, "
-        "`MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.",
+        "organización (el mismo error); 400 en `note` si el motivo exige nota (`requires_note`) "
+        "y no hay texto (sin nota, `null` o en blanco). 409: `STALE_VERSION`, "
+        "`OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.",
     ),
 )
 class OpportunityLoseView(StageCommand):
     required_permissions = {"POST": ("opportunities.view", "opportunities.mark_lost")}
     wanted = inputs.OpportunityLoseSerializer
     run = staticmethod(stages.lose_opportunity)
-    body = frozenset({"lost_reason_id"})
+    body = frozenset({"lost_reason_id", "note"})

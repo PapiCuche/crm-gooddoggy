@@ -7629,7 +7629,7 @@ export const getOpportunitiesLoseUrl = (orgSlug: string, opportunityId: string) 
 };
 
 /**
- * Pierde una oportunidad abierta por un motivo activo (obligatorio) y una nota opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at` y probabilidad 0. Con `opportunities.view` y `opportunities.mark_lost`; fuera del alcance: 404. 400 en `lost_reason_id` si el motivo no existe, está borrado, inactivo o es de otra organización (el mismo error). 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.
+ * Pierde una oportunidad abierta por un motivo activo (obligatorio) y una nota opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at` y probabilidad 0. Con `opportunities.view` y `opportunities.mark_lost`; fuera del alcance: 404. 400 en `lost_reason_id` si el motivo no existe, está borrado, inactivo o es de otra organización (el mismo error); 400 en `note` si el motivo exige nota (`requires_note`) y no hay texto (sin nota, `null` o en blanco). 409: `STALE_VERSION`, `OPPORTUNITY_CLOSED`, `MISSING_FIELDS`, `PIPELINE_UNAVAILABLE`.
  */
 export const opportunitiesLose = async (
   orgSlug: string,

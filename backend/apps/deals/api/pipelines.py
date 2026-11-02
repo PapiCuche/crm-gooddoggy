@@ -127,6 +127,7 @@ class LostReasonSerializer(serializers.Serializer[Any]):
     code = serializers.CharField(help_text="`MAYÚSCULAS_Y_GUION_BAJO`, único. No cambia.")
     sort_order = serializers.IntegerField()
     is_active = serializers.BooleanField()
+    requires_note = serializers.BooleanField(help_text="Perder con este motivo exige una nota.")
     version = serializers.IntegerField()
 
 

@@ -22,6 +22,8 @@ export interface PatchedLostReasonUpdateRequest {
    */
   sort_order?: number;
   is_active?: boolean;
+  /** Perder con este motivo exige una nota. */
+  requires_note?: boolean;
   /**
    * La que se leyó; si no, 409.
    * @minimum 1

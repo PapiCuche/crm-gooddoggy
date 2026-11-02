@@ -40,7 +40,7 @@ STAGE_FIELDS = frozenset(
 )
 NEW_STAGE = STAGE_FIELDS | {"code", "is_active"}
 _PIPELINE_FIELDS = frozenset({"name", "kind", "sort_order", "is_active", "is_default"})
-_REASON_FIELDS = frozenset({"name", "sort_order", "is_active"})
+_REASON_FIELDS = frozenset({"name", "sort_order", "is_active", "requires_note"})
 
 
 class StaleVersion(Exception):
@@ -447,10 +447,16 @@ def reorder_stages(
 
 
 def create_lost_reason(
-    ctx: TenantContext, *, name: str, code: str, sort_order: int | None = None
+    ctx: TenantContext,
+    *,
+    name: str,
+    code: str,
+    sort_order: int | None = None,
+    requires_note: bool | None = None,
 ) -> LostReason:
-    """Crea un motivo de pérdida, activo, y lo audita. Sin `sort_order`, va al final. `CodeTaken`
-    si ya hay uno vivo con ese código (`MAYÚSCULAS_Y_GUION_BAJO`); sin escribir nada."""
+    """Crea un motivo de pérdida, activo, y lo audita. Sin `sort_order`, va al final. Con
+    `requires_note`, perder con él exige una nota (D-F5-02); sin él, no la exige. `CodeTaken` si ya
+    hay uno vivo con ese código (`MAYÚSCULAS_Y_GUION_BAJO`); sin escribir nada."""
     alias = require_scope(ctx)
     values: dict[str, Any] = {
         "name": clean_name(_text(name, "nombre"), NAME_MAX),
@@ -459,6 +465,8 @@ def create_lost_reason(
     if sort_order is not None:
         _integer(sort_order, -ORDER_MAX - 1, ORDER_MAX, "orden")
         values["sort_order"] = sort_order
+    if requires_note is not None:
+        values["requires_note"] = _flag(requires_note, "requires_note")
     try:
         with transaction.atomic(using=alias):
             if sort_order is None:
@@ -481,9 +489,9 @@ def create_lost_reason(
 def update_lost_reason(
     ctx: TenantContext, *, lost_reason_id: UUID, version: int, **fields: Any
 ) -> LostReason:
-    """Cambia el nombre, el orden o si está activo, si nadie lo cambió desde `version`, y lo
-    audita con el antes y el después; sin cambios no escribe. `StaleVersion`; `DoesNotExist` si no
-    es de la organización o está borrado. El código no cambia."""
+    """Cambia el nombre, el orden, si está activo o si exige nota al perder, si nadie lo cambió
+    desde `version`, y lo audita con el antes y el después; sin cambios no escribe. `StaleVersion`;
+    `DoesNotExist` si no es de la organización o está borrado. El código no cambia."""
     alias = require_scope(ctx)
     _integer(version, 1, 2**31 - 1, "versión")
     if unknown := set(fields) - _REASON_FIELDS:
@@ -491,8 +499,9 @@ def update_lost_reason(
     values = dict(fields)
     if "name" in values:
         values["name"] = clean_name(_text(values["name"], "nombre"), NAME_MAX)
-    if "is_active" in values:
-        _flag(values["is_active"], "is_active")
+    for flag in ("is_active", "requires_note"):
+        if flag in values:
+            _flag(values[flag], flag)
     if "sort_order" in values:
         _integer(values["sort_order"], -ORDER_MAX - 1, ORDER_MAX, "orden")
     with transaction.atomic(using=alias):
