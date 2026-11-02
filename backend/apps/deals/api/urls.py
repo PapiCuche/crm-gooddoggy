@@ -47,4 +47,14 @@ urlpatterns = [
         opportunities.OpportunityReopenView.as_view(),
         name="opportunity-reopen",
     ),
+    path(
+        "opportunities/<uuid:opportunity_id>/win/",
+        opportunities.OpportunityWinView.as_view(),
+        name="opportunity-win",
+    ),
+    path(
+        "opportunities/<uuid:opportunity_id>/lose/",
+        opportunities.OpportunityLoseView.as_view(),
+        name="opportunity-lose",
+    ),
 ]
