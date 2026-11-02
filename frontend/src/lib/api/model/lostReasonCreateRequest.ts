@@ -28,4 +28,6 @@ export interface LostReasonCreateRequest {
    * @maximum 32767
    */
   sort_order?: number;
+  /** Perder con este motivo exige una nota. Sin él, no la exige. */
+  requires_note?: boolean;
 }

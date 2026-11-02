@@ -171,6 +171,9 @@ class LostReasonCreateSerializer(Closed, serializers.Serializer[Any]):
         required=False,
         help_text="Sin él, al final; tras 32767 hay que indicarlo (400).",
     )
+    requires_note = Flag(
+        required=False, help_text="Perder con este motivo exige una nota. Sin él, no la exige."
+    )
 
 
 @version_required
@@ -178,6 +181,7 @@ class LostReasonUpdateSerializer(Closed, serializers.Serializer[Any]):
     name = Checked(_name, max_length=NAME_MAX, required=False)
     sort_order = Whole(min_value=ORDER[0], max_value=ORDER[1], required=False)
     is_active = Flag(required=False)
+    requires_note = Flag(required=False, help_text="Perder con este motivo exige una nota.")
     version = Whole(min_value=1, max_value=2**31 - 1, help_text="La que se leyó; si no, 409.")
 
 

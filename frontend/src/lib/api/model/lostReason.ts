@@ -13,5 +13,7 @@ export interface LostReason {
   code: string;
   sort_order: number;
   is_active: boolean;
+  /** Perder con este motivo exige una nota. */
+  requires_note: boolean;
   version: number;
 }
