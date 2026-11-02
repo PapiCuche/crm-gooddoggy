@@ -164,6 +164,7 @@ class LostReason(TenantModel):
     code = models.CharField(max_length=30)
     sort_order = models.IntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    requires_note = models.BooleanField(default=False, db_default=False)  # D-F5-02
     created_by_user_id = models.UUIDField(null=True, blank=True)
     updated_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

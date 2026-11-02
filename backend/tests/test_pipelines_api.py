@@ -37,7 +37,7 @@ STAGE_FIELDS = {
     "id", "name", "code", "sort_order", "stage_type", "default_probability", "stale_after_days",
     "color", "requires_fields", "is_active",
 }  # fmt: skip
-REASON_FIELDS = {"id", "name", "code", "sort_order", "is_active", "version"}
+REASON_FIELDS = {"id", "name", "code", "sort_order", "is_active", "requires_note", "version"}
 UNAUTHENTICATED = (401, b'{"code":"NOT_AUTHENTICATED"}')
 
 

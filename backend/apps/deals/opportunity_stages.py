@@ -180,8 +180,9 @@ def lose_opportunity(
     """Pierde una oportunidad abierta por un motivo activo de la organización (obligatorio) y una
     nota opcional: la lleva a la primera etapa LOST de su pipeline con `lost_at`, probabilidad 0,
     historial y auditoría (`opportunity.lost`, con la nota como `[texto]`). `BadReference
-    ("lost_reason_id")` si el motivo no existe, está borrado o inactivo. Mismos errores que
-    `win_opportunity`; si falla, no escribe nada."""
+    ("lost_reason_id")` si el motivo no existe, está borrado o inactivo; `BadReference("note")` si
+    el motivo exige nota (`requires_note`, leído con el motivo ya bloqueado) y no hay texto. Mismos
+    errores que `win_opportunity`; si falla, no escribe nada."""
     alias, reason = require_scope(ctx), _uuid(lost_reason_id, "motivo")
     text = None if note is None else _line(note, "nota", NOTE_MAX) or None
     with transaction.atomic(using=alias):
@@ -191,8 +192,11 @@ def lose_opportunity(
         usable = LostReason.objects.using(alias).filter(
             pk=reason, is_active=True, deleted_at__isnull=True
         )
-        if not usable.select_for_update(no_key=True).values_list("pk", flat=True)[:1]:
+        locked = list(usable.select_for_update(no_key=True).values_list("requires_note", flat=True))
+        if not locked:
             raise BadReference("lost_reason_id")
+        if locked[0] and text is None:
+            raise BadReference("note")
         extra: dict[str, list[Any]] = {
             "lost_at": [None, timezone.now()],
             "lost_reason_id": [None, reason],
