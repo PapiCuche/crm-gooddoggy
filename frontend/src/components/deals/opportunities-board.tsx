@@ -2,7 +2,7 @@
 
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Choice } from "@/components/catalog/product-create";
@@ -14,6 +14,7 @@ import { getOpportunitiesListQueryKey, opportunitiesList } from "@/lib/api/clien
 import type { Opportunity, OpportunitiesListParams, Stage } from "@/lib/api/model";
 
 import { SEARCH_DELAY, searchTerm } from "../contacts/contact-search";
+import { MoveControl, MoveNotice, useMoveOpportunity } from "./move-opportunity";
 import { cents, OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
 import { useOwners, usePipelines } from "./use-deals";
@@ -24,8 +25,8 @@ type View = "board" | "table";
 const STATUSES = ["OPEN", "WON", "LOST", ""] as const; // «» : todas
 
 // Oportunidades (F5-05a): las que devuelve `GET /api/v1/o/{slug}/opportunities/` (F5-04b) del
-// pipeline elegido, en una columna por etapa o en tabla. Solo lee: mover, crear, ganar y perder
-// llegan en las partes siguientes. Quién ve qué lo decide la API (`opportunities.view` y su
+// pipeline elegido, en una columna por etapa o en tabla. Mover es de `move-opportunity` (F5-05b);
+// crear, ganar y perder llegan en las partes siguientes. Quién ve qué lo decide la API (`opportunities.view` y su
 // alcance); un 403 solo se explica. La lista viene por cursor en orden de creación (ADR-016),
 // así que los totales de las columnas son los de lo cargado, y la pantalla lo dice.
 export function OpportunitiesBoard() {
@@ -57,8 +58,10 @@ export function OpportunitiesBoard() {
     ...(term ? { q: term } : {}),
   };
   // Cada filtro es su propia lista; los filtros viajan también con «Cargar más».
+  const listKey = [...getOpportunitiesListQueryKey(slug, filters), "pages"];
+  const mover = useMoveOpportunity(slug);
   const list = useInfiniteQuery({
-    queryKey: [...getOpportunitiesListQueryKey(slug, filters), "pages"],
+    queryKey: listKey,
     queryFn: ({ pageParam, signal }) =>
       opportunitiesList(
         slug,
@@ -77,6 +80,10 @@ export function OpportunitiesBoard() {
   const stages = (pipeline?.stages ?? []).filter(
     (stage) =>
       (stage.is_active || byStage.has(stage.id)) && (!status || stage.stage_type === status),
+  );
+  // A donde se puede mover: las etapas abiertas y activas, aunque el filtro de estado oculte columnas.
+  const targets = (pipeline?.stages ?? []).filter(
+    (stage) => stage.is_active && stage.stage_type === "OPEN",
   );
   const problem = failed(pipelines, t("denied")) ?? failed(list, t("denied"));
 
@@ -104,6 +111,7 @@ export function OpportunitiesBoard() {
         <p role="status" className="sr-only">
           {t("count", { count: rows.length })}
         </p>
+        <MoveNotice said={mover.said} alertRef={mover.alertRef} />
         {rows.length === 0 ? (
           <p className="text-muted wrap-anywhere">
             {term || ownerId ? t("emptyFiltered") : t("empty", { status })}
@@ -112,6 +120,7 @@ export function OpportunitiesBoard() {
           <OpportunityTable rows={rows} owner={owners.name} now={now} />
         ) : (
           <Board
+            actions={(card) => <MoveControl card={card} targets={targets} mover={mover} />}
             stages={stages}
             byStage={byStage}
             currency={pipeline?.currency ?? ""}
@@ -125,8 +134,10 @@ export function OpportunitiesBoard() {
             <Button
               variant="accent"
               size="lg"
-              aria-disabled={list.isFetchingNextPage}
-              onClick={() => list.isFetchingNextPage || void list.fetchNextPage()}
+              aria-disabled={list.isFetchingNextPage || mover.pending.size > 0}
+              onClick={() =>
+                list.isFetchingNextPage || mover.pending.size > 0 || void list.fetchNextPage()
+              }
             >
               {list.isFetchingNextPage ? t("loadingMore") : t("more")}
             </Button>
@@ -206,12 +217,14 @@ export function OpportunitiesBoard() {
 // Las columnas: se desplazan en horizontal y se detienen en cada una (en 390 px asoma la
 // siguiente). La región recibe el foco para que el teclado la recorra.
 function Board({
+  actions,
   stages,
   byStage,
   currency,
   owner,
   now,
 }: {
+  actions: (card: Opportunity) => ReactNode;
   stages: Stage[];
   byStage: Map<string, Opportunity[]>;
   currency: string;
@@ -261,6 +274,7 @@ function Board({
                     opportunity={card}
                     owner={owner(card.assigned_user_id)}
                     now={now}
+                    actions={actions(card)}
                   />
                 ))}
               </ul>
