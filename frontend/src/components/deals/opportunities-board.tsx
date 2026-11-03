@@ -59,7 +59,7 @@ export function OpportunitiesBoard() {
   };
   // Cada filtro es su propia lista; los filtros viajan también con «Cargar más».
   const listKey = [...getOpportunitiesListQueryKey(slug, filters), "pages"];
-  const mover = useMoveOpportunity(slug, listKey);
+  const mover = useMoveOpportunity(slug);
   const list = useInfiniteQuery({
     queryKey: listKey,
     queryFn: ({ pageParam, signal }) =>
@@ -111,7 +111,7 @@ export function OpportunitiesBoard() {
         <p role="status" className="sr-only">
           {t("count", { count: rows.length })}
         </p>
-        <MoveNotice said={mover.said} />
+        <MoveNotice said={mover.said} alertRef={mover.alertRef} />
         {rows.length === 0 ? (
           <p className="text-muted wrap-anywhere">
             {term || ownerId ? t("emptyFiltered") : t("empty", { status })}
@@ -134,8 +134,10 @@ export function OpportunitiesBoard() {
             <Button
               variant="accent"
               size="lg"
-              aria-disabled={list.isFetchingNextPage}
-              onClick={() => list.isFetchingNextPage || void list.fetchNextPage()}
+              aria-disabled={list.isFetchingNextPage || mover.pending.size > 0}
+              onClick={() =>
+                list.isFetchingNextPage || mover.pending.size > 0 || void list.fetchNextPage()
+              }
             >
               {list.isFetchingNextPage ? t("loadingMore") : t("more")}
             </Button>

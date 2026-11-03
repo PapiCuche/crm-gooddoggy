@@ -1974,7 +1974,9 @@
       "conflict": "La etapa pide datos que faltan o no está disponible.",
       "invalid": "Esa etapa ya no es válida para este pipeline.",
       "denied": "No tienes permiso para mover oportunidades.",
-      "gone": "Esta oportunidad ya no existe o salió de tu alcance."
+      "gone": "Esta oportunidad ya no existe o salió de tu alcance.",
+      "buttonLabel": "Mover «{title}»",
+      "choose": "Elige primero la etapa a la que quieres mover la oportunidad."
     }
   }
 }

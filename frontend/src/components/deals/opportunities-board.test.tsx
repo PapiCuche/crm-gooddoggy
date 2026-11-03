@@ -270,47 +270,60 @@ describe("OpportunitiesBoard", () => {
 
   describe("mover a otra etapa (F5-05b)", () => {
     const MOVE = "POST /api/v1/o/acme/opportunities/1/move/";
+    const MOVE2 = "POST /api/v1/o/acme/opportunities/2/move/";
+    const OPEN_LIST = "/api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN";
     const detail = { ...rocky, stage: luna.stage, version: 2, items: [], history: [] };
     const posts = (api: ReturnType<typeof mockApi>) =>
       api.mock.calls.filter(([, init]) => init?.method === "POST");
-    // La respuesta del servidor espera a `release`: así se ve la tarjeta ya movida, sin respuesta.
-    function setup(reply: { status: number; body?: unknown }) {
+    const gate = () => {
+      let open = () => {};
+      return { open: () => open(), wait: new Promise<void>((resolve) => (open = resolve)) };
+    };
+    // Lo que "el servidor" tiene: la lista cambia si el test la cambia. La respuesta del POST
+    // espera a `release`, así se ve la tarjeta ya movida sin respuesta.
+    function setup(reply: { status: number; body?: unknown }, next: string | null = null) {
+      const server = { rows: [rocky, luna, mimi] as unknown[] };
       const api = mockApi({
         [PIPELINES]: page([sales]),
-        [LIST]: page([rocky, luna, mimi]),
+        [LIST]: () => page(server.rows, next),
         [MOVE]: reply,
       });
       const send = api.getMockImplementation()!;
-      let release = () => {};
-      const gate = new Promise<void>((resolve) => (release = resolve));
+      const held = gate();
       api.mockImplementation(async (input, init) => {
-        if (init?.method === "POST") await gate;
+        if (init?.method === "POST") await held.wait;
         return send(input, init);
       });
       document.cookie = "csrftoken=token-de-prueba";
       show();
-      return { api, release };
+      return { api, server, release: held.open };
     }
     const control = (title: string) => screen.getByRole("combobox", { name: new RegExp(title) });
+    const go = (title: string, stage: string) => {
+      fireEvent.change(control(title), { target: { value: stage } });
+      fireEvent.click(screen.getByRole("button", { name: `Mover «${title}»` }));
+    };
     const pick = async (stage: string) => {
       await screen.findByRole("region", { name: "Tablero de oportunidades" });
-      fireEvent.change(control("Collar"), { target: { value: stage } });
-      fireEvent.click(within(column("Nuevo")).getByRole("button", { name: "Mover" }));
+      go("Collar para Rocky", stage);
     };
 
-    it("la tarjeta pasa a la columna nueva al instante, con sus totales, y la respuesta trae la versión nueva", async () => {
+    it("la tarjeta pasa a la columna nueva al instante, con sus totales; la respuesta trae la versión nueva y una segunda orden la usa", async () => {
       const { api, release } = setup({ status: 200, body: detail });
       await pick("s2");
       // Sin respuesta todavía: ya está en «Cotizado», y el control espera.
-      expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+      expect(await within(column("Cotizado")).findByText("Collar para Rocky")).toBeVisible();
       expect(column("Nuevo")).toHaveTextContent("Sin oportunidades · S/ 0.00");
       expect(column("Cotizado")).toHaveTextContent("3 oportunidades · S/ 1,900.85");
       release();
       expect(await screen.findByText("«Collar para Rocky» pasó a «Cotizado».")).toBeVisible();
       expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({ stage_id: "s2", version: 1 });
       expect(control("Collar")).toHaveFocus(); // el foco sigue a la tarjeta
-      // El control ya no ofrece la etapa actual.
       expect(within(control("Collar")).queryByRole("option", { name: "Cotizado" })).toBeNull();
+      // Liberada la orden anterior, otra sale, con la versión de la respuesta.
+      go("Collar para Rocky", "s1");
+      await waitFor(() => expect(posts(api)).toHaveLength(2));
+      expect(JSON.parse(String(posts(api)[1]![1]?.body))).toEqual({ stage_id: "s1", version: 2 });
     });
 
     it.each([
@@ -324,7 +337,7 @@ describe("OpportunitiesBoard", () => {
       async (status, code, said) => {
         const { api, release } = setup({ status, body: { code } });
         await pick("s2");
-        expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+        expect(await within(column("Cotizado")).findByText("Collar para Rocky")).toBeVisible();
         release();
         expect(await screen.findByRole("alert")).toHaveTextContent(
           `${said} La tarjeta volvió a su etapa.`,
@@ -332,16 +345,12 @@ describe("OpportunitiesBoard", () => {
         expect(within(column("Nuevo")).getByText("Collar para Rocky")).toBeVisible();
         expect(control("Collar")).toHaveFocus();
         await waitFor(() =>
-          expect(
-            api.mock.calls.filter(
-              ([url]) => String(url) === "/api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN",
-            ),
-          ).toHaveLength(2),
+          expect(api.mock.calls.filter(([url]) => String(url) === OPEN_LIST)).toHaveLength(2),
         );
       },
     );
 
-    it("403: lo explica, la tarjeta vuelve y no se vuelve a pedir la lista", async () => {
+    it("403: lo explica, la tarjeta vuelve, no se pide la lista, y una orden nueva borra el aviso", async () => {
       const { api, release } = setup({ status: 403, body: { code: "PERMISSION_DENIED" } });
       await pick("s2");
       release();
@@ -350,14 +359,31 @@ describe("OpportunitiesBoard", () => {
       );
       expect(within(column("Nuevo")).getByText("Collar para Rocky")).toBeVisible();
       expect(api).toHaveBeenCalledTimes(3); // pipelines, lista y el intento
+      go("Collar para Rocky", "s2");
+      expect(screen.queryByRole("alert")).toBeNull(); // el aviso anterior se va al empezar otra
+      await screen.findByRole("alert");
     });
 
-    it("sin elegir etapa «Mover» no envía nada, y una orden en curso no se repite", async () => {
-      const { api, release } = setup({ status: 200, body: detail });
+    it("si la tarjeta desaparece con la lista nueva, el foco va al aviso y no a la nada", async () => {
+      const { server, release } = setup({ status: 404, body: { code: "NOT_FOUND" } });
+      await pick("s2");
+      server.rows = [luna, mimi]; // otra persona la borró
+      release();
+      const alert = await screen.findByRole("alert");
+      await waitFor(() => expect(screen.queryByText("Collar para Rocky")).toBeNull());
+      await waitFor(() => expect(alert).toHaveFocus());
+    });
+
+    it("«Mover» sin etapa elegida lo dice y no envía nada; sus botones se distinguen por la tarjeta", async () => {
+      const { api } = setup({ status: 200, body: detail });
       await screen.findByRole("region", { name: "Tablero de oportunidades" });
-      const button = within(column("Nuevo")).getByRole("button", { name: "Mover" });
+      expect(screen.getAllByRole("button", { name: /^Mover «/ })).toHaveLength(3);
+      const button = screen.getByRole("button", { name: "Mover «Collar para Rocky»" });
       fireEvent.click(button);
       expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveClass("aria-disabled:opacity-50");
+      expect(screen.getByRole("alert")).toHaveTextContent("Elige primero la etapa");
+      expect(control("Collar")).toHaveAccessibleDescription(/Elige primero la etapa/);
       expect(posts(api)).toHaveLength(0);
       // Etapas abiertas y activas menos la actual: ni «Ganado» (cerrada) ni «Antigua» (inactiva).
       expect(
@@ -365,24 +391,85 @@ describe("OpportunitiesBoard", () => {
           .getAllByRole("option")
           .map((o) => o.textContent),
       ).toEqual(["Mover a…", "Cotizado"]);
-      fireEvent.change(control("Collar"), { target: { value: "s2" } });
-      fireEvent.click(button);
-      release();
-      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
-      expect(posts(api)).toHaveLength(1);
+    });
+
+    it("una oportunidad ganada no tiene control; las abiertas, sí", async () => {
+      const won = opportunity("4", {
+        ...{ title: "Cama ganada", status: "WON" },
+        stage: { id: "s4", name: "Ganado", type: "WON" },
+      });
+      mockApi({
+        [PIPELINES]: page([sales]),
+        [LIST]: page([rocky]),
+        "GET /api/v1/o/acme/opportunities/?pipeline_id=p1": page([rocky, won]),
+      });
+      show();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      expect(await screen.findByText("Cama ganada")).toBeVisible();
+      expect(screen.queryByRole("combobox", { name: /Cama ganada/ })).toBeNull();
+      expect(control("Collar")).toBeVisible();
     });
 
     it("dos órdenes seguidas sobre la misma oportunidad envían una sola petición", async () => {
       const api = mockApi({ [MOVE]: { status: 200, body: detail } });
       document.cookie = "csrftoken=token-de-prueba";
       function Twice() {
-        const mover = useMoveOpportunity("acme", ["lista"]);
+        const mover = useMoveOpportunity("acme");
         const twice = () => [1, 2].forEach(() => void mover.move(rocky, sales.stages[1]!));
         return <button onClick={twice}>dos veces</button>;
       }
       renderApp(<Twice />);
       fireEvent.click(screen.getByRole("button", { name: "dos veces" }));
       await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+    });
+
+    it("«Cargar más» espera a que acabe la orden en curso", async () => {
+      const { release } = setup({ status: 200, body: detail }, "c-2");
+      await pick("s2");
+      const more = screen.getByRole("button", { name: "Cargar más" });
+      expect(more).toHaveAttribute("aria-disabled", "true");
+      release();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(more).toHaveAttribute("aria-disabled", "false");
+    });
+
+    it("una lista que llega tarde no deshace un movimiento en curso (se cancela la lectura)", async () => {
+      let rows: unknown[] = [rocky, luna, mimi];
+      const api = mockApi({
+        [PIPELINES]: page([sales]),
+        [LIST]: () => page(rows),
+        [MOVE]: { status: 200, body: detail },
+        [MOVE2]: { status: 409, body: { code: "STALE_VERSION" } },
+      });
+      const send = api.getMockImplementation()!;
+      const late = gate();
+      const slow = gate();
+      let reads = 0;
+      api.mockImplementation(async (input, init) => {
+        if (String(input) === OPEN_LIST && ++reads === 2) {
+          await late.wait; // la lectura que sigue al rechazo de A llega con la lista vieja
+          return new Response(JSON.stringify({ results: [rocky, luna, mimi], next: null }));
+        }
+        if (String(input).includes("/1/move/")) await slow.wait;
+        return send(input, init);
+      });
+      document.cookie = "csrftoken=token-de-prueba";
+      show();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      go("Cama Luna", "s1"); // A: rechazada (409); la lista se pide otra vez
+      await screen.findByRole("alert");
+      await waitFor(() => expect(reads).toBe(2));
+      go("Collar para Rocky", "s2"); // B: en curso
+      await within(column("Cotizado")).findByText("Collar para Rocky");
+      late.open();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+      rows = [{ ...detail, items: undefined }, luna, mimi];
+      slow.open();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      await waitFor(() => expect(reads).toBe(3)); // al acabar la última orden, se relee
+      expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
     });
   });
 });
