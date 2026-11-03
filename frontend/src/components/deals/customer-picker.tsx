@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { type Ref, useEffect, useId, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { useReads } from "@/components/inventory/cell-picker";
@@ -22,13 +22,16 @@ export function CustomerPicker({
   picked,
   onPick,
   error,
+  searchRef,
 }: {
   slug: string;
   picked: Customer | null;
   onPick: (customer: Customer) => void;
   error?: string;
+  searchRef?: Ref<HTMLInputElement>; // para llevar el foco a la búsqueda si falta el cliente
 }) {
   const t = useTranslations("deals.create.customer");
+  const errorId = useId();
   const { permissions } = useTenant();
   const can = permissions.some((grant) => grant.code === "contacts.view");
   const { failed, retry } = useReads();
@@ -47,11 +50,12 @@ export function CustomerPicker({
   });
   const problem = failed(found, t("denied"));
   return (
-    <fieldset className="flex flex-col gap-2" aria-invalid={!!error || undefined}>
+    <fieldset className="flex flex-col gap-2" aria-describedby={error ? errorId : undefined}>
       <legend className="text-sm font-medium">{t("label")}</legend>
       {can ? (
         <>
           <TextField
+            ref={searchRef}
             type="search"
             label={t("search")}
             hint={t("hint")}
@@ -93,9 +97,12 @@ export function CustomerPicker({
       ) : (
         <p className="text-muted text-sm">{t("denied")}</p>
       )}
-      {picked ? <p className="text-sm font-medium">{t("picked", { name: picked.name })}</p> : null}
+      {/* Montado desde el principio: un lector de pantalla anuncia al cliente elegido. */}
+      <p role="status" className={picked ? "text-sm font-medium" : "sr-only"}>
+        {picked ? t("picked", { name: picked.name }) : ""}
+      </p>
       {error ? (
-        <p role="alert" className="text-danger text-sm">
+        <p id={errorId} role="alert" className="text-danger text-sm">
           {error}
         </p>
       ) : null}

@@ -475,6 +475,7 @@ describe("OpportunitiesBoard", () => {
 
   describe("crear una oportunidad (F5-05c)", () => {
     const CREATE = "POST /api/v1/o/acme/opportunities/";
+    const OPEN_LIST = "/api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN";
     const CONTACTS = "GET /api/v1/o/acme/contacts/?limit=8";
     const fresh = opportunity("9", {
       title: "Collar nuevo",
@@ -486,9 +487,18 @@ describe("OpportunitiesBoard", () => {
     const posts = (api: ReturnType<typeof mockApi>) =>
       api.mock.calls.filter(([, init]) => init?.method === "POST");
     // `server.rows` es lo que "el servidor" lista; la respuesta de crear espera a `release`.
-    function setup(reply: { status: number; body?: unknown }, codes = ["contacts.view"]) {
-      const server = { rows: [rocky, luna, mimi] as unknown[] };
+    // `gates`: la segunda lectura de la lista (la que sigue a crear) y mover la tarjeta 1 esperan.
+    function setup(
+      reply: { status: number; body?: unknown },
+      codes = ["contacts.view"],
+      gates: { refetch?: Promise<void>; move?: Promise<void> } = {},
+    ) {
+      const server = { rows: [rocky, luna, mimi] as unknown[], reads: 0 };
       const api = mockApi({
+        "POST /api/v1/o/acme/opportunities/1/move/": {
+          status: 200,
+          body: { ...rocky, stage: luna.stage, version: 2, items: [], history: [] },
+        },
         [PIPELINES]: page([sales]),
         [LIST]: () => page(server.rows),
         [CONTACTS]: page([rosa, { id: "c2", display_name: "Luis Paz" }]),
@@ -498,7 +508,9 @@ describe("OpportunitiesBoard", () => {
       let release = () => {};
       const held = new Promise<void>((resolve) => (release = resolve));
       api.mockImplementation(async (input, init) => {
-        if (init?.method === "POST") await held;
+        if (init?.method === "POST" && String(input).endsWith("/opportunities/")) await held;
+        if (init?.method === "POST" && String(input).includes("/1/move/")) await gates.move;
+        if (String(input) === OPEN_LIST && ++server.reads === 2) await gates.refetch;
         return send(input, init);
       });
       document.cookie = "csrftoken=token-de-prueba";
@@ -572,7 +584,7 @@ describe("OpportunitiesBoard", () => {
       ],
       [
         { status: 400, body: { code: "VALIDATION_ERROR", fields: { pipeline_id: ["x"] } } },
-        "Este pipeline ya no está disponible",
+        "Este pipeline no está disponible o no tiene una etapa abierta",
       ],
       [
         { status: 409, body: { code: "PIPELINE_UNAVAILABLE" } },
@@ -592,7 +604,10 @@ describe("OpportunitiesBoard", () => {
         release();
         await waitFor(() => expect(screen.getByRole("form")).toHaveTextContent(said));
         expect(screen.getByLabelText("Título")).toHaveValue("Collar nuevo"); // lo escrito se conserva
-        expect(screen.getByRole("radio", { name: "Rosa Díaz" })).toBeChecked();
+        // Un cliente que la API rechaza deja de figurar como elegido.
+        expect((screen.getByRole("radio", { name: "Rosa Díaz" }) as HTMLInputElement).checked).toBe(
+          !said.startsWith("Ese cliente"),
+        );
         expect(screen.getByRole("button", { name: "Crear oportunidad" })).toBeVisible(); // se puede reintentar
       },
     );
@@ -662,6 +677,155 @@ describe("OpportunitiesBoard", () => {
       release();
       await screen.findByText(/creada en|se creó en/);
       expect(posts(api)).toHaveLength(1);
+    });
+
+    const gate = () => {
+      let open = () => {};
+      return { open: () => open(), wait: new Promise<void>((resolve) => (open = resolve)) };
+    };
+
+    it("solo manda lo escrito: sin importe ni próxima acción no viajan", async () => {
+      const { api, release } = setup({ status: 201, body: created });
+      await open();
+      fill("Título", "Collar nuevo");
+      fireEvent.click(await screen.findByRole("radio", { name: "Luis Paz" }));
+      submit();
+      release();
+      await screen.findByText(/creada en|se creó en/);
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({
+        ...{ contact_id: "c2", title: "Collar nuevo", pipeline_id: "p1" },
+      });
+    });
+
+    it("no le quita el foco a quien se fue a otra parte mientras se relee la lista", async () => {
+      const refetch = gate();
+      const { server, release } = setup({ status: 201, body: created }, ["contacts.view"], {
+        refetch: refetch.wait,
+      });
+      await complete();
+      release();
+      await waitFor(() => expect(server.reads).toBe(2)); // la lectura posterior a crear espera
+      server.rows = [rocky, luna, mimi, fresh];
+      screen.getByLabelText("Buscar").focus(); // el filtro del tablero
+      refetch.open();
+      await screen.findByText("«Collar nuevo» creada en «Nuevo».");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(screen.getByLabelText("Buscar")).toHaveFocus();
+    });
+
+    it("espera a que acabe un movimiento en curso antes de releer la lista", async () => {
+      const move = gate();
+      const { server, release } = setup({ status: 201, body: created }, ["contacts.view"], {
+        move: move.wait,
+      });
+      await complete();
+      fireEvent.change(screen.getByRole("combobox", { name: /Mover «Collar para Rocky»/ }), {
+        target: { value: "s2" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mover «Collar para Rocky»" }));
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(server.reads).toBe(1); // sin lectura nueva mientras el movimiento no acaba
+      server.rows = [rocky, luna, mimi, fresh];
+      move.open();
+      expect(await screen.findByText("«Collar nuevo» creada en «Nuevo».")).toBeVisible();
+    });
+
+    it("un movimiento que empieza durante la lectura la cancela: se espera y se relee, no dice «oculta»", async () => {
+      const refetch = gate();
+      const move = gate();
+      const { server, release } = setup({ status: 201, body: created }, ["contacts.view"], {
+        refetch: refetch.wait,
+        move: move.wait,
+      });
+      await complete();
+      release();
+      await waitFor(() => expect(server.reads).toBe(2));
+      server.rows = [rocky, luna, mimi, fresh];
+      fireEvent.change(screen.getByRole("combobox", { name: /Mover «Collar para Rocky»/ }), {
+        target: { value: "s2" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mover «Collar para Rocky»" }));
+      refetch.open(); // la lectura cancelada no vale
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(screen.queryByText(/pero los filtros/)).toBeNull();
+      move.open();
+      expect(await screen.findByText("«Collar nuevo» creada en «Nuevo».")).toBeVisible();
+    });
+
+    it("si no se puede releer la lista, lo dice sin culpar a los filtros", async () => {
+      const { api, release } = setup({ status: 201, body: created });
+      const send = api.getMockImplementation()!;
+      let reads = 0;
+      api.mockImplementation(async (input, init) =>
+        String(input) === OPEN_LIST && ++reads >= 2
+          ? new Response(JSON.stringify({ code: "INTERNAL_ERROR" }), { status: 500 })
+          : send(input, init),
+      );
+      await complete();
+      release();
+      expect(await screen.findByText(/no pudimos actualizar la lista/)).toBeVisible();
+      expect(screen.queryByText(/pero los filtros/)).toBeNull();
+    });
+
+    it("sin una etapa abierta y activa el botón lo explica y no abre el formulario", async () => {
+      const closed = pipeline("p3", "Cerrado", {
+        ...{ is_default: true, stages: [stage("w", "Ganado", 0, { stage_type: "WON" })] },
+      });
+      mockApi({
+        [PIPELINES]: page([closed]),
+        "GET /api/v1/o/acme/opportunities/?pipeline_id=p3&status=OPEN": page([]),
+      });
+      show();
+      const button = await screen.findByRole("button", { name: "Nueva oportunidad" });
+      fireEvent.click(button);
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(/no tiene una etapa abierta y activa/);
+      expect(screen.queryByRole("form", { name: "Nueva oportunidad" })).toBeNull();
+    });
+
+    it("Escape en la búsqueda de cliente o durante una composición no cierra el formulario", async () => {
+      setup({ status: 201, body: created });
+      await open();
+      fill("Título", "Collar nuevo");
+      fireEvent.keyDown(await screen.findByLabelText("Buscar cliente"), { key: "Escape" });
+      fireEvent.keyDown(screen.getByLabelText("Título"), { key: "Escape", isComposing: true });
+      expect(screen.getByLabelText("Título")).toHaveValue("Collar nuevo");
+    });
+
+    it("sin cliente, el error se asocia a los clientes y el foco va a la búsqueda", async () => {
+      setup({ status: 201, body: created });
+      await open();
+      fill("Título", "Collar nuevo");
+      submit();
+      const search = await screen.findByLabelText("Buscar cliente");
+      expect(search).toHaveFocus();
+      expect(screen.getByRole("group", { name: "Cliente" })).toHaveAccessibleDescription(
+        "Elige un cliente.",
+      );
+      fireEvent.click(await screen.findByRole("radio", { name: "Rosa Díaz" }));
+      expect(screen.getByText("Cliente elegido: Rosa Díaz")).toBeVisible();
+    });
+
+    it("al reabrir tras crear o cancelar, el formulario empieza limpio; Enter mantenido no repite", async () => {
+      const { release } = setup({ status: 201, body: created });
+      await complete();
+      release();
+      await screen.findByText(/creada en|se creó en/);
+      fireEvent.click(screen.getByRole("button", { name: "Nueva oportunidad" }));
+      expect(screen.getByLabelText("Título")).toHaveValue("");
+      expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+      expect(screen.queryByText("Elige un cliente.")).toBeNull();
+      expect(screen.queryByText(/creada en/)).toBeNull(); // el aviso anterior se va
+      fill("Título", "Otro");
+      fireEvent.click(await screen.findByRole("radio", { name: "Rosa Díaz" }));
+      expect(
+        fireEvent.keyDown(screen.getByLabelText("Título"), { key: "Enter", repeat: true }),
+      ).toBe(false);
+      fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+      fireEvent.click(screen.getByRole("button", { name: "Nueva oportunidad" }));
+      expect(screen.getByLabelText("Título")).toHaveValue("");
+      expect(screen.queryByRole("radio", { checked: true })).toBeNull();
     });
   });
 });

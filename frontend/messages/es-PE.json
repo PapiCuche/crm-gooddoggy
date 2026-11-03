@@ -1994,7 +1994,7 @@
       "cancel": "Cancelar",
       "denied": "No tienes permiso para crear oportunidades.",
       "contactInvalid": "Ese cliente no existe o no está a tu alcance. Elige otro.",
-      "pipelineInvalid": "Este pipeline ya no está disponible. Recarga la página.",
+      "pipelineInvalid": "Este pipeline no está disponible o no tiene una etapa abierta. Elige otro.",
       "conflict": "No se pudo crear: el pipeline no tiene una primera etapa disponible o la etapa pide datos que faltan.",
       "done": "«{title}» creada en «{stage}».",
       "hidden": "«{title}» se creó en «{stage}», pero los filtros actuales o las páginas sin cargar no la muestran.",
@@ -2007,7 +2007,9 @@
         "loading": "Buscando clientes…",
         "picked": "Cliente elegido: {name}",
         "required": "Elige un cliente."
-      }
+      },
+      "noStage": "Este pipeline no tiene una etapa abierta y activa: no se pueden crear oportunidades en él.",
+      "stale": "«{title}» se creó en «{stage}», pero no pudimos actualizar la lista. Recarga la página."
     }
   }
 }

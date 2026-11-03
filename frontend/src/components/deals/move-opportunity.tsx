@@ -120,12 +120,7 @@ export function MoveNotice({ said, alertRef }: { said: Said; alertRef: Mover["al
         {said && !said.alert ? said.text : ""}
       </p>
       {said?.alert ? (
-        <p
-          ref={alertRef}
-          tabIndex={-1}
-          role="alert"
-          className="text-danger text-sm wrap-anywhere focus-visible:outline-none"
-        >
+        <p ref={alertRef} tabIndex={-1} role="alert" className="text-danger text-sm wrap-anywhere">
           {said.text}
         </p>
       ) : null}

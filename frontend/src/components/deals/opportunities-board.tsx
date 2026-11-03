@@ -195,7 +195,14 @@ export function OpportunitiesBoard() {
           />
         </div>
       ) : null}
-      {pipeline ? <OpportunityCreate slug={slug} pipelineId={pipeline.id} mover={mover} /> : null}
+      {pipeline ? (
+        <OpportunityCreate
+          slug={slug}
+          pipelineId={pipeline.id}
+          ready={targets.length > 0}
+          mover={mover}
+        />
+      ) : null}
       {pipeline ? (
         <div role="group" aria-label={t("view.label")} className="flex gap-2">
           {(["board", "table"] as const).map((one) => (

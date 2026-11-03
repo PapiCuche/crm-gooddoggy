@@ -2,7 +2,7 @@
 
 import { type InfiniteData, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { FieldsForm } from "@/components/forms/fields-form";
 import { Button } from "@/components/ui/button";
@@ -37,10 +37,12 @@ const idle = () => new Promise((resolve) => setTimeout(resolve, 50));
 export function OpportunityCreate({
   slug,
   pipelineId,
+  ready,
   mover,
 }: {
   slug: string;
   pipelineId: string;
+  ready: boolean; // el pipeline tiene una etapa abierta y activa donde dejarla
   mover: Mover;
 }) {
   const t = useTranslations("deals.create");
@@ -51,24 +53,52 @@ export function OpportunityCreate({
   const [picked, setPicked] = useState<Customer | null>(null);
   const [asked, setAsked] = useState(false); // intentó enviar sin cliente
   const trigger = useRef<HTMLButtonElement>(null);
+  const search = useRef<HTMLInputElement>(null);
 
   async function arrived(created: OpportunityDetail) {
-    while (mover.sending.current.size > 0) await idle(); // no se pisa un movimiento en curso
-    await client.invalidateQueries(lists); // cancela la lectura en curso y pide la lista otra vez
+    // Se relee la lista cuando no hay órdenes de mover en curso; si una empieza durante la lectura,
+    // cancela esa lectura (su resultado no vale) y se espera a que acabe para leer otra vez.
+    for (let tries = 0; tries < 3; tries++) {
+      while (mover.sending.current.size > 0) await idle();
+      await client.invalidateQueries(lists);
+      if (mover.sending.current.size === 0) break;
+    }
+    const failed = client
+      .getQueryCache()
+      .findAll(lists)
+      .some((q) => q.state.status === "error");
     const shown = client
       .getQueriesData<InfiniteData<PaginatedOpportunityList>>(lists)
       .some(([, data]) =>
         data?.pages.some((page) => page.results.some((r) => r.id === created.id)),
       );
     const values = { title: created.title, stage: created.stage.name };
-    setSaid(t(shown ? "done" : "hidden", values));
+    setSaid(t(failed ? "stale" : shown ? "done" : "hidden", values));
     setOpen(false);
-    // La tarjeta nueva aparece con la lista: el foco va a ella cuando ya está pintada.
-    if (shown) setTimeout(() => document.getElementById(`opportunity-${created.id}`)?.focus(), 0);
+    // La tarjeta nueva aparece con la lista: el foco va a ella cuando ya está pintada, salvo que
+    // el usuario ya esté en otra parte (el botón lo recibe al cerrar, y es de quien lo puso).
+    if (shown && !failed) {
+      setTimeout(() => {
+        const { activeElement } = document;
+        if (activeElement === document.body || activeElement === trigger.current) {
+          document.getElementById(`opportunity-${created.id}`)?.focus();
+        }
+      }, 0);
+    }
   }
   const create = useOpportunitiesCreate({
-    mutation: { networkMode: "always", onSuccess: arrived },
+    mutation: {
+      networkMode: "always",
+      onSuccess: arrived,
+      // Un cliente que la API rechaza ya no se muestra como elegido.
+      onError: (error) => {
+        if (error.code === "VALIDATION_ERROR" && Object.hasOwn(error.fields ?? {}, "contact_id")) {
+          setPicked(null);
+        }
+      },
+    },
   });
+  const hint = useId();
   const busy = create.isPending;
 
   const opened = useRef(false);
@@ -95,7 +125,18 @@ export function OpportunityCreate({
       className="flex flex-col items-start gap-3"
       // Escape cierra sin enviar (no mientras se envía); Enter mantenido no repite el envío.
       onKeyDown={(event) => {
-        if (event.key === "Escape" && open && !busy) show(false);
+        // Escape en la búsqueda de cliente es de la búsqueda, y durante una composición (IME)
+        // cancela la composición: ninguno cierra el formulario.
+        const inSearch = event.target instanceof HTMLInputElement && event.target.type === "search";
+        if (
+          event.key === "Escape" &&
+          open &&
+          !busy &&
+          !inSearch &&
+          !event.nativeEvent.isComposing
+        ) {
+          show(false);
+        }
         if (event.repeat && event.key === "Enter") event.preventDefault();
       }}
     >
@@ -117,11 +158,13 @@ export function OpportunityCreate({
               slug={slug}
               picked={picked}
               onPick={setPicked}
+              searchRef={search}
               error={asked && !picked ? t("customer.required") : undefined}
             />
           }
           check={() => {
             setAsked(true);
+            if (!picked) search.current?.focus(); // sin permiso para buscar no hay a dónde ir
             return !!picked;
           }}
           write={create}
@@ -149,14 +192,23 @@ export function OpportunityCreate({
           onCancel={() => show(false)}
         />
       ) : (
-        <Button
-          ref={trigger}
-          variant="accent"
-          className="min-h-11 sm:min-h-9"
-          onClick={() => show(true)}
-        >
-          {t("open")}
-        </Button>
+        <>
+          <Button
+            ref={trigger}
+            variant="accent"
+            className="min-h-11 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 sm:min-h-9"
+            aria-disabled={!ready}
+            aria-describedby={ready ? undefined : `${hint}-stage`}
+            onClick={() => ready && show(true)}
+          >
+            {t("open")}
+          </Button>
+          {ready ? null : (
+            <p id={`${hint}-stage`} className="text-muted text-sm">
+              {t("noStage")}
+            </p>
+          )}
+        </>
       )}
       {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
       <p role="status" className={said ? "text-sm wrap-anywhere" : "sr-only"}>

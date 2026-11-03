@@ -34,7 +34,7 @@ export function OpportunityCard({
     <li
       id={`opportunity-${opportunity.id}`}
       tabIndex={-1} // destino del foco al crear una oportunidad (F5-05c)
-      className="border-border bg-background flex flex-col gap-2 rounded-[10px] border p-3 leading-snug focus-visible:outline-none"
+      className="border-border bg-background flex flex-col gap-2 rounded-[10px] border p-3 leading-snug"
     >
       <p className="flex flex-col">
         <span className="font-medium wrap-anywhere">{opportunity.title}</span>
