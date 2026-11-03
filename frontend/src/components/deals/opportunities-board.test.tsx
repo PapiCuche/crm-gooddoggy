@@ -5,6 +5,7 @@ import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Opportunity, Pipeline, SelfContext, Stage } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
+import { useMoveOpportunity } from "./move-opportunity";
 import { OpportunitiesBoard } from "./opportunities-board";
 
 const PIPELINES = "GET /api/v1/o/acme/pipelines/?limit=200";
@@ -265,5 +266,123 @@ describe("OpportunitiesBoard", () => {
       "No tienes permiso para ver las oportunidades de esta organización.",
     );
     expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+  });
+
+  describe("mover a otra etapa (F5-05b)", () => {
+    const MOVE = "POST /api/v1/o/acme/opportunities/1/move/";
+    const detail = { ...rocky, stage: luna.stage, version: 2, items: [], history: [] };
+    const posts = (api: ReturnType<typeof mockApi>) =>
+      api.mock.calls.filter(([, init]) => init?.method === "POST");
+    // La respuesta del servidor espera a `release`: así se ve la tarjeta ya movida, sin respuesta.
+    function setup(reply: { status: number; body?: unknown }) {
+      const api = mockApi({
+        [PIPELINES]: page([sales]),
+        [LIST]: page([rocky, luna, mimi]),
+        [MOVE]: reply,
+      });
+      const send = api.getMockImplementation()!;
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      api.mockImplementation(async (input, init) => {
+        if (init?.method === "POST") await gate;
+        return send(input, init);
+      });
+      document.cookie = "csrftoken=token-de-prueba";
+      show();
+      return { api, release };
+    }
+    const control = (title: string) => screen.getByRole("combobox", { name: new RegExp(title) });
+    const pick = async (stage: string) => {
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(control("Collar"), { target: { value: stage } });
+      fireEvent.click(within(column("Nuevo")).getByRole("button", { name: "Mover" }));
+    };
+
+    it("la tarjeta pasa a la columna nueva al instante, con sus totales, y la respuesta trae la versión nueva", async () => {
+      const { api, release } = setup({ status: 200, body: detail });
+      await pick("s2");
+      // Sin respuesta todavía: ya está en «Cotizado», y el control espera.
+      expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+      expect(column("Nuevo")).toHaveTextContent("Sin oportunidades · S/ 0.00");
+      expect(column("Cotizado")).toHaveTextContent("3 oportunidades · S/ 1,900.85");
+      release();
+      expect(await screen.findByText("«Collar para Rocky» pasó a «Cotizado».")).toBeVisible();
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({ stage_id: "s2", version: 1 });
+      expect(control("Collar")).toHaveFocus(); // el foco sigue a la tarjeta
+      // El control ya no ofrece la etapa actual.
+      expect(within(control("Collar")).queryByRole("option", { name: "Cotizado" })).toBeNull();
+    });
+
+    it.each([
+      [409, "STALE_VERSION", "Otra persona cambió esta oportunidad antes que tú."],
+      [409, "OPPORTUNITY_CLOSED", "Esta oportunidad ya está cerrada: no se mueve."],
+      [409, "MISSING_FIELDS", "La etapa pide datos que faltan o no está disponible."],
+      [400, "VALIDATION_ERROR", "Esa etapa ya no es válida para este pipeline."],
+      [404, "NOT_FOUND", "Esta oportunidad ya no existe o salió de tu alcance."],
+    ])(
+      "%i %s: la tarjeta vuelve, lo dice y la lista se pide otra vez",
+      async (status, code, said) => {
+        const { api, release } = setup({ status, body: { code } });
+        await pick("s2");
+        expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+        release();
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          `${said} La tarjeta volvió a su etapa.`,
+        );
+        expect(within(column("Nuevo")).getByText("Collar para Rocky")).toBeVisible();
+        expect(control("Collar")).toHaveFocus();
+        await waitFor(() =>
+          expect(
+            api.mock.calls.filter(
+              ([url]) => String(url) === "/api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN",
+            ),
+          ).toHaveLength(2),
+        );
+      },
+    );
+
+    it("403: lo explica, la tarjeta vuelve y no se vuelve a pedir la lista", async () => {
+      const { api, release } = setup({ status: 403, body: { code: "PERMISSION_DENIED" } });
+      await pick("s2");
+      release();
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "No tienes permiso para mover oportunidades.",
+      );
+      expect(within(column("Nuevo")).getByText("Collar para Rocky")).toBeVisible();
+      expect(api).toHaveBeenCalledTimes(3); // pipelines, lista y el intento
+    });
+
+    it("sin elegir etapa «Mover» no envía nada, y una orden en curso no se repite", async () => {
+      const { api, release } = setup({ status: 200, body: detail });
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      const button = within(column("Nuevo")).getByRole("button", { name: "Mover" });
+      fireEvent.click(button);
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(posts(api)).toHaveLength(0);
+      // Etapas abiertas y activas menos la actual: ni «Ganado» (cerrada) ni «Antigua» (inactiva).
+      expect(
+        within(control("Collar"))
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["Mover a…", "Cotizado"]);
+      fireEvent.change(control("Collar"), { target: { value: "s2" } });
+      fireEvent.click(button);
+      release();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(posts(api)).toHaveLength(1);
+    });
+
+    it("dos órdenes seguidas sobre la misma oportunidad envían una sola petición", async () => {
+      const api = mockApi({ [MOVE]: { status: 200, body: detail } });
+      document.cookie = "csrftoken=token-de-prueba";
+      function Twice() {
+        const mover = useMoveOpportunity("acme", ["lista"]);
+        const twice = () => [1, 2].forEach(() => void mover.move(rocky, sales.stages[1]!));
+        return <button onClick={twice}>dos veces</button>;
+      }
+      renderApp(<Twice />);
+      fireEvent.click(screen.getByRole("button", { name: "dos veces" }));
+      await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+    });
   });
 });

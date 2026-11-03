@@ -1961,6 +1961,20 @@
       "none": "Sin responsable",
       "other": "Otro miembro",
       "pending": "…"
+    },
+    "move": {
+      "label": "Mover «{title}» a otra etapa",
+      "placeholder": "Mover a…",
+      "button": "Mover",
+      "moving": "Moviendo…",
+      "done": "«{title}» pasó a «{stage}».",
+      "back": "{reason} La tarjeta volvió a su etapa.",
+      "stale": "Otra persona cambió esta oportunidad antes que tú.",
+      "closed": "Esta oportunidad ya está cerrada: no se mueve.",
+      "conflict": "La etapa pide datos que faltan o no está disponible.",
+      "invalid": "Esa etapa ya no es válida para este pipeline.",
+      "denied": "No tienes permiso para mover oportunidades.",
+      "gone": "Esta oportunidad ya no existe o salió de tu alcance."
     }
   }
 }
