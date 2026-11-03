@@ -1977,6 +1977,37 @@
       "gone": "Esta oportunidad ya no existe o salió de tu alcance.",
       "buttonLabel": "Mover «{title}»",
       "choose": "Elige primero la etapa a la que quieres mover la oportunidad."
+    },
+    "create": {
+      "open": "Nueva oportunidad",
+      "heading": "Nueva oportunidad",
+      "title": "Título",
+      "titleRequired": "Escribe el título de la oportunidad.",
+      "titleInvalid": "El título no es válido: una línea de hasta 200 caracteres.",
+      "amount": "Importe estimado (opcional)",
+      "amountHint": "Hasta 12 cifras enteras y 2 decimales, por ejemplo 1500.50. Puede ser 0.",
+      "amountInvalid": "El importe no es válido: números con hasta 12 cifras enteras y 2 decimales, sin signo.",
+      "next_action": "Próxima acción (opcional)",
+      "next_actionInvalid": "La próxima acción no es válida: una línea de hasta 200 caracteres.",
+      "submit": "Crear oportunidad",
+      "busy": "Creando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para crear oportunidades.",
+      "contactInvalid": "Ese cliente no existe o no está a tu alcance. Elige otro.",
+      "pipelineInvalid": "Este pipeline ya no está disponible. Recarga la página.",
+      "conflict": "No se pudo crear: el pipeline no tiene una primera etapa disponible o la etapa pide datos que faltan.",
+      "done": "«{title}» creada en «{stage}».",
+      "hidden": "«{title}» se creó en «{stage}», pero los filtros actuales o las páginas sin cargar no la muestran.",
+      "customer": {
+        "label": "Cliente",
+        "search": "Buscar cliente",
+        "hint": "Por nombre, correo o teléfono.",
+        "denied": "Para elegir un cliente necesitas poder ver los clientes, y no tienes ese permiso.",
+        "none": "Ningún cliente coincide.",
+        "loading": "Buscando clientes…",
+        "picked": "Cliente elegido: {name}",
+        "required": "Elige un cliente."
+      }
     }
   }
 }

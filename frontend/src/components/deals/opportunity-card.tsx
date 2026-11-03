@@ -31,7 +31,11 @@ export function OpportunityCard({
   const format = useFormatter();
   const { contact, next_action: next } = opportunity;
   return (
-    <li className="border-border bg-background flex flex-col gap-2 rounded-[10px] border p-3 leading-snug">
+    <li
+      id={`opportunity-${opportunity.id}`}
+      tabIndex={-1} // destino del foco al crear una oportunidad (F5-05c)
+      className="border-border bg-background flex flex-col gap-2 rounded-[10px] border p-3 leading-snug focus-visible:outline-none"
+    >
       <p className="flex flex-col">
         <span className="font-medium wrap-anywhere">{opportunity.title}</span>
         <span className="text-muted font-mono text-[13px]">{opportunity.number}</span>

@@ -14,6 +14,7 @@ import { getOpportunitiesListQueryKey, opportunitiesList } from "@/lib/api/clien
 import type { Opportunity, OpportunitiesListParams, Stage } from "@/lib/api/model";
 
 import { SEARCH_DELAY, searchTerm } from "../contacts/contact-search";
+import { OpportunityCreate } from "./create-opportunity";
 import { MoveControl, MoveNotice, useMoveOpportunity } from "./move-opportunity";
 import { cents, OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
@@ -194,6 +195,7 @@ export function OpportunitiesBoard() {
           />
         </div>
       ) : null}
+      {pipeline ? <OpportunityCreate slug={slug} pipelineId={pipeline.id} mover={mover} /> : null}
       {pipeline ? (
         <div role="group" aria-label={t("view.label")} className="flex gap-2">
           {(["board", "table"] as const).map((one) => (

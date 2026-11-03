@@ -472,4 +472,196 @@ describe("OpportunitiesBoard", () => {
       expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
     });
   });
+
+  describe("crear una oportunidad (F5-05c)", () => {
+    const CREATE = "POST /api/v1/o/acme/opportunities/";
+    const CONTACTS = "GET /api/v1/o/acme/contacts/?limit=8";
+    const fresh = opportunity("9", {
+      title: "Collar nuevo",
+      amount: "99.50",
+      next_action: "Llamar",
+    });
+    const created = { ...fresh, items: [], history: [] };
+    const rosa = { id: "c1", display_name: "Rosa Díaz" };
+    const posts = (api: ReturnType<typeof mockApi>) =>
+      api.mock.calls.filter(([, init]) => init?.method === "POST");
+    // `server.rows` es lo que "el servidor" lista; la respuesta de crear espera a `release`.
+    function setup(reply: { status: number; body?: unknown }, codes = ["contacts.view"]) {
+      const server = { rows: [rocky, luna, mimi] as unknown[] };
+      const api = mockApi({
+        [PIPELINES]: page([sales]),
+        [LIST]: () => page(server.rows),
+        [CONTACTS]: page([rosa, { id: "c2", display_name: "Luis Paz" }]),
+        [CREATE]: reply,
+      });
+      const send = api.getMockImplementation()!;
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      api.mockImplementation(async (input, init) => {
+        if (init?.method === "POST") await held;
+        return send(input, init);
+      });
+      document.cookie = "csrftoken=token-de-prueba";
+      show(grants("opportunities.view", ...codes));
+      return { api, server, release };
+    }
+    const open = async () => {
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.click(screen.getByRole("button", { name: "Nueva oportunidad" }));
+      return screen.getByRole("form", { name: "Nueva oportunidad" });
+    };
+    const fill = (label: string, value: string) =>
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    const submit = () => fireEvent.click(screen.getByRole("button", { name: "Crear oportunidad" }));
+    async function complete() {
+      await open();
+      fill("Título", "Collar nuevo");
+      fill("Importe estimado (opcional)", "99.5");
+      fill("Próxima acción (opcional)", "Llamar");
+      fireEvent.click(await screen.findByRole("radio", { name: "Rosa Díaz" }));
+      submit();
+    }
+
+    it("crea en el pipeline elegido, la tarjeta nueva aparece en la primera etapa con los totales y recibe el foco", async () => {
+      const { api, server, release } = setup({ status: 201, body: created });
+      await complete();
+      expect(screen.getByRole("button", { name: "Creando…" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+      server.rows = [rocky, luna, mimi, fresh];
+      release();
+      expect(await screen.findByText("«Collar nuevo» creada en «Nuevo».")).toBeVisible();
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({
+        ...{ contact_id: "c1", title: "Collar nuevo", pipeline_id: "p1" },
+        ...{ amount: "99.5", next_action: "Llamar" },
+      });
+      expect(screen.queryByRole("form", { name: "Nueva oportunidad" })).toBeNull();
+      expect(column("Nuevo")).toHaveTextContent("2 oportunidades · S/ 1,600.00");
+      await waitFor(() => expect(document.getElementById("opportunity-9")).toHaveFocus());
+    });
+
+    it("si un filtro o una página sin cargar la oculta, lo dice y el foco vuelve al botón", async () => {
+      const { release } = setup({ status: 201, body: created }); // la lista no la trae
+      await complete();
+      release();
+      expect(
+        await screen.findByText(/pero los filtros actuales o las páginas sin cargar/),
+      ).toBeVisible();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Nueva oportunidad" })).toHaveFocus(),
+      );
+    });
+
+    it.each([
+      [
+        { status: 400, body: { code: "VALIDATION_ERROR", fields: { title: ["x"] } } },
+        "El título no es válido",
+      ],
+      [
+        { status: 400, body: { code: "VALIDATION_ERROR", fields: { amount: ["x"] } } },
+        "El importe no es válido",
+      ],
+      [
+        { status: 400, body: { code: "VALIDATION_ERROR", fields: { next_action: ["x"] } } },
+        "La próxima acción no es válida",
+      ],
+      [
+        { status: 400, body: { code: "VALIDATION_ERROR", fields: { contact_id: ["x"] } } },
+        "Ese cliente no existe o no está a tu alcance",
+      ],
+      [
+        { status: 400, body: { code: "VALIDATION_ERROR", fields: { pipeline_id: ["x"] } } },
+        "Este pipeline ya no está disponible",
+      ],
+      [
+        { status: 409, body: { code: "PIPELINE_UNAVAILABLE" } },
+        "No se pudo crear: el pipeline no tiene una primera etapa",
+      ],
+      [
+        { status: 403, body: { code: "PERMISSION_DENIED" } },
+        "No tienes permiso para crear oportunidades.",
+      ],
+      [{ status: 404, body: { code: "NOT_FOUND" } }, "No encontramos lo que buscas."],
+      [{ status: 500, body: { code: "INTERNAL_ERROR" } }, "Algo salió mal de nuestro lado"],
+    ])(
+      "rechazo %#: lo dice junto a su campo o en el formulario y conserva lo escrito",
+      async (reply, said) => {
+        const { release } = setup(reply);
+        await complete();
+        release();
+        await waitFor(() => expect(screen.getByRole("form")).toHaveTextContent(said));
+        expect(screen.getByLabelText("Título")).toHaveValue("Collar nuevo"); // lo escrito se conserva
+        expect(screen.getByRole("radio", { name: "Rosa Díaz" })).toBeChecked();
+        expect(screen.getByRole("button", { name: "Crear oportunidad" })).toBeVisible(); // se puede reintentar
+      },
+    );
+
+    it("sin título, con un importe inválido o sin cliente no envía nada", async () => {
+      const { api } = setup({ status: 201, body: created });
+      await open();
+      submit();
+      expect(screen.getByText("Escribe el título de la oportunidad.")).toBeVisible();
+      fill("Título", "Collar nuevo");
+      fill("Importe estimado (opcional)", "1,5");
+      submit();
+      expect(screen.getByText(/El importe no es válido/)).toBeVisible();
+      fill("Importe estimado (opcional)", "0");
+      submit();
+      expect(screen.getByText("Elige un cliente.")).toBeVisible();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("sin `contacts.view` explica que no se puede elegir un cliente y no ofrece la búsqueda", async () => {
+      const { api } = setup({ status: 201, body: created }, []);
+      await open();
+      expect(screen.getByText(/necesitas poder ver los clientes/)).toBeVisible();
+      expect(screen.queryByLabelText("Buscar cliente")).toBeNull();
+      fill("Título", "Collar nuevo");
+      submit();
+      expect(screen.getByText("Elige un cliente.")).toBeVisible();
+      expect(api.mock.calls.some(([url]) => String(url).includes("/contacts/"))).toBe(false);
+    });
+
+    it("la búsqueda de cliente usa la de Clientes y Enter en ella no envía el formulario", async () => {
+      const { api } = setup({ status: 201, body: created });
+      await open();
+      const search = await screen.findByLabelText("Buscar cliente");
+      expect(fireEvent.keyDown(search, { key: "Enter" })).toBe(false); // se previene el envío
+      fireEvent.change(search, { target: { value: "rosa" } });
+      await waitFor(() =>
+        expect(api.mock.calls.map(([url]) => String(url))).toContain(
+          "/api/v1/o/acme/contacts/?limit=8&q=rosa",
+        ),
+      );
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("dos envíos seguidos son una sola petición", async () => {
+      const { api, release } = setup({ status: 201, body: created });
+      await complete();
+      const form = screen.getByRole("form", { name: "Nueva oportunidad" });
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      release();
+      await screen.findByText(/creada en|se creó en/);
+      expect(posts(api)).toHaveLength(1);
+    });
+
+    it("Escape cierra sin enviar y devuelve el foco; Enter en el título envía", async () => {
+      const { api, release } = setup({ status: 201, body: created });
+      const form = await open();
+      fireEvent.keyDown(screen.getByLabelText("Título"), { key: "Escape" });
+      expect(screen.queryByRole("form", { name: "Nueva oportunidad" })).toBeNull();
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Nueva oportunidad" })).toHaveFocus(),
+      );
+      expect(posts(api)).toHaveLength(0);
+      expect(form).not.toBeInTheDocument();
+      await complete();
+      release();
+      await screen.findByText(/creada en|se creó en/);
+      expect(posts(api)).toHaveLength(1);
+    });
+  });
 });

@@ -108,7 +108,7 @@ export function useMoveOpportunity(slug: string) {
       if (document.activeElement === document.body) alertRef.current?.focus();
     }, 0);
   }
-  return { move, pending, said, focusRef, alertRef };
+  return { move, pending, said, focusRef, alertRef, sending };
 }
 
 // El aviso de la última acción: el éxito se anuncia en una región de estado (montada desde el
