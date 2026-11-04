@@ -14,6 +14,7 @@ import { getOpportunitiesListQueryKey, opportunitiesList } from "@/lib/api/clien
 import type { Opportunity, OpportunitiesListParams, Stage } from "@/lib/api/model";
 
 import { SEARCH_DELAY, searchTerm } from "../contacts/contact-search";
+import { CloseControls } from "./close-opportunity";
 import { OpportunityCreate } from "./create-opportunity";
 import { MoveControl, MoveNotice, useMoveOpportunity } from "./move-opportunity";
 import { cents, OpportunityCard } from "./opportunity-card";
@@ -112,7 +113,7 @@ export function OpportunitiesBoard() {
         <p role="status" className="sr-only">
           {t("count", { count: rows.length })}
         </p>
-        <MoveNotice said={mover.said} alertRef={mover.alertRef} />
+        <MoveNotice said={mover.said} alertRef={mover.alertRef} statusRef={mover.statusRef} />
         {rows.length === 0 ? (
           <p className="text-muted wrap-anywhere">
             {term || ownerId ? t("emptyFiltered") : t("empty", { status })}
@@ -121,7 +122,12 @@ export function OpportunitiesBoard() {
           <OpportunityTable rows={rows} owner={owners.name} now={now} />
         ) : (
           <Board
-            actions={(card) => <MoveControl card={card} targets={targets} mover={mover} />}
+            actions={(card) => (
+              <>
+                <MoveControl card={card} targets={targets} mover={mover} />
+                <CloseControls card={card} mover={mover} />
+              </>
+            )}
             stages={stages}
             byStage={byStage}
             currency={pipeline?.currency ?? ""}

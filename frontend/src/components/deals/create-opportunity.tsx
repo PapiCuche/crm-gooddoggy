@@ -24,7 +24,7 @@ const FIELDS = [
   { name: "next_action", max: 200 },
 ] as const;
 type Name = (typeof FIELDS)[number]["name"];
-const AMOUNT = /^\d{1,12}(\.\d{1,2})?$/;
+export const AMOUNT = /^\d{1,12}(\.\d{1,2})?$/;
 const idle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 // Crear una oportunidad desde el tablero (F5-05c) con `POST …/opportunities/` (F5-04d), en el

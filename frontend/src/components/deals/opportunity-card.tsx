@@ -40,6 +40,15 @@ export function OpportunityCard({
         <span className="font-medium wrap-anywhere">{opportunity.title}</span>
         <span className="text-muted font-mono text-[13px]">{opportunity.number}</span>
       </p>
+      {opportunity.status === "OPEN" ? null : (
+        <p className="text-sm font-medium wrap-anywhere">
+          {opportunity.status === "WON"
+            ? t("won")
+            : opportunity.lost_reason
+              ? t("lostBecause", { reason: opportunity.lost_reason.name })
+              : t("lost")}
+        </p>
+      )}
       <p className="text-sm wrap-anywhere">{contact.display_name ?? t("noContact")}</p>
       <p className="font-medium">{moneyText(format, opportunity.amount, opportunity.currency)}</p>
       <p className="text-muted flex flex-col text-sm">
