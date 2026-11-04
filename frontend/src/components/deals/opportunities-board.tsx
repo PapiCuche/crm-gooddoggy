@@ -89,7 +89,7 @@ export function OpportunitiesBoard() {
   const targets = (pipeline?.stages ?? []).filter(
     (stage) => stage.is_active && stage.stage_type === "OPEN",
   );
-  const drag = useDragMove(mover, stages);
+  const drag = useDragMove(mover, stages, view === "board" ? rows : []);
   const problem = failed(pipelines, t("denied")) ?? failed(list, t("denied"));
 
   let body;

@@ -11,6 +11,7 @@ type Held = {
   card: Opportunity;
   over: string | null; // la etapa que recibiría la tarjeta si se suelta ahora
   by: "pointer" | "keyboard";
+  pointerId: number; // el dedo (o ratón) que la tiene; los demás se ignoran
   x: number;
   y: number;
   moved: boolean; // el puntero ya se movió: un clic sin movimiento no es un arrastre
@@ -25,7 +26,11 @@ const SLOP = 4; // píxeles que separan un clic de un arrastre
 // cancel lo deshacen sin enviar nada. Con el teclado: Espacio/Intro toma la tarjeta, las flechas
 // eligen la etapa (saltando las no válidas), Espacio/Intro suelta y `Escape` cancela. Lo que se
 // dice en cada paso va a una región de estado.
-export function useDragMove(mover: Mover, columns: readonly Stage[]) {
+export function useDragMove(
+  mover: Mover,
+  columns: readonly Stage[],
+  shown: readonly Opportunity[], // las tarjetas con asa en pantalla: si la tomada se va, se suelta
+) {
   const t = useTranslations("deals.drag");
   const [held, setHeld] = useState<Held | null>(null);
   const [said, setSaid] = useState("");
@@ -38,10 +43,17 @@ export function useDragMove(mover: Mover, columns: readonly Stage[]) {
     stage.is_active && stage.stage_type === "OPEN" && stage.id !== card.stage.id;
   const nameOf = (id: string | null) => columns.find((stage) => stage.id === id)?.name ?? "";
 
-  function pick(card: Opportunity, by: Held["by"], x = 0, y = 0) {
-    if (now.current || card.status !== "OPEN" || mover.pending.has(card.id)) return;
-    set({ card, over: null, by, x, y, moved: false });
+  // Solo quien tiene la tarjeta la mueve o la suelta: otra tarjeta, otro dedo o el teclado no.
+  const owns = (card: Opportunity, by: Held["by"], pointerId = 0) =>
+    now.current?.card.id === card.id &&
+    now.current.by === by &&
+    (by === "keyboard" || now.current.pointerId === pointerId);
+
+  function pick(card: Opportunity, by: Held["by"], pointerId = 0, x = 0, y = 0) {
+    if (now.current || card.status !== "OPEN" || mover.pending.has(card.id)) return false;
+    set({ card, over: null, by, pointerId, x, y, moved: false });
     setSaid(by === "keyboard" ? t("picked", { title: card.title, stage: card.stage.name }) : "");
+    return true;
   }
   function cancel(silent = false) {
     const current = now.current;
@@ -50,9 +62,9 @@ export function useDragMove(mover: Mover, columns: readonly Stage[]) {
     if (!silent)
       setSaid(t("cancelled", { title: current.card.title, stage: current.card.stage.name }));
   }
-  function point(x: number, y: number) {
+  function point(card: Opportunity, pointerId: number, x: number, y: number) {
     const current = now.current;
-    if (!current || current.by !== "pointer") return;
+    if (!current || !owns(card, "pointer", pointerId)) return;
     const id = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-stage]")
       ?.dataset.stage;
     const target = columns.find((stage) => stage.id === id);
@@ -62,11 +74,19 @@ export function useDragMove(mover: Mover, columns: readonly Stage[]) {
     else if (moved && !current.moved) setSaid(t("grabbed", { title: current.card.title }));
     set({ ...current, over, moved, ...(moved ? { x, y } : {}) });
   }
+  // Soltar con el puntero: el sitio donde se levanta decide, no el último movimiento.
+  function release(card: Opportunity, pointerId: number, x: number, y: number) {
+    if (!owns(card, "pointer", pointerId)) return;
+    point(card, pointerId, x, y);
+    drop();
+  }
   function drop() {
     const current = now.current;
     if (!current) return;
     const stage = columns.find(({ id }) => id === current.over);
-    if (!stage) return cancel(current.by === "pointer" && !current.moved);
+    if (!stage || !isTarget(stage, current.card)) {
+      return cancel(current.by === "pointer" && !current.moved);
+    }
     set(null);
     setSaid(t("dropped", { title: current.card.title, stage: stage.name }));
     void mover.move(current.card, stage);
@@ -84,15 +104,26 @@ export function useDragMove(mover: Mover, columns: readonly Stage[]) {
     setSaid(t("over", { stage: next.name }));
   }
   function key(event: KeyboardEvent, card: Opportunity) {
-    const keys: Record<string, () => void> = {
-      Enter: () => (now.current ? drop() : pick(card, "keyboard")),
-      " ": () => (now.current ? drop() : pick(card, "keyboard")),
+    // Ni la repetición de una tecla mantenida, ni una combinación del navegador (Alt+←, Cmd+←…).
+    const { altKey, ctrlKey, metaKey, shiftKey } = event;
+    if (event.repeat || event.nativeEvent.isComposing || altKey || ctrlKey || metaKey || shiftKey) {
+      return;
+    }
+    const holding = owns(card, "keyboard");
+    if (now.current && !holding) return; // la tiene otra tarjeta, o el puntero
+    const arrows: Record<string, () => void> = {
       ArrowRight: () => step(1),
       ArrowLeft: () => step(-1),
     };
-    if (!keys[event.key] || event.nativeEvent.isComposing) return;
+    const act =
+      event.key === "Enter" || event.key === " "
+        ? () => (holding ? drop() : pick(card, "keyboard"))
+        : holding
+          ? arrows[event.key]
+          : undefined;
+    if (!act) return;
     event.preventDefault();
-    keys[event.key]!();
+    act();
   }
 
   useEffect(() => {
@@ -101,12 +132,18 @@ export function useDragMove(mover: Mover, columns: readonly Stage[]) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+  useEffect(() => {
+    // La tarjeta tomada ya no tiene asa en pantalla (la lista cambió, o se pasó a la tabla): no
+    // queda tomada para siempre ni bloquea a las demás.
+    if (held && !shown.some(({ id }) => id === held.card.id)) cancel(true);
+  });
   return {
     held,
     pick,
     point,
-    drop,
+    release,
     cancel,
+    owns,
     key,
     isTarget: (stage: Stage) => !!held && isTarget(stage, held.card),
     // Lo que se dice en cada paso, y la vista previa que sigue al puntero.
@@ -150,14 +187,18 @@ export function DragHandle({ card, drag, mover }: { card: Opportunity; drag: Dra
         aria-disabled={busy}
         className="border-border text-muted hover:bg-surface-raised aria-pressed:bg-accent aria-pressed:text-accent-foreground flex size-11 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg border select-none aria-disabled:cursor-not-allowed aria-disabled:opacity-50 sm:size-9"
         onPointerDown={(event) => {
-          if (busy || event.button > 0) return;
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          drag.pick(card, "pointer", event.clientX, event.clientY);
+          // Solo el dedo o el ratón principal, con el botón primario (no Ctrl+clic).
+          if (busy || !event.isPrimary || event.button !== 0 || event.ctrlKey) return;
+          const taken = drag.pick(card, "pointer", event.pointerId, event.clientX, event.clientY);
+          if (taken) event.currentTarget.setPointerCapture?.(event.pointerId);
         }}
-        onPointerMove={(event) => drag.point(event.clientX, event.clientY)}
-        onPointerUp={() => drag.drop()}
-        onPointerCancel={() => drag.cancel()}
-        onBlur={() => drag.held?.by === "keyboard" && mine && drag.cancel()}
+        onPointerMove={(event) => drag.point(card, event.pointerId, event.clientX, event.clientY)}
+        onPointerUp={(event) => drag.release(card, event.pointerId, event.clientX, event.clientY)}
+        onPointerCancel={(event) => drag.owns(card, "pointer", event.pointerId) && drag.cancel()}
+        onLostPointerCapture={(event) =>
+          drag.owns(card, "pointer", event.pointerId) && drag.cancel()
+        }
+        onBlur={() => drag.owns(card, "keyboard") && drag.cancel()}
         onKeyDown={(event) => busy || drag.key(event, card)}
       >
         <svg viewBox="0 0 16 16" aria-hidden className="size-4" fill="currentColor">
@@ -166,7 +207,7 @@ export function DragHandle({ card, drag, mover }: { card: Opportunity; drag: Dra
           )}
         </svg>
       </button>
-      <span id={hint} className="sr-only">
+      <span id={hint} hidden>
         {t("hint")}
       </span>
     </>
