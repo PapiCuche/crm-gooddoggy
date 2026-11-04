@@ -1214,6 +1214,7 @@
       "tabs": "Secciones de la ficha",
       "summary": "Resumen",
       "notes": "Notas",
+      "opportunities": "Oportunidades",
       "profile": "Datos del cliente",
       "record": "En la organización",
       "document": "Documento",
@@ -1958,6 +1959,14 @@
       "won": "Ganada",
       "lost": "Perdida",
       "lostBecause": "Perdida: {reason}"
+    },
+    "tab": {
+      "title": "Oportunidades",
+      "loading": "Cargando las oportunidades del cliente…",
+      "empty": "Este cliente todavía no tiene oportunidades.",
+      "partial": "Hay más oportunidades: las abiertas primero y las más nuevas se ordenan solo entre las cargadas.",
+      "open": "Abierta",
+      "stage": "Etapa: {stage}"
     },
     "owner": {
       "you": "Yo",
