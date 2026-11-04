@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { moneyText } from "@/components/pricing/margins";
 import type { Opportunity } from "@/lib/api/model";
+import { cn } from "@/lib/utils";
 
 const DAY = 86_400_000;
 
@@ -21,11 +22,15 @@ export function OpportunityCard({
   owner,
   now,
   actions,
+  handle,
+  dragging,
 }: {
   opportunity: Opportunity;
   owner: string;
   now: number;
   actions?: ReactNode;
+  handle?: ReactNode; // el asa para arrastrarla (F5-05e)
+  dragging?: boolean; // la tarjeta que se está arrastrando deja su sitio atenuado
 }) {
   const t = useTranslations("deals.card");
   const format = useFormatter();
@@ -34,12 +39,18 @@ export function OpportunityCard({
     <li
       id={`opportunity-${opportunity.id}`}
       tabIndex={-1} // destino del foco al crear una oportunidad (F5-05c)
-      className="border-border bg-background flex flex-col gap-2 rounded-[10px] border p-3 leading-snug"
+      className={cn(
+        "border-border bg-background flex flex-col gap-2 rounded-[10px] border p-3 leading-snug",
+        dragging && "opacity-50",
+      )}
     >
-      <p className="flex flex-col">
-        <span className="font-medium wrap-anywhere">{opportunity.title}</span>
-        <span className="text-muted font-mono text-[13px]">{opportunity.number}</span>
-      </p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="flex min-w-0 flex-col">
+          <span className="font-medium wrap-anywhere">{opportunity.title}</span>
+          <span className="text-muted font-mono text-[13px]">{opportunity.number}</span>
+        </p>
+        {handle}
+      </div>
       {opportunity.status === "OPEN" ? null : (
         <p className="text-sm font-medium wrap-anywhere">
           {opportunity.status === "WON"
