@@ -38,6 +38,7 @@ const stages = [
   stage("s2", "Cotizado", 1),
   stage("s3", "Antigua", 2, { is_active: false }),
   stage("s4", "Ganado", 3, { stage_type: "WON" }),
+  stage("s5", "Perdido", 4, { stage_type: "LOST" }),
 ];
 const sales = pipeline("p1", "Ventas", { is_default: true, stages });
 const opportunity = (id: string, changes: Partial<Opportunity> = {}): Opportunity => ({
@@ -328,8 +329,10 @@ describe("OpportunitiesBoard", () => {
 
     it.each([
       [409, "STALE_VERSION", "Otra persona cambió esta oportunidad antes que tú."],
-      [409, "OPPORTUNITY_CLOSED", "Esta oportunidad ya está cerrada: no se mueve."],
-      [409, "MISSING_FIELDS", "La etapa pide datos que faltan o no está disponible."],
+      [409, "OPPORTUNITY_CLOSED", "Esta oportunidad ya está cerrada."],
+      [409, "MISSING_FIELDS", "Esta oportunidad no tiene datos que la etapa exige."],
+      [409, "PIPELINE_UNAVAILABLE", "El pipeline de esta oportunidad no está disponible."],
+      [409, "CLOSING_STAGE", "Esta oportunidad no admite ese cambio ahora."],
       [400, "VALIDATION_ERROR", "Esa etapa ya no es válida para este pipeline."],
       [404, "NOT_FOUND", "Esta oportunidad ya no existe o salió de tu alcance."],
     ])(
@@ -391,24 +394,6 @@ describe("OpportunitiesBoard", () => {
           .getAllByRole("option")
           .map((o) => o.textContent),
       ).toEqual(["Mover a…", "Cotizado"]);
-    });
-
-    it("una oportunidad ganada no tiene control; las abiertas, sí", async () => {
-      const won = opportunity("4", {
-        ...{ title: "Cama ganada", status: "WON" },
-        stage: { id: "s4", name: "Ganado", type: "WON" },
-      });
-      mockApi({
-        [PIPELINES]: page([sales]),
-        [LIST]: page([rocky]),
-        "GET /api/v1/o/acme/opportunities/?pipeline_id=p1": page([rocky, won]),
-      });
-      show();
-      await screen.findByRole("region", { name: "Tablero de oportunidades" });
-      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
-      expect(await screen.findByText("Cama ganada")).toBeVisible();
-      expect(screen.queryByRole("combobox", { name: /Cama ganada/ })).toBeNull();
-      expect(control("Collar")).toBeVisible();
     });
 
     it("dos órdenes seguidas sobre la misma oportunidad envían una sola petición", async () => {
@@ -826,6 +811,316 @@ describe("OpportunitiesBoard", () => {
       fireEvent.click(screen.getByRole("button", { name: "Nueva oportunidad" }));
       expect(screen.getByLabelText("Título")).toHaveValue("");
       expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    });
+  });
+
+  describe("ganar, perder y reabrir (F5-05d)", () => {
+    const REASONS = "GET /api/v1/o/acme/lost-reasons/?limit=200";
+    const reason = (id: string, name: string, requires_note = false, is_active = true) => ({
+      ...{ id, name, code: id.toUpperCase(), sort_order: 0, is_active, requires_note, version: 1 },
+    });
+    const reasons = [
+      reason("r1", "Precio"),
+      reason("r2", "Otro", true),
+      reason("r3", "Vieja", false, false),
+    ];
+    const closedStage = { id: "s4", name: "Ganado", type: "WON" } as const;
+    const won = { ...rocky, status: "WON", stage: closedStage, amount: "1800.00", version: 2 };
+    const detail = { ...won, items: [], history: [] };
+    const lostCard = opportunity("5", {
+      ...{
+        title: "Cama perdida",
+        status: "LOST",
+        stage: { id: "s5", name: "Perdido", type: "LOST" },
+      },
+      lost_reason: { id: "r1", name: "Precio" },
+    });
+    const wonCard = opportunity("4", { title: "Cama ganada", status: "WON", stage: closedStage });
+    const WIN = "POST /api/v1/o/acme/opportunities/1/win/";
+    const LOSE = "POST /api/v1/o/acme/opportunities/1/lose/";
+    const posts = (api: ReturnType<typeof mockApi>) =>
+      api.mock.calls.filter(([, init]) => init?.method === "POST");
+    const body = (api: ReturnType<typeof mockApi>) => JSON.parse(String(posts(api)[0]![1]?.body));
+    const gate = () => {
+      let open = () => {};
+      return { open: () => open(), wait: new Promise<void>((resolve) => (open = resolve)) };
+    };
+    // `hold(url)`: las órdenes POST a esa dirección esperan; `rows`: lo que "el servidor" lista.
+    function setup(
+      routes: Parameters<typeof mockApi>[0] = {},
+      hold: (url: string) => Promise<void> | undefined = () => undefined,
+      codes = ["opportunities.view"],
+    ) {
+      const server = { rows: [rocky, luna, mimi] as unknown[] };
+      const api = mockApi({
+        [PIPELINES]: page([sales]),
+        [LIST]: () => page(server.rows),
+        "GET /api/v1/o/acme/opportunities/?pipeline_id=p1": page([wonCard, lostCard, rocky]),
+        [REASONS]: page(reasons),
+        ...routes,
+      });
+      const send = api.getMockImplementation()!;
+      api.mockImplementation(async (input, init) => {
+        if (init?.method === "POST") await hold(String(input));
+        return send(input, init);
+      });
+      document.cookie = "csrftoken=token-de-prueba";
+      show(grants(...codes));
+      return { api, server };
+    }
+    const ready = () => screen.findByRole("region", { name: "Tablero de oportunidades" });
+    const open = async (button: string, title = "Collar para Rocky") => {
+      await ready();
+      fireEvent.click(screen.getByRole("button", { name: `${button} «${title}»` }));
+    };
+    const submit = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+    const setAmount = (value: string) =>
+      fireEvent.change(screen.getByLabelText("Importe final"), { target: { value } });
+
+    it("ganar pide el importe final (con el actual) y la tarjeta sale de las abiertas, con totales y aviso", async () => {
+      const { api, server } = setup({ [WIN]: { status: 200, body: detail } });
+      await open("Ganar");
+      expect(screen.getByLabelText("Importe final")).toHaveValue("1500.50");
+      setAmount("1800");
+      server.rows = [luna, mimi]; // el servidor ya no la lista entre las abiertas
+      submit("Ganar oportunidad");
+      expect(await screen.findByText("«Collar para Rocky» ganada por S/ 1,800.00.")).toBeVisible();
+      expect(body(api)).toEqual({ amount: "1800", version: 1 });
+      await waitFor(() => expect(screen.queryByText("Collar para Rocky")).toBeNull());
+      expect(column("Nuevo")).toHaveTextContent("Sin oportunidades · S/ 0.00");
+      // La lista se relee (ya no cuenta la ganada) y el foco no se pierde: va al aviso del tablero.
+      expect(await screen.findByText("2 oportunidades en la lista")).toBeInTheDocument();
+      await waitFor(() => expect(document.activeElement).toHaveAttribute("role", "status"));
+      expect(document.activeElement).toHaveTextContent("ganada por");
+    });
+
+    it.each([["0"], ["-5"], ["1,5"], ["1.234"], [".5"], ["1234567890123"], [" "]])(
+      "ganar con el importe «%s» no envía nada",
+      async (value) => {
+        const { api } = setup({ [WIN]: { status: 200, body: detail } });
+        await open("Ganar");
+        setAmount(value);
+        submit("Ganar oportunidad");
+        expect(screen.getByRole("form", { name: "Ganar la oportunidad" })).toHaveTextContent(
+          /Escribe el importe final|El importe no es válido/,
+        );
+        expect(posts(api)).toHaveLength(0);
+      },
+    );
+
+    it("perder: el motivo es obligatorio, las inactivas no se ofrecen y la nota se omite si está vacía", async () => {
+      const { api } = setup({ [LOSE]: { status: 200, body: { ...detail, status: "LOST" } } });
+      await ready();
+      expect(api.mock.calls.some(([url]) => String(url).includes("lost-reasons"))).toBe(false); // aún no
+      fireEvent.click(screen.getByRole("button", { name: "Perder «Collar para Rocky»" }));
+      expect(await screen.findByRole("radio", { name: "Precio" })).toBeVisible();
+      expect(screen.queryByRole("radio", { name: /Vieja/ })).toBeNull();
+      submit("Perder oportunidad");
+      expect(screen.getByText("Elige un motivo.")).toBeVisible();
+      expect(
+        screen.getByRole("group", { name: "Motivo de la pérdida" }),
+      ).toHaveAccessibleDescription("Elige un motivo.");
+      expect(posts(api)).toHaveLength(0);
+      fireEvent.click(screen.getByRole("radio", { name: "Precio" }));
+      submit("Perder oportunidad");
+      expect(await screen.findByText("«Collar para Rocky» perdida: Precio.")).toBeVisible();
+      expect(body(api)).toEqual({ lost_reason_id: "r1", version: 1 });
+    });
+
+    it("un motivo que exige nota no deja perder sin ella (ni con espacios) y con ella la envía", async () => {
+      const { api } = setup({ [LOSE]: { status: 200, body: { ...detail, status: "LOST" } } });
+      await open("Perder");
+      fireEvent.click(await screen.findByRole("radio", { name: /Otro/ }));
+      for (const note of ["", "   "]) {
+        fireEvent.change(screen.getByLabelText("Nota"), { target: { value: note } });
+        submit("Perder oportunidad");
+        expect(screen.getByText("Este motivo exige una nota: escríbela.")).toBeVisible();
+      }
+      expect(posts(api)).toHaveLength(0);
+      expect(screen.getByLabelText("Nota")).toHaveAttribute("maxLength", "1000");
+      fireEvent.change(screen.getByLabelText("Nota"), {
+        target: { value: " Compró en otra tienda " },
+      });
+      submit("Perder oportunidad");
+      await screen.findByText(/perdida: Otro/);
+      expect(body(api)).toEqual({
+        lost_reason_id: "r2",
+        note: "Compró en otra tienda",
+        version: 1,
+      });
+    });
+
+    it.each([
+      [
+        { status: 403, body: { code: "PERMISSION_DENIED" } },
+        /No tienes permiso para ver los motivos/,
+      ],
+      [
+        { status: 200, body: { results: [reason("r3", "Vieja", false, false)], next: null } },
+        /No hay motivos de pérdida activos/,
+      ],
+    ])(
+      "una lista de motivos negada o sin activos se explica sin bloquear nada más (%#)",
+      async (reply, said) => {
+        setup({ [REASONS]: reply });
+        await open("Perder");
+        expect(await screen.findByText(said)).toBeVisible();
+        expect(screen.getByRole("button", { name: "Cancelar" })).toBeVisible();
+      },
+    );
+
+    it.each([
+      [WIN, 409, "STALE_VERSION", "Otra persona cambió esta oportunidad antes que tú."],
+      [WIN, 409, "OPPORTUNITY_CLOSED", "Esta oportunidad ya está cerrada."],
+      [WIN, 409, "MISSING_FIELDS", "Esta oportunidad no tiene datos que la etapa exige."],
+      [WIN, 409, "PIPELINE_UNAVAILABLE", "El pipeline de esta oportunidad no está disponible."],
+      [WIN, 409, "OTHER", "Esta oportunidad no admite ese cambio ahora."],
+      [WIN, 404, "NOT_FOUND", "Esta oportunidad ya no existe o salió de tu alcance."],
+      [LOSE, 409, "STALE_VERSION", "Otra persona cambió esta oportunidad antes que tú."],
+    ])(
+      "%s %i %s: lo dice el tablero, se cierra el formulario y la lista se pide otra vez",
+      async (route, status, code, said) => {
+        const { api } = setup({ [route]: { status, body: { code } } });
+        await open(route === WIN ? "Ganar" : "Perder");
+        if (route === LOSE) fireEvent.click(await screen.findByRole("radio", { name: "Precio" }));
+        submit(route === WIN ? "Ganar oportunidad" : "Perder oportunidad");
+        expect(await screen.findByRole("alert")).toHaveTextContent(said);
+        await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+        await waitFor(() =>
+          expect(
+            api.mock.calls.filter(
+              ([url]) => String(url) === "/api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN",
+            ),
+          ).toHaveLength(2),
+        );
+      },
+    );
+
+    const bad = (field: string) => ({
+      ...{ status: 400, body: { code: "VALIDATION_ERROR", fields: { [field]: ["x"] } } },
+    });
+    const denied = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    const noPermission = "No tienes permiso para esta acción.";
+    it.each([
+      [WIN, bad("amount"), "El importe no es válido"],
+      [LOSE, bad("note"), "La nota no es válida"],
+      [LOSE, bad("lost_reason_id"), "Ese motivo ya no está disponible"],
+      [WIN, denied, noPermission],
+      [LOSE, denied, noPermission],
+      [WIN, { status: 500, body: { code: "INTERNAL_ERROR" } }, "Algo salió mal de nuestro lado"],
+    ])("%s rechazo %#: el formulario sigue abierto con lo escrito", async (route, reply, said) => {
+      const { api } = setup({ [route]: reply });
+      await open(route === WIN ? "Ganar" : "Perder");
+      if (route === WIN) setAmount("1800");
+      else {
+        fireEvent.click(await screen.findByRole("radio", { name: "Precio" }));
+        fireEvent.change(screen.getByLabelText("Nota (opcional)"), { target: { value: "algo" } });
+      }
+      submit(route === WIN ? "Ganar oportunidad" : "Perder oportunidad");
+      await waitFor(() => expect(screen.getByRole("form")).toHaveTextContent(said));
+      expect(screen.getByRole("form")).toBeVisible();
+      if (route === WIN) expect(screen.getByLabelText("Importe final")).toHaveValue("1800");
+      else expect(screen.getByLabelText(/^Nota/)).toHaveValue("algo");
+      expect(posts(api)).toHaveLength(1);
+    });
+
+    it("dos envíos seguidos son una sola petición, y Escape no cierra mientras se envía", async () => {
+      const held = gate();
+      const { api } = setup({ [WIN]: { status: 200, body: detail } }, (url) =>
+        url.includes("/win/") ? held.wait : undefined,
+      );
+      await open("Ganar");
+      const form = screen.getByRole("form", { name: "Ganar la oportunidad" });
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      await screen.findByRole("button", { name: "Enviando…" });
+      fireEvent.keyDown(screen.getByLabelText("Importe final"), { key: "Escape" });
+      expect(screen.getByRole("form", { name: "Ganar la oportunidad" })).toBeVisible();
+      held.open();
+      await screen.findByText(/ganada por/);
+      expect(posts(api)).toHaveLength(1);
+    });
+
+    it("Escape cierra sin enviar y devuelve el foco al botón; no durante una composición", async () => {
+      const { api } = setup({ [WIN]: { status: 200, body: detail } });
+      await open("Ganar");
+      fireEvent.keyDown(screen.getByLabelText("Importe final"), {
+        key: "Escape",
+        isComposing: true,
+      });
+      expect(screen.getByRole("form", { name: "Ganar la oportunidad" })).toBeVisible();
+      fireEvent.keyDown(screen.getByLabelText("Importe final"), { key: "Escape" });
+      expect(screen.queryByRole("form")).toBeNull();
+      expect(screen.getByRole("button", { name: "Ganar «Collar para Rocky»" })).toHaveFocus();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("con un movimiento de la misma tarjeta en curso, ganar y perder esperan", async () => {
+      const held = gate();
+      const { api } = setup({ [WIN]: { status: 200, body: detail } }, (url) =>
+        url.includes("/1/move/") ? held.wait : undefined,
+      );
+      await ready();
+      fireEvent.change(screen.getByRole("combobox", { name: /Mover «Collar para Rocky»/ }), {
+        target: { value: "s2" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mover «Collar para Rocky»" }));
+      const button = await screen.findByRole("button", { name: "Ganar «Collar para Rocky»" });
+      fireEvent.click(button);
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(screen.queryByRole("form")).toBeNull();
+      held.open();
+      expect(posts(api).filter(([url]) => String(url).includes("/win/"))).toHaveLength(0);
+    });
+
+    it("las ganadas y perdidas dicen su estado, no se mueven ni se ganan, y se reabren en una etapa abierta", async () => {
+      const opened = { ...wonCard, status: "OPEN", stage: luna.stage, version: 2 };
+      let closed: unknown[] = [wonCard]; // lo que el servidor lista como ganadas
+      const { api } = setup({
+        "POST /api/v1/o/acme/opportunities/4/reopen/": {
+          status: 200,
+          body: { ...opened, items: [], history: [] },
+        },
+        "GET /api/v1/o/acme/opportunities/?pipeline_id=p1&status=WON": () => page(closed),
+      });
+      await ready();
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      expect(await screen.findByText("Cama ganada")).toBeVisible();
+      expect(screen.getByText("Ganada")).toBeVisible();
+      expect(screen.getByText("Perdida: Precio")).toBeVisible();
+      expect(screen.queryByRole("button", { name: /^Ganar «Cama/ })).toBeNull();
+      expect(screen.queryByRole("combobox", { name: /^Mover «Cama/ })).toBeNull();
+      // Bajo «Ganadas»: al reabrirla sale de la lista (se relee), lo dice y el foco no se pierde.
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "WON" } });
+      const select = await screen.findByRole("combobox", {
+        name: "Reabrir «Cama ganada» en otra etapa",
+      });
+      expect(
+        within(select)
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["Reabrir en…", "Nuevo", "Cotizado"]);
+      closed = [];
+      fireEvent.change(select, { target: { value: "s2" } });
+      fireEvent.click(screen.getByRole("button", { name: "Reabrir «Cama ganada»" }));
+      expect(
+        await screen.findByText("Todavía no hay oportunidades ganadas en este pipeline."),
+      ).toBeVisible();
+      expect(body(api)).toEqual({ stage_id: "s2", version: 1 });
+      await waitFor(() => expect(document.activeElement).toHaveAttribute("role", "status"));
+      expect(document.activeElement).toHaveTextContent("«Cama ganada» se reabrió en «Cotizado».");
+    });
+
+    it("los motivos de pérdida se ofrecen en el orden de `sort_order`", async () => {
+      const second = { ...reason("r4", "Segundo"), sort_order: 2 };
+      const first = { ...reason("r5", "Primero"), sort_order: 1 };
+      setup({ [REASONS]: { status: 200, body: { results: [second, first], next: null } } });
+      await open("Perder");
+      await screen.findByRole("radio", { name: "Primero" });
+      expect(screen.getAllByRole("radio").map((r) => r.closest("label")?.textContent)).toEqual([
+        "Primero",
+        "Segundo",
+      ]);
     });
   });
 });

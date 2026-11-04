@@ -1954,7 +1954,10 @@
       "noContact": "Cliente no visible",
       "days": "{days, plural, =0 {Hoy en la etapa} one {# día en la etapa} other {# días en la etapa}}",
       "next": "Próxima acción: {text}",
-      "noNext": "Sin próxima acción"
+      "noNext": "Sin próxima acción",
+      "won": "Ganada",
+      "lost": "Perdida",
+      "lostBecause": "Perdida: {reason}"
     },
     "owner": {
       "you": "Yo",
@@ -1970,13 +1973,20 @@
       "done": "«{title}» pasó a «{stage}».",
       "back": "{reason} La tarjeta volvió a su etapa.",
       "stale": "Otra persona cambió esta oportunidad antes que tú.",
-      "closed": "Esta oportunidad ya está cerrada: no se mueve.",
-      "conflict": "La etapa pide datos que faltan o no está disponible.",
+      "closed": "Esta oportunidad ya está cerrada.",
+      "conflict": "Esta oportunidad no admite ese cambio ahora.",
       "invalid": "Esa etapa ya no es válida para este pipeline.",
       "denied": "No tienes permiso para mover oportunidades.",
       "gone": "Esta oportunidad ya no existe o salió de tu alcance.",
       "buttonLabel": "Mover «{title}»",
-      "choose": "Elige primero la etapa a la que quieres mover la oportunidad."
+      "choose": "Elige primero la etapa a la que quieres mover la oportunidad.",
+      "missing": "Esta oportunidad no tiene datos que la etapa exige.",
+      "unavailable": "El pipeline de esta oportunidad no está disponible.",
+      "reopened": "«{title}» se reabrió en «{stage}».",
+      "labelReopen": "Reabrir «{title}» en otra etapa",
+      "placeholderReopen": "Reabrir en…",
+      "buttonReopen": "Reabrir",
+      "buttonLabelReopen": "Reabrir «{title}»"
     },
     "create": {
       "open": "Nueva oportunidad",
@@ -2010,6 +2020,38 @@
       },
       "noStage": "Este pipeline no tiene una etapa abierta y activa: no se pueden crear oportunidades en él.",
       "stale": "«{title}» se creó en «{stage}», pero no pudimos actualizar la lista. Recarga la página."
+    },
+    "close": {
+      "win": "Ganar",
+      "lose": "Perder",
+      "winLabel": "Ganar «{title}»",
+      "loseLabel": "Perder «{title}»",
+      "winTitle": "Ganar la oportunidad",
+      "loseTitle": "Perder la oportunidad",
+      "amount": "Importe final",
+      "amountHint": "Lo que se cobró: mayor que 0, con hasta 12 cifras enteras y 2 decimales.",
+      "amountRequired": "Escribe el importe final.",
+      "amountInvalid": "El importe no es válido: mayor que 0, con hasta 12 cifras enteras y 2 decimales.",
+      "winSubmit": "Ganar oportunidad",
+      "loseSubmit": "Perder oportunidad",
+      "busy": "Enviando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para esta acción.",
+      "won": "«{title}» ganada por {amount}.",
+      "lost": "«{title}» perdida: {reason}.",
+      "reason": {
+        "label": "Motivo de la pérdida",
+        "required": "Elige un motivo.",
+        "loading": "Cargando motivos…",
+        "none": "No hay motivos de pérdida activos: pide que se configure uno.",
+        "denied": "No tienes permiso para ver los motivos de pérdida.",
+        "invalid": "Ese motivo ya no está disponible. Elige otro.",
+        "needsNote": "Este motivo exige una nota."
+      },
+      "note": "Nota",
+      "noteOptional": "Nota (opcional)",
+      "noteRequired": "Este motivo exige una nota: escríbela.",
+      "noteInvalid": "La nota no es válida: una línea de hasta 1000 caracteres."
     }
   }
 }
