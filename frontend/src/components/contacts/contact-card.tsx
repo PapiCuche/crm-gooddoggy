@@ -7,6 +7,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { CustomerOpportunities } from "@/components/deals/customer-opportunities";
 import { Button } from "@/components/ui/button";
 import { contactsRetrieve, getContactsRetrieveQueryKey } from "@/lib/api/client";
 import type { Contact } from "@/lib/api/model";
@@ -18,10 +19,11 @@ import { useContactNames } from "./contact-names";
 import { ContactNotes } from "./contact-notes";
 import { ContactTags } from "./contact-tagging";
 
+type Tab = "summary" | "notes" | "opportunities";
 const BOX = "border-border bg-surface flex flex-col gap-4 rounded-lg border p-4";
 
 // La ficha del cliente (F4-06), de solo lectura, con `GET /api/v1/o/{slug}/contacts/{id}/`.
-// «Resumen» lleva sus etiquetas, que se ponen y quitan con `contacts.update` (F4-12). Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10); las demás llegan con sus API.
+// «Resumen» lleva sus etiquetas, que se ponen y quitan con `contacts.update` (F4-12). Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10) y, con `opportunities.view`, «Oportunidades» (F5-06).
 // Fuera del alcance, borrado, de otra organización o inexistente, la API responde el mismo
 // 404, y la ficha es la página de «no encontrada» de cualquier dirección: no dice cuál fue.
 // Carga, error con «Reintentar», 403 y 401 se tratan como en `CursorList`.
@@ -33,7 +35,12 @@ export function ContactCard({ contactId }: { contactId: string }) {
   const slug = organization.slug;
   const held = (code: string) => permissions.some((grant) => grant.code === code);
   const notes = held("contacts.view");
-  const order: readonly ("summary" | "notes")[] = notes ? ["summary", "notes"] : ["summary"];
+  const deals = held("opportunities.view");
+  const order: readonly Tab[] = [
+    "summary",
+    ...(notes ? ["notes" as const] : []),
+    ...(deals ? ["opportunities" as const] : []),
+  ];
   const { owner, branch } = useContactNames("contacts.card");
   const card = useQuery<Contact, ApiError>({
     queryKey: getContactsRetrieveQueryKey(slug, contactId),
@@ -49,13 +56,13 @@ export function ContactCard({ contactId }: { contactId: string }) {
     if (document.activeElement === document.body) heading.current?.focus();
   }, []);
   const [retrying, setRetrying] = useState(false);
-  const [tab, setTab] = useState<"summary" | "notes">("summary");
-  const [seen, setSeen] = useState(false); // «Notas» sigue montada tras abrirla: no se repide
+  const [tab, setTab] = useState<Tab>("summary");
+  const [seen, setSeen] = useState<readonly Tab[]>([]); // lo abierto sigue montado: no se repide
   const tabs = useRef<Partial<Record<typeof tab, HTMLButtonElement | null>>>({});
-  if (!notes && tab === "notes") setTab("summary"); // perdió `contacts.view` con la ficha abierta
-  function pick(next: typeof tab) {
+  if (!order.includes(tab)) setTab("summary"); // perdió el permiso de la pestaña con la ficha abierta
+  function pick(next: Tab) {
     setTab(next);
-    if (next === "notes") setSeen(true);
+    setSeen((now) => (now.includes(next) ? now : [...now, next]));
   }
   // Como la lista: un 403 cierra la ficha aunque ya estuviera en pantalla, y sigue cerrada
   // hasta que la API responde bien (un fallo pasajero posterior no la reabre).
@@ -201,7 +208,21 @@ export function ContactCard({ contactId }: { contactId: string }) {
             hidden={tab !== "notes"}
             className="flex flex-col gap-4"
           >
-            {seen ? <ContactNotes contactId={contactId} /> : null}
+            {seen.includes("notes") ? <ContactNotes contactId={contactId} /> : null}
+          </div>
+        ) : null}
+        {deals ? (
+          <div
+            role="tabpanel"
+            tabIndex={0}
+            id={`${id}-opportunities-panel`}
+            aria-labelledby={`${id}-opportunities-tab`}
+            hidden={tab !== "opportunities"}
+            className="flex flex-col gap-4"
+          >
+            {seen.includes("opportunities") ? (
+              <CustomerOpportunities contactId={contactId} contactName={contact.display_name} />
+            ) : null}
           </div>
         ) : null}
       </>
