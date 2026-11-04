@@ -31,7 +31,12 @@ def format_number(prefix: str, value: int, width: int = 6) -> str:
 
 
 def allocate(
-    ctx: TenantContext, key: str, *, prefix: str | None = None, using: str = "default"
+    ctx: TenantContext,
+    key: str,
+    *,
+    prefix: str | None = None,
+    width: int = 6,
+    using: str = "default",
 ) -> str:
     """Asigna el siguiente número de `key` en la organización de `ctx`.
 
@@ -49,4 +54,4 @@ def allocate(
     with connection.cursor() as cursor:
         cursor.execute(_ALLOCATE, [key])
         (value,) = cursor.fetchone()
-    return format_number(prefix or key, int(value))
+    return format_number(prefix or key, int(value), width)
