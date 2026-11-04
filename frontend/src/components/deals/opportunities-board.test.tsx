@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -1121,6 +1121,373 @@ describe("OpportunitiesBoard", () => {
         "Primero",
         "Segundo",
       ]);
+    });
+  });
+
+  describe("arrastrar a otra etapa (F5-05e)", () => {
+    const MOVE = "POST /api/v1/o/acme/opportunities/1/move/";
+    const OPEN_LIST = "GET /api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN";
+    const ALL_LIST = "GET /api/v1/o/acme/opportunities/?pipeline_id=p1";
+    const detail = { ...rocky, stage: luna.stage, version: 2, items: [], history: [] };
+    const won = opportunity("4", {
+      ...{ title: "Cama ganada", status: "WON", stage: { id: "s4", name: "Ganado", type: "WON" } },
+    });
+    const old = opportunity("6", {
+      ...{ title: "Cama vieja", stage: { id: "s3", name: "Antigua", type: "OPEN" } },
+    });
+    const posts = (api: ReturnType<typeof mockApi>) =>
+      api.mock.calls.filter(([, init]) => init?.method === "POST");
+    function setup(reply = { status: 200, body: detail } as { status: number; body?: unknown }) {
+      const api = mockApi({
+        [PIPELINES]: page([sales]),
+        [OPEN_LIST]: page([rocky, luna, mimi]),
+        [ALL_LIST]: page([rocky, luna, won, old]),
+        [MOVE]: reply,
+      });
+      document.cookie = "csrftoken=token-de-prueba";
+      show();
+      return api;
+    }
+    const handle = (title = "Collar para Rocky") =>
+      screen.getByRole("button", { name: `Arrastrar «${title}» a otra etapa` });
+    // jsdom no calcula posiciones: lo que hay bajo el puntero lo dice cada prueba.
+    const under = (stage: string | null) => {
+      const target = stage
+        ? within(column(stage)).getByRole("heading", { name: stage })
+        : document.body;
+      document.elementFromPoint = () => target;
+    };
+    const grab = async () => {
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        clientX: 10,
+        clientY: 10,
+      });
+    };
+    const move = (x = 80, y = 80) =>
+      fireEvent.pointerMove(handle(), { pointerId: 1, clientX: x, clientY: y });
+    const said = (text: string) => screen.findByText(text);
+
+    it("arrastrar con el puntero: la columna bajo él se resalta y al soltar se envía el cambio", async () => {
+      const api = setup();
+      await grab();
+      under("Cotizado");
+      move();
+      expect(await said("Etapa «Cotizado»: suéltala aquí.")).toBeInTheDocument();
+      expect(column("Cotizado")).toHaveClass("bg-accent/30", "border-solid");
+      expect(column("Nuevo")).not.toHaveClass("border-dashed"); // la actual no es destino
+      expect(handle()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 80, clientY: 80 });
+      expect(await said("Moviendo «Collar para Rocky» a «Cotizado»…")).toBeInTheDocument();
+      expect(await screen.findByText("«Collar para Rocky» pasó a «Cotizado».")).toBeVisible();
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({ stage_id: "s2", version: 1 });
+      expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+    });
+
+    it("soltar fuera de una columna, en la misma o en una cerrada no envía nada; Escape cancela", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama ganada");
+      for (const place of [null, "Nuevo", "Ganado"]) {
+        fireEvent.pointerDown(handle(), {
+          button: 0,
+          isPrimary: true,
+          pointerId: 1,
+          clientX: 10,
+          clientY: 10,
+        });
+        under(place);
+        move();
+        fireEvent.pointerUp(handle(), { pointerId: 1 });
+        expect(
+          await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo»."),
+        ).toBeInTheDocument();
+      }
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        clientX: 10,
+        clientY: 10,
+      });
+      under("Cotizado");
+      move();
+      fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.pointerUp(handle(), { pointerId: 1 });
+      expect(handle()).toHaveAttribute("aria-pressed", "false");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("un clic en el asa sin moverlo no es un arrastre", async () => {
+      const api = setup();
+      await grab();
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 10, clientY: 10 });
+      expect(screen.queryByText(/cancelado|tomada/)).toBeNull();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("con el teclado: tomar, elegir etapa, soltar y cancelar, con sus anuncios", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.keyDown(handle(), { key: " " });
+      expect(
+        await said(
+          "«Collar para Rocky» tomada, en «Nuevo». Flecha izquierda o derecha para elegir la etapa, Espacio o Intro para soltar, Escape para cancelar.",
+        ),
+      ).toBeInTheDocument();
+      expect(handle()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.keyDown(handle(), { key: "ArrowLeft" });
+      expect(await said("No hay más etapas en esa dirección.")).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: "ArrowRight" });
+      expect(await said("Etapa «Cotizado»: suéltala aquí.")).toBeInTheDocument();
+      expect(column("Cotizado")).toHaveClass("bg-accent/30");
+      fireEvent.keyDown(handle(), { key: "Enter" });
+      expect(await said("Moviendo «Collar para Rocky» a «Cotizado»…")).toBeInTheDocument();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({ stage_id: "s2", version: 1 });
+    });
+
+    it("con el teclado, Escape o salir del asa cancelan, y soltar sin elegir etapa no envía; se saltan las cerradas", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama ganada");
+      fireEvent.keyDown(handle(), { key: "Enter" });
+      fireEvent.keyDown(handle(), { key: "ArrowRight" });
+      expect(await said("Etapa «Cotizado»: suéltala aquí.")).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: "ArrowRight" }); // «Ganado» y «Perdido» no reciben
+      expect(await said("No hay más etapas en esa dirección.")).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: "Escape" });
+      expect(handle()).toHaveAttribute("aria-pressed", "false");
+      fireEvent.keyDown(handle(), { key: " " });
+      fireEvent.keyDown(handle(), { key: " " }); // sin etapa elegida
+      expect(
+        await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo»."),
+      ).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: " " });
+      fireEvent.blur(handle());
+      expect(handle()).toHaveAttribute("aria-pressed", "false");
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("un rechazo vuelve la tarjeta a su sitio con el mensaje del movimiento", async () => {
+      setup({ status: 409, body: { code: "STALE_VERSION" } });
+      await grab();
+      under("Cotizado");
+      move();
+      fireEvent.pointerUp(handle(), { pointerId: 1 });
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Otra persona cambió esta oportunidad antes que tú. La tarjeta volvió a su etapa.",
+      );
+      expect(within(column("Nuevo")).getByText("Collar para Rocky")).toBeVisible();
+    });
+
+    it("el asa se ignora con una orden en curso, las cerradas no la tienen y el asa es táctil-segura", async () => {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const api = setup();
+      const send = api.getMockImplementation()!;
+      api.mockImplementation(async (input, init) => {
+        if (init?.method === "POST") await held;
+        return send(input, init);
+      });
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      expect(handle()).toHaveClass("touch-none"); // el dedo sobre el asa no desplaza la página
+      expect(handle()).toHaveAccessibleDescription(/Espacio o Intro para tomarla/);
+      fireEvent.change(screen.getByRole("combobox", { name: /Mover «Collar para Rocky»/ }), {
+        target: { value: "s2" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mover «Collar para Rocky»" }));
+      await waitFor(() => expect(handle()).toHaveAttribute("aria-disabled", "true"));
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        clientX: 1,
+        clientY: 1,
+      });
+      expect(handle()).toHaveAttribute("aria-pressed", "false"); // no la tomó
+      fireEvent.keyDown(handle(), { key: " " });
+      expect(screen.queryByText(/tomada/)).toBeNull();
+      release();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(posts(api)).toHaveLength(1);
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama ganada");
+      expect(screen.queryByRole("button", { name: /Arrastrar «Cama ganada»/ })).toBeNull();
+    });
+
+    const pressed = (value: boolean) =>
+      expect(handle()).toHaveAttribute("aria-pressed", String(value));
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+    it("solo el dedo principal: otro dedo, otro botón o Ctrl+clic no mueven ni sueltan", async () => {
+      const api = setup();
+      await grab();
+      under("Cotizado");
+      move();
+      await said("Etapa «Cotizado»: suéltala aquí.");
+      under(null);
+      // Un segundo dedo en la misma asa: ni se toma, ni mueve la elección, ni suelta.
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        isPrimary: false,
+        pointerId: 2,
+        clientX: 5,
+        clientY: 5,
+      });
+      fireEvent.pointerMove(handle(), { pointerId: 2, clientX: 200, clientY: 200 });
+      fireEvent.pointerUp(handle(), { pointerId: 2, clientX: 200, clientY: 200 });
+      fireEvent.pointerCancel(handle(), { pointerId: 2 });
+      expect(column("Cotizado")).toHaveClass("bg-accent/30");
+      pressed(true);
+      under("Cotizado");
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 80, clientY: 80 });
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(posts(api)).toHaveLength(1);
+    });
+
+    it("el botón secundario, Ctrl+clic y un pointercancel no arrastran", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      for (const init of [{ button: 2 }, { button: 0, ctrlKey: true }, { isPrimary: false }]) {
+        fireEvent.pointerDown(handle(), {
+          isPrimary: true,
+          pointerId: 1,
+          clientX: 1,
+          clientY: 1,
+          ...init,
+        });
+        pressed(false);
+      }
+      await grab();
+      under("Cotizado");
+      move();
+      fireEvent.pointerCancel(handle(), { pointerId: 1 });
+      expect(
+        await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo»."),
+      ).toBeInTheDocument();
+      pressed(false);
+      // Perder la captura (la asa se desmonta, el sistema la quita) también suelta sin enviar.
+      await grab();
+      under("Cotizado");
+      move();
+      fireEvent.lostPointerCapture(handle(), { pointerId: 1 });
+      pressed(false);
+      await settle();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("lo que hay bajo el puntero al levantarlo decide: salir de la columna y soltar fuera no envía", async () => {
+      const api = setup();
+      await grab();
+      under("Cotizado");
+      move();
+      await said("Etapa «Cotizado»: suéltala aquí.");
+      under(null); // se fue sin un movimiento más
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 400, clientY: 400 });
+      expect(
+        await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo»."),
+      ).toBeInTheDocument();
+      await settle();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("una etapa inactiva no recibe la tarjeta, y las que sí, se marcan con borde discontinuo", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama vieja");
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        clientX: 1,
+        clientY: 1,
+      });
+      expect(column("Cotizado")).toHaveClass("border-dashed");
+      for (const closed of ["Nuevo", "Antigua", "Ganado"])
+        expect(column(closed)).not.toHaveClass("border-dashed");
+      under("Antigua");
+      move();
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 80, clientY: 80 });
+      await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo».");
+      await settle();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("una tecla mantenida no suelta, y Alt+flecha o una flecha sin tarjeta tomada no se bloquean", async () => {
+      setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      expect(fireEvent.keyDown(handle(), { key: "ArrowLeft" })).toBe(true); // nada tomado: del navegador
+      fireEvent.keyDown(handle(), { key: " ", repeat: true });
+      pressed(false);
+      fireEvent.keyDown(handle(), { key: " " });
+      pressed(true);
+      fireEvent.keyDown(handle(), { key: "Enter", repeat: true }); // no suelta
+      pressed(true);
+      for (const modifier of ["altKey", "metaKey", "ctrlKey", "shiftKey"]) {
+        expect(fireEvent.keyDown(handle(), { key: "ArrowRight", [modifier]: true })).toBe(true);
+      }
+      expect(screen.queryByText(/Etapa «Cotizado»/)).toBeNull();
+    });
+
+    it("otra asa o el puntero no sueltan una tarjeta tomada con el teclado, y viceversa", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.keyDown(handle(), { key: " " });
+      fireEvent.keyDown(handle(), { key: "ArrowRight" });
+      const other = handle("Cama Luna");
+      fireEvent.pointerDown(other, {
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        clientX: 1,
+        clientY: 1,
+      });
+      fireEvent.pointerUp(other, { pointerId: 1, clientX: 1, clientY: 1 });
+      fireEvent.keyDown(other, { key: " " });
+      pressed(true); // sigue tomada la primera
+      await settle();
+      expect(posts(api)).toHaveLength(0);
+      fireEvent.keyDown(handle(), { key: "Escape" });
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        clientX: 1,
+        clientY: 1,
+      });
+      fireEvent.keyDown(handle(), { key: " " }); // el teclado no suelta lo del puntero
+      pressed(true);
+    });
+
+    it("si la tarjeta tomada pierde su asa (se pasa a la tabla) no queda tomada para siempre", async () => {
+      setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.keyDown(handle(), { key: " " });
+      fireEvent.click(screen.getByRole("button", { name: "Tabla" })); // sin mover el foco
+      await waitFor(() => expect(screen.queryByRole("button", { name: /^Arrastrar/ })).toBeNull());
+      fireEvent.click(screen.getByRole("button", { name: "Tablero" }));
+      pressed(false);
+      fireEvent.keyDown(handle(), { key: " " });
+      expect(await screen.findByText(/tomada, en «Nuevo»/)).toBeInTheDocument();
+      pressed(true);
+    });
+
+    it("al desmontar se quitan los oyentes de teclado", async () => {
+      const remove = vi.spyOn(window, "removeEventListener");
+      setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.keyDown(handle(), { key: " " });
+      cleanup();
+      expect(remove.mock.calls.some(([type]) => type === "keydown")).toBe(true);
+      remove.mockRestore();
     });
   });
 });
