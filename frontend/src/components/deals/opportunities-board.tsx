@@ -12,11 +12,13 @@ import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 import { getOpportunitiesListQueryKey, opportunitiesList } from "@/lib/api/client";
 import type { Opportunity, OpportunitiesListParams, Stage } from "@/lib/api/model";
+import { cn } from "@/lib/utils";
 
 import { SEARCH_DELAY, searchTerm } from "../contacts/contact-search";
 import { CloseControls } from "./close-opportunity";
+import { type Drag, DragHandle, useDragMove } from "./drag-opportunity";
 import { OpportunityCreate } from "./create-opportunity";
-import { MoveControl, MoveNotice, useMoveOpportunity } from "./move-opportunity";
+import { type Mover, MoveControl, MoveNotice, useMoveOpportunity } from "./move-opportunity";
 import { cents, OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
 import { useOwners, usePipelines } from "./use-deals";
@@ -87,6 +89,7 @@ export function OpportunitiesBoard() {
   const targets = (pipeline?.stages ?? []).filter(
     (stage) => stage.is_active && stage.stage_type === "OPEN",
   );
+  const drag = useDragMove(mover, stages);
   const problem = failed(pipelines, t("denied")) ?? failed(list, t("denied"));
 
   let body;
@@ -113,6 +116,7 @@ export function OpportunitiesBoard() {
         <p role="status" className="sr-only">
           {t("count", { count: rows.length })}
         </p>
+        {drag.live}
         <MoveNotice said={mover.said} alertRef={mover.alertRef} statusRef={mover.statusRef} />
         {rows.length === 0 ? (
           <p className="text-muted wrap-anywhere">
@@ -122,6 +126,8 @@ export function OpportunitiesBoard() {
           <OpportunityTable rows={rows} owner={owners.name} now={now} />
         ) : (
           <Board
+            drag={drag}
+            mover={mover}
             actions={(card) => (
               <>
                 <MoveControl card={card} targets={targets} mover={mover} />
@@ -232,6 +238,8 @@ export function OpportunitiesBoard() {
 // Las columnas: se desplazan en horizontal y se detienen en cada una (en 390 px asoma la
 // siguiente). La región recibe el foco para que el teclado la recorra.
 function Board({
+  drag,
+  mover,
   actions,
   stages,
   byStage,
@@ -239,6 +247,8 @@ function Board({
   owner,
   now,
 }: {
+  drag: Drag;
+  mover: Mover;
   actions: (card: Opportunity) => ReactNode;
   stages: Stage[];
   byStage: Map<string, Opportunity[]>;
@@ -262,7 +272,12 @@ function Board({
           <section
             key={stage.id}
             aria-labelledby={`stage-${stage.id}`}
-            className="border-border bg-surface flex w-[85%] shrink-0 snap-start flex-col gap-3 rounded-lg border p-3 sm:w-72"
+            data-stage={stage.id} // zona de destino de un arrastre (F5-05e)
+            className={cn(
+              "border-border bg-surface flex w-[85%] shrink-0 snap-start flex-col gap-3 rounded-lg border p-3 sm:w-72",
+              drag.isTarget(stage) && "border-foreground/50 border-dashed",
+              drag.held?.over === stage.id && "bg-accent/30 border-foreground border-solid",
+            )}
           >
             <header className="flex flex-col leading-snug">
               <h2 id={`stage-${stage.id}`} className="flex items-center gap-2 font-medium">
@@ -290,6 +305,8 @@ function Board({
                     owner={owner(card.assigned_user_id)}
                     now={now}
                     actions={actions(card)}
+                    handle={<DragHandle card={card} drag={drag} mover={mover} />}
+                    dragging={drag.held?.card.id === card.id}
                   />
                 ))}
               </ul>

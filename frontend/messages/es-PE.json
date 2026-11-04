@@ -2052,6 +2052,16 @@
       "noteOptional": "Nota (opcional)",
       "noteRequired": "Este motivo exige una nota: escríbela.",
       "noteInvalid": "La nota no es válida: una línea de hasta 1000 caracteres."
+    },
+    "drag": {
+      "handle": "Arrastrar «{title}» a otra etapa",
+      "hint": "Espacio o Intro para tomarla; luego las flechas izquierda y derecha eligen la etapa, Espacio o Intro la sueltan y Escape cancela.",
+      "picked": "«{title}» tomada, en «{stage}». Flecha izquierda o derecha para elegir la etapa, Espacio o Intro para soltar, Escape para cancelar.",
+      "grabbed": "«{title}» tomada. Suéltala sobre una etapa.",
+      "over": "Etapa «{stage}»: suéltala aquí.",
+      "end": "No hay más etapas en esa dirección.",
+      "dropped": "Moviendo «{title}» a «{stage}»…",
+      "cancelled": "Movimiento cancelado: «{title}» sigue en «{stage}»."
     }
   }
 }

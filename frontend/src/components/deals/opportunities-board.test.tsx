@@ -1123,4 +1123,176 @@ describe("OpportunitiesBoard", () => {
       ]);
     });
   });
+
+  describe("arrastrar a otra etapa (F5-05e)", () => {
+    const MOVE = "POST /api/v1/o/acme/opportunities/1/move/";
+    const OPEN_LIST = "GET /api/v1/o/acme/opportunities/?pipeline_id=p1&status=OPEN";
+    const ALL_LIST = "GET /api/v1/o/acme/opportunities/?pipeline_id=p1";
+    const detail = { ...rocky, stage: luna.stage, version: 2, items: [], history: [] };
+    const won = opportunity("4", {
+      ...{ title: "Cama ganada", status: "WON", stage: { id: "s4", name: "Ganado", type: "WON" } },
+    });
+    const posts = (api: ReturnType<typeof mockApi>) =>
+      api.mock.calls.filter(([, init]) => init?.method === "POST");
+    function setup(reply = { status: 200, body: detail } as { status: number; body?: unknown }) {
+      const api = mockApi({
+        [PIPELINES]: page([sales]),
+        [OPEN_LIST]: page([rocky, luna, mimi]),
+        [ALL_LIST]: page([rocky, luna, won]),
+        [MOVE]: reply,
+      });
+      document.cookie = "csrftoken=token-de-prueba";
+      show();
+      return api;
+    }
+    const handle = (title = "Collar para Rocky") =>
+      screen.getByRole("button", { name: `Arrastrar «${title}» a otra etapa` });
+    // jsdom no calcula posiciones: lo que hay bajo el puntero lo dice cada prueba.
+    const under = (stage: string | null) => {
+      const target = stage
+        ? within(column(stage)).getByRole("heading", { name: stage })
+        : document.body;
+      document.elementFromPoint = () => target;
+    };
+    const grab = async () => {
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.pointerDown(handle(), { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+    };
+    const move = (x = 80, y = 80) =>
+      fireEvent.pointerMove(handle(), { pointerId: 1, clientX: x, clientY: y });
+    const said = (text: string) => screen.findByText(text);
+
+    it("arrastrar con el puntero: la columna bajo él se resalta y al soltar se envía el cambio", async () => {
+      const api = setup();
+      await grab();
+      under("Cotizado");
+      move();
+      expect(await said("Etapa «Cotizado»: suéltala aquí.")).toBeInTheDocument();
+      expect(column("Cotizado")).toHaveClass("bg-accent/30", "border-solid");
+      expect(column("Nuevo")).not.toHaveClass("border-dashed"); // la actual no es destino
+      expect(handle()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 80, clientY: 80 });
+      expect(await said("Moviendo «Collar para Rocky» a «Cotizado»…")).toBeInTheDocument();
+      expect(await screen.findByText("«Collar para Rocky» pasó a «Cotizado».")).toBeVisible();
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({ stage_id: "s2", version: 1 });
+      expect(within(column("Cotizado")).getByText("Collar para Rocky")).toBeVisible();
+    });
+
+    it("soltar fuera de una columna, en la misma o en una cerrada no envía nada; Escape cancela", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama ganada");
+      for (const place of [null, "Nuevo", "Ganado"]) {
+        fireEvent.pointerDown(handle(), { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+        under(place);
+        move();
+        fireEvent.pointerUp(handle(), { pointerId: 1 });
+        expect(
+          await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo»."),
+        ).toBeInTheDocument();
+      }
+      fireEvent.pointerDown(handle(), { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+      under("Cotizado");
+      move();
+      fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.pointerUp(handle(), { pointerId: 1 });
+      expect(handle()).toHaveAttribute("aria-pressed", "false");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("un clic en el asa sin moverlo no es un arrastre", async () => {
+      const api = setup();
+      await grab();
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 10, clientY: 10 });
+      expect(screen.queryByText(/cancelado|tomada/)).toBeNull();
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("con el teclado: tomar, elegir etapa, soltar y cancelar, con sus anuncios", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.keyDown(handle(), { key: " " });
+      expect(
+        await said(
+          "«Collar para Rocky» tomada, en «Nuevo». Flecha izquierda o derecha para elegir la etapa, Espacio o Intro para soltar, Escape para cancelar.",
+        ),
+      ).toBeInTheDocument();
+      expect(handle()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.keyDown(handle(), { key: "ArrowLeft" });
+      expect(await said("No hay más etapas en esa dirección.")).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: "ArrowRight" });
+      expect(await said("Etapa «Cotizado»: suéltala aquí.")).toBeInTheDocument();
+      expect(column("Cotizado")).toHaveClass("bg-accent/30");
+      fireEvent.keyDown(handle(), { key: "Enter" });
+      expect(await said("Moviendo «Collar para Rocky» a «Cotizado»…")).toBeInTheDocument();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({ stage_id: "s2", version: 1 });
+    });
+
+    it("con el teclado, Escape o salir del asa cancelan, y soltar sin elegir etapa no envía; se saltan las cerradas", async () => {
+      const api = setup();
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama ganada");
+      fireEvent.keyDown(handle(), { key: "Enter" });
+      fireEvent.keyDown(handle(), { key: "ArrowRight" });
+      expect(await said("Etapa «Cotizado»: suéltala aquí.")).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: "ArrowRight" }); // «Ganado» y «Perdido» no reciben
+      expect(await said("No hay más etapas en esa dirección.")).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: "Escape" });
+      expect(handle()).toHaveAttribute("aria-pressed", "false");
+      fireEvent.keyDown(handle(), { key: " " });
+      fireEvent.keyDown(handle(), { key: " " }); // sin etapa elegida
+      expect(
+        await said("Movimiento cancelado: «Collar para Rocky» sigue en «Nuevo»."),
+      ).toBeInTheDocument();
+      fireEvent.keyDown(handle(), { key: " " });
+      fireEvent.blur(handle());
+      expect(handle()).toHaveAttribute("aria-pressed", "false");
+      expect(posts(api)).toHaveLength(0);
+    });
+
+    it("un rechazo vuelve la tarjeta a su sitio con el mensaje del movimiento", async () => {
+      setup({ status: 409, body: { code: "STALE_VERSION" } });
+      await grab();
+      under("Cotizado");
+      move();
+      fireEvent.pointerUp(handle(), { pointerId: 1 });
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Otra persona cambió esta oportunidad antes que tú. La tarjeta volvió a su etapa.",
+      );
+      expect(within(column("Nuevo")).getByText("Collar para Rocky")).toBeVisible();
+    });
+
+    it("el asa se ignora con una orden en curso, las cerradas no la tienen y el asa es táctil-segura", async () => {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const api = setup();
+      const send = api.getMockImplementation()!;
+      api.mockImplementation(async (input, init) => {
+        if (init?.method === "POST") await held;
+        return send(input, init);
+      });
+      await screen.findByRole("region", { name: "Tablero de oportunidades" });
+      expect(handle()).toHaveClass("touch-none"); // el dedo sobre el asa no desplaza la página
+      expect(handle()).toHaveAccessibleDescription(/Espacio o Intro para tomarla/);
+      fireEvent.change(screen.getByRole("combobox", { name: /Mover «Collar para Rocky»/ }), {
+        target: { value: "s2" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mover «Collar para Rocky»" }));
+      await waitFor(() => expect(handle()).toHaveAttribute("aria-disabled", "true"));
+      fireEvent.pointerDown(handle(), { button: 0, pointerId: 1, clientX: 1, clientY: 1 });
+      expect(handle()).toHaveAttribute("aria-pressed", "false"); // no la tomó
+      fireEvent.keyDown(handle(), { key: " " });
+      expect(screen.queryByText(/tomada/)).toBeNull();
+      release();
+      await screen.findByText("«Collar para Rocky» pasó a «Cotizado».");
+      expect(posts(api)).toHaveLength(1);
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
+      await screen.findByText("Cama ganada");
+      expect(screen.queryByRole("button", { name: /Arrastrar «Cama ganada»/ })).toBeNull();
+    });
+  });
 });
