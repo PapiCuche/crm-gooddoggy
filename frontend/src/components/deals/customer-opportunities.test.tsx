@@ -1,8 +1,9 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { Opportunity, Pipeline, SelfContext, Stage } from "@/lib/api/model";
+import type { Opportunity, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
 import { CustomerOpportunities } from "./customer-opportunities";
@@ -24,27 +25,20 @@ const page = (results: unknown[], next: string | null = null) => ({
   status: 200,
   body: { results, next },
 });
-const stage = (id: string, name: string, changes: Partial<Stage> = {}): Stage => ({
-  ...{ id, name, code: id, sort_order: 0, stage_type: "OPEN", default_probability: 10 },
-  ...{ stale_after_days: null, color: "#0ea5e9", requires_fields: {}, is_active: true },
-  ...changes,
+// Los pipelines solo necesitan lo que la pantalla lee de ellos.
+const stage = (id: string, name: string) => ({ id, name, stage_type: "OPEN", is_active: true });
+const pipeline = (id: string, name: string, stages = [stage("s1", "Nuevo")]) => ({
+  ...{ id, name, is_default: id === "p1", is_active: true, sort_order: 0, stages },
 });
-const pipeline = (id: string, name: string, changes: Partial<Pipeline> = {}): Pipeline => ({
-  ...{ id, name, code: id, kind: "RETAIL", currency: "PEN", is_default: false, is_active: true },
-  ...{ sort_order: 0, version: 1, stages: [stage("s1", "Nuevo")] },
-  ...changes,
-});
-const sales = pipeline("p1", "Ventas", { is_default: true });
-const opportunity = (id: string, changes: Partial<Opportunity> = {}): Opportunity => ({
-  ...{ id, number: `OPP-00000${id}`, title: "Collar para Rocky", pipeline_id: "p1" },
-  ...{ contact: { id: CONTACT, display_name: "Rosa Díaz" } },
-  ...{ stage: { id: "s1", name: "Nuevo", type: "OPEN" }, status: "OPEN" },
-  ...{ amount: "1500.50", currency: "PEN", probability: 10, priority: "MEDIUM" },
-  ...{ assigned_user_id: "u1", next_action: "Llamar el viernes", expected_close_date: null },
-  ...{ stage_entered_at: "2026-10-30T10:00:00Z", last_activity_at: "2026-10-30T10:00:00Z" },
-  ...{ won_at: null, lost_at: null, lost_reason: null, version: 1 },
-  ...changes,
-});
+const sales = pipeline("p1", "Ventas");
+const opportunity = (id: string, changes: Partial<Opportunity> = {}) =>
+  ({
+    ...{ id, number: `OPP-00000${id}`, title: "Collar para Rocky", status: "OPEN" },
+    ...{ contact: { id: CONTACT, display_name: "Rosa Díaz" } },
+    ...{ stage: { id: "s1", name: "Nuevo", type: "OPEN" }, amount: "1500.50", currency: "PEN" },
+    ...{ assigned_user_id: "u1", next_action: "Llamar el viernes", lost_reason: null },
+    ...{ stage_entered_at: "2026-10-30T10:00:00Z", ...changes },
+  }) as unknown as Opportunity;
 const rocky = opportunity("1");
 const luna = opportunity("3", {
   ...{ title: "Cama Luna", amount: "300.25", assigned_user_id: "u2", next_action: null },
@@ -89,20 +83,15 @@ describe("CustomerOpportunities (F5-06)", () => {
     expect(await screen.findByText("Cama Luna")).toBeVisible();
     expect(titles()).toEqual(["Cama Luna", "Collar para Rocky", "Venta ganada", "Venta perdida"]);
     const [cama, collar, ganada, perdida] = screen.getAllByRole("listitem");
-    expect(collar).toHaveTextContent("Collar para Rocky");
-    expect(collar).toHaveTextContent("OPP-000001");
-    expect(collar).toHaveTextContent("Abierta");
-    expect(collar).toHaveTextContent("Etapa: Nuevo");
-    expect(collar).toHaveTextContent("S/ 1,500.50");
-    expect(collar).toHaveTextContent("Yo");
-    expect(collar).toHaveTextContent("3 días en la etapa");
-    expect(collar).toHaveTextContent("Próxima acción: Llamar el viernes");
-    expect(cama).toHaveTextContent("Etapa: Cotizado");
-    expect(cama).toHaveTextContent("Otro miembro"); // sin `users.view` no se nombra
-    expect(cama).toHaveTextContent("13 días en la etapa");
-    expect(cama).toHaveTextContent("Sin próxima acción");
-    expect(ganada).toHaveTextContent("Ganada");
-    expect(ganada).toHaveTextContent("USD 80.00"); // la moneda es la de la oportunidad
+    // Título, número, estado, etapa, importe, responsable, días en la etapa y próxima acción.
+    expect(collar).toHaveTextContent(
+      "Collar para RockyOPP-000001AbiertaEtapa: NuevoS/ 1,500.50Yo3 días en la etapaPróxima acción: Llamar el viernes",
+    );
+    // Sin `users.view` no se nombra al responsable.
+    expect(cama).toHaveTextContent(
+      "Cama LunaOPP-000003AbiertaEtapa: CotizadoS/ 300.25Otro miembro13 días en la etapaSin próxima acción",
+    );
+    expect(ganada).toHaveTextContent("GanadaEtapa: GanadoUSD 80.00"); // la moneda es la de la oportunidad
     expect(perdida).toHaveTextContent("Perdida: Sin stock");
     expect(collar).not.toHaveTextContent("Rosa Díaz"); // el cliente es el de la ficha
     // 390 px: una columna, sin tabla ni desplazamiento horizontal propio; el texto largo se parte.
@@ -110,9 +99,7 @@ describe("CustomerOpportunities (F5-06)", () => {
     expect(within(collar!).getByText("Collar para Rocky")).toHaveClass("wrap-anywhere");
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("link")).toBeNull(); // sin pantalla de detalle todavía
-    expect(api.mock.calls.map(([url]) => String(url)).sort()).toEqual(
-      [PIPELINES, LIST].map((route) => route.slice(4)).sort(),
-    );
+    expect(api).toHaveBeenCalledTimes(2); // pipelines y la lista del cliente; sin directorio
   });
 
   it("con `users.view` nombra al responsable con el directorio", async () => {
@@ -120,11 +107,7 @@ describe("CustomerOpportunities (F5-06)", () => {
       [PIPELINES]: page([sales]),
       [LIST]: page([luna]),
       [MEMBERS]: page([
-        {
-          ...{ id: "m2", status: "ACTIVE", joined_at: "2026-01-01T00:00:00Z", roles: [] },
-          ...{ user: { id: "u2", email: "luis@acme.pe", first_name: "Luis", last_name: "Ramos" } },
-          default_branch: null,
-        },
+        { user: { id: "u2", email: "l@acme.pe", first_name: "Luis", last_name: "Ramos" } },
       ]),
     });
     show(["opportunities.view", "users.view"]);
@@ -142,7 +125,9 @@ describe("CustomerOpportunities (F5-06)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
     reply = page([]);
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
-    expect(await screen.findByText("Este cliente todavía no tiene oportunidades.")).toBeVisible();
+    expect(
+      await screen.findByText("Este cliente no tiene oportunidades que puedas ver."),
+    ).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -172,6 +157,31 @@ describe("CustomerOpportunities (F5-06)", () => {
     expect(titles()).toEqual(["Cama Luna", "Collar para Rocky"]);
     expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();
     expect(String(api.mock.calls.at(-1)![0])).toContain("&cursor=tras-1");
+  });
+
+  it("al cambiar de cliente no queda a la vista la lista del anterior", async () => {
+    const OTHER = "7a2d3b5f-1c8e-4d9f-8b62-4e3a8f9c0d21";
+    mockApi({
+      [PIPELINES]: page([sales]),
+      [LIST]: page([rocky]),
+      [`GET /api/v1/o/acme/opportunities/?contact_id=${OTHER}&limit=200`]: page([]),
+    });
+    function Harness() {
+      const [id, setId] = useState(CONTACT);
+      return (
+        <TenantProvider value={tenant}>
+          <button onClick={() => setId(OTHER)}>Otro cliente</button>
+          <CustomerOpportunities contactId={id} contactName="Otro" />
+        </TenantProvider>
+      );
+    }
+    renderApp(<Harness />);
+    expect(await screen.findByText("Collar para Rocky")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Otro cliente" }));
+    expect(
+      await screen.findByText("Este cliente no tiene oportunidades que puedas ver."),
+    ).toBeVisible();
+    expect(screen.queryByText("Collar para Rocky")).toBeNull();
   });
 
   describe("crear desde la ficha", () => {
@@ -211,13 +221,15 @@ describe("CustomerOpportunities (F5-06)", () => {
 
     it("el cliente ya está elegido: no hay buscador, y envía su `contact_id` y el pipeline predeterminado", async () => {
       const { api, server, release } = setup({ status: 201, body: created });
-      await open();
+      const form = await open();
+      expect(screen.queryByLabelText("Pipeline")).toBeNull(); // con uno solo no hay selector
       expect(screen.queryByRole("group", { name: "Cliente" })).toBeNull();
       expect(screen.queryByRole("searchbox")).toBeNull();
       fill("Título", "Collar nuevo");
       fill("Importe estimado (opcional)", "99.5");
       fill("Próxima acción (opcional)", "Llamar");
       submit();
+      fireEvent.submit(form); // dos envíos seguidos son una sola petición
       expect(screen.getByRole("button", { name: "Creando…" })).toHaveAttribute(
         "aria-disabled",
         "true",
@@ -225,6 +237,7 @@ describe("CustomerOpportunities (F5-06)", () => {
       server.rows = [rocky, fresh];
       release();
       expect(await screen.findByText("«Collar nuevo» creada en «Nuevo».")).toBeVisible();
+      expect(posts(api)).toHaveLength(1);
       expect(JSON.parse(String(posts(api)[0]![1]?.body))).toEqual({
         ...{ contact_id: CONTACT, title: "Collar nuevo", pipeline_id: "p1" },
         ...{ amount: "99.5", next_action: "Llamar" },
@@ -250,41 +263,29 @@ describe("CustomerOpportunities (F5-06)", () => {
       expect(posts(api)).toHaveLength(0);
     });
 
-    it("dos envíos seguidos son una sola petición", async () => {
-      const { api, release } = setup({ status: 201, body: created });
-      const form = await open();
-      fill("Título", "Collar nuevo");
-      fireEvent.submit(form);
-      fireEvent.submit(form);
-      release();
-      await screen.findByText(/creada en|se creó en/);
-      expect(posts(api)).toHaveLength(1);
-    });
+    it.each([
+      [403, { code: "PERMISSION_DENIED" }, "No tienes permiso para crear oportunidades."],
+      [
+        400,
+        { code: "VALIDATION_ERROR", fields: { contact_id: ["No válido."] } },
+        "Ese cliente ya no existe o no está a tu alcance.", // no hay a quién elegir
+      ],
+    ])(
+      "un %i de la API se dice en el formulario, que conserva lo escrito",
+      async (status, body, text) => {
+        const { release } = setup({ status, body });
+        await open();
+        fill("Título", "Collar nuevo");
+        submit();
+        release();
+        const message = await screen.findByText(text);
+        expect(message).not.toHaveTextContent("Elige otro");
+        expect(screen.getByLabelText("Título")).toHaveValue("Collar nuevo");
+      },
+    );
 
-    it("un 403 de la API se dice en el formulario, que conserva lo escrito", async () => {
-      const { release } = setup({ status: 403, body: { code: "PERMISSION_DENIED" } });
-      await open();
-      fill("Título", "Collar nuevo");
-      submit();
-      release();
-      expect(await screen.findByText("No tienes permiso para crear oportunidades.")).toBeVisible();
-      expect(screen.getByLabelText("Título")).toHaveValue("Collar nuevo");
-    });
-
-    it("un cliente que la API rechaza se dice sin ofrecer elegir otro", async () => {
-      const { release } = setup({
-        status: 400,
-        body: { code: "VALIDATION_ERROR", fields: { contact_id: ["No válido."] } },
-      });
-      await open();
-      fill("Título", "Collar nuevo");
-      submit();
-      release();
-      expect(await screen.findByText(/Ese cliente no existe o no está a tu alcance/)).toBeVisible();
-    });
-
-    it("con varios pipelines deja elegir y envía el elegido; con uno no ofrece la lista", async () => {
-      const second = pipeline("p2", "Mayoristas", { sort_order: 1 });
+    it("con varios pipelines deja elegir y envía el elegido", async () => {
+      const second = pipeline("p2", "Mayoristas");
       const { api, release } = setup({ status: 201, body: created }, [sales, second]);
       await open();
       const choice = screen.getByLabelText("Pipeline");
@@ -301,14 +302,39 @@ describe("CustomerOpportunities (F5-06)", () => {
       expect(JSON.parse(String(posts(api)[0]![1]?.body)).pipeline_id).toBe("p2");
     });
 
-    it("un solo pipeline no muestra selector", async () => {
-      setup({ status: 201, body: created });
+    it("un pipeline que la API rechaza no manda elegir otro si solo hay uno, y sí si hay varios", async () => {
+      const bad = {
+        status: 400,
+        body: { code: "VALIDATION_ERROR", fields: { pipeline_id: ["No válido."] } },
+      };
+      const one = setup(bad);
       await open();
-      expect(screen.queryByLabelText("Pipeline")).toBeNull();
+      fill("Título", "Collar nuevo");
+      submit();
+      one.release();
+      const text = await screen.findByText(/Este pipeline ya no está disponible/);
+      expect(text).not.toHaveTextContent("Elige otro");
+      cleanup();
+      const many = setup(bad, [sales, pipeline("p2", "Mayoristas")]);
+      await open();
+      fill("Título", "Collar nuevo");
+      submit();
+      many.release();
+      expect(await screen.findByText(/Elige otro/)).toBeVisible();
+    });
+
+    it("si la lista no la trae, lo dice sin hablar de filtros que la ficha no tiene", async () => {
+      const { release } = setup({ status: 201, body: created }); // el servidor sigue sin listarla
+      await open();
+      fill("Título", "Collar nuevo");
+      submit();
+      release();
+      const text = await screen.findByText(/pero la lista no la muestra/);
+      expect(text).not.toHaveTextContent("filtros");
     });
 
     it("sin una etapa abierta y activa el botón lo explica y no abre el formulario", async () => {
-      setup({ status: 201, body: created }, [pipeline("p1", "Ventas", { stages: [] })]);
+      setup({ status: 201, body: created }, [pipeline("p1", "Ventas", [])]);
       const button = await screen.findByRole("button", { name: "Nueva oportunidad" });
       expect(button).toHaveAttribute("aria-disabled", "true");
       fireEvent.click(button);

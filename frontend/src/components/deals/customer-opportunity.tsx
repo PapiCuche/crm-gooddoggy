@@ -5,11 +5,8 @@ import type { Opportunity } from "@/lib/api/model";
 
 import { daysInStage } from "./opportunity-card";
 
-// Una oportunidad en la pestaña de la ficha (F5-06): título y número, estado (con el motivo si
-// se perdió), etapa, importe, responsable, días en la etapa y próxima acción. El cliente no se
-// repite: es el de la ficha. No hay pantalla de detalle (queda para un work item propio), así
-// que todo lo que la lista trae se dice aquí. El `id` y el `tabIndex` son el destino del foco al
-// crear una oportunidad, como en el tablero.
+// Una oportunidad en la pestaña de la ficha (F5-06), con todo lo que trae la lista (aún no hay
+// detalle); el cliente no se repite. `id` y `tabIndex`: destino del foco al crear, como en el tablero.
 export function CustomerOpportunity({
   opportunity,
   owner,

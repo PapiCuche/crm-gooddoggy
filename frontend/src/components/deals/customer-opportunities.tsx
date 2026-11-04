@@ -25,12 +25,11 @@ import { useOwners, usePipelines } from "./use-deals";
 const byOpen = (a: Opportunity, b: Opportunity) =>
   Number(b.status === "OPEN") - Number(a.status === "OPEN") || (a.id < b.id ? 1 : -1);
 
-// La pestaña «Oportunidades» de la ficha del cliente (F5-06): las del contacto, de
-// `GET …/opportunities/?contact_id=` (el filtro de la pestaña, F5-04b), y «Nueva oportunidad»
-// con el cliente ya elegido (el formulario del tablero, sin buscador). Quién ve qué lo decide la
-// API (`opportunities.view` y su alcance); un 403 solo se explica. La API pagina por creación, la
-// más antigua primero (ADR-016): la pantalla ordena lo cargado, y si hay más páginas lo dice.
-// Sin pantalla de detalle (queda para otro work item), cada fila trae todo lo que la lista da.
+// La pestaña «Oportunidades» de la ficha (F5-06): las del contacto (`?contact_id=`, F5-04b) y
+// «Nueva oportunidad» con el cliente ya elegido (el formulario del tablero, sin buscador). Quién
+// ve qué lo decide la API; un 403 solo se explica. La API pagina por creación, la más antigua
+// primero (ADR-016): la pantalla ordena lo cargado y, si hay más páginas, lo dice. Sin pantalla
+// de detalle (otro work item), cada fila trae todo lo que da la lista.
 export function CustomerOpportunities({
   contactId,
   contactName,
@@ -103,40 +102,52 @@ export function CustomerOpportunities({
     );
   }
 
+  // Mientras cargan los pipelines no hay nada que poner en el recuadro: no se pinta vacío.
+  let create;
+  if (!canCreate || denied) {
+    create = null;
+  } else if (pipelineProblem) {
+    create = (
+      <div className="flex flex-col items-start gap-3">
+        <p role="alert" className="text-danger">
+          {pipelineProblem}
+        </p>
+        {retry(pipelines)}
+      </div>
+    );
+  } else if (pipelines.data?.length === 0) {
+    create = <p className="text-muted">{t("noPipelines")}</p>;
+  } else if (pipeline && pipelines.data) {
+    const several = pipelines.data.length > 1;
+    create = (
+      <>
+        {several ? (
+          <div className="w-full max-w-xs">
+            <Choice
+              label={t("filters.pipeline")}
+              value={pipeline.id}
+              busy={false}
+              onChange={setChosen}
+              options={pipelines.data.map(({ id, name }): [string, string] => [id, name])}
+            />
+          </div>
+        ) : null}
+        <OpportunityCreate
+          slug={slug}
+          pipelineId={pipeline.id}
+          ready={ready}
+          customer={{ id: contactId, name: contactName }}
+          onlyPipeline={!several}
+        />
+      </>
+    );
+  }
+
   return (
     <>
-      {canCreate && !denied ? (
+      {create ? (
         <section className="border-border bg-surface flex flex-col gap-3 rounded-lg border p-4">
-          {pipelineProblem ? (
-            <div className="flex flex-col items-start gap-3">
-              <p role="alert" className="text-danger">
-                {pipelineProblem}
-              </p>
-              {retry(pipelines)}
-            </div>
-          ) : pipelines.data?.length === 0 ? (
-            <p className="text-muted">{t("noPipelines")}</p>
-          ) : pipeline && pipelines.data ? (
-            <>
-              {pipelines.data.length > 1 ? (
-                <div className="w-full max-w-xs">
-                  <Choice
-                    label={t("filters.pipeline")}
-                    value={pipeline.id}
-                    busy={false}
-                    onChange={setChosen}
-                    options={pipelines.data.map(({ id, name }): [string, string] => [id, name])}
-                  />
-                </div>
-              ) : null}
-              <OpportunityCreate
-                slug={slug}
-                pipelineId={pipeline.id}
-                ready={ready}
-                customer={{ id: contactId, name: contactName }}
-              />
-            </>
-          ) : null}
+          {create}
         </section>
       ) : null}
       <section className="flex flex-col gap-3">

@@ -1,4 +1,5 @@
 import { fireEvent, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -32,14 +33,10 @@ const rosa = {
   ...{ created_by_user_id: "u1", version: 1, tags: [] },
   ...{ created_at: "2026-10-23T10:00:00Z", updated_at: "2026-10-24T20:30:00Z" },
 } as Contact;
-const stage = { id: "s1", name: "Nuevo", type: "OPEN" };
 const deal = {
-  ...{ id: "1", number: "OPP-000001", title: "Collar para Rocky", pipeline_id: "p1", stage },
-  ...{ contact: { id: ID, display_name: "Rosa Díaz" }, status: "OPEN", amount: "10.00" },
-  ...{ currency: "PEN", probability: 10, priority: "MEDIUM", assigned_user_id: null },
-  ...{ next_action: null, expected_close_date: null, won_at: null, lost_at: null },
-  ...{ stage_entered_at: "2026-10-30T10:00:00Z", last_activity_at: "2026-10-30T10:00:00Z" },
-  ...{ lost_reason: null, version: 1 },
+  ...{ id: "1", number: "OPP-000001", title: "Collar para Rocky", status: "OPEN", amount: "10.00" },
+  ...{ stage: { id: "s1", name: "Nuevo", type: "OPEN" }, currency: "PEN", assigned_user_id: null },
+  ...{ next_action: null, stage_entered_at: "2026-10-30T10:00:00Z", lost_reason: null },
 };
 const page = (results: unknown[]) => ({ status: 200, body: { results, next: null } });
 const open = (...codes: string[]) =>
@@ -74,18 +71,9 @@ describe("ficha del cliente: pestaña «Oportunidades» (F5-06)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Resumen" }));
     fireEvent.click(screen.getByRole("tab", { name: "Oportunidades" }));
     expect(api.mock.calls.filter(([url]) => String(url) === LIST.slice(4))).toHaveLength(1);
-  });
-
-  it("las flechas llegan a ella desde «Notas»", async () => {
-    mockApi({ [CARD]: { status: 200, body: rosa }, [PIPELINES]: page([]), [LIST]: page([]) });
-    open("contacts.view", "opportunities.view");
-    await screen.findByRole("heading", { level: 1, name: "Rosa Díaz" });
+    // Las flechas llegan a ella desde «Notas».
     fireEvent.click(screen.getByRole("tab", { name: "Notas" }));
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "Oportunidades" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
     expect(screen.getByRole("tab", { name: "Oportunidades" })).toHaveFocus();
   });
 
@@ -96,5 +84,26 @@ describe("ficha del cliente: pestaña «Oportunidades» (F5-06)", () => {
     expect(tabs().map((tab) => tab.textContent)).toEqual(["Resumen", "Notas"]);
     expect(screen.queryByRole("tab", { name: "Oportunidades" })).toBeNull();
     expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  it("si pierde `opportunities.view` con la pestaña abierta vuelve a «Resumen»", async () => {
+    mockApi({ [CARD]: { status: 200, body: rosa }, [PIPELINES]: page([]), [LIST]: page([deal]) });
+    function Harness() {
+      const [codes, setCodes] = useState(["contacts.view", "opportunities.view"]);
+      return (
+        <TenantProvider value={tenant(...codes)}>
+          <button onClick={() => setCodes(["contacts.view"])}>Quitar permiso</button>
+          <ContactCard contactId={ID} />
+        </TenantProvider>
+      );
+    }
+    renderApp(<Harness />);
+    await screen.findByRole("heading", { level: 1, name: "Rosa Díaz" });
+    fireEvent.click(screen.getByRole("tab", { name: "Oportunidades" }));
+    expect(await screen.findByText("Collar para Rocky")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Quitar permiso" }));
+    expect(screen.queryByRole("tab", { name: "Oportunidades" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Resumen" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByText("Collar para Rocky")).toBeNull();
   });
 });

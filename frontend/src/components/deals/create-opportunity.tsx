@@ -34,19 +34,22 @@ const idle = () => new Promise((resolve) => setTimeout(resolve, 50));
 // mira si la nueva está en ellas: si está, el foco va a su tarjeta; si no (un filtro o una página
 // sin cargar), lo dice en lugar de callar. Escape cierra sin enviar; lo escrito se conserva si
 // la API rechaza. Desde la ficha del cliente (F5-06) `customer` ya viene elegido, sin buscador,
-// y no hay órdenes de mover (`mover`) que esperar.
+// y no hay órdenes de mover (`mover`) que esperar; ahí no hay buscador ni filtros, y con un solo
+// pipeline (`onlyPipeline`) tampoco selector, así que los avisos no mandan «elegir otro».
 export function OpportunityCreate({
   slug,
   pipelineId,
   ready,
   mover,
   customer,
+  onlyPipeline,
 }: {
   slug: string;
   pipelineId: string;
   ready: boolean; // el pipeline tiene una etapa abierta y activa donde dejarla
   mover?: Mover;
   customer?: Customer;
+  onlyPipeline?: boolean;
 }) {
   const t = useTranslations("deals.create");
   const client = useQueryClient();
@@ -77,7 +80,8 @@ export function OpportunityCreate({
         data?.pages.some((page) => page.results.some((r) => r.id === created.id)),
       );
     const values = { title: created.title, stage: created.stage.name };
-    setSaid(t(failed ? "stale" : shown ? "done" : "hidden", values));
+    const missing = customer ? "hiddenHere" : "hidden"; // la ficha no tiene filtros
+    setSaid(t(failed ? "stale" : shown ? "done" : missing, values));
     setOpen(false);
     // La tarjeta nueva aparece con la lista: el foco va a ella cuando ya está pintada, salvo que
     // el usuario ya esté en otra parte (el botón lo recibe al cerrar, y es de quien lo puso).
@@ -189,8 +193,10 @@ export function OpportunityCreate({
           taken={(error) => {
             const bad = error.code === "VALIDATION_ERROR" ? (error.fields ?? {}) : {};
             if (error.status === 409) return { text: t("conflict") };
-            if (Object.hasOwn(bad, "contact_id")) return { text: t("contactInvalid") };
-            if (Object.hasOwn(bad, "pipeline_id")) return { text: t("pipelineInvalid") };
+            if (Object.hasOwn(bad, "contact_id"))
+              return { text: t(customer ? "contactGone" : "contactInvalid") };
+            if (Object.hasOwn(bad, "pipeline_id"))
+              return { text: t(onlyPipeline ? "pipelineGone" : "pipelineInvalid") };
             return null;
           }}
           denied={t("denied")}

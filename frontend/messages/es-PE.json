@@ -1963,7 +1963,7 @@
     "tab": {
       "title": "Oportunidades",
       "loading": "Cargando las oportunidades del cliente…",
-      "empty": "Este cliente todavía no tiene oportunidades.",
+      "empty": "Este cliente no tiene oportunidades que puedas ver.",
       "partial": "Hay más oportunidades: las abiertas primero y las más nuevas se ordenan solo entre las cargadas.",
       "open": "Abierta",
       "stage": "Etapa: {stage}"
@@ -2013,10 +2013,13 @@
       "cancel": "Cancelar",
       "denied": "No tienes permiso para crear oportunidades.",
       "contactInvalid": "Ese cliente no existe o no está a tu alcance. Elige otro.",
+      "contactGone": "Ese cliente ya no existe o no está a tu alcance.",
       "pipelineInvalid": "Este pipeline no está disponible o no tiene una etapa abierta. Elige otro.",
+      "pipelineGone": "Este pipeline ya no está disponible o no tiene una etapa abierta.",
       "conflict": "No se pudo crear: el pipeline no tiene una primera etapa disponible o la etapa pide datos que faltan.",
       "done": "«{title}» creada en «{stage}».",
       "hidden": "«{title}» se creó en «{stage}», pero los filtros actuales o las páginas sin cargar no la muestran.",
+      "hiddenHere": "«{title}» se creó en «{stage}», pero la lista no la muestra. Recarga la página.",
       "customer": {
         "label": "Cliente",
         "search": "Buscar cliente",
