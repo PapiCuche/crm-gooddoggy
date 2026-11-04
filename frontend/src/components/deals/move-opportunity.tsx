@@ -138,6 +138,7 @@ export function useMoveOpportunity(slug: string) {
     if (card.stage.id === to.id) return;
     const reopen = card.status !== "OPEN";
     const body = { stage_id: to.id, version: card.version };
+    if (reopen) dirty.current = true; // la lista suelta lo que su filtro ya no admite
     await act(card, {
       call: () =>
         reopen ? opportunitiesReopen(slug, card.id, body) : opportunitiesMove(slug, card.id, body),

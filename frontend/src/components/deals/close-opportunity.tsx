@@ -23,16 +23,12 @@ import { AMOUNT } from "./create-opportunity";
 import type { Mover } from "./move-opportunity";
 
 type Panel = "win" | "lose" | null;
-const NOTE_MAX = 1000;
 
-// Ganar y perder desde una tarjeta abierta (F5-05d): cada botón abre un formulario bajo ella.
-// Ganar pide el importe final (`POST …/win/`, mayor que 0) y perder un motivo de `GET …/lost-reasons/`
-// (que solo se pide al abrir ese formulario) con una nota, obligatoria si el motivo la exige
-// (`POST …/lose/`). Se ofrecen a todos: sin `opportunities.mark_won` o `mark_lost` la API responde
-// 403 y se dice. Un 404 o un 409 (la oportunidad cambió, se cerró, le faltan datos) lo dice el
-// tablero y cierra el formulario; un 400, un 403 o un fallo se dicen en el formulario, que
-// conserva lo escrito. Mientras la tarjeta tiene una orden en curso sus botones esperan.
-// Escape cierra (no mientras se envía, ni durante una composición).
+// Ganar y perder desde una tarjeta abierta (F5-05d): cada botón abre su formulario bajo ella.
+// Ganar pide el importe final (`POST …/win/`); perder, un motivo de `GET …/lost-reasons/` (que solo
+// se pide al abrir ese formulario) y una nota, obligatoria si el motivo la exige (`POST …/lose/`).
+// Se ofrecen a todos: la API responde 403 sin `mark_won` o `mark_lost`. Un 404 o un 409 lo dice el
+// tablero y cierra el formulario; un 400, un 403 o un fallo, el formulario, que conserva lo escrito.
 export function CloseControls({ card, mover }: { card: Opportunity; mover: Mover }) {
   const t = useTranslations("deals.close");
   const [panel, setPanel] = useState<Panel>(null);
@@ -85,13 +81,14 @@ function useClose<Input>(
   run: (input: Input) => Parameters<Mover["act"]>[1],
   onClose: () => void,
 ) {
-  const write = useMutation<void, ApiError, Input>({
+  const write = useMutation<boolean, ApiError, Input>({
     networkMode: "always",
     mutationFn: async (input) => {
-      const { error } = await mover.act(card, run(input));
+      const { done, error } = await mover.act(card, run(input));
       if (error) throw error;
+      return done;
     },
-    onSuccess: onClose,
+    onSuccess: (done) => done && onClose(), // no se cierra si no se envió nada (ya había una orden)
   });
   return write;
 }
@@ -147,9 +144,9 @@ function LoseForm({ card, mover, onClose }: FormProps) {
   const reasons = useQuery({
     queryKey: [...getLostReasonsListQueryKey(slug), "all"],
     queryFn: async ({ signal }) =>
-      (await everyPage((params) => lostReasonsList(slug, params, { signal }))).filter(
-        (one: LostReason) => one.is_active,
-      ),
+      (await everyPage((params) => lostReasonsList(slug, params, { signal })))
+        .filter((one: LostReason) => one.is_active)
+        .sort((a, b) => a.sort_order - b.sort_order), // el orden de la pantalla es el de `sort_order`
     gcTime: 0,
   });
   const chosen = reasons.data?.find(({ id }) => id === reasonId);
@@ -178,11 +175,11 @@ function LoseForm({ card, mover, onClose }: FormProps) {
         {
           ...{
             name: "note",
-            max: NOTE_MAX,
+            max: 1000,
             label: t(chosen?.requires_note ? "note" : "noteOptional"),
           },
           required: chosen?.requires_note ? t("noteRequired") : undefined,
-          invalid: t(chosen?.requires_note ? "noteRequired" : "noteInvalid"),
+          invalid: t("noteInvalid"),
         },
       ]}
       note={
@@ -235,7 +232,7 @@ function LoseForm({ card, mover, onClose }: FormProps) {
       }}
       write={write}
       send={({ note }) => write.mutate({ note })}
-      // El motivo que la API ya no acepta (se desactivó): se vuelve a leer la lista.
+      // El motivo que la API ya no acepta (se desactivó): se dice y se elige otro.
       taken={(error) => {
         const bad = error.code === "VALIDATION_ERROR" ? (error.fields ?? {}) : {};
         return Object.hasOwn(bad, "lost_reason_id") ? { text: t("reason.invalid") } : null;

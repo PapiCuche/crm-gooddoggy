@@ -847,7 +847,7 @@ describe("OpportunitiesBoard", () => {
     };
     // `hold(url)`: las órdenes POST a esa dirección esperan; `rows`: lo que "el servidor" lista.
     function setup(
-      routes: Record<string, { status: number; body?: unknown }> = {},
+      routes: Parameters<typeof mockApi>[0] = {},
       hold: (url: string) => Promise<void> | undefined = () => undefined,
       codes = ["opportunities.view"],
     ) {
@@ -888,11 +888,13 @@ describe("OpportunitiesBoard", () => {
       expect(body(api)).toEqual({ amount: "1800", version: 1 });
       await waitFor(() => expect(screen.queryByText("Collar para Rocky")).toBeNull());
       expect(column("Nuevo")).toHaveTextContent("Sin oportunidades · S/ 0.00");
-      // El foco no se pierde: va al aviso del tablero.
-      await waitFor(() => expect(document.activeElement).toHaveTextContent("ganada por"));
+      // La lista se relee (ya no cuenta la ganada) y el foco no se pierde: va al aviso del tablero.
+      expect(await screen.findByText("2 oportunidades en la lista")).toBeInTheDocument();
+      await waitFor(() => expect(document.activeElement).toHaveAttribute("role", "status"));
+      expect(document.activeElement).toHaveTextContent("ganada por");
     });
 
-    it.each([["0"], ["-5"], ["1,5"], ["1234567890123"], [" "]])(
+    it.each([["0"], ["-5"], ["1,5"], ["1.234"], [".5"], ["1234567890123"], [" "]])(
       "ganar con el importe «%s» no envía nada",
       async (value) => {
         const { api } = setup({ [WIN]: { status: 200, body: detail } });
@@ -935,6 +937,7 @@ describe("OpportunitiesBoard", () => {
         expect(screen.getByText("Este motivo exige una nota: escríbela.")).toBeVisible();
       }
       expect(posts(api)).toHaveLength(0);
+      expect(screen.getByLabelText("Nota")).toHaveAttribute("maxLength", "1000");
       fireEvent.change(screen.getByLabelText("Nota"), {
         target: { value: " Compró en otra tienda " },
       });
@@ -993,32 +996,17 @@ describe("OpportunitiesBoard", () => {
       },
     );
 
+    const bad = (field: string) => ({
+      ...{ status: 400, body: { code: "VALIDATION_ERROR", fields: { [field]: ["x"] } } },
+    });
+    const denied = { status: 403, body: { code: "PERMISSION_DENIED" } };
+    const noPermission = "No tienes permiso para esta acción.";
     it.each([
-      [
-        WIN,
-        { status: 400, body: { code: "VALIDATION_ERROR", fields: { amount: ["x"] } } },
-        "El importe no es válido",
-      ],
-      [
-        LOSE,
-        { status: 400, body: { code: "VALIDATION_ERROR", fields: { note: ["x"] } } },
-        "La nota no es válida",
-      ],
-      [
-        LOSE,
-        { status: 400, body: { code: "VALIDATION_ERROR", fields: { lost_reason_id: ["x"] } } },
-        "Ese motivo ya no está disponible",
-      ],
-      [
-        WIN,
-        { status: 403, body: { code: "PERMISSION_DENIED" } },
-        "No tienes permiso para esta acción.",
-      ],
-      [
-        LOSE,
-        { status: 403, body: { code: "PERMISSION_DENIED" } },
-        "No tienes permiso para esta acción.",
-      ],
+      [WIN, bad("amount"), "El importe no es válido"],
+      [LOSE, bad("note"), "La nota no es válida"],
+      [LOSE, bad("lost_reason_id"), "Ese motivo ya no está disponible"],
+      [WIN, denied, noPermission],
+      [LOSE, denied, noPermission],
       [WIN, { status: 500, body: { code: "INTERNAL_ERROR" } }, "Algo salió mal de nuestro lado"],
     ])("%s rechazo %#: el formulario sigue abierto con lo escrito", async (route, reply, said) => {
       const { api } = setup({ [route]: reply });
@@ -1086,17 +1074,14 @@ describe("OpportunitiesBoard", () => {
     });
 
     it("las ganadas y perdidas dicen su estado, no se mueven ni se ganan, y se reabren en una etapa abierta", async () => {
-      const reopened = {
-        ...wonCard,
-        status: "OPEN",
-        stage: { id: "s2", name: "Cotizado", type: "OPEN" },
-        version: 2,
-      };
+      const opened = { ...wonCard, status: "OPEN", stage: luna.stage, version: 2 };
+      let closed: unknown[] = [wonCard]; // lo que el servidor lista como ganadas
       const { api } = setup({
         "POST /api/v1/o/acme/opportunities/4/reopen/": {
           status: 200,
-          body: { ...reopened, items: [], history: [] },
+          body: { ...opened, items: [], history: [] },
         },
+        "GET /api/v1/o/acme/opportunities/?pipeline_id=p1&status=WON": () => page(closed),
       });
       await ready();
       fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "" } });
@@ -1105,18 +1090,37 @@ describe("OpportunitiesBoard", () => {
       expect(screen.getByText("Perdida: Precio")).toBeVisible();
       expect(screen.queryByRole("button", { name: /^Ganar «Cama/ })).toBeNull();
       expect(screen.queryByRole("combobox", { name: /^Mover «Cama/ })).toBeNull();
-      const select = screen.getByRole("combobox", { name: "Reabrir «Cama ganada» en otra etapa" });
+      // Bajo «Ganadas»: al reabrirla sale de la lista (se relee), lo dice y el foco no se pierde.
+      fireEvent.change(screen.getByLabelText("Estado"), { target: { value: "WON" } });
+      const select = await screen.findByRole("combobox", {
+        name: "Reabrir «Cama ganada» en otra etapa",
+      });
       expect(
         within(select)
           .getAllByRole("option")
           .map((o) => o.textContent),
       ).toEqual(["Reabrir en…", "Nuevo", "Cotizado"]);
+      closed = [];
       fireEvent.change(select, { target: { value: "s2" } });
       fireEvent.click(screen.getByRole("button", { name: "Reabrir «Cama ganada»" }));
-      expect(await screen.findByText("«Cama ganada» se reabrió en «Cotizado».")).toBeVisible();
+      expect(
+        await screen.findByText("Todavía no hay oportunidades ganadas en este pipeline."),
+      ).toBeVisible();
       expect(body(api)).toEqual({ stage_id: "s2", version: 1 });
-      expect(within(column("Cotizado")).getByText("Cama ganada")).toBeVisible();
-      expect(screen.queryByText("Ganada")).toBeNull(); // ya está abierta
+      await waitFor(() => expect(document.activeElement).toHaveAttribute("role", "status"));
+      expect(document.activeElement).toHaveTextContent("«Cama ganada» se reabrió en «Cotizado».");
+    });
+
+    it("los motivos de pérdida se ofrecen en el orden de `sort_order`", async () => {
+      const second = { ...reason("r4", "Segundo"), sort_order: 2 };
+      const first = { ...reason("r5", "Primero"), sort_order: 1 };
+      setup({ [REASONS]: { status: 200, body: { results: [second, first], next: null } } });
+      await open("Perder");
+      await screen.findByRole("radio", { name: "Primero" });
+      expect(screen.getAllByRole("radio").map((r) => r.closest("label")?.textContent)).toEqual([
+        "Primero",
+        "Segundo",
+      ]);
     });
   });
 });
