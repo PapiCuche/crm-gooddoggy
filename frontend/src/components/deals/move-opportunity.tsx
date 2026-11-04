@@ -108,7 +108,7 @@ export function useMoveOpportunity(slug: string) {
       if (document.activeElement === document.body) alertRef.current?.focus();
     }, 0);
   }
-  return { move, pending, said, focusRef, alertRef };
+  return { move, pending, said, focusRef, alertRef, sending };
 }
 
 // El aviso de la última acción: el éxito se anuncia en una región de estado (montada desde el
@@ -120,12 +120,7 @@ export function MoveNotice({ said, alertRef }: { said: Said; alertRef: Mover["al
         {said && !said.alert ? said.text : ""}
       </p>
       {said?.alert ? (
-        <p
-          ref={alertRef}
-          tabIndex={-1}
-          role="alert"
-          className="text-danger text-sm wrap-anywhere focus-visible:outline-none"
-        >
+        <p ref={alertRef} tabIndex={-1} role="alert" className="text-danger text-sm wrap-anywhere">
           {said.text}
         </p>
       ) : null}
