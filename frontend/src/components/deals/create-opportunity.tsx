@@ -33,17 +33,23 @@ const idle = () => new Promise((resolve) => setTimeout(resolve, 50));
 // dice. Al crear, espera a que acaben las órdenes de mover en curso, vuelve a pedir las listas y
 // mira si la nueva está en ellas: si está, el foco va a su tarjeta; si no (un filtro o una página
 // sin cargar), lo dice en lugar de callar. Escape cierra sin enviar; lo escrito se conserva si
-// la API rechaza.
+// la API rechaza. Desde la ficha del cliente (F5-06) `customer` ya viene elegido, sin buscador,
+// y no hay órdenes de mover (`mover`) que esperar; ahí no hay buscador ni filtros, y con un solo
+// pipeline (`onlyPipeline`) tampoco selector, así que los avisos no mandan «elegir otro».
 export function OpportunityCreate({
   slug,
   pipelineId,
   ready,
   mover,
+  customer,
+  onlyPipeline,
 }: {
   slug: string;
   pipelineId: string;
   ready: boolean; // el pipeline tiene una etapa abierta y activa donde dejarla
-  mover: Mover;
+  mover?: Mover;
+  customer?: Customer;
+  onlyPipeline?: boolean;
 }) {
   const t = useTranslations("deals.create");
   const client = useQueryClient();
@@ -51,6 +57,7 @@ export function OpportunityCreate({
   const [open, setOpen] = useState(false);
   const [said, setSaid] = useState("");
   const [picked, setPicked] = useState<Customer | null>(null);
+  const who = customer ?? picked;
   const [asked, setAsked] = useState(false); // intentó enviar sin cliente
   const trigger = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -59,9 +66,9 @@ export function OpportunityCreate({
     // Se relee la lista cuando no hay órdenes de mover en curso; si una empieza durante la lectura,
     // cancela esa lectura (su resultado no vale) y se espera a que acabe para leer otra vez.
     for (let tries = 0; tries < 3; tries++) {
-      while (mover.sending.current.size > 0) await idle();
+      while (mover && mover.sending.current.size > 0) await idle();
       await client.invalidateQueries(lists);
-      if (mover.sending.current.size === 0) break;
+      if (!mover || mover.sending.current.size === 0) break;
     }
     const failed = client
       .getQueryCache()
@@ -73,7 +80,8 @@ export function OpportunityCreate({
         data?.pages.some((page) => page.results.some((r) => r.id === created.id)),
       );
     const values = { title: created.title, stage: created.stage.name };
-    setSaid(t(failed ? "stale" : shown ? "done" : "hidden", values));
+    const missing = customer ? "hiddenHere" : "hidden"; // la ficha no tiene filtros
+    setSaid(t(failed ? "stale" : shown ? "done" : missing, values));
     setOpen(false);
     // La tarjeta nueva aparece con la lista: el foco va a ella cuando ya está pintada, salvo que
     // el usuario ya esté en otra parte (el botón lo recibe al cerrar, y es de quien lo puso).
@@ -154,24 +162,26 @@ export function OpportunityCreate({
             valid: field.name === "amount" ? (value: string) => AMOUNT.test(value) : undefined,
           }))}
           note={
-            <CustomerPicker
-              slug={slug}
-              picked={picked}
-              onPick={setPicked}
-              searchRef={search}
-              error={asked && !picked ? t("customer.required") : undefined}
-            />
+            customer ? undefined : (
+              <CustomerPicker
+                slug={slug}
+                picked={picked}
+                onPick={setPicked}
+                searchRef={search}
+                error={asked && !picked ? t("customer.required") : undefined}
+              />
+            )
           }
           check={() => {
             setAsked(true);
-            if (!picked) search.current?.focus(); // sin permiso para buscar no hay a dónde ir
-            return !!picked;
+            if (!who) search.current?.focus(); // sin permiso para buscar no hay a dónde ir
+            return !!who;
           }}
           write={create}
           // Solo lo escrito; el responsable y la etapa los pone la API.
           send={(values) => {
             const data: OpportunityCreateRequest = {
-              contact_id: picked!.id,
+              contact_id: who!.id,
               title: values.title,
               pipeline_id: pipelineId,
             };
@@ -183,8 +193,10 @@ export function OpportunityCreate({
           taken={(error) => {
             const bad = error.code === "VALIDATION_ERROR" ? (error.fields ?? {}) : {};
             if (error.status === 409) return { text: t("conflict") };
-            if (Object.hasOwn(bad, "contact_id")) return { text: t("contactInvalid") };
-            if (Object.hasOwn(bad, "pipeline_id")) return { text: t("pipelineInvalid") };
+            if (Object.hasOwn(bad, "contact_id"))
+              return { text: t(customer ? "contactGone" : "contactInvalid") };
+            if (Object.hasOwn(bad, "pipeline_id"))
+              return { text: t(onlyPipeline ? "pipelineGone" : "pipelineInvalid") };
             return null;
           }}
           denied={t("denied")}
