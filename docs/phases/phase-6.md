@@ -21,8 +21,8 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | ID | Issue | Rama | Depende de | Tipo |
 |---|---|---|---|---|
 | F6-01 | [#536](https://github.com/PapiCuche/crm-gooddoggy/issues/536) Inbox: tablas de canales, conversaciones y mensajes (Sandbox) | `feature/f6-inbox-tables` | — | backend |
-| F6-01b | — Inbox: mensajes y estado de entrega (sin comandos) | `feature/f6-inbox-messages` | F6-01 | backend |
-| F6-01c | — Inbox: comandos de conversación y mensajes, con auditoría | `feature/f6-inbox-commands` | F6-01b | backend |
+| F6-01b | [#543](https://github.com/PapiCuche/crm-gooddoggy/issues/543) Inbox: mensajes y estado de entrega (sin comandos) | `feature/f6-inbox-messages` | F6-01 | backend |
+| F6-01c | [#544](https://github.com/PapiCuche/crm-gooddoggy/issues/544) Inbox: comandos de conversación y mensajes, con auditoría | `feature/f6-inbox-commands` | F6-01b | backend |
 | F6-02 | [#537](https://github.com/PapiCuche/crm-gooddoggy/issues/537) Inbox: API de conversaciones y mensajes con el canal Sandbox | `feature/f6-inbox-api` | F6-01c | backend |
 | F6-03 | [#538](https://github.com/PapiCuche/crm-gooddoggy/issues/538) Inbox: pantalla de conversaciones y chat (solo lectura) | `feature/f6-inbox-screen` | #537 | frontend |
 | F6-04 | [#539](https://github.com/PapiCuche/crm-gooddoggy/issues/539) Inbox: enviar mensajes salientes con el canal Sandbox | `feature/f6-inbox-send` | #538 | full-stack |
