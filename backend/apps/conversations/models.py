@@ -1,13 +1,17 @@
-"""Canales y conversaciones del Inbox (Fase 6, E06; modelo de datos §E.6, ADR-007, 010).
+"""Canales, conversaciones y mensajes del Inbox (Fase 6, E06; modelo de datos §E.6, ADR-007, 010).
 Tablas tenant-owned con FORCE RLS y FKs compuestas en la migración. Nada se borra: una cuenta se
 marca borrada, una conversación se cierra o se archiva, el historial de asignaciones es inmutable
-(los mensajes llegan en F6-01b)."""
+y un mensaje no se reescribe salvo el estado de entrega, que solo avanza."""
 
 from django.db import models
+from django.db.models.functions import Length
+from django.db.models.lookups import LessThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
 
 NUMBER = r"^CONV-[0-9]{5,}$"  # `CONV-00191`; pasado el millón crece (core.sequences)
+BODY_MAX = 4096
+SENDERS = ("USER", "AI_AGENT", "SYSTEM")  # los que pueden escribir una nota interna
 
 
 class Platform(models.TextChoices):
@@ -32,6 +36,32 @@ class AttentionMode(models.TextChoices):
     HUMAN = "HUMAN"
     AI_ASSISTED = "AI_ASSISTED"  # los valores de IA existen; sus invariantes llegan con la Fase 8
     AI_AUTONOMOUS = "AI_AUTONOMOUS"
+
+
+class Direction(models.TextChoices):
+    INBOUND = "INBOUND"
+    OUTBOUND = "OUTBOUND"
+    INTERNAL = "INTERNAL"
+
+
+class SenderType(models.TextChoices):
+    CONTACT = "CONTACT"
+    USER = "USER"
+    AI_AGENT = "AI_AGENT"
+    SYSTEM = "SYSTEM"
+
+
+class MessageType(models.TextChoices):
+    TEXT = "TEXT"
+    NOTE = "NOTE"  # solo INTERNAL: nunca sale hacia un canal (ADR-010)
+
+
+class Delivery(models.TextChoices):
+    QUEUED = "QUEUED"
+    SENT = "SENT"
+    DELIVERED = "DELIVERED"
+    READ = "READ"
+    FAILED = "FAILED"  # terminal
 
 
 Reason: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]  # ADR-007 §2
@@ -158,6 +188,10 @@ class Conversation(TenantModel):
             models.UniqueConstraint(
                 fields=["organization_id", "id"], name="conversations_org_id_uq"
             ),
+            models.UniqueConstraint(  # destino de la FK de los mensajes: la cuenta es la del hilo
+                fields=["organization_id", "id", "channel_account"],
+                name="conversations_org_account_uq",
+            ),
             models.UniqueConstraint(
                 fields=["organization_id", "number"], name="conversations_number_uq"
             ),
@@ -183,6 +217,100 @@ class Conversation(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(assignment_version__gte=1, version__gte=1),
                 name="conversations_version_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+class Message(TenantModel):
+    """Todo lo que aparece en el chat. Una nota (`INTERNAL`) no puede tener id externo, ni ser de
+    un contacto, ni salir: la base lo impide (ADR-010, primera de las tres guardas). Solo
+    `delivery_status` cambia, y solo avanza (disparador de la migración)."""
+
+    Direction = Direction
+    Delivery = Delivery
+
+    id = uuid7_primary_key()
+    conversation = models.ForeignKey(
+        Conversation, models.PROTECT, related_name="messages", db_constraint=False, db_index=False
+    )
+    channel_account = models.ForeignKey(  # la de la conversación: la FK compuesta lo hace cumplir
+        ChannelAccount, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    direction = models.CharField(max_length=8, choices=Direction.choices)
+    sender_type = models.CharField(max_length=8, choices=SenderType.choices)
+    sender_user_id = models.UUIDField(null=True, blank=True)
+    message_type = models.CharField(max_length=8, choices=MessageType.choices, default="TEXT")
+    body = models.TextField()
+    client_message_id = models.UUIDField(null=True, blank=True)
+    external_message_id = models.CharField(max_length=200, null=True, blank=True)  # noqa: DJ001
+    delivery_status = models.CharField(  # noqa: DJ001
+        max_length=10, choices=Delivery.choices, null=True, blank=True
+    )
+    sent_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "messages"
+        indexes = [
+            models.Index(
+                fields=["organization_id", "conversation", "created_at", "id"],
+                name="messages_org_conversation_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "channel_account", "external_message_id"],
+                condition=models.Q(external_message_id__isnull=False),
+                name="messages_external_uq",
+            ),
+            models.UniqueConstraint(
+                fields=["organization_id", "client_message_id"],
+                condition=models.Q(client_message_id__isnull=False),
+                name="messages_client_uq",
+            ),
+            one_of("direction", Direction, "messages_direction_ck"),
+            one_of("sender_type", SenderType, "messages_sender_ck"),
+            one_of("message_type", MessageType, "messages_type_ck"),
+            models.CheckConstraint(  # sin id externo ni remitente cliente: no sale por ningún canal
+                condition=~models.Q(direction="INTERNAL")
+                | (models.Q(external_message_id__isnull=True, sender_type__in=SENDERS)),
+                name="messages_internal_ck",
+            ),
+            models.CheckConstraint(  # una nota es interna, y lo interno es una nota
+                condition=models.Q(message_type="NOTE", direction="INTERNAL")
+                | (~models.Q(message_type="NOTE") & ~models.Q(direction="INTERNAL")),
+                name="messages_note_ck",
+            ),
+            models.CheckConstraint(  # el cliente solo escribe lo entrante; un usuario, su `sender`
+                condition=models.Q(direction="INBOUND", sender_type="CONTACT")
+                | (~models.Q(direction="INBOUND") & ~models.Q(sender_type="CONTACT")),
+                name="messages_contact_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sender_type="USER", sender_user_id__isnull=False)
+                | (~models.Q(sender_type="USER") & models.Q(sender_user_id__isnull=True)),
+                name="messages_sender_user_ck",
+            ),
+            models.CheckConstraint(  # solo lo saliente se entrega, y siempre tiene estado
+                condition=models.Q(direction="OUTBOUND", delivery_status__isnull=False)
+                | (~models.Q(direction="OUTBOUND") & models.Q(delivery_status__isnull=True)),
+                name="messages_delivery_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(delivery_status__isnull=True)
+                | models.Q(delivery_status__in=Delivery.values),
+                name="messages_delivery_values_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(body__regex=r"\S")
+                & models.Q(LessThanOrEqual(Length("body"), BODY_MAX)),
+                name="messages_body_ck",
             ),
         ]
 

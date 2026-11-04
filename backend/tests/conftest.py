@@ -50,7 +50,13 @@ TENANT_TABLES = ("pipeline_stages", "pipelines", "lost_reasons", *TENANT_TABLES)
 # F5-03: delante de todo lo que referencian (etapas, motivos, contactos, variantes y membresías)
 TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
 # F6-01: delante de las oportunidades y de todo lo que referencian (contactos, equipos, personas)
-TENANT_TABLES = ("conversation_assignments", "conversations", "channel_accounts", *TENANT_TABLES)
+TENANT_TABLES = (
+    "messages",
+    "conversation_assignments",
+    "conversations",
+    "channel_accounts",
+    *TENANT_TABLES,
+)
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

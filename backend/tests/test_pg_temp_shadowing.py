@@ -22,6 +22,7 @@ FUNCTIONS = (
     "public.promotions_born_draft()",
     "public.promotion_children_guard()",
     "public.variant_costs_immutable()",
+    "public.messages_delivery_advance()",  # F6-01b
 )
 
 

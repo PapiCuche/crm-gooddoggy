@@ -1,12 +1,12 @@
-"""F6-01: las tablas `channel_accounts`, `conversations` y
+"""F6-01: las tablas `channel_accounts`, `conversations`, `messages` (F6-01b) y
 `conversation_assignments` (Inbox), con PostgreSQL real y el rol `crm_app`: RLS, claves compuestas
-de tenant, CHECKs, únicos parciales y concesiones mínimas."""
+de tenant, CHECKs, únicos parciales, concesiones mínimas y el estado de entrega que solo avanza."""
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -18,6 +18,7 @@ from apps.conversations.models import (
     ChannelAccount,
     Conversation,
     ConversationAssignment,
+    Message,
 )
 from core.sequences import allocate
 from core.tenancy.scope import tenant_scope
@@ -26,7 +27,7 @@ from tests.test_memberships import ctx, join
 from tests.test_teams import team
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
-TABLES = ("channel_accounts", "conversations", "conversation_assignments")
+TABLES = ("channel_accounts", "conversations", "messages", "conversation_assignments")
 
 
 @pytest.fixture
@@ -68,6 +69,18 @@ def fresh(org: UUID, account: Any, number: str, **over: Any) -> Any:
     return conversation(org, who, account, number, **over)
 
 
+def message(org: UUID, convo: Any, **over: Any) -> Any:
+    fields = {
+        "direction": "INBOUND",
+        "sender_type": "CONTACT",
+        "body": "Hola",
+        "conversation_id": convo.pk,
+        "channel_account_id": convo.channel_account_id,
+    } | over
+    with tenant_scope(ctx(org)):
+        return Message.objects.create(**fields)
+
+
 def first(world: SimpleNamespace) -> Any:
     return conversation(world.a, world.contact_a, world.account_a)
 
@@ -85,6 +98,7 @@ def sql(org: UUID, statement: str, params: list[Any] | None = None) -> list[Any]
 
 def test_what_a_creates_never_exists_for_b(world: SimpleNamespace) -> None:
     convo = first(world)
+    message(world.a, convo)
     with tenant_scope(ctx(world.a)):
         ConversationAssignment.objects.create(
             conversation_id=convo.pk, new_user_id=world.ana.pk, reason_code="TAKE",
@@ -97,7 +111,7 @@ def test_what_a_creates_never_exists_for_b(world: SimpleNamespace) -> None:
         found = sql(world.b, f"SELECT 1 FROM {table} WHERE organization_id = %s", [world.a])  # noqa: S608
         assert found == []
     with tenant_scope(ctx(world.b)):
-        assert not Conversation.objects.exists()
+        assert not Conversation.objects.exists() and not Message.objects.exists()
 
 
 def test_every_table_forces_rls_with_a_single_policy(migrator: psycopg.Connection[Any]) -> None:
@@ -124,6 +138,7 @@ def test_a_row_cannot_be_written_for_another_organization(world: SimpleNamespace
 
 def test_the_references_are_composite_with_the_tenant(world: SimpleNamespace) -> None:
     mine, theirs = first(world), conversation(world.b, world.contact_b, world.account_b)
+    stranger = make_user()
     cases = {
         "conversations_contact_fk": lambda: conversation(
             world.a, world.contact_b, world.account_a, "CONV-00002"
@@ -136,6 +151,15 @@ def test_the_references_are_composite_with_the_tenant(world: SimpleNamespace) ->
         ),
         "conversations_user_fk": lambda: fresh(  # no es miembro de A
             world.a, world.account_a, "CONV-00005", assigned_user_id=world.luis.pk
+        ),
+        "messages_conversation_fk": lambda: message(world.a, theirs),
+        "messages_sender_user_fk": lambda: message(
+            world.a,
+            mine,
+            direction="OUTBOUND",
+            sender_type="USER",
+            sender_user_id=stranger.pk,
+            delivery_status="QUEUED",
         ),
         "conv_assignments_conversation_fk": lambda: ConversationAssignment.objects.create(
             conversation_id=theirs.pk, reason_code="MANUAL", assigned_by_system=True
@@ -248,6 +272,107 @@ def test_a_channel_account_is_unique_among_the_live_ones_of_the_whole_platform(
     ))  # fmt: skip
 
 
+def test_a_message_must_carry_the_channel_account_of_its_conversation(
+    world: SimpleNamespace,
+) -> None:
+    convo = first(world)
+    with tenant_scope(ctx(world.a)):
+        other = ChannelAccount.objects.create(
+            platform="SANDBOX", name="Otra", external_account_id=f"otra-{uuid4()}"
+        )
+    refused(
+        world.a,
+        "messages_conversation_fk",
+        lambda: Message.objects.create(
+            conversation_id=convo.pk,
+            channel_account_id=other.pk,
+            direction="INBOUND",
+            sender_type="CONTACT",
+            body="Hola",
+        ),
+    )
+
+
+def test_a_note_can_never_be_a_sendable_message(world: SimpleNamespace) -> None:
+    convo = first(world)
+    note = {"direction": "INTERNAL", "message_type": "NOTE", "sender_type": "USER",
+            "sender_user_id": world.ana.pk}  # fmt: skip
+    assert message(world.a, convo, **note).message_type == "NOTE"
+
+    def attempt(**over: Any) -> Any:
+        return lambda: message(world.a, convo, **({"body": "x"} | over))
+
+    refused(world.a, "messages_internal_ck", attempt(**note, external_message_id="wamid.1"))
+    refused(
+        world.a,
+        "messages_note_ck",
+        attempt(**{**note, "direction": "OUTBOUND"}, delivery_status="QUEUED"),
+    )
+    refused(
+        world.a, "messages_note_ck", attempt(**{**note, "message_type": "TEXT"})
+    )  # interno, no nota
+    refused(
+        world.a, "messages_(contact|internal)_ck", attempt(**{**note, "sender_type": "CONTACT"})
+    )
+
+
+def test_message_checks(world: SimpleNamespace) -> None:
+    convo = first(world)
+    out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": world.ana.pk}
+
+    def make(**over: Any) -> Any:
+        return lambda: message(world.a, convo, **over)
+
+    refused(world.a, "messages_delivery_ck", make(**out))  # lo saliente nace con estado
+    refused(world.a, "messages_delivery_ck", make(delivery_status="SENT"))  # lo entrante, no
+    refused(world.a, "messages_delivery_values_ck", make(**out, delivery_status="BOGUS"))
+    refused(world.a, "messages_contact_ck", make(sender_type="USER", sender_user_id=world.ana.pk))
+    refused(
+        world.a,
+        "messages_contact_ck",
+        make(**{**out, "sender_type": "CONTACT"}, delivery_status="QUEUED"),
+    )
+    refused(
+        world.a,
+        "messages_sender_user_ck",
+        make(direction="OUTBOUND", sender_type="USER", delivery_status="QUEUED"),
+    )
+    refused(world.a, "messages_body_ck", make(body="   "))
+    refused(world.a, "messages_body_ck", make(body="x" * 4097))
+    refused(world.a, "messages_direction_ck", make(**{**out, "direction": "SIDEWAYS"}))
+    refused(
+        world.a,
+        "messages_sender_ck",
+        make(direction="OUTBOUND", sender_type="ROBOT", delivery_status="QUEUED"),
+    )
+    refused(world.a, "messages_type_ck", make(message_type="VIDEO"))
+    assert make(**out, delivery_status="QUEUED", body="x" * 4096)().delivery_status == "QUEUED"
+
+
+def test_the_external_and_client_ids_are_unique_where_they_apply(world: SimpleNamespace) -> None:
+    convo, other = first(world), conversation(world.b, world.contact_b, world.account_b)
+    message(world.a, convo, external_message_id="wamid.1")
+    refused(
+        world.a,
+        "messages_external_uq",
+        lambda: message(world.a, convo, external_message_id="wamid.1"),
+    )
+    message(world.a, convo, external_message_id="wamid.2")  # otro id
+    message(world.a, convo)  # sin id externo: no choca con nadie
+    message(world.a, convo)
+    message(world.b, other, external_message_id="wamid.1")  # otra cuenta
+    out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": world.ana.pk,
+           "delivery_status": "QUEUED"}  # fmt: skip
+    client = uuid4()
+    message(world.a, convo, client_message_id=client, **out)
+    refused(
+        world.a,
+        "messages_client_uq",
+        lambda: message(world.a, convo, client_message_id=client, **out),
+    )
+    message(world.a, convo, client_message_id=uuid4(), **out)
+
+
 def test_the_runtime_role_cannot_delete_and_the_history_is_immutable(
     world: SimpleNamespace,
 ) -> None:
@@ -260,6 +385,7 @@ def test_the_runtime_role_cannot_delete_and_the_history_is_immutable(
     revoked = {  # la concesión misma: una FK podría estorbar el DELETE por casualidad
         "channel_accounts": ("DELETE", "TRUNCATE"),
         "conversations": ("DELETE", "TRUNCATE"),
+        "messages": ("DELETE", "TRUNCATE"),
         "conversation_assignments": ("UPDATE", "DELETE", "TRUNCATE"),
     }
     asked = "SELECT has_table_privilege(current_user, %s, %s)"
@@ -315,3 +441,64 @@ def test_the_number_width_and_a_race_for_the_open_conversation(world: SimpleName
     assert outcome == ["conversations_open_uq"] * 3 + ["opened"]
     with tenant_scope(ctx(world.a)):
         assert Conversation.objects.filter(contact_id=world.contact_a.pk).count() == 1
+
+
+def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
+    """Todas las parejas (estado actual, estado nuevo): saltar pasos vale, retroceder no, `FAILED`
+    solo desde QUEUED o SENT y sin salida."""
+    convo = first(world)
+    out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": world.ana.pk,
+           "delivery_status": "QUEUED"}  # fmt: skip
+    order = ["QUEUED", "SENT", "DELIVERED", "READ"]
+    allowed = {
+        (old, new)
+        for old in [*order, "FAILED"]
+        for new in [*order, "FAILED"]
+        if old != "FAILED"
+        and old != new
+        and (old in order[:2] if new == "FAILED" else order.index(new) > order.index(old))
+    }
+
+    def update(pk: UUID, status: str) -> None:
+        sql(world.a, "UPDATE messages SET delivery_status = %s WHERE id = %s", [status, pk])
+
+    def status(pk: UUID) -> str:
+        return str(sql(world.a, "SELECT delivery_status FROM messages WHERE id = %s", [pk])[0][0])
+
+    for old in [*order, "FAILED"]:
+        for new in [*order, "FAILED"]:
+            if old == new:
+                continue
+            pk = message(world.a, convo, **out).pk
+            if old != "QUEUED":
+                update(pk, old)
+            if (old, new) in allowed:
+                update(pk, new)
+                assert status(pk) == new, (old, new)
+            else:
+                with pytest.raises(DatabaseError, match="solo avanza"):
+                    update(pk, new)
+                assert status(pk) == old, (old, new)
+    pk = message(world.a, convo, **out).pk
+    sql(world.a, "UPDATE messages SET body = 'otro texto' WHERE id = %s", [pk])  # lo demás: libre
+    update(pk, "QUEUED")  # el mismo estado no es un cambio: el disparador no actúa
+
+
+def test_the_same_external_message_arriving_four_times_at_once_is_stored_once(
+    world: SimpleNamespace,
+) -> None:
+    convo, start = first(world), Barrier(4)
+
+    def deliver(_: int) -> str:
+        try:
+            start.wait()
+            message(world.a, convo, external_message_id="wamid.race")
+            return "stored"
+        except IntegrityError as error:
+            return "messages_external_uq" if "messages_external_uq" in str(error) else str(error)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(4) as pool:
+        outcome = sorted(pool.map(deliver, range(4)))
+    assert outcome == ["messages_external_uq"] * 3 + ["stored"]
