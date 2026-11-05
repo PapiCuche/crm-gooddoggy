@@ -209,7 +209,10 @@
       "INTERNAL_ERROR": "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos.",
       "PROMOTION_NOT_DRAFT": "Solo se publica una promoción en borrador, y esta ya se publicó o se canceló.",
       "PROMOTION_ALREADY_CANCELLED": "La promoción ya estaba cancelada.",
-      "PROMOTION_ENDED": "La vigencia de la promoción ya terminó: no se puede publicar."
+      "PROMOTION_ENDED": "La vigencia de la promoción ya terminó: no se puede publicar.",
+      "CONVERSATION_CLOSED": "La conversación está cerrada. Podrás responder cuando el cliente vuelva a escribir.",
+      "CHANNEL_UNAVAILABLE": "El canal de esta conversación no está conectado. Reconéctalo para enviar mensajes.",
+      "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el texto."
     }
   },
   "auth": {
@@ -2149,6 +2152,17 @@
       "older": "Cargar mensajes anteriores",
       "refresh": "Actualizar mensajes",
       "scroll": "Mensajes de la conversación"
+    },
+    "composer": {
+      "label": "Responder",
+      "hint": "Enter envía; Mayús+Enter agrega una línea.",
+      "count": "{count} de {max} caracteres",
+      "over": "Te pasaste por {over, plural, one {# carácter} other {# caracteres}}.",
+      "send": "Enviar",
+      "sending": "Enviando…",
+      "retry": "Reintentar",
+      "denied": "No puedes responder en esta conversación. Puede que ya no esté en tu alcance.",
+      "cannot": "No tienes permiso para responder en esta conversación."
     }
   }
 }
