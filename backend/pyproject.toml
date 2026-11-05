@@ -196,6 +196,12 @@ protected_modules = ["apps.deals.commands", "apps.deals.opportunities", "apps.de
 allowed_importers = ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages"]
 
 [[tool.importlinter.contracts]]
+name = "Comandos del Inbox: solo su API los importa (F6-01c)"
+type = "protected"
+protected_modules = ["apps.conversations.commands"]
+allowed_importers = ["apps.conversations.api"]
+
+[[tool.importlinter.contracts]]
 name = "Comandos de sucursales: solo la API de organizations los importa (F2-44)"
 type = "protected"
 protected_modules = ["apps.organizations.branches"]

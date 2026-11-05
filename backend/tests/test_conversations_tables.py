@@ -42,7 +42,7 @@ def world(orgs: dict[str, Any]) -> SimpleNamespace:
         with tenant_scope(ctx(org)):
             setattr(made, f"contact_{key}", Contact.objects.create(display_name=f"Cliente {key}"))
             account = ChannelAccount.objects.create(
-                platform="SANDBOX", name="Sandbox", external_account_id=f"sandbox-{org}"
+                platform="SANDBOX", name="Sandbox", external_account_id=f"fixture-{org}"
             )
             setattr(made, f"account_{key}", account)
         setattr(made, f"team_{key}", team(org, f"ventas-{key}"))
