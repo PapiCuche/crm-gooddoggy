@@ -2095,6 +2095,10 @@
     "noAccess": "Sin permiso para ver el contenido",
     "noMessages": "Sin mensajes",
     "contactUnavailable": "Cliente no disponible",
+    "noAccessContact": "No tienes permiso para ver a este cliente, o ya no está disponible.",
+    "customerCard": "Ver ficha del cliente",
+    "bodyHidden": "Sin permiso para ver el contenido de este mensaje.",
+    "note": "Nota interna · solo la ve tu equipo",
     "filters": {
       "landmark": "Filtros de conversaciones",
       "box": "Bandeja",
@@ -2119,14 +2123,32 @@
       "UNASSIGNED": "Sin asignar",
       "other": "Asignada"
     },
+    "sender": {
+      "CONTACT": "Cliente",
+      "USER": "Equipo",
+      "AI_AGENT": "Asistente de IA",
+      "SYSTEM": "Sistema"
+    },
+    "delivery": {
+      "QUEUED": "En cola",
+      "SENT": "Enviado",
+      "DELIVERED": "Entregado",
+      "READ": "Leído",
+      "FAILED": "No se pudo enviar"
+    },
     "list": {
       "landmark": "Conversaciones",
       "label": "Lista de conversaciones"
     },
     "chat": {
       "landmark": "Conversación",
-      "choose": "Elige una conversación para abrirla.",
-      "soon": "La lectura de los mensajes llega en el siguiente corte."
+      "label": "Mensajes",
+      "choose": "Elige una conversación para ver sus mensajes.",
+      "loading": "Cargando mensajes…",
+      "empty": "Todavía no hay mensajes en esta conversación.",
+      "older": "Cargar mensajes anteriores",
+      "refresh": "Actualizar mensajes",
+      "scroll": "Mensajes de la conversación"
     }
   }
 }
