@@ -130,7 +130,7 @@ export function ChatPanel({
   return (
     <div className="border-border bg-surface flex h-[calc(100dvh-14rem)] min-h-80 flex-col rounded-lg border lg:h-[calc(100dvh-18rem)]">
       <header className="border-border flex flex-col gap-2 border-b p-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="ghost"
             className="border-border min-h-11 border sm:min-h-9 lg:hidden"
