@@ -65,6 +65,7 @@ import type {
   MemberStatus,
   MemberStatusChangeRequest,
   MembersListParams,
+  Message,
   MfaBackupCodes,
   MfaDisableRequest,
   MfaEnrollment,
@@ -156,6 +157,7 @@ import type {
   SandboxInboundRequest,
   SandboxInboundResult,
   SelfContext,
+  SendMessageRequest,
   Session,
   StageOrderRequest,
   StockImport,
@@ -4971,6 +4973,115 @@ export function useConversationMessagesList<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getConversationMessagesSendUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/messages/`;
+};
+
+/**
+ * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
+ */
+export const conversationMessagesSend = async (
+  orgSlug: string,
+  conversationId: string,
+  sendMessageRequest: SendMessageRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Message> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Message>(getConversationMessagesSendUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(sendMessageRequest),
+  });
+};
+
+export const getConversationMessagesSendMutationKey = () => ["conversationMessagesSend"] as const;
+
+export const getConversationMessagesSendMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationMessagesSend>>,
+    TError,
+    ConversationMessagesSendMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationMessagesSend>>,
+  TError,
+  ConversationMessagesSendMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationMessagesSendMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationMessagesSend>>,
+    ConversationMessagesSendMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, data } = props ?? {};
+
+    return conversationMessagesSend(orgSlug, conversationId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationMessagesSendMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationMessagesSend>>
+>;
+export type ConversationMessagesSendMutationBody = SendMessageRequest;
+export type ConversationMessagesSendMutationError = ErrorType<Error>;
+export type ConversationMessagesSendMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  data: SendMessageRequest;
+};
+
+export const useConversationMessagesSend = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationMessagesSend>>,
+      TError,
+      ConversationMessagesSendMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationMessagesSend>>,
+  TError,
+  ConversationMessagesSendMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationMessagesSendMutationOptions(options), queryClient);
+};
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/inventory/imports/`;
