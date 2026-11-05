@@ -1,12 +1,15 @@
 """Comandos del Inbox (F6-01c; E06, 02 §E.6, ADR-007, 010): el único escritor de las tablas.
 
-Solo la API (F6-02) los importa (contrato de import-linter) y comprueba el permiso de la ruta antes
-de leer. Estos (una apertura, un mensaje entrante, el estado de entrega que informa el canal, la
-cuenta de canal) no reciben el id de una conversación en nombre de una persona; los que sí
-(responder y anotar, F6-01d) comprueban además el permiso y el alcance. Validan los tipos exactos
-(`ValueError`, nunca `TypeError` ni `IntegrityError`) y auditan solo identificadores, estados y
-longitudes: **ningún texto de mensaje** llega a la auditoría. La organización sale siempre del
-contexto, nunca de un dato recibido. Un mensaje entrante es idempotente por `external_message_id`.
+Solo la API (F6-02) los importa (contrato de import-linter) y comprueba el permiso de la ruta
+antes de leer; los que reciben el id de una conversación en nombre de una persona (`record_outbound`
+y `add_note`) comprueban además, sobre la conversación ya bloqueada, el permiso y su alcance
+(`Visible`): lo desconocido y lo que queda fuera del alcance dan el mismo `DoesNotExist`. Los demás
+(un mensaje entrante, una apertura, el estado de entrega que informa el canal) los llama el canal o
+el despachador con su contexto. Validan los tipos exactos (`ValueError`, nunca `TypeError` ni
+`IntegrityError`) y auditan solo identificadores, estados y longitudes: **ningún texto de mensaje**
+llega a la auditoría. La organización sale siempre del contexto, nunca de un dato recibido. Cada
+uno es idempotente donde el mundo reintenta (un webhook repetido, un envío reenviado): la clave es
+`external_message_id` o `client_message_id`.
 
 Crear una conversación bloquea el contacto (`FOR NO KEY UPDATE`): dos mensajes entrantes a la vez
 de un mismo contacto se serializan y la segunda encuentra la conversación de la primera; el índice
@@ -21,6 +24,14 @@ from uuid import UUID
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.access.selectors import (
+    AccessDenied,
+    Denied,
+    ExecutionContext,
+    can,
+    execution_context,
+    has_permission,
+)
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
 from apps.conversations.models import (
@@ -52,6 +63,14 @@ class BadReference(ValueError):
     def __init__(self, field: str) -> None:
         super().__init__(field)
         self.field = field
+
+
+class ConversationClosed(Exception):
+    """La conversación está CLOSED: no admite más respuestas (un mensaje entrante abre otra)."""
+
+
+class ClientMessageConflict(Exception):
+    """Ese `client_message_id` ya es de otro mensaje (otro texto u otra conversación)."""
 
 
 class StaleVersion(Exception):
@@ -274,6 +293,118 @@ def record_inbound(
             )
         record(ctx, "message.received", Entity("message", message.pk), None, _sent(message))
         return message, True
+
+
+def _insert(
+    ctx: TenantContext, alias: str, convo: Conversation, client_id: UUID | None, text: str,
+    **fields: Any,
+) -> tuple[Message, bool]:  # fmt: skip
+    """Guarda un mensaje del actor en la conversación bloqueada; con `client_id` repetido y el mismo
+    texto en la misma conversación devuelve el que ya estaba. `ClientMessageConflict` si no."""
+    if client_id is not None:
+        same = Message.objects.using(alias).filter(client_message_id=client_id)
+        if (found := same.first()) is not None:
+            if (found.conversation_id, found.direction, found.body) != (
+                convo.pk, fields["direction"], text,
+            ):  # fmt: skip
+                raise ClientMessageConflict
+            return found, False
+    sender = {"sender_type": "USER", "sender_user_id": ctx.user_id}
+    try:
+        with transaction.atomic(using=alias):
+            made: Message = Message.objects.using(alias).create(
+                conversation_id=convo.pk, channel_account_id=convo.channel_account_id,
+                body=text, client_message_id=client_id, **sender, **fields,
+            )  # fmt: skip
+    except IntegrityError as error:
+        if "messages_client_uq" not in str(error):
+            raise
+        raise ClientMessageConflict from None  # el mismo id en otra conversación, a la vez
+    return made, True
+
+
+def _locked(alias: str, conversation_id: UUID) -> Conversation:
+    found: Conversation = (
+        Conversation.objects.using(alias).select_for_update(no_key=True).get(pk=conversation_id)
+    )
+    return found
+
+
+def _allowed(ctx: TenantContext, code: str) -> ExecutionContext:
+    """El actor es un miembro activo y tiene el permiso: **antes** de leer la conversación, así que
+    quien no lo tiene no distingue una conversación que existe de una que no."""
+    ectx = execution_context(ctx)  # `AccessDenied` si no es un miembro activo
+    if not has_permission(ectx, code):
+        raise AccessDenied(Denied.PERMISSION)
+    return ectx
+
+
+def _in_scope(ectx: ExecutionContext, code: str, convo: Conversation) -> None:
+    """La conversación (la bloqueada) está en el alcance del actor; si no, el mismo `DoesNotExist`,
+    con el mismo texto, que una desconocida."""
+    if not can(ectx, code, convo):
+        raise Conversation.DoesNotExist("Conversation matching query does not exist.")
+
+
+def record_outbound(
+    ctx: TenantContext, *, conversation_id: UUID, client_message_id: UUID, body: str
+) -> tuple[Message, bool]:
+    """Pone en cola (`QUEUED`) un mensaje del actor al cliente, idempotente por
+    `client_message_id` (el mismo id con otro texto es `ClientMessageConflict`, nunca una
+    sobrescritura). Siempre nace `QUEUED`: ningún argumento elige otro estado. Cuenta como
+    actividad y, si la conversación estaba en cola (`PENDING`), la pasa a `OPEN` (D-INB-1). Audita
+    `message.queued`. `ConversationClosed` si está cerrada (un reenvío de lo ya guardado sí se
+    devuelve); `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de
+    `messages.send`); `AccessDenied` sin el permiso.
+    No evalúa la política de envío: eso es del despachador (ADR-010, F6-04)."""
+    alias = require_scope(ctx)
+    conversation_id, client_id = (
+        _uuid(conversation_id, "conversación"),
+        _uuid(client_message_id, "id"),
+    )
+    text = _body(body)
+    with transaction.atomic(using=alias):
+        ectx = _allowed(ctx, "messages.send")
+        convo = _locked(alias, conversation_id)
+        _in_scope(ectx, "messages.send", convo)
+        earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
+        if earlier is None and convo.status == Status.CLOSED:
+            raise ConversationClosed
+        message, created = _insert(
+            ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED"
+        )
+        if created:
+            now = timezone.now()
+            if convo.status == Status.PENDING:  # con la marca: `update_fields` no la guardaría sola
+                _status(ctx, alias, convo, Status.OPEN, "conversation.opened", last_message_at=now)
+            else:
+                convo.last_message_at = now
+                convo.save(using=alias, update_fields=["last_message_at", "updated_at"])
+            record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
+        return message, created
+
+
+def add_note(
+    ctx: TenantContext, *, conversation_id: UUID, body: str, client_message_id: UUID | None = None
+) -> tuple[Message, bool]:
+    """Una nota interna: nunca sale por un canal (`INTERNAL` y `NOTE`, por `CHECK`), no cuenta como
+    mensaje de la conversación y se admite también en una cerrada. Idempotente si trae
+    `client_message_id`. Exige `messages.note` y su alcance, como `record_outbound`. Audita
+    `message.noted`."""
+    alias = require_scope(ctx)
+    conversation_id = _uuid(conversation_id, "conversación")
+    client_id = None if client_message_id is None else _uuid(client_message_id, "id")
+    text = _body(body)
+    with transaction.atomic(using=alias):
+        ectx = _allowed(ctx, "messages.note")
+        convo = _locked(alias, conversation_id)
+        _in_scope(ectx, "messages.note", convo)
+        note, created = _insert(
+            ctx, alias, convo, client_id, text, direction="INTERNAL", message_type="NOTE"
+        )
+        if created:
+            record(ctx, "message.noted", Entity("message", note.pk), None, _sent(note))
+        return note, created
 
 
 def _advances(old: str | None, new: str) -> bool:
