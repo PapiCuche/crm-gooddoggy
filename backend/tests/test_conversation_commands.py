@@ -759,6 +759,8 @@ def test_the_preview_drops_invisible_format_characters_and_never_splits_a_joined
             pad
         )  # sin media familia ni ZWJ suelto
     assert not commands._preview("x" * 79 + "\u200d" + "y").endswith("\u200d")
+    emoji = "\U0001f600" * 76  # solo se quita la secuencia partida, no los emoji anteriores
+    assert commands._preview(emoji + FAMILY) == emoji
 
 
 def test_direction_marks_for_right_to_left_text_are_kept_in_the_body(

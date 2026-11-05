@@ -120,15 +120,9 @@ def _preview(text: str) -> str:
     shown = "".join(c for c in text if unicodedata.category(c) != "Cf" or c in JOINERS)
     line = " ".join(shown.split())
     cut = line[:PREVIEW_MAX]
-    if cut.endswith(ZWJ) or line[PREVIEW_MAX : PREVIEW_MAX + 1] == ZWJ:
-        while cut and (cut[-1] == ZWJ or _pictographic(cut[-1])):
-            cut = cut[:-1]
+    while cut and (cut[-1] == ZWJ or line[len(cut) : len(cut) + 1] == ZWJ):  # dentro de una unión
+        cut = cut[:-1]  # solo esa secuencia: los emoji anteriores se quedan
     return cut.rstrip()
-
-
-def _pictographic(char: str) -> bool:
-    """Un símbolo, un modificador o un carácter fuera del plano básico: lo que une un ZWJ."""
-    return unicodedata.category(char) in ("So", "Sk", "Mn", "Me") or ord(char) > 0xFFFF
 
 
 def _external(value: Any) -> str:
