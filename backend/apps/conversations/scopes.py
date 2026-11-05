@@ -34,3 +34,17 @@ class Visible:
         if user is not None and user == ectx.tenant.user_id:
             return True
         return scope == Scope.TEAM and team is not None and team in ectx.team_ids
+
+
+@dataclass(frozen=True, slots=True)
+class MessageVisible:
+    """Un mensaje se ve si se ve su conversación (`Visible`): la misma política, por la relación."""
+
+    def q(self, scope: Scope, ectx: ExecutionContext) -> Q:
+        from apps.conversations.models import Conversation
+
+        seen = Conversation.objects.filter(Visible().q(scope, ectx))
+        return Q(conversation_id__in=seen.values("pk"))
+
+    def allows(self, scope: Scope, ectx: ExecutionContext, obj: Model) -> bool:
+        return Visible().allows(scope, ectx, obj.conversation)  # type: ignore[attr-defined]

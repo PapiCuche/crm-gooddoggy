@@ -8812,8 +8812,7 @@ components:
         body:
           type: string
           nullable: true
-          description: '`null` si quien consulta no puede ver el contacto (`contacts.view`):
-            el texto identifica al cliente igual que su nombre.'
+          description: '`null` si no se puede ver el contacto (`contacts.view`).'
         client_message_id:
           type: string
           format: uuid

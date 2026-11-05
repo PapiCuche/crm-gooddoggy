@@ -7,7 +7,8 @@ class ConversationsConfig(AppConfig):
 
     def ready(self) -> None:
         from apps.access.scopes import register
-        from apps.conversations.models import Conversation
-        from apps.conversations.scopes import Visible
+        from apps.conversations.models import Conversation, Message
+        from apps.conversations.scopes import MessageVisible, Visible
 
         register(Conversation, Visible())  # propias, de su equipo y sin asignar (03 §H)
+        register(Message, MessageVisible())  # los de las conversaciones que se ven

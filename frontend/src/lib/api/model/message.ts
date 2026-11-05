@@ -16,7 +16,7 @@ export interface Message {
   /** `TEXT` o `NOTE`. */
   message_type: string;
   /**
-   * `null` si quien consulta no puede ver el contacto (`contacts.view`): el texto identifica al cliente igual que su nombre.
+   * `null` si no se puede ver el contacto (`contacts.view`).
    * @nullable
    */
   body: string | null;

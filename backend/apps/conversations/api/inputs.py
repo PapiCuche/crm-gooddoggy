@@ -1,7 +1,5 @@
-"""Lo que entra por el simulador del canal Sandbox (F6-02): estricto (tipo exacto, ninguna clave
-desconocida) y con las reglas de los comandos, para que un dato inválido sea un 400 en su campo.
-No hay `at`: el orden de los mensajes es el del servidor (03 §I.7) y nada guarda una fecha del
-cliente."""
+"""Lo que entra por el simulador Sandbox (F6-02): estricto y con las reglas de los comandos, para
+que un dato inválido sea un 400 en su campo. Sin `at`: el orden es el del servidor (03 §I.7)."""
 
 from collections.abc import Callable
 from typing import Any

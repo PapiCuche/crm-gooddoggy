@@ -1,10 +1,8 @@
-"""Mensajes de una conversación y el simulador del canal Sandbox (F6-02b, E06).
+"""Mensajes de una conversación y el simulador del canal Sandbox (F6-02c, E06).
 
-`GET …/conversations/{id}/messages/`: la conversación se resuelve con `scoped()` y la política
-`Visible` antes de leer un solo mensaje (desconocida, de otra organización o fuera del alcance: el
-mismo 404). Las notas internas solo las recibe quien tiene `messages.note` sobre esa conversación,
-no quien solo puede enviar (`messages.send`). `POST …/channels/sandbox/inbound/` simula un mensaje
-del cliente con los mismos comandos que usará un canal real.
+`GET …/conversations/{id}/messages/`: la conversación se resuelve con `scoped()` antes de leer
+un mensaje (desconocida, ajena o fuera del alcance: el mismo 404); las notas, solo con
+`messages.note`. `POST …/channels/sandbox/inbound/` simula un mensaje del cliente.
 """
 
 from typing import Any
@@ -18,7 +16,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access.permissions import request_context
+from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import can, scoped
 from apps.contacts.selectors import contacts
 from apps.conversations import commands, selectors
@@ -40,9 +38,7 @@ class MessageSerializer(serializers.Serializer[Any]):
     sender_user_id = serializers.UUIDField(allow_null=True)
     message_type = serializers.CharField(help_text="`TEXT` o `NOTE`.")
     body = serializers.CharField(
-        allow_null=True,
-        help_text="`null` si quien consulta no puede ver el contacto (`contacts.view`): el texto "
-        "identifica al cliente igual que su nombre.",
+        allow_null=True, help_text="`null` si no se puede ver el contacto (`contacts.view`)."
     )
     client_message_id = serializers.UUIDField(
         allow_null=True, help_text="Solo en los mensajes salientes de quien consulta."
@@ -87,7 +83,7 @@ class MessagesView(generics.ListAPIView):
     serializer_class = MessageSerializer
     pagination_class = CursorPagination
     ordering = "-id"
-    filter_backends: list[Any] = []  # el alcance se decide sobre la conversación, no la fila
+    filter_backends = [ScopeFilter]  # los mensajes de las conversaciones que `Visible` deja ver
 
     def get_queryset(self) -> QuerySet[Message]:
         if getattr(self, "swagger_fake_view", False):  # el generador de OpenAPI

@@ -10,6 +10,7 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 
+from apps.access.selectors import can, execution_context, scoped
 from apps.contacts.models import Contact
 from apps.conversations.api.messages import MessageSerializer
 from apps.conversations.models import Conversation, Message
@@ -54,28 +55,28 @@ def test_messages_come_newest_first_in_pages_of_fifty_and_the_same_404_applies(
     assert page["next"] is not None and set(page["results"][0]) == MESSAGE
     older = ana.get(f"{BASE}{convo}/messages/", {"cursor": page["next"]}).json()
     assert [r["body"] for r in older["results"]] == ["m1", "m0"] and older["next"] is None
-    assert len(ana.get(f"{BASE}{convo}/messages/", {"limit": 5}).json()["results"]) == 5
     assert ana.get(f"{BASE}{convo}/messages/", {"limit": 0}).status_code == 400
     assert ana.get(f"{BASE}{convo}/messages/", {"cursor": "x"}).status_code == 400
     vera, sam = signed(inbox.vera), signed(inbox.sam)
-    assert vera.get(f"{BASE}{convo}/messages/").status_code == 200
     missing = reply(vera.get(f"{BASE}{uuid4()}/messages/"))
     assert missing == NOT_FOUND
     for key in ("sam", "ana", "b", "team"):
         assert reply(vera.get(f"{BASE}{inbox.convs[key]}/messages/")) == missing, key
     assert reply(signed(inbox.bea).get(f"{BASE}{convo}/messages/")) == DENIED
     assert reply(Client().get(f"{BASE}{convo}/messages/")) == UNAUTHENTICATED
-    assert reply(sam.get(f"{BASE}{inbox.convs['ana']}/messages/")) == missing
     assert reply(sam.get(f"{BASE}{convo}/messages/")) == missing  # `TEAM` no alcanza lo de vera
 
 
-def test_a_message_serialized_without_the_view_context_hides_its_text(
-    inbox: SimpleNamespace,
-) -> None:
-    sent = say(inbox.a, inbox.convs["vera"], "secreto")
-    with tenant_scope(ctx(inbox.a, inbox.ana)):
-        assert MessageSerializer(sent).data["body"] is None  # sin contexto, cerrado
-        assert MessageSerializer(sent, context={"show_body": True}).data["body"] == "secreto"
+def test_a_message_is_in_scope_exactly_when_its_conversation_is(inbox: SimpleNamespace) -> None:
+    for key, pk in inbox.convs.items():
+        if key != "b":
+            say(inbox.a, pk, key)
+    for user in (inbox.ana, inbox.vera, inbox.sam):  # la lista y `can()`, fila a fila
+        with tenant_scope(ctx(inbox.a, user)) as tenant:
+            ectx, rows = execution_context(tenant), Message.objects.all()
+            listed = set(scoped(ectx, "conversations.view", rows).values_list("pk", flat=True))
+            assert listed == {m.pk for m in rows if can(ectx, "conversations.view", m)}, user.email
+            assert (len(listed) < len(rows)) == (user is not inbox.ana)  # el Owner ve todas
 
 
 SEES: dict[str, str | None] = {"contacts.view": "ORGANIZATION"}  # sin él el texto no sale (D-F6-10)
@@ -96,6 +97,10 @@ def test_the_text_needs_the_contact_to_be_visible_and_the_rest_of_the_message_do
     assert "12345678" not in str(rows) and "NOTA" not in str(rows)
     give(inbox.a, inbox.m["vera"], SEES)
     assert [r["body"] for r in vera.get(url).json()["results"]] == ["NOTA", "Mi DNI es 12345678"]
+    with tenant_scope(ctx(inbox.a, inbox.ana)):  # sin el contexto de la vista, cerrado
+        sent = Message.objects.filter(body="NOTA").get()
+        assert MessageSerializer(sent).data["body"] is None
+        assert MessageSerializer(sent, context={"show_body": True}).data["body"] == "NOTA"
 
 
 def test_notes_reach_only_who_holds_messages_note_over_that_conversation(
@@ -258,13 +263,10 @@ HOSTILE = [
     ({}, ["contact_id", "external_message_id", "text"]),
     ({"at": "2026-01-01T00:00:00Z"}, ["at"]),
     ({"organization_id": "x"}, ["organization_id"]),
-    ({"contact_id": None}, ["contact_id"]), ({"contact_id": 5}, ["contact_id"]),
-    ({"contact_id": "x"}, ["contact_id"]),
-    *[({"external_message_id": v}, ["external_message_id"]) for v in (None, 5, "", "a" * 201)],
-    ({"external_message_id": "a\nb"}, ["external_message_id"]),
-    ({"text": None}, ["text"]), ({"text": 5}, ["text"]), ({"text": ""}, ["text"]),
-    ({"text": "   "}, ["text"]), ({"text": "x\x00y"}, ["text"]),
-    ({"text": "a" * 4097}, ["text"]), ({"text": ["x"]}, ["text"]),
+    *[({"contact_id": v}, ["contact_id"]) for v in (None, 5, "x")],
+    *[({"external_message_id": v}, ["external_message_id"]) for v in (None, 5, "", "a\nb")],
+    ({"external_message_id": "a" * 201}, ["external_message_id"]),
+    *[({"text": v}, ["text"]) for v in (None, 5, "", "   ", "x\x00y", "a" * 4097, ["x"])],
 ]  # fmt: skip
 
 

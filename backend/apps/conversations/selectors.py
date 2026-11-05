@@ -13,7 +13,6 @@ def conversations() -> QuerySet[Conversation]:
 
 
 def messages(conversation_id: object, *, notes: bool) -> QuerySet[Message]:
-    """Los mensajes de una conversación. Las notas internas solo salen con `notes=True`: quien
-    no puede verlas (`messages.note` y su alcance) no las recibe, ni cuentan en la página."""
+    """Los mensajes de una conversación; las notas internas, solo con `notes=True`."""
     found = Message.objects.filter(conversation_id=conversation_id)
     return found if notes else found.exclude(direction="INTERNAL")
