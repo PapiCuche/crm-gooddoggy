@@ -372,6 +372,17 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="conversation",
             constraint=models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(("status", "RESOLVED"), _negated=True),
+                    ("resolved_at__isnull", False),
+                    _connector="OR",
+                ),
+                name="conversations_resolved_ck",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="conversation",
+            constraint=models.CheckConstraint(
                 condition=models.Q(("assignment_version__gte", 1), ("version__gte", 1)),
                 name="conversations_version_ck",
             ),

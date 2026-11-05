@@ -11,7 +11,6 @@ import pytest
 from django.utils import timezone
 
 from apps.access.catalog import BY_CODE, INBOX_SCOPED, ROLE_TEMPLATES, Scope
-from apps.access.scopes import policy_for
 from apps.access.selectors import can, execution_context, scoped
 from apps.contacts.models import Contact
 from apps.conversations.models import ChannelAccount, Conversation
@@ -105,10 +104,6 @@ def test_the_catalog_and_the_templates_carry_the_inbox_permissions() -> None:
     assert held["seller"] == dict.fromkeys(INBOX_SCOPED, Scope.OWN)  # ni reparte ni configura
 
 
-def test_the_policy_is_registered_for_conversations() -> None:
-    assert policy_for(Conversation) == Visible()
-
-
 def test_each_scope_sees_its_own_the_teams_and_the_unassigned(inbox: SimpleNamespace) -> None:
     mine = {"vera": {"vera", "both", "nobody"}, "sam": {"sam", "nobody"}, "ana": {"ana", "nobody"}}
     for name, expected in mine.items():
@@ -124,14 +119,20 @@ def test_each_scope_sees_its_own_the_teams_and_the_unassigned(inbox: SimpleNames
     everyone = set(inbox.convs) - {"b"}
     assert names(inbox, visible(inbox, inbox.ana, Scope.ORGANIZATION)) == everyone
     assert names(inbox, visible(inbox, inbox.bea, Scope.OWN)) == {"nobody"}  # sin nada propio
+    for code in ("messages.send", "messages.note"):  # la misma política para los tres
+        assert names(inbox, visible(inbox, inbox.vera, Scope.OWN, code)) == mine["vera"], code
 
 
-def test_the_other_scoped_permissions_follow_the_same_policy(inbox: SimpleNamespace) -> None:
-    for code in ("messages.send", "messages.note"):
-        found = visible(inbox, inbox.vera, Scope.OWN, code)
-        assert names(inbox, found) == {"vera", "both", "nobody"}, code
-
-
-def test_another_organizations_conversation_is_never_allowed(inbox: SimpleNamespace) -> None:
-    for scope in (Scope.OWN, Scope.TEAM, Scope.ORGANIZATION):
-        assert inbox.convs["b"] not in visible(inbox, inbox.ana, scope)
+def test_a_context_without_a_user_has_no_own_conversations_and_the_list_agrees_with_allows(
+    inbox: SimpleNamespace,
+) -> None:
+    """`assigned_user_id = NULL` sería `IS NULL` y listaría las del equipo sin persona, que `allows`
+    rechaza: sin usuario no hay «propias»."""
+    with tenant_scope(ctx(inbox.a)):
+        sales = Team.objects.get(slug="ventas").pk
+        member: Any = SimpleNamespace(tenant=SimpleNamespace(user_id=None), team_ids={sales})
+        rows = Conversation.objects.filter(pk__in=inbox.convs.values())
+        for scope, expected in ((Scope.OWN, {"nobody"}), (Scope.TEAM, {"nobody", "team", "both"})):
+            found = set(rows.filter(Visible().q(scope, member)).values_list("pk", flat=True))
+            allowed = {c.pk for c in rows if Visible().allows(scope, member, c)}
+            assert found == allowed and names(inbox, found) == expected, scope

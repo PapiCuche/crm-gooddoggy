@@ -14,12 +14,9 @@ class Platform(models.TextChoices):
     SANDBOX = "SANDBOX"  # el canal de pruebas; WhatsApp, Instagram… llegan con su adapter
 
 
-class AccountStatus(models.TextChoices):
-    PENDING = "PENDING"
-    CONNECTED = "CONNECTED"
-    DEGRADED = "DEGRADED"
-    DISCONNECTED = "DISCONNECTED"
-    ERROR = "ERROR"
+AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]
+    "AccountStatus", "PENDING CONNECTED DEGRADED DISCONNECTED ERROR"
+)
 
 
 class Status(models.TextChoices):
@@ -37,19 +34,11 @@ class AttentionMode(models.TextChoices):
     AI_AUTONOMOUS = "AI_AUTONOMOUS"
 
 
-class Reason(models.TextChoices):  # ADR-007 §2
-    MANUAL = "MANUAL"
-    TAKE = "TAKE"
-    TRANSFER = "TRANSFER"
-    ROUND_ROBIN = "ROUND_ROBIN"
-    LOAD_BALANCE = "LOAD_BALANCE"
-    SKILL_RULE = "SKILL_RULE"
-    AI_ROUTING = "AI_ROUTING"
-    HANDOFF = "HANDOFF"
-    SUPERVISOR_TAKEOVER = "SUPERVISOR_TAKEOVER"
-    USER_DEACTIVATED = "USER_DEACTIVATED"
-    AI_DISABLED = "AI_DISABLED"
-    REOPEN = "REOPEN"
+Reason: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]  # ADR-007 §2
+    "Reason",
+    "MANUAL TAKE TRANSFER ROUND_ROBIN LOAD_BALANCE SKILL_RULE AI_ROUTING HANDOFF "
+    "SUPERVISOR_TAKEOVER USER_DEACTIVATED AI_DISABLED REOPEN",
+)
 
 
 def one_of(field: str, choices: type[models.TextChoices], name: str) -> models.CheckConstraint:
@@ -186,6 +175,10 @@ class Conversation(TenantModel):
                 condition=models.Q(status="CLOSED", closed_at__isnull=False)
                 | (~models.Q(status="CLOSED") & models.Q(closed_at__isnull=True)),
                 name="conversations_closed_ck",
+            ),
+            models.CheckConstraint(  # RESOLVED lleva su fecha: la reapertura de 72 h parte de ella
+                condition=~models.Q(status="RESOLVED") | models.Q(resolved_at__isnull=False),
+                name="conversations_resolved_ck",
             ),
             models.CheckConstraint(
                 condition=models.Q(assignment_version__gte=1, version__gte=1),

@@ -2,13 +2,15 @@
 `conversation_assignments` (Inbox), con PostgreSQL real y el rol `crm_app`: RLS, claves compuestas
 de tenant, CHECKs, únicos parciales y concesiones mínimas."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 import psycopg
 import pytest
-from django.db import DatabaseError, IntegrityError, connection
+from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -17,6 +19,7 @@ from apps.conversations.models import (
     Conversation,
     ConversationAssignment,
 )
+from core.sequences import allocate
 from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
 from tests.test_memberships import ctx, join
@@ -143,6 +146,26 @@ def test_the_references_are_composite_with_the_tenant(world: SimpleNamespace) ->
             reason_code="MANUAL",
             assigned_by_system=True,
         ),  # fmt: skip
+        **{
+            name: lambda kw=kw: ConversationAssignment.objects.create(
+                conversation_id=mine.pk, reason_code="MANUAL", assigned_by_system=True, **kw
+            )
+            for name, kw in {
+                "conv_assignments_previous_team_fk": {"previous_team_id": world.team_b.pk},
+                "conv_assignments_previous_user_fk": {"previous_user_id": world.luis.pk},
+                "conv_assignments_new_user_fk": {"new_user_id": world.luis.pk},
+            }.items()
+        },
+        "channel_accounts_created_by_fk": lambda: ChannelAccount.objects.create(
+            platform="SANDBOX", name="x", external_account_id="x", created_by_user_id=world.luis.pk
+        ),
+        "channel_accounts_deleted_by_fk": lambda: ChannelAccount.objects.create(
+            platform="SANDBOX",
+            name="x",
+            external_account_id="y",
+            deleted_at=timezone.now(),
+            deleted_by_user_id=world.luis.pk,
+        ),
         "conv_assignments_assigned_by_user_fk": lambda: ConversationAssignment.objects.create(
             conversation_id=mine.pk, reason_code="MANUAL", assigned_by_user_id=world.luis.pk
         ),
@@ -152,22 +175,14 @@ def test_the_references_are_composite_with_the_tenant(world: SimpleNamespace) ->
 
 
 def test_the_assignee_kind_is_derived_and_cannot_be_written(world: SimpleNamespace) -> None:
-    join(world.a, make_user())
-    kinds = {}
-    for number, over in (
-        ("CONV-00010", {}),
-        ("CONV-00011", {"assigned_team_id": world.team_a.pk}),
-        ("CONV-00012", {"assigned_user_id": world.ana.pk}),
-        ("CONV-00013", {"assigned_team_id": world.team_a.pk, "assigned_user_id": world.ana.pk}),
-    ):
-        kinds[number] = fresh(world.a, world.account_a, number, **over).pk
+    team, user = world.team_a.pk, world.ana.pk  # el equipo y la persona a la vez: USER (ADR-007)
+    wanted = {"CONV-00010": ({}, "UNASSIGNED"), "CONV-00011": ({"assigned_team_id": team}, "TEAM")}
+    wanted["CONV-00012"] = ({"assigned_user_id": user}, "USER")
+    wanted["CONV-00013"] = ({"assigned_team_id": team, "assigned_user_id": user}, "USER")
+    for number, (over, _) in wanted.items():
+        fresh(world.a, world.account_a, number, **over)
     found = dict(sql(world.a, "SELECT number, assignee_kind FROM conversations"))
-    assert found == {
-        "CONV-00010": "UNASSIGNED",
-        "CONV-00011": "TEAM",
-        "CONV-00012": "USER",
-        "CONV-00013": "USER",  # el equipo y la persona a la vez (ADR-007)
-    }
+    assert found == {number: kind for number, (_, kind) in wanted.items()}
     with pytest.raises(DatabaseError):
         sql(world.a, "UPDATE conversations SET assignee_kind = 'TEAM'")
 
@@ -182,6 +197,7 @@ def test_a_conversation_checks(world: SimpleNamespace) -> None:
     refused(world.a, "conversations_closed_ck", make(status="CLOSED"))  # sin `closed_at`
     refused(world.a, "conversations_closed_ck", make(closed_at=timezone.now()))  # sin CLOSED
     refused(world.a, "conversations_version_ck", make(assignment_version=0))
+    refused(world.a, "conversations_resolved_ck", make(status="RESOLVED"))  # sin `resolved_at`
     ok = make(number="CONV-00020", status="CLOSED", closed_at=timezone.now())()
     assert ok.attention_mode == "HUMAN" and ok.status == "CLOSED"  # HUMAN por omisión
     assert first(world).status == "PENDING"  # D-INB-1: nace en cola, sin tomar
@@ -241,11 +257,15 @@ def test_the_runtime_role_cannot_delete_and_the_history_is_immutable(
             conversation_id=convo.pk, new_user_id=world.ana.pk, reason_code="TAKE",
             assigned_by_user_id=world.ana.pk,
         )  # fmt: skip
-    for table in TABLES:
-        with pytest.raises(DatabaseError):
-            sql(world.a, f"DELETE FROM {table}")  # noqa: S608
-        with pytest.raises(DatabaseError):
-            sql(world.a, f"TRUNCATE {table}")  # noqa: S608
+    revoked = {  # la concesión misma: una FK podría estorbar el DELETE por casualidad
+        "channel_accounts": ("DELETE", "TRUNCATE"),
+        "conversations": ("DELETE", "TRUNCATE"),
+        "conversation_assignments": ("UPDATE", "DELETE", "TRUNCATE"),
+    }
+    asked = "SELECT has_table_privilege(current_user, %s, %s)"
+    for table, privileges in revoked.items():
+        for privilege in privileges:
+            assert sql(world.a, asked, [table, privilege]) == [(False,)], (table, privilege)
     with pytest.raises(DatabaseError):  # [INM]: ni cambiarla
         sql(world.a, "UPDATE conversation_assignments SET reason_note = 'otro'")
     with tenant_scope(ctx(world.a)):
@@ -272,3 +292,26 @@ def test_an_assignment_names_who_did_it_exactly_once(world: SimpleNamespace) -> 
     ))  # fmt: skip
     with tenant_scope(ctx(world.a)):
         assert make(assigned_by_system=True)().assigned_by_system
+
+
+def test_the_number_width_and_a_race_for_the_open_conversation(world: SimpleNamespace) -> None:
+    with tenant_scope(ctx(world.a)) as tenant, transaction.atomic():
+        assert allocate(tenant, "CONV", width=5) == "CONV-00001"
+        assert allocate(tenant, "OPP") == "OPP-000001"  # el ancho por omisión no cambia
+    start = Barrier(4)
+
+    def race(i: int) -> str:  # entrantes a la vez: solo uno abre la conversación
+        try:
+            start.wait()
+            conversation(world.a, world.contact_a, world.account_a, f"CONV-{i + 10:05d}")
+            return "opened"
+        except IntegrityError as error:
+            return "conversations_open_uq" if "conversations_open_uq" in str(error) else str(error)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(4) as pool:
+        outcome = sorted(pool.map(race, range(4)))
+    assert outcome == ["conversations_open_uq"] * 3 + ["opened"]
+    with tenant_scope(ctx(world.a)):
+        assert Conversation.objects.filter(contact_id=world.contact_a.pk).count() == 1

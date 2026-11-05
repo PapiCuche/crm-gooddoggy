@@ -19,9 +19,10 @@ from apps.access.selectors import ExecutionContext
 @dataclass(frozen=True, slots=True)
 class Visible:
     def q(self, scope: Scope, ectx: ExecutionContext) -> Q:
-        found = Q(assigned_user_id=ectx.tenant.user_id) | Q(
-            assigned_user_id__isnull=True, assigned_team_id__isnull=True
-        )
+        user = ectx.tenant.user_id
+        # sin usuario no hay «propias»: `assigned_user_id = NULL` sería `IS NULL`
+        mine = Q(pk__in=()) if user is None else Q(assigned_user_id=user)
+        found = mine | Q(assigned_user_id__isnull=True, assigned_team_id__isnull=True)
         if scope == Scope.TEAM and ectx.team_ids:
             found |= Q(assigned_team_id__in=ectx.team_ids)
         return found
