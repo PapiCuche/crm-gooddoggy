@@ -210,7 +210,9 @@ def test_an_inbound_message_reopens_per_d_inb_2(world: SimpleNamespace, migrator
     with tenant_scope(ctx(world.a)):  # esperando al cliente: contesta y vuelve a OPEN
         Conversation.objects.filter(pk=convo.pk).update(status="WAITING_CUSTOMER")
     inbound(world, "wamid.2")
-    assert reload(world, Conversation, convo.pk).status == "OPEN"
+    woke = reload(world, Conversation, convo.pk)
+    assert woke.status == "OPEN" and woke.last_inbound_at > convo.last_inbound_at  # ventana ADR-010
+    assert woke.last_message_at == woke.last_inbound_at
     resolve(world, convo, dt.timedelta(hours=71))  # dentro del plazo: la misma, otra vez abierta
     reopened, _ = inbound(world, "wamid.3")
     after = reload(world, Conversation, convo.pk)
@@ -245,7 +247,10 @@ def test_the_delivery_status_advances_and_ignores_what_does_not(
 
     moment = timezone.now() - dt.timedelta(minutes=5)
     assert advance("SENT", at=moment).sent_at == moment
-    assert advance("READ").delivery_status == "READ"  # saltar pasos vale
+    with pytest.raises(ValueError, match="zona"):
+        advance("SENT", at=dt.datetime(2026, 1, 1))  # noqa: DTZ001 — sin zona horaria
+    read = advance("READ")  # saltar pasos vale, y solo marca la suya
+    assert (read.delivery_status, read.read_at is None, read.delivered_at) == ("READ", False, None)
     assert advance("DELIVERED").delivery_status == "READ"  # un estado tardío no retrocede
     assert advance("READ").delivery_status == "READ" and advance("FAILED").delivery_status == "READ"
     assert audit(migrator)[-1][0] == "message.delivery_changed"

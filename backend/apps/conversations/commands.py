@@ -264,7 +264,10 @@ def record_inbound(
             return same.get(), False  # el mismo mensaje, a la vez
         convo.last_inbound_at = convo.last_message_at = now
         if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED):
-            _status(ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None)
+            _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
+                ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
+                last_inbound_at=now, last_message_at=now,
+            )  # fmt: skip
         else:
             convo.save(
                 using=alias, update_fields=["last_inbound_at", "last_message_at", "updated_at"]
