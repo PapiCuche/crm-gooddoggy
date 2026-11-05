@@ -50,7 +50,10 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
         "contacts.create",  # F4-02
         "contacts.update",
         "contacts.view",
+        "conversations.view",  # F6-01: el Inbox
         "inventory.view",
+        "messages.note",
+        "messages.send",
         "opportunities.create",  # F5-04
         "opportunities.mark_lost",
         "opportunities.mark_won",

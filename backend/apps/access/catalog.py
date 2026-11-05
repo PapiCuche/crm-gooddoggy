@@ -72,6 +72,14 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("opportunities.mark_won", "opportunities", supports_scope=True),
     PermissionDef("opportunities.mark_lost", "opportunities", supports_scope=True),
     PermissionDef("pipelines.manage", "opportunities"),
+    # F6-01: el Inbox. `conversations.view`, `messages.send` y `messages.note` admiten alcance
+    # (propias, de su equipo y sin asignar); `assign` no: qué conversaciones alcanza lo decide
+    # `view`, como `contacts.assign`. `channels.manage` configura las cuentas de canal.
+    PermissionDef("conversations.view", "conversations", supports_scope=True),
+    PermissionDef("conversations.assign", "conversations"),
+    PermissionDef("messages.send", "conversations", supports_scope=True),
+    PermissionDef("messages.note", "conversations", supports_scope=True),
+    PermissionDef("channels.manage", "conversations"),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -88,6 +96,7 @@ class RoleTemplate:
 
 # F5-04: las acciones con alcance de las oportunidades; Supervisor y Vendedor operan las suyas
 # (ver, cambiar, ganar, perder) y solo el Administrador borra (03 §H: «leads / opportunities»).
+INBOX_SCOPED = ("conversations.view", "messages.send", "messages.note")  # F6-01
 OPPORTUNITY_OPERATE = ("view", "update", "mark_won", "mark_lost")
 OPPORTUNITY_SCOPED = (*OPPORTUNITY_OPERATE, "delete")
 
@@ -138,6 +147,8 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "opportunities.create",  # F5-04: «leads / opportunities» ORG en 03 §H
             "opportunities.assign",
             "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
+            "conversations.assign",  # F6-01: «conversations.* ✅» para el Administrador en 03 §H
+            "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar
         )
         | dict.fromkeys(
             (
@@ -145,6 +156,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
                 "contacts.update",
                 "contacts.delete",
                 *(f"opportunities.{action}" for action in OPPORTUNITY_SCOPED),
+                *INBOX_SCOPED,
             ),
             Scope.ORGANIZATION,
         ),
@@ -162,9 +174,11 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "inventory.view",
             "opportunities.create",  # F5-04: crea y reparte las de su equipo, no borra
             "opportunities.assign",
+            "conversations.assign",  # F6-01: reparte las de su equipo
         )
         | {"contacts.view": Scope.TEAM}
-        | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE},  # F5-04, 03 §H
+        | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE}  # F5-04, 03 §H
+        | dict.fromkeys(INBOX_SCOPED, Scope.TEAM),
     ),
     RoleTemplate(
         "seller",
@@ -181,6 +195,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "contacts.view": Scope.OWN,
             "contacts.update": Scope.OWN,
         }
-        | {f"opportunities.{a}": Scope.OWN for a in OPPORTUNITY_OPERATE},
+        | {f"opportunities.{a}": Scope.OWN for a in OPPORTUNITY_OPERATE}
+        | dict.fromkeys(INBOX_SCOPED, Scope.OWN),  # F6-01: «OWN + sin asignar» en 03 §H
     ),
 )

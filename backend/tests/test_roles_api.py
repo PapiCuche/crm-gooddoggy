@@ -202,6 +202,9 @@ def test_the_permission_catalog_lists_every_permission_by_code(rbac: Any) -> Non
         "opportunities.delete",
         "opportunities.mark_won",
         "opportunities.mark_lost",
+        "conversations.view",  # F6-01
+        "messages.send",
+        "messages.note",
     }
     sensitive = {row["code"] for row in body["results"] if row["is_sensitive"]}
     assert sensitive == {p.code for p in PERMISSIONS if p.is_sensitive} and sensitive

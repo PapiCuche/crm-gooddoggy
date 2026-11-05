@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "apps.contacts",
     "apps.pricing",
     "apps.deals",
+    "apps.conversations",
 ]
 
 MIDDLEWARE = [

@@ -187,4 +187,6 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         )
     ]
     layers = next(c for c in contracts if c["type"] == "layers")["layers"]
-    assert "apps.inventory | apps.pricing | apps.deals" in layers  # sobre contacts, no al revés
+    assert (
+        "apps.inventory | apps.pricing | apps.deals | apps.conversations" in layers
+    )  # sobre contacts, no al revés

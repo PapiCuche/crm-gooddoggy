@@ -80,6 +80,8 @@ ADMIN_REST = (
     "opportunities.create",  # F5-04
     "opportunities.assign",
     "pipelines.manage",  # F5-02
+    "conversations.assign",  # F6-01: el Inbox
+    "channels.manage",
 )
 SCOPED_REST = (
     "contacts.view",
@@ -90,6 +92,9 @@ SCOPED_REST = (
     "opportunities.delete",
     "opportunities.mark_won",
     "opportunities.mark_lost",
+    "conversations.view",  # F6-01
+    "messages.send",
+    "messages.note",
 )  # con `ORGANIZATION`
 ADMIN = dict.fromkeys(ADMIN_REST) | dict.fromkeys(SCOPED_REST, "ORGANIZATION")
 STATE = (
