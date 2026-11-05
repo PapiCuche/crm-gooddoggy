@@ -38,6 +38,8 @@ import type {
   ContactCreateRequest,
   ContactNotesListParams,
   ContactsListParams,
+  ConversationDetail,
+  ConversationsListParams,
   Cost,
   CostHistoryListParams,
   CostPage,
@@ -88,6 +90,7 @@ import type {
   PaginatedBrandList,
   PaginatedCategoryList,
   PaginatedContactList,
+  PaginatedConversationList,
   PaginatedInvitationList,
   PaginatedLevelList,
   PaginatedListMarginList,
@@ -4390,6 +4393,291 @@ export const useContactsUntag = <TError = ErrorType<Error>, TContext = unknown>(
 > => {
   return useMutation(getContactsUntagMutationOptions(options), queryClient);
 };
+
+export const getConversationsListUrl = (orgSlug: string, params?: ConversationsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/`;
+};
+
+/**
+ * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box` y `status` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
+ */
+export const conversationsList = async (
+  orgSlug: string,
+  params?: ConversationsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedConversationList> => {
+  return apiFetch<PaginatedConversationList>(getConversationsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getConversationsListQueryKey = (orgSlug: string, params?: ConversationsListParams) => {
+  return [`/api/v1/o/${orgSlug}/conversations/`, ...(params ? [params] : [])] as const;
+};
+
+export const getConversationsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof conversationsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getConversationsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationsList>>> = ({ signal }) =>
+    conversationsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsList>>
+>;
+export type ConversationsListQueryError = ErrorType<Error>;
+
+export function useConversationsList<
+  TData = Awaited<ReturnType<typeof conversationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ConversationsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof conversationsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsList<
+  TData = Awaited<ReturnType<typeof conversationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof conversationsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsList<
+  TData = Awaited<ReturnType<typeof conversationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof conversationsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationsList<
+  TData = Awaited<ReturnType<typeof conversationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof conversationsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getConversationsRetrieveUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/`;
+};
+
+/**
+ * Una conversación. 404: no es de la organización o queda fuera del alcance de `conversations.view`.
+ */
+export const conversationsRetrieve = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<ConversationDetail> => {
+  return apiFetch<ConversationDetail>(getConversationsRetrieveUrl(orgSlug, conversationId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getConversationsRetrieveQueryKey = (orgSlug: string, conversationId: string) => {
+  return [`/api/v1/o/${orgSlug}/conversations/${conversationId}/`] as const;
+};
+
+export const getConversationsRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getConversationsRetrieveQueryKey(orgSlug, conversationId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationsRetrieve>>> = ({ signal }) =>
+    conversationsRetrieve(orgSlug, conversationId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      conversationId !== null &&
+      conversationId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationsRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationsRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsRetrieve>>
+>;
+export type ConversationsRetrieveQueryError = ErrorType<Error>;
+
+export function useConversationsRetrieve<
+  TData = Awaited<ReturnType<typeof conversationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsRetrieve>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsRetrieve<
+  TData = Awaited<ReturnType<typeof conversationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsRetrieve<
+  TData = Awaited<ReturnType<typeof conversationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationsRetrieve<
+  TData = Awaited<ReturnType<typeof conversationsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationsRetrieveQueryOptions(orgSlug, conversationId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/inventory/imports/`;
