@@ -113,6 +113,7 @@ def recalc_lead_score(*, organization_id: str, lead_id: str, correlation_id: str
 ```
 
 - `@tenant_task` exige `organization_id` como kwarg (falla al encolar si falta), crea `TenantContext(source="celery", actor_type=SYSTEM)` y ejecuta el cuerpo dentro de `tenant_scope`.
+- **Firma que ve Celery (#568):** `apply_async` valida los argumentos contra la firma de la tarea (`check_arguments`, también en modo eager). Celery 5.6 con Python 3.14 la obtiene con `inspect.signature`, que sigue `__wrapped__` hasta la función original; `@tenant_task` fija `__signature__` en el envoltorio con la firma de la función más `organization_id`, `actor_type`, `actor_id` y `correlation_id` (con y sin `bind=True`), de modo que el publicador del outbox y los reintentos (`task.retry`) puedan encolar. Una función que declare alguno de esos nombres falla al decorarla. `Task.apply()` (ejecución en el acto) no valida: los tests que solo la usan no ejercen esta comprobación.
 - Las tareas largas que procesan en lotes (imports) abren **un `tenant_scope` por lote**, no una transacción gigante.
 - `@platform_task` para tareas sin tenant (health checks, particiones, purga de `webhook_ingress`). No pueden usar `TenantManager` y, si necesitan iterar sobre tenants, lo hacen así: `for org_id in platform_selectors.active_organization_ids(): with tenant_scope(TenantContext(org_id, "celery")): …` (un scope por tenant, nunca varios a la vez).
 - **Verificación al arrancar el worker:** toda tarea registrada debe estar decorada con `@tenant_task` o `@platform_task`; si no, el worker no arranca.

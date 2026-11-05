@@ -1,3 +1,5 @@
+from typing import Any
+
 from core.observability.logging import get_logger
 from core.observability.reporting import safe_ids
 from core.outbox import subscribe
@@ -10,6 +12,12 @@ from tests.tenancy_app.models import Widget
 @tenant_task(name="tenancy_app.visible_widgets")
 def visible_widgets() -> list[str]:
     return [str(i) for i in Widget.objects.values_list("id", flat=True)]
+
+
+@tenant_task(name="tenancy_app.bound_probe", bind=True)
+def bound_probe(task: Any, widget_ref: str) -> str:
+    """Una tarea de tenant con `bind=True`: recibe la tarea como primer argumento."""
+    return f"{task.name}:{widget_ref}"
 
 
 PINGS: list[str] = []  # ejecuciones reales del cuerpo de platform_ping
