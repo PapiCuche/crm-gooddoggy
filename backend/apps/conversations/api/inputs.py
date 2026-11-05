@@ -40,3 +40,13 @@ class SandboxInboundSerializer(Closed, serializers.Serializer[Any]):
         max_length=BODY_MAX,
         help_text=f"Hasta {BODY_MAX} caracteres, con algo visible.",
     )
+
+
+class SendMessageSerializer(Closed, serializers.Serializer[Any]):
+    client_message_id = Id(help_text="La clave de idempotencia: el mismo id es el mismo mensaje.")
+    body = Checked(
+        commands._body,
+        trim_whitespace=False,
+        max_length=BODY_MAX,
+        help_text=f"Hasta {BODY_MAX} caracteres, con algo visible.",
+    )

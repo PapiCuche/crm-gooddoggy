@@ -19,10 +19,10 @@ from apps.conversations import commands
 from apps.conversations.commands import (
     BadReference,
     ClientMessageConflict,
-    ConversationClosed,
     StaleVersion,
 )
 from apps.conversations.models import PREVIEW_MAX, ChannelAccount, Conversation, Message
+from apps.conversations.policy import ChannelUnavailable, ConversationClosed
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
@@ -294,6 +294,20 @@ def test_a_closed_conversation_takes_no_reply_but_replays_what_was_stored(
     with pytest.raises(ConversationClosed):
         outbound(world, convo, uuid4())
     assert outbound(world, convo, client) == (queued, False)  # el reenvío no falla
+
+
+@pytest.mark.parametrize("state", ["DISCONNECTED", "ERROR", "PENDING"])
+def test_an_unconnected_channel_takes_no_new_reply_but_replays_what_was_stored(
+    world: SimpleNamespace, state: str
+) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    client = uuid4()
+    queued, _ = outbound(world, convo, client)
+    with tenant_scope(ctx(world.a)):
+        ChannelAccount.objects.filter(pk=convo.channel_account_id).update(status=state)
+    with pytest.raises(ChannelUnavailable):
+        outbound(world, convo, uuid4())
+    assert outbound(world, convo, client) == (queued, False)
 
 
 def test_two_replies_with_the_same_client_id_at_once_store_one(world: SimpleNamespace) -> None:

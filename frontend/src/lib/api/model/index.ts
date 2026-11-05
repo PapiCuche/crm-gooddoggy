@@ -219,6 +219,7 @@ export * from "./sandboxInboundRequest";
 export * from "./sandboxInboundResult";
 export * from "./scopesEnum";
 export * from "./selfContext";
+export * from "./sendMessageRequest";
 export * from "./session";
 export * from "./stage";
 export * from "./stageOrderRequest";

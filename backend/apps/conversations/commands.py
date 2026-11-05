@@ -46,6 +46,8 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
+from apps.conversations.policy import check_send
+from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -68,10 +70,6 @@ class BadReference(ValueError):
     def __init__(self, field: str) -> None:
         super().__init__(field)
         self.field = field
-
-
-class ConversationClosed(Exception):
-    """La conversación está CLOSED: no admite más respuestas (un mensaje entrante abre otra)."""
 
 
 class ClientMessageConflict(Exception):
@@ -382,10 +380,11 @@ def record_outbound(
     `client_message_id` (el mismo id con otro texto es `ClientMessageConflict`, nunca una
     sobrescritura). Siempre nace `QUEUED`: ningún argumento elige otro estado. Cuenta como
     actividad y, si la conversación estaba en cola (`PENDING`), la pasa a `OPEN` (D-INB-1). Audita
-    `message.queued`. `ConversationClosed` si está cerrada (un reenvío de lo ya guardado sí se
-    devuelve); `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de
-    `messages.send`); `AccessDenied` sin el permiso.
-    No evalúa la política de envío: eso es del despachador (ADR-010, F6-04)."""
+    `message.queued` y deja el evento `message.queued` en el outbox (ids, sin texto).
+    `ConversationClosed` si está cerrada y `ChannelUnavailable` si el canal no está conectado
+    (política mínima, `policy.check_send`; un reenvío de lo ya guardado sí se devuelve);
+    `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
+    `AccessDenied` sin el permiso. La ventana de 24 horas y las plantillas son del despachador."""
     alias = require_scope(ctx)
     conversation_id, client_id = (
         _uuid(conversation_id, "conversación"),
@@ -397,8 +396,9 @@ def record_outbound(
         convo = _locked(alias, conversation_id)
         _in_scope(ectx, "messages.send", convo)
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
-        if earlier is None and convo.status == Status.CLOSED:
-            raise ConversationClosed
+        if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
+            account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
+            check_send(convo.status, account.status, deleted=account.deleted_at is not None)
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED"
         )
@@ -417,6 +417,14 @@ def record_outbound(
                 )
                 convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
+            ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
+            emit(  # para el despachador (F6-04b); solo ids, nunca el texto
+                ctx,
+                "message.queued",
+                aggregate_type="message",
+                aggregate_id=message.pk,
+                payload={key: str(value) for key, value in ids.items()},
+            )
         return message, created
 
 
