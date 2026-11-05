@@ -3,10 +3,16 @@ quien las sirve (`HasPermission` y `ScopeFilter`)."""
 
 from django.db.models import QuerySet
 
-from apps.conversations.models import Conversation
+from apps.conversations.models import Conversation, Message
 
 
 def conversations() -> QuerySet[Conversation]:
     """Las conversaciones, cada una con su cuenta de canal en la misma consulta. El orden lo pone
     el paginador (lo más reciente primero)."""
     return Conversation.objects.select_related("channel_account")
+
+
+def messages(conversation_id: object, *, notes: bool) -> QuerySet[Message]:
+    """Los mensajes de una conversación; las notas internas, solo con `notes=True`."""
+    found = Message.objects.filter(conversation_id=conversation_id)
+    return found if notes else found.exclude(direction="INTERNAL")
