@@ -6,11 +6,17 @@ ya se aplicó al queryset que llega aquí, así que el cursor de otra organizaci
 filas ajenas.
 """
 
+import base64
+import binascii
+import datetime as dt
+import json
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 
 from django.core.exceptions import ImproperlyConfigured
 from django.core.exceptions import ValidationError as InvalidValue
+from django.db.models import Q
 from rest_framework import pagination
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
@@ -103,3 +109,44 @@ class CursorPagination(pagination.CursorPagination):
                 "schema": {**size, "default": self.page_size},
             },
         ]
+
+
+class RecencyPagination(CursorPagination):
+    """Lo más reciente primero: orden por una marca de tiempo propia y el `id` de desempate
+    (`-<stamp>`, `-id`), con un cursor de dos valores (ADR-016 §6: otro orden pide un cursor por
+    columna e `id`, que DRF no trae). La vista declara la marca en `recency_field`, que ha de ser
+    una columna sin nulos. Mismo sobre, mismos errores y mismo `limit` que el cursor por `id`."""
+
+    def _bad(self) -> ValidationError:
+        return ValidationError({CURSOR: ["Cursor no válido."]})
+
+    def _after(self, request: Any) -> tuple[dt.datetime, UUID] | None:
+        raw = request.query_params.get(CURSOR)
+        if raw is None:
+            return None
+        try:
+            parts = json.loads(base64.urlsafe_b64decode(raw.encode("ascii") + b"=="))
+            when, pk = dt.datetime.fromisoformat(parts["t"]), UUID(parts["i"])
+        except binascii.Error, KeyError, TypeError, ValueError, UnicodeError:
+            raise self._bad() from None
+        if when.tzinfo is None:
+            raise self._bad()
+        return when, pk
+
+    def paginate_queryset(self, queryset: Any, request: Any, view: Any = None) -> Any:
+        size, field = self.get_page_size(request), view.recency_field
+        after = self._after(request)
+        rows = queryset.order_by(f"-{field}", "-id")
+        if after is not None:
+            when, pk = after
+            rows = rows.filter(Q(**{f"{field}__lt": when}) | Q(**{field: when, "id__lt": pk}))
+        found = list(rows[: size + 1])
+        page = found[:size]
+        self._next = None
+        if len(found) > size:
+            token = {"t": getattr(page[-1], field).isoformat(), "i": str(page[-1].pk)}
+            self._next = base64.urlsafe_b64encode(json.dumps(token).encode()).decode().rstrip("=")
+        return page
+
+    def get_next_link(self) -> str | None:
+        return self._next

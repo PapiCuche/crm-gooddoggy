@@ -222,6 +222,15 @@ def test_a_conversation_checks(world: SimpleNamespace) -> None:
     refused(world.a, "conversations_closed_ck", make(closed_at=timezone.now()))  # sin CLOSED
     refused(world.a, "conversations_version_ck", make(assignment_version=0))
     refused(world.a, "conversations_resolved_ck", make(status="RESOLVED"))  # sin `resolved_at`
+    refused(world.a, "conversations_preview_ck", make(last_message_preview="Hola"))  # sin sentido
+    refused(
+        world.a, "conversations_preview_ck", make(last_message_direction="INBOUND")
+    )  # sin texto
+    refused(
+        world.a,
+        "conversations_preview_ck",
+        make(last_message_preview="Hola", last_message_direction="INTERNAL"),
+    )
     ok = make(number="CONV-00020", status="CLOSED", closed_at=timezone.now())()
     assert ok.attention_mode == "HUMAN" and ok.status == "CLOSED"  # HUMAN por omisión
     assert first(world).status == "PENDING"  # D-INB-1: nace en cola, sin tomar
@@ -530,3 +539,18 @@ def test_the_same_external_message_arriving_four_times_at_once_is_stored_once(
     with ThreadPoolExecutor(4) as pool:
         outcome = sorted(pool.map(deliver, range(4)))
     assert outcome == ["messages_external_uq"] * 3 + ["stored"]
+
+
+def test_the_inbox_list_has_its_recency_index_and_the_runtime_role_can_write_the_preview(
+    migrator: psycopg.Connection[Any],
+) -> None:
+    index = migrator.execute(
+        "SELECT indexdef FROM pg_indexes WHERE indexname = 'conversations_org_recent_idx'"
+    ).fetchone()
+    assert index is not None
+    assert "(organization_id, last_message_at DESC, id DESC)" in index[0]
+    for column in ("last_message_preview", "last_message_direction"):
+        granted = migrator.execute(
+            "SELECT has_column_privilege('crm_app', 'conversations', %s, 'UPDATE')", [column]
+        ).fetchone()
+        assert granted == (True,), column

@@ -11,6 +11,7 @@ from core.db.models import TenantModel, uuid7_primary_key
 
 NUMBER = r"^CONV-[0-9]{5,}$"  # `CONV-00191`; pasado el millón crece (core.sequences)
 BODY_MAX = 4096
+PREVIEW_MAX = 80  # la vista previa de la lista: texto plano, sin saltos
 SENDERS = ("USER", "AI_AGENT", "SYSTEM")  # los que pueden escribir una nota interna
 
 
@@ -159,6 +160,14 @@ class Conversation(TenantModel):
         null=True, blank=True
     )  # la ventana de ADR-010 sale de aquí
     last_message_at = models.DateTimeField()
+    # Para la lista (F6-02): lo último que dijo el cliente o el equipo, nunca una nota interna.
+    last_message_preview = models.CharField(max_length=PREVIEW_MAX, null=True, blank=True)  # noqa: DJ001
+    last_message_direction = models.CharField(  # noqa: DJ001
+        max_length=8,
+        null=True,
+        blank=True,
+        choices=[("INBOUND", "Inbound"), ("OUTBOUND", "Outbound")],
+    )
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -182,6 +191,10 @@ class Conversation(TenantModel):
             ),
             models.Index(
                 fields=["organization_id", "contact"], name="conversations_org_contact_idx"
+            ),
+            models.Index(  # la lista del Inbox: lo más reciente primero (F6-02)
+                fields=["organization_id", "-last_message_at", "-id"],
+                name="conversations_org_recent_idx",
             ),
         ]
         constraints = [
@@ -217,6 +230,17 @@ class Conversation(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(assignment_version__gte=1, version__gte=1),
                 name="conversations_version_ck",
+            ),
+            models.CheckConstraint(  # la vista previa y su dirección van juntas
+                condition=models.Q(
+                    last_message_preview__isnull=True, last_message_direction__isnull=True
+                )
+                | models.Q(
+                    last_message_preview__isnull=False,
+                    last_message_direction__isnull=False,  # un NULL pasaría el `IN` de un CHECK
+                    last_message_direction__in=["INBOUND", "OUTBOUND"],
+                ),
+                name="conversations_preview_ck",
             ),
         ]
 
