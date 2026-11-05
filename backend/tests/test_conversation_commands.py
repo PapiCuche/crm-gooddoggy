@@ -13,16 +13,21 @@ import pytest
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 
+from apps.access.selectors import AccessDenied
 from apps.contacts.models import Contact
 from apps.conversations import commands
 from apps.conversations.commands import (
     BadReference,
+    ClientMessageConflict,
+    ConversationClosed,
     StaleVersion,
 )
 from apps.conversations.models import ChannelAccount, Conversation, Message
+from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
 from tests.factories import make_user
+from tests.test_authorization import give
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx, join
 
@@ -30,6 +35,14 @@ world = tables.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
 type DB = psycopg.Connection[Any]
 SECRET = "Mi DNI es 12345678 y mi correo juan@example.com"  # noqa: S105 — texto de prueba
+
+
+@pytest.fixture(autouse=True)
+def writer(world: SimpleNamespace) -> None:
+    """`ana` puede responder y anotar en cualquier conversación de A: los comandos lo exigen."""
+    with tenant_scope(ctx(world.a)):
+        mine = OrganizationMembership.objects.get(user_id=world.ana.pk).pk
+    give(world.a, mine, {"messages.send": "ORGANIZATION", "messages.note": "ORGANIZATION"})
 
 
 def run(
@@ -52,21 +65,9 @@ def inbound(world: SimpleNamespace, external: str = "wamid.1", **over: Any) -> t
     return run(world, commands.record_inbound, **wanted)  # type: ignore[no-any-return]
 
 
-def outbound_of(org: UUID, convo: Any) -> Any:
-    who = make_user()
-    join(org, who)
-    return tables.message(
-        org, convo, direction="OUTBOUND", sender_type="USER", sender_user_id=who.pk,
-        delivery_status="QUEUED",
-    )  # fmt: skip
-
-
-def outbound(world: SimpleNamespace, convo: Any) -> Any:
-    """Un mensaje saliente en cola, escrito directamente: el comando de salida llega en F6-01d."""
-    return tables.message(
-        world.a, convo, direction="OUTBOUND", sender_type="USER",
-        sender_user_id=world.ana.pk, delivery_status="QUEUED",
-    )  # fmt: skip
+def outbound(world: SimpleNamespace, convo: Any, client: UUID | None = None, **over: Any) -> Any:
+    wanted = {"conversation_id": convo.pk, "client_message_id": client or uuid4(), "body": "Hola"}
+    return run(world, commands.record_outbound, **(wanted | over))
 
 
 def reload(world: SimpleNamespace, model: Any, pk: UUID) -> Any:
@@ -235,11 +236,120 @@ def test_an_inbound_message_reopens_per_d_inb_2(world: SimpleNamespace, migrator
     assert actions.count("conversation.reopened") == 2 and actions.count("conversation.closed") == 1
 
 
+def test_an_outbound_message_is_queued_idempotently(world: SimpleNamespace, migrator: DB) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    client = uuid4()
+    queued, created = outbound(world, convo, client)
+    assert created and (queued.direction, queued.delivery_status) == ("OUTBOUND", "QUEUED")
+    assert (queued.sender_type, queued.sender_user_id) == ("USER", world.ana.pk)
+    assert reload(world, Conversation, convo.pk).status == "OPEN"  # la primera respuesta humana
+    again, created = outbound(world, convo, client)
+    assert again.pk == queued.pk and not created
+    for clash in ({"body": "Otro texto"}, {"conversation_id": uuid4()}):  # mismo id, otra cosa
+        with pytest.raises((ClientMessageConflict, ObjectDoesNotExist)):
+            outbound(world, convo, client, **clash)
+    with tenant_scope(ctx(world.a)):
+        who = Contact.objects.create(display_name="Otro cliente")
+    other, _ = inbound(world, "wamid.9", contact_id=who.pk)
+    with pytest.raises(ClientMessageConflict):  # el id ya es de un mensaje de otra conversación
+        outbound(world, reload(world, Conversation, other.conversation_id), client)
+    with tenant_scope(ctx(world.a)):
+        assert Message.objects.filter(direction="OUTBOUND").count() == 1
+    assert reload(world, Message, queued.pk).body == "Hola"  # el conflicto no sobrescribe
+    assert "message.queued" in [a for a, *_ in audit(migrator)]
+
+
+def test_the_first_reply_stores_the_status_the_version_and_the_thread_clock(
+    world: SimpleNamespace,
+) -> None:
+    """Lo guardado, leído de la base de datos (no el objeto en memoria): pasar de PENDING a OPEN
+    persiste también `last_message_at`, la versión y `updated_at`."""
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    assert convo.status == "PENDING"
+    outbound(world, convo)
+    opened = reload(world, Conversation, convo.pk)
+    assert (opened.status, opened.version) == ("OPEN", convo.version + 1)
+    assert opened.last_message_at > convo.last_message_at and opened.updated_at > convo.updated_at
+    outbound(world, opened)  # ya abierta: la marca avanza, sin cambio de estado ni de versión
+    again = reload(world, Conversation, convo.pk)
+    assert (again.status, again.version) == ("OPEN", opened.version)
+    assert again.last_message_at > opened.last_message_at and again.updated_at > opened.updated_at
+    run(world, commands.add_note, conversation_id=convo.pk, body="Nota")  # y una nota, nada
+    noted = reload(world, Conversation, convo.pk)
+
+    def clock(c: Conversation) -> tuple[Any, ...]:
+        return (c.status, c.version, c.last_message_at, c.last_inbound_at, c.updated_at)
+
+    assert clock(noted) == clock(again)
+
+
+def test_a_closed_conversation_takes_no_reply_but_replays_what_was_stored(
+    world: SimpleNamespace,
+) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    client = uuid4()
+    queued, _ = outbound(world, convo, client)
+    with tenant_scope(ctx(world.a)):
+        Conversation.objects.filter(pk=convo.pk).update(status="CLOSED", closed_at=timezone.now())
+    with pytest.raises(ConversationClosed):
+        outbound(world, convo, uuid4())
+    assert outbound(world, convo, client) == (queued, False)  # el reenvío no falla
+
+
+def test_two_replies_with_the_same_client_id_at_once_store_one(world: SimpleNamespace) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    client = uuid4()
+
+    def reply(tenant: Any) -> Any:
+        return commands.record_outbound(
+            tenant, conversation_id=convo.pk, client_message_id=client, body="Hola"
+        )
+
+    first, second = race(world.a, world.ana, [reply, reply])
+    assert first[0].pk == second[0].pk and (first[1], second[1]) == (True, False)
+
+
+def test_a_note_is_internal_never_sendable_and_leaves_the_thread_clock_alone(
+    world: SimpleNamespace, migrator: DB
+) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    note, created = run(world, commands.add_note, conversation_id=convo.pk, body=SECRET)
+    assert created and (note.direction, note.message_type, note.delivery_status) == (
+        "INTERNAL", "NOTE", None,
+    )  # fmt: skip
+    assert note.external_message_id is None and note.sender_user_id == world.ana.pk
+    after = reload(world, Conversation, convo.pk)
+    assert (after.last_message_at, after.last_inbound_at, after.status) == (
+        convo.last_message_at, convo.last_inbound_at, "PENDING",
+    )  # fmt: skip
+    client = uuid4()
+    first, _ = run(
+        world, commands.add_note, conversation_id=convo.pk, body="Nota", client_message_id=client
+    )
+    again, created = run(
+        world, commands.add_note, conversation_id=convo.pk, body="Nota", client_message_id=client
+    )
+    assert again.pk == first.pk and not created
+    with pytest.raises(ClientMessageConflict):  # ese id es de un mensaje que no es esta nota
+        run(
+            world,
+            commands.add_note,
+            conversation_id=convo.pk,
+            body="Otra",
+            client_message_id=client,
+        )
+    with tenant_scope(ctx(world.a)):
+        Conversation.objects.filter(pk=convo.pk).update(status="CLOSED", closed_at=timezone.now())
+    assert run(world, commands.add_note, conversation_id=convo.pk, body="Tras cerrar")[
+        1
+    ]  # se admite
+
+
 def test_the_delivery_status_advances_and_ignores_what_does_not(
     world: SimpleNamespace, migrator: DB
 ) -> None:
     convo = reload(world, Conversation, inbound(world)[0].conversation_id)
-    sent = outbound(world, convo)
+    sent, _ = outbound(world, convo)
     before = len(audit(migrator))
 
     def advance(status: str, **over: Any) -> Any:
@@ -255,7 +365,7 @@ def test_the_delivery_status_advances_and_ignores_what_does_not(
     assert advance("READ").delivery_status == "READ" and advance("FAILED").delivery_status == "READ"
     assert audit(migrator)[-1][0] == "message.delivery_changed"
     assert len(audit(migrator)) == before + 2  # solo SENT y READ dejaron rastro
-    failing = outbound(world, convo)
+    failing, _ = outbound(world, convo)
     run(world, commands.advance_delivery, message_id=failing.pk, status="SENT")
     done = run(world, commands.advance_delivery, message_id=failing.pk, status="FAILED")
     assert (done.delivery_status, done.failed_at is not None) == ("FAILED", True)
@@ -277,27 +387,28 @@ def test_nothing_of_the_message_text_reaches_the_audit(
     plain = "Quiero el iPhone azul para mañana"  # sin nada que la redacción reconozca
     message, _ = inbound(world, body=plain)
     convo = reload(world, Conversation, message.conversation_id)
-    run(world, commands.advance_delivery, message_id=outbound(world, convo).pk, status="DELIVERED")
+    queued, _ = outbound(world, convo, body=plain)
+    run(world, commands.add_note, conversation_id=convo.pk, body=plain)
+    run(world, commands.advance_delivery, message_id=queued.pk, status="DELIVERED")
     rows = audit(migrator)
-    actions = {a for a, *_ in rows}
-    assert actions >= {"conversation.created", "message.received", "message.delivery_changed"}
+    assert {a for a, *_ in rows} >= {
+        "conversation.created", "message.received", "message.queued", "message.noted",
+        "message.delivery_changed",
+    }  # fmt: skip
     for word in ("iPhone", "azul", "mañana"):
         assert word not in json.dumps(rows, ensure_ascii=False)
-    received = [m for a, _, m in rows if a == "message.received"]
-    assert received == [
-        {"conversation_id": str(convo.pk), "direction": "INBOUND", "length": len(plain)}
-    ]  # solo la longitud, ids y dirección
+    lengths = [m["length"] for a, _, m in rows if a.startswith("message.") and "length" in m]
+    assert lengths == [len(plain)] * 3  # solo la longitud, ids y dirección
+    keys = {k for a, _, m in rows if a.startswith("message.") for k in m}
+    assert keys <= {"conversation_id", "direction", "length"}
 
 
 def test_another_organizations_rows_do_not_exist_for_a_command(world: SimpleNamespace) -> None:
     theirs = tables.conversation(world.b, world.contact_b, world.account_b)
-    with pytest.raises(ObjectDoesNotExist):  # su mensaje saliente tampoco existe para A
-        run(
-            world,
-            commands.advance_delivery,
-            message_id=outbound_of(world.b, theirs).pk,
-            status="SENT",
-        )
+    with pytest.raises(ObjectDoesNotExist):
+        outbound(world, theirs)
+    with pytest.raises(ObjectDoesNotExist):
+        run(world, commands.add_note, conversation_id=theirs.pk, body="x")
     with pytest.raises(BadReference):
         inbound(world, contact_id=world.contact_b.pk)
 
@@ -307,17 +418,27 @@ def test_hostile_arguments_are_a_value_error_never_a_type_or_integrity_error(
     world: SimpleNamespace, bad: Any
 ) -> None:
     ok = {"contact_id": world.contact_a.pk, "channel_account_id": world.account_a.pk}
+    convo = tables.first(world)
     calls: list[tuple[Callable[..., Any], dict[str, Any]]] = [
         (commands.open_conversation, ok | {"contact_id": bad}),
         (commands.open_conversation, ok | {"channel_account_id": bad}),
         (commands.record_inbound, ok | {"external_message_id": "a", "body": bad}),
         (commands.record_inbound, ok | {"external_message_id": bad, "body": "x"}),
+        (
+            commands.record_outbound,
+            {"conversation_id": convo.pk, "client_message_id": bad, "body": "x"},
+        ),
+        (
+            commands.record_outbound,
+            {"conversation_id": bad, "client_message_id": uuid4(), "body": "x"},
+        ),
+        (commands.add_note, {"conversation_id": convo.pk, "body": bad}),
         (commands.advance_delivery, {"message_id": bad, "status": "SENT"}),
         (commands.advance_delivery, {"message_id": uuid4(), "status": bad}),
     ]
     texty = isinstance(bad, str) and bad.strip() != ""  # un texto vale como cuerpo o id externo
     for command, fields in calls:
-        if texty and command is commands.record_inbound and "body" in fields:
+        if texty and command in (commands.record_inbound, commands.add_note) and "body" in fields:
             continue
         with pytest.raises(ValueError):  # noqa: PT011
             run(world, command, **fields)
@@ -329,8 +450,10 @@ def test_hostile_arguments_are_a_value_error_never_a_type_or_integrity_error(
 )
 def test_texts_and_external_ids_with_limits_are_refused(world: SimpleNamespace, bad: str) -> None:
     ok = {"contact_id": world.contact_a.pk, "channel_account_id": world.account_a.pk}
+    convo = tables.first(world)
     refused: list[tuple[Callable[..., Any], dict[str, Any]]] = [
         (commands.record_inbound, ok | {"external_message_id": "a", "body": bad}),
+        (commands.add_note, {"conversation_id": convo.pk, "body": bad}),
     ]
     if len(bad) < 4097 and bad.strip() and "\x00" not in bad:  # lo que solo vale como id externo
         refused = [(commands.record_inbound, ok | {"external_message_id": bad, "body": "x"})]
@@ -339,6 +462,50 @@ def test_texts_and_external_ids_with_limits_are_refused(world: SimpleNamespace, 
             run(world, command, **fields)
     with tenant_scope(ctx(world.a)):
         assert Message.objects.count() == 0
+
+
+def seller(world: SimpleNamespace, email: str, grants: dict[str, str | None]) -> Any:
+    user = make_user(email=email)
+    give(world.a, join(world.a, user).pk, grants)
+    return user
+
+
+def test_writing_on_behalf_of_a_person_checks_the_permission_and_the_scope(
+    world: SimpleNamespace, migrator: DB
+) -> None:
+    mine = tables.fresh(world.a, world.account_a, "CONV-00070", assigned_user_id=world.ana.pk)
+    free = tables.fresh(world.a, world.account_a, "CONV-00071")
+    own: dict[str, str | None] = {"messages.send": "OWN", "messages.note": "OWN"}
+    vera = seller(world, "vera@example.com", own)
+    mute = seller(world, "mute@example.com", {"organization.view": None})
+    before = len(audit(migrator))
+    for command, fields in (
+        (commands.record_outbound, {"client_message_id": uuid4(), "body": "Hola"}),
+        (commands.add_note, {"body": "Nota"}),
+    ):
+        with pytest.raises(ObjectDoesNotExist) as hidden:  # de ana: fuera del alcance `OWN`
+            run(world, command, who=vera, conversation_id=mine.pk, **fields)
+        with pytest.raises(ObjectDoesNotExist) as unknown:
+            run(world, command, who=vera, conversation_id=uuid4(), **fields)
+        assert type(hidden.value) is type(unknown.value) and str(hidden.value) == str(unknown.value)
+        with pytest.raises(AccessDenied):  # sin el permiso
+            run(world, command, who=mute, conversation_id=free.pk, **fields)
+        with pytest.raises(AccessDenied):  # la persona de otra organización no es miembro
+            run(world, command, who=world.luis, conversation_id=free.pk, **fields)
+    assert len(audit(migrator)) == before  # nada se escribió
+    with tenant_scope(ctx(world.a)):
+        assert Message.objects.count() == 0
+    only_note = seller(world, "nota@example.com", {"messages.note": "ORGANIZATION"})
+    only_send = seller(world, "envia@example.com", {"messages.send": "ORGANIZATION"})
+    with pytest.raises(AccessDenied):  # cada comando pide su permiso, no el del otro
+        run(world, commands.record_outbound, who=only_note, conversation_id=free.pk,
+            client_message_id=uuid4(), body="Hola")  # fmt: skip
+    with pytest.raises(AccessDenied):
+        run(world, commands.add_note, who=only_send, conversation_id=free.pk, body="Nota")
+    assert run(world, commands.add_note, who=only_note, conversation_id=free.pk, body="Nota")[1]
+    sent = {"conversation_id": free.pk, "client_message_id": uuid4(), "body": "Hola"}
+    assert run(world, commands.record_outbound, who=vera, **sent)[1]  # sin asignar: a la vista
+    assert run(world, commands.add_note, who=vera, conversation_id=free.pk, body="Nota")[1]
 
 
 def test_a_channel_account_changes_only_its_names_and_never_its_identity(
@@ -396,7 +563,8 @@ def test_out_of_order_delivery_statuses_are_no_ops_that_do_not_abort_the_transac
     world: SimpleNamespace, migrator: DB
 ) -> None:
     convo = reload(world, Conversation, inbound(world)[0].conversation_id)
-    sent = outbound(world, convo)
+    sent, _ = outbound(world, convo)
+    assert sent.delivery_status == "QUEUED"  # siempre nace en cola
 
     def advance(pk: UUID, status: str) -> str:
         return str(
@@ -408,7 +576,7 @@ def test_out_of_order_delivery_statuses_are_no_ops_that_do_not_abort_the_transac
     for late in ("DELIVERED", "SENT", "QUEUED", "FAILED", "READ"):  # tardíos y repetidos
         assert advance(sent.pk, late) == "READ"
     assert len(audit(migrator)) == before
-    other = outbound(world, convo)
+    other, _ = outbound(world, convo)
     assert (advance(other.pk, "DELIVERED"), advance(other.pk, "FAILED")) == (
         "DELIVERED",
         "DELIVERED",
@@ -424,7 +592,7 @@ def test_two_delivery_updates_at_once_end_on_the_later_state_without_errors(
     world: SimpleNamespace, order: tuple[str, str]
 ) -> None:
     convo = reload(world, Conversation, inbound(world)[0].conversation_id)
-    message = outbound(world, convo)
+    message, _ = outbound(world, convo)
 
     def update(status: str) -> Callable[[Any], Any]:
         return lambda tenant: commands.advance_delivery(
@@ -434,3 +602,31 @@ def test_two_delivery_updates_at_once_end_on_the_later_state_without_errors(
     first, second = race(world.a, world.ana, [update(order[0]), update(order[1])])
     assert not isinstance(first, str) and not isinstance(second, str)  # ninguna lanzó
     assert reload(world, Message, message.pk).delivery_status == "READ"
+
+
+def test_each_delivery_status_stores_its_own_timestamp_and_a_naive_clock_is_refused(
+    world: SimpleNamespace,
+) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    message, _ = outbound(world, convo)
+    first, second, third = (timezone.now() - dt.timedelta(minutes=m) for m in (30, 20, 10))
+
+    def stamps(pk: UUID) -> tuple[Any, ...]:
+        found = reload(world, Message, pk)
+        return (found.sent_at, found.delivered_at, found.read_at, found.failed_at)
+
+    def advance(status: str, at: dt.datetime) -> None:
+        run(world, commands.advance_delivery, message_id=message.pk, status=status, at=at)
+
+    advance("SENT", first)
+    assert stamps(message.pk) == (first, None, None, None)
+    advance("DELIVERED", second)
+    assert stamps(message.pk) == (first, second, None, None)
+    advance("READ", third)
+    assert stamps(message.pk) == (first, second, third, None)
+    failing, _ = outbound(world, convo)
+    run(world, commands.advance_delivery, message_id=failing.pk, status="FAILED", at=third)
+    assert stamps(failing.pk) == (None, None, None, third)
+    for bad in (dt.datetime(2026, 11, 1, 9, 0), "2026-11-01T09:00:00Z", 5):  # sin zona horaria
+        with pytest.raises(ValueError, match="zona horaria"):
+            run(world, commands.advance_delivery, message_id=failing.pk, status="SENT", at=bad)
