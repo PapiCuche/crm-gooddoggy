@@ -24,9 +24,9 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F6-01b | [#543](https://github.com/PapiCuche/crm-gooddoggy/issues/543) Inbox: mensajes y estado de entrega (sin comandos) | `feature/f6-inbox-messages` | F6-01 | backend |
 | F6-01c | [#544](https://github.com/PapiCuche/crm-gooddoggy/issues/544) Inbox: comandos de apertura, mensajes entrantes, estado de entrega y cuentas de canal, con auditoría | `feature/f6-inbox-commands` | F6-01b | backend |
 | F6-01d | [#547](https://github.com/PapiCuche/crm-gooddoggy/issues/547) Inbox: comandos de respuesta y notas internas, con el alcance de quien escribe | `feature/f6-inbox-send-commands` | F6-01c | backend |
-| F6-02a | por crear (parte de [#537](https://github.com/PapiCuche/crm-gooddoggy/issues/537)) Inbox: vista previa del último mensaje en la conversación y paginación por recencia | `feature/f6-inbox-api` | F6-01d | backend |
-| F6-02b | por crear (parte de [#537](https://github.com/PapiCuche/crm-gooddoggy/issues/537)) Inbox: lista y detalle de conversaciones por la API | `feature/f6-inbox-list-api` | F6-02a | backend |
-| F6-02c | por crear (parte de [#537](https://github.com/PapiCuche/crm-gooddoggy/issues/537)) Inbox: mensajes de una conversación y simulador del canal Sandbox | `feature/f6-inbox-messages-api` | F6-02b | backend |
+| F6-02a | [#537](https://github.com/PapiCuche/crm-gooddoggy/issues/537) Inbox: vista previa del último mensaje en la conversación y paginación por recencia | `feature/f6-inbox-api` | F6-01d | backend |
+| F6-02b | [#550](https://github.com/PapiCuche/crm-gooddoggy/issues/550) Inbox: lista y detalle de conversaciones por la API | `feature/f6-inbox-list-api` | F6-02a | backend |
+| F6-02c | [#551](https://github.com/PapiCuche/crm-gooddoggy/issues/551) Inbox: mensajes de una conversación y simulador del canal Sandbox | `feature/f6-inbox-messages-api` | F6-02b | backend |
 | F6-03 | [#538](https://github.com/PapiCuche/crm-gooddoggy/issues/538) Inbox: pantalla de conversaciones y chat (solo lectura) | `feature/f6-inbox-screen` | F6-02c | frontend |
 | F6-04 | [#539](https://github.com/PapiCuche/crm-gooddoggy/issues/539) Inbox: enviar mensajes salientes con el canal Sandbox | `feature/f6-inbox-send` | #538 | full-stack |
 | F6-05 | [#540](https://github.com/PapiCuche/crm-gooddoggy/issues/540) Inbox: notas internas y asignación (tomar y transferir) | `feature/f6-inbox-assign` | #539 | full-stack |
