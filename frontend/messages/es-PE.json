@@ -29,7 +29,8 @@
       "catalog": "Catálogo",
       "inventory": "Inventario",
       "prices": "Precios",
-      "opportunities": "Oportunidades"
+      "opportunities": "Oportunidades",
+      "inbox": "Inbox"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -2074,6 +2075,58 @@
       "end": "No hay más etapas en esa dirección.",
       "dropped": "Moviendo «{title}» a «{stage}»…",
       "cancelled": "Movimiento cancelado: «{title}» sigue en «{stage}»."
+    }
+  },
+  "inbox": {
+    "eyebrow": "Good Doggy / Inbox",
+    "title": "Inbox",
+    "intro": "Las conversaciones de {organization} que puedes ver, la de mensaje más reciente primero.",
+    "denied": "No tienes permiso para ver las conversaciones de esta organización.",
+    "loading": "Cargando conversaciones…",
+    "empty": "Todavía no hay conversaciones.",
+    "emptyFiltered": "Ninguna conversación coincide con los filtros.",
+    "count": "{count, plural, =0 {Sin conversaciones en la lista} one {# conversación en la lista} other {# conversaciones en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "refresh": "Actualizar",
+    "refreshing": "Actualizando…",
+    "back": "Volver a las conversaciones",
+    "you": "Tú:",
+    "noAccess": "Sin permiso para ver el contenido",
+    "noMessages": "Sin mensajes",
+    "contactUnavailable": "Cliente no disponible",
+    "filters": {
+      "landmark": "Filtros de conversaciones",
+      "box": "Bandeja",
+      "boxes": {
+        "all": "Todas",
+        "mine": "Mías",
+        "unassigned": "Sin asignar"
+      },
+      "status": "Estado",
+      "anyStatus": "Todos los estados"
+    },
+    "status": {
+      "OPEN": "Abierta",
+      "PENDING": "Pendiente",
+      "WAITING_CUSTOMER": "Esperando al cliente",
+      "WAITING_INTERNAL": "Esperando a otra área",
+      "RESOLVED": "Resuelta",
+      "CLOSED": "Cerrada"
+    },
+    "assignee": {
+      "mine": "Asignada a ti",
+      "UNASSIGNED": "Sin asignar",
+      "other": "Asignada"
+    },
+    "list": {
+      "landmark": "Conversaciones",
+      "label": "Lista de conversaciones"
+    },
+    "chat": {
+      "landmark": "Conversación",
+      "choose": "Elige una conversación para abrirla.",
+      "soon": "La lectura de los mensajes llega en el siguiente corte."
     }
   }
 }
