@@ -233,6 +233,19 @@ describe("navegación del shell", () => {
     ]);
   });
 
+  it("«Inbox» pide `conversations.view` y va tras «Oportunidades»", async () => {
+    route.pathname = "/o/acme/inbox";
+    const view = (code: string) => ({ code, scopes: [] });
+    expect(await links([view("messages.send")])).toEqual([["/o/acme", null]]);
+    cleanup();
+    expect(await links([view("opportunities.view"), view("conversations.view")])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/oportunidades", null],
+      ["/o/acme/inbox", "page"],
+    ]);
+    expect(document.title).toBe("Inbox · Acme SAC · Good Doggy CRM");
+  });
+
   it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
     route.pathname = "/o/acme/precios/listas";
     const without = ["prices.bulk_update", "product_cost.view", "inventory.view"];
