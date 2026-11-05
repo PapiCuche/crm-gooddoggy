@@ -227,3 +227,40 @@ def test_the_preview_is_the_text_of_the_last_message_and_never_a_note(
         assert (
             row["contact"]["display_name"] == "vera" and row["last_message_preview"] == "Con gusto"
         )
+
+
+def shown(client: Client, convo: UUID) -> list[tuple[Any, Any]]:
+    """(nombre, vista previa) del contacto de esa conversación, en la lista y en el detalle."""
+    row = {r["id"]: r for r in client.get(BASE).json()["results"]}[str(convo)]
+    return [
+        (r["contact"]["display_name"], r["last_message_preview"])
+        for r in (row, client.get(f"{BASE}{convo}/").json())
+    ]
+
+
+def test_a_team_scoped_contacts_view_names_only_the_contacts_the_scope_reaches(
+    inbox: SimpleNamespace,
+) -> None:
+    mine, other = inbox.convs["sam"], inbox.convs["team"]  # sam las ve las dos
+    for key in ("sam", "team"):
+        stamp(inbox.a, inbox.convs[key], last_message_preview=f"Hola {key}",
+              last_message_direction="INBOUND")  # fmt: skip
+    with tenant_scope(ctx(inbox.a)):
+        who = Conversation.objects.get(pk=mine).contact_id
+        Contact.objects.filter(pk=who).update(owner_user_id=inbox.sam.pk)  # `TEAM` de contactos
+    sam = signed(inbox.sam)
+    assert shown(sam, mine) == [("sam", "Hola sam")] * 2  # un contacto que su alcance alcanza
+    assert shown(sam, other) == [(None, None)] * 2  # otro que no: ni nombre ni vista previa
+
+
+def test_a_deleted_contact_has_no_name_and_no_preview_even_for_the_owner(
+    inbox: SimpleNamespace,
+) -> None:
+    convo = inbox.convs["vera"]
+    stamp(inbox.a, convo, last_message_preview="Hola", last_message_direction="INBOUND")
+    ana = signed(inbox.ana)
+    assert shown(ana, convo) == [("vera", "Hola")] * 2
+    with tenant_scope(ctx(inbox.a)):
+        who = Conversation.objects.get(pk=convo).contact_id
+        Contact.objects.filter(pk=who).update(deleted_at=timezone.now())
+    assert shown(ana, convo) == [(None, None)] * 2

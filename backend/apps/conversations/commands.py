@@ -18,6 +18,7 @@ retrocede el mensaje y no es un error (ADR-010, §E.6).
 """
 
 import datetime as dt
+import unicodedata
 from typing import Any
 from uuid import UUID
 
@@ -51,6 +52,8 @@ from core.tenancy.scope import require_scope
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
 KEY, ORDER = "CONV", (Delivery.QUEUED, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
+ZWJ, JOINERS = "\u200d", "\u200c\u200d"
+BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 LAST = ("last_message_at", "last_message_preview", "last_message_direction")
 STAMPS = {"SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at", "FAILED": "failed_at"}
 EXTERNAL_MAX = 200
@@ -91,16 +94,41 @@ def _uuid(value: Any, what: str) -> UUID:
 
 
 def _body(value: Any) -> str:
-    if not isinstance(value, str) or not value.strip() or "\x00" in value:
-        raise ValueError("texto: no vacío y sin caracteres nulos")
-    if len(value) > BODY_MAX:
-        raise ValueError(f"texto: hasta {BODY_MAX} caracteres")
+    """El texto de un mensaje: algo que se ve (no solo espacios ni caracteres de ancho cero), sin
+    controles salvo el salto de línea y el tabulador, ni sustitutos Unicode sueltos (UTF-8 y
+    PostgreSQL no los guardan), ni los controles que reordenan el texto (incrustaciones,
+    anulaciones y aislamientos de dirección; las marcas LRM, RLM y ALM sí valen)."""
+    if not isinstance(value, str) or len(value) > BODY_MAX:
+        raise ValueError(f"texto: un texto de 1 a {BODY_MAX} caracteres")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("texto: caracteres Unicode no válidos") from None
+    if any(unicodedata.category(c) == "Cc" and c not in "\n\r\t" for c in value):
+        raise ValueError("texto: sin caracteres de control")
+    if any(c in BIDI for c in value):  # reordenan lo que se ve (texto «trojan source»)
+        raise ValueError("texto: sin controles de dirección")
+    if all(unicodedata.category(c) in ("Cc", "Cf", "Zs", "Zl", "Zp") for c in value):
+        raise ValueError("texto: debe tener algo visible")
     return value
 
 
 def _preview(text: str) -> str:
-    """Lo que la lista enseña del último mensaje: el comienzo, en una línea."""
-    return " ".join(text.split())[:PREVIEW_MAX]
+    """Lo que la lista enseña del último mensaje: el comienzo, en una línea y sin caracteres de
+    formato invisibles (se conservan ZWNJ y ZWJ, que el persa y los emoji necesitan). Si el corte
+    cae dentro de una secuencia unida por ZWJ, se quita la secuencia entera en vez de partirla."""
+    shown = "".join(c for c in text if unicodedata.category(c) != "Cf" or c in JOINERS)
+    line = " ".join(shown.split())
+    cut = line[:PREVIEW_MAX]
+    if cut.endswith(ZWJ) or line[PREVIEW_MAX : PREVIEW_MAX + 1] == ZWJ:
+        while cut and (cut[-1] == ZWJ or _pictographic(cut[-1])):
+            cut = cut[:-1]
+    return cut.rstrip()
+
+
+def _pictographic(char: str) -> bool:
+    """Un símbolo, un modificador o un carácter fuera del plano básico: lo que une un ZWJ."""
+    return unicodedata.category(char) in ("So", "Sk", "Mn", "Me") or ord(char) > 0xFFFF
 
 
 def _external(value: Any) -> str:

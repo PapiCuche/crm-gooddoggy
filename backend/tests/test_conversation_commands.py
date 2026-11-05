@@ -22,7 +22,7 @@ from apps.conversations.commands import (
     ConversationClosed,
     StaleVersion,
 )
-from apps.conversations.models import ChannelAccount, Conversation, Message
+from apps.conversations.models import PREVIEW_MAX, ChannelAccount, Conversation, Message
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
@@ -691,3 +691,79 @@ def test_a_closed_and_reopened_conversation_also_gets_its_preview(world: SimpleN
     inbound(world, "wamid.2", body="Sigo aquí")
     again = reload(world, Conversation, convo.pk)
     assert again.status == "OPEN" and again.last_message_preview == "Sigo aquí"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "\ud800",
+        "ab\udfffcd",
+        "​",
+        "​ ⁠﻿",
+        "  ",
+        "x\x07y",
+        "x\x1by",
+        "\x7f",
+        "x\u202ey",
+        "a\u2066b\u2069",
+    ],
+)
+def test_texts_with_lone_surrogates_control_characters_or_nothing_visible_are_refused(
+    world: SimpleNamespace, bad: str
+) -> None:
+    convo = tables.first(world)
+    attempts: list[tuple[Callable[..., Any], dict[str, Any]]] = [
+        (
+            commands.record_inbound,
+            {
+                "contact_id": world.contact_a.pk,
+                "channel_account_id": world.account_a.pk,
+                "external_message_id": "w",
+                "body": bad,
+            },
+        ),
+        (
+            commands.record_outbound,
+            {"conversation_id": convo.pk, "client_message_id": uuid4(), "body": bad},
+        ),
+        (commands.add_note, {"conversation_id": convo.pk, "body": bad}),
+    ]
+    for command, fields in attempts:
+        with pytest.raises(ValueError, match="^texto: ") as refused:
+            run(world, command, **fields)
+        assert "codec" not in str(refused.value)  # lo dice el comando, no la base ni Python
+    with tenant_scope(ctx(world.a)):
+        assert Message.objects.count() == 0
+
+
+def test_text_with_accents_emoji_zero_width_joiners_and_line_breaks_is_kept(
+    world: SimpleNamespace,
+) -> None:
+    text = "Hola ñandú 👨‍👩‍👧 ¿precio?\nlínea\ttab"
+    message, _ = inbound(world, body=text)
+    assert reload(world, Message, message.pk).body == text
+
+
+FAMILY = "\U0001f468\u200d\U0001f469\u200d\U0001f467"  # tres emoji unidos por ZWJ
+
+
+def test_the_preview_drops_invisible_format_characters_and_never_splits_a_joined_sequence() -> None:
+    clean = commands._preview("a\u200bb\u2060c\ufeffd\u200ee\u202af\n\n  g")
+    assert clean == "abcdef g"  # sin ancho cero, BOM ni marcas de dirección; una sola línea
+    assert commands._preview("می\u200cخواهم") == "می\u200cخواهم"  # el ZWNJ del persa vale
+    whole = "x" * (PREVIEW_MAX - len(FAMILY)) + FAMILY
+    assert commands._preview(whole) == whole  # cabe entera
+    for pad in (1, 2, 3, 4):  # el corte cae dentro de la secuencia
+        cut = commands._preview("x" * (PREVIEW_MAX - len(FAMILY) + pad) + FAMILY)
+        assert cut == "x" * (PREVIEW_MAX - len(FAMILY) + pad), (
+            pad
+        )  # sin media familia ni ZWJ suelto
+    assert not commands._preview("x" * 79 + "\u200d" + "y").endswith("\u200d")
+
+
+def test_direction_marks_for_right_to_left_text_are_kept_in_the_body(
+    world: SimpleNamespace,
+) -> None:
+    text = "שלום\u200f 123\u200e"  # LRM y RLM, no reordenan nada
+    message, _ = inbound(world, body=text)
+    assert reload(world, Message, message.pk).body == text
