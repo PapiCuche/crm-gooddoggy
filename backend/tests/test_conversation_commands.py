@@ -681,7 +681,7 @@ def test_the_preview_is_the_plain_start_of_the_last_external_message_and_never_a
     inbound(world, "wamid.2", body="Gracias")
     last = reload(world, Conversation, convo.pk)
     assert (last.last_message_preview, last.last_message_direction) == ("Gracias", "INBOUND")
-    inbound(world, "wamid.2", body="Gracias")  # la repetición no cambia nada
+    inbound(world, "wamid.2", body="Otro texto")  # la repetición no cambia nada, ni la vista previa
     assert reload(world, Conversation, convo.pk).last_message_preview == "Gracias"
 
 

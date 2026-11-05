@@ -16,7 +16,11 @@ from uuid import UUID
 
 from django.core.exceptions import ImproperlyConfigured
 from django.core.exceptions import ValidationError as InvalidValue
-from django.db.models import Q
+from django.db.models import F
+from django.db.models.fields.tuple_lookups import (  # type: ignore[import-untyped]
+    Tuple,
+    TupleLessThan,
+)
 from rest_framework import pagination
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
@@ -127,7 +131,15 @@ class RecencyPagination(CursorPagination):
         try:
             parts = json.loads(base64.urlsafe_b64decode(raw.encode("ascii") + b"=="))
             when, pk = dt.datetime.fromisoformat(parts["t"]), UUID(parts["i"])
-        except binascii.Error, KeyError, TypeError, ValueError, UnicodeError:
+        except (
+            AttributeError,
+            RecursionError,
+            binascii.Error,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+        ):
             raise self._bad() from None
         if when.tzinfo is None:
             raise self._bad()
@@ -139,7 +151,9 @@ class RecencyPagination(CursorPagination):
         rows = queryset.order_by(f"-{field}", "-id")
         if after is not None:
             when, pk = after
-            rows = rows.filter(Q(**{f"{field}__lt": when}) | Q(**{field: when, "id__lt": pk}))
+            # Comparación de fila: PostgreSQL la usa como límite del índice (con el `OR` recorre y
+            # descarta todo lo anterior al cursor, página a página cada vez más lento)
+            rows = rows.filter(TupleLessThan(Tuple(F(field), F("id")), (when, pk)))
         found = list(rows[: size + 1])
         page = found[:size]
         self._next = None

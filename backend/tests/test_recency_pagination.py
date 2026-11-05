@@ -60,8 +60,8 @@ def test_the_pages_walk_from_newest_to_oldest_without_repeating_or_skipping_a_ti
     assert page(world, limit=5)[1] is None  # una página exacta no deja cursor
 
 
-def forged(when: str) -> str:
-    token = json.dumps({"t": when, "i": str(uuid4())}).encode()
+def forged(when: str, ident: Any = None) -> str:
+    token = json.dumps({"t": when, "i": str(uuid4()) if ident is None else ident}).encode()
     return base64.urlsafe_b64encode(token).decode().rstrip("=")
 
 
@@ -71,6 +71,8 @@ def forged(when: str) -> str:
         "x", "e30", "eyJ0IjoieCIsImkiOiJ5In0", "ñ",
         forged("2026-01-01T00:00:00"),  # sin zona horaria
         forged("hoy"),
+        forged("2026-01-01T00:00:00+00:00", 5),  # el id no es un texto: 400, no AttributeError
+        forged("2026-01-01T00:00:00+00:00", []),
     ],
 )  # fmt: skip
 def test_a_cursor_that_is_not_ours_is_a_validation_error_on_cursor(
