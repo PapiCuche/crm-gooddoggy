@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import {
   conversationMessagesList,
   conversationsRetrieve,
-  getConversationMessagesListQueryKey,
   getConversationsRetrieveQueryKey,
 } from "@/lib/api/client";
 import type {
@@ -32,6 +31,7 @@ import type {
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { canSend, Composer, messagesKey } from "./composer";
 import { Plain } from "./plain";
 
 const WHEN = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
@@ -46,7 +46,8 @@ const MARKS: Record<string, ReactNode> = {
 // El chat de una conversación (F6-03): los mensajes de `GET …/conversations/{id}/messages/`
 // (F6-02c), de más antiguo a más reciente. La API los da del más nuevo al más antiguo, 50 por
 // página; «Cargar mensajes anteriores» pide la página siguiente y deja la vista donde estaba. Solo
-// lectura: enviar, notas y asignar llegan en otros work items. Se monta con `key` = la conversación.
+// lectura, más el cuadro de redacción (F6-04c, `composer.tsx`); notas y asignar llegan en otros work
+// items. Se monta con `key` = la conversación.
 export function ChatPanel({
   conversation: row,
   headingRef,
@@ -57,7 +58,7 @@ export function ChatPanel({
   onBack: () => void;
 }) {
   const t = useTranslations("inbox");
-  const { organization } = useTenant();
+  const { organization, permissions, user } = useTenant();
   const slug = organization.slug;
   const { failed, retry } = useReads();
   // La fila de la lista es una instantánea: el encabezado se alimenta del detalle (`GET …/{id}/`),
@@ -71,8 +72,9 @@ export function ChatPanel({
   const scroller = useRef<HTMLDivElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
+  const toBottom = useRef(false); // acabo de enviar: el mensaje nuevo se ve
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
-    queryKey: [...getConversationMessagesListQueryKey(slug, conversation.id), "pages"],
+    queryKey: messagesKey(slug, conversation.id),
     queryFn: ({ pageParam, signal }) =>
       conversationMessagesList(
         slug,
@@ -93,7 +95,10 @@ export function ChatPanel({
     const box = scroller.current;
     if (!box || list.isFetchingNextPage) return;
     if (kept.current !== null) box.scrollTop = box.scrollHeight - kept.current;
-    else if (!placed.current && rows.length > 0) box.scrollTop = box.scrollHeight;
+    else if (toBottom.current || (!placed.current && rows.length > 0)) {
+      box.scrollTop = box.scrollHeight;
+    }
+    toBottom.current = false;
     placed.current = placed.current || rows.length > 0;
     kept.current = null;
   }, [rows.length, list.isFetchingNextPage]);
@@ -128,7 +133,7 @@ export function ChatPanel({
   }
 
   return (
-    <div className="border-border bg-surface flex h-[calc(100dvh-14rem)] min-h-80 flex-col rounded-lg border lg:h-[calc(100dvh-18rem)]">
+    <div className="border-border bg-surface flex h-[calc(100dvh-14rem)] min-h-[26rem] flex-col rounded-lg border lg:h-[calc(100dvh-18rem)]">
       <header className="border-border flex flex-col gap-2 border-b p-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -212,6 +217,11 @@ export function ChatPanel({
         ) : null}
         {body}
       </div>
+      {canSend(permissions, conversation, user.id) ? (
+        <Composer conversation={conversation} onQueued={() => (toBottom.current = true)} />
+      ) : (
+        <p className="border-border text-muted border-t p-3 text-sm">{t("composer.cannot")}</p>
+      )}
     </div>
   );
 }
