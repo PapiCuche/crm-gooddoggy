@@ -14,14 +14,15 @@ from celery.app.task import Task
 from apps.conversations import tasks as inbox_tasks
 from config.celery import app
 from core.outbox.publisher import publish_outbox
-from core.tenancy.celery import TenantTask, tenant_task
+from core.tenancy.celery import TenantTask, _tenant_signature, tenant_task
 from core.tenancy.context import TenantContextError
 from tests.tenancy_app import tasks
 from tests.test_conversations_dispatch import backdate, queue, state, world, writer
 
 __all__ = ["world", "writer"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
-TENANT = {"organization_id", "actor_type", "actor_id", "correlation_id"}
+TENANT_ORDER = ["organization_id", "actor_type", "actor_id", "correlation_id"]
+TENANT = set(TENANT_ORDER)
 
 
 @pytest.fixture
@@ -49,6 +50,33 @@ def test_every_tenant_task_header_takes_the_tenant_arguments() -> None:
     assert {"tenancy_app.outbox_probe", "tenancy_app.bound_probe"} <= found  # con y sin `bind`
     for task in tenant_tasks():
         assert TENANT <= set(inspect.signature(task.__header__).parameters), task.name
+
+
+def test_the_organization_is_a_required_keyword_in_every_header() -> None:
+    """Lo que Celery valida no puede aflojar la garantía de `TenantTask`: sin `organization_id`
+    (o como posicional) la validación misma ya rechaza."""
+    for task in tenant_tasks():
+        org = inspect.signature(task.__header__).parameters["organization_id"]
+        assert org.kind is inspect.Parameter.KEYWORD_ONLY, task.name
+        assert org.default is inspect.Parameter.empty, task.name
+
+
+def test_the_signature_keeps_the_function_arguments_whatever_their_shape() -> None:
+    def odd(a: int, /, b: int = 1, *rest: int, c: int, **extra: int) -> None: ...
+
+    names = list(_tenant_signature(odd).parameters)
+    assert names == ["a", "b", "rest", "c", *TENANT_ORDER, "extra"]
+
+
+@pytest.mark.parametrize("name", sorted(TENANT))
+def test_each_tenant_argument_name_is_reserved(name: str) -> None:
+    def clash(**fields: Any) -> None: ...
+
+    clash.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY)]
+    )
+    with pytest.raises(TypeError, match=name):
+        _tenant_signature(clash)
 
 
 @pytest.mark.parametrize(
