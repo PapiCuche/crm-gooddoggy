@@ -19,9 +19,9 @@ class ChannelUnavailable(Exception):
     """El canal de la conversación no está conectado (`DISCONNECTED`, `ERROR` o `PENDING`)."""
 
 
-def check_send(conversation_status: str, account_status: str) -> None:
+def check_send(conversation_status: str, account_status: str, *, deleted: bool = False) -> None:
     """Lanza `ConversationClosed` o `ChannelUnavailable` si no se puede responder ahora."""
     if conversation_status == Status.CLOSED:
         raise ConversationClosed
-    if account_status in UNAVAILABLE:
+    if deleted or account_status in UNAVAILABLE:  # una cuenta borrada ya no recibe envíos
         raise ChannelUnavailable

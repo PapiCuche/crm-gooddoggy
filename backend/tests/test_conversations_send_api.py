@@ -189,6 +189,30 @@ def test_a_closed_conversation_or_an_unconnected_channel_blocks_the_send_with_a_
     assert post(ana, convo, client_message_id=key).status_code == 200  # lo ya guardado se devuelve
 
 
+def test_a_conversation_the_sender_can_read_but_not_write_is_an_unknown_one(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    """`conversations.view` abarca más que `messages.send` (`OWN`): el comando lo rechaza bajo el
+    bloqueo y la ruta lo cuenta como desconocido, no como un 500."""
+    reader = make_user(email="lee@example.com")
+    grants: dict[str, str | None] = {"conversations.view": "ORGANIZATION", "messages.send": "OWN"}
+    give(inbox.a, join(inbox.a, reader).pk, grants)
+    client, theirs = signed(reader), inbox.convs["sam"]
+    assert client.get(f"{BASE}{theirs}/").status_code == 200  # la ve
+    assert reply(post(client, theirs)) == reply(post(client, uuid4())) == NOT_FOUND
+    assert counts(migrator) == (0, 0, 0)
+
+
+def test_a_deleted_channel_account_takes_no_replies(inbox: SimpleNamespace) -> None:
+    convo = inbox.convs["nobody"]
+    with tenant_scope(ctx(inbox.a)):
+        ChannelAccount.objects.filter(pk=account_of(inbox.a, convo).pk).update(
+            deleted_at=timezone.now()
+        )
+    refused = post(signed(inbox.ana), convo)
+    assert (refused.status_code, refused.json()["code"]) == (409, "CHANNEL_UNAVAILABLE")
+
+
 def test_a_resolved_conversation_and_a_degraded_channel_still_take_replies(
     inbox: SimpleNamespace,
 ) -> None:

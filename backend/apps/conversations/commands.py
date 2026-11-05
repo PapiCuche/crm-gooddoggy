@@ -398,7 +398,7 @@ def record_outbound(
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
             account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
-            check_send(convo.status, account.status)
+            check_send(convo.status, account.status, deleted=account.deleted_at is not None)
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED"
         )
