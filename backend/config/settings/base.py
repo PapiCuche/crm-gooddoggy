@@ -111,6 +111,8 @@ TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  
 CELERY_BROKER_URL = env.optional("CELERY_BROKER_URL", "")
 # F6-04b: minutos que un mensaje saliente puede seguir en cola antes de que el barredor lo recoja.
 INBOX_SWEEP_AFTER_MINUTES = env.integer("INBOX_SWEEP_AFTER_MINUTES", 5)
+# ...y a partir de cuántos el barredor lo da por fallido (un tope a los reintentos sin fin).
+INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
 # Outbox (F1-06): el publisher corre cada segundo en beat.
 CELERY_BEAT_SCHEDULE = {
     "core.publish_outbox": {"task": "core.publish_outbox", "schedule": 1.0},

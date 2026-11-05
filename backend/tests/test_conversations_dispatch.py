@@ -321,6 +321,26 @@ def test_the_sweeper_requeues_only_the_old_queued_messages_with_their_own_organi
     assert tasks.sweep_queued(batch_size=1) == 2  # un lote de 1 por organización
 
 
+def test_an_unexpected_adapter_error_is_retried_only_until_the_sweeper_gives_up(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stuck, recent = queue(world), queue(world)
+    monkeypatch.setitem(channels.ADAPTERS, "SANDBOX", Counting(boom=RuntimeError("raro")))
+    run_it = tasks.dispatch_message.apply(
+        kwargs={"message_id": str(stuck.pk), "organization_id": str(world.a)}
+    )
+    assert run_it.failed() and state(world, stuck).delivery_status == "QUEUED"  # no escribe nada
+    backdate(migrator, stuck, 600)  # lleva más de INBOX_GIVE_UP_AFTER_MINUTES en cola
+    backdate(migrator, recent, 30)
+    sent: list[dict[str, str]] = []
+    monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: sent.append(kwargs))
+    assert tasks.sweep_queued() == 1 and [k["message_id"] for k in sent] == [str(recent.pk)]
+    assert state(world, stuck).delivery_status == "FAILED"  # ya no se reintenta
+    reasons = [m for _, c, m in audit(migrator) if c.get("delivery_status") == ["QUEUED", "FAILED"]]
+    assert reasons == [{"reason": "RETRIES_EXHAUSTED"}] and SECRET not in str(audit(migrator))
+    assert tasks.sweep_queued() == 1 and len(sent) == 2  # solo la reciente, otra vez
+
+
 def test_the_sweeper_lists_organizations_through_a_function_that_only_returns_ids(
     world: SimpleNamespace, migrator: DB
 ) -> None:
@@ -347,7 +367,8 @@ def test_the_partial_index_and_the_schedule_exist(migrator: DB) -> None:
     assert index is not None and "(organization_id, id)" in index[0]
     assert "delivery_status" in index[0] and "QUEUED" in index[0]  # parcial
     assert settings.CELERY_BEAT_SCHEDULE["conversations.sweep_queued"]["schedule"] == 60.0
-    assert settings.INBOX_SWEEP_AFTER_MINUTES == 5 and tasks.sweep_queued.tenancy == "platform"
+    assert settings.INBOX_SWEEP_AFTER_MINUTES == 5 and settings.INBOX_GIVE_UP_AFTER_MINUTES == 120
+    assert tasks.sweep_queued.tenancy == "platform"
 
 
 def test_a_failure_reason_only_goes_with_failed_and_comes_from_the_short_list(

@@ -71,16 +71,26 @@ def queued_organizations(before: dt.datetime, limit: int) -> list[UUID]:
 def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
     """Vuelve a encolar los mensajes `QUEUED` de hace más de `INBOX_SWEEP_AFTER_MINUTES`: los
     eventos anteriores a F6-04b se marcaron publicados sin suscriptores, y un handler puede caer
-    tras publicar. Descubre las organizaciones con una función SECURITY DEFINER (solo ids) y lee
-    los mensajes en el scope de cada una."""
-    before = timezone.now() - dt.timedelta(minutes=settings.INBOX_SWEEP_AFTER_MINUTES)
+    tras publicar. Con más de `INBOX_GIVE_UP_AFTER_MINUTES` de antigüedad deja de reintentar y
+    el mensaje queda `FAILED` (`RETRIES_EXHAUSTED`): un error inesperado del adaptador no puede
+    reintentarse sin fin (sin columna de intentos, la edad es el tope). Descubre las
+    organizaciones con una función SECURITY DEFINER (solo ids) y lee los mensajes en el scope de
+    cada una."""
+    now = timezone.now()
+    before = now - dt.timedelta(minutes=settings.INBOX_SWEEP_AFTER_MINUTES)
+    give_up = now - dt.timedelta(minutes=settings.INBOX_GIVE_UP_AFTER_MINUTES)
     requeued = 0
     for organization_id in queued_organizations(before, max_orgs):
-        with tenant_scope(TenantContext(organization_id, "celery")):
+        tenant = TenantContext(organization_id, "celery")
+        with tenant_scope(tenant):
             found = Message.objects.filter(
                 direction="OUTBOUND", delivery_status="QUEUED", created_at__lt=before
             ).order_by("id")
-            ids = list(found.values_list("pk", flat=True)[:batch_size])
+            fresh = found.filter(created_at__gte=give_up).values_list("pk", flat=True)
+            ids = list(fresh[:batch_size])
+            stale = found.filter(created_at__lt=give_up).values_list("pk", flat=True)
+            for message_id in list(stale[:batch_size]):  # sin más reintentos
+                commands.fail_queued(tenant, message_id=message_id, reason="RETRIES_EXHAUSTED")
         for message_id in ids:
             dispatch_message.apply_async(
                 kwargs={"message_id": str(message_id), "organization_id": str(organization_id)}
