@@ -266,7 +266,8 @@ HOSTILE = [
     *[({"contact_id": v}, ["contact_id"]) for v in (None, 5, "x")],
     *[({"external_message_id": v}, ["external_message_id"]) for v in (None, 5, "", "a\nb")],
     ({"external_message_id": "a" * 201}, ["external_message_id"]),
-    *[({"text": v}, ["text"]) for v in (None, 5, "", "   ", "x\x00y", "a" * 4097, ["x"])],
+    *[({"text": v}, ["text"]) for v in (None, 5, "", "   ", "x\x00y", "x\x07y", "a" * 4097, ["x"])],
+    *[({"text": v}, ["text"]) for v in ("\u200b\u200b", "\u200b \u2060", "\ud800", "x\u202ey")],
 ]  # fmt: skip
 
 
@@ -278,8 +279,11 @@ def test_a_hostile_simulation_is_a_400_on_its_own_field_and_writes_nothing(
         who = Contact.objects.create(display_name="x").pk
     sent = {**simulated(who), **change} if change else {}
     response = post(signed(inbox.ana), sent)
-    assert response.status_code == 400 and response.json()["code"] == "VALIDATION_ERROR"
-    assert sorted(response.json()["fields"]) == sorted(named), response.content
+    # el JSON con un sustituto suelto ya lo rechaza el analizador, antes del serializador
+    code = "PARSE_ERROR" if "\ud800" == change.get("text") else "VALIDATION_ERROR"
+    assert response.status_code == 400 and response.json()["code"] == code, response.content
+    if code == "VALIDATION_ERROR":
+        assert sorted(response.json()["fields"]) == sorted(named), response.content
     with tenant_scope(ctx(inbox.a)):
         assert (
             Message.objects.count() == 0
