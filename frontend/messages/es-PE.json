@@ -2147,7 +2147,8 @@
       "loading": "Cargando mensajes…",
       "empty": "Todavía no hay mensajes en esta conversación.",
       "older": "Cargar mensajes anteriores",
-      "refresh": "Actualizar mensajes"
+      "refresh": "Actualizar mensajes",
+      "scroll": "Mensajes de la conversación"
     }
   }
 }

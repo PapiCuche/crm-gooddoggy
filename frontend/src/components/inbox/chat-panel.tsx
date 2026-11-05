@@ -182,7 +182,14 @@ export function ChatPanel({
           </Link>
         )}
       </header>
-      <div ref={scroller} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+      {/* Una región que se desplaza debe poder enfocarse para recorrerla con el teclado. */}
+      <div
+        ref={scroller}
+        role="region"
+        tabIndex={0}
+        aria-label={t("chat.scroll")}
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+      >
         {list.hasNextPage ? (
           <Button
             variant="ghost"

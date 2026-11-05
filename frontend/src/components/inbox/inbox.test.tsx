@@ -191,7 +191,7 @@ describe("Inbox, chat (F6-03)", () => {
           message_type: "NOTE",
           body: "Pide DNI",
         }),
-        message("m1", { body: "Hola" }),
+        message("m1", { body: "Hola", delivery_status: "DELIVERED" }),
         message("m0", {
           direction: "OUTBOUND",
           sender_type: "USER",
@@ -206,6 +206,10 @@ describe("Inbox, chat (F6-03)", () => {
     // el título de la página sigue en el árbol de accesibilidad aunque se vea solo el chat
     expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toHaveClass("max-lg:sr-only");
     const log = await screen.findByRole("list", { name: "Mensajes" });
+    // la región que se desplaza se recorre con el teclado
+    const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
+    expect(scroller).toHaveAttribute("tabindex", "0");
+    expect(scroller).toContainElement(log);
     const items = within(log).getAllByRole("listitem");
     expect(items.map((li) => li.querySelector("bdi")?.textContent)).toEqual([
       "Falló",
@@ -259,7 +263,9 @@ describe("Inbox, chat (F6-03)", () => {
     });
     show();
     await open(/Rosa Díaz/);
-    expect(await screen.findByText("Resuelta")).toBeVisible(); // la lista decía «Abierta»
+    const chat = within(screen.getByRole("region", { name: "Conversación" }));
+    expect(await chat.findByText("Resuelta")).toBeVisible(); // la lista decía «Abierta»
+    expect(chat.queryByText("Abierta")).toBeNull();
   });
 
   it("si el detalle falla, el chat sigue con la fila y lo avisa", async () => {
@@ -288,6 +294,26 @@ describe("Inbox, chat (F6-03)", () => {
     expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
   });
 
+  it("al cambiar de conversación nunca se ven los mensajes de la anterior", async () => {
+    const luis = conversation("2", { contact: { id: "c2", display_name: "Luis Ramos" } });
+    serve({
+      [LIST]: page([rosa, luis]),
+      [MESSAGES("1")]: page([message("m1", { body: "de Rosa" })]),
+      [MESSAGES("2")]: page([message("m2", { body: "de Luis" })]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    await screen.findByText("de Rosa");
+    fireEvent.click(screen.getByRole("button", { name: /Luis Ramos/ }));
+    expect(screen.queryByText("de Rosa")).toBeNull(); // ni un instante, ni de la caché
+    expect(await screen.findByText("de Luis")).toBeVisible();
+    expect(screen.queryByText("de Rosa")).toBeNull();
+    expect(screen.getByRole("link", { name: "Ver ficha del cliente" })).toHaveAttribute(
+      "href",
+      "/o/acme/clientes/c2",
+    );
+  });
+
   it("el texto hostil se pinta como texto, aislado y sin ejecutarse", async () => {
     const hostile = "‮gnp.exe <img src=x onerror=alert(1)> <b>negrita</b>​\nlínea 2";
     const evil = conversation("6", {
@@ -308,7 +334,13 @@ describe("Inbox, chat (F6-03)", () => {
       expect(bdi).toHaveAttribute("dir", "auto");
       expect(bdi).toHaveClass("whitespace-pre-wrap", "wrap-anywhere");
     }
-    await open(/script/);
+    const heading = await open(/script/);
+    expect(heading.querySelector("bdi")).toHaveAttribute("dir", "auto");
+    const header = screen.getByRole("region", { name: "Conversación" }).querySelector("header");
+    expect(Array.from(header!.querySelectorAll("bdi")).map((b) => b.textContent)).toEqual([
+      "<script>x</script>\u202E",
+      "Sandbox",
+    ]);
     const body = await screen.findByRole("list", { name: "Mensajes" });
     const bdi = body.querySelector("bdi")!;
     expect(bdi.textContent).toBe(hostile); // tal cual, sin interpretar
