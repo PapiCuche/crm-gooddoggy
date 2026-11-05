@@ -109,9 +109,15 @@ TENANCY_ORGANIZATION_SELECTOR = "apps.organizations.selectors.organization_by_sl
 TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  # F2-02
 # Celery (F1-10): broker Redis por entorno (compose: redis://redis:6379/0).
 CELERY_BROKER_URL = env.optional("CELERY_BROKER_URL", "")
+# F6-04b: minutos que un mensaje saliente puede seguir en cola antes de que el barredor lo recoja.
+INBOX_SWEEP_AFTER_MINUTES = env.integer("INBOX_SWEEP_AFTER_MINUTES", 5)
+# ...y a partir de cuántos el barredor lo da por fallido (un tope a los reintentos sin fin).
+INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
 # Outbox (F1-06): el publisher corre cada segundo en beat.
 CELERY_BEAT_SCHEDULE = {
     "core.publish_outbox": {"task": "core.publish_outbox", "schedule": 1.0},
+    # F6-04b: cada minuto vuelve a encolar los mensajes del Inbox que llevan demasiado en cola.
+    "conversations.sweep_queued": {"task": "conversations.sweep_queued", "schedule": 60.0},
     # D-F2-2: una vez al día, a hora fija (UTC). Un intervalo de 24 horas se cuenta desde que
     # beat arranca: si el contenedor se recrea a diario, la purga no se ejecutaría nunca.
     "accounts.purge_expired_sessions": {
