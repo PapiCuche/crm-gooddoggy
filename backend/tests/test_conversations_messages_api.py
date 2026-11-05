@@ -1,4 +1,4 @@
-"""F6-02b: `…/conversations/{id}/messages/` y el simulador `…/channels/sandbox/inbound/`.
+"""F6-02c: `…/conversations/{id}/messages/` y el simulador `…/channels/sandbox/inbound/`.
 Middleware, sesión, motor de autorización y PostgreSQL con el rol `crm_app`."""
 
 from types import SimpleNamespace
@@ -11,6 +11,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.contacts.models import Contact
+from apps.conversations.api.messages import MessageSerializer
 from apps.conversations.models import Conversation, Message
 from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
@@ -66,6 +67,15 @@ def test_messages_come_newest_first_in_pages_of_fifty_and_the_same_404_applies(
     assert reply(Client().get(f"{BASE}{convo}/messages/")) == UNAUTHENTICATED
     assert reply(sam.get(f"{BASE}{inbox.convs['ana']}/messages/")) == missing
     assert reply(sam.get(f"{BASE}{convo}/messages/")) == missing  # `TEAM` no alcanza lo de vera
+
+
+def test_a_message_serialized_without_the_view_context_hides_its_text(
+    inbox: SimpleNamespace,
+) -> None:
+    sent = say(inbox.a, inbox.convs["vera"], "secreto")
+    with tenant_scope(ctx(inbox.a, inbox.ana)):
+        assert MessageSerializer(sent).data["body"] is None  # sin contexto, cerrado
+        assert MessageSerializer(sent, context={"show_body": True}).data["body"] == "secreto"
 
 
 SEES: dict[str, str | None] = {"contacts.view": "ORGANIZATION"}  # sin él el texto no sale (D-F6-10)
