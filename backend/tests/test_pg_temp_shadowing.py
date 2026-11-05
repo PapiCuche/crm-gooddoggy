@@ -22,7 +22,16 @@ FUNCTIONS = (
     "public.promotions_born_draft()",
     "public.promotion_children_guard()",
     "public.variant_costs_immutable()",
+    "public.messages_delivery_advance()",  # F6-01b
 )
+
+
+def test_the_delivery_trigger_is_not_security_definer(migrator: psycopg.Connection[Any]) -> None:
+    row = migrator.execute(
+        "SELECT prosecdef FROM pg_proc"
+        " WHERE oid = 'public.messages_delivery_advance()'::regprocedure"
+    ).fetchone()
+    assert row == (False,)  # corre con los privilegios de quien actualiza
 
 
 @pytest.mark.parametrize("function", FUNCTIONS)
