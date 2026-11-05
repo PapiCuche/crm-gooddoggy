@@ -2044,6 +2044,149 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/:
+    get:
+      operationId: conversations_list
+      description: 'Las conversaciones dentro del alcance de `conversations.view`,
+        la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos
+        valores). `box` y `status` se combinan y la página siguiente se pide con los
+        mismos. 400: un filtro repetido o no válido.'
+      parameters:
+      - in: query
+        name: box
+        schema:
+          enum:
+          - all
+          - mine
+          - unassigned
+          type: string
+          minLength: 1
+        description: |-
+          `all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.
+
+          * `all` - all
+          * `mine` - mine
+          * `unassigned` - unassigned
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: status
+        schema:
+          enum:
+          - OPEN
+          - PENDING
+          - WAITING_CUSTOMER
+          - WAITING_INTERNAL
+          - RESOLVED
+          - CLOSED
+          type: string
+          minLength: 1
+        description: |-
+          * `OPEN` - Open
+          * `PENDING` - Pending
+          * `WAITING_CUSTOMER` - Waiting Customer
+          * `WAITING_INTERNAL` - Waiting Internal
+          * `RESOLVED` - Resolved
+          * `CLOSED` - Closed
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedConversationList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/:
+    get:
+      operationId: conversations_retrieve
+      description: 'Una conversación. 404: no es de la organización o queda fuera
+        del alcance de `conversations.view`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/imports/:
     post:
       operationId: inventory_imports_create
@@ -7347,6 +7490,20 @@ components:
           description: Dentro de qué categoría; sin él, en la raíz.
       required:
       - name
+    ChannelRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: '#/components/schemas/PlatformEnum'
+        name:
+          type: string
+      required:
+      - id
+      - name
+      - platform
     ConditionEnum:
       enum:
       - NEW
@@ -7553,6 +7710,187 @@ components:
       - id
       - is_active
       - name
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          description: '`CONV-00191`: único en la organización.'
+        status:
+          $ref: '#/components/schemas/ConversationStatusEnum'
+        attention_mode:
+          type: string
+        assignee_kind:
+          type: string
+          description: '`USER`, `TEAM` o `UNASSIGNED`.'
+        assigned_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        assigned_team_id:
+          type: string
+          format: uuid
+          nullable: true
+        contact:
+          $ref: '#/components/schemas/ConversationContact'
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        last_message_at:
+          type: string
+          format: date-time
+        last_inbound_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_message_preview:
+          type: string
+          nullable: true
+          description: El comienzo del último mensaje (nunca de una nota interna);
+            `null` si no hay o quien consulta no puede ver el contacto (`contacts.view`),
+            igual que su nombre.
+        last_message_direction:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/LastMessageDirectionEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        version:
+          type: integer
+      required:
+      - assigned_team_id
+      - assigned_user_id
+      - assignee_kind
+      - attention_mode
+      - channel
+      - contact
+      - id
+      - last_inbound_at
+      - last_message_at
+      - last_message_direction
+      - last_message_preview
+      - number
+      - status
+      - version
+    ConversationContact:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          nullable: true
+          description: '`null` si quien consulta no puede ver ese contacto (`contacts.view`).'
+      required:
+      - display_name
+      - id
+    ConversationDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          description: '`CONV-00191`: único en la organización.'
+        status:
+          $ref: '#/components/schemas/ConversationStatusEnum'
+        attention_mode:
+          type: string
+        assignee_kind:
+          type: string
+          description: '`USER`, `TEAM` o `UNASSIGNED`.'
+        assigned_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        assigned_team_id:
+          type: string
+          format: uuid
+          nullable: true
+        contact:
+          $ref: '#/components/schemas/ConversationContact'
+        channel:
+          $ref: '#/components/schemas/ChannelRef'
+        last_message_at:
+          type: string
+          format: date-time
+        last_inbound_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_message_preview:
+          type: string
+          nullable: true
+          description: El comienzo del último mensaje (nunca de una nota interna);
+            `null` si no hay o quien consulta no puede ver el contacto (`contacts.view`),
+            igual que su nombre.
+        last_message_direction:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/LastMessageDirectionEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        version:
+          type: integer
+        assigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        assignment_version:
+          type: integer
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - assigned_at
+      - assigned_team_id
+      - assigned_user_id
+      - assignee_kind
+      - assignment_version
+      - attention_mode
+      - channel
+      - closed_at
+      - contact
+      - created_at
+      - id
+      - last_inbound_at
+      - last_message_at
+      - last_message_direction
+      - last_message_preview
+      - number
+      - resolved_at
+      - status
+      - updated_at
+      - version
+    ConversationStatusEnum:
+      enum:
+      - OPEN
+      - PENDING
+      - WAITING_CUSTOMER
+      - WAITING_INTERNAL
+      - RESOLVED
+      - CLOSED
+      type: string
+      description: |-
+        * `OPEN` - Open
+        * `PENDING` - Pending
+        * `WAITING_CUSTOMER` - Waiting Customer
+        * `WAITING_INTERNAL` - Waiting Internal
+        * `RESOLVED` - Resolved
+        * `CLOSED` - Closed
     Cost:
       type: object
       properties:
@@ -7908,6 +8246,14 @@ components:
       required:
       - quantity
       - variant_id
+    LastMessageDirectionEnum:
+      enum:
+      - INBOUND
+      - OUTBOUND
+      type: string
+      description: |-
+        * `INBOUND` - INBOUND
+        * `OUTBOUND` - OUTBOUND
     Level:
       type: object
       properties:
@@ -9087,6 +9433,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedConversationList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedInvitationList:
       type: object
       required:
@@ -9908,6 +10268,11 @@ components:
         * `WHOLESALE` - Wholesale
         * `TECH_SERVICE` - Tech Service
         * `OTHER` - Other
+    PlatformEnum:
+      enum:
+      - SANDBOX
+      type: string
+      description: '* `SANDBOX` - Sandbox'
     Price:
       type: object
       properties:
