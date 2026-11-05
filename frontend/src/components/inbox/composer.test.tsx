@@ -19,7 +19,8 @@ const tenant: SelfContext = {
   roles: [],
   permissions: [],
 };
-const grants = (...codes: string[]): Grant[] => codes.map((code) => ({ code, scopes: [] }));
+const grants = (...codes: string[]): Grant[] =>
+  codes.map((code) => ({ code, scopes: ["ORGANIZATION" as const] }));
 const page = (results: unknown[]) => ({ status: 200, body: { results, next: null } });
 const rosa = {
   ...{ id: "1", number: "CONV-00001", status: "OPEN", attention_mode: "HUMAN" },
@@ -106,6 +107,12 @@ describe("cuadro de redacción (F6-04c)", () => {
     expect(await screen.findByText(/No tienes permiso para responder/)).toBeVisible();
     expect(screen.queryByRole("textbox")).toBeNull();
     cleanup();
+    // Sin alcance concedido (lista vacía) falla cerrado, como la API, aunque la conversación sea mía.
+    server({ conversation: { assigned_user_id: "u1" } });
+    show([{ code: "messages.send", scopes: [] }, ...grants("conversations.view")]);
+    await openChat();
+    expect(await screen.findByText(/No tienes permiso para responder/)).toBeVisible();
+    cleanup();
     const own = [
       { code: "messages.send", scopes: ["OWN" as const] },
       ...grants("conversations.view"),
@@ -125,7 +132,7 @@ describe("cuadro de redacción (F6-04c)", () => {
     show([{ code: "messages.send", scopes: ["TEAM"] }, ...grants("conversations.view")]);
     await openChat();
     expect(await box()).toBeVisible();
-  });
+  }, 15_000);
 
   it("envía con un id nuevo, muestra «En cola» al instante, limpia, enfoca y refresca", async () => {
     const hostile = "<b>hola</b> ‮abc";
@@ -219,12 +226,60 @@ describe("cuadro de redacción (F6-04c)", () => {
     expect(renewed).not.toBe(again); // tras CLIENT_MESSAGE_ID_TAKEN
   });
 
+  it("un 403 se explica como el 404 y un segundo envío mientras el primero espera no sale", async () => {
+    const s = server({ send: () => ({ status: 403, body: { code: "PERMISSION_DENIED" } }) });
+    show();
+    await openChat();
+    s.wait();
+    await type("Hola");
+    fireEvent.click(sendButton());
+    fireEvent.click(await screen.findByRole("button", { name: "Enviando…" })); // doble clic
+    const said = screen.getAllByRole("status").map((one) => one.textContent);
+    expect(said).toContain("Enviando…"); // se anuncia, no solo cambia el botón
+    fireEvent.keyDown(await box(), { key: "Enter" });
+    s.go();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No puedes responder en esta conversación",
+    );
+    expect(await box()).toHaveValue("Hola");
+    expect(s.posts()).toHaveLength(1);
+  });
+
+  it("tras enviar se vuelve a pedir la lista de mensajes (el estado de entrega avanza)", async () => {
+    const s = server();
+    show();
+    await openChat();
+    const reads = () =>
+      s.api.mock.calls.filter(
+        ([url, init]) => String(url).endsWith("/1/messages/") && init?.method !== "POST",
+      ).length;
+    const before = reads();
+    await type("Hola");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+  });
+
+  it("Enter durante una composición (IME, también keyCode 229 de Safari) no envía", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("你好");
+    fireEvent.keyDown(await box(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(await box(), { key: "Enter", keyCode: 229 });
+    await settle();
+    expect(s.posts()).toEqual([]);
+    fireEvent.keyDown(await box(), { key: "Enter" });
+    await waitFor(() => expect(s.posts()).toHaveLength(1));
+  });
+
   it("una conversación cerrada no admite respuestas y lo dice con el texto del servidor", async () => {
     const s = server({ conversation: { status: "CLOSED" } });
     show();
     await openChat();
     expect(await box()).toBeDisabled();
     expect(screen.getByText(/La conversación está cerrada. Podrás responder/)).toBeVisible();
+    const closed = screen.getByText(/La conversación está cerrada. Podrás responder/);
+    expect(await box()).toHaveAttribute("aria-describedby", expect.stringContaining(closed.id));
     expect(sendButton()).toBeDisabled();
     await type("Hola");
     fireEvent.keyDown(await box(), { key: "Enter" });

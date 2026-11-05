@@ -31,14 +31,16 @@ type Pages = InfiniteData<PaginatedMessageList, string>;
 export const messagesKey = (slug: string, id: string) =>
   [...getConversationMessagesListQueryKey(slug, id), "pages"] as const;
 
-// ¿Se ofrece el cuadro? Es comodidad, no seguridad: la API decide en cada envío. Con alcance solo
-// `OWN` basta con que la conversación sea de quien escribe; con equipo o sucursal no se sabe desde
-// aquí y se ofrece (si la API responde 404, se explica).
+// ¿Se ofrece el cuadro? Es comodidad, no seguridad: la API decide en cada envío. Sin alcance
+// concedido no se ofrece (como ella, que sin alcance no deja nada); con alcance solo `OWN` basta con
+// que la conversación sea de quien escribe; con equipo o sucursal no se sabe desde aquí y se
+// ofrece (si la API responde 404, se explica).
 export function canSend(grants: readonly Grant[], conversation: Conversation, userId: string) {
   const grant = grants.find(({ code }) => code === "messages.send");
   if (!grant) return false;
   const { scopes } = grant;
-  if (scopes.length === 0 || scopes.some((scope) => scope !== "OWN")) return true;
+  if (scopes.length === 0) return false;
+  if (scopes.some((scope) => scope !== "OWN")) return true;
   return conversation.assigned_user_id === userId;
 }
 
@@ -139,8 +141,10 @@ export function Composer({
     send.mutate({ client_message_id: attempt.current.id, body: text });
   };
   const keys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter envía; Mayús+Enter agrega una línea. Durante una composición (IME) Enter es del IME.
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    // Enter envía; Mayús+Enter agrega una línea. Durante una composición (IME) Enter es del IME;
+    // Safari lo entrega ya sin `isComposing`, pero con `keyCode` 229.
+    const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+    if (event.key !== "Enter" || event.shiftKey || composing) return;
     event.preventDefault();
     submit();
   };
@@ -169,7 +173,7 @@ export function Composer({
         value={text}
         disabled={closed}
         readOnly={send.isPending}
-        aria-describedby={`${field}-count ${field}-hint`}
+        aria-describedby={`${field}-count ${field}-hint${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
         className="bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger max-h-40 min-h-16 w-full min-w-0 resize-none rounded-[10px] border p-3 text-[16px] wrap-anywhere disabled:opacity-60"
         onChange={(event) => {
@@ -178,6 +182,9 @@ export function Composer({
         }}
         onKeyDown={keys}
       />
+      <p role="status" className="sr-only">
+        {send.isPending ? t("sending") : ""}
+      </p>
       {problem ? (
         <p role="alert" className="text-danger text-sm">
           {problem}
