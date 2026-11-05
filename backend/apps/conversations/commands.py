@@ -19,6 +19,7 @@ retrocede el mensaje y no es un error (ADR-010, §E.6).
 
 import datetime as dt
 import unicodedata
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from apps.access.selectors import (
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
+from apps.conversations.channels import REASONS, ChannelAdapter, UnknownPlatform, adapter_for
 from apps.conversations.models import (
     BODY_MAX,
     PREVIEW_MAX,
@@ -46,7 +48,7 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
-from apps.conversations.policy import check_send
+from apps.conversations.policy import ChannelUnavailable, ConversationClosed, check_send
 from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
@@ -462,18 +464,26 @@ def _advances(old: str | None, new: str) -> bool:
 
 
 def advance_delivery(
-    ctx: TenantContext, *, message_id: UUID, status: str, at: dt.datetime | None = None
+    ctx: TenantContext,
+    *,
+    message_id: UUID,
+    status: str,
+    at: dt.datetime | None = None,
+    reason: str | None = None,
 ) -> Message:
     """Hace avanzar el estado de entrega de un mensaje saliente y fija su marca de tiempo (`at`, o
     ahora). Un estado que no es un paso adelante (repetido, tardío o tras `FAILED`) se ignora: ni
-    error ni cambio ni auditoría. Audita `message.delivery_changed`. `ValueError` si el estado no
-    existe o el mensaje no es saliente; `DoesNotExist`."""
+    error ni cambio ni auditoría. Audita `message.delivery_changed`, con el `reason` (un motivo
+    corto de `channels.REASONS`, solo con `FAILED`) en los metadatos. `ValueError` si el estado no
+    existe, el motivo no vale o el mensaje no es saliente; `DoesNotExist`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     if not isinstance(status, str) or status not in Delivery.values:
         raise ValueError("estado de entrega: uno de " + ", ".join(Delivery.values))
     if at is not None and (not isinstance(at, dt.datetime) or at.utcoffset() is None):
         raise ValueError("fecha: con zona horaria")
+    if reason is not None and (status != Delivery.FAILED or reason not in REASONS):
+        raise ValueError("motivo: uno de " + ", ".join(REASONS) + ", solo con FAILED")
     with transaction.atomic(using=alias):
         found = Message.objects.using(alias).select_for_update(no_key=True)
         message: Message = found.get(pk=message_id)
@@ -493,5 +503,76 @@ def advance_delivery(
         message.refresh_from_db(using=alias)
         if moved:
             changes = {"delivery_status": [old, status]}
-            record(ctx, "message.delivery_changed", Entity("message", message.pk), changes)
+            why = None if reason is None else {"reason": reason}
+            record(ctx, "message.delivery_changed", Entity("message", message.pk), changes, why)
         return message
+
+
+def fail_queued(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message | None:
+    """Deja `FAILED` un mensaje que sigue `QUEUED` (los reintentos del despachador se agotaron).
+    Uno que ya salió, o que no existe, no se toca: devuelve `None`."""
+    alias = require_scope(ctx)
+    message_id = _uuid(message_id, "mensaje")
+    with transaction.atomic(using=alias):
+        queued = Message.objects.using(alias).select_for_update(no_key=True)
+        if not queued.filter(pk=message_id, delivery_status="QUEUED").exists():
+            return None
+        return advance_delivery(ctx, message_id=message_id, status=Delivery.FAILED, reason=reason)
+
+
+def _blocked(convo: Conversation, account: ChannelAccount) -> str | None:
+    """Por qué ya no se puede enviar (un motivo de `channels.REASONS`), o `None`."""
+    try:
+        check_send(convo.status, account.status, deleted=account.deleted_at is not None)
+    except ConversationClosed:
+        return "CONVERSATION_CLOSED"
+    except ChannelUnavailable:
+        return "CHANNEL_UNAVAILABLE"
+    return None
+
+
+def dispatch_outbound(
+    ctx: TenantContext, *, message_id: UUID, resolve: Callable[[str], ChannelAdapter] = adapter_for
+) -> Message | None:
+    """Entrega un mensaje en cola por el adaptador de su canal (F6-04b): `QUEUED` → `SENT` →
+    `DELIVERED`, siempre con `advance_delivery`. Idempotente: solo actúa sobre un mensaje saliente
+    `QUEUED`; uno ya enviado, de otra organización, inexistente o que otro proceso está
+    despachando devuelve `None`. Con la conversación y la cuenta bloqueadas revalida la política
+    justo antes de llamar al adaptador (el estado se leyó sin bloquear al encolar, F6-04a): si ya
+    no se puede, el mensaje queda `FAILED` con un motivo corto. Un fallo pasajero del adaptador
+    (`TemporaryChannelError`) no escribe nada y sube para que la tarea reintente. Ni la auditoría
+    ni los registros llevan el texto."""
+    alias = require_scope(ctx)
+    message_id = _uuid(message_id, "mensaje")
+    with transaction.atomic(using=alias):
+        queued = Message.objects.using(alias).filter(
+            pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
+        )
+        row = queued.values("conversation_id").first()
+        if row is None:
+            return None
+        convo = _locked(alias, row["conversation_id"])  # el mismo orden que `record_outbound`
+        message = queued.select_for_update(no_key=True, skip_locked=True).first()
+        if message is None:  # otro proceso lo despacha, o ya salió
+            return None
+        account = ChannelAccount.objects.using(alias).select_for_update(no_key=True)
+        account = account.get(pk=convo.channel_account_id)
+        reason, result = _blocked(convo, account), None
+        if reason is None:
+            try:
+                result = resolve(account.platform).send(message)
+            except UnknownPlatform:
+                reason = "CHANNEL_UNAVAILABLE"
+            else:
+                if not result.ok:
+                    reason = result.reason if result.reason in REASONS else "ADAPTER_REJECTED"
+        if reason is not None or result is None:
+            return advance_delivery(
+                ctx, message_id=message.pk, status=Delivery.FAILED, reason=reason
+            )
+        found = Message.objects.using(alias).filter(pk=message.pk)
+        found.update(external_message_id=result.external_id)
+        sent = advance_delivery(ctx, message_id=message.pk, status=Delivery.SENT)
+        if result.delivered:
+            return advance_delivery(ctx, message_id=message.pk, status=Delivery.DELIVERED)
+        return sent

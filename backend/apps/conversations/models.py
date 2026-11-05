@@ -286,6 +286,11 @@ class Message(TenantModel):
                 fields=["organization_id", "conversation", "created_at", "id"],
                 name="messages_org_conversation_idx",
             ),
+            models.Index(  # el barredor de F6-04b: solo lo que sigue en cola (pocas filas)
+                fields=["organization_id", "id"],
+                condition=models.Q(delivery_status="QUEUED"),
+                name="messages_queued_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
