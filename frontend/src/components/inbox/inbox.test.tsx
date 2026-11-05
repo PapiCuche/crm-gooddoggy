@@ -206,6 +206,11 @@ describe("Inbox, chat (F6-03)", () => {
     // el título de la página sigue en el árbol de accesibilidad aunque se vea solo el chat
     expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toHaveClass("max-lg:sr-only");
     const log = await screen.findByRole("list", { name: "Mensajes" });
+    // 390 y 320 px: los controles se reparten en líneas en vez de salirse del recuadro (jsdom no
+    // mide; la medición real es en el navegador)
+    const refresh = screen.getByRole("button", { name: "Actualizar mensajes" });
+    expect(refresh.parentElement).toHaveClass("flex", "flex-wrap");
+    expect(screen.getByRole("button", { name: "Mías" }).parentElement).toHaveClass("flex-wrap");
     // la región que se desplaza se recorre con el teclado
     const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
     expect(scroller).toHaveAttribute("tabindex", "0");
