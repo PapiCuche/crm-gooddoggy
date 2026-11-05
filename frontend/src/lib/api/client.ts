@@ -39,6 +39,7 @@ import type {
   ContactNotesListParams,
   ContactsListParams,
   ConversationDetail,
+  ConversationMessagesListParams,
   ConversationsListParams,
   Cost,
   CostHistoryListParams,
@@ -97,6 +98,7 @@ import type {
   PaginatedListPriceList,
   PaginatedLostReasonList,
   PaginatedMemberList,
+  PaginatedMessageList,
   PaginatedMovementList,
   PaginatedNoteList,
   PaginatedOpportunityList,
@@ -151,6 +153,8 @@ import type {
   Role,
   RoleCreateRequest,
   RolesListParams,
+  SandboxInboundRequest,
+  SandboxInboundResult,
   SelfContext,
   Session,
   StageOrderRequest,
@@ -3112,6 +3116,113 @@ export const useCategoriesDelete = <TError = ErrorType<Error>, TContext = unknow
   return useMutation(getCategoriesDeleteMutationOptions(options), queryClient);
 };
 
+export const getChannelsSandboxInboundUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/channels/sandbox/inbound/`;
+};
+
+/**
+ * Simula un mensaje del cliente por el canal Sandbox, idempotente por `external_message_id`: 201 la primera vez y 200 con `created: false` en un reintento igual. Pide `channels.manage` y `contacts.view`; 400 en `contact_id` si no es un contacto vivo que quien llama pueda ver. 409 `EXTERNAL_ID_TAKEN`: ese id ya es de un mensaje con otro texto u otro contacto.
+ */
+export const channelsSandboxInbound = async (
+  orgSlug: string,
+  sandboxInboundRequest: SandboxInboundRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<SandboxInboundResult> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<SandboxInboundResult>(getChannelsSandboxInboundUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(sandboxInboundRequest),
+  });
+};
+
+export const getChannelsSandboxInboundMutationKey = () => ["channelsSandboxInbound"] as const;
+
+export const getChannelsSandboxInboundMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSandboxInbound>>,
+    TError,
+    ChannelsSandboxInboundMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSandboxInbound>>,
+  TError,
+  ChannelsSandboxInboundMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSandboxInboundMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSandboxInbound>>,
+    ChannelsSandboxInboundMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return channelsSandboxInbound(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSandboxInboundMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSandboxInbound>>
+>;
+export type ChannelsSandboxInboundMutationBody = SandboxInboundRequest;
+export type ChannelsSandboxInboundMutationError = ErrorType<Error>;
+export type ChannelsSandboxInboundMutationVariables = {
+  orgSlug: string;
+  data: SandboxInboundRequest;
+};
+
+export const useChannelsSandboxInbound = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSandboxInbound>>,
+      TError,
+      ChannelsSandboxInboundMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSandboxInbound>>,
+  TError,
+  ChannelsSandboxInboundMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSandboxInboundMutationOptions(options), queryClient);
+};
+
 export const getContactsListUrl = (orgSlug: string, params?: ContactsListParams) => {
   const normalizedParams = new URLSearchParams();
 
@@ -4671,6 +4782,188 @@ export function useConversationsRetrieve<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getConversationsRetrieveQueryOptions(orgSlug, conversationId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getConversationMessagesListUrl = (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/${conversationId}/messages/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/${conversationId}/messages/`;
+};
+
+/**
+ * Los mensajes de una conversación, el más reciente primero, 50 por página: `cursor` (el `next` anterior) pide los más antiguos. Las notas internas solo salen con `messages.note` sobre la conversación, y el texto (`body`) solo con `contacts.view` sobre el contacto. 404: no existe o está fuera del alcance.
+ */
+export const conversationMessagesList = async (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedMessageList> => {
+  return apiFetch<PaginatedMessageList>(
+    getConversationMessagesListUrl(orgSlug, conversationId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getConversationMessagesListQueryKey = (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/conversations/${conversationId}/messages/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getConversationMessagesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationMessagesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationMessagesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getConversationMessagesListQueryKey(orgSlug, conversationId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationMessagesList>>> = ({
+    signal,
+  }) => conversationMessagesList(orgSlug, conversationId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      conversationId !== null &&
+      conversationId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationMessagesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationMessagesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationMessagesList>>
+>;
+export type ConversationMessagesListQueryError = ErrorType<Error>;
+
+export function useConversationMessagesList<
+  TData = Awaited<ReturnType<typeof conversationMessagesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params: undefined | ConversationMessagesListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationMessagesList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationMessagesList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationMessagesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationMessagesList<
+  TData = Awaited<ReturnType<typeof conversationMessagesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationMessagesList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationMessagesList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationMessagesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationMessagesList<
+  TData = Awaited<ReturnType<typeof conversationMessagesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationMessagesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationMessagesList<
+  TData = Awaited<ReturnType<typeof conversationMessagesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationMessagesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationMessagesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationMessagesListQueryOptions(
+    orgSlug,
+    conversationId,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

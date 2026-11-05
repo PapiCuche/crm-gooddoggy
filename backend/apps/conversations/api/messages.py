@@ -1,0 +1,161 @@
+"""Mensajes de una conversación y el simulador del canal Sandbox (F6-02b, E06).
+
+`GET …/conversations/{id}/messages/`: la conversación se resuelve con `scoped()` y la política
+`Visible` antes de leer un solo mensaje (desconocida, de otra organización o fuera del alcance: el
+mismo 404). Las notas internas solo las recibe quien tiene `messages.note` sobre esa conversación,
+no quien solo puede enviar (`messages.send`). `POST …/channels/sandbox/inbound/` simula un mensaje
+del cliente con los mismos comandos que usará un canal real.
+"""
+
+from typing import Any
+from uuid import UUID
+
+from django.db.models import QuerySet
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework import generics, serializers
+from rest_framework.exceptions import NotFound
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.access.permissions import request_context
+from apps.access.selectors import can, scoped
+from apps.contacts.selectors import contacts
+from apps.conversations import commands, selectors
+from apps.conversations.api import inputs
+from apps.conversations.models import Conversation, Direction, Message
+from core.api.errors import ApiError
+from core.api.pagination import CursorPagination
+from core.api.schema import errors
+from core.tenancy import context
+
+TAKEN = "Ese id externo ya es de otro mensaje."
+BAD_CONTACT = "No es un contacto de la organización que puedas ver."
+
+
+class MessageSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    direction = serializers.ChoiceField(choices=Direction.choices)
+    sender_type = serializers.CharField()
+    sender_user_id = serializers.UUIDField(allow_null=True)
+    message_type = serializers.CharField(help_text="`TEXT` o `NOTE`.")
+    body = serializers.CharField(
+        allow_null=True,
+        help_text="`null` si quien consulta no puede ver el contacto (`contacts.view`): el texto "
+        "identifica al cliente igual que su nombre.",
+    )
+    client_message_id = serializers.UUIDField(
+        allow_null=True, help_text="Solo en los mensajes salientes de quien consulta."
+    )
+    delivery_status = serializers.CharField(allow_null=True, help_text="Solo en lo saliente.")
+    created_at = serializers.DateTimeField()
+    sent_at = serializers.DateTimeField(allow_null=True)
+    delivered_at = serializers.DateTimeField(allow_null=True)
+    read_at = serializers.DateTimeField(allow_null=True)
+    failed_at = serializers.DateTimeField(allow_null=True)
+
+    def to_representation(self, instance: Message) -> dict[str, Any]:
+        data: dict[str, Any] = super().to_representation(instance)
+        mine = context.current()
+        own = instance.direction == "OUTBOUND" and instance.sender_user_id == mine.user_id  # type: ignore[union-attr]
+        if not own:  # la clave de idempotencia solo le sirve a quien envió
+            data["client_message_id"] = None
+        if not self.context.get("show_body", False):  # D-F6-10; sin el dato, cerrado
+            data["body"] = None
+        return data
+
+
+class SandboxInboundResultSerializer(serializers.Serializer[Any]):
+    created = serializers.BooleanField(help_text="`false`: era un reintento del mismo mensaje.")
+    conversation_id = serializers.UUIDField()
+    message = MessageSerializer()
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="conversation_messages_list",
+        tags=["conversations"],
+        responses={200: MessageSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Los mensajes de una conversación, el más reciente primero, 50 por página: "
+        "`cursor` (el `next` anterior) pide los más antiguos. Las notas internas solo salen con "
+        "`messages.note` sobre la conversación, y el texto (`body`) solo con `contacts.view` sobre "
+        "el contacto. 404: no existe o está fuera del alcance.",
+    ),
+)
+class MessagesView(generics.ListAPIView):
+    required_permissions = {"GET": "conversations.view"}
+    serializer_class = MessageSerializer
+    pagination_class = CursorPagination
+    ordering = "-id"
+    filter_backends: list[Any] = []  # el alcance se decide sobre la conversación, no la fila
+
+    def get_queryset(self) -> QuerySet[Message]:
+        if getattr(self, "swagger_fake_view", False):  # el generador de OpenAPI
+            return Message.objects.none()
+        ectx = request_context(self.request)
+        assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        mine = scoped(ectx, "conversations.view", Conversation.objects.all())
+        found = mine.filter(pk=self.kwargs["conversation_id"]).first()
+        if found is None:  # desconocida, de otra organización o fuera del alcance: la misma
+            raise NotFound
+        seen = scoped(ectx, "contacts.view", contacts().filter(pk=found.contact_id))
+        self.show_body = seen.exists()  # D-F6-10: el texto, como el nombre, pide ver al contacto
+        return selectors.messages(found.pk, notes=can(ectx, "messages.note", found))
+
+    def get_serializer_context(self) -> dict[str, Any]:
+        return {**super().get_serializer_context(), "show_body": getattr(self, "show_body", False)}
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="channels_sandbox_inbound",
+        tags=["conversations"],
+        request=inputs.SandboxInboundSerializer,
+        responses={
+            200: SandboxInboundResultSerializer,
+            201: SandboxInboundResultSerializer,
+            **errors(400, 401, 403, 404, 409),
+        },
+        description="Simula un mensaje del cliente por el canal Sandbox, idempotente por "
+        "`external_message_id`: 201 la primera vez y 200 con `created: false` en un reintento "
+        "igual. Pide `channels.manage` y `contacts.view`; 400 en `contact_id` si no es un "
+        "contacto vivo que quien llama pueda ver. 409 `EXTERNAL_ID_TAKEN`: ese id ya es de "
+        "un mensaje con otro texto u otro contacto.",
+    ),
+)
+class SandboxInboundView(APIView):
+    required_permissions = {"POST": ("channels.manage", "contacts.view")}
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = inputs.SandboxInboundSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        data = wanted.validated_data
+        ectx, tenant = request_context(request), context.current()
+        assert ectx is not None and tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        contact_id: UUID = data["contact_id"]
+        seen = scoped(ectx, "contacts.view", contacts()).filter(pk=contact_id)
+        if not seen.select_for_update(no_key=True).values_list("pk", flat=True)[:1]:
+            raise serializers.ValidationError({"contact_id": [BAD_CONTACT]})
+        account = commands.ensure_sandbox_account(tenant)
+        try:
+            message, created = commands.record_inbound(
+                tenant,
+                contact_id=contact_id,
+                channel_account_id=account.pk,
+                external_message_id=data["external_message_id"],
+                body=data["text"],
+            )
+        except commands.BadReference as bad:
+            raise serializers.ValidationError({bad.field: [BAD_CONTACT]}) from None
+        same = Conversation.objects.filter(pk=message.conversation_id, contact_id=contact_id)
+        if not created and (message.body != data["text"] or not same.exists()):
+            raise ApiError("EXTERNAL_ID_TAKEN", 409, TAKEN)
+        result = {
+            "created": created,
+            "conversation_id": message.conversation_id,
+            "message": message,
+        }
+        return Response(
+            SandboxInboundResultSerializer(result, context={"show_body": True}).data,
+            status=201 if created else 200,
+        )

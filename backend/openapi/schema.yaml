@@ -1363,6 +1363,73 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/channels/sandbox/inbound/:
+    post:
+      operationId: channels_sandbox_inbound
+      description: 'Simula un mensaje del cliente por el canal Sandbox, idempotente
+        por `external_message_id`: 201 la primera vez y 200 con `created: false` en
+        un reintento igual. Pide `channels.manage` y `contacts.view`; 400 en `contact_id`
+        si no es un contacto vivo que quien llama pueda ver. 409 `EXTERNAL_ID_TAKEN`:
+        ese id ya es de un mensaje con otro texto u otro contacto.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SandboxInboundRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxInboundResult'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxInboundResult'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/contacts/:
     get:
       operationId: contacts_list
@@ -2168,6 +2235,76 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConversationDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/messages/:
+    get:
+      operationId: conversation_messages_list
+      description: 'Los mensajes de una conversación, el más reciente primero, 50
+        por página: `cursor` (el `next` anterior) pide los más antiguos. Las notas
+        internas solo salen con `messages.note` sobre la conversación, y el texto
+        (`body`) solo con `contacts.view` sobre el contacto. 404: no existe o está
+        fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMessageList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
           description: ''
         '401':
           content:
@@ -8010,6 +8147,16 @@ components:
       - price_id
       - starts_at
       - tax_included
+    DirectionEnum:
+      enum:
+      - INBOUND
+      - OUTBOUND
+      - INTERNAL
+      type: string
+      description: |-
+        * `INBOUND` - Inbound
+        * `OUTBOUND` - Outbound
+        * `INTERNAL` - Internal
     DiscountTypeEnum:
       enum:
       - FIXED_PRICE
@@ -8645,6 +8792,70 @@ components:
         * `ACTIVE` - ACTIVE
         * `SUSPENDED` - SUSPENDED
         * `DEACTIVATED` - DEACTIVATED
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        direction:
+          $ref: '#/components/schemas/DirectionEnum'
+        sender_type:
+          type: string
+        sender_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        message_type:
+          type: string
+          description: '`TEXT` o `NOTE`.'
+        body:
+          type: string
+          nullable: true
+          description: '`null` si quien consulta no puede ver el contacto (`contacts.view`):
+            el texto identifica al cliente igual que su nombre.'
+        client_message_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Solo en los mensajes salientes de quien consulta.
+        delivery_status:
+          type: string
+          nullable: true
+          description: Solo en lo saliente.
+        created_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        delivered_at:
+          type: string
+          format: date-time
+          nullable: true
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        failed_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - body
+      - client_message_id
+      - created_at
+      - delivered_at
+      - delivery_status
+      - direction
+      - failed_at
+      - id
+      - message_type
+      - read_at
+      - sender_type
+      - sender_user_id
+      - sent_at
     MfaBackupCodes:
       type: object
       properties:
@@ -9527,6 +9738,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Member'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedMessageList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
         next:
           type: string
           nullable: true
@@ -10949,6 +11174,45 @@ components:
       required:
       - code
       - name
+    SandboxInboundRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        contact_id:
+          type: string
+          format: uuid
+          description: Un contacto vivo de la organización que quien llama puede ver.
+        external_message_id:
+          type: string
+          minLength: 1
+          description: 'La clave de idempotencia: el mismo id es el mismo mensaje.'
+          maxLength: 200
+        text:
+          type: string
+          minLength: 1
+          description: Hasta 4096 caracteres, con algo visible.
+          maxLength: 4096
+      required:
+      - contact_id
+      - external_message_id
+      - text
+    SandboxInboundResult:
+      type: object
+      properties:
+        created:
+          type: boolean
+          description: '`false`: era un reintento del mismo mensaje.'
+        conversation_id:
+          type: string
+          format: uuid
+        message:
+          $ref: '#/components/schemas/Message'
+      required:
+      - conversation_id
+      - created
+      - message
     ScopesEnum:
       enum:
       - OWN
