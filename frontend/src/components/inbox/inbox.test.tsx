@@ -1,13 +1,18 @@
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { Conversation, SelfContext } from "@/lib/api/model";
+import type { Conversation, Message, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
+
+type Routes = Parameters<typeof mockApi>[0];
 
 import { Inbox } from "./inbox";
 
 const LIST = "GET /api/v1/o/acme/conversations/";
+const DETAIL = (id: string) => `GET /api/v1/o/acme/conversations/${id}/`;
+const MESSAGES = (id: string, query = "") =>
+  `GET /api/v1/o/acme/conversations/${id}/messages/${query}`;
 const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
@@ -29,7 +34,24 @@ const conversation = (id: string, changes: Partial<Conversation> = {}) =>
     ...{ last_message_preview: "Hola, ¿tienen collares?", last_message_direction: "INBOUND" },
     ...{ version: 1, ...changes },
   }) as Conversation;
+const message = (id: string, changes: Partial<Message> = {}) =>
+  ({
+    ...{ id, direction: "INBOUND", sender_type: "CONTACT", sender_user_id: null },
+    ...{ message_type: "TEXT", body: `texto ${id}`, client_message_id: null },
+    ...{ delivery_status: null, created_at: "2026-11-04T15:30:00Z", sent_at: null },
+    ...{ delivered_at: null, read_at: null, failed_at: null, ...changes },
+  }) as Message;
 const rosa = conversation("1");
+// Cada fila de la lista tiene su detalle, salvo que el test diga otra cosa.
+const serve = (routes: Routes) => {
+  const reply = routes[LIST];
+  const rows =
+    typeof reply === "object" ? ((reply.body as { results?: Conversation[] })?.results ?? []) : [];
+  return mockApi({
+    ...Object.fromEntries(rows.map((row) => [DETAIL(row.id), { status: 200, body: row }])),
+    ...routes,
+  });
+};
 const show = (codes = ["conversations.view"]) =>
   renderApp(
     <TenantProvider value={{ ...tenant, permissions: codes.map((code) => ({ code, scopes: [] })) }}>
@@ -46,14 +68,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Inbox, lista (F6-03a)", () => {
+describe("Inbox, lista (F6-03)", () => {
   it("carga, muestra cada conversación con su vista previa y marca la elegida", async () => {
     const luna = conversation("2", {
       ...{ contact: { id: "c2", display_name: "Luis Ramos" }, assigned_user_id: "u1" },
       ...{ assignee_kind: "USER", last_message_preview: "Sí, hay", status: "PENDING" },
       ...{ last_message_direction: "OUTBOUND" },
     });
-    mockApi({ [LIST]: page([rosa, luna]) });
+    serve({ [LIST]: page([rosa, luna]), [MESSAGES("1")]: page([]) });
     show();
     expect(screen.getByRole("status")).toHaveTextContent("Cargando conversaciones…");
     const row = await screen.findByRole("button", { name: /Rosa Díaz/ });
@@ -63,15 +85,8 @@ describe("Inbox, lista (F6-03a)", () => {
       "Tú: Sí, hayCONV-00002SandboxPendienteAsignada a ti",
     );
     expect(row).not.toHaveAttribute("aria-current");
-    const heading = await open(/Rosa Díaz/);
+    await open(/Rosa Díaz/);
     expect(row).toHaveAttribute("aria-current", "true");
-    expect(heading).toHaveTextContent("Rosa Díaz");
-    expect(heading).toHaveFocus(); // en 390 px la lista se oculta: el foco va al panel
-    // F6-03b trae los mensajes: hasta entonces el panel lo dice, no ofrece un botón roto.
-    expect(screen.getByText(/La lectura de los mensajes llega/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
-    await waitFor(() => expect(row).toHaveFocus());
-    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
   });
 
   it("vacío, fallo con reintento y 403 sin reintento", async () => {
@@ -79,14 +94,14 @@ describe("Inbox, lista (F6-03a)", () => {
       status: 500,
       body: { code: "INTERNAL_ERROR" },
     };
-    mockApi({ [LIST]: () => reply });
+    serve({ [LIST]: () => reply });
     show();
     expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
     reply = page([]);
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(await screen.findByText("Todavía no hay conversaciones.")).toBeVisible();
     cleanup();
-    mockApi({ [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
+    serve({ [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
     show();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "No tienes permiso para ver las conversaciones de esta organización.",
@@ -95,7 +110,7 @@ describe("Inbox, lista (F6-03a)", () => {
   });
 
   it("la bandeja y el estado son filtros de la API y se combinan", async () => {
-    const api = mockApi({
+    const api = serve({
       [LIST]: page([rosa]),
       [`${LIST}?box=mine`]: page([]),
       [`${LIST}?box=mine&status=OPEN`]: page([conversation("3")]),
@@ -118,7 +133,7 @@ describe("Inbox, lista (F6-03a)", () => {
       status: 500,
       body: { code: "INTERNAL_ERROR" },
     };
-    mockApi({
+    serve({
       [LIST]: page([rosa], "c1"),
       [`${LIST}?cursor=c1`]: () => next,
     });
@@ -139,27 +154,147 @@ describe("Inbox, lista (F6-03a)", () => {
     const hidden = conversation("5", {
       ...{ contact: { id: "c5", display_name: null }, last_message_preview: null },
     });
-    mockApi({ [LIST]: page([hidden]) });
+    serve({ [LIST]: page([hidden]), [MESSAGES("5")]: page([message("m1", { body: null })]) });
     show();
     const row = await screen.findByRole("button", { name: /Cliente no disponible/ });
     expect(row).toHaveTextContent("Sin permiso para ver el contenido");
-    expect(await open(/Cliente no disponible/)).toHaveTextContent("Cliente no disponible");
+    await open(/Cliente no disponible/);
+    expect(
+      await screen.findByText("Sin permiso para ver el contenido de este mensaje."),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Ver ficha del cliente" })).toBeNull();
+    expect(screen.getByText(/No tienes permiso para ver a este cliente/)).toBeVisible();
     cleanup();
     // aunque el servidor mandara la vista previa sin el nombre, la pantalla no la pinta
     const leaky = conversation("7", { contact: { id: "c7", display_name: null } });
-    mockApi({ [LIST]: page([leaky]) });
+    serve({ [LIST]: page([leaky]) });
     show();
     const hiddenRow = await screen.findByRole("button", { name: /Cliente no disponible/ });
     expect(hiddenRow).not.toHaveTextContent("Hola, ¿tienen collares?");
   });
+});
+
+describe("Inbox, chat (F6-03)", () => {
+  it("pinta los mensajes del más antiguo al más reciente con marcas de entrega, notas rotuladas y la ficha", async () => {
+    const sent = message("m3", {
+      direction: "OUTBOUND",
+      sender_type: "USER",
+      delivery_status: "READ",
+    });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([
+        sent,
+        message("m2", {
+          direction: "INTERNAL",
+          sender_type: "USER",
+          message_type: "NOTE",
+          body: "Pide DNI",
+        }),
+        message("m1", { body: "Hola" }),
+        message("m0", {
+          direction: "OUTBOUND",
+          sender_type: "USER",
+          delivery_status: "FAILED",
+          body: "Falló",
+        }),
+      ]),
+    });
+    show();
+    const heading = await open(/Rosa Díaz/);
+    expect(heading).toHaveFocus(); // en 390 px la lista se oculta: el foco va al chat
+    // el título de la página sigue en el árbol de accesibilidad aunque se vea solo el chat
+    expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toHaveClass("max-lg:sr-only");
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const items = within(log).getAllByRole("listitem");
+    expect(items.map((li) => li.querySelector("bdi")?.textContent)).toEqual([
+      "Falló",
+      "Hola",
+      "Pide DNI",
+      "texto m3",
+    ]);
+    expect(items[0]).toHaveTextContent("No se pudo enviar");
+    expect(items[3]).toHaveTextContent("Leído");
+    expect(items[1]).not.toHaveTextContent("Entregado"); // lo entrante no lleva marca
+    expect(items[2]).toHaveTextContent("Nota interna · solo la ve tu equipo");
+    expect(items[2]).toHaveClass("border-dashed");
+    expect(items[1]).not.toHaveTextContent("Nota interna");
+    expect(screen.getByRole("link", { name: "Ver ficha del cliente" })).toHaveAttribute(
+      "href",
+      "/o/acme/clientes/c1",
+    );
+  });
+
+  it("los mensajes anteriores se cargan aparte y un fallo no borra el chat", async () => {
+    let older: { status: number; body?: unknown } = {
+      status: 500,
+      body: { code: "INTERNAL_ERROR" },
+    };
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([message("m2", { body: "Reciente" })], "m2"),
+      [MESSAGES("1", "?cursor=m2")]: () => older,
+    });
+    show();
+    await open(/Rosa Díaz/);
+    await screen.findByText("Reciente");
+    fireEvent.click(screen.getByRole("button", { name: "Cargar mensajes anteriores" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
+    expect(screen.getByText("Reciente")).toBeVisible();
+    older = page([message("m1", { body: "Antiguo" })]);
+    fireEvent.click(screen.getByRole("button", { name: "Cargar mensajes anteriores" }));
+    await screen.findByText("Antiguo");
+    const texts = within(screen.getByRole("list", { name: "Mensajes" }))
+      .getAllByRole("listitem")
+      .map((li) => li.querySelector("bdi")?.textContent);
+    expect(texts).toEqual(["Antiguo", "Reciente"]);
+    expect(screen.queryByRole("button", { name: "Cargar mensajes anteriores" })).toBeNull();
+  });
+
+  it("el encabezado se alimenta del detalle, no de la instantánea de la lista", async () => {
+    serve({
+      [LIST]: page([rosa]),
+      [DETAIL("1")]: { status: 200, body: { ...rosa, status: "RESOLVED" } },
+      [MESSAGES("1")]: page([]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    expect(await screen.findByText("Resuelta")).toBeVisible(); // la lista decía «Abierta»
+  });
+
+  it("si el detalle falla, el chat sigue con la fila y lo avisa", async () => {
+    serve({
+      [LIST]: page([rosa]),
+      [DETAIL("1")]: { status: 500, body: { code: "INTERNAL_ERROR" } },
+      [MESSAGES("1")]: page([message("m1", { body: "Hola" })]),
+    });
+    show();
+    const heading = await open(/Rosa Díaz/);
+    expect(await screen.findByText("Hola")).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
+    expect(heading).toHaveTextContent("Rosa Díaz");
+  });
+
+  it("vacío y 404 del chat se explican; «Volver» devuelve el foco a la fila", async () => {
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    show();
+    await open(/Rosa Díaz/);
+    expect(await screen.findByText("No encontramos lo que buscas.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Volver a las conversaciones" }));
+    await waitFor(() => expect(document.getElementById("conversation-1")).toHaveFocus());
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+  });
 
   it("el texto hostil se pinta como texto, aislado y sin ejecutarse", async () => {
-    const hostile = "\u202Egnp.exe <img src=x onerror=alert(1)> <b>negrita</b>\u200B\nlínea 2";
+    const hostile = "‮gnp.exe <img src=x onerror=alert(1)> <b>negrita</b>​\nlínea 2";
     const evil = conversation("6", {
-      ...{ contact: { id: "c6", display_name: "<script>x</script>\u202E" } },
+      ...{ contact: { id: "c6", display_name: "<script>x</script>‮" } },
       ...{ last_message_preview: hostile },
     });
-    mockApi({ [LIST]: page([evil]) });
+    serve({ [LIST]: page([evil]), [MESSAGES("6")]: page([message("m1", { body: hostile })]) });
     const { container } = show();
     const row = await screen.findByRole("button", { name: /script/ });
     expect(row).toHaveTextContent(hostile.replace("\n", " "));
@@ -173,6 +308,12 @@ describe("Inbox, lista (F6-03a)", () => {
       expect(bdi).toHaveAttribute("dir", "auto");
       expect(bdi).toHaveClass("whitespace-pre-wrap", "wrap-anywhere");
     }
+    await open(/script/);
+    const body = await screen.findByRole("list", { name: "Mensajes" });
+    const bdi = body.querySelector("bdi")!;
+    expect(bdi.textContent).toBe(hostile); // tal cual, sin interpretar
+    expect(bdi).toHaveAttribute("dir", "auto");
+    expect(bdi).toHaveClass("whitespace-pre-wrap", "wrap-anywhere");
     expect(container.querySelector("img, script, b")).toBeNull();
   });
 });
