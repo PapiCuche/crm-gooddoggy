@@ -26,6 +26,14 @@ FUNCTIONS = (
 )
 
 
+def test_the_delivery_trigger_is_not_security_definer(migrator: psycopg.Connection[Any]) -> None:
+    row = migrator.execute(
+        "SELECT prosecdef FROM pg_proc"
+        " WHERE oid = 'public.messages_delivery_advance()'::regprocedure"
+    ).fetchone()
+    assert row == (False,)  # corre con los privilegios de quien actualiza
+
+
 @pytest.mark.parametrize("function", FUNCTIONS)
 def test_every_function_names_pg_temp_last(
     function: str, migrator: psycopg.Connection[Any]

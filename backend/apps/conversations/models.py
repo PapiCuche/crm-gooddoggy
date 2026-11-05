@@ -242,7 +242,7 @@ class Message(TenantModel):
     direction = models.CharField(max_length=8, choices=Direction.choices)
     sender_type = models.CharField(max_length=8, choices=SenderType.choices)
     sender_user_id = models.UUIDField(null=True, blank=True)
-    message_type = models.CharField(max_length=8, choices=MessageType.choices, default="TEXT")
+    message_type = models.CharField(max_length=16, choices=MessageType.choices, default="TEXT")
     body = models.TextField()
     client_message_id = models.UUIDField(null=True, blank=True)
     external_message_id = models.CharField(max_length=200, null=True, blank=True)  # noqa: DJ001

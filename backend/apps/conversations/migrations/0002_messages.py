@@ -47,9 +47,15 @@ def fk(table: str, name: str, columns: str, target: str) -> migrations.RunSQL:
     )
 
 
+# Lo único que cambia de un mensaje: su entrega (y el id que el proveedor le da al aceptarlo).
+# Texto, dirección, remitente, conversación y fecha no se reescriben (UPDATE por columna).
+MUTABLE = "delivery_status, external_message_id, sent_at, delivered_at, read_at, failed_at"
+
+
 def _privileges(apps: Any, schema_editor: Any) -> None:
     role = schema_editor.quote_name(settings.DB_APP_ROLE)
-    schema_editor.execute(f"REVOKE DELETE, TRUNCATE ON public.messages FROM {role}")
+    schema_editor.execute(f"REVOKE DELETE, TRUNCATE, UPDATE ON public.messages FROM {role}")
+    schema_editor.execute(f"GRANT UPDATE ({MUTABLE}) ON public.messages TO {role}")
 
 
 def _restore(apps: Any, schema_editor: Any) -> None:
@@ -106,7 +112,7 @@ class Migration(migrations.Migration):
                 (
                     "message_type",
                     models.CharField(
-                        choices=[("TEXT", "Text"), ("NOTE", "Note")], default="TEXT", max_length=8
+                        choices=[("TEXT", "Text"), ("NOTE", "Note")], default="TEXT", max_length=16
                     ),
                 ),
                 ("body", models.TextField()),

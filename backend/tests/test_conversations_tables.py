@@ -346,6 +346,9 @@ def test_message_checks(world: SimpleNamespace) -> None:
         make(direction="OUTBOUND", sender_type="ROBOT", delivery_status="QUEUED"),
     )
     refused(world.a, "messages_type_ck", make(message_type="VIDEO"))
+    size = "SELECT character_maximum_length FROM information_schema.columns "
+    size += "WHERE table_name = 'messages' AND column_name = 'message_type'"
+    assert sql(world.a, size) == [(16,)]  # caben INTERACTIVE y SYSTEM_EVENT de §E.6
     assert make(**out, delivery_status="QUEUED", body="x" * 4096)().delivery_status == "QUEUED"
 
 
@@ -360,7 +363,13 @@ def test_the_external_and_client_ids_are_unique_where_they_apply(world: SimpleNa
     message(world.a, convo, external_message_id="wamid.2")  # otro id
     message(world.a, convo)  # sin id externo: no choca con nadie
     message(world.a, convo)
-    message(world.b, other, external_message_id="wamid.1")  # otra cuenta
+    message(world.b, other, external_message_id="wamid.1")  # otra organización
+    with tenant_scope(ctx(world.a)):
+        second = ChannelAccount.objects.create(
+            platform="SANDBOX", name="Otra", external_account_id=f"otra-{uuid4()}"
+        )
+    elsewhere = fresh(world.a, second, "CONV-00060")
+    message(world.a, elsewhere, external_message_id="wamid.1")  # otra cuenta de la misma: vale
     out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": world.ana.pk,
            "delivery_status": "QUEUED"}  # fmt: skip
     client = uuid4()
@@ -385,7 +394,7 @@ def test_the_runtime_role_cannot_delete_and_the_history_is_immutable(
     revoked = {  # la concesión misma: una FK podría estorbar el DELETE por casualidad
         "channel_accounts": ("DELETE", "TRUNCATE"),
         "conversations": ("DELETE", "TRUNCATE"),
-        "messages": ("DELETE", "TRUNCATE"),
+        "messages": ("UPDATE", "DELETE", "TRUNCATE"),  # el UPDATE, solo por columna
         "conversation_assignments": ("UPDATE", "DELETE", "TRUNCATE"),
     }
     asked = "SELECT has_table_privilege(current_user, %s, %s)"
@@ -480,7 +489,32 @@ def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
                     update(pk, new)
                 assert status(pk) == old, (old, new)
     pk = message(world.a, convo, **out).pk
-    sql(world.a, "UPDATE messages SET body = 'otro texto' WHERE id = %s", [pk])  # lo demás: libre
+    mutable = (
+        "delivery_status",
+        "external_message_id",
+        "sent_at",
+        "delivered_at",
+        "read_at",
+        "failed_at",
+    )
+    asked_column = "SELECT has_column_privilege(current_user, 'messages', %s, 'UPDATE')"
+    for column in mutable:
+        assert sql(world.a, asked_column, [column]) == [(True,)], column
+    sql(
+        world.a,
+        "UPDATE messages SET external_message_id = 'wamid.x', sent_at = now() WHERE id = %s",
+        [pk],
+    )
+    for column in (
+        "organization_id",
+        "body",
+        "direction",
+        "conversation_id",
+        "created_at",
+        "sender_type",
+    ):
+        with pytest.raises(DatabaseError, match="permission denied"):  # la historia no se reescribe
+            sql(world.a, f"UPDATE messages SET {column} = {column} WHERE id = %s", [pk])  # noqa: S608
     update(pk, "QUEUED")  # el mismo estado no es un cambio: el disparador no actúa
 
 
