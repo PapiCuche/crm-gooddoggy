@@ -31,6 +31,12 @@ class SendResult:
 
 
 class ChannelAdapter(Protocol):
+    """Contrato (ADR-010): el despachador entrega al menos una vez, así que `send` puede llamarse
+    más de una vez para el mismo mensaje (el barredor, un reintento, o un fallo tras enviar y antes
+    de confirmar en la base) y **debe ser idempotente**: la clave es `message.pk` (o su
+    `client_message_id`). Un `TemporaryChannelError` no lleva el texto del mensaje ni el cuerpo de
+    la respuesta del proveedor: lo registran Celery y los registros."""
+
     def send(self, message: Message) -> SendResult: ...
 
 
