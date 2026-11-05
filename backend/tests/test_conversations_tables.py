@@ -498,23 +498,17 @@ def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
         "failed_at",
     )
     asked_column = "SELECT has_column_privilege(current_user, 'messages', %s, 'UPDATE')"
-    for column in mutable:
-        assert sql(world.a, asked_column, [column]) == [(True,)], column
     sql(
         world.a,
         "UPDATE messages SET external_message_id = 'wamid.x', sent_at = now() WHERE id = %s",
         [pk],
     )
-    for column in (
-        "organization_id",
-        "body",
-        "direction",
-        "conversation_id",
-        "created_at",
-        "sender_type",
-    ):
-        with pytest.raises(DatabaseError, match="permission denied"):  # la historia no se reescribe
-            sql(world.a, f"UPDATE messages SET {column} = {column} WHERE id = %s", [pk])  # noqa: S608
+    columns = sql(
+        world.a, "SELECT column_name FROM information_schema.columns WHERE table_name = 'messages'"
+    )
+    for (column,) in columns:  # toda la demás: la historia no se reescribe
+        wanted = column in mutable
+        assert sql(world.a, asked_column, [column]) == [(wanted,)], column
     update(pk, "QUEUED")  # el mismo estado no es un cambio: el disparador no actúa
 
 
