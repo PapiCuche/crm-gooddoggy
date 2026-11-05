@@ -144,6 +144,13 @@ describe("Inbox, lista (F6-03a)", () => {
     const row = await screen.findByRole("button", { name: /Cliente no disponible/ });
     expect(row).toHaveTextContent("Sin permiso para ver el contenido");
     expect(await open(/Cliente no disponible/)).toHaveTextContent("Cliente no disponible");
+    cleanup();
+    // aunque el servidor mandara la vista previa sin el nombre, la pantalla no la pinta
+    const leaky = conversation("7", { contact: { id: "c7", display_name: null } });
+    mockApi({ [LIST]: page([leaky]) });
+    show();
+    const hiddenRow = await screen.findByRole("button", { name: /Cliente no disponible/ });
+    expect(hiddenRow).not.toHaveTextContent("Hola, ¿tienen collares?");
   });
 
   it("el texto hostil se pinta como texto, aislado y sin ejecutarse", async () => {
@@ -157,7 +164,11 @@ describe("Inbox, lista (F6-03a)", () => {
     const row = await screen.findByRole("button", { name: /script/ });
     expect(row).toHaveTextContent(hostile.replace("\n", " "));
     const previews = Array.from(row.querySelectorAll("bdi"));
-    expect(previews.map((bdi) => bdi.textContent)).toContain(hostile); // tal cual, sin interpretar
+    expect(previews.map((bdi) => bdi.textContent)).toEqual([
+      "<script>x</script>\u202E", // el nombre del cliente también va aislado
+      hostile, // tal cual, sin interpretar
+      "Sandbox", // y el nombre del canal
+    ]);
     for (const bdi of previews) {
       expect(bdi).toHaveAttribute("dir", "auto");
       expect(bdi).toHaveClass("whitespace-pre-wrap", "wrap-anywhere");
