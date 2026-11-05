@@ -655,3 +655,39 @@ def test_the_same_client_id_in_two_conversations_at_once_is_a_conflict_not_a_cra
 
     first, second = race(world.a, world.ana, [reply(here), reply(there)])
     assert first[1] is True and second == "ClientMessageConflict"  # sin IntegrityError
+
+
+def test_the_preview_is_the_plain_start_of_the_last_external_message_and_never_a_note(
+    world: SimpleNamespace,
+) -> None:
+    first, _ = inbound(world, body="Hola\n\n  quiero\t el   iPhone " + "x" * 200)
+    convo = reload(world, Conversation, first.conversation_id)
+    assert convo.last_message_direction == "INBOUND"
+    assert convo.last_message_preview == ("Hola quiero el iPhone " + "x" * 200)[:80]
+    assert len(convo.last_message_preview) == 80
+    run(world, commands.add_note, conversation_id=convo.pk, body="Nota con el costo 700")
+    after = reload(world, Conversation, convo.pk)  # una nota no toca ni el texto ni el sentido
+    assert (after.last_message_preview, after.last_message_direction) == (
+        convo.last_message_preview, "INBOUND",
+    )  # fmt: skip
+    outbound(world, convo, body="  Con   gusto ")
+    sent = reload(world, Conversation, convo.pk)
+    assert (sent.last_message_preview, sent.last_message_direction) == ("Con gusto", "OUTBOUND")
+    outbound(world, convo, body="Segunda respuesta")  # ya abierta: otra rama del comando
+    again = reload(world, Conversation, convo.pk)
+    assert (again.last_message_preview, again.last_message_direction) == (
+        "Segunda respuesta", "OUTBOUND",
+    )  # fmt: skip
+    inbound(world, "wamid.2", body="Gracias")
+    last = reload(world, Conversation, convo.pk)
+    assert (last.last_message_preview, last.last_message_direction) == ("Gracias", "INBOUND")
+    inbound(world, "wamid.2", body="Otro texto")  # la repetición no cambia nada, ni la vista previa
+    assert reload(world, Conversation, convo.pk).last_message_preview == "Gracias"
+
+
+def test_a_closed_and_reopened_conversation_also_gets_its_preview(world: SimpleNamespace) -> None:
+    convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    resolve(world, convo, dt.timedelta(minutes=5))
+    inbound(world, "wamid.2", body="Sigo aquí")
+    again = reload(world, Conversation, convo.pk)
+    assert again.status == "OPEN" and again.last_message_preview == "Sigo aquí"

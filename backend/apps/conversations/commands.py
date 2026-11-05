@@ -36,6 +36,7 @@ from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
 from apps.conversations.models import (
     BODY_MAX,
+    PREVIEW_MAX,
     AttentionMode,
     ChannelAccount,
     Conversation,
@@ -50,6 +51,7 @@ from core.tenancy.scope import require_scope
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
 KEY, ORDER = "CONV", (Delivery.QUEUED, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
+LAST = ("last_message_at", "last_message_preview", "last_message_direction")
 STAMPS = {"SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at", "FAILED": "failed_at"}
 EXTERNAL_MAX = 200
 NAME_MAX = 100
@@ -94,6 +96,11 @@ def _body(value: Any) -> str:
     if len(value) > BODY_MAX:
         raise ValueError(f"texto: hasta {BODY_MAX} caracteres")
     return value
+
+
+def _preview(text: str) -> str:
+    """Lo que la lista enseña del último mensaje: el comienzo, en una línea."""
+    return " ".join(text.split())[:PREVIEW_MAX]
 
 
 def _external(value: Any) -> str:
@@ -282,15 +289,15 @@ def record_inbound(
                 raise
             return same.get(), False  # el mismo mensaje, a la vez
         convo.last_inbound_at = convo.last_message_at = now
+        convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
         if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED):
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
                 last_inbound_at=now, last_message_at=now,
+                last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
             )  # fmt: skip
         else:
-            convo.save(
-                using=alias, update_fields=["last_inbound_at", "last_message_at", "updated_at"]
-            )
+            convo.save(using=alias, update_fields=[*LAST, "last_inbound_at", "updated_at"])
         record(ctx, "message.received", Entity("message", message.pk), None, _sent(message))
         return message, True
 
@@ -376,10 +383,17 @@ def record_outbound(
         if created:
             now = timezone.now()
             if convo.status == Status.PENDING:  # con la marca: `update_fields` no la guardaría sola
-                _status(ctx, alias, convo, Status.OPEN, "conversation.opened", last_message_at=now)
+                _status(
+                    ctx, alias, convo, Status.OPEN, "conversation.opened", last_message_at=now,
+                    last_message_preview=_preview(text), last_message_direction="OUTBOUND",
+                )  # fmt: skip
             else:
                 convo.last_message_at = now
-                convo.save(using=alias, update_fields=["last_message_at", "updated_at"])
+                convo.last_message_preview, convo.last_message_direction = (
+                    _preview(text),
+                    "OUTBOUND",
+                )
+                convo.save(using=alias, update_fields=[*LAST, "updated_at"])
             record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
         return message, created
 
