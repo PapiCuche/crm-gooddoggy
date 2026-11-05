@@ -24,7 +24,14 @@ from uuid import UUID
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.access.selectors import AccessDenied, Denied, can, execution_context, has_permission
+from apps.access.selectors import (
+    AccessDenied,
+    Denied,
+    ExecutionContext,
+    can,
+    execution_context,
+    has_permission,
+)
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
 from apps.conversations.models import (
@@ -323,13 +330,19 @@ def _locked(alias: str, conversation_id: UUID) -> Conversation:
     return found
 
 
-def _authorize(ctx: TenantContext, code: str, convo: Conversation) -> None:
-    """El actor tiene el permiso y la conversación (la bloqueada) está en su alcance. Sin el
-    permiso, `AccessDenied`; fuera del alcance, el mismo `DoesNotExist` que una desconocida."""
+def _allowed(ctx: TenantContext, code: str) -> ExecutionContext:
+    """El actor es un miembro activo y tiene el permiso: **antes** de leer la conversación, así que
+    quien no lo tiene no distingue una conversación que existe de una que no."""
     ectx = execution_context(ctx)  # `AccessDenied` si no es un miembro activo
     if not has_permission(ectx, code):
         raise AccessDenied(Denied.PERMISSION)
-    if not can(ectx, code, convo):  # el mismo error, con el mismo texto, que una desconocida
+    return ectx
+
+
+def _in_scope(ectx: ExecutionContext, code: str, convo: Conversation) -> None:
+    """La conversación (la bloqueada) está en el alcance del actor; si no, el mismo `DoesNotExist`,
+    con el mismo texto, que una desconocida."""
+    if not can(ectx, code, convo):
         raise Conversation.DoesNotExist("Conversation matching query does not exist.")
 
 
@@ -351,8 +364,9 @@ def record_outbound(
     )
     text = _body(body)
     with transaction.atomic(using=alias):
+        ectx = _allowed(ctx, "messages.send")
         convo = _locked(alias, conversation_id)
-        _authorize(ctx, "messages.send", convo)
+        _in_scope(ectx, "messages.send", convo)
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
         if earlier is None and convo.status == Status.CLOSED:
             raise ConversationClosed
@@ -382,8 +396,9 @@ def add_note(
     client_id = None if client_message_id is None else _uuid(client_message_id, "id")
     text = _body(body)
     with transaction.atomic(using=alias):
+        ectx = _allowed(ctx, "messages.note")
         convo = _locked(alias, conversation_id)
-        _authorize(ctx, "messages.note", convo)
+        _in_scope(ectx, "messages.note", convo)
         note, created = _insert(
             ctx, alias, convo, client_id, text, direction="INTERNAL", message_type="NOTE"
         )

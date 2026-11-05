@@ -338,6 +338,10 @@ def test_a_note_is_internal_never_sendable_and_leaves_the_thread_clock_alone(
             body="Otra",
             client_message_id=client,
         )
+    with pytest.raises(
+        ClientMessageConflict
+    ):  # ni una respuesta con el id de una nota (mismo texto)
+        outbound(world, convo, client, body="Nota")
     with tenant_scope(ctx(world.a)):
         Conversation.objects.filter(pk=convo.pk).update(status="CLOSED", closed_at=timezone.now())
     assert run(world, commands.add_note, conversation_id=convo.pk, body="Tras cerrar")[
@@ -488,8 +492,9 @@ def test_writing_on_behalf_of_a_person_checks_the_permission_and_the_scope(
         with pytest.raises(ObjectDoesNotExist) as unknown:
             run(world, command, who=vera, conversation_id=uuid4(), **fields)
         assert type(hidden.value) is type(unknown.value) and str(hidden.value) == str(unknown.value)
-        with pytest.raises(AccessDenied):  # sin el permiso
-            run(world, command, who=mute, conversation_id=free.pk, **fields)
+        for known in (free.pk, uuid4()):  # sin el permiso: igual exista o no (nada que enumerar)
+            with pytest.raises(AccessDenied):
+                run(world, command, who=mute, conversation_id=known, **fields)
         with pytest.raises(AccessDenied):  # la persona de otra organización no es miembro
             run(world, command, who=world.luis, conversation_id=free.pk, **fields)
     assert len(audit(migrator)) == before  # nada se escribió
@@ -630,3 +635,23 @@ def test_each_delivery_status_stores_its_own_timestamp_and_a_naive_clock_is_refu
     for bad in (dt.datetime(2026, 11, 1, 9, 0), "2026-11-01T09:00:00Z", 5):  # sin zona horaria
         with pytest.raises(ValueError, match="zona horaria"):
             run(world, commands.advance_delivery, message_id=failing.pk, status="SENT", at=bad)
+
+
+def test_the_same_client_id_in_two_conversations_at_once_is_a_conflict_not_a_crash(
+    world: SimpleNamespace,
+) -> None:
+    here = reload(world, Conversation, inbound(world)[0].conversation_id)
+    with tenant_scope(ctx(world.a)):
+        who = Contact.objects.create(display_name="Otro cliente")
+    there = reload(
+        world, Conversation, inbound(world, "wamid.9", contact_id=who.pk)[0].conversation_id
+    )
+    client = uuid4()
+
+    def reply(convo: Conversation) -> Callable[[Any], Any]:
+        return lambda tenant: commands.record_outbound(
+            tenant, conversation_id=convo.pk, client_message_id=client, body="Hola"
+        )
+
+    first, second = race(world.a, world.ana, [reply(here), reply(there)])
+    assert first[1] is True and second == "ClientMessageConflict"  # sin IntegrityError
