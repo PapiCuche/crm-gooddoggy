@@ -23,6 +23,8 @@ import type {
 
 import type {
   AddStageRequest,
+  AssignRequest,
+  Assignment,
   AuditListParams,
   Branch,
   BranchCreateRequest,
@@ -4791,6 +4793,115 @@ export function useConversationsRetrieve<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getConversationAssignUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/assign/`;
+};
+
+/**
+ * Toma, transfiere o suelta la conversación (`conversations.assign` y `conversations.view` sobre ella). `TAKE`: solo si nadie la tiene. `TRANSFER` a `user_id`, un miembro activo con `conversations.view` (400 si no, con el mismo error para cualquiera). `RELEASE`: la deja sin responsable (una `OPEN` vuelve a la cola, `PENDING`). 409 `ASSIGNMENT_CONFLICT`: otra persona la cambió o la tomó antes, o la versión no es la actual; `CONVERSATION_CLOSED`. 404: no existe o fuera del alcance.
+ */
+export const conversationAssign = async (
+  orgSlug: string,
+  conversationId: string,
+  assignRequest: AssignRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Assignment> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Assignment>(getConversationAssignUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(assignRequest),
+  });
+};
+
+export const getConversationAssignMutationKey = () => ["conversationAssign"] as const;
+
+export const getConversationAssignMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationAssign>>,
+    TError,
+    ConversationAssignMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationAssign>>,
+  TError,
+  ConversationAssignMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationAssignMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationAssign>>,
+    ConversationAssignMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, data } = props ?? {};
+
+    return conversationAssign(orgSlug, conversationId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationAssignMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationAssign>>
+>;
+export type ConversationAssignMutationBody = AssignRequest;
+export type ConversationAssignMutationError = ErrorType<Error>;
+export type ConversationAssignMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  data: AssignRequest;
+};
+
+export const useConversationAssign = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationAssign>>,
+      TError,
+      ConversationAssignMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationAssign>>,
+  TError,
+  ConversationAssignMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationAssignMutationOptions(options), queryClient);
+};
 
 export const getConversationMessagesListUrl = (
   orgSlug: string,

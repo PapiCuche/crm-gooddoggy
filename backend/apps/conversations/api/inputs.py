@@ -8,7 +8,7 @@ from rest_framework import serializers
 
 from apps.conversations import commands
 from apps.conversations.models import BODY_MAX
-from core.api.strict import Closed, Id, Text
+from core.api.strict import Choice, Closed, Id, Text, Whole
 
 
 class Checked(Text):
@@ -50,3 +50,26 @@ class SendMessageSerializer(Closed, serializers.Serializer[Any]):
         max_length=BODY_MAX,
         help_text=f"Hasta {BODY_MAX} caracteres, con algo visible.",
     )
+
+
+class AssignSerializer(Closed, serializers.Serializer[Any]):
+    action = Choice(
+        choices=["TAKE", "TRANSFER", "RELEASE"],
+        help_text="`TAKE`: la toma quien llama. `TRANSFER`: pasa a `user_id`. "
+        "`RELEASE`: sin responsable.",
+    )
+    user_id = Id(required=False, help_text="Solo con `TRANSFER`: la persona que la recibe.")
+    assignment_version = Whole(
+        required=False,
+        min_value=1,
+        max_value=2**31 - 1,
+        help_text="La que se leyó; si cambió, 409. Sin ella no se comprueba.",
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        transfer = attrs["action"] == "TRANSFER"
+        if transfer and "user_id" not in attrs:
+            raise serializers.ValidationError({"user_id": ["Obligatorio con TRANSFER."]})
+        if not transfer and "user_id" in attrs:
+            raise serializers.ValidationError({"user_id": ["Solo con TRANSFER."]})
+        return attrs
