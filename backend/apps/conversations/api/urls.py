@@ -24,6 +24,8 @@ urlpatterns = [
         assignment.AssignView.as_view(),
         name="conversation-assign",
     ),
+    path("channels/", channels.ChannelsView.as_view(), name="channels"),
+    path("channels/<uuid:account_id>/", channels.ChannelView.as_view(), name="channel"),
     path("channels/whatsapp/", channels.ConnectView.as_view(), name="whatsapp-connect"),
     path(
         "channels/whatsapp/<uuid:account_id>/",

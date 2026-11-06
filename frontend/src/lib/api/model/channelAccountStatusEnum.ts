@@ -13,10 +13,10 @@
  * * `DISCONNECTED` - Disconnected
  * * `ERROR` - Error
  */
-export type WhatsAppAccountStatusEnum =
-  (typeof WhatsAppAccountStatusEnum)[keyof typeof WhatsAppAccountStatusEnum];
+export type ChannelAccountStatusEnum =
+  (typeof ChannelAccountStatusEnum)[keyof typeof ChannelAccountStatusEnum];
 
-export const WhatsAppAccountStatusEnum = {
+export const ChannelAccountStatusEnum = {
   PENDING: "PENDING",
   CONNECTED: "CONNECTED",
   DEGRADED: "DEGRADED",

@@ -36,14 +36,15 @@ Avisos heredados de las revisiones de la Fase 6 que esta fase tiene que cerrar: 
 | F7-04  | Mensajes entrantes de texto y marcador de no soportados                                                                                   | `feature/f7-inbound-text`        | F7-03                           | backend            |
 | F7-05  | Adaptador de salida, política de ventana y despacho con reclamo                                                                           | `feature/f7-outbound-adapter`    | F7-02c, F7-04                   | backend            |
 | F7-06  | Estados de entrega y errores del proveedor                                                                                                | `feature/f7-delivery-status`     | F7-05                           | backend            |
-| F7-07  | Pantalla de configuración del canal y estado de salud                                                                                     | `feature/f7-channel-settings-ui` | F7-02d, F7-06                   | frontend           |
+| F7-07a | [#596](https://github.com/PapiCuche/crm-gooddoggy/issues/596) API de lectura de las cuentas de canal y su estado                              | `feature/f7-channel-read-api`    | F7-02d                          | backend            |
+| F7-07b | Pantalla de configuración del canal y estado de salud                                                                                     | `feature/f7-channel-settings-ui` | F7-07a, F7-06                   | frontend           |
 | F7-08  | Consentimientos y baja (STOP)                                                                                                             | `feature/f7-consent-optout`      | F7-04                           | backend            |
 | F7-09  | Medios entrantes y salientes                                                                                                              | `feature/f7-media`               | F7-06                           | full-stack         |
 | F7-10  | Plantillas: sincronización, estado y envío fuera de la ventana                                                                            | `feature/f7-templates`           | F7-06, F7-08                    | full-stack         |
 | F7-11  | Reintento de webhooks fallidos, métricas y alertas                                                                                        | `feature/f7-ingress-ops`         | F7-06                           | full-stack         |
-| F7-12  | Activación en vivo con credenciales del propietario (runbook y prueba de punta a punta)                                                   | `feature/f7-go-live`             | F7-07, F7-11 y las credenciales | docs / operaciones |
+| F7-12  | Activación en vivo con credenciales del propietario (runbook y prueba de punta a punta)                                                   | `feature/f7-go-live`             | F7-07b, F7-11 y las credenciales | docs / operaciones |
 
-Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → F7-06; después F7-07, F7-08 y F7-11 en paralelo; luego F7-09 y F7-10; F7-12 cuando haya credenciales. Tras F7-06 el producto ya recibe y responde texto dentro de la ventana contra el simulador.
+Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → F7-06; después F7-07a → F7-07b, F7-08 y F7-11 en paralelo; luego F7-09 y F7-10; F7-12 cuando haya credenciales. Tras F7-06 el producto ya recibe y responde texto dentro de la ventana contra el simulador.
 
 ### F7-01 · Simulador de la API de Meta
 
@@ -172,6 +173,8 @@ Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → 
 - **No incluye:** plantillas ni medios.
 - **Criterios:** pruebas del formulario y de los estados; 390 y 320 px; pruebas en el navegador contra el simulador.
 - **Tamaño estimado:** 500–700 líneas.
+- **Plan de corte declarado:** **F7-07a** (#596) la API de lectura (`GET /channels/` y `GET /channels/{id}/`), que la pantalla necesita para leer las cuentas y su estado; **F7-07b** la pantalla (formulario, estado, checklist, rotación, desconexión y salud). La tarea `HEALTHCHECK` y el estado «webhook visto» llegan con sus propios work items (F7-03b, F7-04).
+- **Hecho en F7-07a (#596):** `GET …/channels/` (lista de las cuentas vivas de la organización, Sandbox incluida, por creación con el cursor de ADR-016) y `GET …/channels/{id}/` (`api/channels.py`). `channels.manage` antes de consultar nada: sin él 403 también en la lista y con un id que no existe; una cuenta inexistente, de otra organización o desconectada da el mismo 404. Campos: `id`, `platform`, `name`, `status`, `status_detail`, `quality_rating`, `messaging_limit_tier`, `last_healthcheck_at`, `external_account_id` y `external_parent_id` (ids públicos), `token_last_four` (de la credencial viva, `null` si no hay), `version`, `created_at` y `updated_at`; nunca `credential_id`, el cifrado ni más que el final del token. Una sola consulta con subconsulta para `token_last_four` (el número de consultas no crece con las cuentas). Solo lectura: el resto de métodos no están declarados y dan 403. Los GET no cuentan para el límite de tasa de F7-02e (solo limita `…/channels/whatsapp/`). El enum de `status` de las cuentas pasa a llamarse `ChannelAccountStatusEnum` en OpenAPI (antes `WhatsAppAccountStatusEnum`: lo comparten la respuesta de WhatsApp y la de lectura, también para la Sandbox).
 
 ### F7-08 · Consentimientos y baja (STOP)
 

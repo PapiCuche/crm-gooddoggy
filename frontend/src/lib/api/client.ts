@@ -35,6 +35,8 @@ import type {
   CategoriesListParams,
   Category,
   CategoryCreateRequest,
+  ChannelAccount,
+  ChannelsListParams,
   ConnectRequest,
   Contact,
   ContactAssignmentRequest,
@@ -95,6 +97,7 @@ import type {
   PaginatedBranchList,
   PaginatedBrandList,
   PaginatedCategoryList,
+  PaginatedChannelAccountList,
   PaginatedContactList,
   PaginatedConversationList,
   PaginatedInvitationList,
@@ -3123,6 +3126,273 @@ export const useCategoriesDelete = <TError = ErrorType<Error>, TContext = unknow
 > => {
   return useMutation(getCategoriesDeleteMutationOptions(options), queryClient);
 };
+
+export const getChannelsListUrl = (orgSlug: string, params?: ChannelsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/channels/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/channels/`;
+};
+
+/**
+ * Las cuentas de canal vivas de la organización (WhatsApp y Sandbox), por creación (ADR-016). Pide `channels.manage`: sin él, 403 aunque no haya cuentas. Solo lectura; nunca el id de la credencial, el cifrado ni más del final del token.
+ */
+export const channelsList = async (
+  orgSlug: string,
+  params?: ChannelsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedChannelAccountList> => {
+  return apiFetch<PaginatedChannelAccountList>(getChannelsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getChannelsListQueryKey = (orgSlug: string, params?: ChannelsListParams) => {
+  return [`/api/v1/o/${orgSlug}/channels/`, ...(params ? [params] : [])] as const;
+};
+
+export const getChannelsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof channelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ChannelsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getChannelsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof channelsList>>> = ({ signal }) =>
+    channelsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof channelsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ChannelsListQueryResult = NonNullable<Awaited<ReturnType<typeof channelsList>>>;
+export type ChannelsListQueryError = ErrorType<Error>;
+
+export function useChannelsList<
+  TData = Awaited<ReturnType<typeof channelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ChannelsListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof channelsList>>,
+          TError,
+          Awaited<ReturnType<typeof channelsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useChannelsList<
+  TData = Awaited<ReturnType<typeof channelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ChannelsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof channelsList>>,
+          TError,
+          Awaited<ReturnType<typeof channelsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useChannelsList<
+  TData = Awaited<ReturnType<typeof channelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ChannelsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useChannelsList<
+  TData = Awaited<ReturnType<typeof channelsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ChannelsListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getChannelsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getChannelsRetrieveUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/channels/${accountId}/`;
+};
+
+/**
+ * Una cuenta de canal (`channels.manage`). 404: no existe, es de otra organización o está desconectada, sin distinguirlo.
+ */
+export const channelsRetrieve = async (
+  orgSlug: string,
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<ChannelAccount> => {
+  return apiFetch<ChannelAccount>(getChannelsRetrieveUrl(orgSlug, accountId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getChannelsRetrieveQueryKey = (orgSlug: string, accountId: string) => {
+  return [`/api/v1/o/${orgSlug}/channels/${accountId}/`] as const;
+};
+
+export const getChannelsRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof channelsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  accountId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getChannelsRetrieveQueryKey(orgSlug, accountId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof channelsRetrieve>>> = ({ signal }) =>
+    channelsRetrieve(orgSlug, accountId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null && orgSlug !== undefined && accountId !== null && accountId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof channelsRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ChannelsRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof channelsRetrieve>>>;
+export type ChannelsRetrieveQueryError = ErrorType<Error>;
+
+export function useChannelsRetrieve<
+  TData = Awaited<ReturnType<typeof channelsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  accountId: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof channelsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof channelsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useChannelsRetrieve<
+  TData = Awaited<ReturnType<typeof channelsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  accountId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof channelsRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof channelsRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useChannelsRetrieve<
+  TData = Awaited<ReturnType<typeof channelsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  accountId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useChannelsRetrieve<
+  TData = Awaited<ReturnType<typeof channelsRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  accountId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof channelsRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getChannelsRetrieveQueryOptions(orgSlug, accountId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getChannelsSandboxInboundUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/channels/sandbox/inbound/`;

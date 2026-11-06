@@ -61,6 +61,8 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/messages/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/notes/",  # F6-05a2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/assign/",
+        "/api/v1/o/{org_slug}/channels/",  # F7-07a
+        "/api/v1/o/{org_slug}/channels/{account_id}/",
         "/api/v1/o/{org_slug}/channels/sandbox/inbound/",
         "/api/v1/o/{org_slug}/channels/whatsapp/",
         "/api/v1/o/{org_slug}/channels/whatsapp/{account_id}/",
