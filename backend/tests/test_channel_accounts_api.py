@@ -228,3 +228,53 @@ def test_a_token_with_a_trailing_newline_or_a_leading_space_is_a_field_error(
     response = post(signed(crm.ana), **over)
     assert response.status_code == 400 and set(response.json()["fields"]) == set(over)
     assert meta.calls == []
+
+
+def test_the_routes_have_a_rate_limit_that_counts_what_meta_rejects(
+    crm: SimpleNamespace, meta: FakeGraph, settings: Any
+) -> None:
+    settings.CHANNEL_CHECK_THROTTLE = (3, 600)
+    meta.token = "otro-token-de-la-api-falsa-0000"  # noqa: S105  Meta lo rechaza
+    ana = signed(crm.ana)
+    assert [post(ana).status_code for _ in range(3)] == [400, 400, 400]
+    limited = post(ana)
+    assert limited.status_code == 429 and limited.json()["code"] == "RATE_LIMITED"
+    assert int(limited["Retry-After"]) > 0 and len(meta.calls) == 3  # ni se preguntó a Meta
+    assert send(ana, "delete", f"{BASE}{uuid4()}/", None).status_code == 429  # las tres rutas
+    assert post(signed(crm.luis), BASE.replace("org-a", "org-b")).status_code != 429  # otra persona
+
+
+def test_a_member_without_the_permission_cannot_use_up_the_limit_of_another(
+    crm: SimpleNamespace, meta: FakeGraph, settings: Any
+) -> None:
+    settings.CHANNEL_CHECK_THROTTLE = (2, 600)
+    vera = signed(crm.vera)  # sin `channels.manage`: se limita sola
+    assert [post(vera).status_code for _ in range(4)] == [403, 403, 429, 429]
+    assert post(signed(crm.ana)).status_code == 201  # la persona que gestiona no se ve afectada
+
+
+def test_the_sixth_request_in_ten_minutes_is_refused_with_the_default_limit(
+    crm: SimpleNamespace, meta: FakeGraph
+) -> None:
+    ana = signed(crm.ana)
+    answers = [send(ana, "delete", f"{BASE}{uuid4()}/", None) for _ in range(6)]
+    assert [a.status_code for a in answers] == [404, 404, 404, 404, 404, 429]
+    assert answers[-1].json() == {"code": "RATE_LIMITED"} and answers[-1]["Retry-After"]
+
+
+def test_a_request_the_csrf_check_refuses_or_an_anonymous_one_never_uses_the_limit(
+    crm: SimpleNamespace, meta: FakeGraph, settings: Any, migrator: DB
+) -> None:
+    """Una página ajena que fuerza peticiones con la sesión de la víctima no le gasta el tope."""
+    settings.CHANNEL_CHECK_THROTTLE = (2, 600)
+    ana = signed(crm.ana)
+    for _ in range(4):  # sin la cabecera del CSRF: la rechaza el CSRF, antes del tope
+        forged = ana.post(BASE, BODY | TOKEN, "application/json")
+        assert reply(forged) == (403, b'{"code":"CSRF_FAILED"}')
+    anonymous = Client(enforce_csrf_checks=True)
+    assert [send(anonymous, "post", BASE, BODY | TOKEN).status_code for _ in range(4)] == [401] * 4
+    count = "SELECT count(*) FROM login_throttles WHERE key LIKE 'chn:%'"
+    assert migrator.execute(count).fetchone() == (0,)  # nada contó: ni lo forzado ni lo anónimo
+    assert post(ana).status_code == 201  # y la persona conserva todo su tope
+    used = migrator.execute("SELECT failures FROM login_throttles WHERE key LIKE 'chn:%'")
+    assert used.fetchall() == [(1,)]

@@ -396,3 +396,25 @@ def test_the_migrations_job_never_needs_the_whatsapp_settings(
         META_WEBHOOK_VERIFY_TOKEN=None,
     )
     assert settings.DATABASES["default"]["USER"] == "crm_migrator"  # type: ignore[attr-defined]
+
+
+def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -> None:
+    """La purga de los contadores de acceso borra lo que lleva más de su ventana de calma sin
+    moverse; los contadores `chn:` (F7-02e) viven en esa tabla y su ventana tiene que caber."""
+    from config.settings import base
+
+    kept = max(window for _, window, _, _ in base.LOGIN_THROTTLE.values())
+    assert base.CHANNEL_CHECK_THROTTLE[1] < kept
+
+
+@pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (5, 59), (5, 841), (5, 3600)])
+def test_the_whatsapp_channel_on_refuses_a_limit_it_cannot_enforce(
+    throttle: tuple[int, int],
+) -> None:
+    """Encender el canal exige un tope de peticiones razonable (F7-02e)."""
+    from config import env
+
+    good = (META_SECRET, META_VERIFY, "v23.0")
+    env.check_meta([good[0]], good[1], good[2], (5, 600))
+    with pytest.raises(ImproperlyConfigured, match="CHANNEL_CHECK_THROTTLE"):
+        env.check_meta([good[0]], good[1], good[2], throttle)

@@ -86,12 +86,13 @@ def channel_errors() -> Iterator[None]:
         operation_id="channels_whatsapp_connect",
         tags=["conversations"],
         request=inputs.ConnectSerializer,
-        responses={201: WhatsAppAccountSerializer, **errors(400, 401, 403, 409, 503)},
+        responses={201: WhatsAppAccountSerializer, **errors(400, 401, 403, 409, 429, 503)},
         description="Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba "
         "con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en "
         "`phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); "
         "`CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; "
-        "503 `CHANNEL_PROVIDER_UNAVAILABLE`.",
+        "503 `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos por "
+        "persona, las tres rutas).",
     ),
 )
 class ConnectView(APIView):
@@ -111,7 +112,7 @@ class ConnectView(APIView):
         operation_id="channels_whatsapp_rotate_token",
         tags=["conversations"],
         request=inputs.TokenSerializer,
-        responses={200: WhatsAppAccountSerializer, **errors(400, 401, 403, 404, 409, 503)},
+        responses={200: WhatsAppAccountSerializer, **errors(400, 401, 403, 404, 409, 429, 503)},
         description="Cambia el token de la cuenta (`channels.manage`): se comprueba con Meta "
         "contra el mismo número y WABA, sustituye al anterior (que se invalida y pierde su "
         "cifrado). 404: no existe, es de otra organización o ya está desconectada.",
@@ -136,7 +137,7 @@ class RotateTokenView(APIView):
     delete=extend_schema(
         operation_id="channels_whatsapp_disconnect",
         tags=["conversations"],
-        responses={204: None, **errors(401, 403, 404)},
+        responses={204: None, **errors(401, 403, 404, 429)},
         description="Desconecta la cuenta (`channels.manage`): queda borrada, su token se "
         "invalida y su número se libera. Para volver a usarla se conecta otra cuenta.",
     ),
