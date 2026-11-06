@@ -123,6 +123,8 @@ def tenant_db(
         finally:
             connection.close()
             for table in (
+                "webhook_failures",  # F7-03b: de plataforma, antes que la ingesta
+                "webhook_ingress",
                 *TENANT_TABLES,
                 "organizations",
                 "django_session",

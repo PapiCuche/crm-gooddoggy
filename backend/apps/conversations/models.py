@@ -4,7 +4,7 @@ marca borrada, una conversación se cierra o se archiva, el historial de asignac
 y un mensaje no se reescribe salvo el estado de entrega, que solo avanza."""
 
 from django.db import models
-from django.db.models.functions import Length
+from django.db.models.functions import Length, Now
 from django.db.models.lookups import LessThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
@@ -527,3 +527,85 @@ class ConversationAssignment(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+
+INGRESS_STATUSES = ("RECEIVED", "PROCESSING", "PROCESSED", "IGNORED", "FAILED", "DEAD")
+INGRESS_MAX_ATTEMPTS = 8  # tras 8 intentos un ítem queda `DEAD` (ADR-029 §3)
+
+
+class WebhookIngress(models.Model):
+    """Un ítem lógico de un webhook firmado (F7-03b; ADR-029 §3). **De plataforma**: sin
+    organización hasta que el enrutado la encuentra; RLS activada **sin política** y sin ningún
+    privilegio de `crm_app`, que solo entra por las funciones `webhook_ingress_*`. El payload se
+    vacía al pasar a `PROCESSED` o `IGNORED` (queda su hash); `routed_organization_id` y
+    `routed_channel_account_id` los pone el enrutado y son informativos (no se llaman
+    `organization_id`: no es una tabla de tenant)."""
+
+    id = uuid7_primary_key()
+    provider = models.CharField(max_length=16)
+    event_key = models.CharField(max_length=700)
+    kind = models.CharField(max_length=16)
+    waba_id = models.CharField(max_length=30)
+    phone_number_id = models.CharField(max_length=30, null=True)  # noqa: DJ001
+    status = models.CharField(max_length=16, db_default="RECEIVED")
+    payload = models.JSONField(null=True)
+    payload_hash = models.CharField(max_length=64)
+    attempts = models.PositiveSmallIntegerField(db_default=0)
+    next_attempt_at = models.DateTimeField(db_default=Now())
+    claimed_until = models.DateTimeField(null=True)
+    ignored_reason = models.CharField(max_length=32, null=True)  # noqa: DJ001
+    routed_organization_id = models.UUIDField(null=True)
+    routed_channel_account_id = models.UUIDField(null=True)
+    received_at = models.DateTimeField(db_default=Now())
+    processed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "webhook_ingress"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "event_key"], name="webhook_ingress_key_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=INGRESS_STATUSES), name="webhook_ingress_status_ck"
+            ),
+            models.CheckConstraint(  # vaciado al terminar, y solo entonces
+                condition=models.Q(payload__isnull=True)
+                | ~models.Q(status__in=("PROCESSED", "IGNORED")),
+                name="webhook_ingress_emptied_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    payload_hash__regex=r"^[0-9a-f]{64}$", attempts__lte=INGRESS_MAX_ATTEMPTS
+                ),
+                name="webhook_ingress_shape_ck",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["next_attempt_at"],
+                condition=models.Q(status__in=("RECEIVED", "FAILED")),
+                name="webhook_ingress_due_idx",
+            ),
+            models.Index(fields=["received_at"], name="webhook_ingress_received_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return self.event_key
+
+
+class WebhookFailure(models.Model):
+    """Un intento fallido de procesar un ítem: solo un código corto, nunca el error ni el cuerpo."""
+
+    id = uuid7_primary_key()
+    ingress = models.ForeignKey(
+        WebhookIngress, models.CASCADE, related_name="+", db_constraint=True
+    )
+    attempt = models.PositiveSmallIntegerField()
+    reason = models.CharField(max_length=32)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        db_table = "webhook_failures"
+
+    def __str__(self) -> str:
+        return str(self.ingress_id)
