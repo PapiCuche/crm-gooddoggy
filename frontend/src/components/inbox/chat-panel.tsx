@@ -31,6 +31,7 @@ import type {
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { Assignee, AssignmentActions } from "./assignment";
 import { canSend, Composer, messagesKey } from "./composer";
 import { Plain } from "./plain";
 
@@ -170,6 +171,13 @@ export function ChatPanel({
           <Plain>{conversation.channel.name}</Plain>
           <span>{t(`status.${conversation.status}`)}</span>
         </p>
+        {detail.data ? (
+          <AssignmentActions detail={detail.data} />
+        ) : (
+          <p className="text-sm font-medium">
+            <Assignee who={conversation} />
+          </p>
+        )}
         {stale ? (
           <p role="alert" className="text-danger text-sm">
             {stale}
