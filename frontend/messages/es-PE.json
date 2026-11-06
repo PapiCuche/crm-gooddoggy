@@ -2124,7 +2124,8 @@
     "assignee": {
       "mine": "Asignada a ti",
       "UNASSIGNED": "Sin asignar",
-      "other": "Asignada"
+      "other": "Asignada",
+      "to": "Asignada a"
     },
     "sender": {
       "CONTACT": "Cliente",
@@ -2163,6 +2164,22 @@
       "retry": "Reintentar",
       "denied": "No puedes responder en esta conversación. Puede que ya no esté en tu alcance.",
       "cannot": "No tienes permiso para responder en esta conversación."
+    },
+    "assign": {
+      "take": "Tomar",
+      "release": "Soltar",
+      "transfer": "Transferir",
+      "transferTo": "Transferir a",
+      "choose": "Elige a una persona…",
+      "someone": "otra persona",
+      "done": {
+        "TAKE": "Tomaste la conversación.",
+        "RELEASE": "Soltaste la conversación; vuelve a la cola.",
+        "TRANSFER": "Transferiste la conversación a {name}."
+      },
+      "conflict": "Alguien la tomó antes o cambió la asignación. Ya la actualizamos: revisa quién la tiene.",
+      "badTarget": "No se puede transferir a esa persona. Elige a otra.",
+      "closed": "La conversación está cerrada: no se puede asignar."
     }
   }
 }

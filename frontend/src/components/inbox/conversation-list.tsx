@@ -17,6 +17,7 @@ import type {
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+import { Assignee } from "./assignment";
 import { Plain } from "./plain";
 
 export const BOXES = ["all", "mine", "unassigned"] as const;
@@ -176,7 +177,6 @@ function Row({
 }) {
   const t = useTranslations("inbox");
   const format = useFormatter();
-  const { user } = useTenant();
   const name = row.contact.display_name;
   // Sin nombre, la API tampoco da la vista previa: se explica en lugar de dejar un hueco.
   let preview = <span className="italic">{t("noAccess")}</span>;
@@ -190,10 +190,6 @@ function Row({
   } else if (name !== null) {
     preview = <span className="italic">{t("noMessages")}</span>;
   }
-  const assignee =
-    row.assigned_user_id === user.id
-      ? t("assignee.mine")
-      : t(`assignee.${row.assignee_kind === "UNASSIGNED" ? "UNASSIGNED" : "other"}`);
   return (
     <li>
       <button
@@ -219,7 +215,9 @@ function Row({
           <span className="font-mono">{row.number}</span>
           <Plain>{row.channel.name}</Plain>
           <span>{t(`status.${row.status}`)}</span>
-          <span>{assignee}</span>
+          <span>
+            <Assignee who={row} />
+          </span>
         </span>
       </button>
     </li>
