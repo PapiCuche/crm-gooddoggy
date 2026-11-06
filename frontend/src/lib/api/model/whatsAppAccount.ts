@@ -5,11 +5,11 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
+import type { ChannelAccountStatusEnum } from "./channelAccountStatusEnum";
 import type { MessagingLimitTierEnum } from "./messagingLimitTierEnum";
 import type { NullEnum } from "./nullEnum";
 import type { QualityRatingEnum } from "./qualityRatingEnum";
 import type { StatusDetailEnum } from "./statusDetailEnum";
-import type { WhatsAppAccountStatusEnum } from "./whatsAppAccountStatusEnum";
 
 export interface WhatsAppAccount {
   id: string;
@@ -26,7 +26,7 @@ export interface WhatsAppAccount {
    * * `DISCONNECTED` - Disconnected
    * * `ERROR` - Error
    */
-  status: WhatsAppAccountStatusEnum;
+  status: ChannelAccountStatusEnum;
   status_detail: StatusDetailEnum | NullEnum | null;
   quality_rating: QualityRatingEnum | NullEnum | null;
   messaging_limit_tier: MessagingLimitTierEnum | NullEnum | null;

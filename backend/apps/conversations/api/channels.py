@@ -1,22 +1,24 @@
-"""Conectar, rotar el token y desconectar una cuenta de WhatsApp (F7-02d, ADR-029 §2).
+"""Leer, conectar, rotar el token y desconectar las cuentas de canal (F7-02d y F7-07a, ADR-029 §2).
 
-`channels.manage`, comprobado antes de leer el cuerpo; el cuerpo, antes del 404. Una cuenta que no
-existe, es de otra organización, es Sandbox o ya está desconectada da el mismo 404. Ninguna
-respuesta lleva el token ni su cifrado: solo sus últimas cuatro letras, las fechas y el estado.
+`channels.manage`, comprobado antes de leer el cuerpo o la base; el cuerpo, antes del 404. Una
+cuenta que no existe, es de otra organización o ya está desconectada da el mismo 404 (al conectar,
+rotar o desconectar, también la Sandbox). Ninguna respuesta lleva el token ni su cifrado: solo sus
+últimas cuatro letras, las fechas y el estado.
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import serializers
+from rest_framework import generics, serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.access.permissions import rbac_errors
-from apps.conversations import accounts, graph
+from apps.conversations import accounts, graph, selectors
 from apps.conversations.api import inputs
 from apps.conversations.models import (
     LIMIT_TIERS,
@@ -25,6 +27,7 @@ from apps.conversations.models import (
     AccountStatus,
     ChannelAccount,
     Credential,
+    Platform,
 )
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -51,6 +54,28 @@ class WhatsAppAccountSerializer(serializers.Serializer[Any]):
     token_expires_at = serializers.DateTimeField(allow_null=True)
     version = serializers.IntegerField()
     created_at = serializers.DateTimeField()
+
+
+class ChannelAccountSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    platform = serializers.ChoiceField(choices=Platform.choices)
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=AccountStatus.choices)
+    status_detail = serializers.ChoiceField(choices=STATUS_DETAILS, allow_null=True)
+    quality_rating = serializers.ChoiceField(choices=QUALITY_RATINGS, allow_null=True)
+    messaging_limit_tier = serializers.ChoiceField(choices=LIMIT_TIERS, allow_null=True)
+    last_healthcheck_at = serializers.DateTimeField(allow_null=True)
+    external_account_id = serializers.CharField(help_text="El `phone_number_id` de WhatsApp.")
+    external_parent_id = serializers.CharField(
+        allow_null=True, help_text="El WABA; `null` en la Sandbox."
+    )
+    token_last_four = serializers.CharField(
+        allow_null=True,
+        help_text="Lo único que se enseña del token; `null` si la cuenta no tiene credencial viva.",
+    )
+    version = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
 
 
 def shown(account: ChannelAccount, credential: Credential) -> dict[str, Any]:
@@ -149,3 +174,41 @@ class DisconnectView(APIView):
         with channel_errors():
             accounts.disconnect(context.require(), channel_account_id=self.kwargs["account_id"])
         return Response(status=204)
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="channels_list",
+        tags=["conversations"],
+        responses={200: ChannelAccountSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Las cuentas de canal vivas de la organización (WhatsApp y Sandbox), por "
+        "creación (ADR-016). Pide `channels.manage`: sin él, 403 aunque no haya cuentas. Solo "
+        "lectura; nunca el id de la credencial, el cifrado ni más del final del token. En la "
+        "Sandbox, `external_parent_id` y `token_last_four` son `null`.",
+    ),
+)
+class ChannelsView(generics.ListAPIView):
+    required_permissions = {"GET": "channels.manage"}
+    serializer_class = ChannelAccountSerializer
+
+    def get_queryset(self) -> QuerySet[ChannelAccount]:
+        return selectors.channel_accounts()
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="channels_retrieve",
+        tags=["conversations"],
+        responses={200: ChannelAccountSerializer, **errors(401, 403, 404)},
+        description="Una cuenta de canal (`channels.manage`). 404: no existe, es de otra "
+        "organización o está desconectada, sin distinguirlo. En la Sandbox, `external_parent_id` y "
+        "`token_last_four` son `null`.",
+    ),
+)
+class ChannelView(generics.RetrieveAPIView):
+    required_permissions = {"GET": "channels.manage"}
+    serializer_class = ChannelAccountSerializer
+    lookup_url_kwarg = "account_id"
+
+    def get_queryset(self) -> QuerySet[ChannelAccount]:
+        return selectors.channel_accounts()
