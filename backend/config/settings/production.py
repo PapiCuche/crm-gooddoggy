@@ -11,6 +11,7 @@ from config.settings.base import *  # noqa: F403
 from config.settings.base import (
     ALLOWED_HOSTS,
     APP_ORIGIN,
+    CHANNEL_CHECK_THROTTLE,
     DEFAULT_FROM_EMAIL,
     EMAIL_HOST,
     EMAIL_HOST_PASSWORD,
@@ -80,7 +81,9 @@ if not SECRETS_KEKS:
 # ADR-029: con el canal de WhatsApp encendido, sus ajustes son obligatorios y válidos. Apagado
 # (el valor por omisión) no se exige nada.
 if META_ENABLED:
-    env.check_meta(META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION)
+    env.check_meta(
+        META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION, CHANNEL_CHECK_THROTTLE
+    )
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

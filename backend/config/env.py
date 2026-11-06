@@ -117,7 +117,9 @@ def database(url: str) -> dict[str, Any]:
     }
 
 
-def check_meta(secrets: list[str], verify_token: str, version: str) -> None:
+def check_meta(
+    secrets: list[str], verify_token: str, version: str, throttle: tuple[int, int]
+) -> None:
     """Valida los ajustes del canal de WhatsApp (ADR-029) con el canal encendido. Los errores solo
     nombran la variable: los valores son secretos."""
     if not 1 <= len(secrets) <= 3 or len(set(secrets)) != len(secrets):
@@ -132,3 +134,10 @@ def check_meta(secrets: list[str], verify_token: str, version: str) -> None:
         )
     if not _META_VERSION.fullmatch(version):
         raise ImproperlyConfigured("META_GRAPH_VERSION debe tener la forma vNN.N")
+    # El tope de las rutas de la cuenta (F7-02e): sin él un administrador agotaría el límite de
+    # la app de Meta, una sola por despliegue. Ventana menor que la calma de la purga del acceso.
+    limit, window = throttle
+    if not (1 <= limit <= 60 and 60 <= window <= 840):
+        raise ImproperlyConfigured(
+            "CHANNEL_CHECK_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s"
+        )
