@@ -24,20 +24,20 @@ Avisos heredados de las revisiones de la Fase 6 que esta fase tiene que cerrar: 
 
 ## Work items
 
-| ID    | Título                                                                                  | Rama                             | Depende de                      | Tipo               |
-| ----- | --------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------- | ------------------ |
-| F7-01 | Simulador de la API de Meta (webhooks firmados y Graph API falsa)                       | `feature/f7-meta-simulator`      | —                               | backend (pruebas)  |
-| F7-02 | Cuenta de canal de WhatsApp y secretos cifrados                                         | `feature/f7-whatsapp-account`    | F7-01                           | backend            |
-| F7-03 | Webhook: verificación, firma, ingesta y enrutado del tenant                             | `feature/f7-webhook-ingress`     | F7-01, F7-02                    | backend            |
-| F7-04 | Mensajes entrantes de texto y marcador de no soportados                                 | `feature/f7-inbound-text`        | F7-03                           | backend            |
-| F7-05 | Adaptador de salida, política de ventana y despacho con reclamo                         | `feature/f7-outbound-adapter`    | F7-02, F7-04                    | backend            |
-| F7-06 | Estados de entrega y errores del proveedor                                              | `feature/f7-delivery-status`     | F7-05                           | backend            |
-| F7-07 | Pantalla de configuración del canal y estado de salud                                   | `feature/f7-channel-settings-ui` | F7-02, F7-06                    | frontend           |
-| F7-08 | Consentimientos y baja (STOP)                                                           | `feature/f7-consent-optout`      | F7-04                           | backend            |
-| F7-09 | Medios entrantes y salientes                                                            | `feature/f7-media`               | F7-06                           | full-stack         |
-| F7-10 | Plantillas: sincronización, estado y envío fuera de la ventana                          | `feature/f7-templates`           | F7-06, F7-08                    | full-stack         |
-| F7-11 | Reintento de webhooks fallidos, métricas y alertas                                      | `feature/f7-ingress-ops`         | F7-06                           | full-stack         |
-| F7-12 | Activación en vivo con credenciales del propietario (runbook y prueba de punta a punta) | `feature/f7-go-live`             | F7-07, F7-11 y las credenciales | docs / operaciones |
+| ID    | Título                                                                                                                          | Rama                             | Depende de                      | Tipo               |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------- | ------------------ |
+| F7-01 | [#580](https://github.com/PapiCuche/crm-gooddoggy/issues/580) Simulador de la API de Meta (webhooks firmados y Graph API falsa) | `feature/f7-meta-simulator`      | —                               | backend (pruebas)  |
+| F7-02 | Cuenta de canal de WhatsApp y secretos cifrados                                                                                 | `feature/f7-whatsapp-account`    | F7-01                           | backend            |
+| F7-03 | Webhook: verificación, firma, ingesta y enrutado del tenant                                                                     | `feature/f7-webhook-ingress`     | F7-01, F7-02                    | backend            |
+| F7-04 | Mensajes entrantes de texto y marcador de no soportados                                                                         | `feature/f7-inbound-text`        | F7-03                           | backend            |
+| F7-05 | Adaptador de salida, política de ventana y despacho con reclamo                                                                 | `feature/f7-outbound-adapter`    | F7-02, F7-04                    | backend            |
+| F7-06 | Estados de entrega y errores del proveedor                                                                                      | `feature/f7-delivery-status`     | F7-05                           | backend            |
+| F7-07 | Pantalla de configuración del canal y estado de salud                                                                           | `feature/f7-channel-settings-ui` | F7-02, F7-06                    | frontend           |
+| F7-08 | Consentimientos y baja (STOP)                                                                                                   | `feature/f7-consent-optout`      | F7-04                           | backend            |
+| F7-09 | Medios entrantes y salientes                                                                                                    | `feature/f7-media`               | F7-06                           | full-stack         |
+| F7-10 | Plantillas: sincronización, estado y envío fuera de la ventana                                                                  | `feature/f7-templates`           | F7-06, F7-08                    | full-stack         |
+| F7-11 | Reintento de webhooks fallidos, métricas y alertas                                                                              | `feature/f7-ingress-ops`         | F7-06                           | full-stack         |
+| F7-12 | Activación en vivo con credenciales del propietario (runbook y prueba de punta a punta)                                         | `feature/f7-go-live`             | F7-07, F7-11 y las credenciales | docs / operaciones |
 
 Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → F7-06; después F7-07, F7-08 y F7-11 en paralelo; luego F7-09 y F7-10; F7-12 cuando haya credenciales. Tras F7-06 el producto ya recibe y responde texto dentro de la ventana contra el simulador.
 
@@ -46,6 +46,20 @@ Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → 
 - **Incluye:** un módulo de pruebas del repositorio que (a) construye los cuerpos de los webhooks de Meta (texto, estados `sent`, `delivered`, `read` y `failed` con errores, tipos no soportados, eventos mal formados, varios ítems en una entrega) y los firma con un app secret de prueba; (b) una Graph API falsa (en proceso para los tests y como servicio ligero para el entorno local) que responde a `POST …/<phone_number_id>/messages`, a la lectura del número y, después, a plantillas y medios, con respuestas correctas, cada error de ADR-029 §8, lentitud y cortes; (c) fixtures versionadas junto a la versión fijada de la Graph API.
 - **No incluye:** el webhook ni el adaptador (los usan después); nada de red real.
 - **Criterios:** los tests de F7-02 a F7-06 usan este simulador; cambiar la versión de la Graph API obliga a revisar sus fixtures.
+- **Hecho en F7-01 (#580):** `backend/tests/meta_sim/` (`webhooks`: constructores y firma; `graph`: `FakeGraph`; `transport`: cómo se sirve) y `backend/tests/test_meta_simulator.py`. Decisiones:
+  - **Transporte para las pruebas del adaptador:** `transport.install(monkeypatch, graph)` sustituye solo el gestor de conexiones de urllib3 dentro de `core.http`, de modo que la política real (https, puerto 443, allowlist, cabecera `Host`) sigue aplicándose: la prueba fija `HTTP_ALLOWED_HOSTS=["graph.facebook.com"]` con `override_settings` y no se abre ninguna excepción para `127.0.0.1` en `core.http`.
+  - **Servidor local:** no se incluye. `core.http` no puede llegar a un servidor local a propósito (solo https e IP públicas); el servidor local se añade con el adaptador de salida (F7-05) o con la activación (F7-12), junto con el transporte de pruebas explícito que conecta el adaptador de una pila local. El emisor de webhooks firmados contra el webhook local se añade con F7-03.
+  - **Respuesta perdida:** los resultados `cut_after` y `timeout_after` registran el envío (Meta lo aceptó) y después cortan o agotan el tiempo: es el caso que F7-05 reconcilia con `biz_opaque_callback_data` (ADR-029 §6).
+  - **Firma y bytes:** el cuerpo se codifica en ASCII con secuencias `\uXXXX`, como (a confirmar) lo escribe Meta, y se firma sobre esos bytes; quien firme el JSON releído falla. Es un valor a confirmar y se revierte cambiando `webhooks.encode`.
+  - **Versión de la Graph API:** `GRAPH_VERSION` en `meta_sim/__init__.py` (un valor de ejemplo del simulador, no la versión vigente de Meta); la Graph API falsa rechaza otra versión y un test compara con `settings.META_GRAPH_VERSION` cuando F7-02 la añada, de modo que subirla obliga a revisar los fixtures.
+  - **Secretos de prueba** (`TEST_APP_SECRET`, `TEST_TOKEN`): constantes evidentes, sin la forma de una credencial real, que un test impide usar fuera de `tests/` (el escaneo cubre `core`, `apps` y `config`).
+  - **Códigos de error** de la Graph API falsa: los conocidos de Meta a la fecha del diseño; se reconfirman con su documentación al implementar F7-05 y este módulo cambia con ellos.
+  - **Ganchos de plantillas y medios:** no se incluyen todavía; los añaden F7-09 y F7-10 con su comportamiento real.
+- **FIX LATER (revisión de F7-01):**
+  - **F7-02:** el test de la versión pasa a `settings.META_GRAPH_VERSION == GRAPH_VERSION`, sin valor por defecto.
+  - **F7-05:** confirmar con Meta la fidelidad de los errores (el código 100 real suele ser `GraphMethodException`, falta `error_data.details`, códigos como 131030, 131051, 131000 y 133010, el estado HTTP de 130429, 131056 y 132001, y la respuesta sin token); la validación del envío es permisiva (tope de 4096, cuerpo vacío, `to` numérico) y no devuelve el eco de `biz_opaque_callback_data`, que la reconciliación necesita; las cabeceras se comparan sin distinguir mayúsculas; el simulador sustituye el gestor entero, así que no ejercita `Retry(total=2)` ni los tiempos de `core.http`: hay que probar que un POST cortado no se reintenta solo.
+  - **F7-09:** la descarga de medios exige el token y la allowlist del host de descarga (`lookaside.fbsbx.com`, a confirmar), y su prueba descarga del host de la URL, no de `graph.facebook.com`.
+  - **Pruebas del simulador:** algunas comprobaciones son vacuosas (`graph.requests == []`, y la tabla `KNOWN` copia a `ERRORS`): se afinan al usarlas.
 - **Tamaño estimado:** 300–450 líneas.
 
 ### F7-02 · Cuenta de canal de WhatsApp y secretos cifrados
