@@ -65,6 +65,8 @@ PLATFORM = frozenset(  # rutas de plataforma del proyecto: otra frontera (ADR-01
     | {"api/v1/auth/mfa/step-up/"}  # F2-125
     | {"api/v1/auth/test-accounts/"}  # F2-117
 )
+WEBHOOKS = frozenset({"webhooks/meta/"})  # webhooks públicos firmados (F7-03a): sin sesión ni CSRF
+WEBHOOKS_ROOT = "webhooks/"  # todo lo que hay debajo es un webhook: figura en `WEBHOOKS` o falla
 MEMBER = frozenset({TENANT + "me/"})  # rutas de tenant abiertas a todo miembro activo (F2-11)
 PREFIX = "api/v1/o/"  # las rutas de tenant, como `TENANT_PATH` en el middleware
 API = "api/"  # todo lo que hay debajo es contrato: o es de tenant o figura en `PLATFORM`
@@ -407,7 +409,10 @@ def routes(patterns: Any, prefix: str = "") -> Iterator[tuple[str, Any]]:
 
 
 def insecure(
-    patterns: Any, platform: frozenset[str], member: frozenset[str] = frozenset()
+    patterns: Any,
+    platform: frozenset[str],
+    member: frozenset[str] = frozenset(),
+    webhooks: frozenset[str] = frozenset(),
 ) -> dict[str, str]:
     """Auditoría del URLconf: `{ruta: motivo}` de cada ruta que no puede llegar a `main`.
 
@@ -418,16 +423,25 @@ def insecure(
     que figurar en `platform`, y su ruta debe apartarse de `api/v1/o/` en su parte literal, antes
     de cualquier segmento dinámico (por exceso: un router de plataforma va bajo su propio prefijo).
     Es estática: una vista que consulte por su cuenta debe usar `scoped()` (OBS-F2-05B-2).
-    `member` son las rutas de tenant que solo exigen ser miembro activo (`IsMember`).
+    `member` son las rutas de tenant que solo exigen ser miembro activo (`IsMember`). `webhooks`
+    son las rutas públicas bajo `webhooks/`, que la firma del proveedor (no la sesión) autentica:
+    toda ruta de ahí abajo tiene que figurar y ser una vista de Django con `csrf_exempt`.
     """
-    found = dict.fromkeys(platform | member, STALE)
+    found = dict.fromkeys(platform | member | webhooks, STALE)
     for route, callback in routes(patterns):
         cls: Any = getattr(callback, "cls", None)
         drf = isinstance(cls, type) and issubclass(cls, APIView)
         declared = effective(callback, "required_permissions")
         literal = DYNAMIC.split(route.rstrip("$"), maxsplit=1)[0]
         if not route.startswith(PREFIX):
-            if PREFIX.startswith(literal) and literal != route.rstrip("$"):
+            if route.startswith(WEBHOOKS_ROOT):
+                if route not in webhooks:
+                    found[route] = "ruta de webhook sin exclusión explícita"
+                elif reason := webhook_flaw(callback, drf):
+                    found[route] = reason
+                elif found.get(route) == STALE:
+                    del found[route]
+            elif PREFIX.startswith(literal) and literal != route.rstrip("$"):
                 found[route] = "ruta dinámica que puede coincidir con una ruta de tenant"
             elif not drf and not route.startswith(API):
                 continue  # sondas internas: fuera del contrato
@@ -471,6 +485,16 @@ def insecure(
         ]:
             found[route] = "redefine " + ", ".join(redefined)
     return found
+
+
+def webhook_flaw(callback: Any, drf: bool) -> str | None:
+    """Un webhook listado: una vista de Django, nunca de DRF (sin sesión ni contrato de la API) y
+    con `csrf_exempt` explícito; la firma se verifica dentro."""
+    if drf:
+        return "un webhook no es una vista de DRF"
+    if not getattr(callback, "csrf_exempt", False):
+        return "un webhook declara csrf_exempt"
+    return None
 
 
 def platform_flaw(callback: Any, drf: bool) -> str | None:
@@ -849,7 +873,7 @@ def test_platform_staff_gets_no_bypass_and_platform_routes_are_excluded_by_route
 
 
 def test_every_tenant_route_declares_its_permissions(api: Any) -> None:
-    assert insecure(config.urls.urlpatterns, PLATFORM, MEMBER) == {}  # el proyecto real
+    assert insecure(config.urls.urlpatterns, PLATFORM, MEMBER, WEBHOOKS) == {}  # el proyecto real
     assert insecure(secure, SECURE_PLATFORM, frozenset({TENANT + "self/"})) == {}
     assert TENANT_PATH.match("/api/v1/o/org-a/") and not TENANT_PATH.match("/api/v1/x/org-a/")
 
@@ -860,8 +884,39 @@ def test_audit_flags_every_insecure_route(api: Any) -> None:
     assert set(found) == set(flawed) and len(flawed) == len(FLAWED)
     for route, reason in flawed.items():
         assert reason in found[route], route
-    legacy = insecure(legacy_urls.urlpatterns, PLATFORM, MEMBER)  # vistas de Django en `include()`
+    legacy = insecure(
+        legacy_urls.urlpatterns, PLATFORM, MEMBER, WEBHOOKS
+    )  # vistas de Django en `include()`
     assert len(legacy) == 2 and set(legacy.values()) == {"no es una vista de DRF"}
     gone = TENANT + "ya-no/"  # una exclusión que ya no corresponde a ninguna ruta se retira
-    stale = insecure(config.urls.urlpatterns, PLATFORM | {"ya/no/existe/"}, MEMBER | {gone})
+    stale = insecure(
+        config.urls.urlpatterns, PLATFORM | {"ya/no/existe/"}, MEMBER | {gone}, WEBHOOKS
+    )
     assert stale == {"ya/no/existe/": STALE, gone: STALE}
+
+
+def test_audit_requires_every_webhook_route_to_be_declared_and_plain() -> None:
+    """F7-03a: bajo `webhooks/` solo vale lo que figura en la lista y es una vista de Django con
+    `csrf_exempt`; el resto del auditor no se afloja (con la lista vacía, el proyecto falla)."""
+    from apps.conversations.meta_webhook import webhook
+
+    def view(request: Any) -> HttpResponse:
+        return HttpResponse()
+
+    patterns = [
+        path("webhooks/meta/", webhook),
+        path("webhooks/other/", webhook),  # sin declarar
+        path("webhooks/<slug:name>/", webhook),  # dinámica y sin declarar
+        path("webhooks/open/", view),  # declarada, pero sin csrf_exempt
+        path("webhooks/drf/", Open.as_view()),  # declarada, pero de DRF
+    ]
+    listed = frozenset({"webhooks/meta/", "webhooks/open/", "webhooks/drf/", "webhooks/gone/"})
+    found = insecure(patterns, frozenset(), webhooks=listed)
+    assert found == {
+        "webhooks/other/": "ruta de webhook sin exclusión explícita",
+        "webhooks/<slug:name>/": "ruta de webhook sin exclusión explícita",
+        "webhooks/open/": "un webhook declara csrf_exempt",
+        "webhooks/drf/": "un webhook no es una vista de DRF",
+        "webhooks/gone/": STALE,
+    }
+    assert "webhooks/meta/" in insecure(config.urls.urlpatterns, PLATFORM, MEMBER)  # sin la lista
