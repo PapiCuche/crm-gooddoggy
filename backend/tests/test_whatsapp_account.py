@@ -47,7 +47,7 @@ def credential(org: UUID, owner: UUID | None = None) -> UUID:
     with tenant_scope(ctx(org)):
         made = Credential.objects.create(
             owner_id=owner or uuid4(), ciphertext=b"\x01" + bytes(40), key_version=1,
-            last_four="abcd", fingerprint="0" * 64,
+            last_four="abcd",
         )  # fmt: skip
         return made.pk  # type: ignore[no-any-return]
 
