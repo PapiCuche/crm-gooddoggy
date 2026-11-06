@@ -82,7 +82,7 @@ export function Composer({
   const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
   const both = modes.reply && modes.note;
   return (
-    <div className="border-border flex min-w-0 flex-col gap-2 border-t p-3">
+    <div className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
       {both ? (
         <div role="group" aria-label={t("mode.label")} className="flex flex-wrap gap-2">
           {(["reply", "note"] as const).map((mode) => (
@@ -90,7 +90,7 @@ export function Composer({
               key={mode}
               type="button"
               variant={shown === mode ? "accent" : "ghost"}
-              className="border-border min-h-11 border sm:min-h-9"
+              className="border-border h-9 border"
               aria-pressed={shown === mode}
               onClick={() => setChosen(mode)}
             >
@@ -106,6 +106,7 @@ export function Composer({
             key={mode}
             mode={mode}
             active={shown === mode}
+            tabbed={both}
             conversation={conversation}
             onQueued={onQueued}
           />
@@ -118,11 +119,13 @@ export function Composer({
 function ComposeBox({
   mode,
   active,
+  tabbed,
   conversation,
   onQueued,
 }: {
   mode: Mode;
   active: boolean;
+  tabbed: boolean; // hay conmutador: su botón ya dice el modo, la etiqueta queda para lectores
   conversation: Conversation;
   onQueued: () => void;
 }) {
@@ -227,14 +230,15 @@ function ComposeBox({
       hidden={!active}
       className={cn(
         "flex min-w-0 flex-col gap-2",
-        note && "bg-surface-raised border-foreground/40 rounded-[10px] border border-dashed p-3",
+        note &&
+          "bg-surface-raised border-foreground/40 rounded-[10px] border border-dashed p-2 lg:p-3",
       )}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
-      <label htmlFor={field} className="text-sm font-medium">
+      <label htmlFor={field} className={cn("text-sm font-medium", tabbed && "max-lg:sr-only")}>
         {t(`label.${mode}`)}
       </label>
       {closed ? (
@@ -246,14 +250,14 @@ function ComposeBox({
       <textarea
         id={field}
         ref={box}
-        rows={2}
+        rows={1}
         value={text}
         disabled={closed}
         readOnly={send.isPending}
-        aria-describedby={`${field}-count ${field}-hint${closed ? ` ${field}-closed` : ""}`}
+        aria-describedby={`${field}-count ${field}-keys${note ? ` ${field}-hint` : ""}${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
         className={cn(
-          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger max-h-40 min-h-16 w-full min-w-0 resize-none rounded-[10px] border p-3 text-[16px] wrap-anywhere disabled:opacity-60",
+          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger field-sizing-content max-h-32 min-h-10 w-full min-w-0 resize-none rounded-[10px] border px-3 py-2 text-[16px] wrap-anywhere disabled:opacity-60 lg:max-h-40 lg:min-h-16 lg:p-3",
           note && "border-dashed",
         )}
         onChange={(event) => {
@@ -278,10 +282,22 @@ function ComposeBox({
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-muted flex min-w-0 flex-col text-xs">
-          <span id={`${field}-hint`} className={cn(note && "text-foreground font-medium")}>
-            {t(`hint.${mode}`)}
+          {/* El aviso de la nota se ve siempre; en 390 px no hay tecla Enter que explicar y la ayuda de teclas queda para lectores. */}
+          {note ? (
+            <span id={`${field}-hint`} className="text-foreground font-medium">
+              {t("hint.note")}
+            </span>
+          ) : null}
+          <span id={`${field}-keys`} className="max-lg:sr-only">
+            {t(note ? "hint.noteKeys" : "hint.reply")}
           </span>
-          <span id={`${field}-count`} className={cn(over && "text-danger font-medium")}>
+          <span
+            id={`${field}-count`}
+            className={cn(
+              over && "text-danger font-medium",
+              !over && count < BODY_MAX * 0.9 && "max-lg:sr-only",
+            )}
+          >
             {over ? t("over", { over: count - BODY_MAX }) : t("count", { count, max: BODY_MAX })}
           </span>
         </div>
@@ -289,6 +305,7 @@ function ComposeBox({
           type="submit"
           variant="primary"
           size="lg"
+          className="max-lg:h-10"
           disabled={closed || empty || over}
           aria-disabled={send.isPending}
         >

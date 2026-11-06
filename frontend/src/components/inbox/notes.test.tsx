@@ -179,6 +179,43 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     expect(screen.queryByRole("textbox", { name: "Responder al cliente" })).toBeNull();
   });
 
+  it("el cuadro es compacto en 390 px: una línea que crece, etiqueta solo para lectores con conmutador, contador discreto", async () => {
+    server();
+    show();
+    await openChat();
+    const box = await reply();
+    expect(box).toHaveAttribute("rows", "1");
+    expect(box).toHaveClass("field-sizing-content", "max-h-32"); // crece hasta un máximo
+    expect(screen.getByText("Responder al cliente", { selector: "label" })).toHaveClass(
+      "max-lg:sr-only",
+    );
+    const form = within(box.closest("form")!);
+    const count = form.getByText("0 de 4096 caracteres");
+    expect(count).toHaveClass("max-lg:sr-only"); // lejos del tope no ocupa una línea
+    fireEvent.change(box, { target: { value: "a".repeat(4000) } });
+    expect(form.getByText("4000 de 4096 caracteres")).not.toHaveClass("max-lg:sr-only"); // cerca del tope sí
+    cleanup();
+    server();
+    show([grant("conversations.view"), grant("messages.send")]); // sin conmutador la etiqueta se ve
+    await openChat();
+    expect(screen.getByText("Responder al cliente", { selector: "label" })).not.toHaveClass(
+      "max-lg:sr-only",
+    );
+  }, 20_000);
+
+  it("el panel reparte el alto: encabezado y cuadro fijos, solo los mensajes se desplazan", async () => {
+    server();
+    show();
+    await openChat();
+    const panel = screen.getByRole("region", { name: "Conversación" }).firstElementChild!;
+    expect(panel).toHaveClass("h-[calc(100dvh-8rem)]", "flex-col", "lg:h-[calc(100dvh-18rem)]");
+    const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
+    expect(scroller).toHaveAttribute("tabindex", "0"); // sigue enfocable con el teclado
+    expect(scroller).toHaveClass("min-h-40", "flex-1", "overflow-y-auto"); // al menos 160 px
+    expect(panel.querySelector("header")).toHaveClass("shrink-0");
+    expect(scroller.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
+  });
+
   it("guardar una nota usa solo `notes/`, la muestra rotulada y sin marca de entrega, y enfoca el cuadro", async () => {
     const s = server({ notes: () => ({ status: 201, body: note("n1", "Pide DNI") }) });
     show();
