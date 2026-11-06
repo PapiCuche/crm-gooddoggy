@@ -122,6 +122,14 @@ Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → 
   5. **`GraphRejected`** agrupa también un 400 de petición mal formada: distinguir «token vencido» de lo demás para la pantalla de F7-07.
   6. **Tras F7-02d:** comprobar el 400 idéntico byte a byte del número y la respuesta sin token: cerrado en F7-02d.
   Cerrado en F7-02c por esta revisión: una respuesta que no es de Meta (200 con JSON malformado, vacío, bytes inválidos, `data` nulo o no lista, lista raíz o 200000 corchetes) es «no disponible» y nunca «rechazado»; el formato del token se prueba en conectar y rotar, el tope de 1 MiB, el destino bloqueado y una rotación que falla después de invalidar (la credencial vieja queda intacta).
+- **FIX LATER (revisión independiente de F7-02d):**
+  1. **Purga de los contadores de acceso:** el tope depende de que la purga del acceso espere más que la ventana del canal (10 minutos frente a 15). Una prueba de ajustes lo vigila; si la ventana del canal creciera, excluir las claves `chn:` de esa purga.
+  2. **`x-request-id`** es un UUIDv7 con la hora en el prefijo, en todas las respuestas: informativo.
+  3. **Cada petición escribe** en `login_throttles` aun después de superar el tope: una fila por persona, acotada.
+  4. **Sin contadores** de 429 ni de step-up para el panel de F7-11.
+  5. **Ids numéricos y nombre** se recortan en silencio (coherente con el resto de la API); el token no se recorta.
+  6. **Si se limitan GET** de estas rutas, añadir el 429 a la documentación OpenAPI.
+  Cerrado en esta revisión: una petición que el CSRF rechaza o una anónima no gasta el tope de nadie (prueba), y un token con salto de línea final o espacio inicial es un error de campo.
 - **Tamaño estimado:** 600–780 líneas.
 
 ### F7-03 · Webhook: verificación, firma, ingesta y enrutado del tenant

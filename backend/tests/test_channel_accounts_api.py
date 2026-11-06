@@ -245,3 +245,36 @@ def test_the_sixth_request_in_ten_minutes_is_refused_with_the_default_limit(
     answers = [send(ana, "delete", f"{BASE}{uuid4()}/", None) for _ in range(6)]
     assert [a.status_code for a in answers] == [404, 404, 404, 404, 404, 429]
     assert answers[-1].json() == {"code": "RATE_LIMITED"} and answers[-1]["Retry-After"]
+
+
+def test_a_request_the_csrf_check_refuses_or_an_anonymous_one_never_uses_the_limit(
+    crm: SimpleNamespace, meta: FakeGraph, settings: Any, migrator: DB
+) -> None:
+    """Una página ajena que fuerza peticiones con la sesión de la víctima no le gasta el tope."""
+    settings.CHANNEL_CHECK_THROTTLE = (2, 600)
+    ana = signed(crm.ana)
+    for _ in range(4):  # sin la cabecera del CSRF: la rechaza el CSRF, antes del tope
+        forged = ana.post(BASE, BODY | TOKEN, "application/json")
+        assert reply(forged) == (403, b'{"code":"CSRF_FAILED"}')
+    anonymous = Client(enforce_csrf_checks=True)
+    assert [send(anonymous, "post", BASE, BODY | TOKEN).status_code for _ in range(4)] == [401] * 4
+    count = "SELECT count(*) FROM login_throttles WHERE key LIKE 'chn:%'"
+    assert migrator.execute(count).fetchone() == (0,)  # nada contó: ni lo forzado ni lo anónimo
+    assert post(ana).status_code == 201  # y la persona conserva todo su tope
+    used = migrator.execute("SELECT failures FROM login_throttles WHERE key LIKE 'chn:%'")
+    assert used.fetchall() == [(1,)]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"access_token": TEST_TOKEN + "\n"},
+        {"access_token": " " + TEST_TOKEN},
+    ],
+)
+def test_a_token_with_a_trailing_newline_or_a_leading_space_is_a_field_error(
+    crm: SimpleNamespace, meta: FakeGraph, over: dict[str, str]
+) -> None:
+    response = post(signed(crm.ana), **over)
+    assert response.status_code == 400 and set(response.json()["fields"]) == set(over)
+    assert meta.calls == []

@@ -396,3 +396,12 @@ def test_the_migrations_job_never_needs_the_whatsapp_settings(
         META_WEBHOOK_VERIFY_TOKEN=None,
     )
     assert settings.DATABASES["default"]["USER"] == "crm_migrator"  # type: ignore[attr-defined]
+
+
+def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -> None:
+    """La purga de los contadores de acceso borra lo que lleva más de su ventana de calma sin
+    moverse; los contadores `chn:` (F7-02d) viven en esa tabla y su ventana tiene que caber."""
+    from config.settings import base
+
+    kept = max(window for _, window, _, _ in base.LOGIN_THROTTLE.values())
+    assert base.CHANNEL_CHECK_THROTTLE[1] < kept
