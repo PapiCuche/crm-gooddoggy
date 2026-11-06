@@ -10,6 +10,8 @@ import { ChannelsList } from "./channels-list";
 const BASE = "/api/v1/o/acme/channels";
 const LIST = `GET ${BASE}/`;
 const CONNECT = `POST ${BASE}/whatsapp/`;
+const ROTATE = `POST ${BASE}/whatsapp/a1/token/`;
+const DISCONNECT = `DELETE ${BASE}/whatsapp/a1/`;
 const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
 const SECRET = "EAAGsecretTOKEN0123456789";
 const tenant: SelfContext = {
@@ -108,7 +110,7 @@ describe("Canales (F7-07b)", () => {
       ...(await screen.findByRole("list", { name: "Canales" })).querySelectorAll(":scope > li"),
     ] as HTMLElement[];
     expect(items[0]).toHaveTextContent("Canal de pruebas"); // la Sandbox, claramente
-    expect(within(items[0]!).queryByRole("button")).toBeNull(); // la Sandbox no tiene acciones
+    expect(within(items[0]!).queryByRole("button")).toBeNull(); // sin rotar ni desconectar
     expect(items[1]).toHaveTextContent("Pendiente");
     expect(items[1]).toHaveTextContent("Todavía no llega ningún mensaje de Meta a esta cuenta.");
     expect(within(items[1]!).getByText("Token válido")).toBeVisible();
@@ -318,5 +320,72 @@ describe("Canales (F7-07b)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
     expect(field(/^Token de acceso/).value).toBe("");
+  });
+
+  it("rotar el token: campo de contraseña, un solo POST y el campo vacío", async () => {
+    const api = mockApi({ [LIST]: page([wa]), [ROTATE]: { status: 200, body: { ...wa } } });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Rotar token" }));
+    const token = field(/^Token nuevo/);
+    expect(token).toHaveAttribute("type", "password");
+    expect(token).toHaveAttribute("autocomplete", "new-password");
+    fireEvent.change(token, { target: { value: SECRET } });
+    fireEvent.click(screen.getByRole("button", { name: "Rotar" }));
+    expect(await screen.findByText("El token se rotó.")).toBeVisible();
+    const posts = sent(api).filter((call) => call.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0]!.body))).toEqual({ access_token: SECRET });
+    noSecret();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Rotar token" })).toHaveFocus());
+  });
+
+  it("rotar con el canal apagado explica el 409 y borra el token escrito", async () => {
+    mockApi({
+      [LIST]: page([wa]),
+      [ROTATE]: { status: 409, body: { code: "CHANNEL_NOT_ENABLED" } },
+    });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Rotar token" }));
+    fireEvent.change(field(/^Token nuevo/), { target: { value: SECRET } });
+    fireEvent.click(screen.getByRole("button", { name: "Rotar" }));
+    expect(
+      await screen.findByText("El canal de WhatsApp no está habilitado en este despliegue."),
+    ).toBeVisible();
+    expect(field(/^Token nuevo/).value).toBe("");
+    noSecret();
+  });
+
+  it("desconectar pide confirmación que explica el efecto, con el foco en «Cancelar»", async () => {
+    let listed = 0;
+    const api = mockApi({
+      [LIST]: () => {
+        listed += 1;
+        return page(listed === 1 ? [wa] : []);
+      },
+      [DISCONNECT]: { status: 204 },
+    });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+    const group = screen.getByRole("group", { name: "Desconectar Tienda Lima" });
+    expect(group).toHaveTextContent("¿Desconectar «Tienda Lima»?");
+    expect(group).toHaveTextContent("Reconectarla es crear una cuenta nueva.");
+    expect(screen.getByRole("button", { name: "Cancelar" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" })); // no hace nada
+    expect(sent(api).filter((call) => call.method === "DELETE")).toEqual([]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Desconectar" })).toHaveFocus());
+    fireEvent.click(screen.getByRole("button", { name: "Desconectar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sí, desconectar" }));
+    await waitFor(() => expect(screen.queryByText("Tienda Lima")).toBeNull()); // la lista nueva
+    expect(sent(api).filter((call) => call.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("desconectar una cuenta que ya no existe lo dice y vuelve a leer la lista", async () => {
+    mockApi({ [LIST]: page([wa]), [DISCONNECT]: { status: 404, body: { code: "NOT_FOUND" } } });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sí, desconectar" }));
+    expect(
+      await screen.findByText("Esa cuenta ya no existe. Actualizamos la lista."),
+    ).toBeVisible();
   });
 });

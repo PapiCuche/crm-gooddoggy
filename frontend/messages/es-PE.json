@@ -2295,6 +2295,28 @@
       "tokenRequired": "Pega el token de acceso.",
       "tokenInvalid": "Ese token no sirve."
     },
+    "rotate": {
+      "open": "Rotar token",
+      "title": "Rotar el token",
+      "token": "Token nuevo",
+      "hint": "Sustituye al anterior, que deja de valer. No se vuelve a mostrar ni se guarda en este navegador.",
+      "submit": "Rotar",
+      "busy": "Rotando…",
+      "cancel": "Cancelar",
+      "done": "El token se rotó.",
+      "required": "Pega el token nuevo.",
+      "invalid": "Ese token no sirve."
+    },
+    "disconnect": {
+      "open": "Desconectar",
+      "title": "Desconectar {name}",
+      "question": "¿Desconectar «{name}»?",
+      "effect": "La cuenta deja de recibir y enviar mensajes. Reconectarla es crear una cuenta nueva.",
+      "confirm": "Sí, desconectar",
+      "busy": "Desconectando…",
+      "cancel": "Cancelar",
+      "gone": "Esa cuenta ya no existe. Actualizamos la lista."
+    },
     "errors": {
       "denied": "No tienes permiso para gestionar los canales.",
       "badNumber": "No se puede registrar ese número.",
