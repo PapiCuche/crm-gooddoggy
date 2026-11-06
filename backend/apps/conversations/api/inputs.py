@@ -52,6 +52,16 @@ class SendMessageSerializer(Closed, serializers.Serializer[Any]):
     )
 
 
+class NoteSerializer(Closed, serializers.Serializer[Any]):
+    client_message_id = Id(help_text="La clave de idempotencia: el mismo id es la misma nota.")
+    body = Checked(
+        commands._body,
+        trim_whitespace=False,
+        max_length=BODY_MAX,
+        help_text=f"Hasta {BODY_MAX} caracteres, con algo visible. Nunca sale por un canal.",
+    )
+
+
 class AssignSerializer(Closed, serializers.Serializer[Any]):
     action = Choice(
         choices=["TAKE", "TRANSFER", "RELEASE"],

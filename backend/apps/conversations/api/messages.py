@@ -167,6 +167,51 @@ class MessagesView(generics.ListAPIView):
 
 @extend_schema_view(
     post=extend_schema(
+        operation_id="conversation_notes_create",
+        tags=["conversations"],
+        request=inputs.NoteSerializer,
+        responses={
+            200: MessageSerializer,
+            201: MessageSerializer,
+            **errors(400, 401, 403, 404, 409),
+        },
+        description="Añade una nota interna (`INTERNAL`, `NOTE`): nunca sale por un canal, el "
+        "despachador la ignora y la lectura solo la muestra con `messages.note`. Idempotente por "
+        "`client_message_id`: 201 la primera vez y 200 con la misma nota en un reintento igual. "
+        "Pide `messages.note` y `conversations.view`; se admite también en una conversación "
+        "cerrada. 409 `CLIENT_MESSAGE_ID_TAKEN`: ese id es de otro texto u otra persona.",
+    ),
+)
+class NotesView(APIView):
+    required_permissions = {"POST": ("messages.note", "conversations.view")}
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = inputs.NoteSerializer(data=request.data)  # el cuerpo, antes del 404
+        wanted.is_valid(raise_exception=True)
+        ectx, tenant = request_context(request), context.current()
+        assert ectx is not None and tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        mine = scoped(ectx, "conversations.view", Conversation.objects.all())
+        found = mine.filter(pk=self.kwargs["conversation_id"]).first()
+        if found is None:  # desconocida, de otra organización o fuera del alcance: la misma
+            raise NotFound
+        try:
+            with rbac_errors():  # el comando vuelve a comprobar `messages.note` y su alcance
+                note, created = commands.add_note(
+                    tenant, conversation_id=found.pk, body=wanted.validated_data["body"],
+                    client_message_id=wanted.validated_data["client_message_id"],
+                )  # fmt: skip
+        except commands.ClientMessageConflict:
+            raise ApiError(
+                "CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"]
+            ) from None
+        if not created and note.sender_user_id != tenant.user_id:  # el id es de otra persona
+            raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"])
+        shown = MessageSerializer(note, context={"show_body": shows_body(ectx, found)})
+        return Response(shown.data, status=201 if created else 200)
+
+
+@extend_schema_view(
+    post=extend_schema(
         operation_id="channels_sandbox_inbound",
         tags=["conversations"],
         request=inputs.SandboxInboundSerializer,

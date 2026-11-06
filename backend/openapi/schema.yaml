@@ -2467,6 +2467,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/notes/:
+    post:
+      operationId: conversation_notes_create
+      description: 'Añade una nota interna (`INTERNAL`, `NOTE`): nunca sale por un
+        canal, el despachador la ignora y la lectura solo la muestra con `messages.note`.
+        Idempotente por `client_message_id`: 201 la primera vez y 200 con la misma
+        nota en un reintento igual. Pide `messages.note` y `conversations.view`; se
+        admite también en una conversación cerrada. 409 `CLIENT_MESSAGE_ID_TAKEN`:
+        ese id es de otro texto u otra persona.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NoteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/inventory/imports/:
     post:
       operationId: inventory_imports_create
@@ -9413,6 +9487,25 @@ components:
       - updated_at
       - updated_by_user_id
       - version
+    NoteRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        client_message_id:
+          type: string
+          format: uuid
+          description: 'La clave de idempotencia: el mismo id es la misma nota.'
+        body:
+          type: string
+          minLength: 1
+          description: Hasta 4096 caracteres, con algo visible. Nunca sale por un
+            canal.
+          maxLength: 4096
+      required:
+      - body
+      - client_message_id
     NoteWriteRequest:
       type: object
       properties:
