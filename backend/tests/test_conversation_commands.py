@@ -296,7 +296,6 @@ def test_a_closed_conversation_takes_no_reply_but_replays_what_was_stored(
     assert outbound(world, convo, client) == (queued, False)  # el reenvío no falla
 
 
-# `PENDING` ya no se alcanza desde una cuenta conectada: la base lo impide (F7-02a).
 @pytest.mark.parametrize("state", ["DISCONNECTED", "ERROR"])
 def test_an_unconnected_channel_takes_no_new_reply_but_replays_what_was_stored(
     world: SimpleNamespace, state: str
@@ -309,6 +308,22 @@ def test_an_unconnected_channel_takes_no_new_reply_but_replays_what_was_stored(
     with pytest.raises(ChannelUnavailable):
         outbound(world, convo, uuid4())
     assert outbound(world, convo, client) == (queued, False)
+
+
+def test_a_pending_channel_takes_no_reply_but_replays_what_was_stored(
+    world: SimpleNamespace,
+) -> None:
+    """`PENDING` ya no se alcanza desde una cuenta conectada (F7-02a): la cuenta nace así."""
+    account = tables.pending_account(world.a)
+    convo = tables.fresh(world.a, account, "CONV-00090")
+    client = uuid4()
+    stored = tables.message(
+        world.a, convo, direction="OUTBOUND", sender_type="USER", sender_user_id=world.ana.pk,
+        delivery_status="QUEUED", client_message_id=client, body="Hola",
+    )  # fmt: skip
+    with pytest.raises(ChannelUnavailable):
+        outbound(world, convo, uuid4())
+    assert outbound(world, convo, client) == (reload(world, Message, stored.pk), False)
 
 
 def test_two_replies_with_the_same_client_id_at_once_store_one(world: SimpleNamespace) -> None:

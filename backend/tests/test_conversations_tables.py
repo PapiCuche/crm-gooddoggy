@@ -49,6 +49,15 @@ def world(orgs: dict[str, Any]) -> SimpleNamespace:
     return made
 
 
+def pending_account(org: UUID, number: str = "15550001111") -> Any:
+    """Una cuenta de WhatsApp que nace `PENDING`: la base no deja volver a `PENDING` (F7-02a)."""
+    with tenant_scope(ctx(org)):
+        return ChannelAccount.objects.create(
+            platform="WHATSAPP", name="Pendiente", status="PENDING",
+            external_account_id=number, external_parent_id="1234567890",
+        )  # fmt: skip
+
+
 def conversation(
     org: UUID, contact: Any, account: Any, number: str = "CONV-00001", **over: Any
 ) -> Any:

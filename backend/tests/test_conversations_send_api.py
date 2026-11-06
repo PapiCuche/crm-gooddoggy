@@ -15,6 +15,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.conversations.models import ChannelAccount, Conversation, Message
 from core.tenancy.scope import tenant_scope
+from tests import test_conversations_tables as tables
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_authorization import give
 from tests.test_conversations_api import BASE, UNAUTHENTICATED, crm, inbox, real_stack
@@ -187,6 +188,16 @@ def test_a_closed_conversation_or_an_unconnected_channel_blocks_the_send_with_a_
     assert "cerrada" in refused.json()["message"] or "canal" in refused.json()["message"]
     assert counts(migrator) == (1, 1, 1)  # nada se escribió
     assert post(ana, convo, client_message_id=key).status_code == 200  # lo ya guardado se devuelve
+
+
+def test_a_pending_channel_blocks_the_send_with_a_clear_409(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    """`PENDING` ya no se alcanza desde una cuenta conectada (F7-02a): la cuenta nace así."""
+    convo = tables.fresh(inbox.a, tables.pending_account(inbox.a), "CONV-09901")
+    refused = post(signed(inbox.ana), convo.pk)
+    assert (refused.status_code, refused.json()["code"]) == (409, "CHANNEL_UNAVAILABLE")
+    assert counts(migrator) == (0, 0, 0)  # nada se escribió
 
 
 def test_a_conversation_the_sender_can_read_but_not_write_is_an_unknown_one(

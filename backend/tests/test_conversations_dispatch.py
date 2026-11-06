@@ -3,7 +3,7 @@ barredor) con PostgreSQL real y el rol `crm_app`; el outbox y la auditoría, con
 
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -116,13 +116,21 @@ def test_a_message_that_is_not_queued_or_not_outbound_is_left_alone(
         ({"status": "CLOSED", "closed_at": timezone.now()}, "CONVERSATION_CLOSED"),
         ({"account": "DISCONNECTED"}, "CHANNEL_UNAVAILABLE"),
         ({"account": "ERROR"}, "CHANNEL_UNAVAILABLE"),
+        ({"pending": True}, "CHANNEL_UNAVAILABLE"),  # una cuenta que nace `PENDING` (F7-02a)
         ({"deleted": True}, "CHANNEL_UNAVAILABLE"),
     ],
 )
 def test_the_policy_is_revalidated_before_the_adapter_and_a_blocked_message_fails(
     world: SimpleNamespace, migrator: DB, change: dict[str, Any], reason: str
 ) -> None:
-    message = queue(world)
+    if change.get("pending"):
+        convo = tables.fresh(world.a, tables.pending_account(world.a), "CONV-00091")
+        message = tables.message(
+            world.a, convo, direction="OUTBOUND", sender_type="USER", sender_user_id=world.ana.pk,
+            delivery_status="QUEUED", client_message_id=uuid4(), body=SECRET,
+        )  # fmt: skip
+    else:
+        message = queue(world)
     with tenant_scope(ctx(world.a)):
         if "account" in change:
             ChannelAccount.objects.filter(pk=world.account_a.pk).update(status=change["account"])
