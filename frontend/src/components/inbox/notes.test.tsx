@@ -139,6 +139,26 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     ).toBeVisible();
   }, 20_000);
 
+  it("si deja de poder responder (ya no es suya), el modo elegido cae al que sí puede y no queda vacío", async () => {
+    const s = server({ conversation: { assigned_user_id: "u1", assignee_kind: "USER" } });
+    const inner = s.api.getMockImplementation()!;
+    let moved = false;
+    s.api.mockImplementation(async (input, init) =>
+      moved && String(input) === `${BASE}/1/`
+        ? new Response(JSON.stringify({ ...rosa, assigned_user_id: "u2", assignee_kind: "USER" }))
+        : inner(input, init),
+    );
+    show([grant("conversations.view"), grant("messages.send", "OWN"), grant("messages.note")]);
+    await openChat();
+    expect(await reply()).toBeVisible(); // suya: puede responder y anotar
+    moved = true; // otra persona la tiene ahora: la respuesta (OWN) ya no, la nota (toda la org.) sí
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar mensajes" }));
+    expect(await noteBox()).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Responder al cliente" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Responder al cliente" })).toBeNull(); // sin conmutador
+    expect(screen.getByRole("button", { name: "Guardar nota" })).toBeVisible();
+  });
+
   it("arranca siempre en «Responder» y el modo nota se distingue por texto, borde y botón", async () => {
     server();
     show();
