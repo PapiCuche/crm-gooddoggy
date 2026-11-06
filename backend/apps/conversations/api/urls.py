@@ -15,6 +15,11 @@ urlpatterns = [
         name="conversation-messages",
     ),
     path(
+        "conversations/<uuid:conversation_id>/notes/",
+        messages.NotesView.as_view(),
+        name="conversation-notes",
+    ),
+    path(
         "conversations/<uuid:conversation_id>/assign/",
         assignment.AssignView.as_view(),
         name="conversation-assign",
