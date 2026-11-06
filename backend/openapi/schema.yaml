@@ -1430,6 +1430,180 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/channels/whatsapp/:
+    post:
+      operationId: channels_whatsapp_connect
+      description: 'Registra un número de WhatsApp (`channels.manage`, MFA reciente):
+        comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado.
+        400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el
+        mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503
+        `CHANNEL_PROVIDER_UNAVAILABLE`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhatsAppAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/channels/whatsapp/{account_id}/:
+    delete:
+      operationId: channels_whatsapp_disconnect
+      description: 'Desconecta la cuenta (`channels.manage`): queda borrada, su token
+        se invalida y su número se libera. Para volver a usarla se conecta otra cuenta.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/channels/whatsapp/{account_id}/token/:
+    post:
+      operationId: channels_whatsapp_rotate_token
+      description: 'Cambia el token de la cuenta (`channels.manage`): se comprueba
+        con Meta contra el mismo número y WABA, sustituye al anterior (que se invalida
+        y pierde su cifrado). 404: no existe, es de otra organización o ya está desconectada.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WhatsAppAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/contacts/:
     get:
       operationId: contacts_list
@@ -7946,6 +8120,35 @@ components:
         * `OPEN_BOX` - Open Box
         * `REFURBISHED` - Refurbished
         * `USED` - Used
+    ConnectRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          description: El token de acceso del usuario del sistema de Meta. Solo se
+            guarda cifrado.
+        name:
+          type: string
+          minLength: 1
+          description: El nombre que le das a la cuenta.
+          maxLength: 100
+        phone_number_id:
+          type: string
+          minLength: 1
+          description: El identificador del número en Meta (`phone_number_id`).
+        waba_id:
+          type: string
+          minLength: 1
+          description: El WABA al que pertenece.
+      required:
+      - access_token
+      - name
+      - phone_number_id
+      - waba_id
     Contact:
       type: object
       description: |-
@@ -9148,6 +9351,24 @@ components:
       - sender_type
       - sender_user_id
       - sent_at
+    MessagingLimitTierEnum:
+      enum:
+      - TIER_50
+      - TIER_250
+      - TIER_1K
+      - TIER_10K
+      - TIER_100K
+      - TIER_UNLIMITED
+      - TIER_NOT_SET
+      type: string
+      description: |-
+        * `TIER_50` - TIER_50
+        * `TIER_250` - TIER_250
+        * `TIER_1K` - TIER_1K
+        * `TIER_10K` - TIER_10K
+        * `TIER_100K` - TIER_100K
+        * `TIER_UNLIMITED` - TIER_UNLIMITED
+        * `TIER_NOT_SET` - TIER_NOT_SET
     MfaBackupCodes:
       type: object
       properties:
@@ -11404,6 +11625,18 @@ components:
         * `DRAFT` - Draft
         * `PUBLISHED` - Published
         * `CANCELLED` - Cancelled
+    QualityRatingEnum:
+      enum:
+      - GREEN
+      - YELLOW
+      - RED
+      - UNKNOWN
+      type: string
+      description: |-
+        * `GREEN` - GREEN
+        * `YELLOW` - YELLOW
+        * `RED` - RED
+        * `UNKNOWN` - UNKNOWN
     RevokedEnum:
       enum:
       - REVOKED
@@ -11670,6 +11903,22 @@ components:
         * `OPEN` - Open
         * `WON` - Won
         * `LOST` - Lost
+    StatusDetailEnum:
+      enum:
+      - TOKEN_INVALID
+      - WEBHOOK_NOT_SEEN
+      - QUALITY_LOW
+      - LIMIT_REACHED
+      - DISCONNECTED_BY_ADMIN
+      - PROVIDER_ERROR
+      type: string
+      description: |-
+        * `TOKEN_INVALID` - TOKEN_INVALID
+        * `WEBHOOK_NOT_SEEN` - WEBHOOK_NOT_SEEN
+        * `QUALITY_LOW` - QUALITY_LOW
+        * `LIMIT_REACHED` - LIMIT_REACHED
+        * `DISCONNECTED_BY_ADMIN` - DISCONNECTED_BY_ADMIN
+        * `PROVIDER_ERROR` - PROVIDER_ERROR
     StockImport:
       type: object
       properties:
@@ -12027,6 +12276,19 @@ components:
             $ref: '#/components/schemas/TestAccount'
       required:
       - accounts
+    TokenRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          description: El token de acceso del usuario del sistema de Meta. Solo se
+            guarda cifrado.
+      required:
+      - access_token
     User:
       type: object
       properties:
@@ -12228,6 +12490,96 @@ components:
         * `WAREHOUSE` - Warehouse
         * `TRANSIT` - Transit
         * `SERVICE` - Service
+    WhatsAppAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        display_identifier:
+          type: string
+        phone_number_id:
+          type: string
+        waba_id:
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/WhatsAppAccountStatusEnum'
+          description: |-
+            Nace `PENDING`.
+
+            * `PENDING` - Pending
+            * `CONNECTED` - Connected
+            * `DEGRADED` - Degraded
+            * `DISCONNECTED` - Disconnected
+            * `ERROR` - Error
+        status_detail:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/StatusDetailEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        quality_rating:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/QualityRatingEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        messaging_limit_tier:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/MessagingLimitTierEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        last_healthcheck_at:
+          type: string
+          format: date-time
+          nullable: true
+        token_last_four:
+          type: string
+          description: Lo único que se enseña del token.
+        token_rotated_at:
+          type: string
+          format: date-time
+          nullable: true
+        token_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - display_identifier
+      - id
+      - last_healthcheck_at
+      - messaging_limit_tier
+      - name
+      - phone_number_id
+      - quality_rating
+      - status
+      - status_detail
+      - token_expires_at
+      - token_last_four
+      - token_rotated_at
+      - version
+      - waba_id
+    WhatsAppAccountStatusEnum:
+      enum:
+      - PENDING
+      - CONNECTED
+      - DEGRADED
+      - DISCONNECTED
+      - ERROR
+      type: string
+      description: |-
+        * `PENDING` - Pending
+        * `CONNECTED` - Connected
+        * `DEGRADED` - Degraded
+        * `DISCONNECTED` - Disconnected
+        * `ERROR` - Error
   securitySchemes:
     sessionCookie:
       type: apiKey
