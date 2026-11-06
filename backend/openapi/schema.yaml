@@ -1437,7 +1437,8 @@ paths:
         comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado.
         400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el
         mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503
-        `CHANNEL_PROVIDER_UNAVAILABLE`.'
+        `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos
+        por persona, las tres rutas).'
       parameters:
       - in: path
         name: org_slug
@@ -1480,6 +1481,12 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
@@ -1528,6 +1535,12 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
@@ -1593,6 +1606,12 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
