@@ -57,6 +57,7 @@ class FakeGraph:
     script: deque[str] = field(default_factory=deque)
     sent: list[dict[str, Any]] = field(default_factory=list)  # lo que "se envió" a clientes
     requests: list[tuple[str, str]] = field(default_factory=list)  # (método, ruta) recibidos
+    calls: list[dict[str, Any]] = field(default_factory=list)  # método, ruta, query y cabeceras
     quality: str = "GREEN"
     tier: str = "TIER_1K"
 
@@ -73,6 +74,9 @@ class FakeGraph:
         parts = urlsplit(target)
         path, query = parts.path.strip("/").split("/"), parse_qs(parts.query)
         self.requests.append((method, parts.path))
+        self.calls.append(
+            {"method": method, "path": parts.path, "query": query, "headers": dict(headers)}
+        )
         if headers.get("Authorization") != f"Bearer {self.token}":
             return self._error("token")  # también la descarga de medios lleva el token
         if path[0] != GRAPH_VERSION:

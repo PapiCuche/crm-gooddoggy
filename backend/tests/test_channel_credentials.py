@@ -67,7 +67,6 @@ def test_a_token_is_stored_sealed_and_only_opens_for_its_own_account(
     box = cipher(row)
     assert TOKEN.encode() not in box and box[:3] == b"\x01\x00" + bytes([sealed.current()])
     assert (row.last_four, row.key_version, row.revoked_at) == (TOKEN[-4:], sealed.current(), None)
-    assert len(row.fingerprint) == 64 and row.fingerprint != first.last_four
     assert credentials.open_token(row) == TOKEN
     assert store(crm.b, uuid4()).ciphertext != row.ciphertext  # dos cifrados nunca coinciden
     with tenant_scope(ctx(crm.a)):  # alguien con escritura copia el cifrado de una a la otra
@@ -170,7 +169,6 @@ def test_the_database_keeps_credentials_inside_their_organization_and_narrow(
         ({"ciphertext": b"\x01" + bytes(8)}, "credentials_ciphertext_ck"),  # demasiado corto
         ({"revoked_at": timezone.now()}, "credentials_ciphertext_ck"),  # invalidada con cifrado
         ({"last_four": "abc"}, "credentials_shape_ck"),
-        ({"fingerprint": "no-es-hex"}, "credentials_shape_ck"),
         ({"key_version": 0}, "credentials_shape_ck"),
         ({"owner_type": "USER"}, "credentials_owner_ck"),
     ],
@@ -180,7 +178,7 @@ def test_a_credential_row_must_have_the_shape_of_a_sealed_value(
 ) -> None:
     row: dict[str, Any] = {
         "owner_id": uuid4(), "ciphertext": b"\x01" + bytes(40), "key_version": 1,
-        "last_four": "abcd", "fingerprint": "0" * 64,
+        "last_four": "abcd",
     } | fields  # fmt: skip
     refused(crm.a, constraint, lambda: Credential.objects.create(**row))
     owner = uuid4()

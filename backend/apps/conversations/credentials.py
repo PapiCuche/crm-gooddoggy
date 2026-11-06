@@ -1,11 +1,10 @@
 """Las credenciales de las cuentas de canal (F7-02b; ADR-022, ADR-029 §2): el único escritor de
 `credentials`. El token de acceso se cifra con `core.sealed` (propósito `channel.access_token`,
 dueño `channel_account:<id>`: copiado a otra cuenta no se abre) y no sale de aquí: lo único que se
-guarda a la vista es `last_four` y la huella (SHA-256). Los comandos de la cuenta (conectar,
+guarda a la vista es `last_four`. Los comandos de la cuenta (conectar,
 rotar, desconectar) llegan con F7-02c y usan estas funciones. Solo la API y las tareas lo importan.
 """
 
-import hashlib
 from uuid import UUID
 
 from django.db import connection, transaction
@@ -36,7 +35,7 @@ def store(ctx: TenantContext, account_id: UUID, token: str, *, rotated: bool = F
     box = sealed.seal(TOKEN_PURPOSE, owner(account_id), token.encode())
     made: Credential = Credential.objects.using(alias).create(
         owner_id=account_id, ciphertext=box, key_version=int.from_bytes(box[1:3], "big"),
-        last_four=token[-4:], fingerprint=hashlib.sha256(token.encode()).hexdigest(),
+        last_four=token[-4:],
         rotated_at=timezone.now() if rotated else None, created_by_user_id=ctx.user_id,
     )  # fmt: skip
     return made

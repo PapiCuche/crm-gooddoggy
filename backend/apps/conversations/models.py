@@ -191,6 +191,7 @@ class ChannelAccount(TenantModel):
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
 SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
 TOKEN_PURPOSE = "channel.access_token"  # noqa: S105 — el propósito de `core.sealed`, no un secreto
+TOKEN_FORMAT = r"^[A-Za-z0-9_.-]{20,512}$"  # noqa: S105 — el token de acceso de Meta (a confirmar)
 
 
 class Credential(TenantModel):
@@ -198,7 +199,7 @@ class Credential(TenantModel):
     propósito `channel.access_token`, dueño `channel_account:<owner_id>`). Una credencial viva por
     dueño. Al rotarla o desconectar la cuenta se **invalida**: `revoked_at` y el cifrado, borrado.
     Nada se borra ni se reescribe salvo `ciphertext`, `key_version` y `revoked_at` (UPDATE por
-    columna). `last_four` y `fingerprint` (SHA-256 del token) no abren nada."""
+    columna). `last_four` no abre nada (no hay huella: F7-02c la quitó, ver ADR-029)."""
 
     id = uuid7_primary_key()
     owner_type = models.CharField(max_length=16, default="CHANNEL_ACCOUNT")
@@ -206,7 +207,6 @@ class Credential(TenantModel):
     ciphertext = models.BinaryField(null=True)
     key_version = models.PositiveSmallIntegerField()
     last_four = models.CharField(max_length=4)
-    fingerprint = models.CharField(max_length=64)
     expires_at = models.DateTimeField(null=True, blank=True)
     rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a la anterior
     revoked_at = models.DateTimeField(null=True, blank=True)
@@ -249,8 +249,7 @@ class Credential(TenantModel):
                 name="credentials_ciphertext_ck",
             ),
             models.CheckConstraint(
-                condition=models.Q(key_version__gte=1, last_four__regex=r"^.{4}$")
-                & models.Q(fingerprint__regex=r"^[0-9a-f]{64}$"),
+                condition=models.Q(key_version__gte=1, last_four__regex=r"^.{4}$"),
                 name="credentials_shape_ck",
             ),
         ]
