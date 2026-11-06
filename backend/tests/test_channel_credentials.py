@@ -1,6 +1,7 @@
-"""F7-02b: el token de una cuenta de WhatsApp, cifrado en reposo (ADR-022, ADR-029 §2), y conectar,
-rotar y desconectar la cuenta (`apps.conversations.accounts`). PostgreSQL real con `crm_app`, la
-Graph API de Meta simulada (`tests/meta_sim`) servida por `core.http` con su política real."""
+"""F7-02b: el token de una cuenta de WhatsApp, cifrado en reposo (ADR-022, ADR-029 §2): la tabla
+`credentials`, su RLS, sus privilegios, la FK compuesta de la cuenta, el cifrado atado a la cuenta
+y el re-cifrado con una clave nueva (`apps.conversations.credentials`). PostgreSQL real con
+`crm_app`."""
 
 import logging
 from types import SimpleNamespace
@@ -9,21 +10,16 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from django.core.exceptions import ImproperlyConfigured, ObjectDoesNotExist
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.db import IntegrityError, ProgrammingError
 from django.utils import timezone
 
-from apps.access.selectors import AccessDenied
-from apps.conversations import accounts, commands, graph
+from apps.conversations import credentials
 from apps.conversations.models import ChannelAccount, Credential
 from apps.conversations.tasks import reseal_credentials
 from core import sealed
 from core.tenancy.scope import tenant_scope
-from tests.meta_sim import transport
-from tests.meta_sim.graph import TEST_TOKEN, Cut, FakeGraph
-from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
-from tests.test_authorization import give
 from tests.test_contacts_api import crm, real_stack
 from tests.test_conversations_tables import refused
 from tests.test_memberships import ctx
@@ -34,216 +30,98 @@ from tests.test_whatsapp_account import credential
 __all__ = ["broker", "crm", "real_stack"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
-NEW_TOKEN = "meta-sim-rotated-access-token-not-real-0000"  # noqa: S105 — ficticio
-SECOND = "100000000000003"
+TOKEN = "meta-test-access-token-not-real-0001"  # noqa: S105 — ficticio
+OTHER_TOKEN = "meta-test-access-token-not-real-0002"  # noqa: S105 — ficticio
 OLD_KEY, NEW_KEY = bytes(range(32)), bytes(range(32, 64))
 
 
-class Down(FakeGraph):
-    """Meta no responde: la conexión se corta."""
-
-    def handle(self, *args: Any) -> Any:
-        raise Cut
-
-
-@pytest.fixture
-def meta(crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, settings: Any) -> FakeGraph:
-    """El canal encendido, la Graph API falsa servida por `core.http` y `channels.manage` para
-    ana (Owner de A) y para luis (de B)."""
-    settings.META_ENABLED, settings.HTTP_ALLOWED_HOSTS = True, [transport.GRAPH_HOST]
-    fake = FakeGraph(numbers={PHONE_NUMBER_ID: WABA_ID, SECOND: WABA_ID})
-    transport.install(monkeypatch, fake)
-    give(crm.b, crm.m_luis, {"channels.manage": None})
-    return fake
+def store(org: UUID, owner: UUID, token: str = TOKEN, **over: Any) -> Credential:
+    with tenant_scope(ctx(org, None)) as tenant:
+        made: Credential = credentials.store(tenant, owner, token, **over)
+        return made
 
 
-def run(org: UUID, user: Any, command: Any, **fields: Any) -> Any:
-    with tenant_scope(ctx(org, user)) as tenant:
-        return command(tenant, **fields)
+def cipher(row: Credential) -> bytes:
+    assert row.ciphertext is not None
+    return bytes(row.ciphertext)
 
 
-def connect(crm: SimpleNamespace, org: str = "a", **over: Any) -> tuple[ChannelAccount, Credential]:
-    who: tuple[UUID, Any] = {"a": (crm.a, crm.ana), "b": (crm.b, crm.luis)}[org]
-    wanted = {"name": "Ventas", "phone_number_id": PHONE_NUMBER_ID, "waba_id": WABA_ID}
-    wanted |= {"access_token": TEST_TOKEN} | over
-    made: tuple[ChannelAccount, Credential] = run(
-        who[0], who[1], accounts.connect_whatsapp, **wanted
-    )
-    return made
-
-
-def reload(org: UUID, model: Any, pk: UUID) -> Any:
+def reload(org: UUID, pk: UUID) -> Credential:
     with tenant_scope(ctx(org)):
-        return model.objects.get(pk=pk)
+        found: Credential = Credential.objects.get(pk=pk)
+        return found
 
 
 def everything(migrator: DB) -> str:
-    """Lo que la base guarda de la conexión, salvo el cifrado: la auditoría y el outbox enteros y
-    las filas de cuentas y credenciales."""
-    queries = ("audit_logs", "outbox_events", "credentials", "channel_accounts")
-    return "\n".join(
-        str(migrator.execute(f"SELECT t::text FROM {table} t").fetchall())  # noqa: S608
-        for table in queries
-    )
+    """Lo que la base guarda de la credencial, salvo el cifrado, y los registros de auditoría."""
+    return str(migrator.execute("SELECT t::text FROM credentials t").fetchall())
 
 
-def test_connecting_stores_a_pending_account_and_the_token_only_sealed(
-    crm: SimpleNamespace, meta: FakeGraph, migrator: DB, caplog: pytest.LogCaptureFixture
+def test_a_token_is_stored_sealed_and_only_opens_for_its_own_account(
+    crm: SimpleNamespace, migrator: DB, caplog: pytest.LogCaptureFixture
 ) -> None:
+    one, two = uuid4(), uuid4()
     with caplog.at_level(logging.DEBUG):
-        account, secret = connect(crm)
-    assert (account.platform, account.status, account.status_detail) == (
-        "WHATSAPP", "PENDING", "WEBHOOK_NOT_SEEN"  # nunca nace CONNECTED
-    )  # fmt: skip
-    assert (account.quality_rating, account.messaging_limit_tier) == ("GREEN", "TIER_1K")
-    assert account.credential_id == secret.pk and account.last_healthcheck_at is not None
-    assert (secret.last_four, secret.rotated_at, secret.revoked_at) == (TEST_TOKEN[-4:], None, None)
-    assert secret.key_version == sealed.current() and secret.owner_id == account.pk
-    box = bytes(reload(crm.a, Credential, secret.pk).ciphertext)
-    assert TEST_TOKEN.encode() not in box and not sealed.stale(box)
-    assert accounts.open_token(reload(crm.a, Credential, secret.pk)) == TEST_TOKEN
-    assert meta.requests == [("GET", f"/v23.0/{WABA_ID}/phone_numbers")]
-    seen = everything(migrator) + caplog.text
-    assert TEST_TOKEN not in seen and secret.fingerprint in seen  # la huella no abre nada
-    assert "channel_account.connected" in seen  # y sí quedó el hecho, en la auditoría y el outbox
-
-
-def test_a_sealed_token_copied_to_another_account_or_purpose_does_not_open(
-    crm: SimpleNamespace, meta: FakeGraph
-) -> None:
-    first, one = connect(crm)
-    second, two = connect(crm, phone_number_id=SECOND)
+        first, second = store(crm.a, one), store(crm.a, two, OTHER_TOKEN)
+    row = reload(crm.a, first.pk)
+    box = cipher(row)
+    assert TOKEN.encode() not in box and box[:3] == b"\x01\x00" + bytes([sealed.current()])
+    assert (row.last_four, row.key_version, row.revoked_at) == (TOKEN[-4:], sealed.current(), None)
+    assert len(row.fingerprint) == 64 and row.fingerprint != first.last_four
+    assert credentials.open_token(row) == TOKEN
+    assert store(crm.b, uuid4()).ciphertext != row.ciphertext  # dos cifrados nunca coinciden
     with tenant_scope(ctx(crm.a)):  # alguien con escritura copia el cifrado de una a la otra
-        Credential.objects.filter(pk=two.pk).update(
-            ciphertext=bytes(Credential.objects.get(pk=one.pk).ciphertext)
-        )
-        copied = Credential.objects.get(pk=two.pk)
+        Credential.objects.filter(pk=second.pk).update(ciphertext=box)
+        copied = Credential.objects.get(pk=second.pk)
     with pytest.raises(sealed.SealError):
-        accounts.open_token(copied)  # atado a `channel_account:<id>`
-    box = bytes(reload(crm.a, Credential, one.pk).ciphertext)
+        credentials.open_token(copied)  # atado a `channel_account:<id>`
     with pytest.raises(sealed.SealError):
-        sealed.unseal("mfa.totp", accounts.owner(first.pk), box)  # ni como secreto de otro uso
-    assert second.pk != first.pk and accounts.owner(first.pk) != accounts.owner(second.pk)
+        sealed.unseal("mfa.totp", credentials.owner(one), box)  # ni como secreto de otro uso
+    assert TOKEN not in caplog.text + everything(migrator)
 
 
-def test_the_number_is_refused_with_one_error_whether_malformed_or_taken(
-    crm: SimpleNamespace, meta: FakeGraph, migrator: DB
+def test_revoking_wipes_the_cipher_and_a_new_live_credential_may_follow(
+    crm: SimpleNamespace, migrator: DB
 ) -> None:
-    connect(crm)
-    before = everything(migrator).count("credentials")
-    outcomes = []
-    for org, number in (("a", "no-es-un-numero"), ("a", PHONE_NUMBER_ID), ("b", PHONE_NUMBER_ID)):
-        with pytest.raises(accounts.BadNumber) as caught:
-            connect(crm, org, phone_number_id=number)
-        outcomes.append(
-            (
-                str(caught.value),
-                caught.value.__cause__,
-                caught.value.__suppress_context__ or caught.value.__context__ is None,
-            )
-        )
-    assert len({o[0] for o in outcomes}) == 1 and outcomes[0][0] == accounts.NUMBER_REFUSED
-    assert all(o[1] is None and o[2] for o in outcomes)  # sin el IntegrityError a la vista
-    assert "channel_accounts_external_uq" not in outcomes[0][0] and "Key (" not in outcomes[0][0]
-    assert everything(migrator).count("credentials") == before  # y la credencial no quedó
-
-
-@pytest.mark.parametrize("why", ["token", "waba", "down", "off"])
-def test_a_refused_connection_leaves_nothing_behind(
-    crm: SimpleNamespace, meta: FakeGraph, monkeypatch: pytest.MonkeyPatch, settings: Any,
-    migrator: DB, why: str,
-) -> None:  # fmt: skip
-    over: dict[str, Any] = {}
-    expected: type[Exception] = graph.GraphRejected
-    if why == "token":
-        meta.token = "otro-token-de-la-api-falsa-0000"  # noqa: S105
-    elif why == "waba":
-        over["waba_id"] = "100000000000099"  # el número no es de ese WABA
-    elif why == "down":
-        transport.install(monkeypatch, Down())
-        expected = graph.GraphUnavailable
-    else:
-        settings.META_ENABLED, expected = False, graph.ChannelNotEnabled
-    with pytest.raises(expected):
-        connect(crm, **over)
-    for table in ("credentials", "channel_accounts WHERE platform = 'WHATSAPP'"):
-        assert migrator.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)  # noqa: S608
-
-
-def test_without_channels_manage_nothing_is_read_and_meta_is_never_asked(
-    crm: SimpleNamespace, meta: FakeGraph
-) -> None:
-    account, _ = connect(crm)
-    meta.requests.clear()
-    for user in (crm.vera, crm.sam, crm.bea):
-        with pytest.raises(AccessDenied):
-            run(crm.a, user, accounts.connect_whatsapp, name="x", phone_number_id=SECOND,
-                waba_id=WABA_ID, access_token=NEW_TOKEN)  # fmt: skip
-        with pytest.raises(AccessDenied):
-            run(crm.a, user, accounts.rotate_token, channel_account_id=account.pk,
-                access_token=NEW_TOKEN)  # fmt: skip
-        with pytest.raises(AccessDenied):
-            run(crm.a, user, accounts.disconnect, channel_account_id=account.pk)
-    assert meta.requests == [] and reload(crm.a, ChannelAccount, account.pk).deleted_at is None
-
-
-def test_rotating_replaces_the_token_and_wipes_the_old_one(
-    crm: SimpleNamespace, meta: FakeGraph, migrator: DB
-) -> None:
-    account, old = connect(crm)
-    with tenant_scope(ctx(crm.a)):
-        ChannelAccount.objects.filter(pk=account.pk).update(
-            status_detail="TOKEN_INVALID", status="ERROR"
-        )
-    meta.token = NEW_TOKEN
-    rotated, new = run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
-                       access_token=NEW_TOKEN)  # fmt: skip
-    assert rotated.credential_id == new.pk != old.pk and new.rotated_at is not None
-    assert (rotated.status, rotated.status_detail, rotated.version) == ("ERROR", None, 2)
-    gone = reload(crm.a, Credential, old.pk)
-    assert (
-        gone.ciphertext is None and gone.revoked_at is not None and gone.last_four == old.last_four
-    )
-    assert accounts.open_token(reload(crm.a, Credential, new.pk)) == NEW_TOKEN
+    owner = uuid4()
+    old = store(crm.a, owner)
+    with tenant_scope(ctx(crm.a, None)) as tenant:
+        credentials.revoke(tenant, old.pk)
+        credentials.revoke(tenant, None)  # sin credencial no hace nada
+    gone = reload(crm.a, old.pk)
+    assert gone.ciphertext is None and gone.revoked_at is not None and gone.last_four == TOKEN[-4:]
     with pytest.raises(sealed.SealError):
-        accounts.open_token(gone)  # el anterior ya no se puede abrir
-    assert TEST_TOKEN not in everything(migrator) and NEW_TOKEN not in everything(migrator)
-    meta.token = "tercer-token-de-la-api-falsa-000"  # noqa: S105  Meta rechaza el que llega
-    with pytest.raises(graph.GraphRejected):
-        run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
-            access_token=TEST_TOKEN)  # fmt: skip
-    assert reload(crm.a, ChannelAccount, account.pk).credential_id == new.pk  # nada cambió
+        credentials.open_token(gone)  # ya no se puede abrir
+    new = store(
+        crm.a, owner, OTHER_TOKEN, rotated=True
+    )  # una viva por dueño: la vieja ya no cuenta
+    assert credentials.open_token(reload(crm.a, new.pk)) == OTHER_TOKEN and new.rotated_at
+    assert TOKEN not in everything(migrator) and OTHER_TOKEN not in everything(migrator)
 
 
-def test_an_account_that_is_not_a_live_whatsapp_account_of_the_organization_does_not_exist(
-    crm: SimpleNamespace, meta: FakeGraph
+def test_reseal_moves_every_token_to_the_current_key_and_reports_what_it_cannot_open(
+    crm: SimpleNamespace, settings: Any, caplog: pytest.LogCaptureFixture, migrator: DB
 ) -> None:
-    other, _ = connect(crm, "b", phone_number_id=SECOND)
-    gone, _ = connect(crm)
-    run(crm.a, crm.ana, accounts.disconnect, channel_account_id=gone.pk)
-    sandbox = run(crm.a, crm.ana, commands.ensure_sandbox_account)
-    meta.requests.clear()
-    for target in (other.pk, gone.pk, sandbox.pk, uuid4()):  # ajena, desconectada, Sandbox, ninguna
-        for command, extra in ((accounts.rotate_token, {"access_token": TEST_TOKEN}),
-                               (accounts.disconnect, {})):  # fmt: skip
-            with pytest.raises(ObjectDoesNotExist):
-                run(crm.a, crm.ana, command, channel_account_id=target, **extra)
-    assert meta.requests == []  # Meta no se entera de cuentas que no existen
-    assert reload(crm.b, ChannelAccount, other.pk).deleted_at is None
-
-
-def test_disconnecting_frees_the_number_and_reconnecting_is_a_new_account(
-    crm: SimpleNamespace, meta: FakeGraph, migrator: DB
-) -> None:
-    account, secret = connect(crm)
-    run(crm.a, crm.ana, accounts.disconnect, channel_account_id=account.pk)
-    done = reload(crm.a, ChannelAccount, account.pk)
-    assert (done.status, done.status_detail) == ("DISCONNECTED", "DISCONNECTED_BY_ADMIN")
-    assert done.deleted_at is not None and done.deleted_by_user_id == crm.ana.pk
-    assert reload(crm.a, Credential, secret.pk).ciphertext is None  # el token ya no está
-    again, fresh = connect(crm, "b")  # el número se libera: otra organización lo registra
-    assert again.pk != account.pk and fresh.pk != secret.pk and again.status == "PENDING"
-    assert TEST_TOKEN not in everything(migrator)
+    settings.SECRETS_KEKS = {1: OLD_KEY}
+    mine, theirs = store(crm.a, uuid4()), store(crm.b, uuid4(), OTHER_TOKEN)
+    revoked = store(crm.a, uuid4())
+    with tenant_scope(ctx(crm.a, None)) as tenant:
+        credentials.revoke(tenant, revoked.pk)  # las invalidadas no cuentan
+    assert reseal_credentials() == {"key": 1, "resealed": 0, "unreadable": 0, "busy": 0}
+    settings.SECRETS_KEKS = {1: OLD_KEY, 7: NEW_KEY}  # rotación de la clave maestra
+    migrator.execute("UPDATE credentials SET owner_id = %s WHERE id = %s", [uuid4(), theirs.pk])
+    # la de B quedó ilegible: el valor ya no es de esa cuenta
+    with caplog.at_level(logging.DEBUG):
+        assert reseal_credentials() == {"key": 7, "resealed": 1, "unreadable": 1, "busy": 0}
+    kept = reload(crm.a, mine.pk)
+    assert cipher(kept)[:3] == b"\x01\x00\x07" and kept.key_version == 7
+    assert credentials.open_token(kept) == TOKEN and kept.last_four == mine.last_four
+    stuck = reload(crm.b, theirs.pk)
+    assert stuck.key_version == 1 and cipher(stuck)[:3] == b"\x01\x00\x01"  # intacta
+    assert reseal_credentials() == {"key": 7, "resealed": 0, "unreadable": 1, "busy": 0}
+    settings.SECRETS_KEKS = {7: NEW_KEY}  # la anterior ya se puede retirar: lo vuelto a cifrar abre
+    assert credentials.open_token(reload(crm.a, mine.pk)) == TOKEN
+    assert TOKEN not in caplog.text + everything(migrator) and OTHER_TOKEN not in caplog.text
 
 
 def test_the_database_keeps_credentials_inside_their_organization_and_narrow(
@@ -254,7 +132,7 @@ def test_the_database_keeps_credentials_inside_their_organization_and_narrow(
         with tenant_scope(ctx(crm.a)):  # la credencial de B no es de A, aunque exista
             ChannelAccount.objects.create(
                 platform="WHATSAPP", name="x", status="PENDING", credential_id=theirs,
-                external_account_id=SECOND, external_parent_id=WABA_ID,
+                external_account_id="100000000000003", external_parent_id="100000000000001",
             )  # fmt: skip
     with tenant_scope(ctx(crm.a)):
         assert not Credential.objects.filter(pk=theirs).exists()  # la RLS no la deja ver
@@ -311,30 +189,6 @@ def test_a_credential_row_must_have_the_shape_of_a_sealed_value(
         credential(crm.a, owner)  # una viva por dueño
 
 
-def test_reseal_moves_every_token_to_the_current_key_and_reports_what_it_cannot_open(
-    crm: SimpleNamespace, meta: FakeGraph, settings: Any, caplog: pytest.LogCaptureFixture,
-    migrator: DB,
-) -> None:  # fmt: skip
-    settings.SECRETS_KEKS = {1: OLD_KEY}
-    one, mine = connect(crm)
-    two, theirs = connect(crm, "b", phone_number_id=SECOND)
-    assert reseal_credentials() == {"key": 1, "resealed": 0, "unreadable": 0, "busy": 0}
-    settings.SECRETS_KEKS = {1: OLD_KEY, 7: NEW_KEY}  # rotación de la clave maestra
-    migrator.execute("UPDATE credentials SET owner_id = %s WHERE id = %s", [uuid4(), theirs.pk])
-    # la de B quedó ilegible: el valor ya no es de esa cuenta
-    with caplog.at_level(logging.DEBUG):
-        assert reseal_credentials() == {"key": 7, "resealed": 1, "unreadable": 1, "busy": 0}
-    kept = reload(crm.a, Credential, mine.pk)
-    assert bytes(kept.ciphertext)[:3] == b"\x01\x00\x07" and kept.key_version == 7
-    assert accounts.open_token(kept) == TEST_TOKEN and kept.last_four == mine.last_four
-    stuck = reload(crm.b, Credential, theirs.pk)
-    assert stuck.key_version == 1 and bytes(stuck.ciphertext)[:3] == b"\x01\x00\x01"  # intacta
-    assert reseal_credentials() == {"key": 7, "resealed": 0, "unreadable": 1, "busy": 0}
-    settings.SECRETS_KEKS = {7: NEW_KEY}  # la anterior ya se puede retirar: lo vuelto a cifrar abre
-    assert accounts.open_token(reload(crm.a, Credential, mine.pk)) == TEST_TOKEN
-    assert TEST_TOKEN not in caplog.text + everything(migrator) and one.pk != two.pk
-
-
 def test_the_reseal_task_validates_its_arguments_for_real_and_is_scheduled(
     settings: Any, broker: list[Any]
 ) -> None:
@@ -352,7 +206,7 @@ def test_the_reseal_task_validates_its_arguments_for_real_and_is_scheduled(
 def test_without_keys_the_reseal_fails_closed(settings: Any) -> None:
     settings.SECRETS_KEKS = {}
     with pytest.raises(ImproperlyConfigured):
-        accounts.reseal()
+        credentials.reseal()
 
 
 def test_the_migration_goes_back_and_forward(crm: SimpleNamespace, migrator: DB) -> None:

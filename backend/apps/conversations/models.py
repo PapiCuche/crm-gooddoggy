@@ -191,7 +191,6 @@ class ChannelAccount(TenantModel):
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
 SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
 TOKEN_PURPOSE = "channel.access_token"  # noqa: S105 — el propósito de `core.sealed`, no un secreto
-TOKEN_FORMAT = r"^[A-Za-z0-9_.-]{20,512}$"  # noqa: S105 — el token de acceso de Meta (a confirmar)
 
 
 class Credential(TenantModel):

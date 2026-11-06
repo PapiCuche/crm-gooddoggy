@@ -11,8 +11,6 @@ from django.conf import settings
 from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
 
-HTTPError = urllib3.exceptions.HTTPError  # lo que lanza una petición que no llegó a respuesta
-
 
 class BlockedDestination(Exception):  # noqa: N818 — resultado de política, no un fallo de red
     """Destino fuera de la allowlist o que resuelve a una IP no pública."""
