@@ -16,7 +16,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
-from apps.conversations import commands, credentials
+from apps.conversations import commands, credentials, ingress
 from apps.conversations.channels import TemporaryChannelError
 from apps.conversations.models import Message
 from core.observability.logging import get_logger
@@ -105,3 +105,16 @@ def reseal_credentials(max_orgs: int = 50, batch_size: int = 100) -> dict[str, i
     otra (F7-02b, ADR-022 §5). Devuelve la clave vigente en este proceso y cuántos volvió a
     cifrar, cuántos no pudo abrir y cuántos dejó para otra pasada."""
     return credentials.reseal(max_orgs=max_orgs, batch_size=batch_size)
+
+
+@platform_task(name="conversations.process_webhook_ingress", ignore_result=True)
+def process_webhook_ingress(batch_size: int = 50) -> dict[str, int]:
+    """Enruta los ítems recibidos de los webhooks de Meta (F7-03b): reclama lotes, resuelve la
+    cuenta y los cierra. Sin tenant al empezar: el de cada ítem sale de la cuenta registrada."""
+    return ingress.process(batch_size)
+
+
+@platform_task(name="conversations.purge_webhook_ingress", ignore_result=True)
+def purge_webhook_ingress(days: int = 90, batch_size: int = 1000) -> int:
+    """Borra los ítems de los webhooks de más de `days` días: el tope, no el plazo normal."""
+    return ingress.purge(days, batch_size)
