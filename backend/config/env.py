@@ -34,6 +34,11 @@ def optional(name: str, default: str) -> str:
     return os.environ.get(name, default).strip()
 
 
+_META_SECRET = re.compile(r"[A-Za-z0-9]{16,128}")
+_META_VERIFY = re.compile(r"[\x21-\x7e]{16,128}")
+_META_VERSION = re.compile(r"v[0-9]{1,3}\.[0-9]{1,2}")
+
+
 def boolean(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -110,3 +115,20 @@ def database(url: str) -> dict[str, Any]:
         "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
     }
+
+
+def check_meta(secrets: list[str], verify_token: str, version: str) -> None:
+    """Valida los ajustes del canal de WhatsApp (ADR-029) con el canal encendido. Los errores solo
+    nombran la variable: los valores son secretos."""
+    if not 1 <= len(secrets) <= 3 or len(set(secrets)) != len(secrets):
+        raise ImproperlyConfigured(
+            "META_APP_SECRETS: de 1 a 3 secretos distintos, el vigente primero"
+        )
+    if any(not _META_SECRET.fullmatch(item) for item in secrets):
+        raise ImproperlyConfigured("META_APP_SECRETS: cada secreto, de 16 a 128 letras o dígitos")
+    if not _META_VERIFY.fullmatch(verify_token) or verify_token in secrets:
+        raise ImproperlyConfigured(
+            "META_WEBHOOK_VERIFY_TOKEN: de 16 a 128 caracteres sin espacios, distinto de un secreto"
+        )
+    if not _META_VERSION.fullmatch(version):
+        raise ImproperlyConfigured("META_GRAPH_VERSION debe tener la forma vNN.N")

@@ -243,6 +243,20 @@ STORAGE_SECRET_ACCESS_KEY = env.optional("STORAGE_SECRET_ACCESS_KEY", "")
 STORAGE_ADDRESSING_STYLE = env.optional("STORAGE_ADDRESSING_STYLE", "path")
 # HTTP saliente (security-boundaries B9): allowlist exacta de hosts; vacía = nada permitido.
 HTTP_ALLOWED_HOSTS: list[str] = env.csv_list("HTTP_ALLOWED_HOSTS")
+# Canal de WhatsApp (ADR-029, Proposed): una app de Meta por despliegue. Apagado por omisión, y
+# apagado no exige nada (los despliegues actuales, el stack local y CI no tienen estos valores).
+# La validación al arrancar con el canal encendido la hacen `production` y `local`: el job de
+# migraciones no recibe estos secretos (ADR-002 §1.1).
+META_ENABLED = env.boolean("META_ENABLED", False)
+# Los app secrets de Meta: el vigente primero y, durante una rotación, el anterior (ADR-029).
+META_APP_SECRETS: list[str] = env.csv_list("META_APP_SECRETS")
+META_WEBHOOK_VERIFY_TOKEN = env.optional("META_WEBHOOK_VERIFY_TOKEN", "")
+# Versión de la Graph API, fijada en el código (D-F7-08): subirla es un cambio revisado, con los
+# fixtures del simulador. A confirmar con la versión vigente de Meta y su fecha de retirada.
+META_GRAPH_VERSION = "v23.0"
+META_GRAPH_HOST = "graph.facebook.com"
+if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
+    HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

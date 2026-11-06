@@ -38,6 +38,10 @@ x-runtime: &runtime
     APP_ORIGIN: http://localhost:${PROXY_HOST_PORT:-8080}
     # Accesos de prueba (ADR-026): slug de la organización de pruebas; vacío = desactivado.
     DJANGO_TEST_ACCOUNTS_ORGANIZATION: ${DJANGO_TEST_ACCOUNTS_ORGANIZATION:-}
+    # Canal de WhatsApp (ADR-029, Proposed): apagado por omisión; apagado no exige nada.
+    META_ENABLED: ${META_ENABLED:-false}
+    META_APP_SECRETS: ${META_APP_SECRETS:-}
+    META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
   depends_on:
     migrate:
       condition: service_completed_successfully

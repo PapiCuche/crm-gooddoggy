@@ -10807,8 +10807,11 @@ components:
     PlatformEnum:
       enum:
       - SANDBOX
+      - WHATSAPP
       type: string
-      description: '* `SANDBOX` - Sandbox'
+      description: |-
+        * `SANDBOX` - Sandbox
+        * `WHATSAPP` - Whatsapp
     Price:
       type: object
       properties:

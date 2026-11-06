@@ -22,6 +22,11 @@ CSRF_TRUSTED_ORIGINS = [
     *env.csv_list("DJANGO_CSRF_TRUSTED_ORIGINS"),
 ]
 
+# ADR-029: con el canal de WhatsApp encendido (contra el simulador), los mismos ajustes que en
+# production; apagado, nada.
+if META_ENABLED:  # noqa: F405
+    env.check_meta(META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION)  # noqa: F405
+
 # Sin `SECRETS_KEKS`, una clave de desarrollo derivada de la SECRET_KEY local (ADR-022 §6): el
 # cifrado de secretos funciona sin configurar nada. Nunca en production, que no hereda de aquí.
 SECRETS_KEKS = env.keys("SECRETS_KEKS") or {

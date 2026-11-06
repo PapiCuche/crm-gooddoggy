@@ -49,6 +49,15 @@ def world(orgs: dict[str, Any]) -> SimpleNamespace:
     return made
 
 
+def pending_account(org: UUID, number: str = "15550001111") -> Any:
+    """Una cuenta de WhatsApp que nace `PENDING`: la base no deja volver a `PENDING` (F7-02a)."""
+    with tenant_scope(ctx(org)):
+        return ChannelAccount.objects.create(
+            platform="WHATSAPP", name="Pendiente", status="PENDING",
+            external_account_id=number, external_parent_id="1234567890",
+        )  # fmt: skip
+
+
 def conversation(
     org: UUID, contact: Any, account: Any, number: str = "CONV-00001", **over: Any
 ) -> Any:
@@ -274,7 +283,7 @@ def test_a_channel_account_is_unique_among_the_live_ones_of_the_whole_platform(
             platform="SANDBOX", name="Copia", external_account_id=taken
         ).pk  # borrada, se puede volver a registrar
     refused(world.a, "channel_accounts_platform_ck", lambda: ChannelAccount.objects.create(
-        platform="TELEGRAM", name="x", external_account_id="x"
+        platform="TELEGRAM", name="x", external_account_id="x", status="PENDING"
     ))  # fmt: skip
     refused(world.a, "channel_accounts_text_ck", lambda: ChannelAccount.objects.create(
         platform="SANDBOX", name=" ", external_account_id="x"

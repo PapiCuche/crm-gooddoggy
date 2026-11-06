@@ -318,8 +318,8 @@ def test_core_http_policy_still_applies_to_the_simulator(graph: FakeGraph) -> No
 
 
 def test_the_fixtures_follow_the_pinned_graph_version() -> None:
-    """Cuando F7-02 añada `META_GRAPH_VERSION`, subirla obliga a revisar `meta_sim`."""
-    assert getattr(settings, "META_GRAPH_VERSION", GRAPH_VERSION) == GRAPH_VERSION
+    """Subir `META_GRAPH_VERSION` (settings) obliga a revisar los fixtures de `meta_sim`."""
+    assert settings.META_GRAPH_VERSION == GRAPH_VERSION
 
 
 def test_the_test_secrets_exist_only_in_tests() -> None:
