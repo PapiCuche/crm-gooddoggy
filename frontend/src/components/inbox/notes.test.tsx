@@ -179,6 +179,105 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     expect(screen.queryByRole("textbox", { name: "Responder al cliente" })).toBeNull();
   });
 
+  it("el cuadro es compacto en 390 px: una línea que crece, etiqueta solo para lectores con conmutador, contador discreto", async () => {
+    server();
+    show();
+    await openChat();
+    const box = await reply();
+    expect(box).toHaveAttribute("rows", "1");
+    expect(box).toHaveClass("field-sizing-content", "lg:field-sizing-fixed", "max-h-24"); // crece hasta un máximo
+    expect(screen.getByText("Responder al cliente", { selector: "label" })).toHaveClass(
+      "max-lg:sr-only",
+    );
+    const form = within(box.closest("form")!);
+    const count = form.getByText("0 de 4096 caracteres");
+    expect(count).toHaveClass("max-lg:sr-only"); // lejos del tope no ocupa una línea
+    fireEvent.change(box, { target: { value: "a".repeat(4000) } });
+    expect(form.getByText("4000 de 4096 caracteres")).not.toHaveClass("max-lg:sr-only"); // cerca del tope sí
+    cleanup();
+    server();
+    show([grant("conversations.view"), grant("messages.send")]); // sin conmutador la etiqueta se ve
+    await openChat();
+    expect(screen.getByText("Responder al cliente", { selector: "label" })).not.toHaveClass(
+      "max-lg:sr-only",
+    );
+  }, 20_000);
+
+  it("en 320 px el conmutador cabe en una fila con etiquetas cortas y el nombre completo, y el botón no gasta una línea", async () => {
+    server();
+    show();
+    await openChat();
+    const row = mode("Responder al cliente").parentElement!;
+    expect(row).toHaveClass("flex");
+    expect(row).not.toHaveClass("flex-wrap"); // una sola fila
+    for (const [name, short] of [
+      ["Responder al cliente", "Responder"],
+      ["Nota interna", "Nota"],
+    ]) {
+      const button = mode(name!);
+      expect(button).toHaveClass("max-sm:flex-1");
+      expect(button).toHaveAttribute("aria-label", name); // el nombre accesible no se acorta
+      expect(within(button).getByText(short!)).toHaveClass("sm:hidden"); // corta, solo en pantallas estrechas
+      expect(within(button).getByText(name!)).toHaveClass("max-sm:hidden");
+    }
+    // respuesta: el cuadro y un botón de icono en la misma fila; el texto del botón queda para lectores
+    const form = (await reply()).closest("form")!;
+    expect(form).toHaveClass("max-sm:grid", "max-sm:grid-cols-[minmax(0,1fr)_auto]");
+    const send = within(form).getByRole("button", { name: "Enviar" });
+    expect(send).toHaveClass("max-sm:size-10", "max-sm:col-start-2", "max-sm:row-start-1");
+    expect(within(send).getByText("Enviar")).toHaveClass("max-sm:sr-only");
+    // nota: el cuadro ocupa la fila y debajo van el aviso y «Guardar nota», visible y distinto
+    fireEvent.click(mode("Nota interna"));
+    const noteForm = (await noteBox()).closest("form")!;
+    expect(await noteBox()).toHaveClass("max-sm:col-span-2");
+    const save = within(noteForm).getByRole("button", { name: "Guardar nota" });
+    expect(save).toHaveClass("max-sm:row-start-2", "max-sm:col-start-2");
+    expect(within(save).getByText("Guardar nota")).not.toHaveClass("max-sm:sr-only");
+    expect(within(noteForm).getByText(/Solo tu equipo ve esto, el cliente no/)).not.toHaveClass(
+      "max-lg:sr-only",
+    );
+  }, 20_000);
+
+  it("el panel reparte el alto: encabezado y cuadro fijos, solo los mensajes se desplazan", async () => {
+    server();
+    show();
+    await openChat();
+    const panel = screen.getByRole("region", { name: "Conversación" }).firstElementChild!;
+    expect(panel).toHaveClass(
+      "h-[calc(100dvh-8rem)]",
+      "min-h-[28rem]",
+      "flex-col",
+      "lg:h-[calc(100dvh-18rem)]",
+    );
+    const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
+    expect(scroller).toHaveAttribute("tabindex", "0"); // sigue enfocable con el teclado
+    expect(scroller).toHaveClass("min-h-0", "flex-1", "overflow-y-auto"); // la válvula: absorbe el sobrante // al menos 160 px
+    expect(panel.querySelector("header")).toHaveClass("shrink-0");
+    expect(scroller.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
+  });
+
+  it("la descripción del cuadro apunta a elementos que existen: contador, teclas y, en la nota, el aviso", async () => {
+    server();
+    show();
+    await openChat();
+    const described = (box: HTMLElement) =>
+      box
+        .getAttribute("aria-describedby")!
+        .split(" ")
+        .map((id) => document.getElementById(id)?.textContent);
+    expect(described(await reply())).toEqual([
+      "0 de 4096 caracteres",
+      "Enter envía; Mayús+Enter agrega una línea.",
+    ]);
+    fireEvent.click(mode("Nota interna"));
+    expect(described(await noteBox())).toEqual([
+      "0 de 4096 caracteres",
+      "Enter guarda; Mayús+Enter agrega una línea.",
+      "Solo tu equipo ve esto, el cliente no.",
+    ]);
+    expect(screen.getByText("Solo tu equipo ve esto, el cliente no.")).not.toHaveClass("sr-only");
+  }, 20_000);
+
   it("guardar una nota usa solo `notes/`, la muestra rotulada y sin marca de entrega, y enfoca el cuadro", async () => {
     const s = server({ notes: () => ({ status: 201, body: note("n1", "Pide DNI") }) });
     show();

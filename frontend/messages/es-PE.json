@@ -2162,7 +2162,8 @@
       },
       "hint": {
         "reply": "Enter envía; Mayús+Enter agrega una línea.",
-        "note": "Solo tu equipo ve esto, el cliente no. Enter guarda; Mayús+Enter agrega una línea."
+        "note": "Solo tu equipo ve esto, el cliente no.",
+        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea."
       },
       "count": "{count} de {max} caracteres",
       "over": "Te pasaste por {over, plural, one {# carácter} other {# caracteres}}.",
@@ -2174,7 +2175,9 @@
       "mode": {
         "label": "Tipo de mensaje",
         "reply": "Responder al cliente",
-        "note": "Nota interna"
+        "note": "Nota interna",
+        "replyShort": "Responder",
+        "noteShort": "Nota"
       },
       "save": "Guardar nota",
       "saving": "Guardando…",
@@ -2196,7 +2199,8 @@
       },
       "conflict": "Alguien la tomó antes o cambió la asignación. Ya la actualizamos: revisa quién la tiene.",
       "badTarget": "No se puede transferir a esa persona. Elige a otra.",
-      "closed": "La conversación está cerrada: no se puede asignar."
+      "closed": "La conversación está cerrada: no se puede asignar.",
+      "actions": "Acciones"
     }
   }
 }

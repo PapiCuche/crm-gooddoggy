@@ -211,6 +211,14 @@ describe("Inbox, chat (F6-03)", () => {
     const refresh = screen.getByRole("button", { name: "Actualizar mensajes" });
     expect(refresh.parentElement).toHaveClass("flex", "flex-wrap");
     expect(screen.getByRole("button", { name: "Mías" }).parentElement).toHaveClass("flex-wrap");
+    // encabezado de una fila: volver, nombre, ficha y actualizar; el número y el estado debajo
+    const card = screen.getByRole("link", { name: "Ver ficha del cliente" });
+    expect(card.parentElement).toBe(refresh.parentElement);
+    expect(card).toHaveClass("order-3", "lg:order-6"); // icono en 320 px, al final en escritorio
+    expect(within(card.closest("header")!).getByText("CONV-00001").parentElement).toHaveClass(
+      "order-5",
+      "basis-full",
+    );
     // la región que se desplaza se recorre con el teclado
     const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
     expect(scroller).toHaveAttribute("tabindex", "0");

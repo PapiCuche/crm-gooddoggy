@@ -116,6 +116,42 @@ afterEach(() => {
 });
 
 describe("asignación en la pantalla (F6-05b)", () => {
+  it("en 390 px las acciones van tras «Acciones»: aria-expanded, abre y cierra, Escape devuelve el foco", async () => {
+    server();
+    show();
+    await openChat();
+    const toggle = await header().findByRole("button", { name: "Acciones" });
+    const controls = toggle.getAttribute("aria-controls")!;
+    const panel = () => document.getElementById(controls)!;
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(panel()).toHaveClass("max-lg:hidden"); // plegado en pantallas estrechas
+    expect(panel()).toContainElement(header().getByRole("button", { name: "Tomar" }));
+    expect(panel()).toContainElement(header().getByLabelText("Transferir a"));
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(panel()).not.toHaveClass("max-lg:hidden");
+    expect(panel()).toHaveClass("max-lg:absolute"); // se abre sobre los mensajes, sin empujarlos
+    expect(toggle).toHaveClass("lg:hidden"); // en escritorio no hay botón: siempre abiertas
+    header().getByRole("button", { name: "Tomar" }).focus();
+    fireEvent.keyDown(panel(), { key: "Escape" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveFocus();
+  });
+
+  it("sin permiso o con la conversación cerrada no hay botón «Acciones»", async () => {
+    server({ status: "CLOSED" });
+    show();
+    await openChat();
+    expect(await line("Sin asignar")).toBeVisible();
+    expect(header().queryByRole("button", { name: "Acciones" })).toBeNull();
+    cleanup();
+    server();
+    show(["conversations.view", "users.view"]);
+    await openChat();
+    expect(await line("Sin asignar")).toBeVisible();
+    expect(header().queryByRole("button", { name: "Acciones" })).toBeNull();
+  });
+
   it("sin `conversations.assign` se ve quién la tiene, pero no hay botones", async () => {
     server();
     show(["conversations.view", "users.view"]);
@@ -135,10 +171,17 @@ describe("asignación en la pantalla (F6-05b)", () => {
     expect(header().queryByRole("button", { name: "Soltar" })).toBeNull();
     const reads = s.reads();
     const messages = s.messageReads();
+    const actions = await header().findByRole("button", { name: "Acciones" });
+    fireEvent.click(actions); // en 390 px se abren antes de usarlas
+    expect(actions).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(await header().findByRole("button", { name: "Tomar" }));
     expect(await header().findByText("Tomaste la conversación.")).toBeVisible();
     expect(s.posts()).toEqual([{ action: "TAKE", assignment_version: 3 }]);
     expect(await line("Asignada a ti")).toHaveFocus(); // el botón pulsado desaparece
+    expect(header().getByRole("button", { name: "Acciones" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(header().queryByRole("button", { name: "Tomar" })).toBeNull();
     expect(header().getByRole("button", { name: "Soltar" })).toBeVisible();
     await waitFor(() => expect(s.reads()).toBeGreaterThan(reads)); // el detalle se vuelve a leer

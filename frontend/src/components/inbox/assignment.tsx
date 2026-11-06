@@ -2,7 +2,8 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Choice } from "@/components/catalog/product-create";
@@ -15,6 +16,7 @@ import {
 import type { Assignment, AssignRequest, Conversation, ConversationDetail } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
+import { cn } from "@/lib/utils";
 
 import { useMembers } from "./members";
 import { messagesKey } from "./composer";
@@ -56,6 +58,9 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
   const { name, targets } = useMembers();
   const line = useRef<HTMLParagraphElement>(null);
   const [target, setTarget] = useState("");
+  const [open, setOpen] = useState(false); // en 390 px las acciones van tras «Acciones»
+  const panel = useId();
+  const toggle = useRef<HTMLButtonElement>(null);
   const [said, setSaid] = useState<{ error: boolean; text: string } | null>(null);
   const detailKey = getConversationsRetrieveQueryKey(slug, detail.id);
   const can = permissions.some((grant) => grant.code === "conversations.assign");
@@ -75,6 +80,7 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
       // El estado nuevo se ve al instante; la relectura lo confirma.
       client.setQueryData<ConversationDetail>(detailKey, (old) => old && { ...old, ...saved });
       setTarget("");
+      setOpen(false);
       setSaid({
         error: false,
         text:
@@ -103,11 +109,34 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
   };
   const busy = assign.isPending;
 
+  const acts = can && !closed;
   return (
-    <div className="flex flex-col gap-2">
-      <p ref={line} tabIndex={-1} className="text-sm font-medium focus-visible:outline-none">
-        <Assignee who={detail} />
-      </p>
+    <div
+      className="relative flex flex-col gap-1 lg:gap-2"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !open) return;
+        setOpen(false);
+        toggle.current?.focus();
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p ref={line} tabIndex={-1} className="text-sm font-medium focus-visible:outline-none">
+          <Assignee who={detail} />
+        </p>
+        {acts ? (
+          <Button
+            ref={toggle}
+            variant="ghost"
+            className="border-border h-9 border lg:hidden"
+            aria-expanded={open}
+            aria-controls={panel}
+            onClick={() => setOpen(!open)}
+          >
+            {t("actions")}
+            <ChevronDown aria-hidden className={open ? "rotate-180" : undefined} />
+          </Button>
+        ) : null}
+      </div>
       {said ? (
         <p
           role={said.error ? "alert" : "status"}
@@ -117,8 +146,17 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
         </p>
       ) : null}
       {can && closed ? <p className="text-muted text-sm">{t("closed")}</p> : null}
-      {can && !closed ? (
-        <div className="flex flex-wrap items-end gap-2">
+      {acts ? (
+        <div
+          id={panel}
+          className={cn(
+            "flex flex-wrap items-end gap-2",
+            // En 390 px las acciones se abren sobre los mensajes, sin empujar el diseño.
+            open
+              ? "max-lg:bg-surface max-lg:absolute max-lg:inset-x-0 max-lg:top-full max-lg:z-10 max-lg:max-h-56 max-lg:overflow-y-auto max-lg:rounded-lg max-lg:border max-lg:p-3 max-lg:shadow-md"
+              : "max-lg:hidden",
+          )}
+        >
           {holder === null ? (
             <Button
               variant="accent"
