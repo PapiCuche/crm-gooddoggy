@@ -48,6 +48,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.accounts.middleware.SessionLifetimeMiddleware",  # caducidad absoluta y por inactividad
     "core.api.middleware.ApiCsrfMiddleware",  # CSRF de /api/ antes de resolver el tenant
+    "apps.conversations.throttle.ChannelThrottleMiddleware",  # F7-02c: tope por persona
     "core.tenancy.middleware.TenantResolutionMiddleware",  # siempre tras la autenticación
 ]
 
@@ -95,6 +96,9 @@ PASSWORD_RESET_THROTTLE = {
 # Segundo factor (ADR-023 §5): códigos fallidos por cuenta, vengan de donde vengan, y la ventana
 # en segundos. Alcanzado el tope, se rechaza también el código correcto.
 MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
+# Rutas de cuentas de WhatsApp (F7-02c): peticiones de una persona por ventana (segundos); conectar
+# y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
+CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
 ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {"default": env.database(env.required("DATABASE_URL"))}
