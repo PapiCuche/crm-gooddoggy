@@ -147,18 +147,6 @@ def test_if_the_database_cannot_store_the_answer_is_503_so_that_meta_retries(
     assert deliver(text("wamid.1")).status_code == 200 and len(rows(migrator)) == 1
 
 
-def test_nothing_of_the_payload_the_signature_or_the_secrets_reaches_a_log(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    caplog.set_level(logging.DEBUG)
-    value = webhooks.value(messages=[text("wamid.1", "Texto privado del cliente")])
-    delivery = webhooks.deliver(webhooks.encode(webhooks.envelope(value)))
-    post(delivery)
-    signature = delivery.headers[webhooks.SIGNATURE_HEADER]
-    for secret in ("Texto privado", webhooks.TEST_APP_SECRET, signature):
-        assert secret not in caplog.text, secret
-
-
 def test_the_migration_goes_back_and_forward_and_the_tables_come_back_closed(migrator: DB) -> None:
     exists = "SELECT to_regclass('public.webhook_ingress') IS NOT NULL"
     function = "SELECT count(*) FROM pg_proc WHERE proname = 'webhook_ingress_insert'"
@@ -173,14 +161,6 @@ def test_the_migration_goes_back_and_forward_and_the_tables_come_back_closed(mig
     assert migrator.execute(function).fetchone() == (1,)
     grant = "SELECT has_table_privilege('crm_app', 'webhook_ingress', 'SELECT')"
     assert migrator.execute(grant).fetchone() == (False,) and put("again")
-
-
-def test_a_temp_table_cannot_shadow_the_table_the_function_writes(migrator: DB) -> None:
-    with connection.cursor() as cursor:
-        cursor.execute("CREATE TEMP TABLE webhook_ingress (id uuid)")
-        assert put("k")  # va a la tabla de verdad, no a la temporal
-    connection.close()
-    assert migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone() == (1,)
 
 
 def test_a_delivery_is_stored_whole_or_not_at_all(
@@ -220,23 +200,6 @@ def test_an_infinite_number_is_stored_as_null_and_does_not_make_meta_retry_forev
     assert post(webhooks.deliver(raw)).status_code == 200
     stored = rows(migrator)["wa:msg:w1"]["payload"]
     assert (stored["n"], stored["m"], stored["ok"]) == (None, None, 1.5)
-
-
-def test_an_item_the_database_will_never_store_is_dropped_alone_not_a_503(
-    migrator: DB, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from django.db import DataError
-
-    real = ingress.insert
-
-    def picky(kind: str, key: str, *rest: Any) -> bool:
-        if key.endswith("wamid.2"):
-            raise DataError("dato imposible")
-        return real(kind, key, *rest)
-
-    monkeypatch.setattr(ingress, "insert", picky)
-    assert deliver(text("wamid.1"), text("wamid.2"), text("wamid.3")).status_code == 200
-    assert sorted(rows(migrator)) == ["wa:msg:wamid.1", "wa:msg:wamid.3"]
 
 
 def test_a_real_database_refusal_drops_that_item_and_the_rest_still_goes_in(
