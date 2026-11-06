@@ -183,7 +183,8 @@ class DisconnectView(APIView):
         responses={200: ChannelAccountSerializer(many=True), **errors(400, 401, 403, 404)},
         description="Las cuentas de canal vivas de la organización (WhatsApp y Sandbox), por "
         "creación (ADR-016). Pide `channels.manage`: sin él, 403 aunque no haya cuentas. Solo "
-        "lectura; nunca el id de la credencial, el cifrado ni más del final del token.",
+        "lectura; nunca el id de la credencial, el cifrado ni más del final del token. En la "
+        "Sandbox, `external_parent_id` y `token_last_four` son `null`.",
     ),
 )
 class ChannelsView(generics.ListAPIView):
@@ -200,7 +201,8 @@ class ChannelsView(generics.ListAPIView):
         tags=["conversations"],
         responses={200: ChannelAccountSerializer, **errors(401, 403, 404)},
         description="Una cuenta de canal (`channels.manage`). 404: no existe, es de otra "
-        "organización o está desconectada, sin distinguirlo.",
+        "organización o está desconectada, sin distinguirlo. En la Sandbox, `external_parent_id` y "
+        "`token_last_four` son `null`.",
     ),
 )
 class ChannelView(generics.RetrieveAPIView):

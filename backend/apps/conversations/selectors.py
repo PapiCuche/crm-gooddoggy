@@ -21,6 +21,8 @@ def messages(conversation_id: object, *, notes: bool) -> QuerySet[Message]:
 def channel_accounts() -> QuerySet[ChannelAccount]:
     """Las cuentas de canal vivas, cada una con `token_last_four` (el final de su credencial viva,
     `NULL` si no la tiene) en la misma consulta. Nunca se anota nada más de la credencial."""
-    live = Credential.objects.filter(pk=OuterRef("credential_id"), revoked_at__isnull=True)
+    live = Credential.objects.filter(
+        pk=OuterRef("credential_id"), owner_id=OuterRef("pk"), revoked_at__isnull=True
+    )  # viva y de esta cuenta: una credencial ajena no se enseña
     found: QuerySet[ChannelAccount] = ChannelAccount.objects.filter(deleted_at__isnull=True)
     return found.annotate(token_last_four=Subquery(live.values("last_four")[:1]))

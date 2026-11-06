@@ -275,3 +275,18 @@ def test_the_selector_is_the_only_source_of_the_rows(crm: SimpleNamespace, meta:
         assert probe() == [sandbox.pk]  # viva, y nada más
     with tenant_scope(ctx(crm.b)):
         assert probe() == []
+
+
+def test_a_credential_that_belongs_to_another_account_shows_no_token(
+    crm: SimpleNamespace, meta: FakeGraph, migrator: DB
+) -> None:
+    """Aunque una cuenta apuntara a la credencial de otra de la misma organización, no se enseña."""
+    mine, _ = connect(crm)
+    other, theirs = connect(crm, phone_number_id=SECOND)
+    migrator.execute(
+        "UPDATE channel_accounts SET credential_id = %s WHERE id = %s", [theirs.pk, mine.pk]
+    )
+    rows = {
+        row["id"]: row["token_last_four"] for row in get(signed(crm.ana), LIST).json()["results"]
+    }
+    assert rows[str(mine.pk)] is None and rows[str(other.pk)] == theirs.last_four

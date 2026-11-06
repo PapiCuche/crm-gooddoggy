@@ -3144,7 +3144,7 @@ export const getChannelsListUrl = (orgSlug: string, params?: ChannelsListParams)
 };
 
 /**
- * Las cuentas de canal vivas de la organización (WhatsApp y Sandbox), por creación (ADR-016). Pide `channels.manage`: sin él, 403 aunque no haya cuentas. Solo lectura; nunca el id de la credencial, el cifrado ni más del final del token.
+ * Las cuentas de canal vivas de la organización (WhatsApp y Sandbox), por creación (ADR-016). Pide `channels.manage`: sin él, 403 aunque no haya cuentas. Solo lectura; nunca el id de la credencial, el cifrado ni más del final del token. En la Sandbox, `external_parent_id` y `token_last_four` son `null`.
  */
 export const channelsList = async (
   orgSlug: string,
@@ -3271,7 +3271,7 @@ export const getChannelsRetrieveUrl = (orgSlug: string, accountId: string) => {
 };
 
 /**
- * Una cuenta de canal (`channels.manage`). 404: no existe, es de otra organización o está desconectada, sin distinguirlo.
+ * Una cuenta de canal (`channels.manage`). 404: no existe, es de otra organización o está desconectada, sin distinguirlo. En la Sandbox, `external_parent_id` y `token_last_four` son `null`.
  */
 export const channelsRetrieve = async (
   orgSlug: string,
