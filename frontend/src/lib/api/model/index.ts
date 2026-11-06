@@ -118,6 +118,7 @@ export * from "./newStageRequest";
 export * from "./newStageRequestRequiresFields";
 export * from "./nextPrice";
 export * from "./note";
+export * from "./noteRequest";
 export * from "./noteWriteRequest";
 export * from "./nullEnum";
 export * from "./opportunitiesListParams";
