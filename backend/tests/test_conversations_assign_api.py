@@ -159,6 +159,21 @@ def test_release_returns_it_to_the_queue_and_keeps_the_team(
     assert "PENDING" in changes[0][0]  # el cambio de estado también queda
 
 
+@pytest.mark.parametrize("state", ["PENDING", "WAITING_CUSTOMER", "WAITING_INTERNAL", "RESOLVED"])
+def test_releasing_only_sends_an_open_conversation_back_to_the_queue(
+    inbox: SimpleNamespace, state: str
+) -> None:
+    """`PENDING` ya está en cola y las demás esperan a otra cosa: soltar no cambia su estado."""
+    convo = inbox.convs["both"]
+    fields: dict[str, Any] = {"status": state}
+    if state == "RESOLVED":
+        fields["resolved_at"] = timezone.now()
+    with tenant_scope(ctx(inbox.a)):
+        Conversation.objects.filter(pk=convo).update(**fields)
+    freed = assign(signed(inbox.sam), convo, action="RELEASE")
+    assert (freed.status_code, freed.json()["status"]) == (200, state)
+
+
 def test_the_permissions_decide_before_the_body_and_the_scope_before_the_conversation(
     inbox: SimpleNamespace,
 ) -> None:
