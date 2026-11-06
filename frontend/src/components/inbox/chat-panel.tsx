@@ -32,7 +32,7 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { Assignee, AssignmentActions } from "./assignment";
-import { canSend, Composer, messagesKey } from "./composer";
+import { Composer, messagesKey, writableModes } from "./composer";
 import { Plain } from "./plain";
 
 const WHEN = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
@@ -70,6 +70,7 @@ export function ChatPanel({
     gcTime: 0,
   });
   const conversation = detail.data ?? row;
+  const modes = writableModes(permissions, conversation, user.id);
   const scroller = useRef<HTMLDivElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
@@ -225,8 +226,12 @@ export function ChatPanel({
         ) : null}
         {body}
       </div>
-      {canSend(permissions, conversation, user.id) ? (
-        <Composer conversation={conversation} onQueued={() => (toBottom.current = true)} />
+      {modes.reply || modes.note ? (
+        <Composer
+          conversation={conversation}
+          modes={modes}
+          onQueued={() => (toBottom.current = true)}
+        />
       ) : (
         <p className="border-border text-muted border-t p-3 text-sm">{t("composer.cannot")}</p>
       )}
