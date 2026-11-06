@@ -16,12 +16,28 @@ SENDERS = ("USER", "AI_AGENT", "SYSTEM")  # los que pueden escribir una nota int
 
 
 class Platform(models.TextChoices):
-    SANDBOX = "SANDBOX"  # el canal de pruebas; WhatsApp, Instagram… llegan con su adapter
+    SANDBOX = "SANDBOX"  # el canal de pruebas
+    WHATSAPP = (
+        "WHATSAPP"  # la Cloud API oficial de Meta (ADR-029); Instagram… llegan con su adapter
+    )
 
 
 AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]
     "AccountStatus", "PENDING CONNECTED DEGRADED DISCONNECTED ERROR"
 )
+
+
+# Por qué una cuenta real no está bien (ADR-029 §2): un código de un conjunto cerrado, nunca el
+# texto de un error de Meta.
+STATUS_DETAILS = (
+    "TOKEN_INVALID", "WEBHOOK_NOT_SEEN", "QUALITY_LOW", "LIMIT_REACHED", "DISCONNECTED_BY_ADMIN",
+    "PROVIDER_ERROR",
+)  # fmt: skip
+QUALITY_RATINGS = ("GREEN", "YELLOW", "RED", "UNKNOWN")  # a confirmar con la documentación de Meta
+LIMIT_TIERS = (  # a confirmar con la documentación de Meta
+    "TIER_50", "TIER_250", "TIER_1K", "TIER_10K", "TIER_100K", "TIER_UNLIMITED", "TIER_NOT_SET",
+)  # fmt: skip
+META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
 
 
 class Status(models.TextChoices):
@@ -89,6 +105,14 @@ class ChannelAccount(TenantModel):
     external_account_id = models.CharField(max_length=100)
     display_identifier = models.CharField(max_length=100, blank=True, default="")
     status = models.CharField(max_length=16, choices=AccountStatus.choices, default="CONNECTED")
+    # Solo las cuentas reales (WhatsApp, ADR-029 §2): el WABA, la credencial (sin FK hasta que
+    # exista la tabla, F7-02b), el motivo corto del estado y los datos de salud que informa Meta.
+    external_parent_id = models.CharField(max_length=100, null=True, blank=True)  # noqa: DJ001
+    credential_id = models.UUIDField(null=True, blank=True)
+    status_detail = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
+    quality_rating = models.CharField(max_length=10, null=True, blank=True)  # noqa: DJ001
+    messaging_limit_tier = models.CharField(max_length=16, null=True, blank=True)  # noqa: DJ001
+    last_healthcheck_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -115,6 +139,48 @@ class ChannelAccount(TenantModel):
             ),
             models.CheckConstraint(
                 condition=models.Q(version__gte=1), name="channel_accounts_version_ck"
+            ),
+            models.CheckConstraint(  # una cuenta de WhatsApp es un número de un WABA
+                condition=~models.Q(platform="WHATSAPP")
+                | (
+                    models.Q(external_account_id__regex=META_ID)
+                    & models.Q(external_parent_id__isnull=False)  # un NULL pasaría el regex
+                    & models.Q(external_parent_id__regex=META_ID)
+                ),
+                name="channel_accounts_whatsapp_ck",
+            ),
+            models.CheckConstraint(  # el Sandbox no tiene WABA, credencial ni salud
+                condition=~models.Q(platform="SANDBOX")
+                | models.Q(
+                    external_parent_id__isnull=True,
+                    credential_id__isnull=True,
+                    status_detail__isnull=True,
+                    quality_rating__isnull=True,
+                    messaging_limit_tier__isnull=True,
+                    last_healthcheck_at__isnull=True,
+                ),
+                name="channel_accounts_sandbox_ck",
+            ),
+            models.CheckConstraint(  # una cuenta real solo está CONNECTED con credencial verificada
+                condition=models.Q(platform="SANDBOX")
+                | ~models.Q(status="CONNECTED")
+                | models.Q(credential_id__isnull=False, last_healthcheck_at__isnull=False),
+                name="channel_accounts_connected_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status_detail__isnull=True)
+                | models.Q(status_detail__in=STATUS_DETAILS),
+                name="channel_accounts_detail_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quality_rating__isnull=True)
+                | models.Q(quality_rating__in=QUALITY_RATINGS),
+                name="channel_accounts_quality_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(messaging_limit_tier__isnull=True)
+                | models.Q(messaging_limit_tier__in=LIMIT_TIERS),
+                name="channel_accounts_tier_ck",
             ),
         ]
 
