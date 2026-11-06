@@ -428,6 +428,8 @@ tras N intentos (p. ej., 8) → DEAD + notificación "webhook fallido" (§87) + 
 | Privacidad | `headers` sanitizados; el payload contiene PII → la tabla tiene RLS y acceso restringido |
 | Observabilidad | Métricas: recibidos/s, firma inválida, lag de procesamiento (p50/p95), FAILED y DEAD, por proveedor y cuenta |
 
+> **Propuesta pendiente de la decisión del propietario (ADR-029 §3, Proposed):** la fila «Privacidad» y `tenancy-context.md` §5 dicen cosas distintas de la misma tabla. La propuesta es una sola: tabla de plataforma, RLS activada sin política, sin privilegios directos para `crm_app`, acceso solo por funciones `SECURITY DEFINER` mínimas y payload vaciado al pasar a `PROCESSED` o `IGNORED` (la purga de 90 días es el tope, no el plazo normal). No cambia lo decidido hasta que se acepte.
+
 ### Q.4 Interfaz de los Channel Adapters (§80)
 
 ```text
