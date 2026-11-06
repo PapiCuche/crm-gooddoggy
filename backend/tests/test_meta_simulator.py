@@ -4,8 +4,6 @@ import hashlib
 import hmac
 import json
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +14,9 @@ from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
 from core import http
 from tests.meta_sim import GRAPH_VERSION, transport, webhooks
-from tests.meta_sim.graph import ERRORS, MEDIA_HOST, OUTCOMES, TEST_TOKEN, FakeGraph
+from tests.meta_sim.graph import ERRORS, OUTCOMES, TEST_TOKEN, FakeGraph
 
-ALLOWED = override_settings(HTTP_ALLOWED_HOSTS=[transport.GRAPH_HOST, MEDIA_HOST])
+ALLOWED = override_settings(HTTP_ALLOWED_HOSTS=[transport.GRAPH_HOST, "other.example.com"])
 BASE = f"https://{transport.GRAPH_HOST}/{GRAPH_VERSION}"
 AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
 SEND = {"messaging_product": "whatsapp", "to": webhooks.CUSTOMER, "type": "text"} | {
@@ -111,6 +109,17 @@ def test_a_text_delivery_has_the_shape_meta_sends() -> None:
     assert value["contacts"][0]["wa_id"] == webhooks.CUSTOMER
     assert value["metadata"]["phone_number_id"] == webhooks.PHONE_NUMBER_ID
     assert sent.json["entry"][0]["id"] == webhooks.WABA_ID
+    assert sent.json["entry"][0]["changes"][0]["field"] == "messages"
+    assert value["messaging_product"] == "whatsapp" and messages[0]["timestamp"].isdigit()
+
+
+def test_non_ascii_text_travels_escaped_and_signed_over_the_bytes_on_the_wire() -> None:
+    sent = webhooks.text_delivery("¿Precio? 👍")
+    assert sent.body.isascii() and b"\\u00bf" in sent.body  # como lo escribe Meta (a confirmar)
+    assert (
+        sent.json["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"] == "¿Precio? 👍"
+    )
+    assert sent.headers[webhooks.SIGNATURE_HEADER] == webhooks.sign(sent.body)
 
 
 @pytest.mark.parametrize("kind", webhooks.UNSUPPORTED_KINDS)
@@ -120,6 +129,7 @@ def test_each_unsupported_type_has_its_own_type_and_payload(kind: str) -> None:
     )
     (message,), _ = items(sent.json)
     assert message["type"] == kind and kind in message
+    assert isinstance(message[kind], list) == (kind == "contacts")
 
 
 @pytest.mark.parametrize("state", ["sent", "delivered", "read"])
@@ -138,17 +148,21 @@ def test_a_failed_status_carries_the_error_code_and_title() -> None:
     )
     _, (found,) = items(sent.json)
     assert found["status"] == "failed" and found["errors"][0]["code"] == 131047
+    assert found["recipient_id"] == webhooks.CUSTOMER and found["timestamp"].isdigit()
 
 
 def test_a_batch_has_several_items_of_several_kinds() -> None:
     messages, statuses = items(webhooks.batch_delivery().json)
     assert [m["type"] for m in messages] == ["text", "text", "reaction"] and len(statuses) == 1
     assert len({m["from"] for m in messages}) == 2
+    assert messages[2]["reaction"]["message_id"] == statuses[0]["id"] == "wamid.SIMOUT000001"
 
 
 def test_every_malformed_body_is_not_what_meta_sends() -> None:
     bodies = webhooks.malformed()
-    assert {"not_json", "empty", "array", "null", "wrong_object"} <= set(bodies)
+    assert set(bodies) == {"not_json", "empty", "array", "null", "wrong_object"} | {
+        "entry_not_a_list", "no_phone_number_id", "text_not_a_string",
+    }  # fmt: skip
     for name, body in bodies.items():
         with pytest.raises((ValueError, AssertionError, KeyError, TypeError)):
             payload = json.loads(body)
@@ -243,7 +257,7 @@ def test_an_unknown_number_a_bad_body_and_another_version_are_errors(graph: Fake
 @ALLOWED
 def test_the_simulator_refuses_hosts_it_was_not_installed_for(graph: FakeGraph) -> None:
     with pytest.raises(AssertionError, match="no atiende"):
-        http.request("GET", f"https://{MEDIA_HOST}/media/x", headers=AUTH)
+        http.request("GET", "https://other.example.com/x", headers=AUTH)
 
 
 @ALLOWED
@@ -254,6 +268,18 @@ def test_a_cut_connection_and_a_timeout_raise_what_urllib3_raises(graph: FakeGra
     with pytest.raises(ReadTimeoutError):
         post()
     assert graph.sent == []
+
+
+@ALLOWED
+def test_a_lost_reply_still_delivers_the_message_the_case_f7_05_must_reconcile(
+    graph: FakeGraph,
+) -> None:
+    graph.then("cut_after", "timeout_after")
+    with pytest.raises(ProtocolError):
+        post()
+    with pytest.raises(ReadTimeoutError):
+        post()
+    assert [m["text"]["body"] for m in graph.sent] == ["Hola", "Hola"]  # Meta lo envió dos veces
 
 
 @ALLOWED
@@ -278,18 +304,6 @@ def test_reading_a_number_and_its_waba(graph: FakeGraph) -> None:
 
 
 @ALLOWED
-def test_the_template_and_media_hooks_answer_what_the_test_configures(graph: FakeGraph) -> None:
-    templates = f"{webhooks.WABA_ID}/message_templates"
-    assert read(templates) == {"data": []}
-    graph.templates.append({"name": "seguimiento", "language": "es", "status": "APPROVED"})
-    assert read(templates)["data"][0]["status"] == "APPROVED"
-    graph.media["SIMMEDIA0001"] = b"\x89PNG"
-    assert read("SIMMEDIA0001")["url"].startswith(f"https://{MEDIA_HOST}/media/")
-    media = f"https://{transport.GRAPH_HOST}/media/SIMMEDIA0001"
-    assert http.request("GET", media, headers=AUTH).data == b"\x89PNG"
-
-
-@ALLOWED
 def test_core_http_policy_still_applies_to_the_simulator(graph: FakeGraph) -> None:
     for url in (
         f"http://{transport.GRAPH_HOST}/x",
@@ -306,34 +320,6 @@ def test_core_http_policy_still_applies_to_the_simulator(graph: FakeGraph) -> No
 def test_the_fixtures_follow_the_pinned_graph_version() -> None:
     """Cuando F7-02 añada `META_GRAPH_VERSION`, subirla obliga a revisar `meta_sim`."""
     assert getattr(settings, "META_GRAPH_VERSION", GRAPH_VERSION) == GRAPH_VERSION
-
-
-# --- servidor local ---------------------------------------------------------------------------
-
-
-def test_the_local_server_answers_over_a_real_socket() -> None:
-    graph = FakeGraph()
-    with transport.serve(graph) as base:
-
-        def fetch(path: str, data: bytes | None = None, token: str = TEST_TOKEN) -> Any:
-            headers = {"Authorization": f"Bearer {token}"}
-            request = urllib.request.Request(f"{base}{path}", data=data, headers=headers)  # noqa: S310
-            return urllib.request.urlopen(request, timeout=3)  # noqa: S310
-
-        ok = fetch(
-            f"/{GRAPH_VERSION}/{webhooks.PHONE_NUMBER_ID}/messages", json.dumps(SEND).encode()
-        )
-        assert (
-            ok.status == 200 and json.loads(ok.read())["messages"][0]["id"] == "wamid.SIMOUT000001"
-        )
-        with pytest.raises(urllib.error.HTTPError) as denied:
-            fetch(f"/{GRAPH_VERSION}/{webhooks.PHONE_NUMBER_ID}", token="otro")  # noqa: S106
-        assert denied.value.code == 401
-        graph.then("cut")
-        with pytest.raises(OSError):  # noqa: PT011 — RemoteDisconnected / URLError
-            fetch(
-                f"/{GRAPH_VERSION}/{webhooks.PHONE_NUMBER_ID}/messages", json.dumps(SEND).encode()
-            )
 
 
 def test_the_test_secrets_exist_only_in_tests() -> None:

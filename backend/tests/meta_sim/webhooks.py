@@ -46,7 +46,8 @@ def deliver(
 
 
 def encode(payload: Any) -> bytes:
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+    # ASCII con \uXXXX, como Meta (a confirmar): así falla quien firma el JSON releído.
+    return json.dumps(payload, separators=(",", ":")).encode()
 
 
 def value(

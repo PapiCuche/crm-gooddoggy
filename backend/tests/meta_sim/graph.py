@@ -16,7 +16,6 @@ from tests.meta_sim import GRAPH_VERSION
 from tests.meta_sim.webhooks import DISPLAY_NUMBER, PHONE_NUMBER_ID, WABA_ID
 
 TEST_TOKEN = "meta-sim-test-access-token-not-real"  # noqa: S105 — dato ficticio de test
-MEDIA_HOST = "lookaside.fbsbx.com"  # el host de descarga de medios que usará F7-09 (a confirmar)
 # nombre -> (estado HTTP, código de Meta, subcódigo, título)
 ERRORS: dict[str, tuple[int, int, int | None, str]] = {
     "token": (401, 190, None, "Invalid OAuth access token"),
@@ -29,7 +28,6 @@ ERRORS: dict[str, tuple[int, int, int | None, str]] = {
     "template": (404, 132001, None, "Template name does not exist in the translation"),
     "server": (500, 1, None, "An unknown error occurred"),
 }
-OUTCOMES = ("ok", "slow", "cut", "timeout", *ERRORS)
 
 
 class Cut(Exception):  # noqa: N818 — la conexión se cortó antes de la respuesta
@@ -41,6 +39,11 @@ class Timeout(Exception):  # noqa: N818 — la respuesta no llegó a tiempo
 
 
 Response = tuple[int, dict[str, str], bytes]
+LOST = {
+    "cut_after": Cut,
+    "timeout_after": Timeout,
+}  # Meta ya lo aceptó, pero la respuesta se pierde
+OUTCOMES = ("ok", "slow", "cut", "timeout", *LOST, *ERRORS)
 
 
 @dataclass
@@ -50,8 +53,6 @@ class FakeGraph:
 
     token: str = TEST_TOKEN
     numbers: dict[str, str] = field(default_factory=lambda: {PHONE_NUMBER_ID: WABA_ID})
-    templates: list[dict[str, Any]] = field(default_factory=list)  # gancho: F7-10
-    media: dict[str, bytes] = field(default_factory=dict)  # gancho: F7-09
     slow_seconds: float = 0.05
     script: deque[str] = field(default_factory=deque)
     sent: list[dict[str, Any]] = field(default_factory=list)  # lo que "se envió" a clientes
@@ -72,10 +73,8 @@ class FakeGraph:
         parts = urlsplit(target)
         path, query = parts.path.strip("/").split("/"), parse_qs(parts.query)
         self.requests.append((method, parts.path))
-        if path[0] == "media":  # descarga del binario (gancho)
-            return self._media(path[1] if len(path) > 1 else "")
         if headers.get("Authorization") != f"Bearer {self.token}":
-            return self._error("token")
+            return self._error("token")  # también la descarga de medios lleva el token
         if path[0] != GRAPH_VERSION:
             return self._error("no_number", f"Unsupported version {path[0]}")
         match (method, path[1:]):
@@ -86,10 +85,6 @@ class FakeGraph:
             case ("GET", [waba, "phone_numbers"]) if waba in self.numbers.values():
                 found = [self._number(n, query) for n, w in self.numbers.items() if w == waba]
                 return self._ok({"data": found})
-            case ("GET", [waba, "message_templates"]) if waba in self.numbers.values():
-                return self._ok({"data": self.templates})
-            case ("GET", [media_id]) if media_id in self.media:
-                return self._ok({"id": media_id, "url": f"https://{MEDIA_HOST}/media/{media_id}"})
         return self._error("no_number")
 
     def _number(self, number: str, query: dict[str, list[str]]) -> dict[str, Any]:
@@ -109,7 +104,7 @@ class FakeGraph:
             raise Timeout
         if outcome == "slow":
             time.sleep(self.slow_seconds)
-        elif outcome != "ok":
+        elif outcome in ERRORS:
             return self._error(outcome)
         try:
             sent = json.loads(body or b"")
@@ -123,16 +118,13 @@ class FakeGraph:
             return self._error("no_number", "Invalid parameter")
         self.sent.append({"phone_number_id": number, **sent})
         wamid = f"wamid.SIMOUT{len(self.sent):06d}"
+        if outcome in LOST:
+            raise LOST[outcome]
         return self._ok({
             "messaging_product": "whatsapp",
             "contacts": [{"input": sent["to"], "wa_id": sent["to"]}],
             "messages": [{"id": wamid}],
         })  # fmt: skip
-
-    def _media(self, media_id: str) -> Response:
-        if media_id not in self.media:
-            return 404, {}, b""
-        return 200, {"Content-Type": "application/octet-stream"}, self.media[media_id]
 
     @staticmethod
     def _ok(payload: dict[str, Any]) -> Response:
