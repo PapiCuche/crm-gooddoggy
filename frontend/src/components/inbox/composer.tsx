@@ -282,7 +282,11 @@ function ComposeBox({
       </p>
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
-        {over ? t("overLimit") : count >= BODY_MAX * 0.9 ? t("nearLimit") : ""}
+        {over
+          ? t(note ? "overLimit.note" : "overLimit.reply")
+          : count >= BODY_MAX * 0.9
+            ? t("nearLimit")
+            : ""}
       </p>
       <div className="flex flex-wrap items-center justify-between gap-2 max-sm:contents">
         <div

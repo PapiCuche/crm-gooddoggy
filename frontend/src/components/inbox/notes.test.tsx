@@ -454,6 +454,12 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     expect(live()).toEqual(["Pasaste el tope de caracteres: no se puede enviar."]);
     fireEvent.change(box, { target: { value: "a".repeat(10) } });
     expect(live()).toEqual([""]);
+    // en el modo nota el aviso habla de guardar, no de enviar
+    cleanup();
+    show([grant("conversations.view"), grant("messages.note")]);
+    await openChat();
+    fireEvent.change(await noteBox(), { target: { value: "a".repeat(4097) } });
+    expect(live()).toEqual(["Pasaste el tope de caracteres: no se puede guardar."]);
   }, 20_000);
 
   it("vacío, solo espacios y pasarse del tope no guardan; Enter durante un IME tampoco", async () => {

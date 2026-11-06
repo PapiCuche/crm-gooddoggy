@@ -221,6 +221,10 @@ describe("Inbox, chat (F6-03)", () => {
     expect(back.compareDocumentPosition(refresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(refresh.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(refresh).toHaveClass("order-3", "lg:order-2", "lg:ml-auto");
+    // 40 px de lado en móvil (el tamaño táctil que paga el alto mínimo del panel)
+    expect(back).toHaveClass("size-10");
+    expect(refresh).toHaveClass("max-lg:size-10");
+    expect(card).toHaveClass("max-sm:size-10");
     expect(card).toHaveClass("order-4", "lg:order-6"); // icono en 320 px, al final en escritorio
     // los botones de icono solo lo son en pantallas estrechas; en escritorio dicen su texto
     expect(within(refresh).getByText("Actualizar mensajes")).toHaveClass("max-lg:sr-only");
