@@ -35,6 +35,7 @@ import type {
   CategoriesListParams,
   Category,
   CategoryCreateRequest,
+  ConnectRequest,
   Contact,
   ContactAssignmentRequest,
   ContactCreateRequest,
@@ -176,6 +177,7 @@ import type {
   TeamMembersListParams,
   TeamsListParams,
   TestAccounts,
+  TokenRequest,
   Variant,
   VariantCreateRequest,
   VariantPriceHistoryListParams,
@@ -184,6 +186,7 @@ import type {
   Warehouse,
   WarehouseCreateRequest,
   WarehousesListParams,
+  WhatsAppAccount,
 } from "./model";
 
 import { apiFetch } from "../http";
@@ -3226,6 +3229,304 @@ export const useChannelsSandboxInbound = <TError = ErrorType<Error>, TContext = 
   TContext
 > => {
   return useMutation(getChannelsSandboxInboundMutationOptions(options), queryClient);
+};
+
+export const getChannelsWhatsappConnectUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/channels/whatsapp/`;
+};
+
+/**
+ * Registra un número de WhatsApp (`channels.manage`): comprueba con Meta que el token abre ese número en ese WABA y guarda la cuenta `PENDING` con el token cifrado; pasa a `CONNECTED` con el primer evento firmado. 400 en `phone_number_id`: el número no se puede registrar (mal formado o ya registrado: el mismo error) y `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`.
+ */
+export const channelsWhatsappConnect = async (
+  orgSlug: string,
+  connectRequest: ConnectRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<WhatsAppAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<WhatsAppAccount>(getChannelsWhatsappConnectUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(connectRequest),
+  });
+};
+
+export const getChannelsWhatsappConnectMutationKey = () => ["channelsWhatsappConnect"] as const;
+
+export const getChannelsWhatsappConnectMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsWhatsappConnect>>,
+    TError,
+    ChannelsWhatsappConnectMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsWhatsappConnect>>,
+  TError,
+  ChannelsWhatsappConnectMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsWhatsappConnectMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsWhatsappConnect>>,
+    ChannelsWhatsappConnectMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return channelsWhatsappConnect(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsWhatsappConnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsWhatsappConnect>>
+>;
+export type ChannelsWhatsappConnectMutationBody = ConnectRequest;
+export type ChannelsWhatsappConnectMutationError = ErrorType<Error>;
+export type ChannelsWhatsappConnectMutationVariables = { orgSlug: string; data: ConnectRequest };
+
+export const useChannelsWhatsappConnect = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsWhatsappConnect>>,
+      TError,
+      ChannelsWhatsappConnectMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsWhatsappConnect>>,
+  TError,
+  ChannelsWhatsappConnectMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsWhatsappConnectMutationOptions(options), queryClient);
+};
+
+export const getChannelsWhatsappDisconnectUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/channels/whatsapp/${accountId}/`;
+};
+
+/**
+ * Desconecta la cuenta (`channels.manage`): queda borrada, su token se invalida y su número se libera. Para volver a usarla se conecta otra cuenta.
+ */
+export const channelsWhatsappDisconnect = async (
+  orgSlug: string,
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getChannelsWhatsappDisconnectUrl(orgSlug, accountId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getChannelsWhatsappDisconnectMutationKey = () =>
+  ["channelsWhatsappDisconnect"] as const;
+
+export const getChannelsWhatsappDisconnectMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsWhatsappDisconnect>>,
+    TError,
+    ChannelsWhatsappDisconnectMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsWhatsappDisconnect>>,
+  TError,
+  ChannelsWhatsappDisconnectMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsWhatsappDisconnectMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsWhatsappDisconnect>>,
+    ChannelsWhatsappDisconnectMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId } = props ?? {};
+
+    return channelsWhatsappDisconnect(orgSlug, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsWhatsappDisconnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsWhatsappDisconnect>>
+>;
+
+export type ChannelsWhatsappDisconnectMutationError = ErrorType<Error>;
+export type ChannelsWhatsappDisconnectMutationVariables = { orgSlug: string; accountId: string };
+
+export const useChannelsWhatsappDisconnect = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsWhatsappDisconnect>>,
+      TError,
+      ChannelsWhatsappDisconnectMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsWhatsappDisconnect>>,
+  TError,
+  ChannelsWhatsappDisconnectMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsWhatsappDisconnectMutationOptions(options), queryClient);
+};
+
+export const getChannelsWhatsappRotateTokenUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/channels/whatsapp/${accountId}/token/`;
+};
+
+/**
+ * Cambia el token de la cuenta (`channels.manage`): se comprueba con Meta contra el mismo número y WABA, sustituye al anterior (que se invalida y pierde su cifrado). 404: no existe, es de otra organización o ya está desconectada.
+ */
+export const channelsWhatsappRotateToken = async (
+  orgSlug: string,
+  accountId: string,
+  tokenRequest: TokenRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<WhatsAppAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<WhatsAppAccount>(getChannelsWhatsappRotateTokenUrl(orgSlug, accountId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(tokenRequest),
+  });
+};
+
+export const getChannelsWhatsappRotateTokenMutationKey = () =>
+  ["channelsWhatsappRotateToken"] as const;
+
+export const getChannelsWhatsappRotateTokenMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsWhatsappRotateToken>>,
+    TError,
+    ChannelsWhatsappRotateTokenMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsWhatsappRotateToken>>,
+  TError,
+  ChannelsWhatsappRotateTokenMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsWhatsappRotateTokenMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsWhatsappRotateToken>>,
+    ChannelsWhatsappRotateTokenMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId, data } = props ?? {};
+
+    return channelsWhatsappRotateToken(orgSlug, accountId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsWhatsappRotateTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsWhatsappRotateToken>>
+>;
+export type ChannelsWhatsappRotateTokenMutationBody = TokenRequest;
+export type ChannelsWhatsappRotateTokenMutationError = ErrorType<Error>;
+export type ChannelsWhatsappRotateTokenMutationVariables = {
+  orgSlug: string;
+  accountId: string;
+  data: TokenRequest;
+};
+
+export const useChannelsWhatsappRotateToken = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsWhatsappRotateToken>>,
+      TError,
+      ChannelsWhatsappRotateTokenMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsWhatsappRotateToken>>,
+  TError,
+  ChannelsWhatsappRotateTokenMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsWhatsappRotateTokenMutationOptions(options), queryClient);
 };
 
 export const getContactsListUrl = (orgSlug: string, params?: ContactsListParams) => {

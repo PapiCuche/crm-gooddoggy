@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.conversations.api import assignment, conversations, messages
+from apps.conversations.api import assignment, channels, conversations, messages
 
 urlpatterns = [
     path("conversations/", conversations.ConversationsView.as_view(), name="conversations"),
@@ -23,6 +23,17 @@ urlpatterns = [
         "conversations/<uuid:conversation_id>/assign/",
         assignment.AssignView.as_view(),
         name="conversation-assign",
+    ),
+    path("channels/whatsapp/", channels.ConnectView.as_view(), name="whatsapp-connect"),
+    path(
+        "channels/whatsapp/<uuid:account_id>/",
+        channels.DisconnectView.as_view(),
+        name="whatsapp-disconnect",
+    ),
+    path(
+        "channels/whatsapp/<uuid:account_id>/token/",
+        channels.RotateTokenView.as_view(),
+        name="whatsapp-rotate-token",
     ),
     path(
         "channels/sandbox/inbound/",

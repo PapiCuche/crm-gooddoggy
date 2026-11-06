@@ -105,10 +105,10 @@ class ChannelAccount(TenantModel):
     external_account_id = models.CharField(max_length=100)
     display_identifier = models.CharField(max_length=100, blank=True, default="")
     status = models.CharField(max_length=16, choices=AccountStatus.choices, default="CONNECTED")
-    # Solo las cuentas reales (WhatsApp, ADR-029 §2): el WABA, la credencial (sin FK hasta que
-    # exista la tabla, F7-02b), el motivo corto del estado y los datos de salud que informa Meta.
+    # Solo las cuentas reales (WhatsApp, ADR-029 §2): el WABA, la credencial (FK compuesta en la
+    # base, F7-02b), el motivo corto del estado y los datos de salud que informa Meta.
     external_parent_id = models.CharField(max_length=100, null=True, blank=True)  # noqa: DJ001
-    credential_id = models.UUIDField(null=True, blank=True)
+    credential_id = models.UUIDField(null=True, blank=True)  # FK compuesta a `credentials` (0006)
     status_detail = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
     quality_rating = models.CharField(max_length=10, null=True, blank=True)  # noqa: DJ001
     messaging_limit_tier = models.CharField(max_length=16, null=True, blank=True)  # noqa: DJ001
@@ -181,6 +181,78 @@ class ChannelAccount(TenantModel):
                 condition=models.Q(messaging_limit_tier__isnull=True)
                 | models.Q(messaging_limit_tier__in=LIMIT_TIERS),
                 name="channel_accounts_tier_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+# Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
+SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
+TOKEN_PURPOSE = "channel.access_token"  # noqa: S105 — el propósito de `core.sealed`, no un secreto
+TOKEN_FORMAT = r"^[A-Za-z0-9_.-]{20,512}$"  # noqa: S105 — el token de acceso de Meta (a confirmar)
+
+
+class Credential(TenantModel):
+    """El token de acceso de una cuenta de canal, cifrado con `core.sealed` (ADR-022, ADR-029 §2;
+    propósito `channel.access_token`, dueño `channel_account:<owner_id>`). Una credencial viva por
+    dueño. Al rotarla o desconectar la cuenta se **invalida**: `revoked_at` y el cifrado, borrado.
+    Nada se borra ni se reescribe salvo `ciphertext`, `key_version` y `revoked_at` (UPDATE por
+    columna). `last_four` y `fingerprint` (SHA-256 del token) no abren nada."""
+
+    id = uuid7_primary_key()
+    owner_type = models.CharField(max_length=16, default="CHANNEL_ACCOUNT")
+    owner_id = models.UUIDField()
+    ciphertext = models.BinaryField(null=True)
+    key_version = models.PositiveSmallIntegerField()
+    last_four = models.CharField(max_length=4)
+    fingerprint = models.CharField(max_length=64)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a la anterior
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "credentials"
+        constraints = [
+            models.UniqueConstraint(  # destino de la FK compuesta de la cuenta
+                fields=["organization_id", "id"], name="credentials_org_id_uq"
+            ),
+            models.UniqueConstraint(  # una viva por dueño
+                fields=["organization_id", "owner_type", "owner_id"],
+                condition=models.Q(revoked_at__isnull=True),
+                name="credentials_live_owner_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(owner_type="CHANNEL_ACCOUNT"), name="credentials_owner_ck"
+            ),
+            models.CheckConstraint(  # viva: cifrada con el formato vigente; invalidada: sin cifrado
+                condition=models.Q(
+                    models.Q(revoked_at__isnull=True, ciphertext__isnull=False)
+                    & models.Q(models.lookups.GreaterThanOrEqual(Length("ciphertext"), SEALED_MIN))
+                    & models.Q(models.lookups.LessThanOrEqual(Length("ciphertext"), SEALED_MAX))
+                    & models.Q(
+                        models.lookups.Exact(
+                            models.Func(
+                                "ciphertext",
+                                1,
+                                1,
+                                function="substring",
+                                output_field=models.BinaryField(),
+                            ),
+                            models.Value(SEALED_FORMAT, output_field=models.BinaryField()),
+                        )
+                    )
+                    | models.Q(revoked_at__isnull=False, ciphertext__isnull=True)
+                ),
+                name="credentials_ciphertext_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(key_version__gte=1, last_four__regex=r"^.{4}$")
+                & models.Q(fingerprint__regex=r"^[0-9a-f]{64}$"),
+                name="credentials_shape_ck",
             ),
         ]
 

@@ -11,11 +11,11 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.core.management import call_command
-from django.db import IntegrityError
+from django.db import IntegrityError, ProgrammingError
 from django.utils import timezone
 
 from apps.conversations import commands
-from apps.conversations.models import ChannelAccount
+from apps.conversations.models import ChannelAccount, Credential
 from core.tenancy.scope import tenant_scope
 from tests.test_conversations_tables import refused, world
 from tests.test_memberships import ctx
@@ -29,7 +29,6 @@ REAL: dict[str, Any] = {
     "platform": "WHATSAPP", "name": "WhatsApp", "status": "PENDING",
     "external_account_id": NUMBER, "external_parent_id": WABA,
 }  # fmt: skip
-CONNECTED: dict[str, Any] = {"status": "CONNECTED", "credential_id": uuid4()}
 ONE = "SELECT count(*) FROM {} WHERE {}"
 COLUMNS = (
     "external_parent_id credential_id status_detail quality_rating messaging_limit_tier "
@@ -43,8 +42,19 @@ def make(org: UUID, **over: Any) -> ChannelAccount:
         return made
 
 
+def credential(org: UUID, owner: UUID | None = None) -> UUID:
+    """Una credencial viva de la organización (el cifrado es de relleno: importa la FK)."""
+    with tenant_scope(ctx(org)):
+        made = Credential.objects.create(
+            owner_id=owner or uuid4(), ciphertext=b"\x01" + bytes(40), key_version=1,
+            last_four="abcd", fingerprint="0" * 64,
+        )  # fmt: skip
+        return made.pk  # type: ignore[no-any-return]
+
+
 def ready(org: UUID, **over: Any) -> ChannelAccount:
-    return make(org, **CONNECTED | {"last_healthcheck_at": timezone.now()} | over)
+    fields = {"status": "CONNECTED", "credential_id": credential(org)}
+    return make(org, **fields | {"last_healthcheck_at": timezone.now()} | over)
 
 
 def change(org: UUID, pk: UUID, **fields: Any) -> None:
@@ -135,7 +145,16 @@ def test_the_health_columns_take_only_their_closed_values(
     assert getattr(make(world.a, **{field: good}), field) == good
 
 
-def test_the_identity_of_a_connected_account_never_changes(world: SimpleNamespace) -> None:
+def forced(migrator: DB, pk: UUID, **fields: Any) -> None:
+    """Un UPDATE del dueño de la tabla: el rol de la aplicación ni siquiera puede escribir esas
+    columnas (0006), así que el disparador se prueba por aquí."""
+    sets = ", ".join(f"{name} = %s" for name in fields)
+    migrator.execute(f"UPDATE channel_accounts SET {sets} WHERE id = %s", [*fields.values(), pk])  # noqa: S608
+
+
+def test_the_identity_of_a_connected_account_never_changes(
+    world: SimpleNamespace, migrator: DB
+) -> None:
     sandbox, live = world.account_a, ready(world.a)  # el Sandbox nace CONNECTED
     for pk, fields in (
         (sandbox.pk, {"platform": "WHATSAPP"}),
@@ -147,19 +166,33 @@ def test_the_identity_of_a_connected_account_never_changes(world: SimpleNamespac
         (sandbox.pk, {"status": "PENDING"}),
         (live.pk, {"status": "PENDING", "external_account_id": OTHER}),
     ):
-        attempt(world, "channel_accounts_identity_fixed", partial(change, world.a, pk, **fields))
+        with pytest.raises(psycopg.errors.CheckViolation, match="channel_accounts_identity_fixed"):
+            forced(migrator, pk, **fields)
     change(world.a, sandbox.pk, name="Otro nombre")  # lo demás sí cambia
     change(world.a, live.pk, quality_rating="GREEN", status="DEGRADED", status_detail="QUALITY_LOW")
     with tenant_scope(ctx(world.a)):
         assert ChannelAccount.objects.get(pk=live.pk).external_account_id == NUMBER
 
 
-def test_a_pending_account_may_still_fix_its_ids(world: SimpleNamespace) -> None:
+def test_a_pending_account_may_still_fix_its_ids(world: SimpleNamespace, migrator: DB) -> None:
     pending = make(world.a)
-    change(world.a, pending.pk, external_account_id="100000000000004", external_parent_id=OTHER)
+    forced(migrator, pending.pk, external_account_id="100000000000004", external_parent_id=OTHER)
     with tenant_scope(ctx(world.a)):
         found = ChannelAccount.objects.get(pk=pending.pk)
     assert (found.external_account_id, found.external_parent_id) == ("100000000000004", OTHER)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"platform": "SANDBOX"}, {"external_account_id": OTHER}, {"external_parent_id": OTHER}],
+)
+def test_the_application_role_cannot_even_write_the_identity_columns(
+    world: SimpleNamespace, fields: dict[str, Any]
+) -> None:
+    """F7-02b: UPDATE por columna (como `messages`); ni en `PENDING` ni siendo la misma fila."""
+    pending = make(world.a)
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        change(world.a, pending.pk, **fields)
 
 
 def test_a_number_belongs_to_one_organization_and_the_database_says_so(

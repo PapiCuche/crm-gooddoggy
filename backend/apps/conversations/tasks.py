@@ -16,7 +16,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
-from apps.conversations import commands
+from apps.conversations import accounts, commands
 from apps.conversations.channels import TemporaryChannelError
 from apps.conversations.models import Message
 from core.observability.logging import get_logger
@@ -97,3 +97,11 @@ def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
             )
         requeued += len(ids)
     return requeued
+
+
+@platform_task(name="conversations.reseal_credentials")
+def reseal_credentials(max_orgs: int = 50, batch_size: int = 100) -> dict[str, int]:
+    """Vuelve a cifrar con la clave vigente los tokens de las cuentas de canal que quedaron con
+    otra (F7-02b, ADR-022 §5). Devuelve la clave vigente en este proceso y cuántos volvió a
+    cifrar, cuántos no pudo abrir y cuántos dejó para otra pasada."""
+    return accounts.reseal(max_orgs=max_orgs, batch_size=batch_size)

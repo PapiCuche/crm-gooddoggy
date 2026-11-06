@@ -134,6 +134,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "accounts.reseal_mfa_secrets",
         "schedule": crontab(hour=3, minute=47),
     },
+    # F7-02b (ADR-022 §5): lo mismo para los tokens de las cuentas de canal, a otra hora.
+    "conversations.reseal_credentials": {
+        "task": "conversations.reseal_credentials",
+        "schedule": crontab(hour=3, minute=57),
+    },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

@@ -55,6 +55,7 @@ TENANT_TABLES = (
     "conversation_assignments",
     "conversations",
     "channel_accounts",
+    "credentials",  # F7-02b: después de las cuentas, que la referencian
     *TENANT_TABLES,
 )
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
