@@ -29,7 +29,10 @@ export function Assignee({ who }: { who: Who }) {
   const { name } = useMembers();
   const id = who.assigned_user_id;
   if (id === user.id) return <>{t("mine")}</>;
-  if (id === null) return <>{t(who.assignee_kind === "UNASSIGNED" ? "UNASSIGNED" : "other")}</>;
+  if (id === null) {
+    const kind = who.assignee_kind;
+    return <>{t(kind === "UNASSIGNED" || kind === "TEAM" ? kind : "other")}</>;
+  }
   const named = name(id);
   return named === null ? (
     <>{t("other")}</>

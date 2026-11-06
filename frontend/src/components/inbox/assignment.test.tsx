@@ -65,6 +65,7 @@ function server(initial: Partial<Conversation> = {}, members: unknown[] = MEMBER
   const messageReads = () =>
     api.mock.calls.filter(([url]) => String(url) === `${BASE}/1/messages/`).length;
   return {
+    api,
     state,
     posts,
     reads,
@@ -206,6 +207,54 @@ describe("asignación en la pantalla (F6-05b)", () => {
     expect(await line("Asignada a Luis Ramos")).toBeVisible();
     // ahora la tiene Luis, el único destino: no queda a quién transferirla
     expect(header().queryByLabelText("Transferir a")).toBeNull();
+  });
+
+  it("tras transferir, el selector vuelve a «Elige a una persona…» y «Transferir» a deshabilitado", async () => {
+    const people = [...MEMBERS, member("u4", "Pedro")];
+    const s = server({ assigned_user_id: "u1", assignee_kind: "USER" }, people);
+    s.answer({ assigned_user_id: "u2", assignee_kind: "USER" });
+    show();
+    await openChat();
+    const pick = await header().findByLabelText("Transferir a");
+    fireEvent.change(pick, { target: { value: "u2" } });
+    fireEvent.click(header().getByRole("button", { name: "Transferir" }));
+    expect(await header().findByText("Transferiste la conversación a Luis Ramos.")).toBeVisible();
+    await waitFor(() => expect(header().getByLabelText("Transferir a")).toHaveValue(""));
+    expect(header().getByRole("button", { name: "Transferir" })).toBeDisabled();
+  });
+
+  it("sin el detalle leído no se ofrece ninguna acción (la versión sale del detalle), solo quién la tiene", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    s.api.mockImplementation(async (input, init) =>
+      String(input) === `${BASE}/1/`
+        ? new Response(JSON.stringify({ code: "INTERNAL_ERROR" }), { status: 500 })
+        : inner(input, init),
+    );
+    show();
+    await openChat();
+    expect(await header().findByRole("alert")).toBeVisible(); // el detalle no llegó
+    expect(header().getByText("Sin asignar")).toBeVisible();
+    expect(header().queryByRole("button", { name: "Tomar" })).toBeNull();
+    expect(s.posts()).toEqual([]);
+  });
+
+  it("una conversación del equipo, sin persona, lo dice y se puede tomar", async () => {
+    server({ assignee_kind: "TEAM", assigned_team_id: "t1" });
+    show();
+    const row = await screen.findByRole("button", { name: /Rosa Díaz/ });
+    expect(row).toHaveTextContent("Asignada a un equipo");
+    await openChat();
+    expect(await line("Asignada a un equipo")).toBeVisible();
+    expect(header().getByRole("button", { name: "Tomar" })).toBeVisible();
+  });
+
+  it("un miembro sin nombre se nombra por su correo", async () => {
+    const nameless = { ...member("u2", ""), user: { ...member("u2", "").user, last_name: "" } };
+    server({ assigned_user_id: "u2", assignee_kind: "USER" }, [nameless]);
+    show();
+    await openChat();
+    expect(await line("Asignada a u2@acme.pe")).toBeVisible();
   });
 
   it("un destino inválido (400 en user_id) se explica sin tocar lo mostrado", async () => {

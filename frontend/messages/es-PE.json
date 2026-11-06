@@ -2125,7 +2125,8 @@
       "mine": "Asignada a ti",
       "UNASSIGNED": "Sin asignar",
       "other": "Asignada",
-      "to": "Asignada a"
+      "to": "Asignada a",
+      "TEAM": "Asignada a un equipo"
     },
     "sender": {
       "CONTACT": "Cliente",
