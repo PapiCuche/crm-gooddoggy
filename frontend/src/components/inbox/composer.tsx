@@ -1,7 +1,7 @@
 "use client";
 
 import { type InfiniteData, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Send } from "lucide-react";
+import { Send, StickyNote } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 
@@ -9,6 +9,7 @@ import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
 import {
   conversationMessagesSend,
+  conversationNotesCreate,
   getConversationMessagesListQueryKey,
   getConversationsListQueryKey,
   getConversationsRetrieveQueryKey,
@@ -31,17 +32,25 @@ type Pages = InfiniteData<PaginatedMessageList, string>;
 export const messagesKey = (slug: string, id: string) =>
   [...getConversationMessagesListQueryKey(slug, id), "pages"] as const;
 
-// ¿Se ofrece el cuadro? Es comodidad, no seguridad: la API decide en cada envío. Sin alcance
+export type Mode = "reply" | "note";
+const CODES = { reply: "messages.send", note: "messages.note" } as const;
+
+// ¿Qué modos se ofrecen? Es comodidad, no seguridad: la API decide en cada envío. Sin alcance
 // concedido no se ofrece (como ella, que sin alcance no deja nada); con alcance solo `OWN` basta con
 // que la conversación sea de quien escribe; con equipo o sucursal no se sabe desde aquí y se
-// ofrece (si la API responde 404, se explica).
-export function canSend(grants: readonly Grant[], conversation: Conversation, userId: string) {
-  const grant = grants.find(({ code }) => code === "messages.send");
-  if (!grant) return false;
-  const { scopes } = grant;
-  if (scopes.length === 0) return false;
-  if (scopes.some((scope) => scope !== "OWN")) return true;
-  return conversation.assigned_user_id === userId;
+// ofrece (si la API responde 404, se explica). Responder y anotar son permisos distintos.
+export function writableModes(
+  grants: readonly Grant[],
+  conversation: Conversation,
+  userId: string,
+) {
+  const allowed = (mode: Mode) => {
+    const grant = grants.find(({ code }) => code === CODES[mode]);
+    if (!grant || grant.scopes.length === 0) return false;
+    if (grant.scopes.some((scope) => scope !== "OWN")) return true;
+    return conversation.assigned_user_id === userId;
+  };
+  return { reply: allowed("reply"), note: allowed("note") };
 }
 
 const uuid = () => crypto.randomUUID();
@@ -53,14 +62,67 @@ const edit = (data: Pages | undefined, change: (rows: Message[], newest: boolean
     pages: data.pages.map((page, i) => ({ ...page, results: change(page.results, i === 0) })),
   };
 
-// El cuadro de redacción (F6-04c): `POST …/conversations/{id}/messages/` con un `client_message_id`
-// del navegador. El mismo texto reintentado lleva el mismo id (la API lo toma por el mismo mensaje y
-// no lo duplica); otro texto, o un envío ya hecho, uno nuevo. El mensaje aparece al instante «En
-// cola» (optimista); si falla, se quita, el texto sigue en el cuadro y «Reintentar» lo reenvía.
+// El cuadro de redacción (F6-04c y F6-05c): dos modos con su propio borrador, su propia ruta y su
+// propio identificador. «Responder al cliente» (`POST …/messages/`, `messages.send`) y «Nota
+// interna» (`POST …/notes/`, `messages.note`). Siempre arranca en «Responder» si se puede, para no
+// escribir una nota creyendo que es una respuesta; con un solo modo no hay conmutador. Los dos
+// formularios quedan montados y el inactivo se oculta, así cada borrador, cada intento y cada error
+// sobreviven al cambio de modo.
 export function Composer({
+  conversation,
+  modes,
+  onQueued,
+}: {
+  conversation: Conversation;
+  modes: { reply: boolean; note: boolean };
+  onQueued: () => void;
+}) {
+  const t = useTranslations("inbox.composer");
+  const [chosen, setChosen] = useState<Mode>(modes.reply ? "reply" : "note");
+  const shown: Mode = modes[chosen] ? chosen : modes.reply ? "reply" : "note";
+  const both = modes.reply && modes.note;
+  return (
+    <div className="border-border flex min-w-0 flex-col gap-2 border-t p-3">
+      {both ? (
+        <div role="group" aria-label={t("mode.label")} className="flex flex-wrap gap-2">
+          {(["reply", "note"] as const).map((mode) => (
+            <Button
+              key={mode}
+              type="button"
+              variant={shown === mode ? "accent" : "ghost"}
+              className="border-border min-h-11 border sm:min-h-9"
+              aria-pressed={shown === mode}
+              onClick={() => setChosen(mode)}
+            >
+              {mode === "note" ? <StickyNote aria-hidden /> : null}
+              {t(`mode.${mode}`)}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+      {(["reply", "note"] as const).map((mode) =>
+        modes[mode] ? (
+          <ComposeBox
+            key={mode}
+            mode={mode}
+            active={shown === mode}
+            conversation={conversation}
+            onQueued={onQueued}
+          />
+        ) : null,
+      )}
+    </div>
+  );
+}
+
+function ComposeBox({
+  mode,
+  active,
   conversation,
   onQueued,
 }: {
+  mode: Mode;
+  active: boolean;
   conversation: Conversation;
   onQueued: () => void;
 }) {
@@ -74,43 +136,53 @@ export function Composer({
   const attempt = useRef<{ id: string; body: string } | null>(null);
   const [text, setText] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const note = mode === "note";
   const key = messagesKey(slug, conversation.id);
   const count = Array.from(text).length;
-  const closed = conversation.status === "CLOSED";
+  // Una nota se admite también en una conversación cerrada; una respuesta no.
+  const closed = !note && conversation.status === "CLOSED";
   const over = count > BODY_MAX;
   const empty = text.trim() === "";
 
   const send = useMutation<Message, ApiError, SendMessageRequest>({
-    mutationFn: (request) => conversationMessagesSend(slug, conversation.id, request),
+    mutationFn: (request) =>
+      note
+        ? conversationNotesCreate(slug, conversation.id, request)
+        : conversationMessagesSend(slug, conversation.id, request),
     onMutate: async (request) => {
       await client.cancelQueries({ queryKey: key });
       onQueued();
       const pending: Message = {
-        ...{ id: `pending-${request.client_message_id}`, direction: "OUTBOUND" },
-        ...{ sender_type: "USER", sender_user_id: user.id, message_type: "TEXT" },
-        ...{ body: request.body, client_message_id: request.client_message_id },
-        ...{ delivery_status: "QUEUED", created_at: new Date().toISOString() },
+        ...{ id: `pending-${request.client_message_id}`, sender_type: "USER" },
+        ...{ direction: note ? "INTERNAL" : "OUTBOUND", message_type: note ? "NOTE" : "TEXT" },
+        ...{ sender_user_id: user.id, body: request.body },
+        ...{ client_message_id: request.client_message_id },
+        ...{ delivery_status: note ? null : "QUEUED", created_at: new Date().toISOString() },
         ...{ sent_at: null, delivered_at: null, read_at: null, failed_at: null },
       };
       client.setQueryData<Pages>(key, (data) =>
         edit(data, (rows, newest) => (newest ? [pending, ...rows] : rows)),
       );
       setProblem(null);
+      setSaved(null);
     },
-    onSuccess: (saved, request) => {
-      attempt.current = null; // un id por mensaje: el siguiente texto lleva otro
+    onSuccess: (done, request) => {
+      attempt.current = null; // un id por acción: el siguiente texto lleva otro
       setText("");
       const mine = `pending-${request.client_message_id}`;
       client.setQueryData<Pages>(key, (data) => {
-        const known = data?.pages.some((page) => page.results.some(({ id }) => id === saved.id));
+        const known = data?.pages.some((page) => page.results.some(({ id }) => id === done.id));
         return edit(data, (rows, newest) => [
-          ...(newest && !known ? [saved] : []),
+          ...(newest && !known ? [done] : []),
           ...rows.filter(({ id }) => id !== mine),
         ]);
       });
+      // Quien anota sin ver al contacto recibe el texto `null`: se explica en lugar de callarlo.
+      if (note) setSaved(done.body === null ? t("savedHidden") : t("saved"));
       // El estado de entrega avanza en el servidor: se vuelve a pedir; la lista cambia su vista previa.
       void client.invalidateQueries({ queryKey: key });
-      void client.invalidateQueries({ queryKey: getConversationsListQueryKey(slug) });
+      if (!note) void client.invalidateQueries({ queryKey: getConversationsListQueryKey(slug) });
       box.current?.focus();
     },
     onError: (error, request) => {
@@ -128,7 +200,7 @@ export function Composer({
       }
       setProblem(
         error.status === 403 || error.status === 404
-          ? t("denied")
+          ? t(note ? "deniedNote" : "denied")
           : errors(`api.${apiErrorKey(error)}`),
       );
     },
@@ -148,17 +220,22 @@ export function Composer({
     event.preventDefault();
     submit();
   };
+  const idle = note ? t("save") : t("send");
 
   return (
     <form
-      className="border-border flex min-w-0 flex-col gap-2 border-t p-3"
+      hidden={!active}
+      className={cn(
+        "flex min-w-0 flex-col gap-2",
+        note && "bg-surface-raised border-foreground/40 rounded-[10px] border border-dashed p-3",
+      )}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
       <label htmlFor={field} className="text-sm font-medium">
-        {t("label")}
+        {t(`label.${mode}`)}
       </label>
       {closed ? (
         <p id={`${field}-closed`} className="text-muted text-sm">
@@ -175,16 +252,25 @@ export function Composer({
         readOnly={send.isPending}
         aria-describedby={`${field}-count ${field}-hint${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
-        className="bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger max-h-40 min-h-16 w-full min-w-0 resize-none rounded-[10px] border p-3 text-[16px] wrap-anywhere disabled:opacity-60"
+        className={cn(
+          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger max-h-40 min-h-16 w-full min-w-0 resize-none rounded-[10px] border p-3 text-[16px] wrap-anywhere disabled:opacity-60",
+          note && "border-dashed",
+        )}
         onChange={(event) => {
           setText(event.target.value);
           setProblem(null);
+          setSaved(null);
         }}
         onKeyDown={keys}
       />
       <p role="status" className="sr-only">
-        {send.isPending ? t("sending") : ""}
+        {send.isPending ? t(note ? "saving" : "sending") : ""}
       </p>
+      {saved ? (
+        <p role="status" className="text-sm">
+          {saved}
+        </p>
+      ) : null}
       {problem ? (
         <p role="alert" className="text-danger text-sm">
           {problem}
@@ -192,7 +278,9 @@ export function Composer({
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-muted flex min-w-0 flex-col text-xs">
-          <span id={`${field}-hint`}>{t("hint")}</span>
+          <span id={`${field}-hint`} className={cn(note && "text-foreground font-medium")}>
+            {t(`hint.${mode}`)}
+          </span>
           <span id={`${field}-count`} className={cn(over && "text-danger font-medium")}>
             {over ? t("over", { over: count - BODY_MAX }) : t("count", { count, max: BODY_MAX })}
           </span>
@@ -204,8 +292,8 @@ export function Composer({
           disabled={closed || empty || over}
           aria-disabled={send.isPending}
         >
-          <Send aria-hidden />
-          {send.isPending ? t("sending") : problem ? t("retry") : t("send")}
+          {note ? <StickyNote aria-hidden /> : <Send aria-hidden />}
+          {send.isPending ? t(note ? "saving" : "sending") : problem ? t("retry") : idle}
         </Button>
       </div>
     </form>

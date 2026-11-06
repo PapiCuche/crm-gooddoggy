@@ -85,7 +85,7 @@ const openChat = async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
   await screen.findByRole("list", { name: "Mensajes" }).catch(() => null);
 };
-const box = () => screen.findByRole("textbox", { name: "Responder" });
+const box = () => screen.findByRole("textbox", { name: "Responder al cliente" });
 const type = async (text: string) => fireEvent.change(await box(), { target: { value: text } });
 // Lo que un envío indebido haría llega tras unas esperas asíncronas: se deja pasar antes de afirmar.
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 30)));
