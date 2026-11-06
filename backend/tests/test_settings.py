@@ -2,7 +2,7 @@ import base64
 import importlib
 import secrets
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -43,6 +43,15 @@ MAIL_ENV = {
     "EMAIL_USE_TLS": "true",
     "MAIL_FROM": "no-reply@example.com",
 }
+
+
+@pytest.fixture(autouse=True)
+def forget_loaded_settings() -> Iterator[None]:
+    """Cada carga deja `base` en `sys.modules` con las variables de su caso (el canal de Meta
+    encendido, por ejemplo): quien importe `local` o `test` después heredaría ese estado."""
+    yield
+    for name in ("production", "local", "migrate", "base"):
+        sys.modules.pop(f"config.settings.{name}", None)
 
 
 def load_production(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) -> object:
