@@ -5,17 +5,23 @@ sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones
 Aquí está todo lo que las llama. Reclamar, enrutar y cerrar los ítems es de F7-03c.
 """
 
+import math
 from typing import Any
 
-from django.db import connection, transaction
+from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
+from core.observability.logging import get_logger
+
+logger = get_logger(__name__)
 PROVIDER = "meta"
 
 
 def clean(value: Any) -> Any:
     """El payload sin lo que `jsonb` no guarda y un cliente podría escribir: `\\u0000` (se sustituye
     por U+FFFD) y los sustitutos sueltos (por `?`). La profundidad ya está acotada (`MAX_DEPTH`)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None  # `1e999` llega como infinito, y `jsonb` no guarda `Infinity`: un 503 eterno
     if isinstance(value, str):
         return value.replace("\x00", "\ufffd").encode("utf-8", "replace").decode("utf-8")
     if isinstance(value, list):
@@ -42,5 +48,14 @@ def insert(kind: str, key: str, waba_id: str, number: str | None, payload: dict[
 def store(items: list[Any]) -> int:
     """Guarda todos los ítems de una entrega en una transacción (un reintento de Meta repite lo
     que falte y nada más). Devuelve cuántos eran nuevos."""
+    new = refused = 0
     with transaction.atomic():
-        return sum(insert(i.kind, i.key, i.waba_id, i.phone_number_id, i.payload) for i in items)
+        for i in items:
+            try:
+                with transaction.atomic():  # un punto de guardado por ítem
+                    new += insert(i.kind, i.key, i.waba_id, i.phone_number_id, i.payload)
+            except DataError:  # un dato que la base nunca guardará: solo ese ítem se descarta, y
+                refused += 1  # no un 503 que Meta repetiría eternamente
+    if refused:
+        logger.warning("meta.webhook.refused", count=refused)
+    return new

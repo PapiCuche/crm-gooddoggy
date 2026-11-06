@@ -175,6 +175,8 @@ BEGIN
   IF p_provider IS NULL OR p_provider !~ '^[a-z]{{1,16}}$'
      OR p_kind IS NULL OR p_kind NOT IN ('message', 'status', 'other')
      OR p_event_key IS NULL OR length(p_event_key) NOT BETWEEN 1 AND 700
+     OR p_event_key !~ '^[A-Za-z0-9._~%%:-]+$'
+     OR octet_length(p_payload::text) > 1048576
      OR p_waba_id IS NULL OR p_waba_id !~ '^[0-9]{{5,30}}$'
      OR (p_phone_number_id IS NOT NULL AND p_phone_number_id !~ '^[0-9]{{5,30}}$')
      OR p_payload IS NULL OR jsonb_typeof(p_payload) <> 'object'

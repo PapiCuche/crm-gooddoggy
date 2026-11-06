@@ -95,6 +95,7 @@ def test_the_same_event_twice_is_one_row_and_the_second_is_not_new(migrator: DB)
     [
         {"kind": "otro"}, {"key": ""}, {"key": "x" * 701}, {"waba": "abc"}, {"waba": None},
         {"number": "abc"}, {"payload": None}, {"payload": [1]}, {"provider": "Meta"},
+        {"key": "con espacio"}, {"key": "a\nb"}, {"payload": {"x": "a" * 1_048_577}},
     ],
 )  # fmt: skip
 def test_the_insert_function_refuses_what_is_not_a_validated_item(bad: dict[str, Any]) -> None:
@@ -182,14 +183,75 @@ def test_a_temp_table_cannot_shadow_the_table_the_function_writes(migrator: DB) 
     assert migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone() == (1,)
 
 
-def test_a_delivery_is_stored_whole_or_not_at_all(migrator: DB) -> None:
+def test_a_delivery_is_stored_whole_or_not_at_all(
+    migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from django.db import OperationalError
+
     def item(key: str, kind: str) -> Any:
         return SimpleNamespace(
             kind=kind, key=key, waba_id=WABA_ID, phone_number_id=None, payload={"id": key}
         )
 
-    with pytest.raises(DatabaseError):
-        ingress.store([item("wa:msg:1", "message"), item("wa:msg:2", "otro")])
+    real = ingress.insert
+
+    def flaky(kind: str, key: str, *rest: Any) -> bool:
+        if key == "wa:msg:2":
+            raise OperationalError("la base se cayó")  # transitorio: todo o nada
+        return real(kind, key, *rest)
+
+    monkeypatch.setattr(ingress, "insert", flaky)
+    with pytest.raises(OperationalError):
+        ingress.store([item("wa:msg:1", "message"), item("wa:msg:2", "message")])
+    monkeypatch.undo()
     assert migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone() == (0,)
     assert ingress.store([item("wa:msg:1", "message"), item("wa:msg:2", "status")]) == 2
     assert ingress.store([item("wa:msg:1", "message"), item("wa:msg:3", "status")]) == 1
+
+
+def test_an_infinite_number_is_stored_as_null_and_does_not_make_meta_retry_forever(
+    migrator: DB,
+) -> None:
+    raw = (
+        b'{"object":"whatsapp_business_account","entry":[{"id":"%b","changes":[{"field":"messages",'
+        b'"value":{"metadata":{"phone_number_id":"%b"},"messages":[{"type":"text","id":"w1",'
+        b'"text":{"body":"x"},"n":1e999,"m":-1e999,"ok":1.5}]}}]}]}'
+    ) % (WABA_ID.encode(), PHONE_NUMBER_ID.encode())
+    assert post(webhooks.deliver(raw)).status_code == 200
+    stored = rows(migrator)["wa:msg:w1"]["payload"]
+    assert (stored["n"], stored["m"], stored["ok"]) == (None, None, 1.5)
+
+
+def test_an_item_the_database_will_never_store_is_dropped_alone_not_a_503(
+    migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from django.db import DataError
+
+    real = ingress.insert
+
+    def picky(kind: str, key: str, *rest: Any) -> bool:
+        if key.endswith("wamid.2"):
+            raise DataError("dato imposible")
+        return real(kind, key, *rest)
+
+    monkeypatch.setattr(ingress, "insert", picky)
+    assert deliver(text("wamid.1"), text("wamid.2"), text("wamid.3")).status_code == 200
+    assert sorted(rows(migrator)) == ["wa:msg:wamid.1", "wa:msg:wamid.3"]
+
+
+def test_a_real_database_refusal_drops_that_item_and_the_rest_still_goes_in(
+    migrator: DB, caplog: pytest.LogCaptureFixture
+) -> None:
+    """El rechazo real de la función aborta la transacción: sin punto de guardado, el siguiente
+    ítem fallaría con «transacción abortada»."""
+
+    def item(key: str, kind: str) -> Any:
+        return SimpleNamespace(
+            kind=kind, key=key, waba_id=WABA_ID, phone_number_id=None, payload={"id": key}
+        )
+
+    caplog.set_level(logging.DEBUG)
+    batch = [item("wa:msg:1", "message"), item("wa:msg:2", "otro"), item("wa:msg:3", "message")]
+    assert ingress.store(batch) == 2
+    assert sorted(rows(migrator)) == ["wa:msg:1", "wa:msg:3"]
+    assert "meta.webhook.refused" in caplog.text and "'count': 1" in caplog.text

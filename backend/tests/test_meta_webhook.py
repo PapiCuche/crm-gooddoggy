@@ -356,7 +356,8 @@ def test_the_phone_number_id_of_a_messages_change_is_a_numeric_id(number: Any) -
 @pytest.mark.parametrize(
     "fields",
     [
-        {"id": "x" * 201}, {"id": ""}, {"id": 5}, {"id": "\ud800"}, {"type": 5}, {"type": "a\nb"},
+        {"id": "x" * 201}, {"id": "ñ" * 51}, {"id": ""}, {"id": 5}, {"id": "\ud800"},
+        {"type": 5}, {"type": "a\nb"},
         {"text": {"body": 5}}, {"text": {"body": ""}}, {"text": {"body": "x" * 8193}},
         {"text": "hola"}, {"text": None},
     ],
@@ -429,3 +430,11 @@ def test_a_content_length_that_is_not_ascii_digits_is_not_a_server_error() -> No
     request.META["CONTENT_LENGTH"] = "²"
     request._stream = io.BytesIO(b"{}")
     assert webhook(request).status_code == 401
+
+
+def test_an_id_whose_encoded_key_would_not_fit_is_discarded_and_the_limit_is_exact() -> None:
+    """200 caracteres no ASCII ocupan 1200 codificados: más que la columna de la clave."""
+    fits = parse(delivery_of(messages_change(message(wamid="ñ" * 50))))
+    assert [len(i.key) for i in fits.items] == [len("wa:msg:") + 300] and fits.rejected == []
+    long = parse(delivery_of(messages_change(message(wamid="ñ" * 200), message(wamid="wamid.OK"))))
+    assert [i.key for i in long.items] == ["wa:msg:wamid.OK"] and long.rejected == ["id"]
