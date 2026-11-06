@@ -6,6 +6,7 @@
 """
 
 import functools
+import inspect
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID
@@ -33,6 +34,28 @@ class PlatformTask(Task):  # type: ignore[misc]
     tenancy = "platform"
 
 
+def _tenant_signature(fn: Callable[..., Any]) -> inspect.Signature:
+    """La firma de `fn` más los argumentos de tenant que `run` consume antes de llamarla.
+
+    Celery valida `apply_async` contra la firma de la función registrada (`check_arguments`), y
+    en Python 3.14 la obtiene con `inspect.signature`, que sigue `__wrapped__` hasta la `fn`
+    original: sin esto, `organization_id` y `correlation_id` se rechazan con un `TypeError`
+    aunque `run` los acepte (y el publicador del outbox no podría encolar nada)."""
+    kind = inspect.Parameter.KEYWORD_ONLY
+    tenant = [
+        inspect.Parameter("organization_id", kind, annotation=str),
+        inspect.Parameter("actor_type", kind, default=ActorType.SYSTEM),
+        inspect.Parameter("actor_id", kind, default=None),
+        inspect.Parameter("correlation_id", kind, default=None),
+    ]
+    signature = inspect.signature(fn)
+    if clash := {p.name for p in tenant} & set(signature.parameters):
+        raise TypeError(f"{fn.__name__}: {sorted(clash)} ya los pone @tenant_task")
+    params = list(signature.parameters.values())
+    rest = [p for p in params if p.kind is not inspect.Parameter.VAR_KEYWORD]
+    return signature.replace(parameters=[*rest, *tenant, *params[len(rest) :]])
+
+
 def tenant_task(**options: Any) -> Callable[[Callable[..., Any]], Any]:
     def decorate(fn: Callable[..., Any]) -> Any:
         @functools.wraps(fn)
@@ -58,6 +81,7 @@ def tenant_task(**options: Any) -> Callable[[Callable[..., Any]], Any]:
             with bound(request_id=None, correlation_id=ctx.correlation_id), tenant_scope(ctx):
                 return fn(*args, **kwargs)  # los argumentos son IDs: se re-lee el estado aquí
 
+        run.__signature__ = _tenant_signature(fn)  # type: ignore[attr-defined]
         return shared_task(base=TenantTask, **options)(run)
 
     return decorate
