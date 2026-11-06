@@ -2183,7 +2183,9 @@
       "saving": "Guardando…",
       "saved": "Nota guardada.",
       "savedHidden": "Nota guardada. No puedes ver a este cliente, así que su texto no se muestra aquí.",
-      "deniedNote": "No puedes dejar notas en esta conversación. Puede que ya no esté en tu alcance."
+      "deniedNote": "No puedes dejar notas en esta conversación. Puede que ya no esté en tu alcance.",
+      "nearLimit": "Te acercas al tope de caracteres.",
+      "overLimit": "Pasaste el tope de caracteres: no se puede enviar."
     },
     "assign": {
       "take": "Tomar",

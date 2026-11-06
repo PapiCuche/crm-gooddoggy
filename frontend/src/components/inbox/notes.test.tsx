@@ -245,13 +245,13 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     const panel = screen.getByRole("region", { name: "Conversación" }).firstElementChild!;
     expect(panel).toHaveClass(
       "h-[calc(100dvh-8rem)]",
-      "min-h-[28rem]",
+      "min-h-[29rem]",
       "flex-col",
       "lg:h-[calc(100dvh-18rem)]",
     );
     const scroller = screen.getByRole("region", { name: "Mensajes de la conversación" });
     expect(scroller).toHaveAttribute("tabindex", "0"); // sigue enfocable con el teclado
-    expect(scroller).toHaveClass("min-h-0", "flex-1", "overflow-y-auto"); // la válvula: absorbe el sobrante // al menos 160 px
+    expect(scroller).toHaveClass("min-h-0", "flex-1", "overflow-y-auto"); // la válvula: absorbe el sobrante y nunca empuja el cuadro fuera
     expect(panel.querySelector("header")).toHaveClass("shrink-0");
     expect(scroller.nextElementSibling).toHaveClass("shrink-0"); // el cuadro nunca se comprime ni sale
   });
@@ -360,6 +360,14 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Guardar nota" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
     expect(await noteBox()).toHaveValue("Pide DNI");
+    // el aviso va tras el contador y el botón, en el DOM y en la rejilla de 320 px, y el botón cambia de icono
+    const form = (await noteBox()).closest("form")!;
+    const alert = within(form).getByRole("alert");
+    const retry = within(form).getByRole("button", { name: "Reintentar" });
+    expect(alert).toHaveClass("max-sm:col-span-2");
+    expect(retry.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(retry.querySelector("svg")).toHaveClass("lucide-sticky-note"); // la nota conserva su icono
+    expect(retry.parentElement).toHaveClass("max-sm:contents"); // hint y botón son celdas de la rejilla
     answer = { status: 404, body: { code: "NOT_FOUND" } };
     fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
     await waitFor(() =>
@@ -406,6 +414,47 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     await waitFor(() => expect(s.posts("notes")).toHaveLength(1));
     expect(s.posts("messages")).toEqual([]);
   });
+
+  it("al fallar una respuesta, el botón pasa a «Reintentar» con su icono y los avisos van tras el contador", async () => {
+    const s = server();
+    const inner = s.api.getMockImplementation()!;
+    s.api.mockImplementation(async (input, init) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify({ code: "INTERNAL_ERROR" }), { status: 500 })
+        : inner(input, init),
+    );
+    show([grant("conversations.view"), grant("messages.send")]);
+    await openChat();
+    fireEvent.change(await reply(), { target: { value: "Hola" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+    const retry = await screen.findByRole("button", { name: "Reintentar" });
+    expect(retry.querySelector("svg")).toHaveClass("lucide-rotate-cw");
+    expect(retry.querySelector("svg")).not.toHaveClass("lucide-send");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("max-sm:col-span-2");
+    expect(retry.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }, 20_000);
+
+  it("el tope se anuncia con aria-live solo al cruzar el 90 % y el 100 %", async () => {
+    server();
+    show([grant("conversations.view"), grant("messages.send")]);
+    await openChat();
+    const box = await reply();
+    const live = () =>
+      Array.from(document.querySelectorAll("[aria-live=polite]")).map((one) => one.textContent);
+    expect(live()).toEqual([""]); // lejos del tope no dice nada
+    fireEvent.change(box, { target: { value: "a".repeat(100) } });
+    fireEvent.change(box, { target: { value: "a".repeat(3000) } });
+    expect(live()).toEqual([""]);
+    fireEvent.change(box, { target: { value: "a".repeat(3700) } });
+    expect(live()).toEqual(["Te acercas al tope de caracteres."]);
+    fireEvent.change(box, { target: { value: "a".repeat(3900) } });
+    expect(live()).toEqual(["Te acercas al tope de caracteres."]); // el mismo texto: no se vuelve a anunciar
+    fireEvent.change(box, { target: { value: "a".repeat(4097) } });
+    expect(live()).toEqual(["Pasaste el tope de caracteres: no se puede enviar."]);
+    fireEvent.change(box, { target: { value: "a".repeat(10) } });
+    expect(live()).toEqual([""]);
+  }, 20_000);
 
   it("vacío, solo espacios y pasarse del tope no guardan; Enter durante un IME tampoco", async () => {
     const s = server();

@@ -254,11 +254,6 @@ function ComposeBox({
       >
         {t(`label.${mode}`)}
       </label>
-      {closed ? (
-        <p id={`${field}-closed`} className="text-muted text-sm max-sm:col-span-2">
-          {errors("api.CONVERSATION_CLOSED")}
-        </p>
-      ) : null}
       {/* 16 px: por debajo, Safari en iOS amplía la página al enfocar. */}
       <textarea
         id={field}
@@ -285,16 +280,10 @@ function ComposeBox({
       <p role="status" className="sr-only">
         {send.isPending ? t(note ? "saving" : "sending") : ""}
       </p>
-      {saved ? (
-        <p role="status" className="text-sm max-sm:col-span-2">
-          {saved}
-        </p>
-      ) : null}
-      {problem ? (
-        <p role="alert" className="text-danger text-sm max-sm:col-span-2">
-          {problem}
-        </p>
-      ) : null}
+      {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
+      <p aria-live="polite" className="sr-only">
+        {over ? t("overLimit") : count >= BODY_MAX * 0.9 ? t("nearLimit") : ""}
+      </p>
       <div className="flex flex-wrap items-center justify-between gap-2 max-sm:contents">
         <div
           className={cn(
@@ -345,6 +334,21 @@ function ComposeBox({
           </span>
         </Button>
       </div>
+      {closed ? (
+        <p id={`${field}-closed`} className="text-muted text-sm max-sm:col-span-2">
+          {errors("api.CONVERSATION_CLOSED")}
+        </p>
+      ) : null}
+      {saved ? (
+        <p role="status" className="text-sm max-sm:col-span-2">
+          {saved}
+        </p>
+      ) : null}
+      {problem ? (
+        <p role="alert" className="text-danger text-sm max-sm:col-span-2">
+          {problem}
+        </p>
+      ) : null}
     </form>
   );
 }

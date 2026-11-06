@@ -137,18 +137,19 @@ export function ChatPanel({
 
   return (
     // Alto: en 390 px la pantalla pierde el título de la página (queda solo para lectores) y el panel
-    // ocupa el viewport menos la barra y el relleno del shell (8 rem), con un mínimo (28 rem) que deja
+    // ocupa el viewport menos la barra y el relleno del shell (8 rem), con un mínimo (29 rem) que deja
     // sitio a las tres zonas; el encabezado y el cuadro no se comprimen y los mensajes (`min-h-0`)
     // absorben el sobrante y se desplazan. En escritorio, el alto de siempre.
-    <div className="border-border bg-surface flex h-[calc(100dvh-8rem)] min-h-[28rem] flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]">
+    <div className="border-border bg-surface flex h-[calc(100dvh-8rem)] min-h-[29rem] flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]">
       <header className="border-border relative flex shrink-0 flex-col gap-1 border-b p-2 lg:gap-2 lg:p-3">
-        {/* Una sola fila que se parte en líneas. En 320 px: volver, nombre, ficha (icono) y actualizar,
-            y debajo número, canal y estado. En escritorio: actualizar a la derecha, el nombre, el
-            número, el canal y el estado, y la ficha al final, como siempre. */}
+        {/* Una sola fila que se parte en líneas. El DOM va en el orden de tabulación que se ve en
+            escritorio (volver, nombre, actualizar, ficha) y `order` coloca cada pieza: en 320 px
+            volver, nombre, actualizar y ficha (iconos) y debajo número, canal y estado; en escritorio
+            actualizar a la derecha, el nombre, el número, el canal y el estado, y la ficha al final. */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Button
             variant="ghost"
-            className="border-border order-1 size-9 border px-0 lg:hidden"
+            className="border-border order-1 size-10 border px-0 lg:hidden"
             onClick={onBack}
           >
             <ArrowLeft aria-hidden />
@@ -163,19 +164,9 @@ export function ChatPanel({
               {name === null ? t("contactUnavailable") : <Plain>{name}</Plain>}
             </h2>
           </div>
-          {name === null ? null : (
-            <Link
-              href={`/o/${slug}/clientes/${conversation.contact.id}`}
-              prefetch={false}
-              className="max-sm:border-border order-3 inline-flex items-center justify-center gap-2 text-xs font-medium underline underline-offset-4 max-sm:size-9 max-sm:rounded-md max-sm:border max-sm:no-underline sm:text-sm lg:order-6 lg:self-start"
-            >
-              <UserRound aria-hidden className="size-4 sm:hidden" />
-              <span className="max-sm:sr-only">{t("customerCard")}</span>
-            </Link>
-          )}
           <Button
             variant="ghost"
-            className="border-border order-4 border max-lg:size-9 max-lg:px-0 lg:order-2 lg:ml-auto"
+            className="border-border order-3 border max-lg:size-10 max-lg:px-0 lg:order-2 lg:ml-auto"
             aria-disabled={list.isFetching}
             onClick={() => {
               if (list.isFetching) return;
@@ -186,6 +177,16 @@ export function ChatPanel({
             <RefreshCw aria-hidden />
             <span className="max-lg:sr-only">{t("chat.refresh")}</span>
           </Button>
+          {name === null ? null : (
+            <Link
+              href={`/o/${slug}/clientes/${conversation.contact.id}`}
+              prefetch={false}
+              className="max-sm:border-border order-4 inline-flex items-center justify-center gap-2 text-xs font-medium underline underline-offset-4 max-sm:size-10 max-sm:rounded-md max-sm:border max-sm:no-underline sm:text-sm lg:order-6 lg:self-start"
+            >
+              <UserRound aria-hidden className="size-4 sm:hidden" />
+              <span className="max-sm:sr-only">{t("customerCard")}</span>
+            </Link>
+          )}
           <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
             <span className="font-mono">{conversation.number}</span>
             <Plain>{conversation.channel.name}</Plain>

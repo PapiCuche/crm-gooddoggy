@@ -127,7 +127,7 @@ export function AssignmentActions({ detail }: { detail: ConversationDetail }) {
           <Button
             ref={toggle}
             variant="ghost"
-            className="border-border h-9 border lg:hidden"
+            className="border-border h-10 border lg:hidden"
             aria-expanded={open}
             aria-controls={panel}
             onClick={() => setOpen(!open)}

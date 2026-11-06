@@ -214,7 +214,17 @@ describe("Inbox, chat (F6-03)", () => {
     // encabezado de una fila: volver, nombre, ficha y actualizar; el número y el estado debajo
     const card = screen.getByRole("link", { name: "Ver ficha del cliente" });
     expect(card.parentElement).toBe(refresh.parentElement);
-    expect(card).toHaveClass("order-3", "lg:order-6"); // icono en 320 px, al final en escritorio
+    // Tab sigue el orden visual: el DOM es [volver, actualizar, ficha] y `order` coloca cada pieza
+    // (en escritorio actualizar sube a la derecha y la ficha baja al final de la fila)
+    const back = screen.getByRole("button", { name: "Volver a las conversaciones" });
+    expect(back).toHaveClass("order-1", "lg:hidden"); // en escritorio no hay «Volver»
+    expect(back.compareDocumentPosition(refresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(refresh.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(refresh).toHaveClass("order-3", "lg:order-2", "lg:ml-auto");
+    expect(card).toHaveClass("order-4", "lg:order-6"); // icono en 320 px, al final en escritorio
+    // los botones de icono solo lo son en pantallas estrechas; en escritorio dicen su texto
+    expect(within(refresh).getByText("Actualizar mensajes")).toHaveClass("max-lg:sr-only");
+    expect(within(card).getByText("Ver ficha del cliente")).toHaveClass("max-sm:sr-only");
     expect(within(card.closest("header")!).getByText("CONV-00001").parentElement).toHaveClass(
       "order-5",
       "basis-full",
