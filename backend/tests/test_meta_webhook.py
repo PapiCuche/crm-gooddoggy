@@ -7,6 +7,7 @@ import io
 import logging
 from typing import Any
 
+import psycopg
 import pytest
 from django.http import HttpRequest
 from django.test import Client
@@ -17,6 +18,9 @@ from config.settings import base
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import TEST_APP_SECRET
 
+pytestmark = pytest.mark.usefixtures("tenant_db")
+DB = psycopg.Connection[Any]
+ITEM_LEVEL = ("no_phone_number_id", "text_not_a_string")  # se descartan por ítem, no el cuerpo
 URL = "/webhooks/meta/"
 VERIFY = "verify-token-test-not-real-0001"
 OLD_SECRET = "meta-sim-previous-app-secret-not-real"  # noqa: S105 — ficticio
@@ -49,6 +53,10 @@ def post(delivery: webhooks.Delivery, client: Client | None = None) -> Any:
         f"HTTP_{k.upper().replace('-', '_')}": v for k, v in delivery.headers.items()
     }
     return (client or Client()).post(URL, delivery.body, "application/json", **extra)
+
+
+def stored(migrator: DB) -> int:
+    return int(migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone()[0])  # type: ignore[index]
 
 
 def shape(response: Any) -> tuple[int, bytes, str]:
@@ -238,108 +246,163 @@ def test_a_route_that_is_not_for_the_api_has_no_csrf_and_no_session() -> None:
 
 @pytest.mark.parametrize(
     "body",
-    [*webhooks.malformed().values(), b"\xff\xfe\x00", b"[" * 200_000, b'{"a":' * 5000, b" " * 10],
-)
-def test_a_signed_body_that_is_not_what_meta_sends_is_a_uniform_200_never_a_500(
-    body: bytes, caplog: pytest.LogCaptureFixture
+    [
+        *(b for k, b in webhooks.malformed().items() if k not in ITEM_LEVEL),
+        b"\xff\xfe\x00", b"[" * 200_000, b'{"a":' * 5000, b" " * 10,
+    ],
+)  # fmt: skip
+def test_a_signed_body_that_is_not_the_envelope_is_a_uniform_200_and_stores_nothing(
+    body: bytes, caplog: pytest.LogCaptureFixture, migrator: DB
 ) -> None:
     caplog.set_level(logging.DEBUG)
     assert shape(post(webhooks.deliver(body))) == (200, *EMPTY)
-    assert "meta.webhook.invalid" in caplog.text
+    assert "meta.webhook.invalid" in caplog.text and stored(migrator) == 0
 
 
 def test_the_signature_is_checked_before_anything_is_parsed(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, migrator: DB
 ) -> None:
     caplog.set_level(logging.DEBUG)
     assert shape(post(webhooks.deliver(b"[" * 200_000, secret=None)))[0] == 401
-    assert "meta.webhook" not in caplog.text  # ni siquiera se miró
+    assert "meta.webhook" not in caplog.text and stored(migrator) == 0  # ni se miró
 
 
-def valid(**over: Any) -> dict[str, Any]:
-    return {**webhooks.envelope(webhooks.value(messages=[webhooks.text_message("Hola")])), **over}
+def message(body: str = "Hola", wamid: str = "wamid.A", **over: Any) -> dict[str, Any]:
+    return webhooks.text_message(body, wamid=wamid) | over
+
+
+def delivery_of(*changes: Any, waba: str = webhooks.WABA_ID) -> bytes:
+    return webhooks.encode(
+        {"object": "whatsapp_business_account", "entry": [{"id": waba, "changes": list(changes)}]}
+    )
+
+
+def messages_change(*rows: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    return {"field": "messages", "value": webhooks.value(messages=list(rows), **kw)}
 
 
 def test_a_delivery_splits_into_one_item_per_logical_unit_with_a_dedup_key() -> None:
-    items = parse(webhooks.batch_delivery().body)
-    assert [(i.kind, i.key) for i in items] == [
+    parsed = parse(webhooks.batch_delivery().body)
+    assert [(i.kind, i.key) for i in parsed.items] == [
         ("message", "wa:msg:wamid.SIMIN000010"),
         ("message", "wa:msg:wamid.SIMIN000011"),
         ("message", "wa:msg:wamid.SIMIN000012"),
         ("status", "wa:status:wamid.SIMOUT000001:delivered"),
-    ]
-    assert {(i.waba_id, i.phone_number_id) for i in items} == {
+    ] and parsed.rejected == []
+    assert {(i.waba_id, i.phone_number_id) for i in parsed.items} == {
         (webhooks.WABA_ID, webhooks.PHONE_NUMBER_ID)
     }
-    other = {"object": webhooks.envelope()["object"], "entry": [
-        {"id": webhooks.WABA_ID, "changes": [{"field": "account_update", "value": {"event": "x"}}]}
-    ]}  # fmt: skip
-    [account] = parse(webhooks.encode(other))
-    assert account.kind == "other" and account.phone_number_id is None
-    assert account.key == parse(webhooks.encode(other))[0].key  # el mismo cambio, la misma clave
-
-
-def broken(change: Any) -> bytes:
-    return webhooks.encode(change(valid()))
+    account = {"field": "account_update", "value": {"event": "x"}}
+    [other] = parse(delivery_of(account)).items
+    assert other.kind == "other" and other.phone_number_id is None
+    assert other.key == parse(delivery_of(account)).items[0].key  # el mismo cambio, la misma clave
 
 
 @pytest.mark.parametrize(
-    ("change", "reason"),
+    ("body", "reason"),
     [
-        (lambda e: {**e, "object": "page"}, "object"),
-        (lambda e: {**e, "entry": []}, "entry"),
-        (lambda e: {**e, "entry": [e["entry"][0]] * 21}, "entry"),
-        (lambda e: {**e, "entry": ["x"]}, "entry"),
-        (lambda e: [e], "object"),
-        (lambda e: {**e, "entry": [{**e["entry"][0], "id": "abc"}]}, "waba"),
-        (lambda e: {**e, "entry": [{**e["entry"][0], "changes": "x"}]}, "changes"),
-        (lambda e: {**e, "entry": [{**e["entry"][0], "changes": []}]}, "changes"),
+        (b"x", "json"),
+        (webhooks.encode([]), "object"),
+        (webhooks.encode({"object": "page", "entry": []}), "object"),
+        (webhooks.encode({"object": "whatsapp_business_account", "entry": []}), "entry"),
+        (webhooks.encode({"object": "whatsapp_business_account", "entry": "x"}), "entry"),
+        (webhooks.encode({"object": "whatsapp_business_account", "entry": [{}] * 21}), "entry"),
         (
-            lambda e: {**e, "entry": [{**e["entry"][0], "changes": [{"field": "A", "value": {}}]}]},
-            "change",
-        ),
-        (
-            lambda e: {
-                **e,
-                "entry": [{**e["entry"][0], "changes": [{"field": "messages", "value": 1}]}],
-            },
-            "change",
-        ),
-        (lambda e: {"deep": [[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]], **e}, "object"),
+            webhooks.encode(
+                {
+                    "object": "whatsapp_business_account",
+                    "entry": [],
+                    "a": [[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]],
+                }
+            ),
+            "object",
+        ),  # noqa: E501
     ],
 )
-def test_the_schema_is_strict_about_types_sizes_and_shape(change: Any, reason: str) -> None:
+def test_only_what_is_not_an_envelope_invalidates_the_whole_body(body: bytes, reason: str) -> None:
     with pytest.raises(Invalid) as caught:
-        parse(broken(change))
+        parse(body)
     assert caught.value.reason == reason
+
+
+def test_what_is_wrong_with_one_part_discards_only_that_part_never_the_batch() -> None:
+    good = messages_change(message(wamid="wamid.GOOD"))
+    bad_text = messages_change(
+        message(wamid="wamid.BAD", text={"body": 5}), message(wamid="wamid.OK")
+    )
+    no_number = {"field": "messages", "value": {"messages": [message(wamid="wamid.NO")]}}
+    parsed = parse(delivery_of(good, bad_text, no_number, {"field": "A", "value": {}}, "x", {}))
+    assert [i.key for i in parsed.items] == ["wa:msg:wamid.GOOD", "wa:msg:wamid.OK"]
+    assert parsed.rejected == ["text", "phone_number_id", "change", "change", "change"]
+    entries = {"object": "whatsapp_business_account", "entry": [
+        {"id": "abc", "changes": [good]}, "x", {"id": webhooks.WABA_ID, "changes": []},
+        {"id": webhooks.WABA_ID, "changes": [good]},
+    ]}  # fmt: skip
+    parsed = parse(webhooks.encode(entries))
+    assert [i.key for i in parsed.items] == ["wa:msg:wamid.GOOD"]
+    assert parsed.rejected == ["waba", "waba", "changes"]
 
 
 @pytest.mark.parametrize("number", ["abc", "123", "1" * 31, "", 5, None])
 def test_the_phone_number_id_of_a_messages_change_is_a_numeric_id(number: Any) -> None:
+    change = {
+        "field": "messages",
+        "value": webhooks.value(messages=[message()], phone_number_id=number),
+    }
+    parsed = parse(delivery_of(change))
+    assert parsed.items == [] and parsed.rejected == ["phone_number_id"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"id": "x" * 201}, {"id": "ñ" * 51}, {"id": ""}, {"id": 5}, {"id": "\ud800"},
+        {"type": 5}, {"type": "a\nb"},
+        {"text": {"body": 5}}, {"text": {"body": ""}}, {"text": {"body": "x" * 8193}},
+        {"text": "hola"}, {"text": None},
+    ],
+)  # fmt: skip
+def test_a_bad_message_is_discarded_and_the_next_one_still_counts(fields: dict[str, Any]) -> None:
+    parsed = parse(delivery_of(messages_change(message(**fields), message(wamid="wamid.NEXT"))))
+    assert [i.key for i in parsed.items] == ["wa:msg:wamid.NEXT"] and len(parsed.rejected) == 1
+
+
+def test_item_and_row_counts_are_bounded() -> None:
+    many = [message(wamid=f"wamid.{n}") for n in range(100)]
     with pytest.raises(Invalid) as caught:
-        parse(webhooks.encode(webhooks.envelope(webhooks.value(phone_number_id=number))))
-    assert caught.value.reason == "phone_number_id"
-
-
-def test_ids_texts_and_item_counts_are_bounded() -> None:
-    def with_message(**fields: Any) -> bytes:
-        message = {**webhooks.text_message("Hola"), **fields}
-        return webhooks.encode(webhooks.envelope(webhooks.value(messages=[message])))
-
-    bad = (
-        {"id": "x" * 201}, {"id": ""}, {"id": "a\nb"}, {"type": 5}, {"text": {"body": 5}},
-        {"text": {"body": "x" * 8193}}, {"text": "hola"},
-    )  # fmt: skip
-    for fields in bad:
-        with pytest.raises(Invalid):
-            parse(with_message(**fields))
-    many = [webhooks.text_message("x", wamid=f"wamid.{n}") for n in range(100)]
-    six_pages = webhooks.encode(webhooks.envelope(*[webhooks.value(messages=many)] * 6))
-    with pytest.raises(Invalid) as caught:
-        parse(six_pages)
+        parse(delivery_of(*[messages_change(*many)] * 6))
     assert caught.value.reason == "items"
-    with pytest.raises(Invalid):
-        parse(webhooks.encode(webhooks.envelope(webhooks.value(messages=many + many[:1]))))
+    parsed = parse(delivery_of(messages_change(*many, message(wamid="wamid.101"))))
+    assert parsed.items == [] and parsed.rejected == ["messages"]  # un cambio con más de 100 filas
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hola\nqué tal", "a\tb", "a\u00a0b", "👨\u200d👩\u200d👧", "a\u200fb", "línea\r\n",
+        "x" * 4096,
+    ],
+)  # fmt: skip
+def test_the_text_a_customer_writes_is_never_a_reason_to_drop_the_batch(text: str) -> None:
+    """Saltos de línea, tabuladores, espacios duros y uniones de emoji son texto normal."""
+    [item] = parse(delivery_of(messages_change(message(text)))).items
+    assert item.payload["text"]["body"] == text
+
+
+def test_the_dedup_key_has_one_reading_whatever_characters_an_id_carries() -> None:
+    def key(wamid: str, state: str) -> str:
+        found = webhooks.status(wamid, "delivered") | {"id": wamid, "status": state}
+        change = {"field": "messages", "value": webhooks.value(statuses=[found])}
+        return parse(delivery_of(change)).items[0].key
+
+    assert key("a:b", "c") != key("a", "b:c") and len({key("a b", "c"), key("a%20b", "c")}) == 2
+    assert key("wamid.HBgM=-_.x==", "delivered") == "wa:status:wamid.HBgM%3D-_.x%3D%3D:delivered"
+    assert key("a\nb/ñ", "Sent") == "wa:status:a%0Ab%2F%C3%B1:Sent"  # nada se pierde por raro
+    assert message_key("a:b") != message_key("a%3Ab")
+
+
+def message_key(wamid: str) -> str:
+    return parse(delivery_of(messages_change(message(wamid=wamid)))).items[0].key
 
 
 def test_no_output_carries_the_secrets_the_token_the_signature_or_the_body(
@@ -353,27 +416,6 @@ def test_no_output_carries_the_secrets_the_token_the_signature_or_the_body(
     outputs = caplog.text + "".join(r.content.decode() + str(r.headers) for r in responses)
     for secret in (TEST_APP_SECRET, OLD_SECRET, VERIFY, signature, "Texto privado", "5190000000"):
         assert secret not in outputs, secret
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "hola\nqué tal",
-        "a\tb",
-        "a\u00a0b",
-        "👨\u200d👩\u200d👧",
-        "a\u200fb",
-        "línea\r\n",
-        "x" * 4096,
-    ],
-)
-def test_the_text_a_customer_writes_is_never_a_reason_to_drop_the_batch(text: str) -> None:
-    """Saltos de línea, tabuladores, espacios duros y uniones de emoji son texto normal."""
-    body = webhooks.encode(
-        webhooks.envelope(webhooks.value(messages=[webhooks.text_message(text)]))
-    )
-    [item] = parse(body)
-    assert item.payload["text"]["body"] == text
 
 
 @pytest.mark.parametrize("body", [b'{"x": NaN}', b'{"x": Infinity}', b'{"x": -Infinity}'])
@@ -390,25 +432,9 @@ def test_a_content_length_that_is_not_ascii_digits_is_not_a_server_error() -> No
     assert webhook(request).status_code == 401
 
 
-def test_the_dedup_key_has_one_reading_ids_and_states_never_carry_the_separator() -> None:
-    def status_body(wamid: str, state: str) -> bytes:
-        found = webhooks.status(wamid, "delivered") | {"id": wamid, "status": state}
-        return webhooks.encode(webhooks.envelope(webhooks.value(statuses=[found])))
-
-    for wamid, state in (("a:b", "c"), ("a", "b:c"), ("a b", "sent"), ("a", "Sent"), ("a", "")):
-        with pytest.raises(Invalid):
-            parse(status_body(wamid, state))
-    [first] = parse(status_body("wamid.HBgM=-_.x==", "delivered"))
-    [second] = parse(status_body("wamid.HBgM=-_.x==", "read"))
-    assert first.key == "wa:status:wamid.HBgM=-_.x==:delivered" and first.key != second.key
-    message = webhooks.text_message("Hola", wamid="a:b")
-    with pytest.raises(Invalid):
-        parse(webhooks.encode(webhooks.envelope(webhooks.value(messages=[message]))))
-
-
-@pytest.mark.parametrize("text", ["", "x" * 8193, None, 5])
-def test_a_text_that_is_empty_too_long_or_not_a_string_is_invalid(text: Any) -> None:
-    message = webhooks.text_message("Hola") | {"text": {"body": text}}
-    with pytest.raises(Invalid) as caught:
-        parse(webhooks.encode(webhooks.envelope(webhooks.value(messages=[message]))))
-    assert caught.value.reason == "text"
+def test_an_id_whose_encoded_key_would_not_fit_is_discarded_and_the_limit_is_exact() -> None:
+    """200 caracteres no ASCII ocupan 1200 codificados: más que la columna de la clave."""
+    fits = parse(delivery_of(messages_change(message(wamid="ñ" * 50))))
+    assert [len(i.key) for i in fits.items] == [len("wa:msg:") + 300] and fits.rejected == []
+    long = parse(delivery_of(messages_change(message(wamid="ñ" * 200), message(wamid="wamid.OK"))))
+    assert [i.key for i in long.items] == ["wa:msg:wamid.OK"] and long.rejected == ["id"]
