@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
+from django.db.models import F
 from django.utils import timezone
 
 from apps.access.selectors import (
@@ -33,6 +34,7 @@ from apps.access.selectors import (
     can,
     execution_context,
     has_permission,
+    member_holds,
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
@@ -43,12 +45,14 @@ from apps.conversations.models import (
     AttentionMode,
     ChannelAccount,
     Conversation,
+    ConversationAssignment,
     Delivery,
     Message,
     Platform,
     Status,
 )
 from apps.conversations.policy import ChannelUnavailable, ConversationClosed, check_send
+from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
@@ -63,6 +67,11 @@ STAMPS = {"SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at", "FA
 EXTERNAL_MAX = 200
 NAME_MAX = 100
 EDITABLE = ("name", "display_identifier")  # la plataforma y el id externo no cambian
+
+
+class AssignmentConflict(Exception):
+    """Otra persona cambió la asignación (la versión ya no es la que leyó quien la pide) o la
+    conversación ya tiene responsable (tomar) o ya no lo tiene (soltar)."""
 
 
 class BadReference(ValueError):
@@ -518,6 +527,125 @@ def fail_queued(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message
         if not queued.filter(pk=message_id, delivery_status="QUEUED").exists():
             return None
         return advance_delivery(ctx, message_id=message_id, status=Delivery.FAILED, reason=reason)
+
+
+def _assign(
+    ctx: TenantContext, alias: str, convo: Conversation, user_id: UUID | None, reason: str,
+    expected: int | None, *, only_free: bool = False,
+) -> Conversation:  # fmt: skip
+    """Cambia el responsable de la conversación (ya bloqueada): el único punto que escribe la
+    asignación (ADR-007). El `UPDATE` es condicional a la versión que se leyó (y, al tomar, a que
+    siga sin responsable), así que dos a la vez no pisan: una gana, la otra `AssignmentConflict`.
+    Deja la fila inmutable de `conversation_assignments`, la auditoría y el evento, solo con ids.
+    Soltar una `OPEN` la devuelve a la cola (`PENDING`, D-INB-1)."""
+    if convo.status == Status.CLOSED:
+        raise ConversationClosed
+    if (expected is not None and expected != convo.assignment_version) or (
+        only_free and convo.assigned_user_id is not None
+    ):
+        raise AssignmentConflict
+    old, now = convo.assigned_user_id, timezone.now()
+    status = Status.PENDING if user_id is None and convo.status == Status.OPEN else convo.status
+    same = Conversation.objects.using(alias).filter(
+        pk=convo.pk, assignment_version=convo.assignment_version
+    )
+    moved = (same.filter(assigned_user_id__isnull=True) if only_free else same).update(
+        assigned_user_id=user_id, assigned_at=None if user_id is None else now, status=status,
+        assignment_version=F("assignment_version") + 1, version=F("version") + 1, updated_at=now,
+    )  # fmt: skip
+    if not moved:
+        raise AssignmentConflict
+    ConversationAssignment.objects.using(alias).create(
+        conversation_id=convo.pk, previous_team_id=convo.assigned_team_id, previous_user_id=old,
+        new_team_id=convo.assigned_team_id, new_user_id=user_id, reason_code=reason,
+        assigned_by_user_id=ctx.user_id,
+    )  # fmt: skip
+    changes = {"assigned_user_id": [str(old) if old else None, str(user_id) if user_id else None]}
+    if status != convo.status:
+        changes["status"] = [convo.status, status]
+    record(ctx, "conversation.assigned", Entity("conversation", convo.pk, convo.number), changes,
+           {"reason": reason})  # fmt: skip
+    ids = {"previous_user_id": old, "user_id": user_id}
+    emit(
+        ctx, "conversation.assigned", aggregate_type="conversation", aggregate_id=convo.pk,
+        payload={key: str(value) if value else None for key, value in ids.items()},
+    )  # fmt: skip
+    convo.refresh_from_db(using=alias)
+    return convo
+
+
+def _assigner(
+    ctx: TenantContext, alias: str, conversation_id: UUID, *, recheck: bool = True
+) -> Conversation:
+    """El actor tiene `conversations.assign` y ve la conversación (`conversations.view` y su
+    alcance); si no la ve, el mismo `DoesNotExist` que una desconocida. La devuelve bloqueada.
+    Se mira antes de bloquear (lo que la persona veía) y, con `recheck`, otra vez con la fila
+    bloqueada: transferir o soltar lo que otra persona acaba de llevarse de su alcance sería
+    saltarse el alcance. Al tomar no hace falta: si alguien se la llevó, el conflicto lo dice (y
+    quien nunca la vio ya recibió el 404 de antes)."""
+    conversation_id = _uuid(conversation_id, "conversación")
+    ectx = _allowed(ctx, "conversations.assign")
+    seen = Conversation.objects.using(alias).filter(pk=conversation_id).first()
+    if seen is None:
+        raise Conversation.DoesNotExist("Conversation matching query does not exist.")
+    _in_scope(ectx, "conversations.view", seen)
+    convo = _locked(alias, conversation_id)
+    if recheck:
+        _in_scope(ectx, "conversations.view", convo)
+    return convo
+
+
+def _version(value: Any) -> int | None:
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+        raise ValueError("versión: un entero desde 1")
+    return value
+
+
+def take_conversation(
+    ctx: TenantContext, *, conversation_id: UUID, expected_version: int | None = None
+) -> Conversation:
+    """El actor toma una conversación que nadie tiene (`TAKE`). `AssignmentConflict` si otra
+    persona la tomó antes o cambió la versión; `ConversationClosed`; `DoesNotExist`;
+    `AccessDenied` sin `conversations.assign`."""
+    alias, expected = require_scope(ctx), _version(expected_version)
+    with transaction.atomic(using=alias):
+        convo = _assigner(ctx, alias, conversation_id, recheck=False)
+        assert ctx.user_id is not None  # noqa: S101 — `_allowed` ya exigió un miembro
+        return _assign(ctx, alias, convo, ctx.user_id, "TAKE", expected, only_free=True)
+
+
+def transfer_conversation(
+    ctx: TenantContext, *, conversation_id: UUID, user_id: UUID, expected_version: int | None = None
+) -> Conversation:
+    """Pasa la conversación a otra persona (`TRANSFER`; `MANUAL` si no tenía responsable). Quien
+    recibe es miembro activo con `conversations.view`: si no, `BadReference("user_id")`, con el
+    mismo error para todo caso (no se revela quién existe). Ya la tiene: `AssignmentConflict`."""
+    alias, expected = require_scope(ctx), _version(expected_version)
+    target = _uuid(user_id, "persona")
+    with transaction.atomic(using=alias):
+        convo = _assigner(ctx, alias, conversation_id)
+        if not (
+            lock_active_member(target)
+            and member_holds(execution_context(ctx), target, "conversations.view")
+        ):
+            raise BadReference("user_id")
+        if convo.assigned_user_id == target:
+            raise AssignmentConflict
+        reason = "TRANSFER" if convo.assigned_user_id else "MANUAL"
+        return _assign(ctx, alias, convo, target, reason, expected)
+
+
+def release_conversation(
+    ctx: TenantContext, *, conversation_id: UUID, expected_version: int | None = None
+) -> Conversation:
+    """Deja la conversación sin responsable (`MANUAL`); el equipo, si lo hay, la conserva.
+    `AssignmentConflict` si ya no tiene responsable."""
+    alias, expected = require_scope(ctx), _version(expected_version)
+    with transaction.atomic(using=alias):
+        convo = _assigner(ctx, alias, conversation_id)
+        if convo.assigned_user_id is None:
+            raise AssignmentConflict
+        return _assign(ctx, alias, convo, None, "MANUAL", expected)
 
 
 def _blocked(convo: Conversation, account: ChannelAccount) -> str | None:

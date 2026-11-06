@@ -121,6 +121,19 @@ def has_permission(ectx: ExecutionContext, code: str) -> bool:
     return bool(ectx.permissions.get(code))
 
 
+def member_holds(ectx: ExecutionContext, user_id: UUID, code: str) -> bool:
+    """¿Tiene ese miembro (por sus roles) el permiso, con cualquier alcance? Para validar a quien va
+    a recibir algo (una conversación): no dice qué filas alcanza."""
+    bound(ectx)
+    permission = definition(code)
+    grants = RolePermission.objects.using(require_scope(ectx.tenant)).filter(
+        permission_id=code,
+        role__assignments__membership__user_id=user_id,
+        scope__isnull=not permission.supports_scope,
+    )
+    return grants.exists()
+
+
 def can(ectx: ExecutionContext, code: str, obj: Model | None = None) -> bool:
     """Niveles 1 y 2: permiso y, si lo admite, alcance sobre `obj`."""
     bound(ectx)

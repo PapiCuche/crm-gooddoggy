@@ -2254,6 +2254,75 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/assign/:
+    post:
+      operationId: conversation_assign
+      description: 'Toma, transfiere o suelta la conversación (`conversations.assign`
+        y `conversations.view` sobre ella). `TAKE`: solo si nadie la tiene. `TRANSFER`
+        a `user_id`, un miembro activo con `conversations.view` (400 si no, con el
+        mismo error para cualquiera). `RELEASE`: la deja sin responsable (una `OPEN`
+        vuelve a la cola, `PENDING`). 409 `ASSIGNMENT_CONFLICT`: otra persona la cambió
+        o la tomó antes, o la versión no es la actual; `CONVERSATION_CLOSED`. 404:
+        no existe o fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assignment'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/messages/:
     get:
       operationId: conversation_messages_list
@@ -7459,6 +7528,82 @@ components:
       - default_probability
       - name
       - stage_type
+    AssignActionEnum:
+      enum:
+      - TAKE
+      - TRANSFER
+      - RELEASE
+      type: string
+      description: |-
+        * `TAKE` - TAKE
+        * `TRANSFER` - TRANSFER
+        * `RELEASE` - RELEASE
+    AssignRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        action:
+          allOf:
+          - $ref: '#/components/schemas/AssignActionEnum'
+          description: |-
+            `TAKE`: la toma quien llama. `TRANSFER`: pasa a `user_id`. `RELEASE`: sin responsable.
+
+            * `TAKE` - TAKE
+            * `TRANSFER` - TRANSFER
+            * `RELEASE` - RELEASE
+        user_id:
+          type: string
+          format: uuid
+          description: 'Solo con `TRANSFER`: la persona que la recibe.'
+        assignment_version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si cambió, 409. Sin ella no se comprueba.
+      required:
+      - action
+    Assignment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        status:
+          $ref: '#/components/schemas/ConversationStatusEnum'
+        assignee_kind:
+          type: string
+          description: '`USER`, `TEAM` o `UNASSIGNED`.'
+        assigned_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        assigned_team_id:
+          type: string
+          format: uuid
+          nullable: true
+        assigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        assignment_version:
+          type: integer
+          description: La que se manda para no pisar a otra.
+        version:
+          type: integer
+      required:
+      - assigned_at
+      - assigned_team_id
+      - assigned_user_id
+      - assignee_kind
+      - assignment_version
+      - id
+      - number
+      - status
+      - version
     AssignmentStrategyEnum:
       enum:
       - MANUAL
