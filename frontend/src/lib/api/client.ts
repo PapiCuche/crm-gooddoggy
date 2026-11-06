@@ -3236,7 +3236,7 @@ export const getChannelsWhatsappConnectUrl = (orgSlug: string) => {
 };
 
 /**
- * Registra un número de WhatsApp (`channels.manage`): comprueba con Meta que el token abre ese número en ese WABA y guarda la cuenta `PENDING` con el token cifrado; pasa a `CONNECTED` con el primer evento firmado. 400 en `phone_number_id`: el número no se puede registrar (mal formado o ya registrado: el mismo error) y `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`. Pide MFA reciente (`STEP_UP_REQUIRED`, D-F7-11) y tiene un tope de peticiones (429 `RATE_LIMITED`, con `Retry-After`).
+ * Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`.
  */
 export const channelsWhatsappConnect = async (
   orgSlug: string,

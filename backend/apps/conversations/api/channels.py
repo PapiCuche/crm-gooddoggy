@@ -1,4 +1,4 @@
-"""Conectar, rotar el token y desconectar una cuenta de WhatsApp (F7-02b, ADR-029 §2).
+"""Conectar, rotar el token y desconectar una cuenta de WhatsApp (F7-02d, ADR-029 §2).
 
 `channels.manage`, comprobado antes de leer el cuerpo; el cuerpo, antes del 404. Una cuenta que no
 existe, es de otra organización, es Sandbox o ya está desconectada da el mismo 404. Ninguna
@@ -59,15 +59,9 @@ def shown(account: ChannelAccount, credential: Credential) -> dict[str, Any]:
         "messaging_limit_tier", "last_healthcheck_at", "version", "created_at",
     )  # fmt: skip
     data: dict[str, Any] = {key: getattr(account, key) for key in keep}
-    data["phone_number_id"], data["waba_id"] = (
-        account.external_account_id,
-        account.external_parent_id,
-    )
-    data["token_last_four"] = credential.last_four
-    data["token_rotated_at"], data["token_expires_at"] = (
-        credential.rotated_at,
-        credential.expires_at,
-    )
+    data |= {"phone_number_id": account.external_account_id, "waba_id": account.external_parent_id}
+    data |= {"token_last_four": credential.last_four, "token_rotated_at": credential.rotated_at}
+    data["token_expires_at"] = credential.expires_at
     return WhatsAppAccountSerializer(data).data  # type: ignore[no-any-return]
 
 
@@ -92,14 +86,12 @@ def channel_errors() -> Iterator[None]:
         operation_id="channels_whatsapp_connect",
         tags=["conversations"],
         request=inputs.ConnectSerializer,
-        responses={201: WhatsAppAccountSerializer, **errors(400, 401, 403, 409, 429, 503)},
-        description="Registra un número de WhatsApp (`channels.manage`): comprueba con Meta que el "
-        "token abre ese número en ese WABA y guarda la cuenta `PENDING` con el token cifrado; "
-        "pasa a `CONNECTED` con el primer evento firmado. 400 en `phone_number_id`: el número "
-        "no se puede registrar (mal formado o ya registrado: el mismo error) y "
-        "`CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 "
-        "`CHANNEL_PROVIDER_UNAVAILABLE`. Pide MFA reciente (`STEP_UP_REQUIRED`, D-F7-11) y tiene "
-        "un tope de peticiones (429 `RATE_LIMITED`, con `Retry-After`).",
+        responses={201: WhatsAppAccountSerializer, **errors(400, 401, 403, 409, 503)},
+        description="Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba "
+        "con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en "
+        "`phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); "
+        "`CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; "
+        "503 `CHANNEL_PROVIDER_UNAVAILABLE`.",
     ),
 )
 class ConnectView(APIView):
@@ -119,7 +111,7 @@ class ConnectView(APIView):
         operation_id="channels_whatsapp_rotate_token",
         tags=["conversations"],
         request=inputs.TokenSerializer,
-        responses={200: WhatsAppAccountSerializer, **errors(400, 401, 403, 404, 409, 429, 503)},
+        responses={200: WhatsAppAccountSerializer, **errors(400, 401, 403, 404, 409, 503)},
         description="Cambia el token de la cuenta (`channels.manage`): se comprueba con Meta "
         "contra el mismo número y WABA, sustituye al anterior (que se invalida y pierde su "
         "cifrado). 404: no existe, es de otra organización o ya está desconectada.",
@@ -144,7 +136,7 @@ class RotateTokenView(APIView):
     delete=extend_schema(
         operation_id="channels_whatsapp_disconnect",
         tags=["conversations"],
-        responses={204: None, **errors(401, 403, 404, 429)},
+        responses={204: None, **errors(401, 403, 404)},
         description="Desconecta la cuenta (`channels.manage`): queda borrada, su token se "
         "invalida y su número se libera. Para volver a usarla se conecta otra cuenta.",
     ),
