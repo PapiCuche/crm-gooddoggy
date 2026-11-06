@@ -242,6 +242,8 @@ def _receive(request: HttpRequest) -> HttpResponse:
         state = getattr(error.__cause__, "sqlstate", None)  # solo el código, nunca el mensaje
         logger.error("meta.webhook.store_failed", items=len(parsed.items), sqlstate=state)
         return HttpResponse(status=503)
+    if new:
+        ingress.wake()
     logger.info("meta.webhook.received", items=len(parsed.items), new=new)
     return HttpResponse(status=200)
 
