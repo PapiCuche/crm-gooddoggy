@@ -53,9 +53,15 @@ def phone_number(token: str, waba_id: str, phone_number_id: str) -> dict[str, An
         raise GraphUnavailable
     try:
         rows = json.loads(raw)["data"]
-        found = next(r for r in rows if r["id"] == phone_number_id)
-    except ValueError, KeyError, TypeError, StopIteration:
-        raise GraphRejected from None
+        if not isinstance(rows, list):
+            raise TypeError
+    except ValueError, KeyError, TypeError, RecursionError:
+        raise GraphUnavailable from None  # una respuesta que no es de Meta no dice nada del token
+    # Solo la primera página (`limit=100`): un número que no está en ella se rechaza (cerrado).
+    same = (r for r in rows if isinstance(r, dict) and r.get("id") == phone_number_id)
+    found = next(same, None)
+    if found is None:
+        raise GraphRejected
     shown = found.get("display_phone_number")
     quality, tier = found.get("quality_rating"), found.get("messaging_limit_tier")
     return {

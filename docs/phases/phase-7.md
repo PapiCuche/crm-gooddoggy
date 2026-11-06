@@ -114,6 +114,14 @@ Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → 
   6. **`INSERT` de tabla:** `crm_app` conserva el `INSERT` de tabla en `credentials` y `channel_accounts`; pasar a `GRANT INSERT` por columnas al madurar el modelo.
   7. **Hacia atrás, `0006`** devuelve el `UPDATE` de tabla de `channel_accounts`, y las cuentas con credencial pierden la credencial (las `CONNECTED` o `DEGRADED` pasan a `ERROR` con `TOKEN_INVALID`; se arreglan rotando el token). La nota de ADR-029 de que `PENDING` admite cambiar el número deja de valer para el rol de la aplicación: solo lo hace el dueño de la tabla.
   8. **Limitar la tasa** de las rutas: se cierra en F7-02d (middleware por persona).
+- **FIX LATER (revisión independiente de F7-02c):**
+  1. **Paginación:** un WABA con más de 100 números y el buscado en la segunda página recibe «rechazado» (falla cerrado, pero culpa al token): paginar con `paging.next` o dar un error específico.
+  2. **`core.http`** lee la respuesta entera antes de que `graph.py` mire `BODY_MAX`: lectura acotada con `preload_content=False`.
+  3. **`Retry(total=2)`** de `core.http` puede triplicar la espera dentro de la petición; el límite de tasa de F7-02d lo acota.
+  4. **Contadores** de «Meta no disponible» y «rechazado», sin datos sensibles, para el panel de F7-11.
+  5. **`GraphRejected`** agrupa también un 400 de petición mal formada: distinguir «token vencido» de lo demás para la pantalla de F7-07.
+  6. **Tras F7-02d:** comprobar el 400 idéntico byte a byte del número y la respuesta sin token.
+  Cerrado en F7-02c por esta revisión: una respuesta que no es de Meta (200 con JSON malformado, vacío, bytes inválidos, `data` nulo o no lista, lista raíz o 200000 corchetes) es «no disponible» y nunca «rechazado»; el formato del token se prueba en conectar y rotar, el tope de 1 MiB, el destino bloqueado y una rotación que falla después de invalidar (la credencial vieja queda intacta).
 - **Tamaño estimado:** 600–780 líneas.
 
 ### F7-03 · Webhook: verificación, firma, ingesta y enrutado del tenant

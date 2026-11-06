@@ -288,3 +288,95 @@ def test_an_integrity_error_that_is_not_the_number_index_is_not_the_number_error
         connect(crm)
     for table in ("credentials", "channel_accounts WHERE platform = 'WHATSAPP'"):
         assert migrator.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)  # noqa: S608
+
+
+def answer(monkeypatch: pytest.MonkeyPatch, body: bytes, status: int = 200) -> None:
+    """Lo que `core.http` devolvería: una respuesta de Meta con ese estado y ese cuerpo."""
+    import io
+
+    import urllib3
+
+    def reply(*args: Any, **kwargs: Any) -> Any:
+        return urllib3.HTTPResponse(body=io.BytesIO(body), status=status, preload_content=True)
+
+    monkeypatch.setattr(http, "request", reply)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"no es json",
+        b"",
+        b"\xff\xfe",
+        b'{"data": null}',
+        b'{"data": {"a": 1}}',
+        b"[]",
+        b"[" * 100_000,
+    ],
+)
+def test_a_reply_that_is_not_what_meta_sends_is_unavailable_never_a_rejected_token(
+    meta: FakeGraph, monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    answer(monkeypatch, body)
+    with pytest.raises(graph.GraphUnavailable) as caught:
+        graph.phone_number(TEST_TOKEN, WABA_ID, PHONE_NUMBER_ID)
+    assert caught.value.__cause__ is None and TEST_TOKEN not in repr(caught.value)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b'{"data": []}', b'{"data": [{"id": "100000000000009"}]}', b'{"data": [1, "x", null]}'],
+)
+def test_a_number_missing_from_the_reply_is_rejected(
+    meta: FakeGraph, monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    answer(monkeypatch, body)
+    with pytest.raises(graph.GraphRejected):
+        graph.phone_number(TEST_TOKEN, WABA_ID, PHONE_NUMBER_ID)
+
+
+def test_an_oversized_reply_and_a_blocked_destination_are_unavailable(
+    crm: SimpleNamespace, meta: FakeGraph, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    answer(monkeypatch, b'{"data": []}' + b" " * graph.BODY_MAX)
+    with pytest.raises(graph.GraphUnavailable):
+        graph.phone_number(TEST_TOKEN, WABA_ID, PHONE_NUMBER_ID)
+    monkeypatch.undo()
+    settings.META_ENABLED, settings.HTTP_ALLOWED_HOSTS = True, []  # nada permitido
+    with pytest.raises(graph.GraphUnavailable):
+        graph.phone_number(TEST_TOKEN, WABA_ID, PHONE_NUMBER_ID)
+
+
+@pytest.mark.parametrize("token", ["corto", "con espacios " * 3, "a" * 20 + "\r\nX: y", "a" * 513])
+def test_a_token_that_is_not_shaped_like_one_is_refused_before_meta(
+    crm: SimpleNamespace, meta: FakeGraph, token: str
+) -> None:
+    with pytest.raises(ValueError, match="token") as caught:
+        connect(crm, access_token=token)
+    assert token not in str(caught.value)
+    account, _ = connect(crm)
+    meta.requests.clear()
+    with pytest.raises(ValueError, match="token"):
+        run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
+            access_token=token)  # fmt: skip
+    assert meta.requests == []
+
+
+def test_a_rotation_that_fails_after_meta_accepted_leaves_the_old_token_intact(
+    crm: SimpleNamespace, meta: FakeGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account, old = connect(crm)
+    meta.token = NEW_TOKEN
+
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("la base falló")
+
+    monkeypatch.setattr(credentials, "store", boom)  # después de invalidar la anterior
+    with pytest.raises(RuntimeError):
+        run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
+            access_token=NEW_TOKEN)  # fmt: skip
+    kept = reload(crm.a, Credential, old.pk)
+    assert kept.revoked_at is None and kept.ciphertext is not None
+    assert reload(crm.a, ChannelAccount, account.pk).credential_id == old.pk
+    meta.token = TEST_TOKEN
+    assert credentials.open_token(kept) == TEST_TOKEN
