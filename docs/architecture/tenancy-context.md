@@ -162,6 +162,8 @@ Worker:
 - El resolver es una función `SECURITY DEFINER` que cumple los requisitos de ADR-002 §3.3 (propietario explícito, `search_path` fijo, inputs tipados, retorno mínimo, sin SQL dinámico, `REVOKE ALL … FROM PUBLIC` + `GRANT EXECUTE … TO crm_app`).
 - `webhook_ingress` es platform-owned (sin RLS de tenant) y solo la usa el módulo `integrations`; su `organization_id` se rellena tras enrutar y es informativo. Los datos de negocio resultantes (contactos, mensajes, estados) se escriben en tablas tenant-owned dentro del `tenant_scope`.
 
+> **Propuesta pendiente de la decisión del propietario (ADR-029 §3, Proposed):** reconciliar este texto con `04` §Q.3 («la tabla tiene RLS y acceso restringido»): la tabla es de plataforma, con RLS activada **sin ninguna política** y sin privilegios directos para `crm_app`, y la aplicación entra solo por funciones `SECURITY DEFINER` mínimas (insertar, reclamar, marcar, listar metadatos), con el payload vaciado al procesarse. Hasta que se acepte, el texto de arriba sigue siendo el vigente.
+
 ## 6. Tools de IA
 
 - El runtime del agente es una `@tenant_task` (`ai.process_conversation(organization_id, conversation_id)`): **el tenant ya está fijado antes de que el LLM intervenga.**
