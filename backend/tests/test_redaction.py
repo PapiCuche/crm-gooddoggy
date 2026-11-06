@@ -139,3 +139,19 @@ def test_mask_emails_hides_every_address_and_nothing_else() -> None:
     text = "alta pedida por ana@acme.pe (ticket 42), copia a O'Brien%40gooddoggy.pe y a nadie más"
     assert mask_emails(text) == "alta pedida por [EMAIL] (ticket 42), copia a [EMAIL] y a nadie más"
     assert mask_emails("sin direcciones: 3 @ 4, a las 10") == "sin direcciones: 3 @ 4, a las 10"
+
+
+def test_the_meta_channel_secrets_are_redacted_by_key_and_by_shape() -> None:
+    signature = "sha256=" + "ab12" * 16
+    data = redact({
+        "access_token": "x", "app_secret": "x", "verify_token": "x", "hub.verify_token": "x",
+        "X-Hub-Signature-256": signature, "phone_number_id": "100000000000002",
+        "waba_id": "100000000000001",
+    })  # fmt: skip
+    assert [
+        data[k] for k in ("access_token", "app_secret", "verify_token", "hub.verify_token")
+    ] == ["[REDACTED]"] * 4
+    assert data["X-Hub-Signature-256"] == "[REDACTED]"
+    assert redact({"x-hub-signature-256": "opaco"})["x-hub-signature-256"] == REDACTED  # por clave
+    assert data["phone_number_id"] == "100000000000002" and data["waba_id"] == "100000000000001"
+    assert signature not in redact_text(f"cabecera X-Hub-Signature-256: {signature} recibida")

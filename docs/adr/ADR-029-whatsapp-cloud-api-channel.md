@@ -58,7 +58,7 @@ Una `channel_account` con `platform = WHATSAPP` representa **un número** (`phon
 | `status_detail` (nuevo)                                                  | Un **código corto** de un conjunto cerrado (`TOKEN_INVALID`, `WEBHOOK_NOT_SEEN`, `QUALITY_LOW`…); nunca el texto de un error de Meta |
 | `quality_rating`, `messaging_limit_tier`, `last_healthcheck_at` (nuevos) | Datos de salud que Meta informa (§12)                                                                                                |
 
-`platform`, `external_account_id` y `external_parent_id` son **inmutables** una vez la cuenta salió de `PENDING` (el webhook enruta con ellos). Cambiar de número es crear otra cuenta.
+`platform`, `external_account_id` y `external_parent_id` son **inmutables** una vez la cuenta salió de `PENDING` (el webhook enruta con ellos). Cambiar de número es crear otra cuenta. La unicidad global del número es el índice único de F6-01: su violación dice en la base que el número ya existe en alguna organización, así que el comando de conectar la convierte en el mismo error genérico que un número mal formado, sin nombrar el índice ni la otra organización. Con el canal apagado (`META_ENABLED`, apagado por omisión) la aplicación no exige ningún ajuste de Meta; encendido, `production` y `local` validan al arrancar (el job de migraciones, no).
 
 **Qué secretos hay y dónde viven**
 

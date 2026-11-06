@@ -274,7 +274,7 @@ def test_a_channel_account_is_unique_among_the_live_ones_of_the_whole_platform(
             platform="SANDBOX", name="Copia", external_account_id=taken
         ).pk  # borrada, se puede volver a registrar
     refused(world.a, "channel_accounts_platform_ck", lambda: ChannelAccount.objects.create(
-        platform="TELEGRAM", name="x", external_account_id="x"
+        platform="TELEGRAM", name="x", external_account_id="x", status="PENDING"
     ))  # fmt: skip
     refused(world.a, "channel_accounts_text_ck", lambda: ChannelAccount.objects.create(
         platform="SANDBOX", name=" ", external_account_id="x"

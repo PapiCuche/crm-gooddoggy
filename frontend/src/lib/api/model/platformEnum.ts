@@ -8,9 +8,11 @@
 
 /**
  * * `SANDBOX` - Sandbox
+ * * `WHATSAPP` - Whatsapp
  */
 export type PlatformEnum = (typeof PlatformEnum)[keyof typeof PlatformEnum];
 
 export const PlatformEnum = {
   SANDBOX: "SANDBOX",
+  WHATSAPP: "WHATSAPP",
 } as const;

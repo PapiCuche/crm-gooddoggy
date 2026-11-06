@@ -17,7 +17,9 @@ _SECRET_SEGMENTS = frozenset(
      "credentials", "dsn", "kek", "csrf", "csrftoken", "csrfmiddlewaretoken", "xcsrftoken",
      "sessionkey", "sessiontoken"}
 )  # fmt: skip
-_SECRET_FRAGMENTS = ("api_key", "private_key", "access_key", "session_key", "crm_session")
+_SECRET_FRAGMENTS = (
+    "api_key", "private_key", "access_key", "session_key", "crm_session", "hub_signature",
+)  # fmt: skip
 # Toda clave `*session_id` se trata como credencial, aunque termine en `_id`: para correlacionar
 # hay que usar otro nombre (p. ej., `conversation_id`).
 _SESSION_IDS = ("session_id", "session_ids")
@@ -28,6 +30,7 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # OpenAI (sk-, sk-proj-, sk-svcacct-, sk-admin-) y Anthropic (sk-ant-…).
     (re.compile(r"(?<![A-Za-z0-9])sk-(?:ant-|proj-|svcacct-|admin-)?[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(r"(?<![A-Za-z0-9])EAA[A-Za-z0-9]{20,}"), REDACTED),  # tokens de Meta
+    (re.compile(r"(?i)\bsha256=[0-9a-f]{64}\b"), REDACTED),  # firma X-Hub-Signature-256 de Meta
     (
         re.compile(
             r"(?i)(\bbearer|authorization[\"']?\s*[:=]\s*[\"']?basic)\s+[A-Za-z0-9._~+/=-]{8,}"

@@ -18,6 +18,10 @@ from config.settings.base import (
     EMAIL_USE_SSL,
     EMAIL_USE_TLS,
     MAIL_BACKEND,
+    META_APP_SECRETS,
+    META_ENABLED,
+    META_GRAPH_VERSION,
+    META_WEBHOOK_VERIFY_TOKEN,
     SECRET_KEY,
     SECRETS_KEKS,
     TEST_ACCOUNTS_ORGANIZATION,
@@ -73,6 +77,10 @@ if MAIL_BACKEND != "smtp":
 # no se arranca. Aquí nunca se deriva una de desarrollo.
 if not SECRETS_KEKS:
     raise ImproperlyConfigured("SECRETS_KEKS es obligatorio en production (ADR-022 §6)")
+# ADR-029: con el canal de WhatsApp encendido, sus ajustes son obligatorios y válidos. Apagado
+# (el valor por omisión) no se exige nada.
+if META_ENABLED:
+    env.check_meta(META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION)
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

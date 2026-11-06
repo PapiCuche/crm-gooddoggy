@@ -2,6 +2,8 @@ import base64
 import importlib
 import secrets
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -28,6 +30,9 @@ BASE_ENV: dict[str, str | None] = {
     "APP_ORIGIN": None,
     "DJANGO_TEST_ACCOUNTS_ORGANIZATION": None,
     "SECRETS_KEKS": "1:" + base64.urlsafe_b64encode(bytes(range(32))).decode(),  # ADR-022 §6
+    "META_ENABLED": None,
+    "META_APP_SECRETS": None,
+    "META_WEBHOOK_VERIFY_TOKEN": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
@@ -298,3 +303,87 @@ def test_migrate_settings_refuse_runtime_url_or_missing_migrator(
 ) -> None:
     with pytest.raises(ImproperlyConfigured):
         load_migrate(monkeypatch, **env)
+
+
+META_SECRET, META_NEXT = secrets.token_hex(16), secrets.token_hex(16)  # aleatorios por ejecución
+META_VERIFY = secrets.token_urlsafe(24)
+META_ENV: dict[str, str | None] = {
+    "META_ENABLED": "true",
+    "META_APP_SECRETS": f"{META_SECRET},{META_NEXT}",
+    "META_WEBHOOK_VERIFY_TOKEN": META_VERIFY,
+}
+
+
+def load_local(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> Any:
+    for key, value in {**BASE_ENV, **env}.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    for name in ("config.settings.local", "config.settings.base"):
+        sys.modules.pop(name, None)
+    return importlib.import_module("config.settings.local")
+
+
+@pytest.mark.parametrize("loader", [load_production, load_local])
+def test_the_whatsapp_channel_is_off_by_default_and_then_requires_nothing(
+    monkeypatch: pytest.MonkeyPatch, loader: Callable[..., Any]
+) -> None:
+    settings = loader(monkeypatch)
+    assert settings.META_ENABLED is False and settings.META_APP_SECRETS == []
+    assert "graph.facebook.com" not in settings.HTTP_ALLOWED_HOSTS
+    stray = loader(monkeypatch, META_APP_SECRETS="x", META_ENABLED="false")
+    assert stray.META_ENABLED is False  # un valor suelto con el canal apagado no se valida
+
+
+@pytest.mark.parametrize("loader", [load_production, load_local])
+def test_the_whatsapp_channel_on_loads_with_valid_settings_and_allows_the_graph_host(
+    monkeypatch: pytest.MonkeyPatch, loader: Callable[..., Any]
+) -> None:
+    settings = loader(
+        monkeypatch, **META_ENV, HTTP_ALLOWED_HOSTS="graph.facebook.com,api.example.com"
+    )
+    assert settings.META_APP_SECRETS == [META_SECRET, META_NEXT]
+    assert settings.META_GRAPH_VERSION == "v23.0"
+    assert settings.HTTP_ALLOWED_HOSTS.count("graph.facebook.com") == 1
+    added = loader(monkeypatch, **META_ENV, HTTP_ALLOWED_HOSTS="api.example.com")
+    assert added.HTTP_ALLOWED_HOSTS == ["api.example.com", "graph.facebook.com"]
+
+
+BAD_META: dict[str, dict[str, str | None]] = {
+    "no secrets": {"META_APP_SECRETS": None},
+    "short secret": {"META_APP_SECRETS": "corto"},
+    "symbols": {"META_APP_SECRETS": "a" * 15 + "-" + "b" * 16},
+    "duplicates": {"META_APP_SECRETS": f"{META_SECRET},{META_SECRET}"},
+    "four secrets": {"META_APP_SECRETS": ",".join(secrets.token_hex(16) for _ in range(4))},
+    "no verify token": {"META_WEBHOOK_VERIFY_TOKEN": None},
+    "short verify token": {"META_WEBHOOK_VERIFY_TOKEN": "corto"},
+    "verify token with spaces": {"META_WEBHOOK_VERIFY_TOKEN": "con espacios " * 3},
+    "verify token is a secret": {"META_WEBHOOK_VERIFY_TOKEN": META_SECRET},
+}
+
+
+@pytest.mark.parametrize("loader", [load_production, load_local])
+@pytest.mark.parametrize("name", sorted(BAD_META))
+def test_the_whatsapp_channel_on_refuses_to_start_with_bad_settings_and_names_no_value(
+    monkeypatch: pytest.MonkeyPatch, loader: Callable[..., Any], name: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured) as raised:
+        loader(monkeypatch, **META_ENV | BAD_META[name])
+    message = str(raised.value)
+    assert "META_" in message and META_SECRET not in message and META_VERIFY not in message
+
+
+def test_the_migrations_job_never_needs_the_whatsapp_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_migrate(
+        monkeypatch,
+        DATABASE_URL=None,
+        DATABASE_MIGRATOR_URL="postgres://crm_migrator:x@db:5432/crm",
+        DJANGO_SECRET_KEY=None,
+        META_ENABLED="true",
+        META_APP_SECRETS=None,
+        META_WEBHOOK_VERIFY_TOKEN=None,
+    )
+    assert settings.DATABASES["default"]["USER"] == "crm_migrator"  # type: ignore[attr-defined]
