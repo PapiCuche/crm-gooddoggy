@@ -98,6 +98,15 @@ Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → 
   3. **Formato del token** (`[A-Za-z0-9_.-]{20,512}`), de los ids de 5 a 30 dígitos y de los valores de calidad y nivel: a confirmar con Meta antes de F7-05.
   4. **Re-cifrado:** una organización con credenciales que no se abren sigue saliendo en el descubrimiento; con más de `max_orgs` (50) de ellas, las demás esperan hasta que se arregle la clave.
   5. **Llamada a Meta dentro del `tenant_scope`** de la petición (sin filas bloqueadas, con los tiempos de `core.http`); el adaptador de salida (F7-05) sí llama fuera de la transacción.
+- **FIX LATER (revisión independiente de F7-02b):**
+  1. **Huella (`fingerprint`):** hoy es un SHA-256 sin clave; ADR-022 §7 habla de un HMAC. Nada la usa todavía. Decidir en F7-02c: borrarla o pasarla a HMAC con una clave derivada. Anotado en ADR-029 §2.
+  2. **`credentials_stale_organizations`** da a un proceso `crm_app` comprometido la lista de organizaciones con una credencial viva (solo ids). Es el patrón aceptado de ADR-002 §3.3 (igual que `messages_queued_organizations`); queda documentado aquí y en la migración.
+  3. **Pruebas más débiles:** los `IntegrityError` ajenos al índice del número (F7-02c); el `skip_locked` del re-cifrado sin prueba de concurrencia; la validación de ids dentro de `graph.py` (F7-02c). Cerrado en F7-02b: el re-cifrado y el descubrimiento excluyen las credenciales invalidadas, con prueba.
+  4. **Mensajes de la base:** el `IntegrityError` de otro `CHECK` de `credentials` incluye «Failing row contains (...)», con el cifrado (nunca el token en claro) si llegara al reporte de errores. Riesgo bajo; el reporte de errores no envía variables locales.
+  5. **`open_token` vive en `credentials.py`** (no en `accounts`): F7-05 lo importa de allí, y el contrato de import-linter de «solo la API y las tareas» se ajusta con él.
+  6. **`INSERT` de tabla:** `crm_app` conserva el `INSERT` de tabla en `credentials` y `channel_accounts`; pasar a `GRANT INSERT` por columnas al madurar el modelo.
+  7. **Hacia atrás, `0006`** devuelve el `UPDATE` de tabla de `channel_accounts`, y las cuentas con credencial pierden la credencial (las `CONNECTED` o `DEGRADED` pasan a `ERROR` con `TOKEN_INVALID`; se arreglan rotando el token). La nota de ADR-029 de que `PENDING` admite cambiar el número deja de valer para el rol de la aplicación: solo lo hace el dueño de la tabla.
+  8. **Limitar la tasa** de las rutas de conectar y rotar (F7-02c o F7-03).
 - **Tamaño estimado:** 600–780 líneas.
 
 ### F7-03 · Webhook: verificación, firma, ingesta y enrutado del tenant

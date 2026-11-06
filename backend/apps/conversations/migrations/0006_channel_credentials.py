@@ -30,6 +30,18 @@ def _privileges(apps: Any, schema_editor: Any) -> None:
     run(f"GRANT UPDATE ({ACCOUNT_MUTABLE}) ON public.channel_accounts TO {role}")
 
 
+# Atrás: los tokens cifrados desaparecen con la tabla, así que ninguna cuenta puede seguir
+# apuntando a ellos (la FK impediría volver a aplicar 0006): pierden la credencial y las que
+# estaban conectadas pasan a `ERROR`/`TOKEN_INVALID` (se arreglan rotando el token).
+FORGET_CREDENTIALS = """
+UPDATE public.channel_accounts SET credential_id = NULL,
+    status = CASE WHEN status IN ('CONNECTED', 'DEGRADED') THEN 'ERROR' ELSE status END,
+    status_detail = CASE WHEN status IN ('CONNECTED', 'DEGRADED') THEN 'TOKEN_INVALID'
+                         ELSE status_detail END
+WHERE credential_id IS NOT NULL
+"""
+
+
 def _restore(apps: Any, schema_editor: Any) -> None:
     role = schema_editor.quote_name(settings.DB_APP_ROLE)
     schema_editor.execute(f"GRANT UPDATE ON public.channel_accounts TO {role}")
@@ -138,9 +150,11 @@ class Migration(migrations.Migration):
             "ALTER TABLE public.channel_accounts DROP CONSTRAINT IF EXISTS "
             "channel_accounts_credential_fk",
         ),
+        migrations.RunSQL(migrations.RunSQL.noop, FORGET_CREDENTIALS),  # solo al volver atrás
         migrations.RunPython(_privileges, _restore),
         # Descubrimiento cross-tenant mínimo para volver a cifrar tras rotar la clave (ADR-022 §5,
         # ADR-002 §3.3): solo ids de organización con una credencial viva cifrada con otra clave.
+        # Enumera organizaciones para un proceso `crm_app` comprometido: aceptado (solo ids).
         SecurityDefinerFunction(
             "credentials_stale_organizations",
             arguments="p_key_version integer, p_limit integer",

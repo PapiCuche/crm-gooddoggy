@@ -12,7 +12,7 @@ import psycopg
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
-from django.db import IntegrityError, ProgrammingError
+from django.db import IntegrityError, ProgrammingError, connection
 from django.utils import timezone
 
 from apps.conversations import credentials
@@ -25,7 +25,7 @@ from tests.test_conversations_tables import refused
 from tests.test_memberships import ctx
 from tests.test_pipelines_tables import as_migrator
 from tests.test_tenant_task_signature import broker
-from tests.test_whatsapp_account import credential
+from tests.test_whatsapp_account import credential, ready
 
 __all__ = ["broker", "crm", "real_stack"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -229,3 +229,44 @@ def test_the_migration_goes_back_and_forward(crm: SimpleNamespace, migrator: DB)
     assert migrator.execute(function).fetchone() == (1,) and mine is not None
     execute = "SELECT has_function_privilege('public', 'public.credentials_stale_organizations(integer, integer)', 'EXECUTE')"  # noqa: E501
     assert migrator.execute(execute).fetchone() == (False,)
+
+
+def test_going_back_with_connected_accounts_forgets_their_tokens_and_goes_forward_again(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    """Los tokens cifrados se van con la tabla: las cuentas pierden la credencial (las conectadas
+    pasan a `ERROR`) y la migración vuelve a aplicarse; si no, la FK impediría volver adelante."""
+    live = ready(crm.a)  # CONNECTED, con credencial
+    pending = ready(
+        crm.b, status="PENDING", last_healthcheck_at=None, external_account_id="100000000000004"
+    )  # no conectada
+    left = "SELECT status, status_detail, credential_id FROM channel_accounts WHERE id = %s"
+    assert migrator.execute(left, [live.pk]).fetchone()[2] is not None  # type: ignore[index]
+    with as_migrator():
+        call_command("migrate", "conversations", "0005", verbosity=0)
+    assert migrator.execute(left, [live.pk]).fetchone() == ("ERROR", "TOKEN_INVALID", None)
+    assert migrator.execute(left, [pending.pk]).fetchone() == ("PENDING", None, None)
+    with as_migrator():
+        call_command("migrate", "conversations", verbosity=0)
+    assert migrator.execute("SELECT to_regclass('public.credentials') IS NOT NULL").fetchone() == (
+        True,
+    )
+    assert migrator.execute(left, [live.pk]).fetchone() == ("ERROR", "TOKEN_INVALID", None)
+
+
+def test_the_discovery_function_lists_only_organizations_with_a_live_token_under_another_key(
+    crm: SimpleNamespace, settings: Any
+) -> None:
+    settings.SECRETS_KEKS = {1: OLD_KEY}
+    gone = store(crm.a, uuid4())
+    store(crm.b, uuid4())
+    with tenant_scope(ctx(crm.a, None)) as tenant:
+        credentials.revoke(tenant, gone.pk)  # la de A está invalidada, la de B viva
+
+    def stale(version: int) -> set[UUID]:
+        with connection.cursor() as cursor:  # como la tarea: sin tenant
+            cursor.execute("SELECT public.credentials_stale_organizations(%s, 10)", [version])
+            return {UUID(str(row[0])) for row in cursor.fetchall()}
+
+    assert stale(1) == set()  # ya están con la clave 1
+    assert stale(7) == {crm.b}  # la invalidada de A no cuenta
