@@ -353,3 +353,62 @@ def test_no_output_carries_the_secrets_the_token_the_signature_or_the_body(
     outputs = caplog.text + "".join(r.content.decode() + str(r.headers) for r in responses)
     for secret in (TEST_APP_SECRET, OLD_SECRET, VERIFY, signature, "Texto privado", "5190000000"):
         assert secret not in outputs, secret
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hola\nqué tal",
+        "a\tb",
+        "a\u00a0b",
+        "👨\u200d👩\u200d👧",
+        "a\u200fb",
+        "línea\r\n",
+        "x" * 4096,
+    ],
+)
+def test_the_text_a_customer_writes_is_never_a_reason_to_drop_the_batch(text: str) -> None:
+    """Saltos de línea, tabuladores, espacios duros y uniones de emoji son texto normal."""
+    body = webhooks.encode(
+        webhooks.envelope(webhooks.value(messages=[webhooks.text_message(text)]))
+    )
+    [item] = parse(body)
+    assert item.payload["text"]["body"] == text
+
+
+@pytest.mark.parametrize("body", [b'{"x": NaN}', b'{"x": Infinity}', b'{"x": -Infinity}'])
+def test_python_only_json_constants_are_not_json(body: bytes) -> None:
+    with pytest.raises(Invalid, match="json"):
+        parse(body)
+
+
+def test_a_content_length_that_is_not_ascii_digits_is_not_a_server_error() -> None:
+    request = HttpRequest()
+    request.method = "POST"
+    request.META["CONTENT_LENGTH"] = "²"
+    request._stream = io.BytesIO(b"{}")
+    assert webhook(request).status_code == 401
+
+
+def test_the_dedup_key_has_one_reading_ids_and_states_never_carry_the_separator() -> None:
+    def status_body(wamid: str, state: str) -> bytes:
+        found = webhooks.status(wamid, "delivered") | {"id": wamid, "status": state}
+        return webhooks.encode(webhooks.envelope(webhooks.value(statuses=[found])))
+
+    for wamid, state in (("a:b", "c"), ("a", "b:c"), ("a b", "sent"), ("a", "Sent"), ("a", "")):
+        with pytest.raises(Invalid):
+            parse(status_body(wamid, state))
+    [first] = parse(status_body("wamid.HBgM=-_.x==", "delivered"))
+    [second] = parse(status_body("wamid.HBgM=-_.x==", "read"))
+    assert first.key == "wa:status:wamid.HBgM=-_.x==:delivered" and first.key != second.key
+    message = webhooks.text_message("Hola", wamid="a:b")
+    with pytest.raises(Invalid):
+        parse(webhooks.encode(webhooks.envelope(webhooks.value(messages=[message]))))
+
+
+@pytest.mark.parametrize("text", ["", "x" * 8193, None, 5])
+def test_a_text_that_is_empty_too_long_or_not_a_string_is_invalid(text: Any) -> None:
+    message = webhooks.text_message("Hola") | {"text": {"body": text}}
+    with pytest.raises(Invalid) as caught:
+        parse(webhooks.encode(webhooks.envelope(webhooks.value(messages=[message]))))
+    assert caught.value.reason == "text"

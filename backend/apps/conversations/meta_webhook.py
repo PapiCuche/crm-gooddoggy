@@ -40,6 +40,9 @@ BODY_MAX = 1 << 20  # 1 MiB: a confirmar con el tamaño máximo documentado de u
 SIGNATURE = re.compile(r"sha256=([0-9a-fA-F]{64})")
 CHALLENGE = re.compile(r"[A-Za-z0-9]{1,128}")
 ID = re.compile(META_ID)
+# El id de un mensaje de Meta, sin `:` (el separador de la clave de deduplicación).
+WAMID = re.compile(r"[A-Za-z0-9._=-]{1,200}")
+STATE = re.compile(r"[a-z_]{1,32}")  # `sent`, `delivered`, `read`, `failed`…
 FIELD = re.compile(r"[a-z_]{1,64}")
 OBJECT = "whatsapp_business_account"
 MAX_ENTRIES, MAX_CHANGES, MAX_ROWS, MAX_ITEMS, MAX_DEPTH = 20, 20, 100, 500, 16
@@ -68,6 +71,14 @@ class Item:
 def _text(value: Any, limit: int = ID_MAX) -> str:
     if not isinstance(value, str) or not 1 <= len(value) <= limit or not value.isprintable():
         raise Invalid("text")
+    return value
+
+
+def _wamid(value: Any) -> str:
+    """El id de un mensaje, con el juego de caracteres de Meta: así la clave de deduplicación no
+    tiene dos lecturas (`a:b` + `c` frente a `a` + `b:c`)."""
+    if not isinstance(value, str) or not WAMID.fullmatch(value):
+        raise Invalid("id")
     return value
 
 
@@ -104,23 +115,32 @@ def _messages(waba: str, value: dict[str, Any]) -> list[Item]:
         kind = _text(message.get("type"), 32)
         if kind == "text":
             text = message.get("text")
-            if not isinstance(text, dict) or not isinstance(text.get("body"), str):
+            body = text.get("body") if isinstance(text, dict) else None
+            # El texto del cliente es de quien lo escribe: saltos de línea, tabuladores, espacios
+            # duros y uniones de emoji son normales. Aquí solo el tipo y el tamaño; limpiarlo es de
+            # F7-04. Rechazarlo descartaría el lote entero (200 sin procesar): mensajes perdidos.
+            if not isinstance(body, str) or not 1 <= len(body) <= TEXT_MAX:
                 raise Invalid("text")
-            _text(text["body"], TEXT_MAX)
-        items.append(Item("message", f"wa:msg:{_text(message.get('id'))}", waba, number, message))
+        items.append(Item("message", f"wa:msg:{_wamid(message.get('id'))}", waba, number, message))
     for status in _rows(value.get("statuses", []), "statuses"):
-        state = _text(status.get("status"), 32)
-        items.append(
-            Item("status", f"wa:status:{_text(status.get('id'))}:{state}", waba, number, status)
-        )
+        state = status.get("status")
+        if not isinstance(state, str) or not STATE.fullmatch(state):
+            raise Invalid("status")
+        key = f"wa:status:{_wamid(status.get('id'))}:{state}"  # ni el id ni el estado llevan `:`
+        items.append(Item("status", key, waba, number, status))
     return items
+
+
+def _no_constant(name: str) -> None:
+    """`NaN` e `Infinity` no son JSON: Python los acepta, y la base (`jsonb`) no los guarda."""
+    raise ValueError(name)
 
 
 def parse(body: bytes) -> list[Item]:
     """Valida el cuerpo (ya firmado) y lo divide en ítems. `Invalid` si no es lo que Meta envía:
     ni JSON, ni el objeto, ni las listas y los tamaños esperados. No guarda nada."""
     try:
-        event = json.loads(body)
+        event = json.loads(body, parse_constant=_no_constant)
     except ValueError, RecursionError:  # incluye UnicodeDecodeError; 100 000 corchetes
         raise Invalid("json") from None
     if not isinstance(event, dict) or event.get("object") != OBJECT or _deep(event):
@@ -178,7 +198,7 @@ def _subscribe(request: HttpRequest) -> HttpResponse:
 
 def _receive(request: HttpRequest) -> HttpResponse:
     length = request.META.get("CONTENT_LENGTH", "")
-    if length.isdigit() and int(length) > BODY_MAX:
+    if length.isascii() and length.isdigit() and int(length) > BODY_MAX:
         return HttpResponse(status=413)  # sin leer nada
     body = request.read(BODY_MAX + 1)
     if len(body) > BODY_MAX:
