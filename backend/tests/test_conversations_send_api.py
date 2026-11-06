@@ -169,7 +169,7 @@ def test_a_seller_sends_only_in_the_conversations_the_scope_reaches(
 
 
 @pytest.mark.parametrize("blocked", [{"status": "CLOSED"}, {"account": "DISCONNECTED"},
-                                     {"account": "ERROR"}, {"account": "PENDING"}])  # fmt: skip
+                                     {"account": "ERROR"}])  # fmt: skip
 def test_a_closed_conversation_or_an_unconnected_channel_blocks_the_send_with_a_clear_409(
     inbox: SimpleNamespace, migrator: DB, blocked: dict[str, str]
 ) -> None:

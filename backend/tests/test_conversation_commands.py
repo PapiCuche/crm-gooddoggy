@@ -296,7 +296,8 @@ def test_a_closed_conversation_takes_no_reply_but_replays_what_was_stored(
     assert outbound(world, convo, client) == (queued, False)  # el reenvío no falla
 
 
-@pytest.mark.parametrize("state", ["DISCONNECTED", "ERROR", "PENDING"])
+# `PENDING` ya no se alcanza desde una cuenta conectada: la base lo impide (F7-02a).
+@pytest.mark.parametrize("state", ["DISCONNECTED", "ERROR"])
 def test_an_unconnected_channel_takes_no_new_reply_but_replays_what_was_stored(
     world: SimpleNamespace, state: str
 ) -> None:

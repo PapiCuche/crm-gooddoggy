@@ -116,7 +116,6 @@ def test_a_message_that_is_not_queued_or_not_outbound_is_left_alone(
         ({"status": "CLOSED", "closed_at": timezone.now()}, "CONVERSATION_CLOSED"),
         ({"account": "DISCONNECTED"}, "CHANNEL_UNAVAILABLE"),
         ({"account": "ERROR"}, "CHANNEL_UNAVAILABLE"),
-        ({"account": "PENDING"}, "CHANNEL_UNAVAILABLE"),
         ({"deleted": True}, "CHANNEL_UNAVAILABLE"),
     ],
 )

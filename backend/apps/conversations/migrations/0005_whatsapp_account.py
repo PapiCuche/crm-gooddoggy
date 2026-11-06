@@ -7,7 +7,8 @@ CREATE FUNCTION public.channel_accounts_identity_fixed() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
     IF OLD.status <> 'PENDING' AND (
-        NEW.platform IS DISTINCT FROM OLD.platform
+        NEW.status = 'PENDING'  -- volver a PENDING reabriría la identidad
+        OR NEW.platform IS DISTINCT FROM OLD.platform
         OR NEW.external_account_id IS DISTINCT FROM OLD.external_account_id
         OR NEW.external_parent_id IS DISTINCT FROM OLD.external_parent_id
     ) THEN
@@ -18,7 +19,8 @@ BEGIN
 END
 $fn$;
 CREATE TRIGGER channel_accounts_identity_fixed
-    BEFORE UPDATE OF platform, external_account_id, external_parent_id ON public.channel_accounts
+    BEFORE UPDATE OF status, platform, external_account_id, external_parent_id
+    ON public.channel_accounts
     FOR EACH ROW EXECUTE FUNCTION public.channel_accounts_identity_fixed();
 """
 DROP_IDENTITY_FIXED = """
@@ -182,7 +184,7 @@ class Migration(migrations.Migration):
                 name="channel_accounts_tier_ck",
             ),
         ),
-        # La identidad de una cuenta (plataforma, número y WABA) no cambia fuera de PENDING: el
-        # webhook enruta con ella (ADR-029 §2). Mismo patrón que `messages_delivery_advance`.
+        # La identidad de una cuenta (plataforma, número y WABA) no cambia fuera de PENDING, y nada
+        # vuelve a PENDING: el webhook enruta con ella (ADR-029 §2).
         migrations.RunSQL(IDENTITY_FIXED, DROP_IDENTITY_FIXED),
     ]

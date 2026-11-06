@@ -143,6 +143,9 @@ def test_the_identity_of_a_connected_account_never_changes(world: SimpleNamespac
         (live.pk, {"external_account_id": OTHER}),
         (live.pk, {"external_parent_id": OTHER}),
         (live.pk, {"platform": "SANDBOX", "external_parent_id": None, "credential_id": None}),
+        (live.pk, {"status": "PENDING"}),  # volver a PENDING reabriría la identidad
+        (sandbox.pk, {"status": "PENDING"}),
+        (live.pk, {"status": "PENDING", "external_account_id": OTHER}),
     ):
         attempt(world, "channel_accounts_identity_fixed", partial(change, world.a, pk, **fields))
     change(world.a, sandbox.pk, name="Otro nombre")  # lo demás sí cambia
