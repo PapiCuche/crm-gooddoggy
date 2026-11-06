@@ -1,0 +1,132 @@
+"use client";
+
+import { Check, Clock, X } from "lucide-react";
+import { useFormatter, useTranslations } from "next-intl";
+import { useRef } from "react";
+
+import { useTenant } from "@/components/app-shell/tenant-context";
+import { CursorList, type CursorListHandle } from "@/components/lists/cursor-list";
+import { channelsList, getChannelsListQueryKey } from "@/lib/api/client";
+import type { ChannelAccount } from "@/lib/api/model";
+import { cn } from "@/lib/utils";
+
+import { Plain } from "../inbox/plain";
+import { ConnectAccount } from "./connect-account";
+
+// Los canales (F7-07b): las cuentas que devuelve `GET /api/v1/o/{slug}/channels/` (F7-07a), la
+// Sandbox y las de WhatsApp, con su estado y su salud. Quién las ve lo decide la API
+// (`channels.manage`); un 403 solo se explica. Ninguna pantalla enseña un secreto: del token solo
+// los últimos cuatro caracteres. Lo que la API dice de una cuenta es texto que no controlamos:
+// los nombres van por `Plain`, y los códigos de estado se traducen, nunca se pintan tal cual.
+export function ChannelsList() {
+  const { organization } = useTenant();
+  const slug = organization.slug;
+  const list = useRef<CursorListHandle>(null);
+  const refresh = () => list.current?.refetch();
+
+  return (
+    <CursorList<ChannelAccount>
+      ref={list}
+      section="channels"
+      organization={organization.name}
+      listKey={[...getChannelsListQueryKey(slug), "pages"]}
+      fetchPage={(cursor, signal) =>
+        channelsList(slug, cursor ? { cursor } : undefined, { signal })
+      }
+      notice={<ConnectAccount slug={slug} onConnected={refresh} />}
+      rowClassName="flex flex-col gap-3"
+    >
+      {(account) => <Account account={account} />}
+    </CursorList>
+  );
+}
+
+function Account({ account }: { account: ChannelAccount }) {
+  const t = useTranslations("channels");
+  const format = useFormatter();
+  const whatsapp = account.platform === "WHATSAPP";
+  const detail = account.status_detail;
+  // Lo que falta, de `status_detail` (la API manda un código, no un texto): el token vale si no
+  // está invalidado y hay credencial; el webhook, si ya llegó el primer evento firmado.
+  const steps = [
+    { key: "token", ok: account.token_last_four !== null && detail !== "TOKEN_INVALID" },
+    { key: "webhook", ok: detail !== "WEBHOOK_NOT_SEEN" && account.status !== "PENDING" },
+  ] as const;
+  return (
+    <>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-1">
+        <p className="flex min-w-0 flex-col leading-snug">
+          <span className="font-medium wrap-anywhere">
+            <Plain>{account.name}</Plain>
+          </span>
+          <span className="text-muted text-sm">{t(`platform.${account.platform}`)}</span>
+        </p>
+        <p className="text-sm font-medium">{t(`status.${account.status}`)}</p>
+      </div>
+      {detail ? <p className="text-sm">{t(`detail.${detail}`)}</p> : null}
+      {whatsapp ? (
+        <>
+          <ul aria-label={t("checklist.label")} className="flex flex-col gap-1 text-sm">
+            {steps.map(({ key, ok }) => (
+              <li key={key} className="flex items-center gap-2">
+                {ok ? (
+                  <Check aria-hidden className="text-success size-4 shrink-0" />
+                ) : key === "webhook" ? (
+                  <Clock aria-hidden className="size-4 shrink-0" />
+                ) : (
+                  <X aria-hidden className="text-danger size-4 shrink-0" />
+                )}
+                <span>{t(`checklist.${key}.${ok ? "ok" : "missing"}`)}</span>
+              </li>
+            ))}
+          </ul>
+          <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
+            <Row label={t("fields.phone")} mono>
+              {account.external_account_id}
+            </Row>
+            {account.external_parent_id ? (
+              <Row label={t("fields.waba")} mono>
+                {account.external_parent_id}
+              </Row>
+            ) : null}
+            <Row label={t("fields.token")} mono>
+              {account.token_last_four ? `…${account.token_last_four}` : t("fields.noToken")}
+            </Row>
+            <Row label={t("fields.quality")}>
+              {t(`quality.${account.quality_rating ?? "UNKNOWN"}`)}
+            </Row>
+            <Row label={t("fields.tier")}>
+              {t(`tier.${account.messaging_limit_tier ?? "TIER_NOT_SET"}`)}
+            </Row>
+            <Row label={t("fields.checked")}>
+              {account.last_healthcheck_at
+                ? format.dateTime(new Date(account.last_healthcheck_at), {
+                    ...{ day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" },
+                  })
+                : t("fields.neverChecked")}
+            </Row>
+          </dl>
+        </>
+      ) : (
+        <p className="text-muted text-sm">{t("sandbox")}</p>
+      )}
+    </>
+  );
+}
+
+function Row({
+  label,
+  mono,
+  children,
+}: {
+  label: string;
+  mono?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <dt className="text-muted">{label}</dt>
+      <dd className={cn("min-w-0 wrap-anywhere", mono && "font-mono")}>{children}</dd>
+    </>
+  );
+}
