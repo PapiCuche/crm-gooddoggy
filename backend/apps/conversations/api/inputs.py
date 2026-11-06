@@ -1,15 +1,13 @@
 """Lo que entra por el simulador Sandbox (F6-02): estricto y con las reglas de los comandos, para
 que un dato inválido sea un 400 en su campo. Sin `at`: el orden es el del servidor (03 §I.7)."""
 
-import re
 from collections.abc import Callable
 from typing import Any
 
 from rest_framework import serializers
 
 from apps.conversations import commands
-from apps.conversations.accounts import NUMBER_REFUSED
-from apps.conversations.models import BODY_MAX, META_ID, TOKEN_FORMAT
+from apps.conversations.models import BODY_MAX
 from core.api.strict import Choice, Closed, Id, Text, Whole
 
 
@@ -85,35 +83,3 @@ class AssignSerializer(Closed, serializers.Serializer[Any]):
         if not transfer and "user_id" in attrs:
             raise serializers.ValidationError({"user_id": ["Solo con TRANSFER."]})
         return attrs
-
-
-class Pattern(Text):
-    """Un texto que cumple una expresión; si no, siempre el mismo mensaje fijo, sin repetir lo
-    recibido (para el número, el mismo de un número que ya existe: sin oráculo)."""
-
-    def __init__(self, pattern: str, message: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.pattern, self.message = re.compile(pattern), message
-
-    def to_internal_value(self, data: Any) -> Any:
-        value: str = super().to_internal_value(data)
-        if not self.pattern.fullmatch(value):
-            raise serializers.ValidationError(self.message)
-        return value
-
-
-class TokenSerializer(Closed, serializers.Serializer[Any]):
-    access_token = Pattern(
-        TOKEN_FORMAT, "Token no válido.", trim_whitespace=False,
-        help_text="El token de acceso del usuario del sistema de Meta. Solo se guarda cifrado.",
-    )  # fmt: skip
-
-
-class ConnectSerializer(TokenSerializer):
-    name = Text(max_length=100, help_text="El nombre que le das a la cuenta.")
-    phone_number_id = Pattern(
-        META_ID,
-        NUMBER_REFUSED,
-        help_text="El identificador del número en Meta (`phone_number_id`).",
-    )
-    waba_id = Pattern(META_ID, "Identificador no válido.", help_text="El WABA al que pertenece.")
