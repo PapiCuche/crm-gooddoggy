@@ -1,7 +1,7 @@
 "use client";
 
 import { type InfiniteData, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Send, StickyNote } from "lucide-react";
+import { RotateCw, Send, StickyNote } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
 
@@ -84,18 +84,21 @@ export function Composer({
   return (
     <div className="border-border flex min-w-0 shrink-0 flex-col gap-2 border-t p-2 lg:p-3">
       {both ? (
-        <div role="group" aria-label={t("mode.label")} className="flex flex-wrap gap-2">
+        <div role="group" aria-label={t("mode.label")} className="flex gap-2">
           {(["reply", "note"] as const).map((mode) => (
             <Button
               key={mode}
               type="button"
               variant={shown === mode ? "accent" : "ghost"}
-              className="border-border h-9 border"
+              className="border-border h-9 min-w-0 border max-sm:flex-1"
               aria-pressed={shown === mode}
+              aria-label={t(`mode.${mode}`)}
               onClick={() => setChosen(mode)}
             >
               {mode === "note" ? <StickyNote aria-hidden /> : null}
-              {t(`mode.${mode}`)}
+              {/* En 320 px las dos etiquetas largas no caben en una fila: se acortan, el nombre accesible no. */}
+              <span className="max-sm:hidden">{t(`mode.${mode}`)}</span>
+              <span className="sm:hidden">{t(`mode.${mode}Short`)}</span>
             </Button>
           ))}
         </div>
@@ -224,12 +227,16 @@ function ComposeBox({
     submit();
   };
   const idle = note ? t("save") : t("send");
+  // En menos de 640 px el formulario es una cuadrícula de dos columnas: la respuesta lleva el cuadro
+  // y un botón de icono en la misma fila; la nota, el cuadro y debajo su aviso con «Guardar nota».
+  const first = tabbed ? "max-sm:row-start-1" : "max-sm:row-start-2";
+  const second = tabbed ? "max-sm:row-start-2" : "max-sm:row-start-3";
 
   return (
     <form
       hidden={!active}
       className={cn(
-        "flex min-w-0 flex-col gap-2",
+        "flex min-w-0 flex-col gap-2 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-2 max-sm:gap-y-1",
         note &&
           "bg-surface-raised border-foreground/40 rounded-[10px] border border-dashed p-2 lg:p-3",
       )}
@@ -238,11 +245,17 @@ function ComposeBox({
         submit();
       }}
     >
-      <label htmlFor={field} className={cn("text-sm font-medium", tabbed && "max-lg:sr-only")}>
+      <label
+        htmlFor={field}
+        className={cn(
+          "text-sm font-medium max-sm:col-span-2 max-sm:row-start-1",
+          tabbed && "max-lg:sr-only",
+        )}
+      >
         {t(`label.${mode}`)}
       </label>
       {closed ? (
-        <p id={`${field}-closed`} className="text-muted text-sm">
+        <p id={`${field}-closed`} className="text-muted text-sm max-sm:col-span-2">
           {errors("api.CONVERSATION_CLOSED")}
         </p>
       ) : null}
@@ -257,8 +270,10 @@ function ComposeBox({
         aria-describedby={`${field}-count ${field}-keys${note ? ` ${field}-hint` : ""}${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
         className={cn(
-          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger field-sizing-content max-h-32 min-h-10 w-full min-w-0 resize-none rounded-[10px] border px-3 py-2 text-[16px] wrap-anywhere disabled:opacity-60 lg:max-h-40 lg:min-h-16 lg:p-3",
+          "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger field-sizing-content max-h-24 min-h-10 w-full min-w-0 resize-none rounded-[10px] border px-3 py-2 text-[16px] wrap-anywhere disabled:opacity-60 lg:field-sizing-fixed lg:max-h-40 lg:min-h-16 lg:p-3",
           note && "border-dashed",
+          note ? "max-sm:col-span-2" : "max-sm:col-start-1",
+          first,
         )}
         onChange={(event) => {
           setText(event.target.value);
@@ -271,17 +286,23 @@ function ComposeBox({
         {send.isPending ? t(note ? "saving" : "sending") : ""}
       </p>
       {saved ? (
-        <p role="status" className="text-sm">
+        <p role="status" className="text-sm max-sm:col-span-2">
           {saved}
         </p>
       ) : null}
       {problem ? (
-        <p role="alert" className="text-danger text-sm">
+        <p role="alert" className="text-danger text-sm max-sm:col-span-2">
           {problem}
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-muted flex min-w-0 flex-col text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 max-sm:contents">
+        <div
+          className={cn(
+            "text-muted flex min-w-0 flex-col text-xs",
+            note ? "max-sm:col-start-1" : "max-sm:col-span-2",
+            second,
+          )}
+        >
           {/* El aviso de la nota se ve siempre; en 390 px no hay tecla Enter que explicar y la ayuda de teclas queda para lectores. */}
           {note ? (
             <span id={`${field}-hint`} className="text-foreground font-medium">
@@ -305,12 +326,23 @@ function ComposeBox({
           type="submit"
           variant="primary"
           size="lg"
-          className="max-lg:h-10"
+          className={cn(
+            "max-lg:h-10 max-sm:col-start-2 max-sm:self-center",
+            note ? second : cn("max-sm:size-10 max-sm:px-0", first),
+          )}
           disabled={closed || empty || over}
           aria-disabled={send.isPending}
         >
-          {note ? <StickyNote aria-hidden /> : <Send aria-hidden />}
-          {send.isPending ? t(note ? "saving" : "sending") : problem ? t("retry") : idle}
+          {note ? (
+            <StickyNote aria-hidden />
+          ) : problem ? (
+            <RotateCw aria-hidden />
+          ) : (
+            <Send aria-hidden />
+          )}
+          <span className={note ? undefined : "max-sm:sr-only"}>
+            {send.isPending ? t(note ? "saving" : "sending") : problem ? t("retry") : idle}
+          </span>
         </Button>
       </div>
     </form>

@@ -9,6 +9,7 @@ import {
   RefreshCw,
   StickyNote,
   TriangleAlert,
+  UserRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
@@ -136,14 +137,18 @@ export function ChatPanel({
 
   return (
     // Alto: en 390 px la pantalla pierde el título de la página (queda solo para lectores) y el panel
-    // ocupa el viewport menos la barra y el relleno del shell (8 rem); cada zona ocupa lo suyo y solo
-    // los mensajes se desplazan. En escritorio, el alto de siempre.
-    <div className="border-border bg-surface flex h-[calc(100dvh-8rem)] min-h-[27rem] flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]">
+    // ocupa el viewport menos la barra y el relleno del shell (8 rem), con un mínimo (28 rem) que deja
+    // sitio a las tres zonas; el encabezado y el cuadro no se comprimen y los mensajes (`min-h-0`)
+    // absorben el sobrante y se desplazan. En escritorio, el alto de siempre.
+    <div className="border-border bg-surface flex h-[calc(100dvh-8rem)] min-h-[28rem] flex-col rounded-lg border lg:h-[calc(100dvh-18rem)] lg:min-h-[26rem]">
       <header className="border-border relative flex shrink-0 flex-col gap-1 border-b p-2 lg:gap-2 lg:p-3">
+        {/* Una sola fila que se parte en líneas. En 320 px: volver, nombre, ficha (icono) y actualizar,
+            y debajo número, canal y estado. En escritorio: actualizar a la derecha, el nombre, el
+            número, el canal y el estado, y la ficha al final, como siempre. */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Button
             variant="ghost"
-            className="border-border size-11 border px-0 sm:size-9 lg:hidden"
+            className="border-border order-1 size-9 border px-0 lg:hidden"
             onClick={onBack}
           >
             <ArrowLeft aria-hidden />
@@ -157,27 +162,20 @@ export function ChatPanel({
             >
               {name === null ? t("contactUnavailable") : <Plain>{name}</Plain>}
             </h2>
-            <p className="text-muted flex flex-wrap items-center gap-x-2 text-xs lg:text-sm">
-              <span className="font-mono">{conversation.number}</span>
-              <Plain>{conversation.channel.name}</Plain>
-              <span>{t(`status.${conversation.status}`)}</span>
-              {name === null ? null : (
-                <Link
-                  href={`/o/${slug}/clientes/${conversation.contact.id}`}
-                  prefetch={false}
-                  className="text-foreground font-medium underline underline-offset-4"
-                >
-                  {t("customerCard")}
-                </Link>
-              )}
-            </p>
-            {name === null ? (
-              <p className="text-muted text-xs lg:text-sm">{t("noAccessContact")}</p>
-            ) : null}
           </div>
+          {name === null ? null : (
+            <Link
+              href={`/o/${slug}/clientes/${conversation.contact.id}`}
+              prefetch={false}
+              className="max-sm:border-border order-3 inline-flex items-center justify-center gap-2 text-xs font-medium underline underline-offset-4 max-sm:size-9 max-sm:rounded-md max-sm:border max-sm:no-underline sm:text-sm lg:order-6 lg:self-start"
+            >
+              <UserRound aria-hidden className="size-4 sm:hidden" />
+              <span className="max-sm:sr-only">{t("customerCard")}</span>
+            </Link>
+          )}
           <Button
             variant="ghost"
-            className="border-border order-3 min-h-11 border max-lg:w-11 max-lg:px-0 sm:min-h-9 sm:max-lg:w-9 lg:order-2 lg:ml-auto"
+            className="border-border order-4 border max-lg:size-9 max-lg:px-0 lg:order-2 lg:ml-auto"
             aria-disabled={list.isFetching}
             onClick={() => {
               if (list.isFetching) return;
@@ -188,6 +186,16 @@ export function ChatPanel({
             <RefreshCw aria-hidden />
             <span className="max-lg:sr-only">{t("chat.refresh")}</span>
           </Button>
+          <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
+            <span className="font-mono">{conversation.number}</span>
+            <Plain>{conversation.channel.name}</Plain>
+            <span>{t(`status.${conversation.status}`)}</span>
+          </p>
+          {name === null ? (
+            <p className="text-muted order-5 basis-full text-xs lg:text-sm">
+              {t("noAccessContact")}
+            </p>
+          ) : null}
         </div>
         {detail.data ? (
           <AssignmentActions detail={detail.data} />
@@ -208,7 +216,7 @@ export function ChatPanel({
         role="region"
         tabIndex={0}
         aria-label={t("chat.scroll")}
-        className="flex min-h-40 flex-1 flex-col gap-3 overflow-y-auto p-3"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
       >
         {list.hasNextPage ? (
           <Button

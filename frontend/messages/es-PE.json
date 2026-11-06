@@ -2175,7 +2175,9 @@
       "mode": {
         "label": "Tipo de mensaje",
         "reply": "Responder al cliente",
-        "note": "Nota interna"
+        "note": "Nota interna",
+        "replyShort": "Responder",
+        "noteShort": "Nota"
       },
       "save": "Guardar nota",
       "saving": "Guardando…",
