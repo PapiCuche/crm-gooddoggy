@@ -182,6 +182,8 @@ export function FieldsForm<Name extends string>({
   return (
     <form
       noValidate
+      // Con un secreto, un envío nativo (si el JS fallara) nunca es un GET: el token iría a la URL.
+      method={fields.some((field) => field.secret) ? "post" : undefined}
       onSubmit={submit}
       // Cualquier control del formulario, también los que la pantalla pone en `note`.
       onInput={edited}

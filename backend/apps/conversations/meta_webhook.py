@@ -27,11 +27,14 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from django.conf import settings
+from django.db import DatabaseError
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
 
+from apps.conversations import ingress
 from apps.conversations.models import META_ID
 from core.observability.logging import get_logger
 
@@ -40,13 +43,10 @@ BODY_MAX = 1 << 20  # 1 MiB: a confirmar con el tamaño máximo documentado de u
 SIGNATURE = re.compile(r"sha256=([0-9a-fA-F]{64})")
 CHALLENGE = re.compile(r"[A-Za-z0-9]{1,128}")
 ID = re.compile(META_ID)
-# El id de un mensaje de Meta, sin `:` (el separador de la clave de deduplicación).
-WAMID = re.compile(r"[A-Za-z0-9._=-]{1,200}")
-STATE = re.compile(r"[a-z_]{1,32}")  # `sent`, `delivered`, `read`, `failed`…
 FIELD = re.compile(r"[a-z_]{1,64}")
 OBJECT = "whatsapp_business_account"
 MAX_ENTRIES, MAX_CHANGES, MAX_ROWS, MAX_ITEMS, MAX_DEPTH = 20, 20, 100, 500, 16
-ID_MAX, TEXT_MAX = 200, 8192
+ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
 
 
 class Invalid(Exception):  # noqa: N818 — un cuerpo firmado que no es lo que Meta envía
@@ -68,26 +68,25 @@ class Item:
     payload: dict[str, Any]
 
 
-def _text(value: Any, limit: int = ID_MAX) -> str:
+def _text(value: Any, limit: int) -> str:
     if not isinstance(value, str) or not 1 <= len(value) <= limit or not value.isprintable():
         raise Invalid("text")
     return value
 
 
-def _wamid(value: Any) -> str:
-    """El id de un mensaje, con el juego de caracteres de Meta: así la clave de deduplicación no
-    tiene dos lecturas (`a:b` + `c` frente a `a` + `b:c`)."""
-    if not isinstance(value, str) or not WAMID.fullmatch(value):
+def _quote(value: Any, limit: int) -> str:
+    """Un id o un estado de Meta como parte de la clave de deduplicación: cualquier cadena de 1 a
+    `limit` caracteres, codificada con `%XX` para que `:` (el separador) no tenga dos lecturas
+    (`a:b` + `c` frente a `a` + `b:c`) y un carácter raro nunca haga perder un mensaje."""
+    if not isinstance(value, str) or not 1 <= len(value) <= limit:
         raise Invalid("id")
-    return value
-
-
-def _rows(value: Any, name: str) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or len(value) > MAX_ROWS:
-        raise Invalid(name)
-    if any(not isinstance(row, dict) for row in value):
-        raise Invalid(name)
-    return value
+    try:
+        encoded = quote(value, safe="")
+    except UnicodeEncodeError:  # un sustituto suelto: no es texto
+        raise Invalid("id") from None
+    if len(encoded) > KEY_PART_MAX:
+        raise Invalid("id")
+    return encoded
 
 
 def _deep(value: Any) -> bool:
@@ -105,40 +104,68 @@ def _deep(value: Any) -> bool:
     return False
 
 
-def _messages(waba: str, value: dict[str, Any]) -> list[Item]:
-    metadata = value.get("metadata")
-    number = metadata.get("phone_number_id") if isinstance(metadata, dict) else None
-    if not isinstance(number, str) or not ID.fullmatch(number):
-        raise Invalid("phone_number_id")
-    items = []
-    for message in _rows(value.get("messages", []), "messages"):
-        kind = _text(message.get("type"), 32)
-        if kind == "text":
-            text = message.get("text")
-            body = text.get("body") if isinstance(text, dict) else None
-            # El texto del cliente es de quien lo escribe: saltos de línea, tabuladores, espacios
-            # duros y uniones de emoji son normales. Aquí solo el tipo y el tamaño; limpiarlo es de
-            # F7-04. Rechazarlo descartaría el lote entero (200 sin procesar): mensajes perdidos.
-            if not isinstance(body, str) or not 1 <= len(body) <= TEXT_MAX:
-                raise Invalid("text")
-        items.append(Item("message", f"wa:msg:{_wamid(message.get('id'))}", waba, number, message))
-    for status in _rows(value.get("statuses", []), "statuses"):
-        state = status.get("status")
-        if not isinstance(state, str) or not STATE.fullmatch(state):
-            raise Invalid("status")
-        key = f"wa:status:{_wamid(status.get('id'))}:{state}"  # ni el id ni el estado llevan `:`
-        items.append(Item("status", key, waba, number, status))
-    return items
-
-
 def _no_constant(name: str) -> None:
     """`NaN` e `Infinity` no son JSON: Python los acepta, y la base (`jsonb`) no los guarda."""
     raise ValueError(name)
 
 
-def parse(body: bytes) -> list[Item]:
+def _message(waba: str, number: str, message: dict[str, Any]) -> Item:
+    if _text(message.get("type"), 32) == "text":
+        text = message.get("text")
+        body = text.get("body") if isinstance(text, dict) else None
+        # El texto del cliente es de quien lo escribe: saltos de línea, tabuladores, espacios duros
+        # y uniones de emoji son normales. Aquí solo el tipo y el tamaño; limpiarlo es de F7-04.
+        if not isinstance(body, str) or not 1 <= len(body) <= TEXT_MAX:
+            raise Invalid("text")
+    return Item("message", f"wa:msg:{_quote(message.get('id'), ID_MAX)}", waba, number, message)
+
+
+def _status(waba: str, number: str, status: dict[str, Any]) -> Item:
+    state = _quote(status.get("status"), 32)
+    key = f"wa:status:{_quote(status.get('id'), ID_MAX)}:{state}"
+    return Item("status", key, waba, number, status)
+
+
+def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
+    """Los ítems de un cambio. Un ítem que no vale se descarta solo (`rejected`): un cliente no
+    puede envenenar el lote de otros. Lo que invalida el cambio entero lanza `Invalid`."""
+    field, value = (
+        (change.get("field"), change.get("value")) if isinstance(change, dict) else (0, 0)
+    )
+    if not isinstance(field, str) or not FIELD.fullmatch(field) or not isinstance(value, dict):
+        raise Invalid("change")
+    if field != "messages":  # cuenta, plantillas…: F7-10 y F7-11; llegan con el WABA y sin número
+        digest = hashlib.sha256(json.dumps(change, sort_keys=True).encode()).hexdigest()
+        return [Item("other", f"wa:{field}:{digest[:32]}", waba, None, change)]
+    metadata = value.get("metadata")
+    number = metadata.get("phone_number_id") if isinstance(metadata, dict) else None
+    if not isinstance(number, str) or not ID.fullmatch(number):
+        raise Invalid("phone_number_id")
+    items: list[Item] = []
+    for name, build in (("messages", _message), ("statuses", _status)):
+        rows = value.get(name, [])
+        if not isinstance(rows, list) or len(rows) > MAX_ROWS:
+            raise Invalid(name)
+        for row in rows:
+            try:
+                if not isinstance(row, dict):
+                    raise Invalid(name)
+                items.append(build(waba, number, row))
+            except Invalid as error:
+                rejected.append(error.reason)
+    return items
+
+
+@dataclass(frozen=True, slots=True)
+class Parsed:
+    items: list[Item]
+    rejected: list[str]  # el motivo (corto y fijo) de cada ítem, cambio o entrada descartados
+
+
+def parse(body: bytes) -> Parsed:
     """Valida el cuerpo (ya firmado) y lo divide en ítems. `Invalid` si no es lo que Meta envía:
-    ni JSON, ni el objeto, ni las listas y los tamaños esperados. No guarda nada."""
+    ni JSON, ni el objeto, ni la lista de entradas, ni los topes. Dentro de eso, lo que no vale se
+    descarta por ítem, por cambio o por entrada, y el resto sigue. No guarda nada."""
     try:
         event = json.loads(body, parse_constant=_no_constant)
     except ValueError, RecursionError:  # incluye UnicodeDecodeError; 100 000 corchetes
@@ -149,29 +176,25 @@ def parse(body: bytes) -> list[Item]:
     if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_ENTRIES:
         raise Invalid("entry")
     items: list[Item] = []
-    for entry in _rows(entries, "entry"):
-        waba = entry.get("id")
-        if not isinstance(waba, str) or not ID.fullmatch(waba):
-            raise Invalid("waba")
-        changes = _rows(entry.get("changes"), "changes")
-        if not 1 <= len(changes) <= MAX_CHANGES:
-            raise Invalid("changes")
-        for change in changes:
-            field, value = change.get("field"), change.get("value")
-            if (
-                not isinstance(field, str)
-                or not FIELD.fullmatch(field)
-                or not isinstance(value, dict)
-            ):
-                raise Invalid("change")
-            if field == "messages":
-                items += _messages(waba, value)
-            else:  # cuenta, plantillas…: F7-10 y F7-11; llegan con el WABA y sin número
-                digest = hashlib.sha256(json.dumps(change, sort_keys=True).encode()).hexdigest()
-                items.append(Item("other", f"wa:{field}:{digest[:32]}", waba, None, change))
+    rejected: list[str] = []
+    for entry in entries:
+        try:
+            waba = entry.get("id") if isinstance(entry, dict) else None
+            changes = entry.get("changes") if isinstance(entry, dict) else None
+            if not isinstance(waba, str) or not ID.fullmatch(waba):
+                raise Invalid("waba")
+            if not isinstance(changes, list) or not 1 <= len(changes) <= MAX_CHANGES:
+                raise Invalid("changes")
+            for change in changes:
+                try:
+                    items += _change(waba, change, rejected)
+                except Invalid as error:
+                    rejected.append(error.reason)
+        except Invalid as error:
+            rejected.append(error.reason)
     if len(items) > MAX_ITEMS:
         raise Invalid("items")
-    return items
+    return Parsed(items, rejected)
 
 
 def signed(header: str | None, body: bytes) -> bool:
@@ -206,11 +229,20 @@ def _receive(request: HttpRequest) -> HttpResponse:
     if not signed(request.headers.get("X-Hub-Signature-256"), body):
         return HttpResponse(status=401)
     try:
-        items = parse(body)
+        parsed = parse(body)
     except Invalid as error:
         logger.warning("meta.webhook.invalid", reason=error.reason)
         return HttpResponse(status=200)  # firmado pero mal formado: 200, contado y sin procesar
-    logger.info("meta.webhook.received", items=len(items))
+    if parsed.rejected:
+        logger.warning("meta.webhook.rejected", reasons=sorted(set(parsed.rejected)),
+                       count=len(parsed.rejected))  # fmt: skip
+    try:
+        new = ingress.store(parsed.items)
+    except DatabaseError as error:  # sin guardar no hay nada que procesar: 503 y Meta reintenta
+        state = getattr(error.__cause__, "sqlstate", None)  # solo el código, nunca el mensaje
+        logger.error("meta.webhook.store_failed", items=len(parsed.items), sqlstate=state)
+        return HttpResponse(status=503)
+    logger.info("meta.webhook.received", items=len(parsed.items), new=new)
     return HttpResponse(status=200)
 
 

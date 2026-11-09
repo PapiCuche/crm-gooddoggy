@@ -211,6 +211,33 @@ describe("Canales (F7-07b)", () => {
     expect(document.body.textContent).not.toContain("TEXTO DEL SERVIDOR"); // nunca el texto ajeno
   });
 
+  it("un código de error desconocido da el mensaje genérico, nunca el código ni el texto del servidor", async () => {
+    mockApi({
+      [LIST]: page([]),
+      [CONNECT]: {
+        status: 500,
+        body: { code: "CODIGO_NUEVO_DEL_SERVIDOR", detail: "TEXTO AJENO" },
+      },
+    });
+    show();
+    await open();
+    fillConnect();
+    submit();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal de nuestro lado");
+    expect(document.body.textContent).not.toContain("CODIGO_NUEVO_DEL_SERVIDOR");
+    expect(document.body.textContent).not.toContain("TEXTO AJENO");
+  });
+
+  it("el formulario con el token se envía por POST aunque falle el JavaScript", async () => {
+    mockApi({ [LIST]: page([]) });
+    show();
+    await open();
+    expect(screen.getByRole("form", { name: "Conectar una cuenta de WhatsApp" })).toHaveAttribute(
+      "method",
+      "post",
+    );
+  });
+
   it("un número no registrable da siempre el mismo mensaje genérico, junto a su campo", async () => {
     mockApi({
       [LIST]: page([]),

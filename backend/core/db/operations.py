@@ -90,16 +90,27 @@ class CompositeTenantFK(_SqlOperation):
 class SecurityDefinerFunction(_SqlOperation):
     """Función SECURITY DEFINER con los requisitos de ADR-002 §3.3 (siempre REVOKE/GRANT)."""
 
-    def __init__(self, name: str, arguments: str, argtypes: str, returns: str, body: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        arguments: str,
+        argtypes: str,
+        returns: str,
+        body: str,
+        *,
+        language: str = "sql STABLE",
+        search_path: str = "pg_catalog, public",
+    ) -> None:
         self.name, self.arguments, self.argtypes = name, arguments, argtypes
         self.returns, self.body = returns, body
+        self.language, self.search_path = language, search_path  # p. ej. «plpgsql VOLATILE»
 
     def database_forwards(self, app_label: str, schema_editor: Editor, *a: Any) -> None:
         signature = f"public.{self.name}({self.argtypes})"
         app_role = schema_editor.quote_name(settings.DB_APP_ROLE)
         schema_editor.execute(
             f"CREATE FUNCTION public.{self.name}({self.arguments}) RETURNS {self.returns} "
-            f"LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public "
+            f"LANGUAGE {self.language} SECURITY DEFINER SET search_path = {self.search_path} "
             f"AS $fn$ {self.body} $fn$"
         )
         owner = schema_editor.quote_name(settings.DB_MIGRATOR_ROLE)  # ADR-002 §3.3: explícito
