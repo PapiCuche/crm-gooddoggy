@@ -20,6 +20,8 @@ from uuid import UUID
 from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
+from apps.audit.services import Entity, record
+from apps.conversations import inbound
 from apps.conversations.models import ChannelAccount
 from core.observability.logging import get_logger
 from core.tenancy.context import ActorType, TenantContext
@@ -160,13 +162,35 @@ def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
     organization_id, account_id = found
     context = TenantContext(organization_id, "webhook", actor_type=ActorType.INTEGRATION)
     with tenant_scope(context):
-        parent = ChannelAccount.objects.filter(pk=account_id).values_list(
-            "external_parent_id", flat=True
-        )
-        if parent.first() != item.waba_id:
+        account = ChannelAccount.objects.filter(pk=account_id).first()
+        if account is None or account.external_parent_id != item.waba_id:
             logger.warning("meta.webhook.waba_mismatch", channel_account_id=str(account_id))
             return "IGNORED", None, None, "WABA_MISMATCH"
+        seen(context, account)
+        if item.kind == "message" and (reason := inbound.receive(context, account, item.payload)):
+            return "IGNORED", organization_id, account_id, reason
     return "PROCESSED", organization_id, account_id, None
+
+
+def seen(ctx: TenantContext, account: ChannelAccount) -> None:
+    """El primer evento firmado enrutado a una cuenta `PENDING` es la señal de «webhook visto»
+    (ADR-029 §2): limpia `WEBHOOK_NOT_SEEN` y, solo si ya no queda otro detalle y la cuenta tiene
+    credencial y comprobación de salud (`connected_ck`), pasa a `CONNECTED`. Si no, sigue `PENDING`
+    (la comprobación de salud es de F7-06). `DISCONNECTED` y `ERROR` no cambian."""
+    if account.status != "PENDING":
+        return
+    before = (account.status, account.status_detail)
+    if account.status_detail == "WEBHOOK_NOT_SEEN":
+        account.status_detail = None
+    ready = account.credential_id is not None and account.last_healthcheck_at is not None
+    if account.status_detail is None and ready:
+        account.status = "CONNECTED"
+    if before == (account.status, account.status_detail):
+        return
+    account.version += 1
+    account.save(update_fields=["status", "status_detail", "version", "updated_at"])
+    change = {"status": [before[0], account.status], "status_detail": [before[1], None]}
+    record(ctx, "channel_account.seen", Entity("channel_account", account.pk), change)
 
 
 def handle(item: Claimed) -> str:

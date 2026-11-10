@@ -1,0 +1,567 @@
+"""F7-04: el mensaje de texto entrante de WhatsApp llega al Inbox (`apps.conversations.inbound`,
+migración `0010`, ADR-029 §5). De la entrega firmada del simulador de Meta al webhook, la ingesta
+y el procesador, y de ahí al contacto, la conversación y el mensaje que ve la API del Inbox.
+PostgreSQL real con `crm_app`, también con hilos a la vez."""
+
+import datetime as dt
+import json
+import logging
+import threading
+from types import SimpleNamespace
+from typing import Any
+from uuid import UUID, uuid4
+
+import psycopg
+import pytest
+from django.db import connection
+from django.utils import timezone
+
+from apps.contacts.models import Contact
+from apps.conversations import commands, inbound, ingress
+from apps.conversations.models import ChannelAccount, Conversation, Message
+from core.tenancy.context import ActorType, TenantContext
+from core.tenancy.scope import tenant_scope
+from tests.meta_sim import webhooks
+from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
+from tests.test_contacts_api import crm, real_stack
+from tests.test_conversations_api import BASE
+from tests.test_memberships import ctx
+from tests.test_meta_webhook import channel
+from tests.test_self_context import signed
+from tests.test_tenant_task_signature import broker
+from tests.test_webhook_ingress import deliver, rows
+from tests.test_whatsapp_account import credential, make
+
+__all__ = ["broker", "channel", "crm", "real_stack"]  # las fixtures, para pytest
+pytestmark = pytest.mark.usefixtures("tenant_db")
+DB = psycopg.Connection[Any]
+PRIVATE = "Mi DNI es 12345678"  # noqa: S105 — texto de prueba: nunca debe llegar a un log
+
+
+@pytest.fixture(autouse=True)
+def fresh_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ingress, "_last_wake", 0.0)
+
+
+def snap(org: UUID) -> SimpleNamespace:
+    with tenant_scope(ctx(org)):
+        return SimpleNamespace(
+            contacts=list(  # los de la fixture `crm` no tienen teléfono
+                Contact.objects.filter(primary_phone_e164__isnull=False).order_by("created_at")
+            ),
+            conversations=list(Conversation.objects.order_by("created_at")),
+            messages=list(Message.objects.order_by("created_at")),
+        )
+
+
+def run(*messages: dict[str, Any], **kw: Any) -> dict[str, int]:
+    deliver(*messages, **kw)
+    return ingress.process()
+
+
+def live(org: UUID, **over: Any) -> ChannelAccount:
+    """Una cuenta como la deja F7-02c: credencial y comprobación de salud, `CONNECTED`."""
+    fields = {"status": "CONNECTED", "credential_id": credential(org)}
+    return make(org, **fields | {"last_healthcheck_at": timezone.now()} | over)
+
+
+def message(wamid: str, body: str = "Hola", **over: Any) -> dict[str, Any]:
+    return webhooks.text_message(body, wamid=wamid) | over
+
+
+# ---- Funciones puras: el saneo, el teléfono, el instante ----
+
+
+@pytest.mark.parametrize(
+    ("raw", "clean"),
+    [
+        ("Hola", "Hola"),
+        ("a\r\nb\rc", "a\nb\nc"),
+        ("a\tb\nc", "a\tb\nc"),  # el tabulador y el salto de línea son del cliente
+        ("a\x00b\x07c\x1bd\x7fe", "abcde"),  # controles
+        ("a​b⁠c﻿d­e", "abcde"),  # espacio de ancho cero, unión de palabras…
+        ("a‮b⁦c⁩d", "abcd"),  # controles de dirección: spoofing visual
+        ("a‎b‏c", "a‎b‏c"),  # LRM y RLM sí: texto árabe y hebreo
+        ("ab\U000e0041\U000e007fcd", "abcd"),  # Tags U+E0000–E007F: inyección de instrucciones
+        ("a\ud800b", "ab"),  # sustituto suelto
+        ("👨‍👩‍👧", "👨‍👩‍👧"),  # emoji de familia intacto
+        ("Ñandú, 你好, 😀", "Ñandú, 你好, 😀"),
+    ],
+)
+def test_the_text_of_a_customer_is_cleaned_before_the_commands_that_would_refuse_it(
+    raw: str, clean: str
+) -> None:
+    assert inbound.clean_text(raw) == clean
+
+
+def test_the_text_is_cut_at_4096_code_points_without_breaking_a_joined_sequence() -> None:
+    assert inbound.clean_text("x" * 5000) == "x" * 4096
+    family = "👨‍👩‍👧"  # cinco puntos de código
+    cut = inbound.clean_text("x" * 4094 + family)
+    assert cut == "x" * 4094  # ni el hombre suelto ni un ZWJ colgando
+    assert inbound.clean_text("x" * 4090 + family) == "x" * 4090 + family
+    assert len(inbound.clean_text("😀" * 5000)) == 4096
+
+
+def test_only_visible_text_counts_and_a_name_is_one_clean_line_of_at_most_100() -> None:
+    assert inbound.visible("a") and not inbound.visible(" \n\t 　")
+    assert not inbound.visible("")
+    assert inbound.profile_name("  Ana \n  Pérez‮  ") == "Ana Pérez"
+    assert inbound.profile_name("x" * 300) == "x" * 100
+    assert inbound.profile_name(None) == inbound.profile_name(5) == ""
+
+
+@pytest.mark.parametrize(
+    ("wa_id", "phone"),
+    [
+        ("51900000001", "+51900000001"),
+        ("5215512345678", "+525512345678"),  # México: 52 + 1 + 10 dígitos (a confirmar)
+        ("525512345678", "+525512345678"),
+        ("5491112345678", "+541112345678"),  # Argentina: 54 + 9 + 10 dígitos (a confirmar)
+        ("541112345678", "+541112345678"),
+        ("5511987654321", "+5511987654321"),  # otro país de 13 dígitos: no se toca
+        ("12345678", "+12345678"),
+        ("123456789012345", "+123456789012345"),
+        ("1234567", None),  # corto
+        ("1234567890123456", None),  # largo
+        ("0123456789", None),  # empieza en 0
+        ("+51900000001", None),
+        ("5190000000x", None),
+        ("٥١٩٠٠٠٠٠٠٠١", None),  # dígitos que no son ASCII
+        ("", None),
+        (None, None),
+        (51900000001, None),
+    ],
+)
+def test_the_wa_id_becomes_e164_and_the_two_forms_of_a_number_are_one(
+    wa_id: Any, phone: str | None
+) -> None:
+    assert inbound.normalize_phone(wa_id) == phone
+
+
+def test_a_contact_saved_with_the_other_form_of_the_same_number_is_found() -> None:
+    assert inbound.variants("+525512345678") == ["+525512345678", "+5215512345678"]
+    assert inbound.variants("+541112345678") == ["+541112345678", "+5491112345678"]
+    assert inbound.variants("+51900000001") == ["+51900000001"]
+
+
+# ---- De punta a punta: la entrega firmada hasta lo que ve el Inbox ----
+
+
+def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    mine = make(crm.a, status_detail="WEBHOOK_NOT_SEEN")
+    other = make(crm.b, external_account_id="100000000000008", external_parent_id="100000000000007")
+    before_b = snap(crm.b)
+    assert deliver(message("wamid.1", "Hola, ¿tienen stock?")).status_code == 200
+    assert ingress.process() == {"PROCESSED": 1}
+    found = snap(crm.a)
+    [contact], [convo], [first] = found.contacts, found.conversations, found.messages
+    assert (contact.display_name, contact.primary_phone_e164) == (
+        "Cliente de prueba",
+        "+51900000001",
+    )
+    assert contact.source == "INBOUND_MESSAGE" and contact.deleted_at is None
+    assert (convo.status, convo.contact_id, convo.channel_account_id) == (
+        "PENDING", contact.pk, mine.pk,
+    )  # fmt: skip
+    assert (first.direction, first.sender_type, first.message_type) == (
+        "INBOUND",
+        "CONTACT",
+        "TEXT",
+    )
+    assert (first.body, first.external_message_id) == ("Hola, ¿tienen stock?", "wamid.1")
+    assert convo.last_inbound_at is not None  # la ventana de 24 h corre desde que escribió
+    # la API existente del Inbox lo ve, sin cambios
+    ana = signed(crm.ana)
+    listed = ana.get(BASE).json()["results"]
+    assert [r["id"] for r in listed] == [str(convo.pk)]
+    assert listed[0]["contact"]["display_name"] == "Cliente de prueba"
+    assert listed[0]["last_message_preview"] == "Hola, ¿tienen stock?"
+    shown = ana.get(f"{BASE}{convo.pk}/messages/").json()["results"]
+    assert [(r["body"], r["message_type"], r["direction"]) for r in shown] == [
+        ("Hola, ¿tienen stock?", "TEXT", "INBOUND")
+    ]
+    # la otra organización, intacta
+    after_b = snap(crm.b)
+    assert (len(after_b.contacts), len(after_b.conversations), len(after_b.messages)) == (
+        len(before_b.contacts), 0, 0,
+    )  # fmt: skip
+    assert other.pk is not None
+    assert signed(crm.luis).get(BASE.replace("org-a", "org-b")).status_code in (200, 403)
+    assert ana.get(BASE.replace("org-a", "org-b")).status_code == 404
+    # el ítem queda cerrado y sin el texto del cliente
+    closed = rows(migrator)["wa:msg:wamid.1"]
+    assert closed["status"] == "PROCESSED" and closed["payload"] is None
+
+
+def test_the_message_of_one_organization_never_lands_in_another(crm: SimpleNamespace) -> None:
+    make(crm.a)
+    make(crm.b, external_account_id="100000000000008", external_parent_id="100000000000007")
+    run(message("wamid.1"))
+    deliver(message("wamid.2"), waba="100000000000007", number="100000000000008")
+    assert ingress.process() == {"PROCESSED": 1}
+    mine, theirs = snap(crm.a), snap(crm.b)
+    assert [m.external_message_id for m in mine.messages] == ["wamid.1"]
+    assert [m.external_message_id for m in theirs.messages] == ["wamid.2"]
+    assert not {c.pk for c in mine.contacts} & {c.pk for c in theirs.contacts}
+
+
+def test_a_second_message_of_the_same_customer_joins_the_same_conversation(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    run(message("wamid.1", "Uno"))
+    run(message("wamid.2", "Dos"))
+    found = snap(crm.a)
+    assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 2)
+    assert found.conversations[0].last_message_preview == "Dos"
+
+
+def test_the_same_message_delivered_twice_or_claimed_twice_is_one_message(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    mine = make(crm.a)
+    assert run(message("wamid.1")) == {"PROCESSED": 1}
+    assert run(message("wamid.1")) == {}  # Meta repite la entrega: ya está en la ingesta
+    # un ítem reclamado dos veces (el plazo caducó y otro trabajador lo toma): no duplica
+    claimed = ingress.Claimed(uuid4(), "message", WABA_ID, PHONE_NUMBER_ID, message("wamid.1"), 2)
+    assert ingress.route(claimed) == ("PROCESSED", crm.a, mine.pk, None)
+    found = snap(crm.a)
+    assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 1)
+    count = migrator.execute(
+        "SELECT count(*) FROM outbox_events WHERE event_type = 'message.received'"
+    )
+    assert count.fetchone() == (1,)  # y el evento tampoco
+
+
+def test_four_workers_with_messages_of_a_new_customer_make_one_contact_and_one_conversation(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    deliver(*[message(f"wamid.{n}", f"m{n}") for n in range(4)])
+    start, outcome = threading.Barrier(4), []
+
+    def work() -> None:
+        try:
+            start.wait(timeout=10)
+            outcome.append(ingress.process(batch_size=1, rounds=1))
+        except Exception as error:  # noqa: BLE001 — lo comprueba el test
+            outcome.append({type(error).__name__: 1})
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=work) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert sorted(k for o in outcome for k in o) == ["PROCESSED"] * 4, outcome
+    found = snap(crm.a)
+    assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 4)
+
+
+def test_two_deliveries_of_the_same_message_at_once_are_one_message(crm: SimpleNamespace) -> None:
+    mine = make(crm.a)
+    start, outcome = threading.Barrier(2), []
+
+    def work() -> None:
+        try:
+            context = TenantContext(crm.a, "webhook", actor_type=ActorType.INTEGRATION)
+            with tenant_scope(context):
+                account = ChannelAccount.objects.get(pk=mine.pk)
+                start.wait(timeout=10)
+                outcome.append(inbound.receive(context, account, message("wamid.1")))
+        except Exception as error:  # noqa: BLE001
+            outcome.append(type(error).__name__)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=work) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert outcome == [None, None], outcome
+    found = snap(crm.a)
+    assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 1)
+
+
+# ---- La cuenta PENDING, DISCONNECTED y ERROR ----
+
+
+def detail(org: UUID, pk: UUID) -> tuple[str, str | None, int]:
+    with tenant_scope(ctx(org)):
+        found = ChannelAccount.objects.get(pk=pk)
+        return found.status, found.status_detail, found.version
+
+
+def test_the_first_event_of_a_pending_account_is_the_webhook_seen_signal(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    ready = make(
+        crm.a, status_detail="WEBHOOK_NOT_SEEN", credential_id=credential(crm.a),
+        last_healthcheck_at=timezone.now(),
+    )  # fmt: skip
+    assert detail(crm.a, ready.pk) == ("PENDING", "WEBHOOK_NOT_SEEN", 1)
+    run(message("wamid.1"))
+    assert detail(crm.a, ready.pk) == ("CONNECTED", None, 2)  # cumple `connected_ck`
+    assert len(snap(crm.a).messages) == 1  # y no pierde el primer mensaje
+    run(message("wamid.2"))
+    assert detail(crm.a, ready.pk) == ("CONNECTED", None, 2)  # solo la primera vez
+    audited = migrator.execute(
+        "SELECT actor_type, changes::text FROM audit_logs WHERE action = 'channel_account.seen'"
+    ).fetchall()
+    assert len(audited) == 1 and audited[0][0] == "INTEGRATION"
+    assert json.loads(audited[0][1])["status"] == ["PENDING", "CONNECTED"]
+
+
+def test_a_pending_account_without_credential_or_health_check_stays_pending_but_keeps_the_message(
+    crm: SimpleNamespace,
+) -> None:
+    bare = make(crm.a, status_detail="WEBHOOK_NOT_SEEN")  # sin credencial ni salud (F7-06)
+    run(message("wamid.1"))
+    assert detail(crm.a, bare.pk) == ("PENDING", None, 2)  # visto, pero no conectada
+    assert len(snap(crm.a).messages) == 1
+    run(message("wamid.2"))
+    assert detail(crm.a, bare.pk) == ("PENDING", None, 2)  # sin más cambios ni auditoría
+
+
+def test_a_pending_account_with_another_detail_keeps_it(crm: SimpleNamespace) -> None:
+    odd = make(
+        crm.a, status_detail="TOKEN_INVALID", credential_id=credential(crm.a),
+        last_healthcheck_at=timezone.now(),
+    )  # fmt: skip
+    run(message("wamid.1"))
+    assert detail(crm.a, odd.pk) == ("PENDING", "TOKEN_INVALID", 1)
+    assert len(snap(crm.a).messages) == 1
+
+
+def test_an_account_in_error_or_disconnected_registers_the_message_and_a_deleted_one_does_not(
+    crm: SimpleNamespace,
+) -> None:
+    broken = live(crm.a, status="ERROR", status_detail="PROVIDER_ERROR")
+    assert run(message("wamid.1")) == {"PROCESSED": 1}
+    assert detail(crm.a, broken.pk)[:2] == ("ERROR", "PROVIDER_ERROR")  # no se toca
+    with tenant_scope(ctx(crm.a)):
+        ChannelAccount.objects.filter(pk=broken.pk).update(status="DISCONNECTED")
+    assert run(message("wamid.2")) == {"PROCESSED": 1}  # lo que el cliente escribió no se pierde
+    assert detail(crm.a, broken.pk)[0] == "DISCONNECTED"
+    assert len(snap(crm.a).messages) == 2
+    with tenant_scope(ctx(crm.a)):
+        ChannelAccount.objects.filter(pk=broken.pk).update(deleted_at=timezone.now())
+    assert run(message("wamid.3")) == {"IGNORED": 1}  # una cuenta borrada ya no se enruta
+    assert len(snap(crm.a).messages) == 2
+
+
+# ---- El contacto ----
+
+
+def contact(org: UUID, name: str, phone: str | None, **over: Any) -> Contact:
+    with tenant_scope(ctx(org)):
+        made: Contact = Contact.objects.create(display_name=name, primary_phone_e164=phone, **over)
+        return made
+
+
+def test_an_existing_contact_with_that_phone_is_reused_and_its_name_is_not_overwritten(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    mine = contact(crm.a, "Ana de siempre", "+51900000001")
+    run(message("wamid.1"))
+    found = snap(crm.a)
+    assert [c.pk for c in found.contacts if c.primary_phone_e164 == "+51900000001"] == [mine.pk]
+    assert found.conversations[0].contact_id == mine.pk
+    with tenant_scope(ctx(crm.a)):
+        assert Contact.objects.get(pk=mine.pk).display_name == "Ana de siempre"
+
+
+def test_with_homonyms_the_contact_with_an_open_conversation_here_wins_else_the_oldest(
+    crm: SimpleNamespace,
+) -> None:
+    mine = make(crm.a)
+    old, new = (contact(crm.a, n, "+51900000001") for n in ("Más antiguo", "Más nuevo"))
+    run(message("wamid.1"))
+    assert snap(crm.a).conversations[0].contact_id == old.pk  # sin conversación: el más antiguo
+    older, newer = (contact(crm.a, n, "+51900000002") for n in ("Antiguo 2", "Nuevo 2"))
+    other = make(crm.a, external_account_id="100000000000010", name="Otro número")
+    with tenant_scope(ctx(crm.a)):  # el nuevo habla aquí; el antiguo, en otra cuenta
+        Conversation.objects.create(
+            number="CONV-90001", contact_id=newer.pk, channel_account_id=mine.pk,
+            last_message_at=timezone.now(),
+        )  # fmt: skip
+        Conversation.objects.create(
+            number="CONV-90002", contact_id=older.pk, channel_account_id=other.pk,
+            last_message_at=timezone.now() + dt.timedelta(minutes=5),
+        )  # fmt: skip
+    run(webhooks.text_message("Hola", wamid="wamid.2", sender="51900000002"))
+    talking = [c.contact_id for c in snap(crm.a).conversations if c.number == "CONV-90001"]
+    assert talking == [newer.pk]  # gana el de la conversación abierta, aunque es el más nuevo
+    assert len(snap(crm.a).conversations) == 3 and len(snap(crm.a).contacts) == 4
+    assert older.pk != newer.pk and new.pk != old.pk  # nunca se fusiona ni se crea otro
+
+
+def test_a_deleted_contact_is_not_reused_and_a_phone_of_another_organization_is_not_seen(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    contact(crm.a, "Borrado", "+51900000001", deleted_at=timezone.now())
+    elsewhere = contact(crm.b, "De B", "+51900000001")
+    run(message("wamid.1"))
+    found = snap(crm.a)
+    assert len(found.contacts) == 2 and found.conversations[0].contact_id not in {elsewhere.pk}
+    assert [c.source for c in found.contacts if c.deleted_at is None] == ["INBOUND_MESSAGE"]
+    assert len(snap(crm.b).contacts) == 1  # el de B, sin tocar
+
+
+@pytest.mark.parametrize(("first", "second"), [
+    ("5215512345678", "525512345678"), ("525512345678", "5215512345678"),
+    ("5491112345678", "541112345678"), ("541112345678", "5491112345678"),
+])  # fmt: skip
+def test_two_forms_of_the_same_mexican_or_argentine_number_are_one_contact(
+    crm: SimpleNamespace, first: str, second: str
+) -> None:
+    make(crm.a)
+    run(webhooks.text_message("Uno", wamid="wamid.1", sender=first))
+    run(webhooks.text_message("Dos", wamid="wamid.2", sender=second))
+    found = snap(crm.a)
+    assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 2)
+    assert found.contacts[0].primary_phone_e164 in ("+525512345678", "+541112345678")
+
+
+def test_a_contact_saved_with_the_one_in_the_middle_form_is_found_by_the_other(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    mine = contact(crm.a, "Con el 1", "+5215512345678")  # cargado a mano con la forma larga
+    run(webhooks.text_message("Hola", wamid="wamid.1", sender="525512345678"))
+    assert [c.contact_id for c in snap(crm.a).conversations] == [mine.pk]
+    assert len(snap(crm.a).contacts) == 1
+
+
+def test_the_profile_name_is_cleaned_and_a_missing_one_falls_back_to_the_phone(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    value = webhooks.value(messages=[message("wamid.1")], name="  Ana ‮\u2066Pérez  " + "z" * 200)
+    ingress_delivery = webhooks.deliver(webhooks.encode(webhooks.envelope(value)))
+    from tests.test_meta_webhook import post
+
+    assert post(ingress_delivery).status_code == 200
+    value = webhooks.value(messages=[message("wamid.2", **{"from": "51900000002"})], name=None)
+    value.pop("contacts")
+    post(webhooks.deliver(webhooks.encode(webhooks.envelope(value))))
+    assert ingress.process() == {"PROCESSED": 2}
+    names = {c.primary_phone_e164: c.display_name for c in snap(crm.a).contacts}
+    assert names["+51900000001"].startswith("Ana Pérez") and len(names["+51900000001"]) == 100
+    assert names["+51900000002"] == "+51900000002"
+
+
+def test_a_bad_sender_is_ignored_with_a_code_and_creates_nothing(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    make(crm.a)
+    for wamid, sender in (("wamid.1", "abc"), ("wamid.2", "12"), ("wamid.3", "+5190")):
+        assert run(webhooks.text_message("Hola", wamid=wamid, sender=sender)) == {"IGNORED": 1}
+    assert (
+        snap(crm.a).contacts == []
+        and rows(migrator)["wa:msg:wamid.1"]["ignored_reason"] == "BAD_PHONE"
+    )
+
+
+def test_the_contact_is_created_by_the_integration_actor_in_the_audit(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    make(crm.a)
+    run(message("wamid.1"))
+    found = migrator.execute(
+        "SELECT action, actor_type, actor_id FROM audit_logs WHERE action IN"
+        " ('contact.created', 'conversation.created', 'message.received') ORDER BY action"
+    ).fetchall()
+    assert [(a, t, u) for a, t, u in found] == [
+        ("contact.created", "INTEGRATION", None),
+        ("conversation.created", "INTEGRATION", None),
+        ("message.received", "INTEGRATION", None),
+    ]
+
+
+# ---- El tope de contactos nuevos, el evento y los registros ----
+
+
+def test_the_event_for_the_outbox_carries_only_ids_never_the_text_or_the_phone(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    mine = make(crm.a)
+    run(message("wamid.1", PRIVATE))
+    [event] = migrator.execute(
+        "SELECT aggregate_type, aggregate_id, payload::text FROM outbox_events"
+        " WHERE event_type = 'message.received'"
+    ).fetchall()
+    found = snap(crm.a)
+    assert event[0] == "message" and event[1] == found.messages[0].pk
+    payload = json.loads(event[2])
+    assert payload == {
+        "conversation_id": str(found.conversations[0].pk),
+        "channel_account_id": str(mine.pk),
+        "contact_id": str(found.contacts[0].pk),
+    }
+    assert PRIVATE not in event[2] and "+519" not in event[2]
+
+
+def test_no_log_of_the_flow_carries_the_phone_or_the_text(
+    crm: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    make(crm.a)
+    caplog.set_level(logging.DEBUG)
+    run(message("wamid.1", PRIVATE))
+    run(webhooks.text_message("x", wamid="wamid.3", sender="abc"))
+    for secret in (PRIVATE, CUSTOMER, "+51900000001", "Cliente de prueba", "wamid.1"):
+        assert secret not in caplog.text, secret
+
+
+def test_an_error_in_the_commands_fails_the_item_and_rolls_back_everything(
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, migrator: DB
+) -> None:
+    make(crm.a)
+
+    def explode(*args: Any, **kw: Any) -> None:
+        raise RuntimeError(PRIVATE)
+
+    monkeypatch.setattr(commands, "record_inbound", explode)
+    assert run(message("wamid.1")) == {"FAILED": 1}
+    found = snap(crm.a)  # ni el contacto quedó a medias
+    assert (found.contacts, found.conversations, found.messages) == ([], [], [])
+    assert rows(migrator)["wa:msg:wamid.1"]["payload"] is not None
+    monkeypatch.undo()
+    migrator.execute("UPDATE webhook_ingress SET next_attempt_at = now() - interval '1 second'")
+    assert ingress.process() == {"PROCESSED": 1} and len(snap(crm.a).messages) == 1
+
+
+def test_a_status_item_of_a_pending_account_is_the_seen_signal_too_but_creates_no_message(
+    crm: SimpleNamespace,
+) -> None:
+    mine = make(crm.a, status_detail="WEBHOOK_NOT_SEEN")
+    value = webhooks.value(statuses=[webhooks.status("wamid.OUT1", "delivered")])
+    from tests.test_meta_webhook import post
+
+    post(webhooks.deliver(webhooks.encode(webhooks.envelope(value))))
+    assert ingress.process() == {"PROCESSED": 1}
+    assert detail(crm.a, mine.pk)[:2] == ("PENDING", None)
+    found = snap(crm.a)
+    assert (found.contacts, found.messages) == ([], [])
+
+
+def test_what_is_not_text_is_ignored_with_a_code_until_the_next_piece_stores_it(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    make(crm.a)
+    assert run(webhooks.other_message("image", wamid="wamid.1")) == {"IGNORED": 1}
+    assert run(webhooks.reaction("wamid.OUT1", wamid="wamid.2")) == {"IGNORED": 1}
+    assert run(message("wamid.3", " \u200b\u202e \n")) == {"IGNORED": 1}  # nada visible
+    found = rows(migrator)
+    assert [found[f"wa:msg:wamid.{n}"]["ignored_reason"] for n in (1, 2, 3)] == [
+        "NOT_TEXT", "NOT_TEXT", "EMPTY",
+    ]  # fmt: skip
+    after = snap(crm.a)
+    assert (after.contacts, after.conversations, after.messages) == ([], [], [])

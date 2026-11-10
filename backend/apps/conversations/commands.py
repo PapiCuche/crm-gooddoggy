@@ -297,7 +297,8 @@ def record_inbound(
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
     pone `last_inbound_at` y `last_message_at` y, según D-INB-2, pasa a `OPEN` una conversación en
-    `WAITING_CUSTOMER` o `RESOLVED` dentro del plazo. Audita `message.received`."""
+    `WAITING_CUSTOMER` o `RESOLVED` dentro del plazo. Audita `message.received` y deja el evento
+    `message.received` en el outbox (solo ids)."""
     alias = require_scope(ctx)
     contact_id, account_id = _uuid(contact_id, "contacto"), _uuid(channel_account_id, "cuenta")
     external, text = _external(external_message_id), _body(body)
@@ -330,6 +331,15 @@ def record_inbound(
         else:
             convo.save(using=alias, update_fields=[*LAST, "last_inbound_at", "updated_at"])
         record(ctx, "message.received", Entity("message", message.pk), None, _sent(message))
+        ids = {
+            "conversation_id": convo.pk,
+            "channel_account_id": account_id,
+            "contact_id": contact_id,
+        }
+        emit(  # para quien se suscriba (la IA, las automatizaciones): solo ids, nunca el texto
+            ctx, "message.received", aggregate_type="message", aggregate_id=message.pk,
+            payload={key: str(value) for key, value in ids.items()},
+        )  # fmt: skip
         return message, True
 
 

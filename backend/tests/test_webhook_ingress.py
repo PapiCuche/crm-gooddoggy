@@ -524,7 +524,8 @@ def test_the_tasks_do_the_work_when_called(crm: SimpleNamespace, migrator: DB) -
     deliver(text("wamid.1"))
     put("old")
     force(migrator, "old", "received_at = now() - interval '91 days'")
-    assert tasks.process_webhook_ingress() == {"PROCESSED": 2}  # el de la entrega y el viejo
+    # el de la entrega, y el viejo (un payload sin remitente) se ignora: F7-04 lo lee de verdad
+    assert tasks.process_webhook_ingress() == {"PROCESSED": 1, "IGNORED": 1}
     assert tasks.purge_webhook_ingress() == 1  # solo el viejo pasa del tope
     assert list(rows(migrator)) == ["wa:msg:wamid.1"]
 
