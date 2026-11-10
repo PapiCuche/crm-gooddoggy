@@ -179,6 +179,11 @@ def seen(ctx: TenantContext, account: ChannelAccount) -> None:
     (la comprobación de salud es de F7-06). `DISCONNECTED` y `ERROR` no cambian."""
     if account.status != "PENDING":
         return
+    # Varios primeros eventos a la vez: se relee bajo el bloqueo de la fila y solo el primero cambia
+    # la cuenta y la audita (los demás ya la ven distinta).
+    account = ChannelAccount.objects.select_for_update(no_key=True).get(pk=account.pk)
+    if account.status != "PENDING":
+        return
     before = (account.status, account.status_detail)
     if account.status_detail == "WEBHOOK_NOT_SEEN":
         account.status_detail = None

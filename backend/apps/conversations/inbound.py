@@ -21,7 +21,6 @@ from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
     Conversation,
-    Message,
 )
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
@@ -41,6 +40,11 @@ def _cut(text: str, limit: int) -> str:
     return cut
 
 
+def tag(char: str) -> bool:
+    """El bloque Tags entero (U+E0000–E007F), también sus puntos sin asignar (categoría `Cn`)."""
+    return 0xE0000 <= ord(char) <= 0xE007F
+
+
 def clean_text(raw: str) -> str:
     """El texto de un cliente listo para `record_inbound`: sin controles (salvo el salto de línea y
     el tabulador), sin caracteres de formato invisibles ni controles de dirección (se conservan
@@ -49,7 +53,7 @@ def clean_text(raw: str) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n")
     kept = [
         c for c in text
-        if c in KEEP or unicodedata.category(c) not in ("Cc", "Cf", "Cs")
+        if c in KEEP or (unicodedata.category(c) not in ("Cc", "Cf", "Cs") and not tag(c))
     ]  # fmt: skip
     return _cut("".join(kept), BODY_MAX)
 
@@ -119,12 +123,6 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
     if not visible(body):
         return "EMPTY"
     external = message["id"]
-    if (
-        Message.objects.using(alias)
-        .filter(channel_account_id=account.pk, external_message_id=external)
-        .exists()
-    ):
-        return None  # un reintento del procesador o una entrega repetida: ya está
     with connections[alias].cursor() as cursor:  # se suelta al acabar la transacción del scope
         key = f"wa:{ctx.organization_id}:{phone}"
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])

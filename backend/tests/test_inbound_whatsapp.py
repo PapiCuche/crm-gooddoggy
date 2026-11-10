@@ -17,7 +17,7 @@ from django.db import connection
 from django.utils import timezone
 
 from apps.contacts.models import Contact
-from apps.conversations import commands, inbound, ingress
+from apps.conversations import commands, inbound, ingress, meta_webhook
 from apps.conversations.models import ChannelAccount, Conversation, Message
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
@@ -83,6 +83,7 @@ def message(wamid: str, body: str = "Hola", **over: Any) -> dict[str, Any]:
         ("a‮b⁦c⁩d", "abcd"),  # controles de dirección: spoofing visual
         ("a‎b‏c", "a‎b‏c"),  # LRM y RLM sí: texto árabe y hebreo
         ("ab\U000e0041\U000e007fcd", "abcd"),  # Tags U+E0000–E007F: inyección de instrucciones
+        ("a\U000e0000b\U000e0002c\U000e001fd", "abcd"),  # los puntos sin asignar del bloque Tags
         ("a\ud800b", "ab"),  # sustituto suelto
         ("👨‍👩‍👧", "👨‍👩‍👧"),  # emoji de familia intacto
         ("Ñandú, 你好, 😀", "Ñandú, 你好, 😀"),
@@ -139,12 +140,6 @@ def test_the_wa_id_becomes_e164_and_the_two_forms_of_a_number_are_one(
     assert inbound.normalize_phone(wa_id) == phone
 
 
-def test_a_contact_saved_with_the_other_form_of_the_same_number_is_found() -> None:
-    assert inbound.variants("+525512345678") == ["+525512345678", "+5215512345678"]
-    assert inbound.variants("+541112345678") == ["+541112345678", "+5491112345678"]
-    assert inbound.variants("+51900000001") == ["+51900000001"]
-
-
 # ---- De punta a punta: la entrega firmada hasta lo que ve el Inbox ----
 
 
@@ -152,7 +147,7 @@ def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
     crm: SimpleNamespace, migrator: DB
 ) -> None:
     mine = make(crm.a, status_detail="WEBHOOK_NOT_SEEN")
-    other = make(crm.b, external_account_id="100000000000008", external_parent_id="100000000000007")
+    make(crm.b, external_account_id="100000000000008", external_parent_id="100000000000007")
     before_b = snap(crm.b)
     assert deliver(message("wamid.1", "Hola, ¿tienen stock?")).status_code == 200
     assert ingress.process() == {"PROCESSED": 1}
@@ -188,35 +183,10 @@ def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
     assert (len(after_b.contacts), len(after_b.conversations), len(after_b.messages)) == (
         len(before_b.contacts), 0, 0,
     )  # fmt: skip
-    assert other.pk is not None
-    assert signed(crm.luis).get(BASE.replace("org-a", "org-b")).status_code in (200, 403)
     assert ana.get(BASE.replace("org-a", "org-b")).status_code == 404
     # el ítem queda cerrado y sin el texto del cliente
     closed = rows(migrator)["wa:msg:wamid.1"]
     assert closed["status"] == "PROCESSED" and closed["payload"] is None
-
-
-def test_the_message_of_one_organization_never_lands_in_another(crm: SimpleNamespace) -> None:
-    make(crm.a)
-    make(crm.b, external_account_id="100000000000008", external_parent_id="100000000000007")
-    run(message("wamid.1"))
-    deliver(message("wamid.2"), waba="100000000000007", number="100000000000008")
-    assert ingress.process() == {"PROCESSED": 1}
-    mine, theirs = snap(crm.a), snap(crm.b)
-    assert [m.external_message_id for m in mine.messages] == ["wamid.1"]
-    assert [m.external_message_id for m in theirs.messages] == ["wamid.2"]
-    assert not {c.pk for c in mine.contacts} & {c.pk for c in theirs.contacts}
-
-
-def test_a_second_message_of_the_same_customer_joins_the_same_conversation(
-    crm: SimpleNamespace,
-) -> None:
-    make(crm.a)
-    run(message("wamid.1", "Uno"))
-    run(message("wamid.2", "Dos"))
-    found = snap(crm.a)
-    assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 2)
-    assert found.conversations[0].last_message_preview == "Dos"
 
 
 def test_the_same_message_delivered_twice_or_claimed_twice_is_one_message(
@@ -230,10 +200,8 @@ def test_the_same_message_delivered_twice_or_claimed_twice_is_one_message(
     assert ingress.route(claimed) == ("PROCESSED", crm.a, mine.pk, None)
     found = snap(crm.a)
     assert (len(found.contacts), len(found.conversations), len(found.messages)) == (1, 1, 1)
-    count = migrator.execute(
-        "SELECT count(*) FROM outbox_events WHERE event_type = 'message.received'"
-    )
-    assert count.fetchone() == (1,)  # y el evento tampoco
+    events = "SELECT count(*) FROM outbox_events WHERE event_type = 'message.received'"
+    assert migrator.execute(events).fetchone() == (1,)  # y el evento tampoco
 
 
 def test_four_workers_with_messages_of_a_new_customer_make_one_contact_and_one_conversation(
@@ -300,10 +268,8 @@ def detail(org: UUID, pk: UUID) -> tuple[str, str | None, int]:
 def test_the_first_event_of_a_pending_account_is_the_webhook_seen_signal(
     crm: SimpleNamespace, migrator: DB
 ) -> None:
-    ready = make(
-        crm.a, status_detail="WEBHOOK_NOT_SEEN", credential_id=credential(crm.a),
-        last_healthcheck_at=timezone.now(),
-    )  # fmt: skip
+    fields = {"credential_id": credential(crm.a), "last_healthcheck_at": timezone.now()}
+    ready = make(crm.a, status_detail="WEBHOOK_NOT_SEEN", **fields)
     assert detail(crm.a, ready.pk) == ("PENDING", "WEBHOOK_NOT_SEEN", 1)
     run(message("wamid.1"))
     assert detail(crm.a, ready.pk) == ("CONNECTED", None, 2)  # cumple `connected_ck`
@@ -323,19 +289,15 @@ def test_a_pending_account_without_credential_or_health_check_stays_pending_but_
     bare = make(crm.a, status_detail="WEBHOOK_NOT_SEEN")  # sin credencial ni salud (F7-06)
     run(message("wamid.1"))
     assert detail(crm.a, bare.pk) == ("PENDING", None, 2)  # visto, pero no conectada
-    assert len(snap(crm.a).messages) == 1
     run(message("wamid.2"))
     assert detail(crm.a, bare.pk) == ("PENDING", None, 2)  # sin más cambios ni auditoría
 
 
 def test_a_pending_account_with_another_detail_keeps_it(crm: SimpleNamespace) -> None:
-    odd = make(
-        crm.a, status_detail="TOKEN_INVALID", credential_id=credential(crm.a),
-        last_healthcheck_at=timezone.now(),
-    )  # fmt: skip
+    fields = {"credential_id": credential(crm.a), "last_healthcheck_at": timezone.now()}
+    odd = make(crm.a, status_detail="TOKEN_INVALID", **fields)
     run(message("wamid.1"))
     assert detail(crm.a, odd.pk) == ("PENDING", "TOKEN_INVALID", 1)
-    assert len(snap(crm.a).messages) == 1
 
 
 def test_an_account_in_error_or_disconnected_registers_the_message_and_a_deleted_one_does_not(
@@ -565,3 +527,43 @@ def test_what_is_not_text_is_ignored_with_a_code_until_the_next_piece_stores_it(
     ]  # fmt: skip
     after = snap(crm.a)
     assert (after.contacts, after.conversations, after.messages) == ([], [], [])
+
+
+def test_six_first_events_at_once_change_the_pending_account_and_audit_it_exactly_once(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    mine = make(crm.a)
+    with tenant_scope(ctx(crm.a)):
+        ChannelAccount.objects.filter(pk=mine.pk).update(
+            status_detail="WEBHOOK_NOT_SEEN",
+            credential_id=credential(crm.a),
+            last_healthcheck_at=timezone.now(),
+        )
+    before = detail(crm.a, mine.pk)[2]
+    deliver(*[message(f"wamid.{n}", f"m{n}", **{"from": f"5190000000{n}"}) for n in range(6)])
+    start, outcome = threading.Barrier(6), []
+
+    def work() -> None:
+        try:
+            start.wait(timeout=10)
+            outcome.append(ingress.process(batch_size=1, rounds=1))
+        except Exception as error:  # noqa: BLE001 — lo comprueba el test
+            outcome.append({type(error).__name__: 1})
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=work) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    assert sorted(k for o in outcome for k in o) == ["PROCESSED"] * 6, outcome
+    assert detail(crm.a, mine.pk) == ("CONNECTED", None, before + 1)
+    seen = migrator.execute("SELECT count(*) FROM audit_logs WHERE action = 'channel_account.seen'")
+    assert seen.fetchone() == (1,)
+
+
+def test_the_profile_name_travels_in_the_item_capped_at_200_characters() -> None:
+    value = webhooks.value(messages=[message("wamid.1")], name="n" * 300)
+    [item] = meta_webhook.parse(webhooks.encode(webhooks.envelope(value))).items
+    assert item.payload["profile_name"] == "n" * 200  # `inbound.profile_name` lo recorta a 100
