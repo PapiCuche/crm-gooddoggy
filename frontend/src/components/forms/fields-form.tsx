@@ -30,6 +30,9 @@ export type FormField<Name extends string> = {
   literal?: boolean;
   defaultValue?: string; // lo que hay al abrir (un formulario de edición)
   list?: string; // el `id` de un `<datalist>` de sugerencias
+  // Un secreto (un token): campo de contraseña sin eco ni autocompletado, que se vacía al enviar.
+  // Nunca vive en el estado de React: se lee del formulario, se manda y se borra.
+  secret?: boolean;
 };
 // Lo que el formulario necesita saber de la escritura: el resultado de `useMutation` en el
 // render de la pantalla (un objeto nuevo cada vez que ella se pinta).
@@ -127,7 +130,8 @@ export function FieldsForm<Name extends string>({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (sending.current) return;
-    const form = new FormData(event.currentTarget);
+    const element = event.currentTarget;
+    const form = new FormData(element);
     const values = Object.fromEntries(
       fields.map((field) => [field.name, String(form.get(field.name) ?? "").trim()]),
     ) as Record<Name, string>;
@@ -158,6 +162,11 @@ export function FieldsForm<Name extends string>({
     }
     sending.current = true;
     sentWith.current = write;
+    // Los secretos se borran del campo al enviar, también si la respuesta es un error.
+    for (const field of fields) {
+      const input = field.secret ? element.elements.namedItem(field.name) : null;
+      if (input instanceof HTMLInputElement) input.value = "";
+    }
     send(values);
   }
 
@@ -173,6 +182,8 @@ export function FieldsForm<Name extends string>({
   return (
     <form
       noValidate
+      // Con un secreto, un envío nativo (si el JS fallara) nunca es un GET: el token iría a la URL.
+      method={fields.some((field) => field.secret) ? "post" : undefined}
       onSubmit={submit}
       // Cualquier control del formulario, también los que la pantalla pone en `note`.
       onInput={edited}
@@ -189,11 +200,14 @@ export function FieldsForm<Name extends string>({
           }}
           label={field.label}
           name={field.name}
-          autoComplete="off"
+          type={field.secret ? "password" : undefined}
+          autoComplete={field.secret ? "new-password" : "off"}
+          data-1p-ignore={field.secret ? true : undefined}
+          data-lpignore={field.secret ? "true" : undefined}
           inputMode={field.inputMode}
-          autoCapitalize={field.literal ? "none" : undefined}
-          autoCorrect={field.literal ? "off" : undefined}
-          spellCheck={field.literal ? false : undefined}
+          autoCapitalize={field.literal || field.secret ? "none" : undefined}
+          autoCorrect={field.literal || field.secret ? "off" : undefined}
+          spellCheck={field.literal || field.secret ? false : undefined}
           defaultValue={field.defaultValue}
           list={field.list}
           maxLength={field.max}
