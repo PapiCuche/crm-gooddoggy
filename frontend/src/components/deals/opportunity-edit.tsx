@@ -64,7 +64,10 @@ export function OpportunityEdit({
         done(next, t("done"));
         setTimeout(() => trigger.current?.focus());
       },
-      onError: (error) => [404, 409].includes(error.status) && stale(),
+      // Cerrada mientras se editaba: al volver a leer, el formulario ya no está; se dice aquí.
+      onError: (error) =>
+        [404, 409].includes(error.status) &&
+        stale(error.code === "OPPORTUNITY_CLOSED" ? t("closed") : undefined),
     },
   });
   const assign = useOpportunitiesAssign({

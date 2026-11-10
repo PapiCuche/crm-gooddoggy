@@ -364,6 +364,61 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(value("Responsable")).toHaveTextContent("Luis Ramos");
   });
 
+  it("dos pulsaciones seguidas de «Asignar» envían una sola petición", async () => {
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [MEMBERS]: people,
+      [ASSIGN]: ok(detail({ assigned_user_id: "u2", version: 4 })),
+    });
+    show(["opportunities.view", "opportunities.assign", "users.view"]);
+    const pick = await screen.findByRole("combobox", { name: "Asignar a" });
+    await within(pick).findByRole("option", { name: "Luis Ramos" });
+    fireEvent.change(pick, { target: { value: "u2" } });
+    const button = screen.getByRole("button", { name: "Asignar" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await screen.findByText("Responsable cambiado.");
+    expect(sent(api, "POST")).toHaveLength(1);
+  });
+
+  it("un 409 OPPORTUNITY_CLOSED al editar se dice aunque el formulario desaparezca", async () => {
+    let closed = false;
+    mockApi({
+      [DETAIL]: () =>
+        ok(detail(closed ? { status: "WON", stage: stage("s3", "Ganado", "WON") } : {})),
+      [PIPELINES]: pipelines,
+      [PATCH]: () => {
+        closed = true;
+        return { status: 409, body: { code: "OPPORTUNITY_CLOSED" } };
+      },
+    });
+    show(["opportunities.view", "opportunities.update"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    fireEvent.change(within(form).getByLabelText("Título"), { target: { value: "Otro" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Esta oportunidad ya está cerrada");
+  });
+
+  it("sin directorio solo se puede asignar a uno mismo, y un importe igual escrito de otra forma no se envía", async () => {
+    const api = mockApi({ [DETAIL]: ok(detail()), [PIPELINES]: pipelines });
+    show(["opportunities.view", "opportunities.assign", "opportunities.update"]);
+    const pick = await screen.findByRole("combobox", { name: "Asignar a" });
+    expect(
+      within(pick)
+        .getAllByRole("option")
+        .map((one) => one.textContent),
+    ).toEqual(["Asignar a…", "Yo"]);
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    fireEvent.change(within(form).getByLabelText("Importe"), { target: { value: "1500.5" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(sent(api, "PATCH")).toEqual([]);
+  });
+
   it("mover la etapa usa la acción del tablero con la versión leída y vuelve a leer el detalle", async () => {
     let moved = false;
     const api = mockApi({
