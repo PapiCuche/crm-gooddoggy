@@ -226,6 +226,20 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(screen.getByRole("button", { name: /^Perder «/ })).toBeVisible();
   });
 
+  it("una oportunidad cerrada no se edita ni se asigna aunque haya permiso: se reabre", async () => {
+    mockApi({
+      [DETAIL]: ok(detail({ status: "WON", stage: stage("s3", "Ganado", "WON") })),
+      [PIPELINES]: pipelines,
+      [MEMBERS]: people,
+    });
+    show(["opportunities.view", "opportunities.update", "opportunities.assign", "users.view"]);
+    expect(
+      await screen.findByRole("button", { name: /^Reabrir «Collar para Rocky»/ }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Asignar a" })).toBeNull();
+  });
+
   it("un 404 es la página de «no encontrada», sin decir si existe", async () => {
     mockApi({ [DETAIL]: { status: 404, body: { code: "NOT_FOUND" } }, [PIPELINES]: pipelines });
     const failure = notFoundThrown();
