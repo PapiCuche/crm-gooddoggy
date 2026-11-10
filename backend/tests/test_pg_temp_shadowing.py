@@ -27,6 +27,11 @@ FUNCTIONS = (
     "public.messages_queued_organizations(timestamptz, integer)",  # F6-04b, SECURITY DEFINER
     "public.credentials_stale_organizations(integer, integer)",  # F7-02b, SECURITY DEFINER
     "public.webhook_ingress_insert(text, text, text, text, text, jsonb)",  # F7-03b
+    "public.webhook_ingress_claim(integer, integer)",  # F7-03c
+    "public.webhook_ingress_mark(uuid, integer, text, uuid, uuid, text)",
+    "public.webhook_ingress_list(text, integer)",
+    "public.webhook_ingress_purge(integer, integer)",
+    "public.resolve_channel_account(text, text)",
 )
 
 
