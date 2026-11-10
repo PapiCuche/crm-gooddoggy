@@ -1,6 +1,9 @@
+import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 
+import { useTenant } from "@/components/app-shell/tenant-context";
+import { Plain } from "@/components/inbox/plain";
 import { moneyText } from "@/components/pricing/margins";
 import type { Opportunity } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
@@ -34,6 +37,7 @@ export function OpportunityCard({
 }) {
   const t = useTranslations("deals.card");
   const format = useFormatter();
+  const slug = useTenant().organization.slug;
   const { contact, next_action: next } = opportunity;
   return (
     <li
@@ -46,7 +50,13 @@ export function OpportunityCard({
     >
       <div className="flex items-start justify-between gap-2">
         <p className="flex min-w-0 flex-col">
-          <span className="font-medium wrap-anywhere">{opportunity.title}</span>
+          <Link
+            href={`/o/${slug}/oportunidades/${opportunity.id}`}
+            prefetch={false}
+            className="font-medium wrap-anywhere underline-offset-4 hover:underline"
+          >
+            <Plain>{opportunity.title}</Plain>
+          </Link>
           <span className="text-muted font-mono text-[13px]">{opportunity.number}</span>
         </p>
         {handle}

@@ -2079,6 +2079,45 @@
       "end": "No hay más etapas en esa dirección.",
       "dropped": "Moviendo «{title}» a «{stage}»…",
       "cancelled": "Movimiento cancelado: «{title}» sigue en «{stage}»."
+    },
+    "detail": {
+      "eyebrow": "Good Doggy / Oportunidades",
+      "breadcrumb": "Ruta de la oportunidad",
+      "list": "Oportunidades",
+      "title": "Oportunidad",
+      "loading": "Cargando la oportunidad…",
+      "denied": "No tienes permiso para ver esta oportunidad.",
+      "customer": "Cliente",
+      "noContact": "Cliente no visible",
+      "amount": "Importe",
+      "stage": "Etapa",
+      "probability": "Probabilidad",
+      "owner": "Responsable",
+      "next": "Próxima acción",
+      "noNext": "Sin próxima acción",
+      "closeDate": "Cierre esperado",
+      "noCloseDate": "Sin fecha",
+      "days": "En la etapa",
+      "daysValue": "{days, plural, =0 {Desde hoy} one {# día} other {# días}}",
+      "lostReason": "Motivo de pérdida",
+      "noReason": "Sin motivo",
+      "lostNote": "Nota",
+      "status": {
+        "OPEN": "Abierta",
+        "WON": "Ganada",
+        "LOST": "Perdida"
+      },
+      "actions": "Acciones de la oportunidad",
+      "items": {
+        "title": "Líneas",
+        "empty": "Esta oportunidad no tiene líneas.",
+        "line": "Línea {index}: {quantity} × {price}"
+      },
+      "history": {
+        "title": "Historial de etapas",
+        "created": "Creada en «<n>{to}</n>»",
+        "moved": "De «<n>{from}</n>» a «<n>{to}</n>»"
+      }
     }
   },
   "inbox": {
