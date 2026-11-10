@@ -16,7 +16,7 @@
 | `work-item-dependencies.yml` | `issues` (closed, edited, labeled) + `workflow_dispatch` | **Activo desde A-04 (trusted):** desbloquea `status:blocked` → `status:ready` con dependencias CLOSED y gates presentes en el ruleset; comenta en el issue y en el maestro |
 | `backend.yml` | **Todos** los PRs (sin `paths`) + push a `main` con cambios en `backend/**` o en el workflow | **Activo desde F1-02; gate estable desde A-03:**
   - `backend changes`: detector;
-  - `backend checks`, `backend tests` y `backend docker build`: jobs de implementación, que solo corren si el PR toca el backend;
+  - `backend checks`, `backend tests` y `backend docker build`: jobs de implementación, que solo corren si el PR toca el backend. `backend tests` es una matriz de 4 shards (`backend tests (shard N/4)`, CI-PERF-01): cada shard es una VM con su propio PostgreSQL 18.6 (roles `crm_migrator`/`crm_app`, RLS) y su Garage, ejecuta solo sus archivos (reparto determinista por peso, `.github/scripts/shard_backend.py` y `backend_shard_weights.json`) y comprueba por JUnit que ejecutó exactamente lo planeado; la suma de los shards es la suite completa. Si se añaden archivos de test, el peso se estima por número de tests; los pesos se regeneran con las líneas `SECONDS` del log de un run;
   - `backend gate`: siempre presente; es el candidato a check requerido. |
 | `frontend.yml` | PR/push con cambios en `frontend/**` | Se crea en la Fase 1 (cuando exista `package.json`) |
 
