@@ -11,7 +11,6 @@ import {
   TriangleAlert,
   UserRound,
 } from "lucide-react";
-import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useLayoutEffect, useRef } from "react";
 
@@ -54,10 +53,12 @@ export function ChatPanel({
   conversation: row,
   headingRef,
   onBack,
+  onCustomer,
 }: {
   conversation: Conversation;
   headingRef: Ref<HTMLHeadingElement>;
   onBack: () => void;
+  onCustomer: () => void; // abre el panel del cliente (el chat sigue montado, con su borrador)
 }) {
   const t = useTranslations("inbox");
   const { organization, permissions, user } = useTenant();
@@ -178,14 +179,15 @@ export function ChatPanel({
             <span className="max-lg:sr-only">{t("chat.refresh")}</span>
           </Button>
           {name === null ? null : (
-            <Link
-              href={`/o/${slug}/clientes/${conversation.contact.id}`}
-              prefetch={false}
-              className="max-sm:border-border order-4 inline-flex items-center justify-center gap-2 text-xs font-medium underline underline-offset-4 max-sm:size-10 max-sm:rounded-md max-sm:border max-sm:no-underline sm:text-sm lg:order-6 lg:self-start"
+            <Button
+              id="customer-toggle"
+              variant="ghost"
+              className="text-foreground border-border order-4 text-xs font-medium max-sm:size-10 max-sm:border max-sm:px-0 sm:h-auto sm:px-0 sm:text-sm sm:underline sm:underline-offset-4 lg:order-6 lg:self-start"
+              onClick={onCustomer}
             >
               <UserRound aria-hidden className="size-4 sm:hidden" />
-              <span className="max-sm:sr-only">{t("customerCard")}</span>
-            </Link>
+              <span className="max-sm:sr-only">{t("customer.open")}</span>
+            </Button>
           )}
           <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
             <span className="font-mono">{conversation.number}</span>

@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 import { ChatPanel } from "./chat-panel";
 import { ConversationList, type Filters } from "./conversation-list";
+import { CustomerPanel } from "./customer-panel";
 
 // En pantalla ancha lista y chat conviven; en 390 px se ve uno u otro (lista y, al abrirla, el chat).
 const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 1024px)").matches;
@@ -21,7 +22,10 @@ export function Inbox() {
   const { organization } = useTenant();
   const [filters, setFilters] = useState<Filters>({ box: "all", status: "" });
   const [selected, setSelected] = useState<Conversation | null>(null);
+  const [view, setView] = useState<"chat" | "customer">("chat");
+  const customerHeading = useRef<HTMLHeadingElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const wasCustomer = useRef(false);
   const last = useRef<string | null>(null);
   const selectedId = selected?.id ?? null;
   useEffect(() => {
@@ -32,6 +36,12 @@ export function Inbox() {
       document.getElementById(`conversation-${last.current}`)?.focus();
     }
   }, [selectedId]);
+  useEffect(() => {
+    // Abrir el panel lleva el foco a su nombre; volver, al botón que lo abrió (el chat sigue montado).
+    if (view === "customer") customerHeading.current?.focus();
+    else if (wasCustomer.current) document.getElementById("customer-toggle")?.focus();
+    wasCustomer.current = view === "customer";
+  }, [view]);
 
   return (
     <section className="flex min-w-0 flex-col gap-6">
@@ -62,17 +72,37 @@ export function Inbox() {
             filters={filters}
             onFilters={setFilters}
             selectedId={selectedId}
-            onSelect={setSelected}
+            onSelect={(next) => {
+              setView("chat");
+              setSelected(next);
+            }}
           />
         </section>
         <section aria-label={t("chat.landmark")} className="min-w-0">
           {selected ? (
-            <ChatPanel
-              key={selected.id}
-              conversation={selected}
-              headingRef={heading}
-              onBack={() => setSelected(null)}
-            />
+            <>
+              {/* El chat no se desmonta al ver al cliente: conserva su borrador y su posición. */}
+              <div hidden={view === "customer"}>
+                <ChatPanel
+                  key={selected.id}
+                  conversation={selected}
+                  headingRef={heading}
+                  onBack={() => {
+                    setView("chat");
+                    setSelected(null);
+                  }}
+                  onCustomer={() => setView("customer")}
+                />
+              </div>
+              {view === "customer" ? (
+                <CustomerPanel
+                  key={selected.id}
+                  contact={selected.contact}
+                  headingRef={customerHeading}
+                  onBack={() => setView("chat")}
+                />
+              ) : null}
+            </>
           ) : (
             <p className="text-muted max-lg:hidden">{t("chat.choose")}</p>
           )}
