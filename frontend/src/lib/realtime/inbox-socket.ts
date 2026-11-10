@@ -1,0 +1,112 @@
+// El cliente WebSocket del Inbox (F6-07c), sin React: el contrato con el servicio `ws` (F6-07a) y la
+// reconexión. El servidor manda texto JSON `{type, conversation_id, message_id?}` por
+// `/ws/o/{slug}/inbox/`, autenticado por la cookie de sesión (mismo origen, ADR-003). Aquí solo se
+// valida lo que llega, se reconecta con espera creciente y se avisa de cada evento válido y de cada
+// reconexión (cuando se pudo perder algo). Qué hacer con ellos es de quien lo usa.
+
+export const INBOX_EVENTS = [
+  "message.received",
+  "message.updated",
+  "conversation.updated",
+] as const;
+export type InboxEvent = {
+  type: (typeof INBOX_EVENTS)[number];
+  conversation_id: string;
+  message_id?: string;
+};
+
+// Cierres que el servidor da a propósito y que reconectar no arregla (`core.tenancy.channels`:
+// 4403 organización suspendida, 4404 sin organización o sin membresía; 4401, sin sesión).
+export const FINAL_CLOSES: readonly number[] = [4401, 4403, 4404];
+const ID = /^[0-9a-zA-Z-]{1,64}$/;
+
+// Un fotograma que no es lo acordado (binario, JSON roto, tipo desconocido, ids raros) se ignora:
+// el servidor puede crecer con tipos nuevos sin romper a un cliente viejo.
+export function parseInboxEvent(data: unknown): InboxEvent | null {
+  if (typeof data !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (typeof raw !== "object" || raw === null) return null;
+  const {
+    type,
+    conversation_id: conversation,
+    message_id: message,
+  } = raw as Record<string, unknown>;
+  if (!INBOX_EVENTS.includes(type as InboxEvent["type"])) return null;
+  if (typeof conversation !== "string" || !ID.test(conversation)) return null;
+  if (message !== undefined && (typeof message !== "string" || !ID.test(message))) return null;
+  return {
+    type: type as InboxEvent["type"],
+    conversation_id: conversation,
+    ...(message === undefined ? {} : { message_id: message }),
+  };
+}
+
+// Lo que se usa del `WebSocket` (también lo cumple el doble de las pruebas).
+export type SocketLike = {
+  onopen: ((event: unknown) => void) | null;
+  onmessage: ((event: { data: unknown }) => void) | null;
+  onclose: ((event: { code: number }) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+  close: () => void;
+};
+
+const WAIT = { first: 1000, max: 30_000 };
+
+// La espera antes del intento `attempt` (0 el primero): 1 s, 2 s, 4 s… con tope de 30 s.
+export const backoff = (attempt: number) => Math.min(WAIT.max, WAIT.first * 2 ** attempt);
+
+export function connectInbox({
+  url,
+  onEvent,
+  onResync,
+  create = (target: string) => new WebSocket(target) as unknown as SocketLike,
+}: {
+  url: string;
+  onEvent: (event: InboxEvent) => void;
+  onResync: () => void; // se volvió a conectar tras un corte: lo ocurrido mientras tanto se relee
+  create?: (url: string) => SocketLike;
+}): () => void {
+  let socket: SocketLike | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let attempt = 0;
+  let opened = false; // ¿hubo ya una conexión? la primera no es una reconexión
+  let stopped = false;
+
+  function open() {
+    const current = create(url);
+    socket = current;
+    current.onopen = () => {
+      attempt = 0; // lo que sigue se cuenta desde cero
+      if (opened) onResync();
+      opened = true;
+    };
+    current.onmessage = (frame) => {
+      const event = parseInboxEvent(frame.data);
+      if (event) onEvent(event);
+    };
+    current.onclose = (close) => {
+      if (stopped || socket !== current) return;
+      socket = null;
+      if (FINAL_CLOSES.includes(close.code)) return;
+      timer = setTimeout(open, backoff(attempt++));
+    };
+    current.onerror = () => {}; // sigue un `close`, que es lo que trata la reconexión
+  }
+  open();
+
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    const current = socket;
+    socket = null;
+    if (current) {
+      current.onclose = current.onmessage = current.onopen = current.onerror = null;
+      current.close();
+    }
+  };
+}
