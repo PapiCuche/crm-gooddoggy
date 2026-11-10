@@ -138,6 +138,18 @@ CELERY_BEAT_SCHEDULE = {
         "task": "accounts.reseal_mfa_secrets",
         "schedule": crontab(hour=3, minute=47),
     },
+    # F7-03c: recoge lo que la ruta del webhook no pudo avisar, y reintenta lo fallido.
+    "conversations.process_webhook_ingress": {
+        "task": "conversations.process_webhook_ingress",
+        "schedule": 15.0,
+        # Si los workers se paran no se acumulan ~5760 tareas al día para despacharse de golpe.
+        "options": {"expires": 15},
+    },
+    # F7-03c: purga a 90 días, el tope de la ingesta (ADR-029 §3).
+    "conversations.purge_webhook_ingress": {
+        "task": "conversations.purge_webhook_ingress",
+        "schedule": crontab(hour=4, minute=17),
+    },
     # F7-02b (ADR-022 §5): lo mismo para los tokens de las cuentas de canal, a otra hora.
     "conversations.reseal_credentials": {
         "task": "conversations.reseal_credentials",

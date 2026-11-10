@@ -1,20 +1,48 @@
-"""La ingesta de los webhooks de Meta (F7-03b; ADR-029 §3): guardar cada ítem firmado.
+"""La ingesta de los webhooks de Meta (F7-03b y F7-03c; ADR-029 §3 y §4): guardar cada ítem
+firmado, reclamarlo, enrutarlo al tenant y cerrarlo.
 
 `webhook_ingress` y `webhook_failures` son de plataforma: `crm_app` no tiene ningún privilegio
-sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones (`0008`: insertar).
-Aquí está todo lo que las llama. Reclamar, enrutar y cerrar los ítems es de F7-03c.
+sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones (`0008`: insertar;
+`0009`: el resto). Aquí está todo lo que las llama. El enrutado **nunca** usa la organización que
+diga el payload: sale de `resolve_channel_account` (la cuenta que la propia organización
+registró), y el procesador solo enruta y marca: un ítem enrutado queda `PROCESSED` sin efecto
+hasta F7-04.
 """
 
+import json
 import math
+import time
+from collections import Counter
+from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
+from apps.conversations.models import ChannelAccount
 from core.observability.logging import get_logger
+from core.tenancy.context import ActorType, TenantContext
+from core.tenancy.scope import tenant_scope
 
 logger = get_logger(__name__)
 PROVIDER = "meta"
+LEASE_SECONDS = 60  # el reclamo caduca: un proceso que muere no deja el ítem para siempre
+BROKER_WAIT = 3  # segundos que la ruta pública espera a un broker que no contesta
+_NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
+WAKE_EVERY = 1.0  # segundos entre dos avisos de un mismo proceso: el resto lo recoge el barrido
+_last_wake = 0.0
+_now = time.monotonic  # separado para que una prueba mueva el reloj
+
+
+@dataclass(frozen=True, slots=True)
+class Claimed:
+    id: UUID
+    kind: str
+    waba_id: str
+    phone_number_id: str | None
+    payload: dict[str, Any]
+    attempts: int
 
 
 def clean(value: Any) -> Any:
@@ -59,3 +87,108 @@ def store(items: list[Any]) -> int:
     if refused:
         logger.warning("meta.webhook.refused", count=refused)
     return new
+
+
+def claim(limit: int = 50, lease: int = LEASE_SECONDS) -> list[Claimed]:
+    rows = _call("SELECT * FROM public.webhook_ingress_claim(%s, %s)", [limit, lease])
+    # El jsonb llega como texto por el cursor de Django.
+    return [Claimed(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows]
+
+
+def mark(
+    item: Claimed,
+    status: str,
+    organization_id: UUID | None = None,
+    channel_account_id: UUID | None = None,
+    reason: str | None = None,
+) -> str | None:
+    """Cierra un ítem reclamado; devuelve su estado final (`DEAD` si agotó los intentos) o `None`
+    si ya no estaba reclamado por este intento (caducó y lo tiene otro, o ya se cerró)."""
+    sql = "SELECT public.webhook_ingress_mark(%s, %s, %s, %s, %s, %s)"
+    found = _call(
+        sql, [item.id, item.attempts, status, organization_id, channel_account_id, reason]
+    )
+    return found[0][0]  # type: ignore[no-any-return]
+
+
+def listing(status: str | None = None, limit: int = 50) -> list[tuple[Any, ...]]:
+    """Solo metadatos, sin el payload (para el panel de F7-11)."""
+    return _call("SELECT * FROM public.webhook_ingress_list(%s, %s)", [status, limit])
+
+
+def purge(days: int = 90, limit: int = 1000) -> int:
+    """Borra lo que lleva más de `days` días (90 es el tope, no el plazo normal)."""
+    return int(_call("SELECT public.webhook_ingress_purge(%s, %s)", [days, limit])[0][0])
+
+
+def resolve(platform: str, number: str) -> tuple[UUID, UUID] | None:
+    """(organización, cuenta) de la cuenta viva de ese número, o `None`: sin enumerar nada más."""
+    found = _call("SELECT * FROM public.resolve_channel_account(%s, %s)", [platform, number])
+    return (found[0][0], found[0][1]) if found else None
+
+
+def wake() -> None:
+    """Avisa al procesador de que hay ítems nuevos, sin retener la ruta pública: una conexión propia
+    al broker que no reintenta ni espera más de `BROKER_WAIT`. Si falla, el barrido de beat lo
+    recoge igual; nunca estropea la respuesta a Meta. Como mucho uno por segundo y proceso: cada
+    aviso abre una conexión (con el broker caído, espera hasta `BROKER_WAIT`)."""
+    global _last_wake
+    now = _now()
+    if now - _last_wake < WAKE_EVERY:
+        return
+    _last_wake = now
+    from apps.conversations.tasks import process_webhook_ingress
+
+    try:
+        broker = process_webhook_ingress.app.connection_for_write(
+            connect_timeout=BROKER_WAIT, transport_options=_NO_WAIT
+        )
+        with broker:
+            process_webhook_ingress.apply_async(expires=60, retry=False, connection=broker)
+    except Exception:
+        logger.warning("meta.webhook.wake_failed")
+
+
+def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
+    """A dónde va un ítem: (estado, organización, cuenta, motivo). La organización es la de la
+    cuenta registrada, nunca una del payload; el WABA del evento tiene que ser el de la cuenta."""
+    if item.phone_number_id is None:
+        return "IGNORED", None, None, "NO_NUMBER"  # cuenta y plantillas: F7-10 y F7-11
+    found = resolve("WHATSAPP", item.phone_number_id)
+    if found is None:
+        return "IGNORED", None, None, "UNKNOWN_NUMBER"
+    organization_id, account_id = found
+    context = TenantContext(organization_id, "webhook", actor_type=ActorType.INTEGRATION)
+    with tenant_scope(context):
+        parent = ChannelAccount.objects.filter(pk=account_id).values_list(
+            "external_parent_id", flat=True
+        )
+        if parent.first() != item.waba_id:
+            logger.warning("meta.webhook.waba_mismatch", channel_account_id=str(account_id))
+            return "IGNORED", None, None, "WABA_MISMATCH"
+    return "PROCESSED", organization_id, account_id, None
+
+
+def handle(item: Claimed) -> str:
+    try:
+        status, organization_id, account_id, reason = route(item)
+        return mark(item, status, organization_id, account_id, reason) or "LOST"
+    except Exception as error:  # el motivo es un código: nada del error ni del payload
+        logger.error("meta.webhook.process_failed", error=type(error).__name__)
+        try:
+            return mark(item, "FAILED", reason="ERROR") or "LOST"
+        except Exception:
+            logger.error("meta.webhook.mark_failed")  # el reclamo caduca y se reintenta
+            return "LOST"
+
+
+def process(batch_size: int = 50, rounds: int = 10) -> dict[str, int]:
+    """Reclama lotes y los enruta hasta vaciar lo pendiente (o `rounds` lotes). Devuelve cuántos
+    quedaron en cada estado. Dos procesos a la vez no reclaman el mismo ítem."""
+    done: Counter[str] = Counter()
+    for _ in range(rounds):
+        batch = claim(batch_size)
+        done.update(handle(item) for item in batch)
+        if len(batch) < batch_size:
+            break
+    return dict(done)
