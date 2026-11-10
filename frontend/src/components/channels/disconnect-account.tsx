@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { channelsWhatsappDisconnect } from "@/lib/api/client";
+import { Plain } from "@/components/inbox/plain";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
@@ -67,7 +68,11 @@ export function DisconnectAccount({
           aria-label={t("title", { name })}
           className="border-danger flex w-full max-w-xl flex-col gap-3 rounded-lg border p-3"
         >
-          <p className="wrap-anywhere">{t("question", { name })}</p>
+          {/* El nombre lo escribió otra persona: aislado (`Plain`) para que un carácter de dirección no
+              reordene lo que lo rodea en la pregunta de una acción que no se deshace. */}
+          <p className="wrap-anywhere">
+            {t.rich("question", { name, n: (chunks) => <Plain>{chunks}</Plain> })}
+          </p>
           <p className="text-muted text-sm">{t("effect")}</p>
           <div className="flex flex-wrap gap-2">
             <Button

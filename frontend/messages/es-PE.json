@@ -2310,7 +2310,7 @@
     "disconnect": {
       "open": "Desconectar",
       "title": "Desconectar {name}",
-      "question": "¿Desconectar «{name}»?",
+      "question": "¿Desconectar «<n>{name}</n>»?",
       "effect": "La cuenta deja de recibir y enviar mensajes. Reconectarla es crear una cuenta nueva.",
       "confirm": "Sí, desconectar",
       "busy": "Desconectando…",

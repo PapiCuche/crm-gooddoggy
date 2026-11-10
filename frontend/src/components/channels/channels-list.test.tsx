@@ -462,6 +462,16 @@ describe("Canales (F7-07b)", () => {
     expect(sent(api).filter((call) => call.method === "DELETE")).toHaveLength(1);
   });
 
+  it("la confirmación aísla el nombre de la cuenta: un carácter de dirección no reordena la pregunta", async () => {
+    mockApi({ [LIST]: page([account("a1", { name: "Tienda‮abc" })]) });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+    const group = await screen.findByRole("group", { name: /^Desconectar / });
+    const bdi = group.querySelector("p bdi")!;
+    expect(bdi.textContent).toBe("Tienda‮abc");
+    expect(bdi).toHaveAttribute("dir", "auto");
+  });
+
   it.each([
     [404, "NOT_FOUND", "Esa cuenta ya no existe. Actualizamos la lista."],
     [403, "PERMISSION_DENIED", "No tienes permiso para gestionar los canales."],
