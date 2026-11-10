@@ -49,6 +49,10 @@ TENANT_TABLES = ("promotion_items", "promotion_price_lists", "promotions", *TENA
 TENANT_TABLES = ("pipeline_stages", "pipelines", "lost_reasons", *TENANT_TABLES)
 # F5-03: delante de todo lo que referencian (etapas, motivos, contactos, variantes y membresías)
 TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
+TENANT_TABLES = (
+    "tasks",
+    *TENANT_TABLES,
+)  # F5-08a: delante de contactos, oportunidades y membresías
 # F6-01: delante de las oportunidades y de todo lo que referencian (contactos, equipos, personas)
 TENANT_TABLES = (
     "messages",
