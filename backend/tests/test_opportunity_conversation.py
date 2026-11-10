@@ -16,9 +16,10 @@ from django.utils import timezone
 from apps.conversations.models import ChannelAccount, Conversation
 from apps.deals import opportunities
 from apps.deals.models import Opportunity
-from apps.deals.opportunities import BadReference, create_opportunity
+from apps.deals.opportunities import BadReference, create_opportunity, update_opportunity
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunity_scopes as scopes
+from tests.test_authorization import give
 from tests.test_memberships import ctx
 from tests.test_opportunities_api import OPPS
 from tests.test_opportunities_write_api import acts, create, fail, rows
@@ -95,6 +96,33 @@ def test_every_conversation_that_does_not_fit_gives_the_same_error(
     free = convo(crm.a, crm.ids["owned"], "CONV-00006", "f")  # sin asignar: dentro de OWN
     assert made(vera, crm, conversation_id=str(free)).status_code == 201
     assert made(signed(crm.ana), crm, conversation_id=str(sams)).status_code == 201  # ORGANIZATION
+
+
+def test_the_scope_that_counts_is_the_one_of_conversations_view_not_the_one_of_contacts_view(
+    crm: SimpleNamespace,
+) -> None:
+    give(  # ve a todos los contactos, pero solo sus propias conversaciones
+        crm.a, crm.m["bea"],
+        {"opportunities.create": None, "contacts.view": "ORGANIZATION",
+         "conversations.view": "OWN"},
+    )  # fmt: skip
+    sams = convo(crm.a, crm.ids["owned"], "CONV-00012", "b", assigned_user_id=crm.sam.pk)
+    mine = convo(crm.a, crm.ids["owned"], "CONV-00013", "c", assigned_user_id=crm.bea.pk)
+    bea = signed(crm.bea)
+    assert fail(made(bea, crm, conversation_id=str(sams)))[2] == ["conversation_id"]
+    assert made(bea, crm, conversation_id=str(mine)).status_code == 201
+
+
+def test_the_command_never_changes_the_conversation_of_an_opportunity(
+    crm: SimpleNamespace,
+) -> None:
+    created = made(signed(crm.ana), crm).json()
+    origin = convo(crm.a, crm.ids["owned"], "CONV-00014")
+    with tenant_scope(ctx(crm.a, crm.ana)) as tenant, pytest.raises(ValueError, match="campos"):
+        update_opportunity(
+            tenant, opportunity_id=UUID(created["id"]), version=created["version"],
+            conversation_id=origin,
+        )  # fmt: skip
 
 
 def test_a_conversation_id_that_is_not_an_id_is_a_field_error_and_it_is_not_editable(
