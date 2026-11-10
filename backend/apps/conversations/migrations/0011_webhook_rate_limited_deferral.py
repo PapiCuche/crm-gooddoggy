@@ -10,7 +10,6 @@ from django.db import migrations
 
 from core.db.operations import SecurityDefinerFunction
 
-NINE = "apps.conversations.migrations.0009_webhook_processing"
 OLD: SecurityDefinerFunction = next(
     op
     for op in import_module(
