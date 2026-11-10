@@ -19,11 +19,14 @@ export type InboxEvent = {
 // 4403 organización suspendida, 4404 sin organización o sin membresía; 4401, sin sesión).
 export const FINAL_CLOSES: readonly number[] = [4401, 4403, 4404];
 const ID = /^[0-9a-zA-Z-]{1,64}$/;
+// Un fotograma legítimo mide unas decenas de bytes: uno mayor no se analiza (no se bloquea la
+// pantalla con un JSON enorme).
+export const MAX_FRAME = 4096;
 
 // Un fotograma que no es lo acordado (binario, JSON roto, tipo desconocido, ids raros) se ignora:
 // el servidor puede crecer con tipos nuevos sin romper a un cliente viejo.
 export function parseInboxEvent(data: unknown): InboxEvent | null {
-  if (typeof data !== "string") return null;
+  if (typeof data !== "string" || data.length > MAX_FRAME) return null;
   let raw: unknown;
   try {
     raw = JSON.parse(data);
@@ -56,6 +59,9 @@ export type SocketLike = {
 };
 
 const WAIT = { first: 1000, max: 30_000 };
+// Una conexión que dura menos que esto no cuenta como recuperada: si el servidor acepta y cierra
+// enseguida, la espera sigue creciendo (y no se relee todo el Inbox cada segundo).
+export const STABLE = 10_000;
 
 // La espera antes del intento `attempt` (0 el primero): 1 s, 2 s, 4 s… con tope de 30 s.
 export const backoff = (attempt: number) => Math.min(WAIT.max, WAIT.first * 2 ** attempt);
@@ -74,16 +80,17 @@ export function connectInbox({
   let socket: SocketLike | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
-  let opened = false; // ¿hubo ya una conexión? la primera no es una reconexión
+  let lost = false; // ¿se perdió una conexión o un intento? lo ocurrido mientras tanto se relee
+  let since = 0; // cuándo abrió la conexión actual (0: no está abierta)
   let stopped = false;
 
   function open() {
     const current = create(url);
     socket = current;
     current.onopen = () => {
-      attempt = 0; // lo que sigue se cuenta desde cero
-      if (opened) onResync();
-      opened = true;
+      since = Date.now();
+      if (lost) onResync(); // la primera conexión sin fallos previos no relee: la pantalla acaba de leer
+      lost = false;
     };
     current.onmessage = (frame) => {
       const event = parseInboxEvent(frame.data);
@@ -92,6 +99,9 @@ export function connectInbox({
     current.onclose = (close) => {
       if (stopped || socket !== current) return;
       socket = null;
+      if (since && Date.now() - since >= STABLE) attempt = 0; // estable: se cuenta desde cero
+      since = 0;
+      lost = true;
       if (FINAL_CLOSES.includes(close.code)) return;
       timer = setTimeout(open, backoff(attempt++));
     };

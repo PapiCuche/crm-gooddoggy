@@ -4,8 +4,10 @@ import {
   backoff,
   connectInbox,
   type InboxEvent,
+  MAX_FRAME,
   parseInboxEvent,
   type SocketLike,
+  STABLE,
 } from "./inbox-socket";
 
 // El doble del WebSocket: guarda cada conexión y deja a la prueba abrirla, mandarle texto o cerrarla.
@@ -83,6 +85,7 @@ describe("parseInboxEvent", () => {
       frame({ type: "message.received", conversation_id: "../x" }),
       frame({ type: "message.received", conversation_id: "c1", message_id: 3 }),
       frame({ type: "message.received", conversation_id: "c1", message_id: "a b" }),
+      frame({ type: "message.received", conversation_id: "c1", pad: "x".repeat(MAX_FRAME) }),
     ]) {
       expect(parseInboxEvent(bad)).toBeNull();
     }
@@ -110,6 +113,7 @@ describe("connectInbox", () => {
     expect(resync).not.toHaveBeenCalled(); // aún no abre
     last().open();
     expect(resync).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(STABLE); // una conexión estable
     last().drop();
     vi.advanceTimersByTime(1000);
     last().open();
@@ -128,7 +132,8 @@ describe("connectInbox", () => {
       vi.advanceTimersByTime(1);
     }
     expect(Fake.all).toHaveLength(4);
-    last().open(); // conectó: la espera vuelve a 1 s
+    last().open(); // conectó y se mantuvo: la espera vuelve a 1 s
+    vi.advanceTimersByTime(STABLE);
     last().drop();
     vi.advanceTimersByTime(1000);
     expect(Fake.all).toHaveLength(5);
@@ -143,6 +148,28 @@ describe("connectInbox", () => {
     expect(Fake.all).toHaveLength(2);
     vi.advanceTimersByTime(1);
     expect(Fake.all).toHaveLength(3);
+  });
+
+  it("un servidor que acepta y cierra enseguida no se martillea: la espera sigue creciendo", () => {
+    const { resync } = start();
+    last().open();
+    for (const wait of [1000, 2000, 4000]) {
+      last().drop(1011); // abrió y se cayó al instante
+      vi.advanceTimersByTime(wait - 1);
+      expect(Fake.all.length).toBe(Fake.all.indexOf(last()) + 1);
+      vi.advanceTimersByTime(1);
+      last().open();
+    }
+    expect(Fake.all).toHaveLength(4);
+    expect(resync).toHaveBeenCalledTimes(3); // una vez por reconexión, a ritmo decreciente
+  });
+
+  it("si la primera conexión falló, al abrir por fin relee (pudo perderse lo de antes)", () => {
+    const { resync } = start();
+    last().drop(); // nunca abrió
+    vi.advanceTimersByTime(1000);
+    last().open();
+    expect(resync).toHaveBeenCalledTimes(1);
   });
 
   it("no reconecta tras un cierre definitivo del servidor", () => {
