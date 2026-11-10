@@ -7,6 +7,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { Plain } from "@/components/inbox/plain";
 import { useReads } from "@/components/inventory/cell-picker";
 import { moneyText } from "@/components/pricing/margins";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,8 @@ const BOX = "border-border bg-surface flex flex-col gap-3 rounded-lg border p-4"
 // etapas; se cambia de etapa con las acciones del tablero (mover, ganar, perder, reabrir). Editar
 // (`PATCH`, `assign`) llega en el siguiente corte (F5-07b). Fuera del alcance, borrada, de otra organización o inexistente la API
 // responde el mismo 404 y la pantalla es la página de «no encontrada» de cualquier dirección. Qué
-// puede hacer quien mira lo decide la API: aquí un 403 solo se explica.
+// puede hacer quien mira lo decide la API: aquí un 403 solo se explica. Lo que escribió otra persona
+// (título, cliente, próxima acción, motivo y nota, notas de línea) va por `Plain`: texto aislado.
 export function OpportunityDetail({ opportunityId }: { opportunityId: string }) {
   const t = useTranslations("deals.detail");
   const errors = useTranslations("errors");
@@ -87,6 +89,7 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
         {format.dateTime(new Date(iso), { dateStyle: "medium", timeStyle: "short" })}
       </time>
     );
+    const lostNote = detail.lost_reason_note ? <Plain>{detail.lost_reason_note}</Plain> : null;
     const rows: [string, ReactNode][] = [
       [
         t("customer"),
@@ -98,7 +101,7 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
             prefetch={false}
             className="font-medium underline underline-offset-4"
           >
-            {detail.contact.display_name}
+            <Plain>{detail.contact.display_name}</Plain>
           </Link>
         ),
       ],
@@ -106,7 +109,14 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
       [t("stage"), `${detail.stage.name} · ${t(`status.${detail.status}`)}`],
       [t("probability"), `${detail.probability} %`],
       [t("owner"), owners.name(detail.assigned_user_id)],
-      [t("next"), detail.next_action ?? <span className="text-muted">{t("noNext")}</span>],
+      [
+        t("next"),
+        detail.next_action === null ? (
+          <span className="text-muted">{t("noNext")}</span>
+        ) : (
+          <Plain>{detail.next_action}</Plain>
+        ),
+      ],
       [
         t("closeDate"),
         detail.expected_close_date ?? <span className="text-muted">{t("noCloseDate")}</span>,
@@ -114,10 +124,11 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
       [t("days"), t("daysValue", { days: daysInStage(card, now) })],
       ...(detail.status === "LOST"
         ? ([
-            [t("lostReason"), detail.lost_reason?.name ?? t("noReason")],
-            ...(detail.lost_reason_note
-              ? [[t("lostNote"), detail.lost_reason_note] as [string, ReactNode]]
-              : []),
+            [
+              t("lostReason"),
+              detail.lost_reason ? <Plain>{detail.lost_reason.name}</Plain> : t("noReason"),
+            ],
+            ...(lostNote ? [[t("lostNote"), lostNote] as [string, ReactNode]] : []),
           ] as [string, ReactNode][])
         : []),
     ];
@@ -151,7 +162,9 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
                     })}
                   </span>
                   {item.notes ? (
-                    <span className="text-muted wrap-anywhere">{item.notes}</span>
+                    <span className="text-muted">
+                      <Plain>{item.notes}</Plain>
+                    </span>
                   ) : null}
                 </li>
               ))}
@@ -201,7 +214,7 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
           tabIndex={-1}
           className="text-[28px] leading-tight font-bold tracking-[0.02em] wrap-anywhere focus-visible:outline-none"
         >
-          {detail?.title ?? t("title")}
+          {detail ? <Plain>{detail.title}</Plain> : t("title")}
         </h1>
         {detail ? <p className="text-muted font-mono text-[13px]">{detail.number}</p> : null}
       </div>

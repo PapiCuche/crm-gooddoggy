@@ -176,6 +176,31 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(screen.getByRole("button", { name: /^Reabrir «Collar para Rocky»/ })).toBeVisible();
   });
 
+  it("lo que escribió otra persona va aislado y una abierta no enseña campos de pérdida", async () => {
+    const hostile = "x‮abc";
+    mockApi({
+      [DETAIL]: ok(
+        detail({
+          ...{ title: hostile, next_action: hostile },
+          ...{ contact: { id: "c1", display_name: hostile } },
+          items: [{ variant_id: "v1", quantity: 1, estimated_unit_price: "1", notes: hostile }],
+        }),
+      ),
+      [PIPELINES]: pipelines,
+    });
+    const { container } = show();
+    await screen.findByText("OPP-000007"); // ya leyó el detalle
+    // título, cliente, próxima acción y nota de línea: cada uno en su `<bdi>`
+    const isolated = [...container.querySelectorAll("bdi")].filter(
+      (one) => one.textContent === hostile,
+    );
+    expect(isolated).toHaveLength(4);
+    expect(screen.queryByText("Motivo de pérdida")).toBeNull();
+    expect(screen.queryByText("Nota")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Ganar «/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Perder «/ })).toBeVisible();
+  });
+
   it("un 404 es la página de «no encontrada», sin decir si existe", async () => {
     mockApi({ [DETAIL]: { status: 404, body: { code: "NOT_FOUND" } }, [PIPELINES]: pipelines });
     const failure = notFoundThrown();
