@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import type { Conversation } from "@/lib/api/model";
+import type { Conversation, ConversationContact } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { ChatPanel } from "./chat-panel";
@@ -22,10 +22,14 @@ export function Inbox() {
   const { organization } = useTenant();
   const [filters, setFilters] = useState<Filters>({ box: "all", status: "" });
   const [selected, setSelected] = useState<Conversation | null>(null);
-  const [view, setView] = useState<"chat" | "customer">("chat");
+  // El cliente que se ve en el panel (el del detalle de la conversación, no el de la fila de la lista);
+  // `null`: se ve el chat.
+  const [customer, setCustomer] = useState<ConversationContact | null>(null);
+  const view = customer ? "customer" : "chat";
   const customerHeading = useRef<HTMLHeadingElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const wasCustomer = useRef(false);
+  const toChat = useRef(false); // se cambió de conversación con el panel abierto: el foco va al chat nuevo
   const last = useRef<string | null>(null);
   const selectedId = selected?.id ?? null;
   useEffect(() => {
@@ -39,7 +43,10 @@ export function Inbox() {
   useEffect(() => {
     // Abrir el panel lleva el foco a su nombre; volver, al botón que lo abrió (el chat sigue montado).
     if (view === "customer") customerHeading.current?.focus();
+    else if (wasCustomer.current && toChat.current)
+      heading.current?.focus(); // otra conversación
     else if (wasCustomer.current) document.getElementById("customer-toggle")?.focus();
+    if (view === "chat") toChat.current = false;
     wasCustomer.current = view === "customer";
   }, [view]);
 
@@ -73,7 +80,8 @@ export function Inbox() {
             onFilters={setFilters}
             selectedId={selectedId}
             onSelect={(next) => {
-              setView("chat");
+              toChat.current = view === "customer";
+              setCustomer(null);
               setSelected(next);
             }}
           />
@@ -87,19 +95,20 @@ export function Inbox() {
                   key={selected.id}
                   conversation={selected}
                   headingRef={heading}
+                  visible={view === "chat"}
                   onBack={() => {
-                    setView("chat");
+                    setCustomer(null);
                     setSelected(null);
                   }}
-                  onCustomer={() => setView("customer")}
+                  onCustomer={setCustomer}
                 />
               </div>
-              {view === "customer" ? (
+              {customer ? (
                 <CustomerPanel
                   key={selected.id}
-                  contact={selected.contact}
+                  contact={customer}
                   headingRef={customerHeading}
-                  onBack={() => setView("chat")}
+                  onBack={() => setCustomer(null)}
                 />
               ) : null}
             </>

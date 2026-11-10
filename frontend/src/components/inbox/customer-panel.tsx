@@ -98,7 +98,7 @@ export function CustomerPanel({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div id="customer-panel" className="flex min-w-0 flex-col gap-4">
       <Button
         variant="ghost"
         className="border-border min-h-11 self-start border sm:min-h-9"

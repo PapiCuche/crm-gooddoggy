@@ -59,13 +59,14 @@ const page = (results: unknown[]) => ({ status: 200, body: { results, next: null
 function server(
   options: {
     contact?: { id: string; display_name: string | null };
+    detailContact?: { id: string; display_name: string | null }; // lo que dice el detalle (la fila es una instantánea)
     extra?: Record<string, never> | object;
   } = {},
 ) {
   const contact = options.contact ?? { id: "c1", display_name: "Rosa Díaz" };
   return mockApi({
     [`GET ${BASE}/conversations/`]: page([row(contact)]),
-    [`GET ${BASE}/conversations/1/`]: { status: 200, body: row(contact) },
+    [`GET ${BASE}/conversations/1/`]: { status: 200, body: row(options.detailContact ?? contact) },
     [`GET ${BASE}/conversations/1/messages/`]: page([]),
     [CONTACT]: { status: 200, body: person() },
     [DEALS]: page([deal]),
@@ -129,6 +130,47 @@ describe("panel del cliente de la conversación (F6-06)", () => {
     );
   });
 
+  it("el panel usa el contacto del detalle de la conversación, no el de la fila de la lista", async () => {
+    server({ detailContact: { id: "c1", display_name: "Rosa Díaz de Soto" } });
+    show();
+    await open();
+    await screen.findByRole("heading", { level: 2, name: "Rosa Díaz de Soto" }); // llegó el detalle
+    fireEvent.click(await toggle());
+    const panel = await screen.findByRole("region", { name: "Cliente de la conversación" });
+    expect(within(panel).getByRole("heading", { name: "Rosa Díaz de Soto" })).toBeVisible();
+  });
+
+  it("el botón declara el panel que abre", async () => {
+    server();
+    show();
+    await open();
+    const button = await toggle();
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveAttribute("aria-controls", "customer-panel");
+    fireEvent.click(button);
+    const panel = await screen.findByRole("region", { name: "Cliente de la conversación" });
+    expect(panel.closest("#customer-panel")).not.toBeNull(); // el id al que apunta el botón
+  });
+
+  it.each([
+    ["se leía lo último: al volver se vuelve a lo último", 400, 500],
+    ["se leía más arriba: al volver se deja donde estaba", 0, 0],
+  ])("%s", async (_name, before, after) => {
+    server();
+    show();
+    await open();
+    const scroller = await screen.findByRole("region", { name: "Mensajes de la conversación" });
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 100 });
+    scroller.scrollTop = before;
+    fireEvent.click(await toggle());
+    await screen.findByRole("region", { name: "Cliente de la conversación" });
+    scroller.scrollTop = 0; // oculto (`display: none`) el navegador puede perder la posición
+    fireEvent.click(screen.getByRole("button", { name: "Volver a la conversación" }));
+    await screen.findByRole("textbox", { name: "Responder al cliente" });
+    await waitFor(() => expect(scroller.scrollTop).toBe(after));
+  });
+
   it("sin nombre del contacto (D-F6-10) no hay panel y no se pide nada suyo", async () => {
     const api = server({ contact: { id: "c1", display_name: null } });
     show();
@@ -151,6 +193,10 @@ describe("panel del cliente de la conversación (F6-06)", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Rosa Díaz/ })); // la fila de la lista
     expect(await screen.findByRole("textbox", { name: "Responder al cliente" })).toBeVisible();
+    // el foco va al chat, no al botón del panel (que era de la conversación anterior)
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 2, name: "Rosa Díaz" })).toHaveFocus(),
+    );
     expect(screen.queryByRole("region", { name: "Cliente de la conversación" })).toBeNull();
   });
 

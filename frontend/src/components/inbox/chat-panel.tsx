@@ -54,11 +54,13 @@ export function ChatPanel({
   headingRef,
   onBack,
   onCustomer,
+  visible,
 }: {
   conversation: Conversation;
   headingRef: Ref<HTMLHeadingElement>;
   onBack: () => void;
-  onCustomer: () => void; // abre el panel del cliente (el chat sigue montado, con su borrador)
+  onCustomer: (contact: Conversation["contact"]) => void; // abre el panel del cliente (el chat sigue montado)
+  visible: boolean; // el chat se oculta (no se desmonta) mientras se ve al cliente
 }) {
   const t = useTranslations("inbox");
   const { organization, permissions, user } = useTenant();
@@ -76,6 +78,7 @@ export function ChatPanel({
   const scroller = useRef<HTMLDivElement>(null);
   const kept = useRef<number | null>(null); // lo que faltaba por desplazar al pedir los anteriores
   const placed = useRef(false);
+  const atBottom = useRef(false); // al ocultarse el chat, ¿se leía lo último?
   const toBottom = useRef(false); // acabo de enviar: el mensaje nuevo se ve
   const list = useInfiniteQuery<PaginatedMessageList, ApiError>({
     queryKey: messagesKey(slug, conversation.id),
@@ -107,6 +110,10 @@ export function ChatPanel({
     kept.current = null;
   }, [rows.length, list.isFetchingNextPage]);
 
+  useLayoutEffect(() => {
+    const box = scroller.current;
+    if (visible && atBottom.current && box) box.scrollTop = box.scrollHeight;
+  }, [visible]);
   const name = conversation.contact.display_name;
   let body;
   if (!list.data && problem) {
@@ -183,7 +190,14 @@ export function ChatPanel({
               id="customer-toggle"
               variant="ghost"
               className="text-foreground border-border order-4 text-xs font-medium max-sm:size-10 max-sm:border max-sm:px-0 sm:h-auto sm:px-0 sm:text-sm sm:underline sm:underline-offset-4 lg:order-6 lg:self-start"
-              onClick={onCustomer}
+              aria-expanded="false" // al abrirse el panel, este botón se oculta con el chat
+              aria-controls="customer-panel"
+              onClick={() => {
+                const box = scroller.current;
+                // Oculto (`display: none`) el chat puede perder su posición: si se leía lo último, se vuelve a ello.
+                atBottom.current = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 8;
+                onCustomer(conversation.contact);
+              }}
             >
               <UserRound aria-hidden className="size-4 sm:hidden" />
               <span className="max-sm:sr-only">{t("customer.open")}</span>
