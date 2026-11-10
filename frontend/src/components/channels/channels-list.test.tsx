@@ -385,6 +385,22 @@ describe("Canales (F7-07b)", () => {
     },
   );
 
+  it("rotar: un 404 (la cuenta ya no existe) lo dice y vuelve a leer la lista", async () => {
+    const api = mockApi({
+      [LIST]: page([wa]),
+      [ROTATE]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    show();
+    await openRotate();
+    rotate();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Esa cuenta ya no existe. Actualizamos la lista.",
+    );
+    await waitFor(() => expect(listReads(api)).toBe(2));
+    expect(field(/^Token nuevo/).value).toBe("");
+    noSecret();
+  });
+
   it("rotar: 429 dice cuánto esperar", async () => {
     mockApi({
       [LIST]: page([wa]),

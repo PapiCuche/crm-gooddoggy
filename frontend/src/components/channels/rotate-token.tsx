@@ -51,6 +51,8 @@ export function RotateToken({
                 onRotated();
                 setTimeout(() => trigger.current?.focus());
               },
+              // La cuenta ya no está (404): se vuelve a leer la lista, como al desconectar.
+              (error) => error.status === 404 && onRotated(),
             )
           }
           taken={(error) => channelError(error, errors)}

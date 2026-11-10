@@ -2325,7 +2325,8 @@
       "CHANNEL_CREDENTIALS_REJECTED": "Meta no aceptó ese token. Revisa que sea el del usuario del sistema y que tenga acceso a ese número.",
       "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
-      "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}."
+      "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+      "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista."
     }
   }
 }

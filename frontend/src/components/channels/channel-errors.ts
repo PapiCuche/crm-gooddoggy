@@ -8,6 +8,7 @@ export function channelError(
   t: (key: string, values?: Record<string, number>) => string,
 ): { field?: "access_token"; text: string } | null {
   switch (error.code) {
+    case "NOT_FOUND": // la cuenta ya no existe (otra persona la desconectó)
     case "CHANNEL_NOT_ENABLED":
     case "CHANNEL_PROVIDER_UNAVAILABLE":
     case "STEP_UP_REQUIRED":
