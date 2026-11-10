@@ -13,12 +13,20 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.conf import settings
+from django.contrib.auth.hashers import Argon2PasswordHasher
 from django.core.management import call_command
 from django.db import connection
 from psycopg.conninfo import make_conninfo
 from pytest_django import DjangoDbBlocker
 
 from config.env import database
+
+# CI-PERF-01: sigue siendo Argon2id (PASSWORD_HASHERS no cambia y test_accounts lo comprueba), pero con
+# el coste mínimo de argon2-cffi: con el de producción (100 MiB, p=8) cada `create_user` de la suite
+# costaba ~60-90 ms de CPU. Los hashes existentes se verifican con los parámetros que llevan.
+Argon2PasswordHasher.time_cost = 1
+Argon2PasswordHasher.memory_cost = 8
+Argon2PasswordHasher.parallelism = 1
 
 TENANT_TABLES: tuple[str, ...] = ("tenancy_app_widgetpart", "tenancy_app_widget", "org_sequences")
 TENANT_TABLES += ("outbox_events", "audit_logs")  # F1-06
@@ -122,7 +130,9 @@ def tenant_db(
             yield
         finally:
             connection.close()
-            for table in (
+            # CI-PERF-01: un solo mensaje (protocolo simple, una transacción implícita) en lugar de
+            # ~55 DELETE en autocommit, cada uno con su commit y su fsync. Mismo orden y mismas tablas.
+            tables = (
                 "webhook_failures",  # F7-03b: de plataforma, antes que la ingesta
                 "webhook_ingress",
                 *TENANT_TABLES,
@@ -135,8 +145,8 @@ def tenant_db(
                 "user_mfa_code_attempts",  # F2-102: ídem
                 "users",
                 PLATFORM_AUDIT,
-            ):
-                migrator.execute(f"DELETE FROM {table}")  # noqa: S608 — nombres fijos
+            )
+            migrator.execute("; ".join(f"DELETE FROM {table}" for table in tables))  # noqa: S608
 
 
 @pytest.fixture
