@@ -62,6 +62,8 @@ class Contact(TenantModel):
     owner_user_id = models.UUIDField(null=True, blank=True)  # responsable
     branch_id = models.UUIDField(null=True, blank=True)
     source = models.CharField(max_length=24, choices=Source.choices, default=Source.MANUAL)
+    # Un contacto bloqueado no recibe mensajes (ADR-010 §2 regla 3). Lo escribe el comando de F7-08.
+    is_blocked = models.BooleanField(default=False, db_default=False)
     created_by_user_id = models.UUIDField(null=True, blank=True)
     updated_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
