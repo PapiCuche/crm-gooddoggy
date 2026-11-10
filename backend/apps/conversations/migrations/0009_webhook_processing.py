@@ -142,7 +142,9 @@ END""",  # noqa: S608 — texto fijo, sin datos
 BEGIN
   WITH old AS (
     SELECT w.id AS old_id FROM public.webhook_ingress w
-    WHERE w.received_at < now() - make_interval(days => greatest(1, coalesce(p_days, 90)))
+    WHERE w.received_at < now() - make_interval(days => CASE
+            WHEN w.status IN ('PROCESSED', 'IGNORED', 'DEAD')
+            THEN least(90, greatest(1, coalesce(p_days, 90))) ELSE 90 END)
     ORDER BY w.received_at LIMIT greatest(1, least(coalesce(p_limit, 1000), 10000))
     FOR UPDATE SKIP LOCKED),
   failures AS (

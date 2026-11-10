@@ -11,6 +11,7 @@ hasta F7-04.
 
 import json
 import math
+import time
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -29,6 +30,9 @@ PROVIDER = "meta"
 LEASE_SECONDS = 60  # el reclamo caduca: un proceso que muere no deja el ítem para siempre
 BROKER_WAIT = 3  # segundos que la ruta pública espera a un broker que no contesta
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
+WAKE_EVERY = 1.0  # segundos entre dos avisos de un mismo proceso: el resto lo recoge el barrido
+_last_wake = 0.0
+_now = time.monotonic  # separado para que una prueba mueva el reloj
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +130,13 @@ def resolve(platform: str, number: str) -> tuple[UUID, UUID] | None:
 def wake() -> None:
     """Avisa al procesador de que hay ítems nuevos, sin retener la ruta pública: una conexión propia
     al broker que no reintenta ni espera más de `BROKER_WAIT`. Si falla, el barrido de beat lo
-    recoge igual; nunca estropea la respuesta a Meta."""
+    recoge igual; nunca estropea la respuesta a Meta. Como mucho uno por segundo y proceso: cada
+    aviso abre una conexión (con el broker caído, espera hasta `BROKER_WAIT`)."""
+    global _last_wake
+    now = _now()
+    if now - _last_wake < WAKE_EVERY:
+        return
+    _last_wake = now
     from apps.conversations.tasks import process_webhook_ingress
 
     try:

@@ -41,6 +41,11 @@ FUNCTIONS = (
 OTHER_WABA, OTHER_NUMBER = "100000000000007", "100000000000008"
 
 
+@pytest.fixture(autouse=True)
+def fresh_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ingress, "_last_wake", 0.0)  # el aviso agrupado no pasa de un test a otro
+
+
 def put(key: str, number: str | None = PHONE_NUMBER_ID, **payload: Any) -> bool:
     return ingress.insert("message", key, WABA_ID, number, payload or {"id": key})
 
@@ -422,13 +427,22 @@ def test_a_signed_event_for_a_number_of_another_organization_is_not_routed_to_th
     account(crm.a)
     theirs = account(crm.b, external_account_id=OTHER_NUMBER, external_parent_id=OTHER_WABA)
     caplog.set_level(logging.DEBUG)
-    assert deliver(text("wamid.1"), number=OTHER_NUMBER).status_code == 200  # WABA de A
+    assert (
+        deliver(text("wamid.1", "Texto privado"), number=OTHER_NUMBER).status_code == 200
+    )  # WABA de A
     assert ingress.process() == {"IGNORED": 1}
     found = rows(migrator)["wa:msg:wamid.1"]
     assert found["status"] == "IGNORED" and found["ignored_reason"] == "WABA_MISMATCH"
     assert found["routed_organization_id"] is None and found["routed_channel_account_id"] is None
     assert found["payload"] is None and "meta.webhook.waba_mismatch" in caplog.text
-    assert str(theirs.pk) in caplog.text  # solo el id de la cuenta, para la alerta
+    [record] = [r for r in caplog.records if "meta.webhook.waba_mismatch" in str(r.msg)]
+    alert: dict[str, Any] = record.msg  # type: ignore[assignment]
+    context = {"event", "level", "logger", "timestamp", "request_id", "correlation_id"}
+    context |= {"organization_id", "actor_type", "user_id"}  # los pone el scope de la cuenta
+    assert set(alert) - context == {"channel_account_id"}
+    assert alert["channel_account_id"] == str(theirs.pk)
+    for private in (OTHER_NUMBER, OTHER_WABA, "Texto privado"):  # ni número, ni WABA, ni payload
+        assert private not in caplog.text, private
 
 
 def test_an_unknown_number_and_a_change_without_a_number_are_ignored(
@@ -501,6 +515,7 @@ def test_the_processor_tasks_validate_their_arguments_for_real_and_are_scheduled
             task.apply_async(kwargs={"organization_id": str(uuid4())})
     schedule = settings.CELERY_BEAT_SCHEDULE
     assert schedule["conversations.process_webhook_ingress"]["schedule"] == 15.0
+    assert schedule["conversations.process_webhook_ingress"]["options"] == {"expires": 15}
     assert "conversations.purge_webhook_ingress" in schedule
 
 
@@ -617,3 +632,117 @@ def test_going_back_to_the_tables_only_removes_the_processing_functions(migrator
     with as_migrator():
         call_command("migrate", "conversations", verbosity=0)
     assert migrator.execute(names, ["resolve_channel_account"]).fetchone() == (6,)
+
+
+def test_the_purge_never_deletes_a_pending_item_before_the_cap_whatever_the_days_asked(
+    migrator: DB,
+) -> None:
+    """Lo cerrado puede purgarse antes; lo pendiente (no cerrado), solo a los 90."""
+    states = {"a": "RECEIVED", "b": "PROCESSING", "c": "FAILED", "d": "PROCESSED",
+              "e": "IGNORED", "f": "DEAD", "g": "RECEIVED"}  # fmt: skip
+    for key, status in states.items():
+        put(key)
+        emptied = ", payload = NULL" if status in ("PROCESSED", "IGNORED") else ""
+        force(migrator, key, f"status = '{status}'{emptied}")
+        age = 91 if key == "g" else 2
+        force(migrator, key, f"received_at = now() - interval '{age} days'")
+    assert ingress.purge(1, 100) == 4  # d, e, f (cerrados) y g (pendiente de 91 días)
+    kept = sorted(
+        k for (k,) in migrator.execute("SELECT event_key FROM webhook_ingress").fetchall()
+    )
+    assert kept == ["a", "b", "c"]
+    assert ingress.purge(100000, 100) == 0  # más de 90 días pedidos no es más plazo que 90
+
+
+def lease_left(migrator: DB, key: str) -> float:
+    found = migrator.execute(
+        "SELECT extract(epoch FROM claimed_until - now()) FROM webhook_ingress"
+        " WHERE event_key = %s",
+        [key],
+    ).fetchone()
+    assert found is not None
+    return float(found[0])
+
+
+def test_the_claim_lease_has_a_floor_of_ten_seconds_and_a_cap_of_fifteen_minutes(
+    migrator: DB,
+) -> None:
+    for key, asked, expected in (("a", 1, 10), ("b", 100_000, 900), ("c", 120, 120)):
+        put(key)
+        force(migrator, key, "next_attempt_at = now() - interval '1 second'")
+        assert [c.attempts for c in ingress.claim(1, asked)] == [1]
+        assert expected - 5 < lease_left(migrator, key) <= expected, key
+
+
+def test_a_claim_takes_at_most_a_hundred_items_and_at_least_one() -> None:
+    for n in range(120):
+        put(f"k{n:03d}")
+    assert len(ingress.claim(1000)) == 100
+    assert len(ingress.claim(0)) == 1 and len(ingress.claim(-5)) == 1
+
+
+def test_a_purge_deletes_at_most_ten_thousand_items_at_a_time(migrator: DB) -> None:
+    migrator.execute(
+        "INSERT INTO webhook_ingress (provider, event_key, kind, waba_id, payload, payload_hash,"
+        " received_at) SELECT 'meta', 'k' || n, 'message', '100000000000001', '{}'::jsonb,"
+        " repeat('0', 64), now() - interval '100 days' FROM generate_series(1, 10050) AS n"
+    )
+    assert ingress.purge(90, 1_000_000) == 10_000 and ingress.purge(90, 1_000_000) == 50
+
+
+def test_a_sandbox_account_whose_id_looks_like_the_number_is_never_routed(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a, platform="SANDBOX", external_parent_id=None, external_account_id=PHONE_NUMBER_ID)
+    assert ingress.resolve("WHATSAPP", PHONE_NUMBER_ID) is None
+
+
+def test_the_processor_keeps_claiming_rounds_while_batches_come_back_full(
+    crm: SimpleNamespace,
+) -> None:
+    account(crm.a)
+    deliver(*[text(f"wamid.{n}") for n in range(5)])
+    assert ingress.process(batch_size=2, rounds=1) == {"PROCESSED": 2}  # una ronda, un lote
+    assert ingress.process(batch_size=2) == {"PROCESSED": 3}  # 2 y luego 1: para en el corto
+
+
+def test_the_wake_goes_out_at_most_once_a_second_per_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent: list[dict[str, Any]] = []
+    clock = [1000.0]
+    monkeypatch.setattr(tasks.process_webhook_ingress, "apply_async", lambda **kw: sent.append(kw))
+    monkeypatch.setattr(ingress, "_now", lambda: clock[0])
+    ingress.wake()
+    ingress.wake()  # dentro del mismo segundo: no abre otra conexión
+    assert len(sent) == 1 and sent[0]["expires"] == 60 and sent[0]["retry"] is False
+    clock[0] += 1.0
+    ingress.wake()
+    assert len(sent) == 2
+
+
+def test_whatever_days_are_asked_a_closed_item_goes_at_ninety(migrator: DB) -> None:
+    put("old")
+    force(
+        migrator,
+        "old",
+        "status = 'IGNORED', payload = NULL, received_at = now() - interval '95 days'",
+    )
+    assert ingress.purge(1000, 100) == 1  # pedir más días no alarga el tope de 90
+
+
+def test_the_processor_stops_at_the_first_short_batch(
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    account(crm.a)
+    deliver(*[text(f"wamid.{n}") for n in range(5)])
+    calls: list[int] = []
+    real = ingress.claim
+
+    def counting(limit: int = 50, lease: int = ingress.LEASE_SECONDS) -> list[ingress.Claimed]:
+        calls.append(limit)
+        return real(limit, lease)
+
+    monkeypatch.setattr(ingress, "claim", counting)
+    assert ingress.process(batch_size=2) == {"PROCESSED": 5}
+    assert len(calls) == 3  # 2, 2 y 1: el lote corto es el último, sin una vuelta en vacío

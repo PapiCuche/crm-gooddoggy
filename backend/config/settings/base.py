@@ -142,6 +142,8 @@ CELERY_BEAT_SCHEDULE = {
     "conversations.process_webhook_ingress": {
         "task": "conversations.process_webhook_ingress",
         "schedule": 15.0,
+        # Si los workers se paran no se acumulan ~5760 tareas al día para despacharse de golpe.
+        "options": {"expires": 15},
     },
     # F7-03c: purga a 90 días, el tope de la ingesta (ADR-029 §3).
     "conversations.purge_webhook_ingress": {
