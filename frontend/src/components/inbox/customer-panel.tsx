@@ -38,17 +38,20 @@ export function CustomerPanel({
   const { organization, permissions } = useTenant();
   const slug = organization.slug;
   const held = (code: string) => permissions.some((grant) => grant.code === code);
+  // La fila de la lista es una instantánea: si ya no trae el nombre (D-F6-10), aquí tampoco se pide
+  // nada del contacto, aunque se haya llegado hasta el panel.
+  const named = contact.display_name !== null;
   const name = contact.display_name ?? "";
   const card = useQuery<Contact, ApiError>({
     queryKey: getContactsRetrieveQueryKey(slug, contact.id),
     queryFn: ({ signal }) => contactsRetrieve(slug, contact.id, { signal }),
-    enabled: held("contacts.view"),
+    enabled: named && held("contacts.view"),
     gcTime: 0, // como la ficha: al salir no queda en memoria
   });
   const status = card.error?.status;
 
   let summary: ReactNode;
-  if (!held("contacts.view") || status === 403 || status === 404) {
+  if (!named || !held("contacts.view") || status === 403 || status === 404) {
     summary = <p className="text-muted">{t("unavailable")}</p>;
   } else if (card.data) {
     const missing = <span className="text-muted">{t("missing")}</span>;
@@ -110,7 +113,7 @@ export function CustomerPanel({
           tabIndex={-1}
           className="text-lg font-semibold wrap-anywhere focus-visible:outline-none"
         >
-          <Plain>{name}</Plain>
+          {named ? <Plain>{name}</Plain> : t("title")}
         </h2>
         {summary}
         <Link
@@ -121,7 +124,7 @@ export function CustomerPanel({
           {t("card")}
         </Link>
       </section>
-      {held("opportunities.view") ? (
+      {named && held("opportunities.view") ? (
         <CustomerOpportunities contactId={contact.id} contactName={name} />
       ) : (
         <p className="text-muted text-sm">{t("noDeals")}</p>

@@ -5,6 +5,7 @@ import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { Conversation, Grant, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
+import { CustomerPanel } from "./customer-panel";
 import { Inbox } from "./inbox";
 
 // Espera a la API simulada (lista, detalle, ficha y oportunidades): en una máquina cargada el
@@ -134,6 +135,39 @@ describe("panel del cliente de la conversación (F6-06)", () => {
     await open();
     await screen.findByText(/No tienes permiso para ver a este cliente/);
     expect(screen.queryByRole("button", { name: "Cliente y oportunidades" })).toBeNull();
+    expect(
+      calls(api).filter((url) => url.includes("/contacts/") || url.includes("/opportunities/")),
+    ).toEqual([]);
+  });
+
+  it("abrir el panel lleva el foco a su título; elegir otra conversación vuelve al chat", async () => {
+    server();
+    show();
+    await open();
+    fireEvent.click(await toggle());
+    const panel = await screen.findByRole("region", { name: "Cliente de la conversación" });
+    await waitFor(() =>
+      expect(within(panel).getByRole("heading", { name: "Rosa Díaz" })).toHaveFocus(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Rosa Díaz/ })); // la fila de la lista
+    expect(await screen.findByRole("textbox", { name: "Responder al cliente" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Cliente de la conversación" })).toBeNull();
+  });
+
+  it("si la fila ya no trae el nombre del contacto, el panel no pide nada suyo", async () => {
+    const api = server();
+    renderApp(
+      <TenantProvider value={{ ...tenant, permissions: ALL }}>
+        <CustomerPanel
+          contact={{ id: "c1", display_name: null }}
+          headingRef={{ current: null }}
+          onBack={() => {}}
+        />
+      </TenantProvider>,
+    );
+    expect(
+      await screen.findByText(/No tienes permiso para ver los datos de este cliente/),
+    ).toBeVisible();
     expect(
       calls(api).filter((url) => url.includes("/contacts/") || url.includes("/opportunities/")),
     ).toEqual([]);
