@@ -19,6 +19,7 @@ from django.utils import timezone
 from apps.contacts.models import Contact
 from apps.conversations import commands, inbound, ingress, meta_webhook
 from apps.conversations.models import ChannelAccount, Conversation, Message
+from core.outbox.publisher import publish_outbox
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import webhooks
@@ -168,7 +169,6 @@ def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
     )
     assert (first.body, first.external_message_id) == ("Hola, ¿tienen stock?", "wamid.1")
     assert convo.last_inbound_at is not None  # la ventana de 24 h corre desde que escribió
-    # la API existente del Inbox lo ve, sin cambios
     ana = signed(crm.ana)
     listed = ana.get(BASE).json()["results"]
     assert [r["id"] for r in listed] == [str(convo.pk)]
@@ -178,13 +178,11 @@ def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
     assert [(r["body"], r["message_type"], r["direction"]) for r in shown] == [
         ("Hola, ¿tienen stock?", "TEXT", "INBOUND")
     ]
-    # la otra organización, intacta
     after_b = snap(crm.b)
     assert (len(after_b.contacts), len(after_b.conversations), len(after_b.messages)) == (
         len(before_b.contacts), 0, 0,
     )  # fmt: skip
     assert ana.get(BASE.replace("org-a", "org-b")).status_code == 404
-    # el ítem queda cerrado y sin el texto del cliente
     closed = rows(migrator)["wa:msg:wamid.1"]
     assert closed["status"] == "PROCESSED" and closed["payload"] is None
 
@@ -469,6 +467,7 @@ def test_the_event_for_the_outbox_carries_only_ids_never_the_text_or_the_phone(
         "contact_id": str(found.contacts[0].pk),
     }
     assert PRIVATE not in event[2] and "+519" not in event[2]
+    assert publish_outbox() == 1  # sin suscriptores aún: se publica y nada más
 
 
 def test_no_log_of_the_flow_carries_the_phone_or_the_text(
