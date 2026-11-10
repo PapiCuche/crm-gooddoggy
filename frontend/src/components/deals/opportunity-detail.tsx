@@ -165,6 +165,7 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
             client.setQueryData(key, next); // lo que devolvió la API: ya es lo vigente
             setNotice({ text });
           }}
+          started={() => setNotice(null)}
           stale={(text) => {
             if (text) setNotice({ text, alert: true });
             void refetch();

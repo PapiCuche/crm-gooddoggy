@@ -34,11 +34,13 @@ export function OpportunityEdit({
   owners,
   saved,
   stale,
+  started,
 }: {
   detail: OpportunityDetail;
   owners: readonly (readonly [string, string])[]; // a quién se puede asignar
   saved: (next: OpportunityDetail, text: string) => void;
   stale: (text?: string) => void; // la API dijo que lo mostrado ya no vale: se vuelve a leer y se dice
+  started: () => void; // empieza otra edición: el aviso de la anterior ya no aplica
 }) {
   const t = useTranslations("deals.detail.edit");
   const errors = useTranslations("errors.api");
@@ -149,6 +151,7 @@ export function OpportunityEdit({
             variant="ghost"
             className="border-border min-h-11 self-start border sm:min-h-9"
             onClick={() => {
+              started();
               update.reset();
               setOpen(true);
             }}
@@ -179,6 +182,7 @@ export function OpportunityEdit({
               aria-disabled={assign.isPending}
               onClick={() => {
                 if (assign.isPending) return;
+                started();
                 if (!choice) return setAsked(true);
                 setAsked(false);
                 assign.mutate({

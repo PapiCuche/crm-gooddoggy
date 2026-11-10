@@ -301,6 +301,10 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(await screen.findByText("Cambios guardados.")).toBeVisible();
     expect(value("Importe")).toHaveTextContent("S/ 1,600.00");
     await waitFor(() => expect(screen.getByRole("button", { name: "Editar" })).toHaveFocus());
+    // otra edición empieza: el aviso de la anterior ya no aplica
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    await screen.findByRole("form", { name: "Editar la oportunidad" });
+    expect(screen.queryByText("Cambios guardados.")).toBeNull();
   });
 
   it("un 409 al editar dice que otra persona la cambió y vuelve a leer; el importe inválido no se envía", async () => {
