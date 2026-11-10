@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -66,6 +66,13 @@ const noSecret = () => {
   expect(JSON.stringify({ ...sessionStorage })).not.toContain(SECRET);
   expect(location.href).not.toContain(SECRET);
 };
+
+// Estos tests esperan peticiones (la API simulada, el CSRF y el código de segundo factor) y el
+// montaje de un `<dialog>`: en una máquina lenta (CI) el segundo por omisión no alcanza. Se sube el
+// tiempo que esperan los `findBy…` y `waitFor` de este archivo, sin reintentar nada: la espera
+// termina en cuanto aparece lo esperado.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
 
 beforeAll(() => {
   // jsdom no implementa el `<dialog>` modal (el del código de segundo factor): se refleja `open`.
@@ -287,8 +294,10 @@ describe("Canales (F7-07b)", () => {
     await open();
     fillConnect();
     submit();
-    fireEvent.change(await screen.findByLabelText(/^Código/), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verificar" }));
+    // el `<dialog>` solo es accesible cuando está abierto: se espera a eso y no a una de sus etiquetas
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Verificar" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const bodies = sent(api)
       .filter((call) => call.url === `${BASE}/whatsapp/`)
