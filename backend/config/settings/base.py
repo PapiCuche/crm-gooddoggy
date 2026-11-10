@@ -99,6 +99,9 @@ MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
+# Mensajes entrantes (F7-04): contactos nuevos por minuto y por cuenta; pasado el tope, el mensaje
+# se reintenta (no se pierde) y se alerta. Pendiente de confirmación del PO.
+INBOUND_NEW_CONTACTS_PER_MINUTE = 30
 ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {"default": env.database(env.required("DATABASE_URL"))}

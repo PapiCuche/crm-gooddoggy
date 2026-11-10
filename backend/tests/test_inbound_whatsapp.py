@@ -13,7 +13,8 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from django.db import connection
+from django.core.management import call_command
+from django.db import IntegrityError, connection
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -28,9 +29,10 @@ from tests.test_contacts_api import crm, real_stack
 from tests.test_conversations_api import BASE
 from tests.test_memberships import ctx
 from tests.test_meta_webhook import channel
+from tests.test_pipelines_tables import as_migrator
 from tests.test_self_context import signed
 from tests.test_tenant_task_signature import broker
-from tests.test_webhook_ingress import deliver, rows
+from tests.test_webhook_ingress import deliver, put, rows
 from tests.test_whatsapp_account import credential, make
 
 __all__ = ["broker", "channel", "crm", "real_stack"]  # las fixtures, para pytest
@@ -150,7 +152,10 @@ def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
     mine = make(crm.a, status_detail="WEBHOOK_NOT_SEEN")
     make(crm.b, external_account_id="100000000000008", external_parent_id="100000000000007")
     before_b = snap(crm.b)
-    assert deliver(message("wamid.1", "Hola, ¿tienen stock?")).status_code == 200
+    stamp = int(timezone.now().timestamp()) - 60
+    assert (
+        deliver(message("wamid.1", "Hola, ¿tienen stock?", timestamp=str(stamp))).status_code == 200
+    )
     assert ingress.process() == {"PROCESSED": 1}
     found = snap(crm.a)
     [contact], [convo], [first] = found.contacts, found.conversations, found.messages
@@ -168,7 +173,10 @@ def test_a_signed_text_reaches_the_inbox_as_contact_conversation_and_message(
         "TEXT",
     )
     assert (first.body, first.external_message_id) == ("Hola, ¿tienen stock?", "wamid.1")
-    assert convo.last_inbound_at is not None  # la ventana de 24 h corre desde que escribió
+    assert (
+        first.provider_timestamp is not None and int(first.provider_timestamp.timestamp()) == stamp
+    )
+    assert convo.last_inbound_at == first.provider_timestamp  # ancla de la ventana de 24 h
     ana = signed(crm.ana)
     listed = ana.get(BASE).json()["results"]
     assert [r["id"] for r in listed] == [str(convo.pk)]
@@ -475,7 +483,7 @@ def test_no_log_of_the_flow_carries_the_phone_or_the_text(
 ) -> None:
     make(crm.a)
     caplog.set_level(logging.DEBUG)
-    run(message("wamid.1", PRIVATE))
+    run(message("wamid.1", PRIVATE), webhooks.other_message("image", wamid="wamid.2"))
     run(webhooks.text_message("x", wamid="wamid.3", sender="abc"))
     for secret in (PRIVATE, CUSTOMER, "+51900000001", "Cliente de prueba", "wamid.1"):
         assert secret not in caplog.text, secret
@@ -511,21 +519,6 @@ def test_a_status_item_of_a_pending_account_is_the_seen_signal_too_but_creates_n
     assert detail(crm.a, mine.pk)[:2] == ("PENDING", None)
     found = snap(crm.a)
     assert (found.contacts, found.messages) == ([], [])
-
-
-def test_what_is_not_text_is_ignored_with_a_code_until_the_next_piece_stores_it(
-    crm: SimpleNamespace, migrator: DB
-) -> None:
-    make(crm.a)
-    assert run(webhooks.other_message("image", wamid="wamid.1")) == {"IGNORED": 1}
-    assert run(webhooks.reaction("wamid.OUT1", wamid="wamid.2")) == {"IGNORED": 1}
-    assert run(message("wamid.3", " \u200b\u202e \n")) == {"IGNORED": 1}  # nada visible
-    found = rows(migrator)
-    assert [found[f"wa:msg:wamid.{n}"]["ignored_reason"] for n in (1, 2, 3)] == [
-        "NOT_TEXT", "NOT_TEXT", "EMPTY",
-    ]  # fmt: skip
-    after = snap(crm.a)
-    assert (after.contacts, after.conversations, after.messages) == ([], [], [])
 
 
 def test_six_first_events_at_once_change_the_pending_account_and_audit_it_exactly_once(
@@ -566,3 +559,239 @@ def test_the_profile_name_travels_in_the_item_capped_at_200_characters() -> None
     value = webhooks.value(messages=[message("wamid.1")], name="n" * 300)
     [item] = meta_webhook.parse(webhooks.encode(webhooks.envelope(value))).items
     assert item.payload["profile_name"] == "n" * 200  # `inbound.profile_name` lo recorta a 100
+
+
+@pytest.mark.parametrize(
+    ("raw", "found"),
+    [
+        ("1700000000", dt.datetime(2023, 11, 14, 22, 13, 20, tzinfo=dt.UTC)),
+        ("999999999", None),  # antes de 2001
+        ("4102444801", None),  # después de 2100
+        ("-5", None), ("1.5", None), ("", None), (1700000000, None), (None, None),
+    ],
+)  # fmt: skip
+def test_the_provider_timestamp_is_a_unix_second_in_text_or_nothing(
+    raw: Any, found: dt.datetime | None
+) -> None:
+    assert inbound.instant(raw) == found
+
+
+@pytest.mark.parametrize("kind", webhooks.UNSUPPORTED_KINDS)
+def test_a_type_not_supported_yet_is_stored_as_unsupported_with_a_fixed_label(
+    crm: SimpleNamespace, kind: str
+) -> None:
+    make(crm.a)
+    assert run(webhooks.other_message(kind)) == {"PROCESSED": 1}
+    [first] = snap(crm.a).messages
+    assert first.message_type == "UNSUPPORTED" and first.body == inbound.LABELS[kind]
+    assert first.direction == "INBOUND" and "SIMMEDIA" not in first.body
+    shown = signed(crm.ana).get(f"{BASE}{snap(crm.a).conversations[0].pk}/messages/").json()
+    assert shown["results"][0]["message_type"] == "UNSUPPORTED"
+
+
+def test_an_unknown_type_and_a_text_with_nothing_visible_are_unsupported_with_the_generic_label(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    odd = webhooks.other_message("order", wamid="wamid.1") | {"order": {"text": PRIVATE}}
+    empty = message("wamid.2", " ​‮ \n")
+    assert run(odd, empty) == {"PROCESSED": 2}
+    found = snap(crm.a)
+    assert {m.body for m in found.messages} == {inbound.GENERIC}
+    assert {m.message_type for m in found.messages} == {"UNSUPPORTED"}
+
+
+def test_a_reaction_is_ignored_without_creating_anything_and_counted_without_personal_data(
+    crm: SimpleNamespace, migrator: DB, caplog: pytest.LogCaptureFixture
+) -> None:
+    make(crm.a)
+    caplog.set_level(logging.DEBUG)
+    assert run(webhooks.reaction("wamid.OUT1", "🎉")) == {"IGNORED": 1}
+    found = snap(crm.a)
+    assert (found.contacts, found.conversations, found.messages) == ([], [], [])
+    assert rows(migrator)["wa:msg:wamid.SIMIN000003"]["ignored_reason"] == "REACTION"
+    assert "meta.webhook.reaction_ignored" in caplog.text
+    for secret in ("🎉", CUSTOMER, "wamid.OUT1"):
+        assert secret not in caplog.text, secret
+
+
+def test_the_database_refuses_an_outbound_unsupported_message(crm: SimpleNamespace) -> None:
+    mine = make(crm.a)
+    run(message("wamid.1"))
+    convo = snap(crm.a).conversations[0]
+    with tenant_scope(ctx(crm.a)), pytest.raises(IntegrityError, match="messages_unsupported_ck"):
+        Message.objects.create(
+            conversation_id=convo.pk, channel_account_id=mine.pk, direction="OUTBOUND",
+            sender_type="USER", sender_user_id=crm.ana.pk, body="x", message_type="UNSUPPORTED",
+            client_message_id=uuid4(), delivery_status="QUEUED",
+        )  # fmt: skip
+
+
+def seed(crm: SimpleNamespace, mine: ChannelAccount, **over: Any) -> tuple[Contact, Conversation]:
+    who = contact(crm.a, "Ana", "+51900000001")
+    with tenant_scope(ctx(crm.a)):
+        made = Conversation.objects.create(
+            number="CONV-90001", contact_id=who.pk, channel_account_id=mine.pk,
+            last_message_at=timezone.now(), **over,
+        )  # fmt: skip
+    return who, made
+
+
+def reload(org: UUID, pk: UUID) -> Conversation:
+    with tenant_scope(ctx(org)):
+        found: Conversation = Conversation.objects.get(pk=pk)
+        return found
+
+
+def ago(**delta: float) -> str:
+    return str(int((timezone.now() - dt.timedelta(**delta)).timestamp()))
+
+
+def test_the_window_anchor_is_the_provider_instant_bounded_to_now_and_never_goes_back(
+    crm: SimpleNamespace,
+) -> None:
+    mine = make(crm.a)
+    _, convo = seed(crm, mine)
+    run(message("wamid.1", timestamp=ago(hours=2)))
+    first = reload(crm.a, convo.pk).last_inbound_at
+    assert first is not None and abs((timezone.now() - first).total_seconds() - 7200) < 5
+    run(message("wamid.2", timestamp=ago(hours=5)))  # llega después, pero es más viejo
+    assert reload(crm.a, convo.pk).last_inbound_at == first  # no retrocede
+    run(message("wamid.3", timestamp=str(int(timezone.now().timestamp()) + 86_400)))
+    after = reload(crm.a, convo.pk).last_inbound_at
+    assert after is not None and after <= timezone.now()  # un instante del futuro se acota
+    assert all(m.provider_timestamp <= timezone.now() for m in snap(crm.a).messages)
+
+
+def test_a_message_without_a_credible_timestamp_still_arrives_and_anchors_at_arrival(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    run(message("wamid.1", timestamp="no-es-un-numero"))
+    [first] = snap(crm.a).messages
+    convo = snap(crm.a).conversations[0]
+    assert first.provider_timestamp is None and convo.last_inbound_at is not None
+    assert abs((timezone.now() - convo.last_inbound_at).total_seconds()) < 60
+
+
+def test_the_chat_order_is_the_arrival_order_even_if_the_provider_instant_is_older(
+    crm: SimpleNamespace,
+) -> None:
+    make(crm.a)
+    run(message("wamid.1", "Segundo en el tiempo", timestamp=ago(minutes=1)))
+    run(message("wamid.2", "Primero en el tiempo", timestamp=ago(hours=3)))
+    convo = snap(crm.a).conversations[0]
+    assert [m.body for m in snap(crm.a).messages] == [
+        "Segundo en el tiempo", "Primero en el tiempo",
+    ]  # fmt: skip
+    assert convo.last_message_preview == "Primero en el tiempo"  # llegó último
+
+
+@pytest.mark.parametrize("status", ["WAITING_CUSTOMER", "RESOLVED"])
+def test_a_recent_message_reopens_and_an_old_one_does_not_reopen(
+    crm: SimpleNamespace, status: str
+) -> None:
+    mine = make(crm.a)
+    _, convo = seed(crm, mine, status=status, resolved_at=timezone.now() - dt.timedelta(hours=1))
+    run(message("wamid.1", timestamp=ago(hours=30)))  # un evento de hace más de 24 h
+    assert reload(crm.a, convo.pk).status == status  # la anota sin reabrirla
+    assert [m.conversation_id for m in snap(crm.a).messages] == [convo.pk]
+    run(message("wamid.2", timestamp=ago(minutes=1)))
+    assert reload(crm.a, convo.pk).status == "OPEN"
+
+
+def test_an_old_event_never_reopens_a_closed_conversation_it_opens_a_new_pending_one(
+    crm: SimpleNamespace,
+) -> None:
+    mine = make(crm.a)
+    _, closed = seed(crm, mine, status="CLOSED", closed_at=timezone.now())
+    run(message("wamid.1", timestamp=ago(days=3)))
+    assert reload(crm.a, closed.pk).status == "CLOSED"
+    found = snap(crm.a)
+    assert [c.status for c in found.conversations] == ["CLOSED", "PENDING"]
+    assert found.messages[0].conversation_id == found.conversations[1].pk
+
+
+def test_a_resolved_conversation_past_the_reopen_limit_is_closed_by_an_old_event_too(
+    crm: SimpleNamespace,
+) -> None:
+    mine = make(crm.a)
+    _, convo = seed(crm, mine, status="RESOLVED", resolved_at=timezone.now() - dt.timedelta(days=4))
+    run(message("wamid.1", timestamp=ago(days=2)))
+    assert reload(crm.a, convo.pk).status == "CLOSED"  # D-INB-2: el plazo de 72 h
+    assert [c.status for c in snap(crm.a).conversations] == ["CLOSED", "PENDING"]
+
+
+def test_past_the_new_contacts_per_minute_cap_the_message_waits_and_is_never_lost(
+    crm: SimpleNamespace, migrator: DB, settings: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    make(crm.a)
+    settings.INBOUND_NEW_CONTACTS_PER_MINUTE = 2
+    caplog.set_level(logging.DEBUG)
+    senders = [f"5190000010{n}" for n in range(3)]
+    sent = [
+        webhooks.text_message("Hola", wamid=f"wamid.{n}", sender=s) for n, s in enumerate(senders)
+    ]
+    assert run(*sent) == {"PROCESSED": 2, "FAILED": 1}
+    assert len(snap(crm.a).contacts) == 2 and "meta.webhook.contact_cap" in caplog.text
+    waiting = rows(migrator)["wa:msg:wamid.2"]
+    assert waiting["status"] == "FAILED" and waiting["payload"] is not None  # sigue entero
+    failure = migrator.execute("SELECT reason FROM webhook_failures").fetchone()
+    assert failure == ("RATE_LIMITED",)
+    # un cliente que ya existe no cuenta contra el tope
+    assert run(webhooks.text_message("Otra vez", wamid="wamid.9", sender=senders[0])) == {
+        "PROCESSED": 1
+    }
+    # pasa el minuto: el mensaje retenido entra y nada se perdió
+    migrator.execute(
+        "UPDATE webhook_ingress SET next_attempt_at = now() - interval '1 second',"
+        " claimed_until = NULL WHERE event_key = 'wa:msg:wamid.2'"
+    )
+    migrator.execute("UPDATE contacts SET created_at = created_at - interval '2 minutes'")
+    assert ingress.process() == {"PROCESSED": 1}
+    found = snap(crm.a)
+    assert (len(found.contacts), len(found.messages)) == (3, 4)
+    assert "12345" not in caplog.text and not any(s in caplog.text for s in senders)
+
+
+def test_the_cap_is_per_account_and_per_minute_not_per_organization(
+    crm: SimpleNamespace, settings: Any
+) -> None:
+    make(crm.a)
+    settings.INBOUND_NEW_CONTACTS_PER_MINUTE = 1
+    other = make(
+        crm.a, external_account_id="100000000000010", external_parent_id=WABA_ID, name="Otro"
+    )
+    assert other.pk is not None
+    run(webhooks.text_message("Hola", wamid="wamid.1", sender="51900000101"))
+    deliver(
+        webhooks.text_message("Hola", wamid="wamid.2", sender="51900000102"),
+        number="100000000000010",
+    )
+    assert ingress.process() == {"PROCESSED": 1}  # el tope es de esta cuenta: la otra tiene el suyo
+    assert len(snap(crm.a).contacts) == 2
+
+
+def test_the_migration_goes_back_and_forward_keeping_the_messages(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    make(crm.a)
+    run(message("wamid.1"))
+    with as_migrator():
+        call_command("migrate", "conversations", "0009", verbosity=0)
+    columns = migrator.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_name = 'messages' AND column_name = 'provider_timestamp'"
+    ).fetchall()
+    assert columns == []
+    assert migrator.execute("SELECT count(*) FROM messages").fetchone() == (1,)
+    with as_migrator():
+        call_command("migrate", "conversations", verbosity=0)
+    assert migrator.execute(
+        "SELECT count(*) FROM pg_constraint WHERE conname IN"
+        " ('messages_type_ck', 'messages_unsupported_ck')"
+    ).fetchone() == (2,)
+    assert migrator.execute(
+        "SELECT message_type, provider_timestamp IS NULL FROM messages"
+    ).fetchone() == ("TEXT", True)
+    assert put("wa:msg:again") is True  # y la ingesta sigue funcionando

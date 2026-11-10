@@ -9,10 +9,13 @@ homónimos, ADR-028): el segundo proceso espera, encuentra el del primero y lo r
 fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un teléfono ni un texto.
 """
 
+import datetime as dt
 import unicodedata
 from typing import Any
 
+from django.conf import settings
 from django.db import connections
+from django.utils import timezone
 
 from apps.contacts.commands import create_contact
 from apps.contacts.models import Contact
@@ -21,6 +24,7 @@ from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
     Conversation,
+    MessageType,
 )
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
@@ -30,6 +34,17 @@ logger = get_logger(__name__)
 ZWJ = "‍"
 KEEP = frozenset({"\n", "\t", "‌", ZWJ, "‎", "‏", "؜"})  # y las marcas LRM, RLM, ALM
 NAME_MAX = 100
+LABELS = {  # lo que ve el chat de lo que aún no se entiende: una frase fija, nunca el contenido
+    "image": "Imagen recibida", "audio": "Audio recibido", "video": "Video recibido",
+    "document": "Documento recibido", "sticker": "Sticker recibido",
+    "location": "Ubicación recibida", "contacts": "Contacto recibido",
+    "interactive": "Respuesta interactiva recibida", "button": "Respuesta interactiva recibida",
+}  # fmt: skip
+GENERIC = "Mensaje no soportado"
+
+
+class Throttled(Exception):  # noqa: N818 — el tope de contactos nuevos por minuto
+    """Se alcanzó el tope de contactos nuevos de la cuenta: el ítem se reintenta, no se pierde."""
 
 
 def _cut(text: str, limit: int) -> str:
@@ -90,6 +105,16 @@ def variants(phone: str) -> list[str]:
     return forms
 
 
+def instant(raw: Any) -> dt.datetime | None:
+    """El `timestamp` de Meta (segundos Unix en texto) como instante; `None` si no es creíble."""
+    if not isinstance(raw, str) or not raw.isascii() or not raw.isdigit():
+        return None
+    seconds = int(raw)
+    if not 1_000_000_000 <= seconds <= 4_102_444_800:  # de 2001 a 2100
+        return None
+    return dt.datetime.fromtimestamp(seconds, dt.UTC)
+
+
 def _find(alias: str, account_id: Any, phones: list[str]) -> Contact | None:
     """El contacto de ese teléfono: el de conversación abierta en esta cuenta o el más antiguo."""
     found = list(
@@ -110,24 +135,45 @@ def _find(alias: str, account_id: Any, phones: list[str]) -> Contact | None:
     return found[0] if found else None
 
 
+def _capped(alias: str, account_id: Any) -> bool:
+    """¿Ya nacieron en el último minuto tantos contactos nuevos por esta cuenta como permite el
+    tope? Cuenta los contactos de un mensaje entrante cuya primera conversación es de la cuenta."""
+    since = timezone.now() - dt.timedelta(minutes=1)
+    threads = Conversation.objects.using(alias).filter(
+        channel_account_id=account_id, created_at__gte=since
+    )
+    born = Contact.objects.using(alias).filter(
+        source=Contact.Source.INBOUND_MESSAGE, created_at__gte=since,
+        pk__in=threads.values("contact_id"),
+    )  # fmt: skip
+    return born.count() >= settings.INBOUND_NEW_CONTACTS_PER_MINUTE
+
+
 def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]) -> str | None:
-    """Registra un mensaje de texto entrante de la cuenta. Devuelve `None` si quedó registrado (o
-    ya lo estaba), o el motivo por el que se ignora: `NOT_TEXT` (imágenes, audios, reacciones…:
-    F7-04b los guarda como «no soportado»), `EMPTY` (sin nada visible) y `BAD_PHONE`."""
+    """Registra un mensaje entrante de la cuenta. Devuelve `None` si quedó registrado (o ya lo
+    estaba), o el motivo por el que se ignora (`REACTION`, `BAD_PHONE`). `Throttled` si hay que
+    crear un contacto y la cuenta alcanzó el tope por minuto: el procesador reintenta."""
     alias = require_scope(ctx)
-    if message.get("type") != "text":
-        return "NOT_TEXT"
+    kind, external = message.get("type"), message["id"]
+    if kind == "reaction":  # se ignoran, con un contador (sin quién ni a qué mensaje)
+        logger.info("meta.webhook.reaction_ignored")
+        return "REACTION"
     if (phone := normalize_phone(message.get("from"))) is None:
         return "BAD_PHONE"
-    body = clean_text(message["text"]["body"])
-    if not visible(body):
-        return "EMPTY"
-    external = message["id"]
+    body, message_type = None, MessageType.UNSUPPORTED
+    if kind == "text":
+        body = clean_text(message["text"]["body"])
+    if body is not None and visible(body):
+        message_type = MessageType.TEXT
+    else:
+        body = LABELS.get(str(kind), GENERIC) if kind != "text" else GENERIC
     with connections[alias].cursor() as cursor:  # se suelta al acabar la transacción del scope
         key = f"wa:{ctx.organization_id}:{phone}"
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
     contact = _find(alias, account.pk, variants(phone))
     if contact is None:
+        if _capped(alias, account.pk):
+            raise Throttled
         name = profile_name(message.get("profile_name")) or phone
         try:
             contact = create_contact(
@@ -141,6 +187,6 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
             )  # fmt: skip
     commands.record_inbound(
         ctx, contact_id=contact.pk, channel_account_id=account.pk, external_message_id=external,
-        body=body,
+        body=body, message_type=message_type, provider_at=instant(message.get("timestamp")),
     )  # fmt: skip
     return None
