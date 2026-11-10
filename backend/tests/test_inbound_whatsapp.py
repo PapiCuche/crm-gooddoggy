@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import logging
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,7 +15,7 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.core.management import call_command
-from django.db import IntegrityError, connection
+from django.db import DatabaseError, IntegrityError, connection
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -678,9 +679,10 @@ def test_the_chat_order_is_the_arrival_order_even_if_the_provider_instant_is_old
     crm: SimpleNamespace,
 ) -> None:
     make(crm.a)
-    run(message("wamid.1", "Segundo en el tiempo", timestamp=ago(minutes=1)))
+    run(message("wamid.1", "Segundo en el tiempo", timestamp=ago(hours=2)))
     run(message("wamid.2", "Primero en el tiempo", timestamp=ago(hours=3)))
     convo = snap(crm.a).conversations[0]
+    assert (timezone.now() - convo.last_message_at).total_seconds() < 60  # el orden es de llegada
     assert [m.body for m in snap(crm.a).messages] == [
         "Segundo en el tiempo", "Primero en el tiempo",
     ]  # fmt: skip
@@ -698,6 +700,41 @@ def test_a_recent_message_reopens_and_an_old_one_does_not_reopen(
     assert [m.conversation_id for m in snap(crm.a).messages] == [convo.pk]
     run(message("wamid.2", timestamp=ago(minutes=1)))
     assert reload(crm.a, convo.pk).status == "OPEN"
+
+
+@pytest.mark.parametrize(("hours", "reopens"), [(23.5, True), (24.5, False)])
+def test_the_24_hour_edge_and_a_reopen_keeps_the_provider_instant_as_the_anchor(
+    crm: SimpleNamespace, hours: float, reopens: bool
+) -> None:
+    mine = make(crm.a)
+    _, convo = seed(crm, mine, status="WAITING_CUSTOMER")
+    run(message("wamid.1", timestamp=ago(hours=hours)))
+    after = reload(crm.a, convo.pk)
+    assert after.status == ("OPEN" if reopens else "WAITING_CUSTOMER")
+    assert after.last_inbound_at is not None
+    assert abs((timezone.now() - after.last_inbound_at).total_seconds() - hours * 3600) < 60
+    assert (timezone.now() - after.last_message_at).total_seconds() < 60  # y el chat, por llegada
+
+
+def test_only_a_contact_born_from_a_message_counts_against_the_new_contacts_cap(
+    crm: SimpleNamespace, settings: Any
+) -> None:
+    mine = make(crm.a)
+    settings.INBOUND_NEW_CONTACTS_PER_MINUTE = 1
+    seed(crm, mine)  # una persona del equipo abrió una conversación hace un instante
+    assert run(webhooks.text_message("Hola", wamid="wamid.1", sender="51900000101")) == {
+        "PROCESSED": 1
+    }
+
+
+def test_record_inbound_only_takes_text_or_unsupported(crm: SimpleNamespace) -> None:
+    mine = make(crm.a)
+    who, _ = seed(crm, mine)
+    with tenant_scope(ctx(crm.a)), pytest.raises(ValueError, match="tipo"):
+        commands.record_inbound(
+            ctx(crm.a), contact_id=who.pk, channel_account_id=mine.pk,
+            external_message_id="wamid.1", body="x", message_type="NOTE",
+        )  # fmt: skip
 
 
 def test_an_old_event_never_reopens_a_closed_conversation_it_opens_a_new_pending_one(
@@ -736,8 +773,13 @@ def test_past_the_new_contacts_per_minute_cap_the_message_waits_and_is_never_los
     assert len(snap(crm.a).contacts) == 2 and "meta.webhook.contact_cap" in caplog.text
     waiting = rows(migrator)["wa:msg:wamid.2"]
     assert waiting["status"] == "FAILED" and waiting["payload"] is not None  # sigue entero
-    failure = migrator.execute("SELECT reason FROM webhook_failures").fetchone()
-    assert failure == ("RATE_LIMITED",)
+    assert waiting["attempts"] == 0  # un frenado no gasta un intento
+    wait = migrator.execute(
+        "SELECT next_attempt_at > now(), next_attempt_at <= now() + interval '61 seconds'"
+        " FROM webhook_ingress WHERE event_key = 'wa:msg:wamid.2'"
+    )
+    assert wait.fetchone() == (True, True)  # espera al siguiente minuto
+    assert migrator.execute("SELECT count(*) FROM webhook_failures").fetchone() == (0,)
     # un cliente que ya existe no cuenta contra el tope
     assert run(webhooks.text_message("Otra vez", wamid="wamid.9", sender=senders[0])) == {
         "PROCESSED": 1
@@ -752,6 +794,62 @@ def test_past_the_new_contacts_per_minute_cap_the_message_waits_and_is_never_los
     found = snap(crm.a)
     assert (len(found.contacts), len(found.messages)) == (3, 4)
     assert "12345" not in caplog.text and not any(s in caplog.text for s in senders)
+
+
+def test_a_sustained_spike_never_kills_a_rate_limited_item(
+    crm: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    make(crm.a)
+    settings.INBOUND_NEW_CONTACTS_PER_MINUTE = 1
+    sent = [
+        webhooks.text_message("Hola", wamid=f"wamid.{n}", sender=f"5190000020{n}") for n in (1, 2)
+    ]
+    assert run(*sent) == {"PROCESSED": 1, "FAILED": 1}
+    for _ in range(10):  # más intentos que los 8 de un fallo de verdad
+        migrator.execute("UPDATE webhook_ingress SET next_attempt_at = now() - interval '1 second'")
+        assert ingress.process() == {"FAILED": 1}
+    waiting = rows(migrator)["wa:msg:wamid.2"]
+    assert (waiting["status"], waiting["attempts"]) == ("FAILED", 0)
+
+
+def test_new_contacts_at_once_never_pass_the_cap(
+    crm: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    live(crm.a)  # conectada: una `PENDING` serializa los hilos con el bloqueo de `seen()`
+    settings.INBOUND_NEW_CONTACTS_PER_MINUTE = 2
+    counting = inbound._capped
+
+    def slow(alias: str, account_id: Any) -> bool:  # todos cuentan antes de que nadie cree
+        found = counting(alias, account_id)
+        time.sleep(0.3)
+        return found
+
+    monkeypatch.setattr(inbound, "_capped", slow)
+    senders = [f"5190000030{n}" for n in range(8)]
+    deliver(
+        *[
+            webhooks.text_message("Hola", wamid=f"wamid.{n}", sender=s)
+            for n, s in enumerate(senders)
+        ]
+    )
+    start, outcome = threading.Barrier(8), []
+
+    def work() -> None:
+        try:
+            start.wait(timeout=10)
+            outcome.append(ingress.process(batch_size=1, rounds=1))
+        except Exception as error:  # noqa: BLE001 — lo comprueba el test
+            outcome.append({type(error).__name__: 1})
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=work) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    assert sorted(k for o in outcome for k in o) == ["FAILED"] * 6 + ["PROCESSED"] * 2, outcome
+    assert len(snap(crm.a).contacts) == 2  # sin el bloqueo de la cuenta, contaban a la vez
 
 
 def test_the_cap_is_per_account_and_per_minute_not_per_organization(
@@ -779,6 +877,8 @@ def test_the_migration_goes_back_and_forward_keeping_the_messages(
     run(message("wamid.1"))
     with as_migrator():
         call_command("migrate", "conversations", "0009", verbosity=0)
+    mark = "SELECT prosrc LIKE '%RATE_LIMITED%' FROM pg_proc WHERE proname = 'webhook_ingress_mark'"
+    assert migrator.execute(mark).fetchone() == (False,)  # volver atrás restaura la función de 0009
     columns = migrator.execute(
         "SELECT column_name FROM information_schema.columns"
         " WHERE table_name = 'messages' AND column_name = 'provider_timestamp'"
@@ -794,4 +894,17 @@ def test_the_migration_goes_back_and_forward_keeping_the_messages(
     assert migrator.execute(
         "SELECT message_type, provider_timestamp IS NULL FROM messages"
     ).fetchone() == ("TEXT", True)
+    assert migrator.execute(mark).fetchone() == (True,)
     assert put("wa:msg:again") is True  # y la ingesta sigue funcionando
+
+
+def test_going_back_fails_while_unsupported_messages_exist_and_loses_nothing(
+    crm: SimpleNamespace, migrator: DB
+) -> None:
+    make(crm.a)
+    run(webhooks.other_message("image", wamid="wamid.1"))
+    with as_migrator(), pytest.raises(DatabaseError):  # el CHECK viejo no admite `UNSUPPORTED`
+        call_command("migrate", "conversations", "0009", verbosity=0)
+    assert migrator.execute("SELECT message_type FROM messages").fetchall() == [("UNSUPPORTED",)]
+    with as_migrator():
+        call_command("migrate", "conversations", verbosity=0)  # 0011 ya se había deshecho

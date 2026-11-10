@@ -135,6 +135,12 @@ def _find(alias: str, account_id: Any, phones: list[str]) -> Contact | None:
     return found[0] if found else None
 
 
+def _lock(alias: str, key: str) -> None:
+    """Bloqueo de aviso hasta que acabe la transacción del scope (el segundo espera al primero)."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+
+
 def _capped(alias: str, account_id: Any) -> bool:
     """¿Ya nacieron en el último minuto tantos contactos nuevos por esta cuenta como permite el
     tope? Cuenta los contactos de un mensaje entrante cuya primera conversación es de la cuenta."""
@@ -167,11 +173,10 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
         message_type = MessageType.TEXT
     else:
         body = LABELS.get(str(kind), GENERIC) if kind != "text" else GENERIC
-    with connections[alias].cursor() as cursor:  # se suelta al acabar la transacción del scope
-        key = f"wa:{ctx.organization_id}:{phone}"
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+    _lock(alias, f"wa:{ctx.organization_id}:{phone}")
     contact = _find(alias, account.pk, variants(phone))
     if contact is None:
+        _lock(alias, f"wa-cap:{account.pk}")  # contar y crear, uno a uno: orden teléfono, cuenta
         if _capped(alias, account.pk):
             raise Throttled
         name = profile_name(message.get("profile_name")) or phone
