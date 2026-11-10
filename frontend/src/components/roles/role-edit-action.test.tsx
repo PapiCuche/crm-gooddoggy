@@ -105,7 +105,7 @@ describe("RoleEditAction", () => {
       "Editar el rol Vendedor", // una plantilla sí: decide `editable`, no `is_system`
     ]);
     const form = await opened();
-    expect(field(form, "Nombre")).toHaveFocus();
+    await waitFor(() => expect(field(form, "Nombre")).toHaveFocus());
     expect(field(form, "Nombre")).toHaveValue("Caja");
     expect(field(form, "Nombre")).toHaveAttribute("maxlength", "100");
     expect(field(form, "Nombre")).toHaveAccessibleDescription(/No puede leerse igual/);
@@ -493,7 +493,7 @@ describe("RoleEditAction", () => {
       else (document.activeElement as HTMLElement).blur();
       await within(form).findByRole("alert");
       await tick();
-      expect(field(form, ends)).toHaveFocus();
+      await waitFor(() => expect(field(form, ends)).toHaveFocus());
     },
   );
 });

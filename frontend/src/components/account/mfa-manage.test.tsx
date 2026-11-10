@@ -55,7 +55,7 @@ describe("AccountSecurity con el segundo factor activado", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Generar códigos de respaldo nuevos" }),
     );
-    expect(screen.getByLabelText("Contraseña actual")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Contraseña actual")).toHaveFocus());
     expect(screen.queryByRole("link")).toBeNull(); // no se sale de la página a medias
     fill("clave", "");
     fireEvent.click(screen.getByRole("button", { name: "Generar códigos nuevos" }));

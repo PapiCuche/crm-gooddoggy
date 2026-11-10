@@ -422,7 +422,7 @@ describe("TeamEditAction", () => {
     await waitFor(() => expect(calls(api, "GET")).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     await tick();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
   });
 
   it("el aviso de la lista solo lo retira abrir: cancelar otro formulario lo deja", async () => {

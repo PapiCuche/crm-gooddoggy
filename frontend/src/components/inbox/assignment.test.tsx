@@ -178,7 +178,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
     fireEvent.click(await header().findByRole("button", { name: "Tomar" }));
     expect(await header().findByText("Tomaste la conversación.")).toBeVisible();
     expect(s.posts()).toEqual([{ action: "TAKE", assignment_version: 3 }]);
-    expect(await line("Asignada a ti")).toHaveFocus(); // el botón pulsado desaparece
+    await waitFor(async () => expect(await line("Asignada a ti")).toHaveFocus()); // el botón pulsado desaparece
     expect(header().getByRole("button", { name: "Acciones" })).toHaveAttribute(
       "aria-expanded",
       "false",

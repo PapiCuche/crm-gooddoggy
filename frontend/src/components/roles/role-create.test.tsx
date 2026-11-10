@@ -376,7 +376,7 @@ describe("RoleCreate: marca de envío, foco y avisos", () => {
     release();
     await waitFor(() => expect(screen.queryByRole("form")).not.toBeInTheDocument());
     await tick();
-    expect(heading).toHaveFocus();
+    await waitFor(() => expect(heading).toHaveFocus());
 
     reply = { status: 409, body: { code: "ROLE_NAME_TAKEN" } };
     form = await opened();
@@ -389,7 +389,7 @@ describe("RoleCreate: marca de envío, foco y avisos", () => {
     release();
     await within(form).findByRole("alert");
     await tick();
-    expect(cancel).toHaveFocus();
+    await waitFor(() => expect(cancel).toHaveFocus());
     cancel.blur(); // en ninguna parte: el mismo error, otra vez, lleva el foco al nombre
     expect(document.body).toHaveFocus();
     release = hold(api);

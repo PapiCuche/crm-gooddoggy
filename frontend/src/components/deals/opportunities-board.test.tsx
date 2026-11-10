@@ -695,7 +695,7 @@ describe("OpportunitiesBoard", () => {
       refetch.open();
       await screen.findByText("«Collar nuevo» creada en «Nuevo».");
       await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(screen.getByLabelText("Buscar")).toHaveFocus();
+      await waitFor(() => expect(screen.getByLabelText("Buscar")).toHaveFocus());
     });
 
     it("espera a que acabe un movimiento en curso antes de releer la lista", async () => {
@@ -784,7 +784,7 @@ describe("OpportunitiesBoard", () => {
       fill("Título", "Collar nuevo");
       submit();
       const search = await screen.findByLabelText("Buscar cliente");
-      expect(search).toHaveFocus();
+      await waitFor(() => expect(search).toHaveFocus());
       expect(screen.getByRole("group", { name: "Cliente" })).toHaveAccessibleDescription(
         "Elige un cliente.",
       );

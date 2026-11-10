@@ -421,8 +421,10 @@ describe("ListPrices: costos que no deben quedarse", () => {
     const { client } = screenOf(seller("product_cost.view"));
     const [first] = [await row("LAP-1"), await row("LAP-2")];
     fireEvent.click(await switchOf());
-    fireEvent.change(await screen.findByLabelText(/^Código/), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verificar" }));
+    // un `<dialog>` cerrado no es accesible: se espera a que esté abierto y se consulta dentro
+    const code = await screen.findByRole("dialog", { name: "Confirma que eres tú" });
+    fireEvent.change(within(code).getByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(within(code).getByRole("button", { name: "Verificar" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /confirmar de nuevo tu segundo factor/,
     );
@@ -492,8 +494,10 @@ describe("ListPrices: registrar costo e historial", () => {
     );
     fill("3399.00");
     save();
-    fireEvent.change(await screen.findByLabelText(/^Código/), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Verificar" }));
+    // un `<dialog>` cerrado no es accesible: se espera a que esté abierto y se consulta dentro
+    const code = await screen.findByRole("dialog", { name: "Confirma que eres tú" });
+    fireEvent.change(within(code).getByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(within(code).getByRole("button", { name: "Verificar" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const sent = requested(api, "/costs/").filter(([, init]) => init?.method === "POST");
     expect(sent).toHaveLength(2);

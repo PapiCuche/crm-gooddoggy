@@ -247,7 +247,9 @@ describe("TeamMembersPanel", () => {
     reply = { status: 403, body: { code: "PERMISSION_DENIED" } };
     fireEvent.click(retry);
     await within(panel).findByText(/No tienes permiso/);
-    expect(within(panel).getByRole("button", { name: "Cerrar" })).toHaveFocus(); // el botón se fue
+    await waitFor(() =>
+      expect(within(panel).getByRole("button", { name: "Cerrar" })).toHaveFocus(),
+    ); // el botón se fue
     reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
     const other = await opened("Soporte", "soporte");
     const again = await within(other).findByRole("button", { name: "Reintentar" });

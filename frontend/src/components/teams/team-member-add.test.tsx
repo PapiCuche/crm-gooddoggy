@@ -405,7 +405,7 @@ describe("TeamMemberAdd", () => {
     fireEvent.click(retry); // y vuelve a fallar
     await waitFor(() => expect(retry).not.toBeInTheDocument());
     await within(group).findByRole("alert");
-    expect(within(group).getByRole("button", { name: "Listo" })).toHaveFocus(); // no se pierde
+    await waitFor(() => expect(within(group).getByRole("button", { name: "Listo" })).toHaveFocus()); // no se pierde
     reply = page([ana, luis, marta]);
     fireEvent.click(within(group).getByRole("button", { name: "Reintentar" }));
     await waitFor(() => expect(offered(group)).toHaveLength(1));

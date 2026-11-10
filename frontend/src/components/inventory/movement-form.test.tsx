@@ -94,7 +94,7 @@ describe("MovementForm", () => {
       },
     });
     await opened();
-    expect(field("Unidades que entran")).toHaveFocus();
+    await waitFor(() => expect(field("Unidades que entran")).toHaveFocus());
     expect(field("Unidades que entran")).toHaveAttribute("inputmode", "numeric");
     expect(field("Entrada: llegan unidades")).toBeChecked();
     for (const wrong of ["abc", "0", "1.5", "-3", "1000001"]) {
@@ -189,7 +189,7 @@ describe("MovementForm", () => {
       await waitFor(() => expect(within(where()).getByRole("alert")).toHaveTextContent(text));
     };
     await again(reply, /No hay stock suficiente/);
-    expect(field("Unidades que salen")).toHaveFocus();
+    await waitFor(() => expect(field("Unidades que salen")).toHaveFocus());
     await again({ status: 409, body: { code: "WAREHOUSE_INACTIVE" } }, /está desactivado/);
     await again({ status: 409, body: { code: "IDEMPOTENCY_KEY_REUSED" } }, /sí se registró/);
     const bad = { code: "VALIDATION_ERROR", fields: { warehouse_id: ["x"] } };

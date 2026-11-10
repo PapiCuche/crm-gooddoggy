@@ -106,7 +106,7 @@ describe("useStepUp", () => {
     const api = await ask();
     const input = screen.getByLabelText("Código de la aplicación");
     expect(screen.getByRole("dialog", { name: "Confirma que eres tú" })).toBeVisible();
-    expect(input).toHaveFocus();
+    await waitFor(() => expect(input).toHaveFocus());
     expect(input).toHaveAttribute("inputmode", "numeric");
     expect(input).toHaveAttribute("autocomplete", "one-time-code");
     type("123 456");

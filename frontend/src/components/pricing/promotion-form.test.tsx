@@ -619,7 +619,7 @@ describe("PromotionForm: prioridad, canales y visibilidad a la IA", () => {
     type("Agregar un canal", "web");
     submit();
     expect(await screen.findByText(/Agrega el canal que escribiste/)).toBeVisible();
-    expect(screen.getByLabelText("Agregar un canal")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Agregar un canal")).toHaveFocus());
     expect(bodies(api)).toHaveLength(0);
   });
 

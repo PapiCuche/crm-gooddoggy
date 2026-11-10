@@ -206,7 +206,9 @@ describe("StockImportRows", () => {
     expect(button).toHaveTextContent("Cargando filas…");
     onlineManager.setOnline(true);
     expect(await items()).toHaveLength(1);
-    expect(screen.getByRole("heading", { name: "Filas del archivo" })).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Filas del archivo" })).toHaveFocus(),
+    );
   });
 
   it("la misma fila nueva en otra lista también recibe el foco", async () => {
