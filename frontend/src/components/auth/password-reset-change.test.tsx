@@ -92,7 +92,7 @@ describe("PasswordResetChange", () => {
     const view = open(`#${LINK}`);
     type(TYPED);
     const title = await screen.findByRole("heading", { level: 2, name: CHANGED });
-    expect(title).toHaveFocus(); // el formulario ya no está: el foco va a lo que lo sustituye
+    await waitFor(() => expect(title).toHaveFocus()); // el formulario ya no está: el foco va a lo que lo sustituye
     expect(screen.getByText(/Se cerraron las sesiones que tenías abiertas/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Entrar" })).toHaveAttribute("href", "/login");
     expect(screen.queryByLabelText("Contraseña nueva")).not.toBeInTheDocument();
@@ -152,7 +152,9 @@ describe("PasswordResetChange", () => {
     const api = mockApi({ [CHANGE]: refusedLink });
     const view = open(`#${LINK}`);
     type(TYPED);
-    expect(await screen.findByRole("heading", { level: 2, name: INVALID })).toHaveFocus();
+    await waitFor(async () =>
+      expect(await screen.findByRole("heading", { level: 2, name: INVALID })).toHaveFocus(),
+    );
     expect(
       screen.getByText(/ya se haya usado, que haya caducado o que hayas pedido otro/),
     ).toBeVisible();

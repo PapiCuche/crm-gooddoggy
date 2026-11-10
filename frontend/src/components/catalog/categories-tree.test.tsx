@@ -563,7 +563,9 @@ describe("CategoriesTree", () => {
     screen.getByRole("button", { name: "Editar Accesorios" }).focus();
     release();
     expect(await screen.findByText(/movida con sus subcategorías/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Editar Accesorios" })).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar Accesorios" })).toHaveFocus(),
+    );
   });
 
   it("si la borrada aún enseñaba hijas (otra pestaña las movió), el árbol se vuelve a pedir", async () => {

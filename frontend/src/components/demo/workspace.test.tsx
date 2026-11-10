@@ -84,7 +84,7 @@ describe("Workspace de la demo", () => {
     expect(thread().getAllByRole("listitem")).toHaveLength(3);
   });
 
-  it("mueve una oportunidad de etapa con el selector y abre su detalle", () => {
+  it("mueve una oportunidad de etapa con el selector y abre su detalle", async () => {
     render(<ModuleView slug="pipeline" />);
     const column = (name: RegExp) => screen.getByRole("region", { name });
     expect(column(/^Nuevo: 1 oportunidad$/)).toHaveTextContent("Camila Torres");
@@ -100,7 +100,7 @@ describe("Workspace de la demo", () => {
     expect(screen.getByRole("combobox", { name: "ETAPA de Camila Torres" })).toHaveFocus();
 
     fireEvent.click(screen.getByRole("button", { name: "Ver oportunidad de Camila Torres" }));
-    const dialog = screen.getByRole("dialog", { name: "Camila Torres" });
+    const dialog = await screen.findByRole("dialog", { name: "Camila Torres" });
     expect(dialog).toHaveTextContent("Ganada");
     expect(dialog).toHaveTextContent("USD 4,899");
   });

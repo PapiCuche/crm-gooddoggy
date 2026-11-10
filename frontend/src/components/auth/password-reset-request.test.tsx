@@ -41,7 +41,7 @@ describe("PasswordResetRequest", () => {
     expect(screen.getByText(/Si existe, te enviaremos un enlace/)).toBeVisible();
     ask("  Persona-Unica@Acme.PE ");
     const title = await screen.findByRole("heading", { level: 2, name: SENT });
-    expect(title).toHaveFocus(); // el formulario ya no está: el foco va a lo que lo sustituye
+    await waitFor(() => expect(title).toHaveFocus()); // el formulario ya no está: el foco va a lo que lo sustituye
     expect(screen.getByText(/Si hay una cuenta con ese correo/)).toHaveTextContent(
       "Vale 60 minutos y solo sirve el último que pidas.",
     );

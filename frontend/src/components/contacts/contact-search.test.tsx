@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -455,6 +455,6 @@ describe("búsqueda de clientes (F4-13)", () => {
     type("ana");
     await wait(300);
     await screen.findByText("1 cliente en la lista");
-    expect(box()).toHaveFocus();
+    await waitFor(() => expect(box()).toHaveFocus());
   });
 });

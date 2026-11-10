@@ -202,7 +202,7 @@ describe("Inbox, chat (F6-03)", () => {
     });
     show();
     const heading = await open(/Rosa Díaz/);
-    expect(heading).toHaveFocus(); // en 390 px la lista se oculta: el foco va al chat
+    await waitFor(() => expect(heading).toHaveFocus()); // en 390 px la lista se oculta: el foco va al chat
     // el título de la página sigue en el árbol de accesibilidad aunque se vea solo el chat
     expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toHaveClass("max-lg:sr-only");
     const log = await screen.findByRole("list", { name: "Mensajes" });

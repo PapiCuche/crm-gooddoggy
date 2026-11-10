@@ -95,7 +95,7 @@ describe("CursorList", () => {
     const view = renderApp(ui);
     await screen.findByRole("list", { name: "Miembros" });
     handle.current?.focusHeading();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     handle.current?.refetch();
     await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
     view.unmount();
