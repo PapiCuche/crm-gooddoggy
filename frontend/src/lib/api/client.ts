@@ -8561,7 +8561,7 @@ export const getOpportunitiesCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea una oportunidad abierta de un contacto, en la primera etapa abierta del pipeline elegido (o del predeterminado), con su número `OPP-…`; quien la crea es su responsable. Con `opportunities.create` y `contacts.view`. 400 en `contact_id` si no es un contacto vivo que quien crea pueda ver (el mismo error que para uno que no existe), en `pipeline_id` o en `items` (una variante) si no son activos, y por cada dato inválido.
+ * Crea una oportunidad abierta de un contacto, en la primera etapa abierta del pipeline elegido (o del predeterminado), con su número `OPP-…`; quien la crea es su responsable. Con `opportunities.create` y `contacts.view`. 400 en `contact_id` si no es un contacto vivo que quien crea pueda ver (el mismo error que para uno que no existe), en `pipeline_id` o en `items` (una variante) si no son activos, en `conversation_id` si no es una conversación de ese contacto dentro del alcance de `conversations.view` de quien crea (el mismo error que para una que no existe o de otra organización), y por cada dato inválido.
  */
 export const opportunitiesCreate = async (
   orgSlug: string,
