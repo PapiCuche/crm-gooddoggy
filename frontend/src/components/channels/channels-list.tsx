@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 
 import { Plain } from "../inbox/plain";
 import { ConnectAccount } from "./connect-account";
+import { DisconnectAccount } from "./disconnect-account";
+import { RotateToken } from "./rotate-token";
 
 // Los canales (F7-07b): las cuentas que devuelve `GET /api/v1/o/{slug}/channels/` (F7-07a), la
 // Sandbox y las de WhatsApp, con su estado y su salud. Quién las ve lo decide la API
@@ -36,12 +38,20 @@ export function ChannelsList() {
       notice={<ConnectAccount slug={slug} onConnected={refresh} />}
       rowClassName="flex flex-col gap-3"
     >
-      {(account) => <Account account={account} />}
+      {(account) => <Account slug={slug} account={account} refresh={refresh} />}
     </CursorList>
   );
 }
 
-function Account({ account }: { account: ChannelAccount }) {
+function Account({
+  slug,
+  account,
+  refresh,
+}: {
+  slug: string;
+  account: ChannelAccount;
+  refresh: () => void;
+}) {
   const t = useTranslations("channels");
   const format = useFormatter();
   const whatsapp = account.platform === "WHATSAPP";
@@ -106,6 +116,17 @@ function Account({ account }: { account: ChannelAccount }) {
                 : t("fields.neverChecked")}
             </Row>
           </dl>
+          {account.status !== "DISCONNECTED" ? (
+            <div className="flex flex-col gap-3">
+              <RotateToken slug={slug} accountId={account.id} onRotated={refresh} />
+              <DisconnectAccount
+                slug={slug}
+                accountId={account.id}
+                name={account.name}
+                onDisconnected={refresh}
+              />
+            </div>
+          ) : null}
         </>
       ) : (
         <p className="text-muted text-sm">{t("sandbox")}</p>

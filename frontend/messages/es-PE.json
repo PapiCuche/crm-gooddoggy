@@ -2295,6 +2295,28 @@
       "tokenRequired": "Pega el token de acceso.",
       "tokenInvalid": "Ese token no sirve."
     },
+    "rotate": {
+      "open": "Rotar token",
+      "title": "Rotar el token",
+      "token": "Token nuevo",
+      "hint": "Sustituye al anterior, que deja de valer. No se vuelve a mostrar ni se guarda en este navegador.",
+      "submit": "Rotar",
+      "busy": "Rotando…",
+      "cancel": "Cancelar",
+      "done": "El token se rotó.",
+      "required": "Pega el token nuevo.",
+      "invalid": "Ese token no sirve."
+    },
+    "disconnect": {
+      "open": "Desconectar",
+      "title": "Desconectar {name}",
+      "question": "¿Desconectar «<n>{name}</n>»?",
+      "effect": "La cuenta deja de recibir y enviar mensajes. Reconectarla es crear una cuenta nueva.",
+      "confirm": "Sí, desconectar",
+      "busy": "Desconectando…",
+      "cancel": "Cancelar",
+      "gone": "Esa cuenta ya no existe. Actualizamos la lista."
+    },
     "errors": {
       "denied": "No tienes permiso para gestionar los canales.",
       "badNumber": "No se puede registrar ese número.",
@@ -2303,7 +2325,8 @@
       "CHANNEL_CREDENTIALS_REJECTED": "Meta no aceptó ese token. Revisa que sea el del usuario del sistema y que tenga acceso a ese número.",
       "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
-      "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}."
+      "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
+      "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista."
     }
   }
 }
