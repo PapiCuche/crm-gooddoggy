@@ -84,6 +84,8 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
       (stage) => stage.is_active && stage.stage_type === "OPEN",
     );
     const card = detail as unknown as Opportunity; // los campos de la lista, que es lo que usan las acciones
+    // Los nombres de etapa los escribió una persona: van aislados, dentro del texto traducido.
+    const named = { n: (chunks: ReactNode) => <Plain>{chunks}</Plain> };
     const when = (iso: string) => (
       <time dateTime={iso}>
         {format.dateTime(new Date(iso), { dateStyle: "medium", timeStyle: "short" })}
@@ -106,7 +108,12 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
         ),
       ],
       [t("amount"), moneyText(format, detail.amount, detail.currency)],
-      [t("stage"), `${detail.stage.name} · ${t(`status.${detail.status}`)}`],
+      [
+        t("stage"),
+        <>
+          <Plain>{detail.stage.name}</Plain> · {t(`status.${detail.status}`)}
+        </>,
+      ],
       [t("probability"), `${detail.probability} %`],
       [t("owner"), owners.name(detail.assigned_user_id)],
       [
@@ -178,8 +185,12 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
               <li key={entry.id} className="flex flex-col">
                 <span className="wrap-anywhere">
                   {entry.from_stage
-                    ? t("history.moved", { from: entry.from_stage.name, to: entry.to_stage.name })
-                    : t("history.created", { to: entry.to_stage.name })}
+                    ? t.rich("history.moved", {
+                        ...named,
+                        from: entry.from_stage.name,
+                        to: entry.to_stage.name,
+                      })
+                    : t.rich("history.created", { ...named, to: entry.to_stage.name })}
                 </span>
                 <span className="text-muted">
                   {when(entry.changed_at)}

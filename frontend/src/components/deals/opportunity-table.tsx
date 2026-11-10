@@ -2,6 +2,7 @@ import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { Plain } from "@/components/inbox/plain";
 import { moneyText } from "@/components/pricing/margins";
 import type { Opportunity } from "@/lib/api/model";
 
@@ -54,7 +55,7 @@ export function OpportunityTable({
                   prefetch={false}
                   className="underline-offset-4 hover:underline"
                 >
-                  {row.title}
+                  <Plain>{row.title}</Plain>
                 </Link>
               </td>
               <td className="px-3 py-2 wrap-anywhere">

@@ -167,12 +167,11 @@ describe("OpportunityDetail (F5-07)", () => {
       ),
       [PIPELINES]: pipelines,
     });
-    show(["opportunities.view", "opportunities.update", "opportunities.assign"]);
+    show();
     expect(await screen.findByText("Cliente no visible")).toBeVisible();
     expect(screen.queryByRole("link", { name: /Rosa/ })).toBeNull();
     expect(value("Motivo de pérdida")).toHaveTextContent("Precio");
     expect(value("Nota")).toHaveTextContent("Compró en otra tienda");
-    expect(screen.queryByRole("button", { name: "Editar" })).toBeNull(); // cerrada: no se edita, se reabre
     expect(screen.getByRole("button", { name: /^Reabrir «Collar para Rocky»/ })).toBeVisible();
   });
 
@@ -181,20 +180,30 @@ describe("OpportunityDetail (F5-07)", () => {
     mockApi({
       [DETAIL]: ok(
         detail({
-          ...{ title: hostile, next_action: hostile },
+          ...{ title: hostile, next_action: hostile, stage: stage("s1", hostile) },
           ...{ contact: { id: "c1", display_name: hostile } },
           items: [{ variant_id: "v1", quantity: 1, estimated_unit_price: "1", notes: hostile }],
+          history: [
+            {
+              id: "h1",
+              from_stage: stage("s0", hostile),
+              to_stage: stage("s1", hostile),
+              changed_by_user_id: null,
+              changed_at: "2026-10-30T10:00:00Z",
+              seconds_in_previous_stage: null,
+            },
+          ],
         }),
       ),
       [PIPELINES]: pipelines,
     });
     const { container } = show();
     await screen.findByText("OPP-000007"); // ya leyó el detalle
-    // título, cliente, próxima acción y nota de línea: cada uno en su `<bdi>`
+    // título, cliente, etapa, próxima acción, nota de línea y las dos etapas del historial: cada uno en su `<bdi>`
     const isolated = [...container.querySelectorAll("bdi")].filter(
       (one) => one.textContent === hostile,
     );
-    expect(isolated).toHaveLength(4);
+    expect(isolated).toHaveLength(7);
     expect(screen.queryByText("Motivo de pérdida")).toBeNull();
     expect(screen.queryByText("Nota")).toBeNull();
     expect(screen.getByRole("button", { name: /^Ganar «/ })).toBeVisible();

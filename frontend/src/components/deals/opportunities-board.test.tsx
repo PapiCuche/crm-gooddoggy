@@ -91,6 +91,8 @@ describe("OpportunitiesBoard", () => {
       name: "Collar para Rocky",
     });
     expect(row).toHaveAttribute("href", "/o/acme/oportunidades/1");
+    // lo que escribió otra persona va aislado (`<bdi dir="auto">`), también en el título
+    expect(row.querySelector("bdi")).toHaveAttribute("dir", "auto");
   });
 
   it("una columna por etapa activa con su recuento y su total, y las tarjetas con sus datos", async () => {

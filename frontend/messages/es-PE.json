@@ -2115,8 +2115,8 @@
       },
       "history": {
         "title": "Historial de etapas",
-        "created": "Creada en «{to}»",
-        "moved": "De «{from}» a «{to}»"
+        "created": "Creada en «<n>{to}</n>»",
+        "moved": "De «<n>{from}</n>» a «<n>{to}</n>»"
       }
     }
   },

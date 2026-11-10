@@ -3,6 +3,7 @@ import { useFormatter, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { Plain } from "@/components/inbox/plain";
 import { moneyText } from "@/components/pricing/margins";
 import type { Opportunity } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
@@ -54,7 +55,7 @@ export function OpportunityCard({
             prefetch={false}
             className="font-medium wrap-anywhere underline-offset-4 hover:underline"
           >
-            {opportunity.title}
+            <Plain>{opportunity.title}</Plain>
           </Link>
           <span className="text-muted font-mono text-[13px]">{opportunity.number}</span>
         </p>

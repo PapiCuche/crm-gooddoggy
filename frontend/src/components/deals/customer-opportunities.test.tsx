@@ -99,6 +99,9 @@ describe("CustomerOpportunities (F5-06)", () => {
     expect(within(collar!).getByText("Collar para Rocky")).toHaveClass("wrap-anywhere");
     expect(screen.queryByRole("table")).toBeNull();
     // el título abre el detalle de esa oportunidad (F5-07)
+    expect(
+      within(collar!).getByRole("link", { name: "Collar para Rocky" }).querySelector("bdi"),
+    ).toHaveAttribute("dir", "auto");
     expect(within(collar!).getByRole("link", { name: "Collar para Rocky" })).toHaveAttribute(
       "href",
       "/o/acme/oportunidades/1",
