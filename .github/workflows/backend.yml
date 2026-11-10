@@ -191,7 +191,7 @@ jobs:
           STORAGE_BUCKET: crm-ci
           DATABASE_URL: postgres://crm_app:app-ci@localhost:5432/crm
           DATABASE_MIGRATOR_URL: postgres://crm_migrator:migrator-ci@localhost:5432/crm
-        run: uv run pytest -p no:cacheprovider --junitxml="$RUNNER_TEMP/junit.xml" $(cat "$RUNNER_TEMP/shard-files.txt")
+        run: uv run pytest -p no:cacheprovider --durations=40 --durations-min=0.5 --junitxml="$RUNNER_TEMP/junit.xml" $(cat "$RUNNER_TEMP/shard-files.txt")
       - name: Cada test corrió exactamente una vez (JUnit == plan del shard)
         env:
           SHARD: ${{ matrix.shard }}
