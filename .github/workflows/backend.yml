@@ -183,7 +183,7 @@ jobs:
           set -euo pipefail
           uv run pytest --collect-only -q -p no:cacheprovider > "$RUNNER_TEMP/collected.txt"
           python3 ../.github/scripts/shard_backend.py plan --shards "$SHARDS" --shard "$SHARD" \
-            --collected "$RUNNER_TEMP/collected.txt" > "$RUNNER_TEMP/shard-files.txt"
+            --weights ../.github/scripts/backend_shard_weights.json --collected "$RUNNER_TEMP/collected.txt" > "$RUNNER_TEMP/shard-files.txt"
       - name: pytest del shard (PostgreSQL 18.6; migra crm_migrator, tests como crm_app)
         env:
           STORAGE_ENDPOINT_URL: http://127.0.0.1:3900

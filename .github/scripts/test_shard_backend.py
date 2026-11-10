@@ -24,10 +24,15 @@ class ShardTest(unittest.TestCase):
 
     def test_partition_is_exact_and_deterministic(self):
         counts = sb.collected_counts(COLLECTED)
-        plan = sb.partition(counts, 2)
+        plan = sb.partition(sb.weigh(counts, {}), 2)
         sb.check_partition(counts, plan)
-        self.assertEqual(plan, sb.partition(counts, 2))
+        self.assertEqual(plan, sb.partition(sb.weigh(counts, {}), 2))
         self.assertEqual(sorted(n for s in plan for n in s), sorted(counts))
+
+    def test_measured_seconds_move_the_heavy_file_alone(self):
+        counts = sb.collected_counts(COLLECTED)
+        plan = sb.partition(sb.weigh(counts, {"tests/test_a.py": 1.0, "tests/test_b.py": 1.0, "tests/test_c.py": 100.0}), 2)
+        self.assertIn(["tests/test_c.py"], plan)
 
     def test_partition_rejects_duplicates_and_omissions(self):
         counts = sb.collected_counts(COLLECTED)

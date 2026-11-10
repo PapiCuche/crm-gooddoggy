@@ -13,6 +13,7 @@ cargado) y ejecuta solo sus archivos. Dos modos:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET  # noqa: S405 — el informe lo genera nuestro propio pytest
@@ -31,11 +32,18 @@ def collected_counts(text: str) -> Counter[str]:
     return counts
 
 
-def partition(counts: Counter[str], shards: int) -> list[list[str]]:
-    """LPT determinista: archivos por tamaño descendente (y nombre), al shard con menos peso."""
+def weigh(counts: Counter[str], seconds: dict[str, float]) -> dict[str, float]:
+    """Peso por archivo: segundos medidos en CI; si falta, tests x segundos medios por test."""
+    known = [n for n in counts if n in seconds and counts[n]]
+    mean = sum(seconds[n] for n in known) / max(1, sum(counts[n] for n in known)) or 1.0
+    return {n: seconds.get(n, counts[n] * mean) for n in counts}
+
+
+def partition(weights: dict[str, float], shards: int) -> list[list[str]]:
+    """LPT determinista: archivos por peso descendente (y nombre), al shard con menos carga."""
     bins: list[list[str]] = [[] for _ in range(shards)]
-    load = [0] * shards
-    for name, weight in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+    load = [0.0] * shards
+    for name, weight in sorted(weights.items(), key=lambda kv: (-kv[1], kv[0])):
         target = min(range(shards), key=lambda i: (load[i], i))
         bins[target].append(name)
         load[target] += weight
@@ -52,6 +60,16 @@ def check_partition(counts: Counter[str], plan: list[list[str]]) -> None:
         raise SystemExit(f"reparto inválido: los shards suman {summed} tests y la suite {total}")
     if any(not shard for shard in plan):
         raise SystemExit("reparto inválido: hay un shard vacío")
+
+
+def file_seconds(junit_path: str, files: list[str]) -> dict[str, float]:
+    """Segundos por archivo según JUnit (para regenerar el archivo de pesos)."""
+    out: dict[str, float] = {}
+    for case in ET.parse(junit_path).getroot().iter("testcase"):  # noqa: S314
+        name = module_file(case.get("classname", ""), set(files))
+        if name:
+            out[name] = out.get(name, 0.0) + float(case.get("time", 0))
+    return {n: round(t, 1) for n, t in sorted(out.items())}
 
 
 def executed(junit_path: str) -> Counter[str]:
@@ -93,12 +111,17 @@ def main() -> int:
     ap.add_argument("--shard", type=int, required=True, help="1..shards")
     ap.add_argument("--collected", required=True, help="salida de `pytest --collect-only -q`")
     ap.add_argument("--junit", help="informe JUnit del shard (modo verify)")
+    ap.add_argument("--weights", help="JSON {archivo: segundos} medido en CI (opcional)")
     args = ap.parse_args()
     if not 1 <= args.shard <= args.shards:
         raise SystemExit("--shard fuera de rango")
     with open(args.collected, encoding="utf-8") as fh:
         counts = collected_counts(fh.read())
-    plan = partition(counts, args.shards)
+    seconds: dict[str, float] = {}
+    if args.weights:
+        with open(args.weights, encoding="utf-8") as fh:
+            seconds = json.load(fh)
+    plan = partition(weigh(counts, seconds), args.shards)
     check_partition(counts, plan)
     mine = plan[args.shard - 1]
     total = sum(counts.values())
@@ -110,6 +133,7 @@ def main() -> int:
     if not args.junit:
         raise SystemExit("verify exige --junit")
     print(f"shard {args.shard}/{args.shards} (suite {total}, reparto {per_shard}): {verify(counts, mine, args.junit)}")
+    print("SECONDS " + json.dumps(file_seconds(args.junit, mine), separators=(",", ":")))
     return 0
 
 
