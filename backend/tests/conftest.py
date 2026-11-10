@@ -146,7 +146,17 @@ def tenant_db(
                 "users",
                 PLATFORM_AUDIT,
             )
-            migrator.execute("; ".join(f"DELETE FROM {table}" for table in tables))  # noqa: S608
+            try:
+                migrator.execute("; ".join(f"DELETE FROM {table}" for table in tables))  # noqa: S608
+            except psycopg.Error:
+                for table in tables:  # el mensaje único no dice qué tabla falló: se localiza
+                    try:
+                        migrator.execute(f"DELETE FROM {table}")  # noqa: S608
+                    except psycopg.Error as exc:
+                        raise RuntimeError(
+                            f"la limpieza de tests falló en la tabla {table}"
+                        ) from exc
+                raise
 
 
 @pytest.fixture
