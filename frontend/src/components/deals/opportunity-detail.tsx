@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useFormatter, useTranslations } from "next-intl";
@@ -17,6 +17,7 @@ import type { ApiError } from "@/lib/http";
 
 import { CloseControls } from "./close-opportunity";
 import { MoveControl, MoveNotice, useMoveOpportunity } from "./move-opportunity";
+import { OpportunityEdit } from "./opportunity-edit";
 import { daysInStage } from "./opportunity-card";
 import { useOwners, usePipelines } from "./use-deals";
 
@@ -24,8 +25,8 @@ const BOX = "border-border bg-surface flex flex-col gap-3 rounded-lg border p-4"
 
 // El detalle de una oportunidad (F5-07), con `GET /api/v1/o/{slug}/opportunities/{id}/` (F5-04c):
 // cliente, importe, etapa, responsable, próxima acción, motivo de pérdida, líneas e historial de
-// etapas; se cambia de etapa con las acciones del tablero (mover, ganar, perder, reabrir). Editar
-// (`PATCH`, `assign`) llega en el siguiente corte (F5-07b). Fuera del alcance, borrada, de otra organización o inexistente la API
+// etapas; se edita (`PATCH`, `assign`) y se cambia de etapa con las acciones del tablero (mover,
+// ganar, perder, reabrir). Fuera del alcance, borrada, de otra organización o inexistente la API
 // responde el mismo 404 y la pantalla es la página de «no encontrada» de cualquier dirección. Qué
 // puede hacer quien mira lo decide la API: aquí un 403 solo se explica. Lo que escribió otra persona
 // (título, cliente, próxima acción, motivo y nota, notas de línea) va por `Plain`: texto aislado.
@@ -33,7 +34,9 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
   const t = useTranslations("deals.detail");
   const errors = useTranslations("errors");
   const format = useFormatter();
-  const { organization } = useTenant();
+  const you = useTranslations("deals.owner")("you");
+  const client = useQueryClient();
+  const { organization, user } = useTenant();
   const slug = organization.slug;
   const { failed, retry } = useReads();
   const owners = useOwners();
@@ -45,6 +48,7 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
     queryFn: ({ signal }) => opportunitiesRetrieve(slug, opportunityId, { signal }),
     gcTime: 0, // como la lista: al salir no queda en memoria
   });
+  const [notice, setNotice] = useState<{ text: string; alert?: boolean } | null>(null);
   const [now] = useState(() => Date.now());
   const heading = useRef<HTMLHeadingElement>(null);
   const { refetch } = read;
@@ -154,6 +158,18 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
           <MoveControl card={card} targets={targets} mover={mover} />
           <CloseControls card={card} mover={mover} />
         </section>
+        <OpportunityEdit
+          detail={detail}
+          owners={[[user.id, you], ...owners.options]}
+          saved={(next, text) => {
+            client.setQueryData(key, next); // lo que devolvió la API: ya es lo vigente
+            setNotice({ text });
+          }}
+          stale={(text) => {
+            if (text) setNotice({ text, alert: true });
+            void refetch();
+          }}
+        />
         <section className={BOX} aria-label={t("items.title")}>
           <h2 className="font-medium">{t("items.title")}</h2>
           {detail.items.length === 0 ? (
@@ -229,6 +245,12 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
         </h1>
         {detail ? <p className="text-muted font-mono text-[13px]">{detail.number}</p> : null}
       </div>
+      <p
+        role={notice?.alert ? "alert" : "status"}
+        className={notice ? (notice.alert ? "text-danger text-sm" : "text-sm") : "sr-only"}
+      >
+        {notice?.text ?? ""}
+      </p>
       {body}
       {read.isError && detail && problem ? (
         <div className="flex flex-col items-start gap-2">
