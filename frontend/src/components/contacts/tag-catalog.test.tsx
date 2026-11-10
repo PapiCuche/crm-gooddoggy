@@ -159,7 +159,9 @@ describe("TagCatalog", () => {
     await waitFor(() => expect(status()).toHaveTextContent("Etiqueta «Frecuente» creada."));
     expect(api.sent()).toEqual(['POST  {"name":"Frecuente","color":"#1f9d55"}']);
     expect(await screen.findByText("#1f9d55")).toBeVisible(); // la lista se volvió a pedir
-    expect(screen.getByRole("button", { name: "Crear etiqueta" })).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Crear etiqueta" })).toHaveFocus(),
+    );
   });
 
   it("`TAG_NAME_TAKEN` se dice junto al nombre, con el foco en él", async () => {

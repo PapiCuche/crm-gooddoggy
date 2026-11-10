@@ -96,7 +96,7 @@ describe("InvitationCreate", () => {
     const api = mockApi({ [LIST]: list(), [ROLES]: () => now });
     screenOf();
     const form = await opened(); // también sin ninguna invitación
-    expect(email(form)).toHaveFocus();
+    await waitFor(() => expect(email(form)).toHaveFocus());
     expect(within(form).getByRole("heading", { name: "Nueva invitación" })).toBeVisible();
     expect(within(form).getByRole("group", { name: "Roles que tendrá al aceptar" })).toBeVisible();
     const boxes = within(form).getAllByRole("checkbox");

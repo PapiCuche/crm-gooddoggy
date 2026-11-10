@@ -209,7 +209,9 @@ describe("StockImport", () => {
 
   it("previsualiza: recuentos y avisos; sin cambios no ofrece aplicar; el archivo no queda en caché", async () => {
     const { client } = await preview();
-    expect(screen.getByRole("heading", { name: "Revisa la importación" })).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Revisa la importación" })).toHaveFocus(),
+    );
     expect(screen.getByText("stock.csv · 4 filas")).toBeVisible();
     for (const [label, value] of [
       ["Celdas nuevas", "1"],
@@ -285,7 +287,9 @@ describe("StockImport", () => {
     press("Aplicar 2 filas");
     fireEvent.click(screen.getByRole("button", { name: "Sí, aplicar" }));
     fireEvent.click(screen.getByRole("button", { name: /Sí, aplicar|Aplicando/ }));
-    expect(await screen.findByRole("heading", { name: "Importación aplicada" })).toHaveFocus();
+    await waitFor(async () =>
+      expect(await screen.findByRole("heading", { name: "Importación aplicada" })).toHaveFocus(),
+    );
     expect(posts(api, `${URL_}i1/apply/`)).toHaveLength(1);
     expect(tile("Aplicadas")).toHaveTextContent("1");
     expect(tile("STALE")).toHaveTextContent("1");
@@ -338,7 +342,9 @@ describe("StockImport", () => {
     press("Revertir importación");
     fireEvent.click(screen.getByRole("button", { name: "Sí, revertir" }));
     fireEvent.click(screen.getByRole("button", { name: /Sí, revertir|Revirtiendo/ }));
-    expect(await screen.findByRole("heading", { name: "Importación revertida" })).toHaveFocus();
+    await waitFor(async () =>
+      expect(await screen.findByRole("heading", { name: "Importación revertida" })).toHaveFocus(),
+    );
     const sent = posts(api, `${URL_}i1/revert/`);
     expect(sent.map(([, init]) => init?.body)).toEqual([JSON.stringify({ confirm: true })]);
     expect(tile("Revertidas")).toHaveTextContent("1");
@@ -397,7 +403,7 @@ describe("StockImport", () => {
     expect(
       await screen.findByText("Esa importación ya no existe. Sube el archivo otra vez."),
     ).toBeVisible();
-    expect(screen.getByLabelText("Archivo CSV o Excel")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Archivo CSV o Excel")).toHaveFocus());
     status = 403;
     choose(csv("sku,almacen,cantidad\nIP16,ALM1,5\n"));
     await screen.findByRole("button", { name: "Aplicar 2 filas" });

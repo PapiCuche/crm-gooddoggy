@@ -57,10 +57,10 @@ describe("Landing de la demo", () => {
     expect(tab("Inbox")).toHaveAttribute("aria-selected", "true");
   });
 
-  it("abre el acceso simulado, sin campos de credenciales", () => {
+  it("abre el acceso simulado, sin campos de credenciales", async () => {
     render(<Landing />);
     fireEvent.click(screen.getByRole("button", { name: "Ingresar demo" }));
-    const dialog = screen.getByRole("dialog", { name: "Tu espacio te espera." });
+    const dialog = await screen.findByRole("dialog", { name: "Tu espacio te espera." });
     expect(dialog).toHaveAttribute("open");
     expect(within(dialog).getByRole("link", { name: "Continuar a la demo" })).toHaveAttribute(
       "href",

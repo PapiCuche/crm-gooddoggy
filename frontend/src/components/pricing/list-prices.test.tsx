@@ -255,7 +255,7 @@ describe("PriceForm", () => {
 
   it("comprueba el importe antes de enviar y enseña la diferencia con el vigente", async () => {
     const api = await opened();
-    expect(field(AMOUNT)).toHaveFocus();
+    await waitFor(() => expect(field(AMOUNT)).toHaveFocus());
     expect(field(AMOUNT)).toHaveAttribute("inputmode", "decimal");
     for (const wrong of ["4399.555", "0", "4.399,50", "4399.", "1234567890123"]) {
       fill({ [AMOUNT]: wrong, Motivo: "Promoción" });

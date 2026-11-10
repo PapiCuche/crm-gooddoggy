@@ -215,7 +215,7 @@ describe("MembersList", () => {
     reply = denial;
     fireEvent.click(retry); // la API niega al reintentar: el foco no se queda en ninguna parte
     expect(await screen.findByRole("alert")).toHaveTextContent("No tienes permiso para ver");
-    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
     await refresh(page);
     expect(screen.getByText("ana@acme.pe")).toBeVisible(); // la API vuelve a responder bien
     await refresh(denial);

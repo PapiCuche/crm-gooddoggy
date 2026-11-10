@@ -175,7 +175,7 @@ describe("RolePermissionsAction", () => {
     const flipped = await within(group).findByRole("button", {
       name: "Retirar Ver miembros a Caja",
     });
-    expect(flipped).toHaveFocus(); // el mismo botón, con la acción contraria
+    await waitFor(() => expect(flipped).toHaveFocus()); // el mismo botón, con la acción contraria
     expect(writes(api)).toHaveLength(1);
     const [url, init] = calls(api, "PUT")[0]!;
     expect(String(url)).toBe("/api/v1/o/acme/roles/r2/permissions/users.view/"); // el id del rol
@@ -276,7 +276,9 @@ describe("RolePermissionsAction", () => {
     answer = catalog;
     fireEvent.click(retry);
     await within(group).findByRole("button", { name: /Ver miembros/ });
-    expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus();
+    await waitFor(() =>
+      expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus(),
+    );
     expect(within(group).queryByRole("alert")).not.toBeInTheDocument();
     expect(writes(api)).toHaveLength(0);
   });
@@ -575,6 +577,8 @@ describe("RolePermissionsAction", () => {
     answer = catalog;
     fireEvent.click(retry);
     await within(group).findByRole("button", { name: /Ver miembros/ });
-    expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus();
+    await waitFor(() =>
+      expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus(),
+    );
   });
 });
