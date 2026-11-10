@@ -47,6 +47,7 @@ FIELD = re.compile(r"[a-z_]{1,64}")
 OBJECT = "whatsapp_business_account"
 MAX_ENTRIES, MAX_CHANGES, MAX_ROWS, MAX_ITEMS, MAX_DEPTH = 20, 20, 100, 500, 16
 ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
+PROFILE_NAME_MAX = 200  # el nombre de perfil que viaja en el ítem; `inbound` lo recorta a 100
 
 
 class Invalid(Exception):  # noqa: N818 — un cuerpo firmado que no es lo que Meta envía
@@ -126,6 +127,18 @@ def _status(waba: str, number: str, status: dict[str, Any]) -> Item:
     return Item("status", key, waba, number, status)
 
 
+def _profiles(contacts: Any) -> dict[Any, str]:
+    """El nombre de perfil de cada `wa_id` del cambio (`contacts[].profile.name`): solo cadenas y
+    acotado; limpiarlo es de F7-04 (`inbound.profile_name`). Lo que no sea lista, se ignora."""
+    found: dict[Any, str] = {}
+    for contact in contacts[:MAX_ROWS] if isinstance(contacts, list) else []:
+        profile = contact.get("profile") if isinstance(contact, dict) else None
+        name = profile.get("name") if isinstance(profile, dict) else None
+        if isinstance(name, str) and isinstance(contact.get("wa_id"), str):
+            found[contact["wa_id"]] = name[:PROFILE_NAME_MAX]
+    return found
+
+
 def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     """Los ítems de un cambio. Un ítem que no vale se descarta solo (`rejected`): un cliente no
     puede envenenar el lote de otros. Lo que invalida el cambio entero lanza `Invalid`."""
@@ -142,6 +155,7 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     if not isinstance(number, str) or not ID.fullmatch(number):
         raise Invalid("phone_number_id")
     items: list[Item] = []
+    names = _profiles(value.get("contacts"))
     for name, build in (("messages", _message), ("statuses", _status)):
         rows = value.get(name, [])
         if not isinstance(rows, list) or len(rows) > MAX_ROWS:
@@ -150,7 +164,10 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
             try:
                 if not isinstance(row, dict):
                     raise Invalid(name)
-                items.append(build(waba, number, row))
+                item = build(waba, number, row)
+                if item.kind == "message" and (profile := names.get(row.get("from"))):
+                    item.payload["profile_name"] = profile  # el nombre de perfil va por `wa_id`
+                items.append(item)
             except Invalid as error:
                 rejected.append(error.reason)
     return items

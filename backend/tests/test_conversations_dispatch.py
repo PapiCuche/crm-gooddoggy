@@ -54,6 +54,7 @@ class Counting:
 def queue(world: SimpleNamespace, text: str = SECRET) -> Message:
     """Un mensaje saliente en cola de la organización A, por el comando de F6-04a."""
     convo = reload(world, Conversation, inbound(world)[0].conversation_id)
+    publish_outbox()  # vacía el `message.received` del entrante: cada prueba cuenta lo suyo
     sent: Message = outbound(world, convo, body=text)[0]
     return sent
 

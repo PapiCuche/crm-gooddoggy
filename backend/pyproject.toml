@@ -183,10 +183,10 @@ source_modules = ["apps.pricing.services", "apps.pricing.selectors"]
 forbidden_modules = ["apps.pricing.costs"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos de contactos: solo su API los importa (F4-01, F4-11)"
+name = "Comandos de contactos: solo su API los importa (F4-01, F4-11, F7-04)"
 type = "protected"
 protected_modules = ["apps.contacts.commands", "apps.contacts.notes", "apps.contacts.tags"]
-allowed_importers = ["apps.contacts.api"]
+allowed_importers = ["apps.contacts.api", "apps.conversations.inbound"]  # F7-04: crea el contacto
 
 [[tool.importlinter.contracts]]
 name = "Comandos de pipelines y oportunidades: solo su API los importa (F5-01, F5-03b, F5-03c)"
@@ -196,7 +196,13 @@ protected_modules = ["apps.deals.commands", "apps.deals.opportunities", "apps.de
 allowed_importers = ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F7-02b, F7-02c)"
+name = "Entrantes de WhatsApp: solo el procesador importa inbound (F7-04a; no pide permisos: actor de sistema)"
+type = "protected"
+protected_modules = ["apps.conversations.inbound"]
+allowed_importers = ["apps.conversations.ingress"]
+
+[[tool.importlinter.contracts]]
+name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F7-02b, F7-02c, F7-04)"
 type = "protected"
 protected_modules = [
     "apps.conversations.commands",
@@ -207,6 +213,7 @@ allowed_importers = [
     "apps.conversations.api",
     "apps.conversations.tasks",
     "apps.conversations.accounts",  # F7-02c: usa `credentials`
+    "apps.conversations.inbound",  # F7-04: `record_inbound`
 ]
 
 [[tool.importlinter.contracts]]
