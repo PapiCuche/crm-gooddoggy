@@ -112,10 +112,8 @@ layers = [
     # independientes entre sí, no se importan. pricing, los precios (F3-40): sobre catalog, en la
     # misma fila que inventory, sin importarse entre sí. deals, los pipelines (F5-01): sobre
     # contacts (las oportunidades, F5-03, referenciarán contactos), nunca al revés. conversations,
-    # el Inbox (F6-01): sobre contacts, en la fila de inventory y pricing. deals, además, sobre
-    # conversations (F6-06b: la conversación de origen de una oportunidad), nunca al revés.
-    "apps.deals",
-    "apps.inventory | apps.pricing | apps.conversations",
+    # el Inbox (F6-01): sobre contacts, en la fila de deals, sin importarse entre sí.
+    "apps.inventory | apps.pricing | apps.deals | apps.conversations",
     "apps.catalog | apps.contacts",
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",
@@ -125,6 +123,9 @@ layers = [
     "apps.audit | apps.files | apps.imports",
     "core",
 ]
+# F6-06b: la única arista de deals a conversations (el alcance de `conversations.view` al crear una
+# oportunidad desde una conversación); cualquier otra, y la inversa, siguen prohibidas.
+ignore_imports = ["apps.deals.api.opportunities -> apps.conversations.selectors"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
