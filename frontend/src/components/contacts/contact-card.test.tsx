@@ -284,14 +284,16 @@ describe("ContactCard", () => {
     release();
     await screen.findByRole("heading", { name: "Rosa Díaz" });
     await act(async () => {});
-    expect(back).toHaveFocus();
+    await waitFor(() => expect(back).toHaveFocus());
   });
 
   it("al llegar, el foco va al título; no se lo quita a quien ya está en otra parte", async () => {
     mockApi({ [CARD]: ok(rosa) });
     const view = cardOf(viewer);
     expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(); // sin anuncio de Next
-    expect(await screen.findByRole("heading", { name: "Rosa Díaz" })).toHaveFocus();
+    await waitFor(async () =>
+      expect(await screen.findByRole("heading", { name: "Rosa Díaz" })).toHaveFocus(),
+    );
     view.unmount();
     const elsewhere = document.body.appendChild(document.createElement("button"));
     try {

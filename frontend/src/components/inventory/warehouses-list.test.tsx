@@ -214,7 +214,7 @@ describe("WarehousesList", () => {
     });
     screenOf(manager);
     press("Editar el almacén Central", await screen.findByRole("listitem"));
-    expect(field("Nombre")).toHaveFocus();
+    await waitFor(() => expect(field("Nombre")).toHaveFocus());
     expect(field("Nombre")).toHaveValue("Central");
     expect(within(form()).queryByLabelText("Código")).toBeNull();
     expect(field("Su stock cuenta para la venta")).toBeChecked();
@@ -236,7 +236,7 @@ describe("WarehousesList", () => {
     press("Guardar", form());
     expect(await screen.findByText(/El almacén «Central Lima» ya no existe/)).toBeVisible();
     expect(await screen.findByText(/todavía no tiene almacenes/)).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Almacenes" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Almacenes" })).toHaveFocus());
   });
 
   it("reabrir vuelve a pedir las sucursales que fallaron; editar no deshace lo que otro cambió", async () => {

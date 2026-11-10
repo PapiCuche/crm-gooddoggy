@@ -190,7 +190,7 @@ describe("PriceLists", () => {
     });
     screenOf(owner);
     press("Editar la lista Mayorista", await screen.findByRole("listitem"));
-    expect(field("Nombre")).toHaveFocus();
+    await waitFor(() => expect(field("Nombre")).toHaveFocus());
     expect(field("Nombre")).toHaveValue("Mayorista");
     expect(field("Orden")).toHaveValue("20");
     expect(within(form()).queryByLabelText("Código")).toBeNull();
@@ -288,6 +288,8 @@ describe("PriceLists", () => {
     press("Guardar", form());
     expect(await screen.findByText(/La lista «Regular» ya no existe/)).toBeVisible();
     expect(await screen.findByText(/todavía no tiene listas/)).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Listas de precios" })).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Listas de precios" })).toHaveFocus(),
+    );
   });
 });

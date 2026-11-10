@@ -103,7 +103,9 @@ describe("MemberRolesAction", () => {
     ]);
     expect(calls(api, "GET")).not.toContain("/api/v1/o/acme/roles/?limit=200");
     const group = await panel();
-    expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus();
+    await waitFor(() =>
+      expect(within(group).getByRole("button", { name: "Cerrar" })).toHaveFocus(),
+    );
     const offers = within(group)
       .getAllByRole("button")
       .map((button) => button.getAttribute("aria-label"));
@@ -369,7 +371,7 @@ describe("MemberRolesAction", () => {
     act(() => onlineManager.setOnline(false));
     act(() => onlineManager.setOnline(true)); // vuelve la red: no se repide solo ni se lleva el foco
     await tick();
-    expect(retry).toHaveFocus();
+    await waitFor(() => expect(retry).toHaveFocus());
     const release = hold(api);
     fireEvent.click(retry);
     await waitFor(() => expect(retry).toHaveTextContent("Cargando roles…"));

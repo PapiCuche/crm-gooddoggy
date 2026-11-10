@@ -60,7 +60,8 @@ describe("AccountSecurity", () => {
     const { client } = renderApp(<AccountSecurity />);
     expect(await screen.findByText(/te pediremos un código/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Activar la verificación en dos pasos" }));
-    expect(screen.getByLabelText("Contraseña actual")).toHaveFocus();
+    // el foco llega tras montar el formulario: se espera a que esté, no a que exista el campo
+    await waitFor(() => expect(screen.getByLabelText("Contraseña actual")).toHaveFocus());
     expect(screen.queryByRole("link")).toBeNull(); // durante el alta no se sale de la página
     fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
     expect(screen.getByLabelText("Contraseña actual")).toHaveAccessibleDescription(
@@ -81,7 +82,9 @@ describe("AccountSecurity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Comprobando…" })); // una sola petición
     expect(await screen.findByText("ABCD EFGH IJKL MNOP QRST UVWX YZ23 4567")).toBeInTheDocument();
     expect(calls(api, "/mfa/totp/")).toHaveLength(2); // la que no valía y esta
-    expect(screen.getByText(/Abre tu aplicación de autenticación/)).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByText(/Abre tu aplicación de autenticación/)).toHaveFocus(),
+    );
     // El QR es el de la URI que devolvió la API, no el de la clave ni el de otro valor.
     const qr = /<path d="([^"]+)"/.exec(renderToStaticMarkup(<QrCode value={URI} label="" />))?.[1];
     expect(qr).toBeTruthy();
@@ -100,15 +103,14 @@ describe("AccountSecurity", () => {
         "Ese código no vale. Prueba con el que muestra ahora la aplicación.",
       ),
     );
-    expect(screen.getByLabelText("Código")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Código")).toHaveFocus());
     confirm = confirmed;
     fireEvent.change(screen.getByLabelText("Código"), { target: { value: " 123 456 " } });
     const activate = screen.getByRole("button", { name: "Activar" });
     fireEvent.click(activate);
     fireEvent.click(activate); // dos pulsaciones, una petición
-    expect(
-      await screen.findByRole("heading", { name: "Guarda tus códigos de respaldo" }),
-    ).toHaveFocus();
+    const saved = await screen.findByRole("heading", { name: "Guarda tus códigos de respaldo" });
+    await waitFor(() => expect(saved).toHaveFocus());
     expect(calls(api, "/mfa/totp/confirm/")).toHaveLength(2); // el que no valía y este
     expect(JSON.parse(String(calls(api, "/mfa/totp/confirm/")[1]?.[1]?.body))).toEqual({
       code: "123456",

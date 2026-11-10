@@ -120,7 +120,7 @@ describe("MemberBranchAction", () => {
     expect(offered[0]).toHaveTextContent(/^Sucursal$/);
     expect(reads(api, "/branches/")).toEqual([]);
     const { group, select, cancel } = await panel("Luis Paz (luis@acme.pe)");
-    expect(cancel).toHaveFocus(); // lo que no cambia nada
+    await waitFor(() => expect(cancel).toHaveFocus()); // lo que no cambia nada
     expect(within(group).getByLabelText("Sucursal de Luis Paz (luis@acme.pe)")).toBe(select);
     expect([...select.options].map((option) => [option.value, option.text])).toEqual([
       ["", "Sin sucursal"],
@@ -365,7 +365,7 @@ describe("MemberBranchAction", () => {
     act(() => onlineManager.setOnline(true)); // vuelve la red: no se repide solo ni se lleva el foco
     act(() => focusManager.setFocused(true)); // ni al volver a la pestaña
     await tick();
-    expect(retry).toHaveFocus();
+    await waitFor(() => expect(retry).toHaveFocus());
     const release = hold(api);
     fireEvent.click(retry);
     await waitFor(() => expect(retry).toHaveTextContent("Cargando sucursales…"));
