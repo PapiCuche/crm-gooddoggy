@@ -81,6 +81,18 @@ def test_what_a_records_never_exists_for_b(world: SimpleNamespace) -> None:
         IntegrityError, match="consent_events_contact_fk"
     ):  # ni con un contacto ajeno
         sql(world.a, insert, [uuid4(), world.a, world.theirs])
+    state = (
+        "INSERT INTO contact_consents (id, organization_id, contact_id, channel, purpose, status,"
+        " source, revoked_at, evidence, updated_at) VALUES (%s, %s, %s, 'SMS', 'ALL_PROACTIVE',"
+        " 'REVOKED', 'AGENT_RECORDED', now(), '{}', now())"
+    )
+    with pytest.raises(DatabaseError, match="row-level security"):  # el estado vigente, igual
+        sql(world.b, state, [uuid4(), world.a, world.mine])
+    sql(world.a, state, [uuid4(), world.a, world.mine])
+    with pytest.raises(
+        IntegrityError, match="contact_consents_org_combo_uq"
+    ):  # una por combinación
+        sql(world.a, state, [uuid4(), world.a, world.mine])
 
 
 def test_the_foreign_keys_keep_every_reference_in_the_organization(world: SimpleNamespace) -> None:
@@ -129,6 +141,9 @@ def test_the_history_is_never_edited_or_deleted_and_the_state_keeps_its_identity
         "DELETE FROM contact_consent_events",
         "TRUNCATE contact_consent_events",
         "DELETE FROM contact_consents",
+        "TRUNCATE contact_consents",
+        "UPDATE contact_consents SET id = gen_random_uuid()",
+        "UPDATE contact_consents SET organization_id = gen_random_uuid()",
         "UPDATE contact_consents SET channel = 'SMS'",  # lo que identifica la fila no se reescribe
         "UPDATE contact_consents SET purpose = 'MARKETING'",
         "UPDATE contact_consents SET contact_id = gen_random_uuid()",
@@ -256,6 +271,17 @@ def test_which_revocations_reach_a_send(
         assert not selectors.is_revoked(world.theirs, *asked)
 
 
+def test_the_revocation_of_one_contact_never_reaches_another_of_the_same_organization(
+    world: SimpleNamespace,
+) -> None:
+    with tenant_scope(ctx(world.a)):
+        other = Contact.objects.create(display_name="Otra clienta").pk
+    revoke(world, channel="ANY", purpose=ALL)
+    with tenant_scope(ctx(world.a)):
+        assert selectors.is_revoked(world.mine, WA, "MARKETING")
+        assert not selectors.is_revoked(other, WA, "MARKETING")
+
+
 def test_a_grant_is_not_a_revocation(world: SimpleNamespace) -> None:
     grant(world)
     with tenant_scope(ctx(world.a)):
@@ -284,3 +310,6 @@ def test_blocking_a_contact_is_audited_and_repeating_it_writes_nothing(
     ]
     with pytest.raises(Contact.DoesNotExist):
         run(world.b, set_blocked, contact_id=world.mine, blocked=True)
+    sql(world.a, "UPDATE contacts SET deleted_at = now()")
+    with pytest.raises(Contact.DoesNotExist):  # uno borrado no se bloquea ni se desbloquea
+        run(world.a, set_blocked, world.ana, contact_id=world.mine, blocked=False)
