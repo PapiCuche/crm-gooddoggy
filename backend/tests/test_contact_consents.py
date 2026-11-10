@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection
 
 from apps.contacts import selectors
@@ -18,6 +19,7 @@ from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
 from tests.test_anti_escalation import audit
 from tests.test_memberships import ctx, join
+from tests.test_pipelines_tables import as_migrator
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
 WA, ALL, OPT_IN, STOP = "WHATSAPP", "ALL_PROACTIVE", "CHANNEL_OPT_IN", "KEYWORD_STOP"
@@ -313,3 +315,36 @@ def test_blocking_a_contact_is_audited_and_repeating_it_writes_nothing(
     sql(world.a, "UPDATE contacts SET deleted_at = now()")
     with pytest.raises(Contact.DoesNotExist):  # uno borrado no se bloquea ni se desbloquea
         run(world.a, set_blocked, world.ana, contact_id=world.mine, blocked=False)
+
+
+def test_the_migration_goes_back_and_forward_keeping_the_contacts(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """Atrás se van las dos tablas y la columna, pero el contacto se queda; adelante vuelven vacías,
+    con `is_blocked` falso y los mismos privilegios y FORCE RLS."""
+    grant(world)
+    run(world.a, set_blocked, world.ana, contact_id=world.mine, blocked=True)
+    exists = "SELECT to_regclass('public.contact_consents') IS NOT NULL"
+    column = (
+        "SELECT count(*) FROM information_schema.columns"
+        " WHERE table_name = 'contacts' AND column_name = 'is_blocked'"
+    )
+    update = "SELECT has_table_privilege('crm_app', 'contact_consent_events', 'UPDATE')"
+    force = "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'contact_consent_events'"
+    assert migrator.execute(exists).fetchone() == (True,)
+    assert migrator.execute(update).fetchone() == (False,)
+    with as_migrator():
+        call_command("migrate", "contacts", "0006", verbosity=0)
+    assert migrator.execute(exists).fetchone() == (False,)
+    assert migrator.execute(column).fetchone() == (0,)
+    assert migrator.execute("SELECT count(*) FROM contacts").fetchone() == (2,)  # los de A y B
+    with as_migrator():
+        call_command("migrate", "contacts", verbosity=0)
+    assert migrator.execute(exists).fetchone() == (True,)
+    assert migrator.execute("SELECT count(*) FROM contact_consents").fetchone() == (0,)
+    assert migrator.execute("SELECT is_blocked FROM contacts").fetchall() == [(False,), (False,)]
+    assert migrator.execute(update).fetchone() == (False,)  # el historial sigue sin UPDATE
+    assert migrator.execute(force).fetchone() == (True,)
+    assert history(world) == []
+    grant(world)  # y vuelve a funcionar
+    assert history(world) == [("GRANTED", OPT_IN)]
