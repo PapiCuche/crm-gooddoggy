@@ -4,6 +4,7 @@ import {
   backoff,
   connectInbox,
   type InboxEvent,
+  jittered,
   MAX_FRAME,
   parseInboxEvent,
   type SocketLike,
@@ -38,6 +39,7 @@ function start() {
     onEvent: (event) => events.push(event),
     onResync: resync,
     create: (url) => new Fake(url),
+    random: () => 1, // sin recorte: las esperas son las de `backoff`
   });
   return { events, resync, stop };
 }
@@ -207,5 +209,60 @@ describe("connectInbox", () => {
     last().onerror?.({});
     vi.advanceTimersByTime(60_000);
     expect(Fake.all).toHaveLength(1);
+  });
+});
+
+describe("robustez del cliente", () => {
+  it("la espera lleva jitter entre el 50 % y el 100 %", () => {
+    expect(jittered(4000, () => 0)).toBe(2000);
+    expect(jittered(4000, () => 0.5)).toBe(3000);
+    expect(jittered(4000, () => 1)).toBe(4000);
+    connectInbox({
+      url: "ws://x/",
+      onEvent: () => {},
+      onResync: () => {},
+      create: (url) => new Fake(url),
+      random: () => 0,
+    });
+    last().drop();
+    vi.advanceTimersByTime(499);
+    expect(Fake.all).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(Fake.all).toHaveLength(2);
+  });
+
+  it("si crear el socket lanza, reintenta como tras un cierre y relee al abrir", () => {
+    let fail = true;
+    const resync = vi.fn();
+    connectInbox({
+      url: "ws://x/",
+      onEvent: () => {},
+      onResync: resync,
+      create: (url) => {
+        if (fail) throw new Error("SecurityError");
+        return new Fake(url);
+      },
+      random: () => 1,
+    });
+    expect(Fake.all).toHaveLength(0);
+    vi.advanceTimersByTime(1000);
+    expect(Fake.all).toHaveLength(0); // sigue lanzando: espera 2 s
+    fail = false;
+    vi.advanceTimersByTime(2000);
+    expect(Fake.all).toHaveLength(1);
+    last().open();
+    expect(resync).toHaveBeenCalledTimes(1);
+  });
+
+  it("un cierre repetido de un socket viejo no programa otro intento", () => {
+    start();
+    const old = last();
+    old.drop();
+    vi.advanceTimersByTime(1000);
+    expect(Fake.all).toHaveLength(2);
+    old.drop(); // el viejo vuelve a avisar mientras el nuevo sigue conectando
+    old.drop();
+    vi.advanceTimersByTime(120_000);
+    expect(Fake.all).toHaveLength(2);
   });
 });

@@ -36,7 +36,7 @@ export function useInboxRealtime() {
       }
     };
     return connectInbox({
-      url: `${proto}//${window.location.host}/ws/o/${slug}/inbox/`,
+      url: `${proto}//${window.location.host}/ws/o/${encodeURIComponent(slug)}/inbox/`,
       onEvent: reread,
       // Todo lo del Inbox de esta organización: la lista, los detalles y los mensajes.
       onResync: () =>

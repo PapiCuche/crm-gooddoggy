@@ -66,16 +66,22 @@ export const STABLE = 10_000;
 // La espera antes del intento `attempt` (0 el primero): 1 s, 2 s, 4 s… con tope de 30 s.
 export const backoff = (attempt: number) => Math.min(WAIT.max, WAIT.first * 2 ** attempt);
 
+// Con jitter: entre la mitad y el total de la espera, para que muchos clientes que perdieron el
+// servidor a la vez no vuelvan todos en el mismo instante.
+export const jittered = (wait: number, random: () => number) => wait * (0.5 + 0.5 * random());
+
 export function connectInbox({
   url,
   onEvent,
   onResync,
   create = (target: string) => new WebSocket(target) as unknown as SocketLike,
+  random = Math.random,
 }: {
   url: string;
   onEvent: (event: InboxEvent) => void;
   onResync: () => void; // se volvió a conectar tras un corte: lo ocurrido mientras tanto se relee
   create?: (url: string) => SocketLike;
+  random?: () => number;
 }): () => void {
   let socket: SocketLike | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -84,8 +90,21 @@ export function connectInbox({
   let since = 0; // cuándo abrió la conexión actual (0: no está abierta)
   let stopped = false;
 
+  // Tras perder la conexión (o un intento): se relee al volver y se espera más cada vez.
+  function retry() {
+    since = 0;
+    lost = true;
+    timer = setTimeout(open, jittered(backoff(attempt++), random));
+  }
+
   function open() {
-    const current = create(url);
+    let current: SocketLike;
+    try {
+      current = create(url);
+    } catch {
+      retry(); // un `new WebSocket` que lanza (URL o política) cuenta como un cierre
+      return;
+    }
     socket = current;
     current.onopen = () => {
       since = Date.now();
@@ -100,10 +119,12 @@ export function connectInbox({
       if (stopped || socket !== current) return;
       socket = null;
       if (since && Date.now() - since >= STABLE) attempt = 0; // estable: se cuenta desde cero
-      since = 0;
-      lost = true;
-      if (FINAL_CLOSES.includes(close.code)) return;
-      timer = setTimeout(open, backoff(attempt++));
+      if (FINAL_CLOSES.includes(close.code)) {
+        since = 0;
+        lost = true;
+        return;
+      }
+      retry();
     };
     current.onerror = () => {}; // sigue un `close`, que es lo que trata la reconexión
   }
