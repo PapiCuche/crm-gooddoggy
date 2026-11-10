@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -107,6 +107,13 @@ const line = async (text: string) => {
   return find();
 };
 
+// Estos tests esperan a la API simulada (la lista, el detalle y los mensajes) y al montaje del chat:
+// en una máquina cargada (CI, el gate) el segundo por omisión no alcanza. Se sube lo que esperan los
+// `findBy…` y `waitFor` de este archivo y el tiempo de cada test, sin reintentar nada: la espera
+// termina en cuanto aparece lo esperado.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
+
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
 });
@@ -184,7 +191,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
       "false",
     );
     expect(header().queryByRole("button", { name: "Tomar" })).toBeNull();
-    expect(header().getByRole("button", { name: "Soltar" })).toBeVisible();
+    expect(await header().findByRole("button", { name: "Soltar" })).toBeVisible();
     await waitFor(() => expect(s.reads()).toBeGreaterThan(reads)); // el detalle se vuelve a leer
     await waitFor(() => expect(s.messageReads()).toBeGreaterThan(messages)); // y los mensajes
     // la fila de la lista dice lo mismo
@@ -264,7 +271,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
     fireEvent.click(header().getByRole("button", { name: "Transferir" }));
     expect(await header().findByText("Transferiste la conversación a Luis Ramos.")).toBeVisible();
     await waitFor(() => expect(header().getByLabelText("Transferir a")).toHaveValue(""));
-    expect(header().getByRole("button", { name: "Transferir" })).toBeDisabled();
+    expect(await header().findByRole("button", { name: "Transferir" })).toBeDisabled();
   });
 
   it("sin el detalle leído no se ofrece ninguna acción (la versión sale del detalle), solo quién la tiene", async () => {
@@ -290,7 +297,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
     expect(row).toHaveTextContent("Asignada a un equipo");
     await openChat();
     expect(await line("Asignada a un equipo")).toBeVisible();
-    expect(header().getByRole("button", { name: "Tomar" })).toBeVisible();
+    expect(await header().findByRole("button", { name: "Tomar" })).toBeVisible();
   });
 
   it("un miembro sin nombre se nombra por su correo", async () => {
@@ -324,7 +331,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
     expect(await header().findByText("Soltaste la conversación; vuelve a la cola.")).toBeVisible();
     expect(s.posts()).toEqual([{ action: "RELEASE", assignment_version: 3 }]);
     expect(await line("Sin asignar")).toBeVisible();
-    expect(header().getByRole("button", { name: "Tomar" })).toBeVisible();
+    expect(await header().findByRole("button", { name: "Tomar" })).toBeVisible();
   });
 
   it("una conversación cerrada no se asigna y lo dice", async () => {
@@ -346,7 +353,7 @@ describe("asignación en la pantalla (F6-05b)", () => {
     await openChat();
     expect(await line("Asignada")).toBeVisible();
     expect(header().queryByLabelText("Transferir a")).toBeNull();
-    expect(header().getByRole("button", { name: "Soltar" })).toBeVisible();
+    expect(await header().findByRole("button", { name: "Soltar" })).toBeVisible();
     cleanup();
     const hostile = { ...member("u2", "<b>Luis</b>‮") };
     server({ assigned_user_id: "u2", assignee_kind: "USER" }, [hostile]);

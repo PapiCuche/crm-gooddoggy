@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -62,6 +62,13 @@ const open = async (name: string | RegExp) => {
   fireEvent.click(await screen.findByRole("button", { name }));
   return screen.findByRole("heading", { level: 2 });
 };
+
+// Estos tests esperan a la API simulada (la lista, el detalle y los mensajes) y al montaje del chat:
+// en una máquina cargada (CI, el gate) el segundo por omisión no alcanza. Se sube lo que esperan los
+// `findBy…` y `waitFor` de este archivo y el tiempo de cada test, sin reintentar nada: la espera
+// termina en cuanto aparece lo esperado.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
 
 afterEach(() => {
   cleanup();
