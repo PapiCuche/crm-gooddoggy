@@ -1,7 +1,11 @@
+import contextlib
+import io
 import pathlib
-import tempfile
 import re
+import sys
+import tempfile
 import unittest
+from unittest import mock
 
 import shard_backend as sb
 
@@ -70,6 +74,43 @@ class ShardTest(unittest.TestCase):
         self.assertIsNone(sb.module_file("tests.test_z", files))
 
 
+class CliTest(unittest.TestCase):
+    """`main` de punta a punta: lo que ejecuta cada shard del CI (plan y verify con los mismos argumentos)."""
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["shard_backend.py", *argv]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = sb.main()
+        self.assertEqual(code, 0)
+        return out.getvalue()
+
+    def test_every_file_runs_in_exactly_one_shard_and_verify_accepts_what_plan_planned(self):
+        with tempfile.TemporaryDirectory() as d:
+            collected = pathlib.Path(d, "c.txt")
+            collected.write_text(COLLECTED)
+            weights = pathlib.Path(d, "w.json")
+            weights.write_text('{"tests/test_a.py": 9.0}')
+            for shards in (1, 2, 3):
+                seen = []
+                for shard in range(1, shards + 1):
+                    args = ("--shards", str(shards), "--shard", str(shard), "--weights", str(weights), "--collected", str(collected))
+                    files = self.run_main("plan", *args).split()
+                    seen += files
+                    cases = [f[:-3].replace("/", ".") for f in files for _ in range(sb.collected_counts(COLLECTED)[f])]
+                    junit_path = pathlib.Path(d, f"j{shards}{shard}.xml")
+                    junit_path.write_text(junit(cases))
+                    self.assertIn("coincide con el plan", self.run_main("verify", *args, "--junit", str(junit_path)))
+                self.assertEqual(sorted(seen), ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"])
+
+    def test_shard_outside_range_is_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            collected = pathlib.Path(d, "c.txt")
+            collected.write_text(COLLECTED)
+            for shard in ("0", "3"):
+                with self.assertRaisesRegex(SystemExit, "fuera de rango"):
+                    self.run_main("plan", "--shards", "2", "--shard", shard, "--collected", str(collected))
+
+
 class WorkflowTest(unittest.TestCase):
     def test_matrix_lists_every_shard_without_gaps(self):
         """El plan usa `strategy.job-total`: un hueco en la matriz dejaría archivos sin ejecutar."""
@@ -79,6 +120,23 @@ class WorkflowTest(unittest.TestCase):
         shards = [int(n) for n in m.group(1).split(",")]
         self.assertEqual(shards, list(range(1, len(shards) + 1)))
         self.assertIn("name: backend tests (shard ${{ matrix.shard }}/${{ strategy.job-total }})", text)
+
+    def steps(self):
+        text = (pathlib.Path(__file__).resolve().parents[1] / "workflows" / "backend.yml").read_text()
+        return [b for b in re.split(r"^      - ", text, flags=re.M) if "shard_backend.py" in b]
+
+    def test_verify_cannot_pass_silently_and_checks_the_plan_that_ran(self):
+        """El `bash -e` de Actions no lleva pipefail: `verify | tee` en verde aunque verify falle. Y debe
+        verificar el MISMO reparto que ejecutó el shard (mismos --weights y --collected que `plan`)."""
+        plan, verify = (next(s for s in self.steps() if f"shard_backend.py {mode}" in s) for mode in ("plan", "verify"))
+        self.assertIn("set -euo pipefail", verify)
+        self.assertIn("set -euo pipefail", plan)
+        for flag in ("--weights", "--collected", "--shards", "--shard"):
+            self.assertEqual(re.search(flag + r" (\S+)", plan).group(1), re.search(flag + r" (\S+)", verify).group(1), flag)
+
+    def test_the_unit_tests_of_the_sharding_run_in_ci(self):
+        text = (pathlib.Path(__file__).resolve().parents[1] / "workflows" / "backend.yml").read_text()
+        self.assertRegex(text, r"unittest -q [^\n]*\btest_shard_backend\b")
 
 
 if __name__ == "__main__":

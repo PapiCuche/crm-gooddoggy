@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
       - name: Tests de la lógica del gate
         working-directory: .github/scripts
-        run: python3 -m unittest -q test_backend_gate test_stack_proxy
+        run: python3 -m unittest -q test_backend_gate test_stack_proxy test_shard_backend
       - name: Detectar cambios de backend (backend/**, .github/workflows/backend.yml)
         id: detect
         working-directory: .github/scripts
@@ -197,7 +197,11 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ strategy.job-total }}
         run: |
+          # `bash -e` por defecto no lleva pipefail: sin él, un `verify` que falla detrás de `| tee` dejaría el paso en verde.
+          set -euo pipefail
+          # Mismos pesos y recolección que el reparto: otro reparto verificaría archivos que el shard no ejecutó.
           python3 ../.github/scripts/shard_backend.py verify --shards "$SHARDS" --shard "$SHARD" \
+            --weights ../.github/scripts/backend_shard_weights.json \
             --collected "$RUNNER_TEMP/collected.txt" --junit "$RUNNER_TEMP/junit.xml" | tee -a "$GITHUB_STEP_SUMMARY"
 
   docker:
