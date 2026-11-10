@@ -65,7 +65,7 @@ const show = (codes: string[] = ["opportunities.view"]) =>
 const titles = () =>
   within(screen.getByRole("list", { name: "Oportunidades" }))
     .getAllByRole("listitem")
-    .map((row) => row.querySelector("span")!.textContent);
+    .map((row) => row.querySelector("a")!.textContent);
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -98,7 +98,11 @@ describe("CustomerOpportunities (F5-06)", () => {
     expect(collar).toHaveClass("flex-col");
     expect(within(collar!).getByText("Collar para Rocky")).toHaveClass("wrap-anywhere");
     expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.queryByRole("link")).toBeNull(); // sin pantalla de detalle todavía
+    // el título abre el detalle de esa oportunidad (F5-07)
+    expect(within(collar!).getByRole("link", { name: "Collar para Rocky" })).toHaveAttribute(
+      "href",
+      "/o/acme/oportunidades/1",
+    );
     expect(api).toHaveBeenCalledTimes(2); // pipelines y la lista del cliente; sin directorio
   });
 
