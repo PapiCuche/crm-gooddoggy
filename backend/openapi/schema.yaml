@@ -6782,6 +6782,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/:
+    get:
+      operationId: quotes_retrieve
+      description: 'Una cotización con sus líneas en orden, tal como se congelaron.
+        404: no es de la organización, no existe o queda fuera del alcance de `quotes.view`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/:
     get:
       operationId: roles_list
@@ -12863,6 +12909,198 @@ components:
       required:
       - display_name
       - id
+    QuoteDetail:
+      type: object
+      description: Más las notas (texto libre), el motivo de cancelación y las líneas
+        en orden.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        number:
+          type: string
+          maxLength: 20
+        revision:
+          type: integer
+          maximum: 32767
+          minimum: 0
+        status:
+          $ref: '#/components/schemas/QuoteStatusEnum'
+        contact:
+          $ref: '#/components/schemas/QuoteContactRef'
+        opportunity_id:
+          type: string
+          format: uuid
+          nullable: true
+          readOnly: true
+        price_list_id:
+          type: string
+          format: uuid
+          readOnly: true
+        currency:
+          type: string
+          maxLength: 3
+        tax_mode:
+          $ref: '#/components/schemas/TaxModeEnum'
+        tax_rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,4})?$
+        subtotal:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        discount_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        tax_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        notes_to_customer:
+          type: string
+          maxLength: 2000
+        internal_notes:
+          type: string
+          maxLength: 2000
+        cancel_reason:
+          type: string
+          nullable: true
+          maxLength: 500
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuoteItem'
+      required:
+      - contact
+      - created_at
+      - currency
+      - id
+      - items
+      - number
+      - opportunity_id
+      - price_list_id
+      - status
+      - tax_mode
+      - tax_rate
+      - updated_at
+    QuoteDiscountTypeEnum:
+      enum:
+      - NONE
+      - PERCENT
+      - AMOUNT
+      type: string
+      description: |-
+        * `NONE` - None
+        * `PERCENT` - Percent
+        * `AMOUNT` - Amount
+    QuoteItem:
+      type: object
+      description: Una línea con lo que se congeló al cotizar.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: 0
+        variant_id:
+          type: string
+          format: uuid
+          readOnly: true
+        product_name:
+          type: string
+        variant_name:
+          type: string
+        sku:
+          type: string
+        quantity:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        list_unit_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        promotion_id:
+          type: string
+          format: uuid
+          nullable: true
+        promotion_name:
+          type: string
+          nullable: true
+        unit_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        discount_type:
+          $ref: '#/components/schemas/QuoteDiscountTypeEnum'
+        discount_value:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        discount_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        final_unit_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        line_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        currency:
+          type: string
+          maxLength: 3
+      required:
+      - currency
+      - final_unit_price
+      - id
+      - line_total
+      - list_unit_price
+      - product_name
+      - promotion_id
+      - promotion_name
+      - quantity
+      - sku
+      - sort_order
+      - unit_price
+      - variant_id
+      - variant_name
     QuoteStatusEnum:
       enum:
       - DRAFT
