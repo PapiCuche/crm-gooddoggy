@@ -178,7 +178,7 @@ Una URL de media de Meta caduca en minutos y exige el token. El flujo: el entran
 
 ### 8. Estados de entrega y errores
 
-Los `statuses[]` del webhook (`sent`, `delivered`, `read`, `failed`) se localizan por `external_message_id` (o por `biz_opaque_callback_data`, §6) y llaman a `advance_delivery`, que solo avanza (un `delivered` tardío tras `read` no retrocede; `failed` es terminal y no se alcanza desde lo entregado). Si el estado llega **antes** de que el envío confirme su `external_message_id`, la fila de ingesta falla de forma transitoria y se reintenta con la espera de §4; superados los intentos queda `IGNORED` con métrica.
+Los `statuses[]` del webhook (`sent`, `delivered`, `read`, `failed`) se localizan por `external_message_id` (o por `biz_opaque_callback_data`, §6) y llaman a `advance_delivery`, que solo avanza (un `delivered` tardío tras `read` no retrocede; `failed` es terminal y no se alcanza desde lo entregado). Si el estado llega **antes** de que el envío confirme su `external_message_id`, la fila de ingesta falla de forma transitoria y se reintenta con la espera de §4; superados los primeros intentos (tres, unos minutos: solo cubren esa carrera) queda `IGNORED` con métrica y su payload vaciado, porque un número que también se usa desde la app del teléfono recibe estados de mensajes que el CRM no envió.
 
 Los errores de Meta se normalizan a códigos propios guardados en el mensaje (columna nueva `provider_error_code`, un código corto; el texto en español sale de una tabla del código). Ejemplos a **verificar contra la documentación vigente** al implementar (los números cambian):
 
