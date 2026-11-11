@@ -87,7 +87,8 @@ def test_a_late_or_repeated_state_never_goes_back_and_failed_is_terminal(
 @pytest.mark.parametrize(
     ("meta", "code"),
     [(190, "TOKEN_INVALID"), (131047, "WINDOW_CLOSED"), (131026, "RECIPIENT_UNREACHABLE"),
-     (130429, "RATE_LIMITED"), (131056, "RATE_LIMITED"), (131048, "QUALITY_BLOCKED"),
+     (130429, "RATE_LIMITED"), (131056, "RATE_LIMITED"), (4, "RATE_LIMITED"), (17, "RATE_LIMITED"),
+     (613, "RATE_LIMITED"), (80007, "RATE_LIMITED"), (131048, "QUALITY_BLOCKED"),
      (132001, "TEMPLATE_UNAVAILABLE"), (131000, "PROVIDER_ERROR"), (999999, "PROVIDER_REJECTED")],
 )  # fmt: skip
 def test_each_meta_error_becomes_its_own_closed_code_and_never_its_text(
@@ -164,6 +165,24 @@ def test_a_status_before_the_send_confirmation_is_retried_and_then_applies(
     migrator.execute("UPDATE webhook_ingress SET next_attempt_at = now()")
     assert ingress.process() == {"PROCESSED": 1}
     assert stamp(world, message).delivery_status == "DELIVERED"
+
+
+def test_a_status_for_a_message_the_crm_never_sent_is_closed_as_ignored_with_its_payload_cleared(
+    world: SimpleNamespace, graph: Any, migrator: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    sent(world, graph)  # otro mensaje del mismo número, enviado desde la app del teléfono
+    outcomes = []
+    for _ in range(ingress.UNKNOWN_AFTER):
+        migrator.execute("UPDATE webhook_ingress SET next_attempt_at = now()")
+        outcomes.append(run(webhooks.status("wamid.DEL-TELEFONO", "read")))
+    assert outcomes == [
+        {"FAILED": 1},
+        {"FAILED": 1},
+        {"IGNORED": 1},
+    ]  # solo la carrera se reintenta
+    row = migrator.execute("SELECT status, ignored_reason, payload FROM webhook_ingress").fetchone()
+    assert row == ("IGNORED", "UNKNOWN_MESSAGE", None)  # sin el teléfono del cliente (recipient_id)
+    assert "wamid.DEL-TELEFONO" not in caplog.text and webhooks.CUSTOMER not in caplog.text
 
 
 def test_a_status_for_a_message_of_another_organization_or_account_does_not_exist(

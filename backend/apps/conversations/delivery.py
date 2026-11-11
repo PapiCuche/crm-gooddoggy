@@ -30,10 +30,12 @@ from core.tenancy.scope import require_scope
 
 logger = get_logger(__name__)
 STATES = {"sent": "SENT", "delivered": "DELIVERED", "read": "READ", "failed": "FAILED"}
-# Código de error de Meta -> código propio (ADR-029 §8); a reconfirmar con su documentación.
+# Código de error de Meta -> código propio (ADR-029 §8); a reconfirmar con su documentación. Los
+# límites de tasa son los mismos que el adaptador reintenta (`whatsapp.TOO_FAST`).
 CODES = {
     190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNREACHABLE",
     130429: "RATE_LIMITED", 131056: "RATE_LIMITED", 131048: "QUALITY_BLOCKED",
+    4: "RATE_LIMITED", 17: "RATE_LIMITED", 613: "RATE_LIMITED", 80007: "RATE_LIMITED",
     1: "PROVIDER_ERROR", 2: "PROVIDER_ERROR", 131000: "PROVIDER_ERROR", 131016: "PROVIDER_ERROR",
 }  # fmt: skip
 TEMPLATES = range(132000, 133000)  # la familia de errores de plantilla de Meta
