@@ -472,19 +472,19 @@ def test_the_number_width_and_a_race_for_the_open_conversation(world: SimpleName
 
 def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
     """Todas las parejas (estado actual, estado nuevo): saltar pasos vale, retroceder no, `FAILED`
-    solo desde QUEUED o SENT y sin salida."""
+    solo desde QUEUED, SENDING o SENT y sin salida; solo SENDING vuelve a QUEUED (F7-05b)."""
     convo = first(world)
     out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": world.ana.pk,
            "delivery_status": "QUEUED"}  # fmt: skip
-    order = ["QUEUED", "SENT", "DELIVERED", "READ"]
+    order = ["QUEUED", "SENDING", "SENT", "DELIVERED", "READ"]
     allowed = {
         (old, new)
         for old in [*order, "FAILED"]
         for new in [*order, "FAILED"]
         if old != "FAILED"
         and old != new
-        and (old in order[:2] if new == "FAILED" else order.index(new) > order.index(old))
-    }
+        and (old in order[:3] if new == "FAILED" else order.index(new) > order.index(old))
+    } | {("SENDING", "QUEUED")}  # devolver un reclamo
 
     def update(pk: UUID, status: str) -> None:
         sql(world.a, "UPDATE messages SET delivery_status = %s WHERE id = %s", [status, pk])
@@ -515,6 +515,7 @@ def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
         "read_at",
         "failed_at",
         "policy_decision",  # F7-05a: el despachador la reescribe al revaluar antes de enviar
+        "sending_at",  # F7-05b: cuándo se reclamó
     )
     asked_column = "SELECT has_column_privilege(current_user, 'messages', %s, 'UPDATE')"
     sql(

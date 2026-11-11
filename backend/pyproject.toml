@@ -130,6 +130,7 @@ ignore_imports = [
     "apps.tasks.models -> apps.deals.models",
     "apps.tasks.commands -> apps.deals.models",
     "apps.deals.api.opportunities -> apps.conversations.selectors",
+    "apps.tasks.apps -> apps.deals.scopes",  # F5-08b: el alcance por responsable es el mismo
 ]
 
 [[tool.importlinter.contracts]]
@@ -233,6 +234,7 @@ allowed_importers = [
     "apps.conversations.tasks",
     "apps.conversations.accounts",  # F7-02c: usa `credentials`
     "apps.conversations.inbound",  # F7-04: `record_inbound`
+    "apps.conversations.whatsapp",  # F7-05b: `credentials.open_token`
 ]
 
 [[tool.importlinter.contracts]]

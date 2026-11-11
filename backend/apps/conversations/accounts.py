@@ -160,3 +160,22 @@ def disconnect(ctx: TenantContext, *, channel_account_id: UUID) -> None:
         _announce(
             ctx, "channel_account.disconnected", account, {"status": [old, "DISCONNECTED"]}, None
         )
+
+
+def mark_token_invalid(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
+    """Meta rechazó el token en un envío (ADR-029 §8): la cuenta pasa a `ERROR`
+    (`TOKEN_INVALID`) y deja de enviar hasta que se rote el token. Lo llama el despachador, sin
+    permiso de persona. `False` si la cuenta ya no está viva o ya estaba `ERROR`/`DISCONNECTED`."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        found = _live().using(alias).select_for_update(no_key=True)
+        live = found.filter(pk=channel_account_id).exclude(status__in=("ERROR", "DISCONNECTED"))
+        if (account := live.first()) is None:
+            return False
+        old, account.status, account.status_detail = account.status, "ERROR", "TOKEN_INVALID"
+        account.version += 1
+        account.save(
+            using=alias, update_fields=["status", "status_detail", "version", "updated_at"]
+        )
+        _announce(ctx, "channel_account.token_invalid", account, {"status": [old, "ERROR"]}, None)
+        return True

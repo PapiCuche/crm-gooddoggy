@@ -257,6 +257,7 @@ SPECTACULAR_SETTINGS = {
         # distintas con valores en común.
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
         "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
+        "TaskTypeEnum": "apps.tasks.models.TaskType",  # F5-08b: `type` de una tarea
         "ProductStatusEnum": "apps.catalog.models.Product.Status",
         "VariantStatusEnum": "apps.catalog.models.ProductVariant.Status",
         "WarehouseTypeEnum": "apps.inventory.models.Warehouse.Type",  # F3-08

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -62,6 +62,13 @@ const open = async (name: string | RegExp) => {
   fireEvent.click(await screen.findByRole("button", { name }));
   return screen.findByRole("heading", { level: 2 });
 };
+
+// Estos tests esperan a la API simulada (la lista, el detalle y los mensajes) y al montaje del chat:
+// en una máquina cargada (CI, el gate) el segundo por omisión no alcanza. Se sube lo que esperan los
+// `findBy…` y `waitFor` de este archivo y el tiempo de cada test, sin reintentar nada: la espera
+// termina en cuanto aparece lo esperado.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
 
 afterEach(() => {
   cleanup();
@@ -162,7 +169,7 @@ describe("Inbox, lista (F6-03)", () => {
     expect(
       await screen.findByText("Sin permiso para ver el contenido de este mensaje."),
     ).toBeVisible();
-    expect(screen.queryByRole("link", { name: "Ver ficha del cliente" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cliente y oportunidades" })).toBeNull(); // sin nombre no hay panel
     expect(screen.getByText(/No tienes permiso para ver a este cliente/)).toBeVisible();
     cleanup();
     // aunque el servidor mandara la vista previa sin el nombre, la pantalla no la pinta
@@ -212,7 +219,7 @@ describe("Inbox, chat (F6-03)", () => {
     expect(refresh.parentElement).toHaveClass("flex", "flex-wrap");
     expect(screen.getByRole("button", { name: "Mías" }).parentElement).toHaveClass("flex-wrap");
     // encabezado de una fila: volver, nombre, ficha y actualizar; el número y el estado debajo
-    const card = screen.getByRole("link", { name: "Ver ficha del cliente" });
+    const card = screen.getByRole("button", { name: "Cliente y oportunidades" });
     expect(card.parentElement).toBe(refresh.parentElement);
     // Tab sigue el orden visual: el DOM es [volver, actualizar, ficha] y `order` coloca cada pieza
     // (en escritorio actualizar sube a la derecha y la ficha baja al final de la fila)
@@ -228,7 +235,7 @@ describe("Inbox, chat (F6-03)", () => {
     expect(card).toHaveClass("order-4", "lg:order-6"); // icono en 320 px, al final en escritorio
     // los botones de icono solo lo son en pantallas estrechas; en escritorio dicen su texto
     expect(within(refresh).getByText("Actualizar mensajes")).toHaveClass("max-lg:sr-only");
-    expect(within(card).getByText("Ver ficha del cliente")).toHaveClass("max-sm:sr-only");
+    expect(within(card).getByText("Cliente y oportunidades")).toHaveClass("max-sm:sr-only");
     expect(within(card.closest("header")!).getByText("CONV-00001").parentElement).toHaveClass(
       "order-5",
       "basis-full",
@@ -250,7 +257,8 @@ describe("Inbox, chat (F6-03)", () => {
     expect(items[2]).toHaveTextContent("Nota interna · solo la ve tu equipo");
     expect(items[2]).toHaveClass("border-dashed");
     expect(items[1]).not.toHaveTextContent("Nota interna");
-    expect(screen.getByRole("link", { name: "Ver ficha del cliente" })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("button", { name: "Cliente y oportunidades" }));
+    expect(await screen.findByRole("link", { name: "Ver ficha del cliente" })).toHaveAttribute(
       "href",
       "/o/acme/clientes/c1",
     );
@@ -335,7 +343,8 @@ describe("Inbox, chat (F6-03)", () => {
     expect(screen.queryByText("de Rosa")).toBeNull(); // ni un instante, ni de la caché
     expect(await screen.findByText("de Luis")).toBeVisible();
     expect(screen.queryByText("de Rosa")).toBeNull();
-    expect(screen.getByRole("link", { name: "Ver ficha del cliente" })).toHaveAttribute(
+    fireEvent.click(screen.getByRole("button", { name: "Cliente y oportunidades" }));
+    expect(await screen.findByRole("link", { name: "Ver ficha del cliente" })).toHaveAttribute(
       "href",
       "/o/acme/clientes/c2",
     );

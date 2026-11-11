@@ -1,4 +1,12 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -83,13 +91,20 @@ const show = (permissions: Grant[] = grants("conversations.view", "messages.send
   );
 const openChat = async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Rosa Díaz/ }));
-  await screen.findByRole("list", { name: "Mensajes" }).catch(() => null);
+  await screen.findByRole("heading", { level: 2 }); // el chat se abrió (su lista puede estar vacía)
 };
 const box = () => screen.findByRole("textbox", { name: "Responder al cliente" });
 const type = async (text: string) => fireEvent.change(await box(), { target: { value: text } });
 // Lo que un envío indebido haría llega tras unas esperas asíncronas: se deja pasar antes de afirmar.
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 30)));
 const sendButton = (name = "Enviar") => screen.getByRole("button", { name });
+
+// Estos tests esperan a la API simulada (la lista, el detalle y los mensajes) y al montaje del chat:
+// en una máquina cargada (CI, el gate) el segundo por omisión no alcanza. Se sube lo que esperan los
+// `findBy…` y `waitFor` de este archivo y el tiempo de cada test, sin reintentar nada: la espera
+// termina en cuanto aparece lo esperado.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
 
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
@@ -100,39 +115,43 @@ afterEach(() => {
 });
 
 describe("cuadro de redacción (F6-04c)", () => {
-  it("sin `messages.send` no hay cuadro; con alcance OWN solo en lo propio", async () => {
-    server();
-    show(grants("conversations.view"));
-    await openChat();
-    expect(await screen.findByText(/No tienes permiso para responder/)).toBeVisible();
-    expect(screen.queryByRole("textbox")).toBeNull();
-    cleanup();
+  const OWN = [
+    { code: "messages.send", scopes: ["OWN" as const] },
+    ...grants("conversations.view"),
+  ];
+  const TEAM = [
+    { code: "messages.send", scopes: ["TEAM" as const] },
+    ...grants("conversations.view"),
+  ];
+  it.each([
+    ["sin `messages.send` no hay cuadro", {}, grants("conversations.view"), false],
     // Sin alcance concedido (lista vacía) falla cerrado, como la API, aunque la conversación sea mía.
-    server({ conversation: { assigned_user_id: "u1" } });
-    show([{ code: "messages.send", scopes: [] }, ...grants("conversations.view")]);
-    await openChat();
-    expect(await screen.findByText(/No tienes permiso para responder/)).toBeVisible();
-    cleanup();
-    const own = [
-      { code: "messages.send", scopes: ["OWN" as const] },
-      ...grants("conversations.view"),
-    ];
-    server({ conversation: { assigned_user_id: "u2" } });
-    show(own);
-    await openChat();
-    expect(await screen.findByText(/No tienes permiso para responder/)).toBeVisible();
-    cleanup();
-    server({ conversation: { assigned_user_id: "u1" } });
-    show(own);
-    await openChat();
-    expect(await box()).toBeVisible();
-    cleanup();
+    [
+      "con una lista de alcances vacía falla cerrado",
+      { assigned_user_id: "u1" },
+      [{ code: "messages.send", scopes: [] }, ...grants("conversations.view")],
+      false,
+    ],
+    [
+      "con alcance OWN no se ofrece en una conversación ajena",
+      { assigned_user_id: "u2" },
+      OWN,
+      false,
+    ],
+    ["con alcance OWN se ofrece en la propia", { assigned_user_id: "u1" }, OWN, true],
     // Con equipo o sucursal no se sabe desde aquí: se ofrece y la API decide.
-    server({ conversation: { assigned_user_id: "u2" } });
-    show([{ code: "messages.send", scopes: ["TEAM"] }, ...grants("conversations.view")]);
+    ["con alcance de equipo se ofrece", { assigned_user_id: "u2" }, TEAM, true],
+  ])("%s", async (_name, conversation, permissions, offered) => {
+    server({ conversation });
+    show(permissions);
     await openChat();
-    expect(await box()).toBeVisible();
-  }, 15_000);
+    if (offered) {
+      expect(await box()).toBeVisible();
+    } else {
+      expect(await screen.findByText(/No tienes permiso para responder/)).toBeVisible();
+      expect(screen.queryByRole("textbox")).toBeNull();
+    }
+  });
 
   it("envía con un id nuevo, muestra «En cola» al instante, limpia, enfoca y refresca", async () => {
     const hostile = "<b>hola</b> ‮abc";
@@ -295,7 +314,7 @@ describe("cuadro de redacción (F6-04c)", () => {
     show();
     await openChat();
     expect(await box()).toBeDisabled();
-    expect(screen.getByText(/La conversación está cerrada. Podrás responder/)).toBeVisible();
+    expect(await screen.findByText(/La conversación está cerrada. Podrás responder/)).toBeVisible();
     const closed = screen.getByText(/La conversación está cerrada. Podrás responder/);
     expect(await box()).toHaveAttribute("aria-describedby", expect.stringContaining(closed.id));
     expect(sendButton()).toBeDisabled();
