@@ -2,7 +2,7 @@
 
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useTimeZone, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { useReads } from "@/components/inventory/cell-picker";
@@ -12,6 +12,7 @@ import type { PaginatedTaskList, Task, TasksListParams } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
 import { TaskForm } from "./task-form";
+import { TaskActions } from "./task-actions";
 import { TaskRow } from "./task-row";
 import { dayRange, isOpen, isOverdue } from "./task-time";
 
@@ -46,7 +47,21 @@ export function TasksList({
   const { permissions } = useTenant();
   const { failed, retry } = useReads();
   const [editing, setEditing] = useState<string | null>(null);
-  const [saved, setSaved] = useState("");
+  const [said, setSaid] = useState("");
+  const status = useRef<HTMLParagraphElement>(null);
+  // El foco se mueve con un efecto tras pintar, no con un temporizador (en producción React pinta
+  // después de un `setTimeout(0)`): a «Editar» de la fila que se acaba de cerrar o, si la fila salió
+  // de la lista y se llevó el foco (completar una vencida), al aviso, que no se queda sin sitio.
+  const [focus, setFocus] = useState<{ row?: string } | null>(null);
+  useEffect(() => {
+    if (!focus) return;
+    if (focus.row) document.getElementById(`task-${focus.row}`)?.querySelector("button")?.focus();
+    else if (document.activeElement === document.body) status.current?.focus();
+  }, [focus]);
+  const done = (text: string) => {
+    setSaid(text);
+    setFocus({});
+  };
   const { start } = dayRange(now, zone);
   const list = useInfiniteQuery<PaginatedTaskList, ApiError>({
     queryKey: [...getTasksListQueryKey(slug, params), "pages"],
@@ -60,12 +75,11 @@ export function TasksList({
     getNextPageParam: (last) => last.next ?? undefined,
     gcTime: 0, // al salir no queda en memoria: cada visita pregunta a la API
   });
-  // Al cerrar el formulario, el foco vuelve al botón «Editar» de esa fila (si sigue abierta).
   const leave = (id: string) => {
     setEditing(null);
-    setTimeout(() => document.getElementById(`task-${id}`)?.querySelector("button")?.focus(), 0);
+    setFocus({ row: id });
   };
-  const canEdit = permissions.some((grant) => grant.code === "tasks.update");
+  const canAct = permissions.some((grant) => /^tasks\.(update|assign)$/.test(grant.code));
   const rows = (list.data?.pages.flatMap((page) => page.results) ?? [])
     .filter((task) => keep !== "overdue" || isOverdue(task, start, now))
     .sort(byDue);
@@ -92,8 +106,13 @@ export function TasksList({
   }
   return (
     <>
-      <p role="status" className={saved ? "text-sm" : "sr-only"}>
-        {saved}
+      <p
+        ref={status}
+        role="status"
+        tabIndex={-1}
+        className={said ? "text-sm focus-visible:outline-none" : "sr-only"}
+      >
+        {said}
       </p>
       {rows.length === 0 ? <p className="text-muted">{empty}</p> : null}
       {rows.length > 0 ? (
@@ -106,7 +125,7 @@ export function TasksList({
                   onCancel={() => leave(task.id)}
                   onSaved={() => {
                     leave(task.id);
-                    setSaved(t("form.saved"));
+                    setSaid(t("form.saved"));
                   }}
                 />
               </li>
@@ -117,7 +136,15 @@ export function TasksList({
                 zone={zone}
                 links={links}
                 late={isOverdue(task, start, now)}
-                onEdit={canEdit ? () => (setSaved(""), setEditing(task.id)) : undefined}
+                actions={
+                  canAct ? (
+                    <TaskActions
+                      task={task}
+                      onEdit={() => (setSaid(""), setEditing(task.id))}
+                      onDone={done}
+                    />
+                  ) : undefined
+                }
               />
             ),
           )}
