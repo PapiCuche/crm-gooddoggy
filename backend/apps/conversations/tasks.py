@@ -40,6 +40,7 @@ logger = get_logger(__name__)
 MAX_RETRIES = 5
 BACKOFF_SECONDS, BACKOFF_MAX = 30, 600
 REALTIME_RETRIES = 3
+REQUEUE_WAIT = 120  # segundos: lo que el barredor de la cola deja pasar antes de repetir un mensaje
 
 
 def deliver(
@@ -150,9 +151,13 @@ def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
             ids = list(fresh[:batch_size])
             for message_id in list(found.filter(spent).values_list("pk", flat=True)[:batch_size]):
                 commands.fail_queued(tenant, message_id=message_id, reason="RETRIES_EXHAUSTED")
+            # no se vuelve a reencolar antes de `REQUEUE_WAIT`, y el despacho espera lo mismo
+            wait = dt.timedelta(seconds=REQUEUE_WAIT)
+            Message.objects.filter(pk__in=ids).update(not_before=now + wait)
         for message_id in ids:
             dispatch_message.apply_async(
-                kwargs={"message_id": str(message_id), "organization_id": str(organization_id)}
+                kwargs={"message_id": str(message_id), "organization_id": str(organization_id)},
+                countdown=REQUEUE_WAIT + 1,
             )
         requeued += len(ids)
     return requeued

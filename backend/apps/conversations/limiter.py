@@ -11,10 +11,6 @@ from uuid import UUID
 import redis
 from django.conf import settings
 
-# Cuenta y fija el plazo en una sola operación: sin una pausa entre las dos, un fallo no deja una
-# clave eterna que bloquee la cuenta para siempre.
-COUNT = "local n = redis.call('INCR', KEYS[1]) if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end return n"  # noqa: E501
-
 
 @cache
 def client() -> redis.Redis:
@@ -24,7 +20,16 @@ def client() -> redis.Redis:
 
 
 def allow(account_id: UUID) -> bool:
-    """¿Cabe otro envío de la cuenta en la ventana actual? Todo intento cuenta. Lanza si Redis no
-    contesta: quien llama lo trata como un fallo pasajero (el mensaje no sale)."""
+    """¿Cabe otro envío de la cuenta en la ventana actual? Todo intento cuenta. Fija el plazo de la
+    clave al crearla y **también si no lo tiene** (`TTL < 0`: una clave que perdió su `EXPIRE`
+    bloquearía la cuenta para siempre). Lanza si Redis no contesta: quien llama lo trata como un
+    fallo pasajero (el mensaje no sale)."""
     limit, window = settings.CHANNEL_SEND_LIMIT
-    return int(client().eval(COUNT, 1, f"chn:send:{account_id}", window)) <= limit
+    key, server = f"chn:send:{account_id}", client()
+    with server.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.ttl(key)
+        count, ttl = pipe.execute()
+    if count == 1 or ttl < 0:
+        server.expire(key, window)
+    return int(count) <= limit

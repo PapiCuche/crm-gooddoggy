@@ -100,14 +100,33 @@ def test_the_queue_sweeper_waits_for_not_before_and_gives_up_after_too_many_atte
     migrator.execute("UPDATE messages SET dispatch_attempts = %s WHERE id = %s",
                      [tasks.MAX_RETRIES + 1, spent.pk])  # fmt: skip
     sent: list[dict[str, str]] = []
-    monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: sent.append(kwargs))
+    waits: list[int] = []
+
+    def enqueue(kwargs: dict[str, str], countdown: int) -> None:
+        sent.append(kwargs)
+        waits.append(countdown)
+
+    monkeypatch.setattr(tasks.dispatch_message, "apply_async", enqueue)
     assert tasks.sweep_queued() == 1 and [k["message_id"] for k in sent] == [str(ready.pk)]
     assert state(world, spent).delivery_status == "FAILED"  # ya no se reencola, ni amplifica
     assert state(world, waiting).delivery_status == "QUEUED"
+    wait = (state(world, ready).not_before - timezone.now()).total_seconds()  # type: ignore[operator]
+    assert 110 < wait <= tasks.REQUEUE_WAIT and waits == [tasks.REQUEUE_WAIT + 1]
+    assert tasks.sweep_queued() == 0  # el minuto siguiente no lo reencola otra vez
+
+
+def test_a_message_still_inside_its_wait_is_not_claimed_by_a_redelivered_event(
+    world: SimpleNamespace, migrator: Any
+) -> None:
+    message, adapter = queue(world), Counting()
+    migrator.execute("UPDATE messages SET not_before = now() + interval '1 min'")
+    assert dispatch(world, message, adapter).delivery_status == "QUEUED" and adapter.calls == 0
+    migrator.execute("UPDATE messages SET not_before = now() - interval '1 sec'")
+    assert dispatch(world, message, adapter).delivery_status == "DELIVERED" and adapter.calls == 1
 
 
 def test_a_returned_claim_counts_the_attempt_and_waits_and_the_attempts_outlive_the_task(
-    world: SimpleNamespace,
+    world: SimpleNamespace, migrator: Any
 ) -> None:
     message, flaky = queue(world), Counting(boom=TemporaryChannelError())
     with pytest.raises(RuntimeError, match="retry"):
@@ -115,9 +134,8 @@ def test_a_returned_claim_counts_the_attempt_and_waits_and_the_attempts_outlive_
     saved = state(world, message)
     wait = (saved.not_before - timezone.now()).total_seconds()  # type: ignore[operator]
     assert saved.dispatch_attempts == 1 and 25 < wait <= tasks.BACKOFF_SECONDS
-    with tenant_scope(
-        ctx(world.a)
-    ) as tenant:  # varias cadenas seguidas: el contador es del mensaje
+    migrator.execute("UPDATE messages SET not_before = NULL")  # pasada su espera
+    with tenant_scope(ctx(world.a)) as tenant:  # varias cadenas: el contador es del mensaje
         for _ in range(tasks.MAX_RETRIES - 1):
             commands.claim_outbound(tenant, message_id=message.pk)
             commands.release_outbound(tenant, message_id=message.pk, wait=dt.timedelta(0))

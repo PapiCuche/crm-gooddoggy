@@ -38,17 +38,45 @@ PHONE = "+51900000111"
 
 
 class FakeRedis:
-    """Lo único que usa el limitador: el script que cuenta y fija el plazo (probado contra un
-    Redis real aparte)."""
+    """Lo único que usa el limitador: contar, leer el plazo y fijarlo (`pipeline` de una
+    transacción)."""
 
     def __init__(self) -> None:
         self.counts: dict[str, int] = {}
         self.windows: dict[str, int] = {}
 
-    def eval(self, script: str, keys: int, key: str, window: int) -> int:
+    def incr(self, key: str) -> int:
         self.counts[key] = self.counts.get(key, 0) + 1
-        self.windows.setdefault(key, window)
         return self.counts[key]
+
+    def ttl(self, key: str) -> int:
+        return self.windows.get(key, -1)
+
+    def expire(self, key: str, window: int) -> None:
+        self.windows[key] = window
+
+    def pipeline(self, transaction: bool = True) -> FakePipe:
+        return FakePipe(self)
+
+
+class FakePipe:
+    def __init__(self, server: FakeRedis) -> None:
+        self.server, self.calls = server, []  # type: ignore[var-annotated]
+
+    def __enter__(self) -> FakePipe:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def incr(self, key: str) -> None:
+        self.calls.append(lambda: self.server.incr(key))
+
+    def ttl(self, key: str) -> None:
+        self.calls.append(lambda: self.server.ttl(key))
+
+    def execute(self) -> list[int]:
+        return [call() for call in self.calls]
 
 
 @pytest.fixture(autouse=True)
@@ -189,6 +217,14 @@ def test_the_limiter_counts_per_account_and_window_and_stops_a_burst_before_meta
         and f"{convo.channel_account_id}" in list(redis.counts)[0]
     )
     assert limiter.allow(new_id())  # otra cuenta tiene su propio cupo
+
+
+def test_a_limiter_key_that_lost_its_expiry_gets_one_again(settings: Any, redis: FakeRedis) -> None:
+    settings.CHANNEL_SEND_LIMIT = (2, 5)
+    account = new_id()
+    redis.counts[f"chn:send:{account}"] = 7  # una clave sin plazo (perdió su `EXPIRE`)
+    assert not limiter.allow(account)  # sigue contando...
+    assert redis.windows[f"chn:send:{account}"] == 5  # ...y recupera su plazo: no bloquea siempre
 
 
 def test_without_redis_a_send_fails_closed_towards_the_retry_and_logs_no_url(

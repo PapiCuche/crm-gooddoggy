@@ -23,7 +23,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.access.selectors import (
@@ -695,12 +695,14 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
     adaptador necesita. Con la conversación bloqueada y la cuenta con `FOR SHARE` (desconectarla
     espera; dos envíos de una cuenta no se serializan) re-evalúa la política justo antes de enviar:
     si ya no se puede, queda `FAILED` con el motivo y devuelve `None`. Idempotente: lo que no está
-    `QUEUED`, ajeno, inexistente o que otro despachador reclama a la vez da `None`."""
+    `QUEUED`, ajeno, inexistente, aún dentro de su espera (`not_before`: un evento reentregado no
+    envía antes) o que otro despachador reclama a la vez da `None`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
+        waiting = Q(not_before__isnull=True) | Q(not_before__lte=timezone.now())  # tras su espera
         queued = Message.objects.using(alias).filter(
-            pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
+            waiting, pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
         )
         row = queued.values("conversation_id").first()
         if row is None:
