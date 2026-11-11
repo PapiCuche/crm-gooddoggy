@@ -397,3 +397,37 @@ def test_a_session_key_outside_the_django_format_never_touches_the_database(
 
     with django_assert_num_queries(0):
         assert not user_for(key).is_authenticated
+
+
+def test_a_close_frees_exactly_one_place_and_a_rejection_frees_none(
+    inbox: SimpleNamespace, settings: Any
+) -> None:
+    settings.INBOX_WS_MAX_PER_USER = 2
+
+    async def go() -> None:
+        session = await sync_to_async(cookie)(inbox.ana)
+        async with connected("org-a", inbox.ana), connected("org-a", inbox.ana):
+            for _ in range(2):  # los rechazados no liberan nada: el siguiente también se rechaza
+                assert await try_connect("org-a", session) == (False, TOO_MANY)
+            assert sum(realtime._open.values()) == 2
+            async with connected("org-a", inbox.vera):
+                pass
+            assert sum(realtime._open.values()) == 2  # y cerrar la de otra persona, tampoco
+        assert not realtime._open
+
+    async def one_of_two() -> None:
+        async with connected("org-a", inbox.ana):
+            async with connected("org-a", inbox.ana):
+                pass
+            assert sum(realtime._open.values()) == 1  # cerrar una libera exactamente una
+
+    run(go)
+    run(one_of_two)
+
+
+def test_without_a_channel_layer_the_socket_does_not_open_and_nothing_is_published(
+    inbox: SimpleNamespace, settings: Any
+) -> None:
+    settings.CHANNEL_LAYERS = {}
+    channel_layers.backends.clear()
+    assert attempt("org-a", inbox.ana) == (False, 1013) and not realtime.publish(inbox.a, {})
