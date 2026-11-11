@@ -133,6 +133,8 @@ ignore_imports = [
     "apps.tasks.apps -> apps.deals.scopes",  # F5-08b: el alcance por responsable es el mismo
     "apps.tasks.api.* -> apps.deals.api.inputs",  # los serializadores estrictos
     "apps.tasks.api.tasks -> apps.deals.selectors",  # la oportunidad en el alcance de quien crea
+    "apps.quotes.commands -> apps.deals.models",  # F5-09a: la oportunidad de la cotización
+    "apps.quotes.commands -> apps.pricing.services",  # y los precios, solo del `PricingService`
 ]
 
 [[tool.importlinter.contracts]]
@@ -217,6 +219,12 @@ type = "protected"
 protected_modules = ["apps.conversations.inbound", "apps.conversations.delivery"]
 # `delivery` usa el instante creíble de `inbound` (`inbound.instant`)
 allowed_importers = ["apps.conversations.ingress", "apps.conversations.delivery"]
+
+[[tool.importlinter.contracts]]
+name = "Comandos de cotizaciones: solo su API los importa (F5-09a)"
+type = "protected"
+protected_modules = ["apps.quotes.commands"]
+allowed_importers = ["apps.quotes.api"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de tareas: solo su API los importa (F5-08a)"
