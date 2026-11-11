@@ -16,6 +16,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import connection
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.conversations import accounts, commands, credentials, ingress, realtime
@@ -58,13 +59,14 @@ def deliver(
     except AmbiguousChannelError:  # pudo llegar: no se reenvía; sigue `SENDING`
         return
     except TemporaryChannelError as error:  # seguro que no llegó: se devuelve y se reintenta
+        countdown = min(BACKOFF_SECONDS * 2**task.request.retries, BACKOFF_MAX)
         with tenant_scope(ctx):
-            commands.release_outbound(ctx, message_id=message_id)
-            if task.request.retries >= MAX_RETRIES:
+            wait = dt.timedelta(seconds=countdown)
+            attempts = commands.release_outbound(ctx, message_id=message_id, wait=wait)
+            if task.request.retries >= MAX_RETRIES or (attempts or 0) > MAX_RETRIES:
                 logger.warning("inbox.dispatch_gave_up", message_id=str(message_id))
                 commands.fail_queued(ctx, message_id=message_id, reason="RETRIES_EXHAUSTED")
                 return
-        countdown = min(BACKOFF_SECONDS * 2**task.request.retries, BACKOFF_MAX)
         raise task.retry(exc=error, countdown=countdown, max_retries=MAX_RETRIES) from None
     with tenant_scope(ctx):
         commands.settle_outbound(ctx, message_id=message_id, result=result)
@@ -127,9 +129,9 @@ def queued_organizations(before: dt.datetime, limit: int) -> list[UUID]:
 def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
     """Vuelve a encolar los mensajes `QUEUED` de hace más de `INBOX_SWEEP_AFTER_MINUTES`: los
     eventos anteriores a F6-04b se marcaron publicados sin suscriptores, y un handler puede caer
-    tras publicar. Con más de `INBOX_GIVE_UP_AFTER_MINUTES` de antigüedad deja de reintentar y
-    el mensaje queda `FAILED` (`RETRIES_EXHAUSTED`): un error inesperado del adaptador no puede
-    reintentarse sin fin (sin columna de intentos, la edad es el tope). Descubre las
+    tras publicar. No reencola lo que aún espera su `not_before` (un «demasiado rápido» no se
+    amplifica) y, con más de `INBOX_GIVE_UP_AFTER_MINUTES` de antigüedad o más de `MAX_RETRIES`
+    intentos devueltos, deja de reintentar: queda `FAILED` (`RETRIES_EXHAUSTED`). Descubre las
     organizaciones con una función SECURITY DEFINER (solo ids) y lee los mensajes en el scope de
     cada una."""
     now = timezone.now()
@@ -142,10 +144,11 @@ def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
             found = Message.objects.filter(
                 direction="OUTBOUND", delivery_status="QUEUED", created_at__lt=before
             ).order_by("id")
-            fresh = found.filter(created_at__gte=give_up).values_list("pk", flat=True)
+            spent = Q(created_at__lt=give_up) | Q(dispatch_attempts__gt=MAX_RETRIES)
+            ready = Q(not_before__isnull=True) | Q(not_before__lte=now)
+            fresh = found.exclude(spent).filter(ready).values_list("pk", flat=True)
             ids = list(fresh[:batch_size])
-            stale = found.filter(created_at__lt=give_up).values_list("pk", flat=True)
-            for message_id in list(stale[:batch_size]):  # sin más reintentos
+            for message_id in list(found.filter(spent).values_list("pk", flat=True)[:batch_size]):
                 commands.fail_queued(tenant, message_id=message_id, reason="RETRIES_EXHAUSTED")
         for message_id in ids:
             dispatch_message.apply_async(
@@ -153,6 +156,35 @@ def sweep_queued(batch_size: int = 100, max_orgs: int = 50) -> int:
             )
         requeued += len(ids)
     return requeued
+
+
+def sending_organizations(before: dt.datetime, limit: int) -> list[UUID]:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT public.messages_sending_organizations(%s, %s)", [before, limit])
+        return [UUID(str(row[0])) for row in cursor.fetchall()]
+
+
+@platform_task(name="conversations.sweep_sending", ignore_result=True)
+def sweep_sending(batch_size: int = 100, max_orgs: int = 50) -> int:
+    """Cierra como `FAILED` (`PROVIDER_UNKNOWN`) los `SENDING` con `sending_at` a
+    `INBOX_SENDING_DEADLINE_MINUTES` o más: un resultado ambiguo (tiempo agotado, corte, 5xx) o un
+    proceso que cayó tras reclamar. **Nunca reenvía**: pudo haber salido, y la persona decide con el
+    riesgo de un duplicado a la vista. Descubre las organizaciones con una función SECURITY DEFINER
+    (solo ids) y cierra cada mensaje en el scope de la suya."""
+    before = timezone.now() - dt.timedelta(minutes=settings.INBOX_SENDING_DEADLINE_MINUTES)
+    closed = 0
+    for organization_id in sending_organizations(before, max_orgs):
+        tenant = TenantContext(organization_id, "celery")
+        with tenant_scope(tenant):
+            stuck = Message.objects.filter(
+                direction="OUTBOUND", delivery_status="SENDING", sending_at__lte=before
+            ).order_by("sending_at", "id")
+            for message_id in list(stuck.values_list("pk", flat=True)[:batch_size]):
+                done = commands.fail_sending(
+                    tenant, message_id=message_id, reason="PROVIDER_UNKNOWN"
+                )
+                closed += done is not None
+    return closed
 
 
 @platform_task(name="conversations.reseal_credentials")

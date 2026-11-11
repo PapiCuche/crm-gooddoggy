@@ -11,7 +11,9 @@ from config.settings.base import *  # noqa: F403
 from config.settings.base import (
     ALLOWED_HOSTS,
     APP_ORIGIN,
+    CELERY_BROKER_URL,
     CHANNEL_CHECK_THROTTLE,
+    CHANNEL_SEND_LIMIT,
     DEFAULT_FROM_EMAIL,
     EMAIL_HOST,
     EMAIL_HOST_PASSWORD,
@@ -82,7 +84,12 @@ if not SECRETS_KEKS:
 # (el valor por omisión) no se exige nada.
 if META_ENABLED:
     env.check_meta(
-        META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION, CHANNEL_CHECK_THROTTLE
+        META_APP_SECRETS,
+        META_WEBHOOK_VERIFY_TOKEN,
+        META_GRAPH_VERSION,
+        CHANNEL_CHECK_THROTTLE,
+        CHANNEL_SEND_LIMIT,
+        CELERY_BROKER_URL,
     )
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,

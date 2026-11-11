@@ -16,7 +16,7 @@ from django.db import connection
 from django.utils import timezone
 
 from apps.contacts.models import Contact
-from apps.conversations import accounts, channels, commands, credentials, tasks, whatsapp
+from apps.conversations import accounts, channels, commands, credentials, limiter, tasks, whatsapp
 from apps.conversations.channels import AmbiguousChannelError, TemporaryChannelError
 from apps.conversations.models import TOKEN_PURPOSE, ChannelAccount, Conversation, Credential
 from core import http, sealed
@@ -35,6 +35,27 @@ from tests.test_whatsapp_account import credential as tables_credential
 __all__ = ["world", "writer"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
 PHONE = "+51900000111"
+
+
+class FakeRedis:
+    """Lo único que usa el limitador: el script que cuenta y fija el plazo (probado contra un
+    Redis real aparte)."""
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+        self.windows: dict[str, int] = {}
+
+    def eval(self, script: str, keys: int, key: str, window: int) -> int:
+        self.counts[key] = self.counts.get(key, 0) + 1
+        self.windows.setdefault(key, window)
+        return self.counts[key]
+
+
+@pytest.fixture(autouse=True)
+def redis(monkeypatch: pytest.MonkeyPatch) -> FakeRedis:
+    fake = FakeRedis()
+    monkeypatch.setattr(limiter, "client", lambda: fake)
+    return fake
 
 
 @pytest.fixture
@@ -152,6 +173,39 @@ def test_the_token_is_opened_only_during_the_call_and_never_stored_in_the_claim(
     assert channels.adapter_for("WHATSAPP").send(claim).ok and opened == ["x"]
 
 
+def test_the_limiter_counts_per_account_and_window_and_stops_a_burst_before_meta(
+    world: SimpleNamespace, graph: FakeGraph, settings: Any, redis: FakeRedis
+) -> None:
+    settings.CHANNEL_SEND_LIMIT = (1, 3)  # un envío cada 3 s por cuenta
+    convo = talk(world)
+    assert send(world, convo)[1].delivery_status == "SENT"
+    message, _ = outbound(world, convo)
+    task = Retrying(0)
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(task, world.a, message.pk)  # sin cupo: no sale y se devuelve
+    assert state(world, message).delivery_status == "QUEUED" and len(graph.sent) == 1
+    assert (
+        list(redis.windows.values()) == [3]
+        and f"{convo.channel_account_id}" in list(redis.counts)[0]
+    )
+    assert limiter.allow(new_id())  # otra cuenta tiene su propio cupo
+
+
+def test_without_redis_a_send_fails_closed_towards_the_retry_and_logs_no_url(
+    world: SimpleNamespace, graph: FakeGraph, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    def down() -> Any:
+        raise ConnectionError("redis://:secret@broker:6379/0")
+
+    monkeypatch.setattr(limiter, "client", down)
+    message, _ = outbound(world, talk(world))
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(Retrying(0), world.a, message.pk)
+    assert graph.requests == [] and state(world, message).delivery_status == "QUEUED"
+    assert "secret" not in caplog.text and "redis://" not in caplog.text
+
+
 def test_two_dispatchers_at_once_send_to_meta_once(
     world: SimpleNamespace, graph: FakeGraph
 ) -> None:
@@ -252,13 +306,16 @@ def test_a_phone_number_id_that_is_not_digits_never_reaches_the_url(
 
 
 OUT = {"direction": "OUTBOUND", "sender_type": "USER"}
+ZERO = dt.timedelta(0)
 
 
 ANSWERS = [  # (estado HTTP, cuerpo, qué pasa)
     (200, b"{}", AmbiguousChannelError), (200, b'{"messages":[{"id":" "}]}', AmbiguousChannelError),
     (400, b'{"error": {"code": 190}}', "TOKEN_INVALID"), (401, b"", "TOKEN_INVALID"),
     (400, b'{"error": {"code": true}}', "PROVIDER_REJECTED"), (429, b"", TemporaryChannelError),
-    (400, b'{"error": {"code": 130429}}', TemporaryChannelError), (503, b"", AmbiguousChannelError),
+    (503, b"", AmbiguousChannelError),
+    *[(400, b'{"error": {"code": %d}}' % c, TemporaryChannelError)
+      for c in (4, 17, 613, 80007, 130429, 131056)],  # los límites de tasa de Meta
     (400, b'{"error": {"code": 131047}}', "WINDOW_CLOSED"),
     (400, b'{"error": {"code": 131026}}', "RECIPIENT_UNREACHABLE"),
 ]  # fmt: skip
@@ -292,7 +349,7 @@ def test_only_a_sending_message_can_be_settled_or_returned(world: SimpleNamespac
     with tenant_scope(ctx(world.a)) as tenant:
         ok = channels.SendResult(True, "x")
         assert commands.settle_outbound(tenant, message_id=queued.pk, result=ok) is None
-        assert not commands.release_outbound(tenant, message_id=queued.pk)
+        assert commands.release_outbound(tenant, message_id=queued.pk, wait=ZERO) is None
 
 
 def test_the_migration_goes_back_failing_what_was_sending_and_forward_again(

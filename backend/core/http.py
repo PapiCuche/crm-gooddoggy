@@ -1,6 +1,7 @@
 """HTTP saliente anti-SSRF (B9): allowlist https, IP pública validada al conectar y fijada, sin
 redirects ni proxies. Único módulo con urllib3. Diseño: docs/architecture/storage-http.md."""
 
+import io
 import ipaddress
 import socket
 import ssl
@@ -13,6 +14,11 @@ from urllib3.connection import HTTPSConnection
 from urllib3.connectionpool import HTTPSConnectionPool
 
 HTTPError = urllib3.exceptions.HTTPError  # lo que lanza una petición que no llegó a respuesta
+MAX_RESPONSE = 1 << 20  # una respuesta mayor no es de un servicio de la allowlist: se corta
+
+
+class ResponseTooLarge(HTTPError):
+    """La respuesta pasó `MAX_RESPONSE`: se deja de leer (la petición ya se envió)."""
 
 
 class BlockedDestination(Exception):  # noqa: N818 — resultado de política, no un fallo de red
@@ -107,4 +113,13 @@ def request(
     check_url(url)
     if any(name.lower() == "host" for name in headers or {}):
         raise BlockedDestination("La cabecera Host no se puede sustituir")  # TLS/Host = URL
-    return _manager.request(method, url, headers=headers, body=body, json=json, redirect=False)
+    reply = _manager.request(
+        method, url, headers=headers, body=body, json=json, redirect=False, preload_content=False
+    )
+    data = reply.read(MAX_RESPONSE + 1)  # nunca más de `MAX_RESPONSE` + 1 bytes en memoria
+    reply.release_conn()
+    if len(data) > MAX_RESPONSE:
+        raise ResponseTooLarge
+    return urllib3.HTTPResponse(
+        body=io.BytesIO(data), headers=reply.headers, status=reply.status, preload_content=True
+    )

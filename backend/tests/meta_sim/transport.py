@@ -35,6 +35,7 @@ class _Manager:
         body: bytes | None = None,
         json: Any = None,
         redirect: bool = True,
+        preload_content: bool = True,
         **_: Any,
     ) -> urllib3.BaseHTTPResponse:
         import json as jsonlib
@@ -53,7 +54,10 @@ class _Manager:
         except Timeout:
             raise ReadTimeoutError(None, url, "Read timed out.") from None  # type: ignore[arg-type]
         return urllib3.HTTPResponse(
-            body=io.BytesIO(payload), headers=reply_headers, status=status, preload_content=True
+            body=io.BytesIO(payload),
+            headers=reply_headers,
+            status=status,
+            preload_content=preload_content,
         )
 
 

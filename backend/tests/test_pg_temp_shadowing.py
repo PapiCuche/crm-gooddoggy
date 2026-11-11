@@ -25,6 +25,7 @@ FUNCTIONS = (
     "public.messages_delivery_advance()",  # F6-01b
     "public.channel_accounts_identity_fixed()",  # F7-02a
     "public.messages_queued_organizations(timestamptz, integer)",  # F6-04b, SECURITY DEFINER
+    "public.messages_sending_organizations(timestamptz, integer)",  # F7-05c, SECURITY DEFINER
     "public.credentials_stale_organizations(integer, integer)",  # F7-02b, SECURITY DEFINER
     "public.webhook_ingress_insert(text, text, text, text, text, jsonb)",  # F7-03b
     "public.webhook_ingress_claim(integer, integer)",  # F7-03c

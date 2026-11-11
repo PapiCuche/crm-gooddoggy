@@ -13,7 +13,7 @@ from typing import Any
 
 from django.conf import settings
 
-from apps.conversations import credentials
+from apps.conversations import credentials, limiter
 from apps.conversations.channels import (
     AmbiguousChannelError,
     Claim,
@@ -28,7 +28,8 @@ logger = get_logger(__name__)
 PHONE = r"^\+[1-9][0-9]{6,14}$"
 EXTERNAL_ID = r"^[A-Za-z0-9._=-]{1,200}$"  # el `wamid`: se guarda en `messages.external_message_id`
 REASONS = {190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNREACHABLE"}
-TOO_FAST = (130429, 131056)  # rendimiento o par: Meta no lo aceptó, vale esperar y reintentar
+# Límites de tasa de Meta: no lo aceptó, se reintenta.
+TOO_FAST = (4, 17, 613, 80007, 130429, 131056)
 
 
 def _field(raw: bytes, *path: str | int) -> Any:
@@ -58,6 +59,13 @@ class WhatsAppAdapter:
             "messaging_product": "whatsapp", "to": claim.recipient[1:], "type": "text",
             "text": {"body": claim.body}, "biz_opaque_callback_data": str(claim.message_id),
         }  # fmt: skip
+        try:
+            room = limiter.allow(claim.account_id)
+        except Exception:  # Redis caído: falla cerrado hacia el reintento, sin registrar el error
+            logger.warning("channel.limiter_unavailable")
+            raise TemporaryChannelError from None
+        if not room:
+            raise TemporaryChannelError  # sin cupo: no sale, se reintenta
         try:
             token = credentials.open_token(claim.credential)  # solo durante esta llamada
         except sealed.SealError:
