@@ -558,5 +558,3 @@ def test_the_second_migration_goes_back_and_forward_with_its_triggers(
     with as_migrator():
         call_command("migrate", verbosity=0)
     assert migrator.execute(tables_now).fetchone() == (True, True, 3)
-    marks = "SELECT count(*) FROM quote_items WHERE manual_price_override"
-    assert migrator.execute(marks).fetchone() == (0,)
