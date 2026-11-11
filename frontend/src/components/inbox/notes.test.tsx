@@ -1,4 +1,12 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -97,6 +105,13 @@ const noteBox = () => screen.findByRole("textbox", { name: "Nota interna" });
 const mode = (name: string) => screen.getByRole("button", { name });
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 30)));
 
+// Estos tests esperan a la API simulada (la lista, el detalle y los mensajes) y al montaje del chat:
+// en una máquina cargada (CI, el gate) el segundo por omisión no alcanza. Se sube lo que esperan los
+// `findBy…` y `waitFor` de este archivo y el tiempo de cada test, sin reintentar nada: la espera
+// termina en cuanto aparece lo esperado.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 15_000 });
+
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
 });
@@ -106,38 +121,42 @@ afterEach(() => {
 });
 
 describe("notas internas en el cuadro de redacción (F6-05c)", () => {
-  it("los modos salen de los permisos: cada uno el suyo, y sin conmutador con uno solo", async () => {
+  it("con solo `messages.send` hay un cuadro de respuesta y ningún conmutador", async () => {
     server();
     show([grant("conversations.view"), grant("messages.send")]);
     await openChat();
     expect(await reply()).toBeVisible();
     expect(screen.queryByRole("button", { name: "Nota interna" })).toBeNull();
-    cleanup();
+  });
+
+  it("con solo `messages.note` hay un cuadro de nota («Guardar nota», nunca «Enviar») y ningún conmutador", async () => {
     server();
     show([grant("conversations.view"), grant("messages.note")]);
     await openChat();
     expect(await noteBox()).toBeVisible();
     expect(screen.queryByRole("textbox", { name: "Responder al cliente" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Responder al cliente" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Guardar nota" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Guardar nota" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Enviar" })).toBeNull();
-    cleanup();
-    server();
-    show([grant("conversations.view")]);
+  });
+
+  it.each([
+    ["sin ninguno de los dos permisos", {}, [grant("conversations.view")]],
+    // con alcance OWN, solo en una conversación propia
+    [
+      "con `messages.note` de alcance OWN en una conversación ajena",
+      { assigned_user_id: "u2" },
+      [grant("conversations.view"), grant("messages.note", "OWN")],
+    ],
+  ])("no hay cuadro %s", async (_name, conversation, permissions) => {
+    server({ conversation });
+    show(permissions);
     await openChat();
     expect(
       await screen.findByText(/No tienes permiso para responder ni dejar notas/),
     ).toBeVisible();
     expect(screen.queryByRole("textbox")).toBeNull();
-    cleanup();
-    // con alcance OWN, solo en una conversación propia
-    server({ conversation: { assigned_user_id: "u2" } });
-    show([grant("conversations.view"), grant("messages.note", "OWN")]);
-    await openChat();
-    expect(
-      await screen.findByText(/No tienes permiso para responder ni dejar notas/),
-    ).toBeVisible();
-  }, 20_000);
+  });
 
   it("si deja de poder responder (ya no es suya), el modo elegido cae al que sí puede y no queda vacío", async () => {
     const s = server({ conversation: { assigned_user_id: "u1", assignee_kind: "USER" } });
