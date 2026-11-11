@@ -2,7 +2,13 @@ import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { Conversation, Message, SelfContext } from "@/lib/api/model";
+import {
+  type Conversation,
+  type Message,
+  ProviderErrorCodeEnum,
+  type SelfContext,
+} from "@/lib/api/model";
+import messages from "../../../messages/es-PE.json";
 import { mockApi, renderApp } from "@/test-utils";
 
 type Routes = Parameters<typeof mockApi>[0];
@@ -178,6 +184,104 @@ describe("Inbox, lista (F6-03)", () => {
     show();
     const hiddenRow = await screen.findByRole("button", { name: /Cliente no disponible/ });
     expect(hiddenRow).not.toHaveTextContent("Hola, ¿tienen collares?");
+  });
+});
+
+describe("Inbox, motivo de un fallo (F7-06c)", () => {
+  it("dice por qué un mensaje no salió con el texto de su código y nunca el valor crudo", async () => {
+    const failed = (id: string, code: string | null, status = "FAILED") =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: status,
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+      });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([
+        failed("e", "PROVIDER_UNKNOWN"),
+        failed("d", "WINDOW_CLOSED"),
+        failed("c", "CODIGO-NUEVO-<b>"),
+        failed("b", null),
+        failed("a", "WINDOW_CLOSED", "SENT"),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("e")).toHaveTextContent("Puede que sí se haya enviado");
+    expect(row("e")).toHaveTextContent("Reenviarlo podría duplicar el mensaje");
+    // Duda, no error seguro: ni el motivo ni la marca van en rojo; un fallo cierto sí.
+    expect(row("e").querySelectorAll(".text-danger")).toHaveLength(0);
+    expect(row("d").querySelectorAll("p.text-danger")).toHaveLength(1);
+    expect(row("d")).toHaveTextContent("Pasaron más de 24 horas");
+    expect(row("c")).toHaveTextContent("No se pudo enviar"); // un código nuevo no rompe la pantalla
+    expect(row("c")).not.toHaveTextContent("CODIGO-NUEVO");
+    expect(row("b")).toHaveTextContent("No se pudo enviar"); // sin motivo guardado: el texto de antes
+    expect(row("b").querySelectorAll("p.text-danger")).toHaveLength(0);
+    expect(row("a")).not.toHaveTextContent("Pasaron más de 24 horas"); // solo con `FAILED`
+  });
+});
+
+describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
+  it("cada código del contrato tiene su texto en español", () => {
+    for (const code of Object.values(ProviderErrorCodeEnum)) {
+      expect(typeof (messages.inbox.failure as Record<string, unknown>)[code]).toBe("string");
+    }
+  });
+
+  it("claves del prototipo que llegaran como código no se pintan ni rompen la burbuja", async () => {
+    const failed = (id: string, code: string) =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: "FAILED",
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+      });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([failed("b", "toString"), failed("a", "constructor")]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("a")).toHaveTextContent("No se pudo enviar");
+    expect(row("a").querySelectorAll("p.text-danger")).toHaveLength(0);
+    expect(row("b").querySelectorAll("p.text-danger")).toHaveLength(0);
+  });
+
+  it("un estado de entrega con nombre de clave del prototipo no rompe la burbuja ni se pinta", async () => {
+    const odd = (id: string, status: string) =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: status,
+        body: id,
+      });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([odd("c", "__proto__"), odd("b", "toString"), odd("a", "constructor")]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    expect(within(log).getAllByRole("listitem")).toHaveLength(3);
+    expect(log).not.toHaveTextContent("constructor");
+    expect(log.querySelectorAll("svg")).toHaveLength(0);
+  });
+
+  it("el texto de TOKEN_INVALID manda a quien administra los canales, no a quien escribe", () => {
+    expect(messages.inbox.failure.TOKEN_INVALID).toContain("quien administra los canales");
   });
 });
 

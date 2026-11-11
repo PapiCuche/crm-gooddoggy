@@ -69,7 +69,9 @@ class WhatsAppAdapter:
         try:
             token = credentials.open_token(claim.credential)  # solo durante esta llamada
         except sealed.SealError:
-            return SendResult(False, reason="TOKEN_INVALID")
+            if not sealed.has_key(claim.credential.key_version):
+                raise TemporaryChannelError from None  # falta la clave en este despliegue: no es
+            return SendResult(False, reason="TOKEN_INVALID")  # del token; se reintenta
         try:
             reply = http.request(
                 "POST", url, headers={"Authorization": f"Bearer {token}"}, json=body
