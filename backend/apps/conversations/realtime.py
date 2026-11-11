@@ -171,18 +171,31 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
             await self.send(text_data='{"type":"pong"}')
 
     async def _watch(self) -> None:
-        """Cierra por inactividad y, cada `INBOX_WS_RECHECK_SECONDS`, comprueba sesión y permiso."""
+        """Cierra por inactividad y, cada `INBOX_WS_RECHECK_SECONDS`, comprueba sesión y permiso y
+        renueva la pertenencia al grupo (la capa de Redis olvida a quien lleva más de 24 h en él).
+        Un fallo aquí cierra la conexión (1013): si la tarea muriera en silencio, la conexión
+        seguiría abierta sin comprobar nunca más la sesión ni la inactividad."""
         checked = time.monotonic()
-        while True:
-            await asyncio.sleep(settings.INBOX_WS_TICK_SECONDS)
-            now = time.monotonic()
-            if now - self.last_seen > settings.INBOX_WS_IDLE_SECONDS:
-                await self._close(CLOSE_IDLE)
-                return
-            if now - checked >= settings.INBOX_WS_RECHECK_SECONDS:
-                checked = now
-                if not await self._still_allowed():
+        try:
+            while True:
+                await asyncio.sleep(settings.INBOX_WS_TICK_SECONDS)
+                now = time.monotonic()
+                if now - self.last_seen > settings.INBOX_WS_IDLE_SECONDS:
+                    await self._close(CLOSE_IDLE)
                     return
+                if now - checked >= settings.INBOX_WS_RECHECK_SECONDS:
+                    checked = now
+                    if not await self._still_allowed():
+                        return
+                    tenant, layer = self.tenant, self.channel_layer
+                    if tenant is not None and layer is not None:
+                        await layer.group_add(group_name(tenant.organization_id), self.channel_name)
+        except Exception as error:  # noqa: BLE001 — BD o Redis caídas: se cierra, nunca se sigue
+            logger.warning("inbox.ws_watch_failed", error=type(error).__name__)
+            try:
+                await self._close(CLOSE_RETRY)
+            except Exception:  # noqa: BLE001, S110 — ya cerrada: nada más que hacer
+                pass
 
     async def _still_allowed(self) -> bool:
         tenant = self.tenant

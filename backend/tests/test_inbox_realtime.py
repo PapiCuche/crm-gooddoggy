@@ -412,3 +412,42 @@ def test_the_outbox_handler_is_subscribed_runs_in_its_organization_and_retries(
     monkeypatch.setattr(realtime, "publish", broken)
     assert tasks.publish_realtime.apply(kwargs=kwargs).successful()
     assert len(sent) == tasks.REALTIME_RETRIES + 1  # reintenta y se descarta
+
+
+def test_a_failure_in_the_watcher_closes_the_socket_instead_of_leaving_it_unchecked(
+    inbox: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, migrator: DB
+) -> None:
+    settings.INBOX_WS_RECHECK_SECONDS = 0.1
+
+    def blip(key: str | None) -> Any:
+        raise RuntimeError("la BD parpadeó")
+
+    async def go() -> None:
+        async with connected("org-a", inbox.vera) as vera:
+            monkeypatch.setattr("apps.conversations.realtime.user_for", blip)
+            assert await vera.closed_with() == 1013  # antes: la tarea moría y seguía abierta
+            assert not realtime._open
+
+    run(go)
+
+
+def test_a_long_lived_connection_keeps_its_place_in_the_group(
+    inbox: SimpleNamespace, settings: Any
+) -> None:
+    """`channels_redis` olvida a quien lleva más de `group_expiry` (24 h) en el grupo."""
+    settings.CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+            "CONFIG": {"group_expiry": 1},
+        }
+    }
+    settings.INBOX_WS_RECHECK_SECONDS = 0.2
+    channel_layers.backends.clear()
+
+    async def go() -> None:
+        async with connected("org-a", inbox.vera) as vera:
+            await asyncio.sleep(1.6)  # más que el plazo del grupo, con varias renovaciones
+            await push(inbox.a, "message.received", inbox.convs["vera"])
+            assert seen(inbox, await vera.frames(1)) == {"vera"}
+
+    run(go)
