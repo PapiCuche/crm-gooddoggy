@@ -210,6 +210,7 @@ def test_the_outbox_reaches_the_connection_with_only_type_ids_and_time(
     sent = realtime.outgoing("message.updated", mid, {"conversation_id": str(cid), **pii}, "t")
     assert sent and set(sent["event"]) == {"type", "id", "conversation_id", "at"}
     assert realtime.outgoing("contact.created", mid, {"conversation_id": str(cid)}, "t") is None
+    assert realtime.outgoing("message.received", mid, {"conversation_id": "x"}, "t") is None
 
 
 @pytest.mark.parametrize("lose", [LOSE_ROLE, SUSPEND])
@@ -362,6 +363,7 @@ def test_with_the_channel_layer_down_the_socket_closes_without_logging_secrets(
     channel_layers.backends.clear()
     assert run(lambda: go("receive")) == 1013
     assert not realtime._open and session.decode().split("=")[1] not in caplog.text
+    assert str(inbox.ana.pk) not in caplog.text
     settings.CHANNEL_LAYERS = {}  # sin capa: no abre ni publica
     channel_layers.backends.clear()
     assert attempt("org-a", inbox.ana) == (False, 1013) and not realtime.publish(inbox.a, {})
