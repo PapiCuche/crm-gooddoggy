@@ -518,6 +518,7 @@ def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
         "sending_at",  # F7-05b: cuándo se reclamó
         "dispatch_attempts",  # F7-05c: reintentos devueltos y no antes de cuándo
         "not_before",
+        "provider_error_code",  # F7-06a: el motivo del fallo, junto al estado
     )
     asked_column = "SELECT has_column_privilege(current_user, 'messages', %s, 'UPDATE')"
     sql(

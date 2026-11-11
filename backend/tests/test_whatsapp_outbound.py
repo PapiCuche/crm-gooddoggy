@@ -219,6 +219,23 @@ def test_the_limiter_counts_per_account_and_window_and_stops_a_burst_before_meta
     assert limiter.allow(new_id())  # otra cuenta tiene su propio cupo
 
 
+def test_the_limiter_window_is_fixed_when_the_key_is_created_and_never_extended(
+    settings: Any, redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.CHANNEL_SEND_LIMIT = (5, 3)
+    expired: list[str] = []
+    real = redis.expire
+
+    def spy(key: str, window: int) -> None:
+        expired.append(key)
+        real(key, window)
+
+    monkeypatch.setattr(redis, "expire", spy)
+    account = new_id()
+    assert [limiter.allow(account) for _ in range(4)] == [True] * 4
+    assert expired == [f"chn:send:{account}"]  # una vez: otra más alargaría la ventana sin fin
+
+
 def test_a_limiter_key_that_lost_its_expiry_gets_one_again(settings: Any, redis: FakeRedis) -> None:
     settings.CHANNEL_SEND_LIMIT = (2, 5)
     account = new_id()

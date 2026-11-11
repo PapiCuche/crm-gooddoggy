@@ -213,10 +213,11 @@ protected_modules = ["apps.deals.commands", "apps.deals.opportunities", "apps.de
 allowed_importers = ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages"]
 
 [[tool.importlinter.contracts]]
-name = "Entrantes de WhatsApp: solo el procesador importa inbound (F7-04a; no pide permisos: actor de sistema)"
+name = "Entrantes y estados de WhatsApp: solo el procesador los importa (F7-04a, F7-06a; actor de sistema)"
 type = "protected"
-protected_modules = ["apps.conversations.inbound"]
-allowed_importers = ["apps.conversations.ingress"]
+protected_modules = ["apps.conversations.inbound", "apps.conversations.delivery"]
+# `delivery` usa el instante creíble de `inbound` (`inbound.instant`)
+allowed_importers = ["apps.conversations.ingress", "apps.conversations.delivery"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de tareas: solo su API los importa (F5-08a)"
@@ -237,6 +238,7 @@ allowed_importers = [
     "apps.conversations.tasks",
     "apps.conversations.accounts",  # F7-02c: usa `credentials`
     "apps.conversations.inbound",  # F7-04: `record_inbound`
+    "apps.conversations.delivery",  # F7-06a: `advance_delivery` y el estado de la cuenta
     "apps.conversations.whatsapp",  # F7-05b: `credentials.open_token`
 ]
 

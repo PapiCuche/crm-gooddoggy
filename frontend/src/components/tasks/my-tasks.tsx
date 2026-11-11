@@ -7,6 +7,7 @@ import { useTenant } from "@/components/app-shell/tenant-context";
 import type { TasksListParams } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
+import { NewTask } from "./new-task";
 import { dayRange } from "./task-time";
 import { TasksList } from "./tasks-list";
 
@@ -53,6 +54,7 @@ export function MyTasks() {
         <h1 className="text-[28px] leading-tight font-bold tracking-[0.02em]">{t("title")}</h1>
         <p className="text-muted">{t("intro", { organization: organization.name })}</p>
       </div>
+      <NewTask withToday />
       <div
         role="tablist"
         aria-label={t("tabs.label")}
