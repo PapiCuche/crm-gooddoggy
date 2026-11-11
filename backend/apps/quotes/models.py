@@ -179,6 +179,8 @@ class QuoteItem(TenantModel):
     )
     discount_value = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     discount_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    manual_price_override = models.BooleanField(default=False)  # precio escrito a mano (F5-09b)
+    override_reason = models.CharField(max_length=200, null=True, blank=True)  # noqa: DJ001
     final_unit_price = models.DecimalField(max_digits=14, decimal_places=2)
     line_total = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3)
@@ -224,7 +226,178 @@ class QuoteItem(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(currency__regex="^[A-Z]{3}$"), name="quote_items_currency_ck"
             ),
+            models.CheckConstraint(  # un precio manual lleva su motivo; ninguno más
+                condition=models.Q(
+                    manual_price_override=True,
+                    override_reason__isnull=False,
+                    override_reason__regex=r"\S",
+                )
+                | models.Q(manual_price_override=False, override_reason__isnull=True),
+                name="quote_items_override_ck",
+            ),
         ]
 
     def __str__(self) -> str:
         return self.sku_snapshot
+
+
+class ApprovalReason(models.TextChoices):
+    DISCOUNT_OVER_LIMIT = "DISCOUNT_OVER_LIMIT"
+    MANUAL_PRICE = "MANUAL_PRICE"
+    AI_CREATED = "AI_CREATED"
+
+
+class ApprovalStatus(models.TextChoices):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class DiscountPolicy(TenantModel):
+    """El descuento máximo de un rol (§E.1, 04 §L.3): en porcentaje y, si se quiere, en importe;
+    para una lista de precios o, sin ella, para todas. Con varios roles manda el límite más alto; un
+    rol sin política tiene 0 %. Es configuración: se cambia por sus comandos, con auditoría."""
+
+    id = uuid7_primary_key()
+    role = models.ForeignKey(
+        "access.Role", models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    max_discount_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    max_discount_amount = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True
+    )
+    currency = models.CharField(max_length=3, null=True, blank=True)  # noqa: DJ001
+    applies_to_price_list = models.ForeignKey(
+        "pricing.PriceList",
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "discount_policies"
+        constraints = [
+            models.UniqueConstraint(  # una por rol para todas las listas...
+                fields=["organization_id", "role"],
+                condition=models.Q(applies_to_price_list__isnull=True),
+                name="discount_policies_all_lists_uq",
+            ),
+            models.UniqueConstraint(  # ...y una por rol y lista
+                fields=["organization_id", "role", "applies_to_price_list"],
+                condition=models.Q(applies_to_price_list__isnull=False),
+                name="discount_policies_list_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_discount_percent__gte=0, max_discount_percent__lte=100),
+                name="discount_policies_percent_ck",
+            ),
+            models.CheckConstraint(  # un tope en importe lleva su moneda, y no es negativo
+                condition=models.Q(max_discount_amount__isnull=True)
+                | models.Q(
+                    max_discount_amount__gte=0, currency__isnull=False, currency__regex="^[A-Z]{3}$"
+                ),
+                name="discount_policies_amount_ck",
+            ),
+            models.CheckConstraint(  # la FK compuesta de la lista lleva la moneda: sin ella no vale
+                condition=models.Q(applies_to_price_list__isnull=True)
+                | models.Q(currency__isnull=False),
+                name="discount_policies_list_currency_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(version__gte=1), name="discount_policies_version_ck"
+            ),
+        ]
+
+
+class QuoteApproval(TenantModel):
+    """La solicitud de aprobar una cotización (§E.6): por un descuento sobre el límite de quien la
+    pidió, por un precio manual o porque la creó la IA (sin persona que la pidiera). Una decisión
+    es definitiva y quien aprueba no es quien la pidió (separación de funciones)."""
+
+    Status, Reason = ApprovalStatus, ApprovalReason
+
+    id = uuid7_primary_key()
+    quote = models.ForeignKey(
+        Quote, models.PROTECT, related_name="approvals", db_constraint=False, db_index=False
+    )
+    reason = models.CharField(max_length=20, choices=ApprovalReason.choices)
+    requested_by_user_id = models.UUIDField(null=True, blank=True)  # nadie: la IA
+    requested_discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True
+    )
+    limit_percent_at_request = models.DecimalField(max_digits=5, decimal_places=2)
+    status = models.CharField(
+        max_length=10, choices=ApprovalStatus.choices, default=ApprovalStatus.PENDING
+    )
+    decided_by_user_id = models.UUIDField(null=True, blank=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    comment = models.CharField(max_length=500, default="", blank=True)  # texto libre
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "quote_approvals"
+        indexes = [
+            models.Index(fields=["organization_id", "quote"], name="quote_approvals_quote_idx")
+        ]
+        constraints = [
+            models.UniqueConstraint(  # una solicitud abierta por cotización
+                fields=["organization_id", "quote"],
+                condition=models.Q(status="PENDING"),
+                name="quote_approvals_one_pending_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(reason__in=ApprovalReason.values),
+                name="quote_approvals_reason_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=ApprovalStatus.values),
+                name="quote_approvals_status_ck",
+            ),
+            models.CheckConstraint(  # solo la IA no tiene a nadie que la pida
+                condition=models.Q(reason="AI_CREATED", requested_by_user_id__isnull=True)
+                | (~models.Q(reason="AI_CREATED") & models.Q(requested_by_user_id__isnull=False)),
+                name="quote_approvals_requester_ck",
+            ),
+            models.CheckConstraint(  # abierta: sin decisión; decidida: con fecha (y quien, salvo
+                condition=models.Q(  # una cancelada por el sistema)
+                    status="PENDING", decided_at__isnull=True, decided_by_user_id__isnull=True
+                )
+                | models.Q(
+                    status__in=["APPROVED", "REJECTED"],
+                    decided_at__isnull=False,
+                    decided_by_user_id__isnull=False,
+                )
+                | models.Q(status="CANCELLED", decided_at__isnull=False),
+                name="quote_approvals_decided_ck",
+            ),
+            models.CheckConstraint(  # quien aprueba no es quien pidió; rechazar lleva su motivo
+                condition=~models.Q(
+                    status="APPROVED", decided_by_user_id=models.F("requested_by_user_id")
+                )
+                & (~models.Q(status="REJECTED") | models.Q(comment__regex=r"\S")),
+                name="quote_approvals_separation_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(requested_discount_percent__isnull=True)
+                | models.Q(requested_discount_percent__gte=0, requested_discount_percent__lte=100),
+                name="quote_approvals_percent_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    limit_percent_at_request__gte=0, limit_percent_at_request__lte=100
+                ),
+                name="quote_approvals_limit_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(version__gte=1), name="quote_approvals_version_ck"
+            ),
+        ]
