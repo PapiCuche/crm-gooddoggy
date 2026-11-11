@@ -71,19 +71,15 @@ class Socket(ApplicationCommunicator):
     async def send_to(self, text: str | None = None, data: bytes | None = None) -> None:
         await self.send_input({"type": "websocket.receive", "text": text, "bytes": data})
 
-    async def frames(self, count: int | None = None) -> list[dict[str, Any]]:
-        got: list[dict[str, Any]] = []
-        while count is None or len(got) < count:
-            if await self.receive_nothing(timeout=0.15 if count is None else 1.0):
-                break
-            out = await self.receive_output(timeout=1)
-            assert out["type"] == "websocket.send", out
-            got.append(json.loads(out["text"]))
-        return got
+    async def frames(self, count: int) -> list[dict[str, Any]]:
+        """Las próximas `count` tramas: se espera un número, no un silencio (la carga no importa)."""
+        got = [await self.receive_output(timeout=10) for _ in range(count)]
+        assert all(out["type"] == "websocket.send" for out in got), got
+        return [json.loads(out["text"]) for out in got]
 
     async def closed_with(self) -> Any:
         try:
-            out = await self.receive_output(timeout=2)
+            out = await self.receive_output(timeout=6)
         except TimeoutError:
             return None
         return out.get("code") if out["type"] == "websocket.close" else out
@@ -159,22 +155,24 @@ def test_each_session_receives_only_what_its_scope_and_organization_reach(
             async with connected("org-a", inbox.sam) as sam:
                 for name in ("vera", "sam", "ana", "team", "nobody", "both"):
                     await push(inbox.a, "message.received", inbox.convs[name])
-                assert seen(inbox, await ana.frames()) == set(inbox.convs) - {"b"}
-                assert seen(inbox, await vera.frames()) == {"vera", "nobody", "both"}  # OWN
-                assert seen(inbox, await sam.frames()) == {"sam", "team", "nobody", "both"}  # TEAM
+                assert seen(inbox, await ana.frames(6)) == set(inbox.convs) - {"b"}
+                assert seen(inbox, await vera.frames(3)) == {"vera", "nobody", "both"}  # OWN
+                assert seen(inbox, await sam.frames(4)) == {"sam", "team", "nobody", "both"}  # TEAM
                 async with connected("org-b", inbox.luis) as luis:  # de otra organización
                     await push(inbox.a, "message.received", inbox.convs["ana"])
                     await push(inbox.b, "message.received", inbox.convs["ana"])  # id de A, en B
-                    assert len(await ana.frames()) == 1 and await luis.frames() == []
-                    await push(inbox.b, "message.received", inbox.convs["b"])
-                    assert seen(inbox, await luis.frames()) == {"b"} and await ana.frames() == []
+                    await push(inbox.b, "message.received", inbox.convs["b"])  # centinela de luis
+                    assert seen(inbox, await luis.frames(1)) == {"b"}  # el de A no llegó antes
+                    assert seen(inbox, await ana.frames(1)) == {"ana"}
                 taken = inbox.convs["nobody"]  # sam la toma: vera ya no la ve, y sigue abierta
                 migrator.execute(
                     "UPDATE conversations SET assigned_user_id = %s WHERE id = %s",
                     [inbox.sam.pk, taken],
                 )
                 await push(inbox.a, "message.received", taken)
-                assert await vera.frames() == [] and len(await ana.frames()) == 1
+                await push(inbox.a, "message.received", inbox.convs["vera"])  # centinela
+                assert seen(inbox, await vera.frames(1)) == {"vera"}  # la tomada no llegó
+                assert seen(inbox, await ana.frames(2)) == {"nobody", "vera"}
 
     run(go)
 
@@ -199,7 +197,7 @@ def test_the_outbox_reaches_the_connection_with_only_type_ids_and_time(
         async with connected("org-a", inbox.vera) as vera:
             message = await sync_to_async(receive)()
             assert await sync_to_async(publish_outbox)() == 1
-            (event,) = await vera.frames()
+            (event,) = await vera.frames(1)
             assert event == {"type": "message.received", "id": str(message.pk),
                              "conversation_id": str(convo.pk), "at": event["at"]}  # fmt: skip
             assert SECRET not in json.dumps(event) and "vera" not in json.dumps(event)
@@ -221,7 +219,7 @@ def test_a_member_who_loses_the_permission_or_the_membership_is_dropped(
     async def go() -> None:
         async with connected("org-a", inbox.vera) as vera:
             await push(inbox.a, "message.received", inbox.convs["vera"])
-            assert len(await vera.frames()) == 1
+            assert len(await vera.frames(1)) == 1
             migrator.execute(lose, [inbox.m["vera"]])
             await push(inbox.a, "message.received", inbox.convs["vera"])
             assert await vera.closed_with() == FORBIDDEN  # sin el dato
@@ -308,10 +306,11 @@ def test_the_client_can_only_ping_and_a_big_or_binary_frame_closes(
             assert await vera.frames(1) == [{"type": "pong"}]
             for hostile in HOSTILE:
                 await vera.send_to(hostile)
-            assert await vera.frames() == []  # ni respuesta ni cambio
+            await vera.send_to(PING)
+            assert await vera.frames(1) == [{"type": "pong"}]  # los hostiles no respondieron
             await push(inbox.a, "message.received", inbox.convs["ana"])  # no es de vera
             await push(inbox.a, "message.received", inbox.convs["vera"])
-            assert seen(inbox, await vera.frames()) == {"vera"}
+            assert seen(inbox, await vera.frames(1)) == {"vera"}
             await (vera.send_to(data=frame) if isinstance(frame, bytes) else vera.send_to(frame))
             assert await vera.closed_with() == 1009
             await push(inbox.a, "message.received", inbox.convs["vera"])
@@ -323,7 +322,7 @@ def test_the_client_can_only_ping_and_a_big_or_binary_frame_closes(
 def test_idle_session_membership_and_permission_are_checked_while_connected(
     inbox: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
-    settings.INBOX_WS_RECHECK_SECONDS, settings.INBOX_WS_IDLE_SECONDS = 0.1, 0.8
+    settings.INBOX_WS_RECHECK_SECONDS, settings.INBOX_WS_IDLE_SECONDS = 0.1, 2.5
 
     async def go() -> None:
         async with connected("org-a", inbox.vera) as vera, connected("org-a", inbox.sam) as sam:
@@ -332,7 +331,7 @@ def test_idle_session_membership_and_permission_are_checked_while_connected(
                 assert await sam.closed_with() == NO_SESSION
                 migrator.execute(LOSE_ROLE, [inbox.m["ana"]])  # sin esperar a un evento
                 assert await ana.closed_with() == FORBIDDEN
-                for _ in range(20):  # con `ping` sigue abierta más allá del plazo de inactividad
+                for _ in range(60):  # con `ping` sigue abierta más allá del plazo de inactividad
                     await vera.send_to(PING)
                     assert await vera.frames(1) == [{"type": "pong"}]
                     await asyncio.sleep(0.05)
