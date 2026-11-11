@@ -1,11 +1,10 @@
 """El adaptador de WhatsApp (F7-05b; ADR-029 §6, §8): `POST /<versión>/<phone_number_id>/messages`
 por `core.http` con la versión de la Graph API fijada en `META_GRAPH_VERSION`.
 
-Meta no deduplica, así que lo que no se sabe no se reenvía: un fallo antes de enviar o un «demasiado
-rápido» es `TemporaryChannelError`; un tiempo agotado, un corte o un 5xx, `AmbiguousChannelError`
-(el mensaje sigue `SENDING`); un error de Meta se normaliza a un motivo cerrado y nunca se guarda ni
-se registra su texto. El token se abre solo para esta llamada y va en la cabecera, no en la URL;
-`biz_opaque_callback_data` lleva el id de nuestro mensaje, para reconciliar el estado del webhook.
+Meta no deduplica, así que lo que no se sabe no se reenvía: un fallo antes de enviar o «demasiado
+rápido» es `TemporaryChannelError`; un tiempo agotado, un corte o un 5xx, `AmbiguousChannelError`.
+Un error de Meta se normaliza a un motivo cerrado, nunca su texto. El token se abre solo para esta
+llamada y va en la cabecera; `biz_opaque_callback_data` lleva el id de nuestro mensaje.
 """
 
 import json
@@ -28,7 +27,6 @@ from core.observability.logging import get_logger
 logger = get_logger(__name__)
 PHONE = r"^\+[1-9][0-9]{6,14}$"
 EXTERNAL_ID = r"^[A-Za-z0-9._=-]{1,200}$"  # el `wamid`: se guarda en `messages.external_message_id`
-# Código de error de Meta -> motivo cerrado propio (ADR-029 §8); a reconfirmar con su documentación.
 REASONS = {190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNREACHABLE"}
 TOO_FAST = (130429, 131056)  # rendimiento o par: Meta no lo aceptó, vale esperar y reintentar
 

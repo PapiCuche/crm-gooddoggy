@@ -3,11 +3,10 @@ se quedan.
 
 `message.queued` (outbox, F6-04a) trae el id del mensaje. El despachador **reclama** el mensaje
 (`QUEUED` → `SENDING`), llama al canal **fuera de toda transacción** y cierra el resultado en otra
-(ADR-029 §6): `dispatch_message` es una tarea de plataforma que abre su `tenant_scope` en cada paso.
-Dos despachadores a la vez no envían dos veces (solo se reclama un `QUEUED`). Un fallo pasajero
-(seguro que el canal no recibió nada) devuelve el reclamo y reintenta con espera creciente; al
-agotarse queda `FAILED` (`RETRIES_EXHAUSTED`). Un resultado ambiguo no se reenvía: sigue `SENDING`.
-Ningún registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket del Inbox.
+(ADR-029 §6): `dispatch_message` es una tarea de plataforma con un `tenant_scope` por paso. Un fallo
+pasajero (seguro que no llegó) devuelve el reclamo y reintenta con espera creciente; al agotarse
+queda `FAILED` (`RETRIES_EXHAUSTED`). Un resultado ambiguo no se reenvía: sigue `SENDING`. Ningún
+registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket del Inbox.
 """
 
 import datetime as dt
@@ -81,12 +80,11 @@ def dispatch_event(task: Any, event_id: str) -> None:
     aquí, dentro de su transacción: encola `dispatch_message`."""
     event = OutboxEvent.objects.filter(id=event_id, event_type="message.queued").first()
     if event is not None:
-        dispatch_message.apply_async(
-            kwargs={
-                "message_id": str(event.aggregate_id),
-                "organization_id": str(require().organization_id),
-            }  # fmt: skip
-        )
+        ids = {
+            "message_id": str(event.aggregate_id),
+            "organization_id": str(require().organization_id),
+        }
+        dispatch_message.apply_async(kwargs=ids)
 
 
 @subscribe(*realtime.EVENTS)
@@ -114,9 +112,8 @@ def publish_realtime(task: Any, event_id: str) -> None:
 
 @platform_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
 def dispatch_message(task: Any, message_id: str, organization_id: str) -> None:
-    """Despacha un mensaje por su id y su organización (las pone quien encola: el handler del
-    evento o el barredor); cada paso abre su `tenant_scope`, así que un mensaje de otra
-    organización no existe."""
+    """Despacha un mensaje por su id y su organización (las pone quien encola: el handler o el
+    barredor); cada paso abre su `tenant_scope`, así que uno de otra organización no existe."""
     deliver(task, UUID(organization_id), UUID(message_id))
 
 

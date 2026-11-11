@@ -683,11 +683,10 @@ def release_conversation(
 
 def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
     """Reclama un mensaje saliente `QUEUED` (F7-05b): `QUEUED` → `SENDING` y devuelve lo que el
-    adaptador necesita, leído aquí. Con la conversación bloqueada y la cuenta con bloqueo
-    **compartido** (`FOR SHARE`: desconectarla espera, pero dos envíos de una cuenta no se
-    serializan) re-evalúa la política justo antes de enviar; si ya no se puede, queda `FAILED` con
-    el motivo y devuelve `None`. Idempotente: un mensaje que no está `QUEUED`, ajeno, inexistente o
-    que otro despachador reclama a la vez da `None`. Termina antes de llamar al canal."""
+    adaptador necesita. Con la conversación bloqueada y la cuenta con `FOR SHARE` (desconectarla
+    espera; dos envíos de una cuenta no se serializan) re-evalúa la política justo antes de enviar:
+    si ya no se puede, queda `FAILED` con el motivo y devuelve `None`. Idempotente: lo que no está
+    `QUEUED`, ajeno, inexistente o que otro despachador reclama a la vez da `None`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
@@ -727,8 +726,7 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
 
 
 def release_outbound(ctx: TenantContext, *, message_id: UUID) -> bool:
-    """Devuelve a la cola un `SENDING` que seguro no salió (`TemporaryChannelError`), nunca tras un
-    resultado ambiguo. `False` si ya no estaba `SENDING`."""
+    """Devuelve a la cola un `SENDING` que seguro no salió, nunca tras un resultado ambiguo."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
@@ -742,9 +740,8 @@ def release_outbound(ctx: TenantContext, *, message_id: UUID) -> bool:
 
 
 def settle_outbound(ctx: TenantContext, *, message_id: UUID, result: SendResult) -> Message | None:
-    """Cierra un `SENDING` con lo que respondió el adaptador: `SENT` (y `DELIVERED` si el canal lo
-    entregó) con el id externo, o `FAILED` con un motivo de `channels.REASONS` (uno desconocido es
-    `ADAPTER_REJECTED`). `None` si ya no estaba `SENDING`."""
+    """Cierra un `SENDING` con la respuesta del adaptador: `SENT` (y `DELIVERED` si el canal lo
+    entregó) o `FAILED` con un motivo de `channels.REASONS` (uno raro: `ADAPTER_REJECTED`)."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):

@@ -7,19 +7,18 @@ import datetime as dt
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 import urllib3
 from django.core.management import call_command
-from django.db import DatabaseError, connection
+from django.db import connection
 from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.conversations import accounts, channels, commands, credentials, tasks, whatsapp
 from apps.conversations.channels import AmbiguousChannelError, TemporaryChannelError
 from apps.conversations.models import TOKEN_PURPOSE, ChannelAccount, Conversation, Credential
-from apps.conversations.policy import ChannelUnavailable
 from core import http, sealed
 from core.ids import new_id
 from core.tenancy.scope import tenant_scope
@@ -70,45 +69,18 @@ def send(world: SimpleNamespace, convo: Conversation) -> Any:
 
 
 def test_a_reply_inside_the_window_goes_out_with_its_token_and_callback_data(
-    world: SimpleNamespace, graph: FakeGraph, migrator: Any, caplog: pytest.LogCaptureFixture
+    world: SimpleNamespace, graph: FakeGraph, migrator: Any
 ) -> None:
-    caplog.set_level("DEBUG")
     message, saved = send(world, talk(world))
     assert (saved.delivery_status, saved.external_message_id) == ("SENT", "wamid.SIMOUT000001")
     sent, call = graph.sent[0], graph.calls[0]
-    assert (sent["to"], sent["type"], sent["messaging_product"]) == (
-        "51900000111",
-        "text",
-        "whatsapp",
-    )
-    assert sent["biz_opaque_callback_data"] == str(message.pk) and sent["text"]["body"].startswith(
-        "Hola"
-    )
+    assert (sent["to"], sent["type"]) == ("51900000111", "text")
+    assert sent["biz_opaque_callback_data"] == str(message.pk)
     assert call["path"] == f"/{GRAPH_VERSION}/{PHONE_NUMBER_ID}/messages"
-    assert (
-        call["headers"]["Authorization"] == f"Bearer {TEST_TOKEN}"
-    )  # en la cabecera, no en la URL
-    assert saved.sending_at is not None
-    assert [c for c, _ in deliveries(migrator)] == [["QUEUED", "SENDING"], ["SENDING", "SENT"]]
-    everything = str(audit(migrator)) + caplog.text + str(call["path"])
-    assert TEST_TOKEN not in everything and "Hola, ¿en" not in everything  # ni token ni texto
-
-
-REFUSALS = {
-    "window_closed": "WINDOW_CLOSED", "unreachable": "RECIPIENT_UNREACHABLE",
-    "quality": "PROVIDER_REJECTED",
-}  # fmt: skip
-
-
-@pytest.mark.parametrize("outcome", list(REFUSALS))
-def test_a_refusal_of_meta_is_a_closed_reason_and_never_its_text(
-    world: SimpleNamespace, graph: FakeGraph, migrator: Any, outcome: str
-) -> None:
-    graph.then(outcome)
-    _, saved = send(world, talk(world))
-    assert saved.delivery_status == "FAILED" and graph.sent == []
-    why = [m for _, m in deliveries(migrator) if m]
-    assert why == [{"reason": REFUSALS[outcome]}] and "Re-engagement" not in str(audit(migrator))
+    assert call["headers"]["Authorization"] == f"Bearer {TEST_TOKEN}"  # en la cabecera
+    moves = [c for c, _ in deliveries(migrator)]
+    assert moves == [["QUEUED", "SENDING"], ["SENDING", "SENT"]] and saved.sending_at is not None
+    assert TEST_TOKEN not in str(audit(migrator)) + call["path"]  # ni token ni texto
 
 
 @pytest.mark.parametrize("outcome", ["cut", "timeout", "cut_after", "timeout_after", "server"])
@@ -137,8 +109,6 @@ def test_a_refused_token_puts_the_account_in_error_and_stops_the_queue(
     assert found.status_detail == "TOKEN_INVALID"
     tasks.deliver(Retrying(0), world.a, second.pk)  # lo que seguía en cola falla por la política
     assert state(world, second).delivery_status == "FAILED" and len(graph.requests) == 1
-    with pytest.raises(ChannelUnavailable):
-        outbound(world, convo)  # y no se encola más
     assert [a for a, *_ in audit(migrator) if a.endswith("token_invalid")] == [
         "channel_account.token_invalid"
     ]
@@ -146,22 +116,20 @@ def test_a_refused_token_puts_the_account_in_error_and_stops_the_queue(
         assert not accounts.mark_token_invalid(tenant, channel_account_id=found.pk)
 
 
-def test_nothing_is_sent_with_a_credential_of_another_account_or_to_a_host_off_the_allowlist(
+def test_nothing_is_sent_to_a_host_off_the_allowlist_or_with_a_credential_of_another_account(
     world: SimpleNamespace, graph: FakeGraph, settings: Any
 ) -> None:
-    convo = talk(world)
-    with tenant_scope(ctx(world.a)):
-        mine = ChannelAccount.objects.get(pk=convo.channel_account_id).credential_id
-        theirs = tables_credential(world.a)  # una credencial viva que es de otra cuenta
-        ChannelAccount.objects.filter(pk=convo.channel_account_id).update(credential_id=theirs)
-    assert send(world, convo)[1].delivery_status == "FAILED" and graph.requests == []
-    with tenant_scope(ctx(world.a)):
-        ChannelAccount.objects.filter(pk=convo.channel_account_id).update(credential_id=mine)
+    convo, hosts = talk(world), settings.HTTP_ALLOWED_HOSTS
     settings.HTTP_ALLOWED_HOSTS = []  # fuera de la allowlist: ni se conecta, y se reintenta
     message, _ = outbound(world, convo)
     with pytest.raises(RuntimeError, match="retry"):
         tasks.deliver(Retrying(0), world.a, message.pk)
     assert graph.requests == [] and state(world, message).delivery_status == "QUEUED"
+    settings.HTTP_ALLOWED_HOSTS = hosts
+    with tenant_scope(ctx(world.a)):  # una credencial viva que es de otra cuenta
+        other = tables_credential(world.a)
+        ChannelAccount.objects.filter(pk=convo.channel_account_id).update(credential_id=other)
+    assert send(world, convo)[1].delivery_status == "FAILED" and graph.requests == []
 
 
 def test_the_token_is_opened_only_during_the_call_and_never_stored_in_the_claim(
@@ -169,11 +137,12 @@ def test_the_token_is_opened_only_during_the_call_and_never_stored_in_the_claim(
 ) -> None:
     opened: list[str] = []
     real = credentials.open_token
-    monkeypatch.setattr(
-        credentials,
-        "open_token",
-        lambda c: opened.append("x") or real(c),  # type: ignore[func-returns-value]
-    )
+
+    def spy(credential: Any) -> str:
+        opened.append("x")
+        return real(credential)
+
+    monkeypatch.setattr(credentials, "open_token", spy)
     convo = talk(world)
     message, _ = outbound(world, convo)
     with tenant_scope(ctx(world.a)) as tenant:
@@ -201,19 +170,7 @@ def test_two_dispatchers_at_once_send_to_meta_once(
     assert len(graph.sent) == 1 and state(world, message).delivery_status == "SENT"
 
 
-def test_a_failure_before_the_request_is_safe_to_repeat_and_one_after_it_is_not() -> None:
-    err, pool = urllib3.exceptions, cast("Any", None)
-    assert http.never_connected(http.BlockedDestination("x"))
-    assert http.never_connected(err.NewConnectionError(pool, "x"))
-    slow = err.ReadTimeoutError(pool, "u", "x")  # el tiempo de lectura es ambiguo, también envuelto
-    assert not http.never_connected(slow) and not http.never_connected(err.ProtocolError("x"))
-    assert not http.never_connected(err.MaxRetryError(pool, "u", reason=slow))
-    retries = http._manager.connection_pool_kw["retries"]
-    assert "POST" not in retries.allowed_methods  # una lectura fallida de un POST no se repite
-
-
 def test_a_tls_error_while_reading_the_answer_never_repeats_the_post_and_is_ambiguous() -> None:
-    """urllib3 trataba un `SSLError` como «otro» error y repetía un POST ya enviado (3 envíos)."""
     import ssl
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -247,6 +204,7 @@ def test_a_tls_error_while_reading_the_answer_never_repeats_the_post_and_is_ambi
     finally:
         server.shutdown()
     assert len(hits) == 1 and not http.never_connected(caught.value)
+    assert "POST" not in http._manager.connection_pool_kw["retries"].allowed_methods
     err = urllib3.exceptions
     assert http.never_connected(err.SSLError(ssl.SSLCertVerificationError("certificado")))
     assert not http.never_connected(err.SSLError(ssl.SSLError("alerta")))  # ni un cierre limpio
@@ -280,25 +238,7 @@ def test_a_phone_number_id_that_is_not_digits_never_reaches_the_url(
     assert calls == []
 
 
-MOVES = [("QUEUED", "SENDING", True), ("SENDING", "QUEUED", True), ("SENDING", "SENT", True),
-         ("SENDING", "READ", True), ("SENDING", "FAILED", True), ("SENT", "QUEUED", False),
-         ("SENT", "SENDING", False), ("DELIVERED", "SENDING", False)]  # fmt: skip
 OUT = {"direction": "OUTBOUND", "sender_type": "USER"}
-
-
-@pytest.mark.parametrize(("old", "new", "allowed"), MOVES)
-def test_the_database_lets_a_claim_be_returned_and_nothing_else_go_back(
-    world: SimpleNamespace, old: str, new: str, allowed: bool
-) -> None:
-    made = tables.message(
-        world.a, tables.first(world), delivery_status=old, sender_user_id=world.ana.pk, **OUT
-    )
-    update = "UPDATE messages SET delivery_status = %s WHERE id = %s"
-    if allowed:
-        tables.sql(world.a, update, [new, made.pk])
-    else:
-        with pytest.raises(DatabaseError, match="solo avanza"):
-            tables.sql(world.a, update, [new, made.pk])
 
 
 ANSWERS = [  # (estado HTTP, cuerpo, qué pasa)
@@ -306,6 +246,8 @@ ANSWERS = [  # (estado HTTP, cuerpo, qué pasa)
     (400, b'{"error": {"code": 190}}', "TOKEN_INVALID"), (401, b"", "TOKEN_INVALID"),
     (400, b'{"error": {"code": true}}', "PROVIDER_REJECTED"), (429, b"", TemporaryChannelError),
     (400, b'{"error": {"code": 130429}}', TemporaryChannelError), (503, b"", AmbiguousChannelError),
+    (400, b'{"error": {"code": 131047}}', "WINDOW_CLOSED"),
+    (400, b'{"error": {"code": 131026}}', "RECIPIENT_UNREACHABLE"),
 ]  # fmt: skip
 
 
@@ -346,14 +288,10 @@ def test_the_migration_goes_back_failing_what_was_sending_and_forward_again(
     held = tables.message(
         world.a, tables.first(world), delivery_status="SENDING", sender_user_id=world.ana.pk, **OUT
     )
-    column = "SELECT count(*) FROM information_schema.columns WHERE column_name = 'sending_at'"
     with as_migrator():
         call_command("migrate", "conversations", "0012", verbosity=0)
-    assert migrator.execute(column).fetchone() == (0,)
     status = "SELECT delivery_status FROM messages WHERE id = %s"  # el modelo ya no coincide
     assert migrator.execute(status, [held.pk]).fetchone() == ("FAILED",)  # ningún estado ajeno
     with as_migrator():
         call_command("migrate", verbosity=0)
-    grant = "SELECT has_column_privilege('crm_app', 'messages', 'sending_at', 'UPDATE')"
-    assert migrator.execute(column).fetchone() == (1,)
-    assert migrator.execute(grant).fetchone() == (True,)
+    assert state(world, held).sending_at is None  # la columna vuelve

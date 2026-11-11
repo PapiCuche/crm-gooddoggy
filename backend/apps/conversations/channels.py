@@ -1,13 +1,11 @@
 """Adaptadores de canal (F6-04b, F7-05b; ADR-010, ADR-029 §6): lo único que cambia de un canal a
 otro.
 
-`ChannelAdapter.send` recibe un `Claim`: el mensaje que el despachador ya reclamó (`SENDING`) con
-todo lo que hace falta para enviarlo, leído antes; **no toca la base de datos y se llama fuera de
-toda transacción**. Devuelve un `SendResult` (un fallo definitivo lleva un motivo corto y fijo,
-nunca el texto del mensaje ni el error del proveedor) o lanza: `TemporaryChannelError` cuando el
-canal seguro no recibió nada (el despachador devuelve el reclamo y reintenta) o
-`AmbiguousChannelError` cuando pudo recibirlo y no se sabe (no se reenvía a ciegas: Meta no
-deduplica).
+`ChannelAdapter.send` recibe un `Claim` (el mensaje reclamado, `SENDING`, con lo que hace falta,
+leído antes): **no toca la base de datos y se llama fuera de toda transacción**. Devuelve un
+`SendResult` (un fallo definitivo lleva un motivo corto y fijo, nunca el texto del proveedor) o
+lanza `TemporaryChannelError` (seguro que no llegó: se devuelve el reclamo y se reintenta) o
+`AmbiguousChannelError` (pudo llegar: no se reenvía a ciegas, Meta no deduplica).
 """
 
 from dataclasses import dataclass, field
@@ -35,8 +33,8 @@ class AmbiguousChannelError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Claim:
-    """Lo que el adaptador necesita de un mensaje reclamado, ya leído. `credential` es la fila
-    cifrada de la cuenta: el token solo se abre durante la llamada (`credentials.open_token`)."""
+    """Lo que el adaptador necesita de un mensaje reclamado. `credential` va cifrada: el token solo
+    se abre durante la llamada."""
 
     message_id: UUID
     account_id: UUID
@@ -59,11 +57,9 @@ class SendResult:
 
 
 class ChannelAdapter(Protocol):
-    """Contrato (ADR-010, ADR-029 §6): el despachador reclama el mensaje (`SENDING`) y llama una
-    vez por reclamo; un reclamo devuelto (`TemporaryChannelError`) o un proceso que cayó tras
-    reclamar pueden repetirlo, así que `send` **debe ser idempotente** con la clave
-    `claim.message_id` donde el canal lo permita. Ningún error lleva el texto del mensaje ni el
-    cuerpo de la respuesta del proveedor."""
+    """Contrato (ADR-010, ADR-029 §6): una llamada por reclamo, que un reclamo devuelto puede
+    repetir: `send` **debe ser idempotente** con la clave `claim.message_id` donde el canal lo
+    permita. Ningún error lleva el texto del mensaje ni la respuesta del proveedor."""
 
     def send(self, claim: Claim) -> SendResult: ...
 
