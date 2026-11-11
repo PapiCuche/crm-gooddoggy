@@ -127,8 +127,12 @@ def test_a_complete_quote_with_a_promotion_and_a_cancelled_one_are_valid(
     assert (manual.unit_price, manual.final_unit_price) == (MONEY, Decimal("90"))
     big = line(world, made, sort_order=3, discount_type="AMOUNT", discount_value=150)
     assert big.discount_value == 150  # solo el porcentaje se limita a 100
-    gone = quote(world, number="COT-000002", status="CANCELLED", cancelled_at=NOW,
-                 cancel_reason="El cliente ya no quiere")  # fmt: skip
+    gone = quote(world, number="COT-000002")  # nace en borrador y se cancela después
+    with tenant_scope(ctx(world.a)):
+        Quote.objects.filter(pk=gone.pk).update(
+            status="CANCELLED", cancelled_at=NOW, cancel_reason="El cliente ya no quiere"
+        )
+        gone = Quote.objects.get(pk=gone.pk)
     assert (gone.status, gone.revision) == ("CANCELLED", 1)
 
 

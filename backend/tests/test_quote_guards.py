@@ -90,6 +90,62 @@ def decide(world: SimpleNamespace, found: QuoteApproval, **fields: Any) -> None:
         QuoteApproval.objects.filter(pk=found.pk).update(**fields)
 
 
+def test_a_quote_is_born_a_draft_even_by_sql(world: SimpleNamespace) -> None:
+    mine = quote(world)
+    insert = (
+        "INSERT INTO quotes (id, organization_id, number, revision, contact_id, price_list_id,"
+        " status, currency, tax_mode, tax_rate, subtotal, discount_total, tax_total, total,"
+        " version, created_at, updated_at, notes_to_customer, internal_notes) VALUES"
+        " (gen_random_uuid(), %s, 'COT-900001', 1, %s, %s, %s, 'PEN', 'INCLUDED', 0.18, 0, 0, 0,"
+        " 0, 1, now(), now(), '', '')"
+    )
+    for state in ("APPROVED", "SENT", "PENDING_APPROVAL", "CANCELLED"):
+        with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
+            with pytest.raises(IntegrityError, match="born a DRAFT"), transaction.atomic():
+                cursor.execute(insert, [world.a, mine.contact_id, mine.price_list_id, state])
+
+
+def test_a_temporary_table_cannot_stand_in_for_the_quote_the_guards_read(
+    world: SimpleNamespace,
+) -> None:
+    """`crm_app` crea tablas temporales: sin `pg_temp` al final del `search_path`, una `quotes` o
+    una `quote_approvals` falsas harían creer a las guardas que la cotización es un borrador o que
+    hay una solicitud abierta o aprobada."""
+    sent, row = quote(world), None
+    row = line(world, sent)
+    go(world, sent, "SENT")
+    with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
+        cursor.execute(
+            "CREATE TEMP TABLE quotes (organization_id uuid, id uuid, status text) ON COMMIT DROP"
+        )
+        cursor.execute("INSERT INTO pg_temp.quotes VALUES (%s, %s, 'DRAFT')", [world.a, sent.pk])
+        with pytest.raises(IntegrityError, match="lines change only in DRAFT"):
+            cursor.execute("UPDATE quote_items SET sku_snapshot = 'X' WHERE id = %s", [row.pk])
+    draft = quote(world, number="COT-900002")
+    with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
+        cursor.execute(
+            "CREATE TEMP TABLE quote_approvals (organization_id uuid, quote_id uuid, status text)"
+            " ON COMMIT DROP"
+        )
+        cursor.execute(
+            "INSERT INTO pg_temp.quote_approvals VALUES (%s, %s, 'PENDING'), (%s, %s, 'APPROVED')",
+            [world.a, draft.pk, world.a, draft.pk],
+        )
+        with pytest.raises(IntegrityError, match="needs an open request"):
+            cursor.execute(
+                "UPDATE quotes SET status = 'PENDING_APPROVAL' WHERE id = %s", [draft.pk]
+            )
+
+
+def test_a_policy_for_a_price_list_needs_its_currency(world: SimpleNamespace) -> None:
+    listed = price_list(world.a, "SINMONEDA")
+    fails(
+        world,
+        "discount_policies_list_currency_ck",
+        lambda: policy(world, applies_to_price_list_id=listed, currency=None),
+    )  # la FK compuesta no mira un `NULL`: lo impone el `CHECK`
+
+
 @pytest.fixture
 def boss(world: SimpleNamespace) -> Any:
     """Otra persona de A: la que decide lo que pidió `ana`."""

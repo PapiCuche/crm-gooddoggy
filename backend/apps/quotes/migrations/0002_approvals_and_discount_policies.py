@@ -34,12 +34,21 @@ def _fail(constraint: str, message: str) -> str:
 # depende de que cada comando se acuerde): la identidad no cambia nunca; desde que sale del
 # borrador no cambian ni las líneas ni los importes; los estados siguen su grafo; y una solicitud
 # abierta y la cotización que espera se corresponden. Los disparadores corren con el rol que escribe
-# (también `crm_app`) y son `INVOKER`: no dan ningún permiso.
+# (también `crm_app`) y son `INVOKER`: no dan ningún permiso. Fijan `pg_temp` al final del
+# `search_path`: `crm_app` puede crear tablas temporales, y sin eso una `quotes` o una
+# `quote_approvals` temporales taparían a las verdaderas (F3-52).
 QUOTES_GUARD = f"""
-CREATE FUNCTION quotes_guard() RETURNS trigger LANGUAGE plpgsql AS $f$
+CREATE FUNCTION quotes_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $f$
 DECLARE allowed text[]; pending boolean; approved boolean;
 BEGIN
   IF current_user <> '__APP__' THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' THEN  -- una cotización nace en borrador, no ya aprobada o enviada
+    IF NEW.status <> 'DRAFT' THEN
+      {_fail("quotes_born_draft", "quotes: a quote is born a DRAFT")}
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.organization_id <> OLD.organization_id OR NEW.id <> OLD.id OR NEW.number <> OLD.number
      OR NEW.revision <> OLD.revision OR NEW.contact_id <> OLD.contact_id
      OR NEW.price_list_id <> OLD.price_list_id OR NEW.created_at <> OLD.created_at
@@ -82,7 +91,8 @@ BEGIN
 END $f$"""  # noqa: S608
 
 ITEMS_GUARD = f"""
-CREATE FUNCTION quote_items_guard() RETURNS trigger LANGUAGE plpgsql AS $f$
+CREATE FUNCTION quote_items_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $f$
 DECLARE org uuid; quote uuid; st text;
 BEGIN
   IF current_user <> '__APP__' THEN RETURN CASE TG_OP WHEN 'DELETE' THEN OLD ELSE NEW END; END IF;
@@ -101,7 +111,8 @@ BEGIN
 END $f$"""  # noqa: S608
 
 APPROVALS_GUARD = f"""
-CREATE FUNCTION quote_approvals_guard() RETURNS trigger LANGUAGE plpgsql AS $f$
+CREATE FUNCTION quote_approvals_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $f$
 DECLARE st text;
 BEGIN
   IF current_user <> '__APP__' THEN RETURN NEW; END IF;
@@ -127,7 +138,7 @@ BEGIN
 END $f$"""  # noqa: S608
 
 TRIGGERS = (
-    ("quotes", "quotes_guard", "BEFORE UPDATE", QUOTES_GUARD),
+    ("quotes", "quotes_guard", "BEFORE INSERT OR UPDATE", QUOTES_GUARD),
     ("quote_items", "quote_items_guard", "BEFORE INSERT OR UPDATE OR DELETE", ITEMS_GUARD),
     ("quote_approvals", "quote_approvals_guard", "BEFORE INSERT OR UPDATE", APPROVALS_GUARD),
 )
