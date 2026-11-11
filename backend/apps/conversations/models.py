@@ -418,6 +418,9 @@ class Message(TenantModel):
     delivered_at = models.DateTimeField(null=True, blank=True)
     read_at = models.DateTimeField(null=True, blank=True)
     failed_at = models.DateTimeField(null=True, blank=True)
+    # La decisión de la política (ADR-010) al encolar y tras la última revaluación: solo la
+    # instantánea de `PolicyDecision.as_json()` (permitido, modo, motivo y horas), nunca texto.
+    policy_decision = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -485,6 +488,10 @@ class Message(TenantModel):
                 condition=models.Q(body__regex=r"\S")
                 & models.Q(LessThanOrEqual(Length("body"), BODY_MAX)),
                 name="messages_body_ck",
+            ),
+            models.CheckConstraint(  # la decisión de la política es solo de lo saliente
+                condition=models.Q(policy_decision__isnull=True) | models.Q(direction="OUTBOUND"),
+                name="messages_policy_ck",
             ),
         ]
 

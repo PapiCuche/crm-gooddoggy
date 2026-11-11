@@ -235,6 +235,7 @@ SPECTACULAR_SETTINGS = {
         "AuditActorTypeEnum": "apps.audit.models.ACTOR_TYPES",
         "AuditResultEnum": "apps.audit.services.Result",
         "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
+        "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED"],  # F7-05a: no un `ModeEnum` suelto
         "RevokedEnum": ["REVOKED"],  # el único estado que la API pone a una invitación (F2-82)
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
