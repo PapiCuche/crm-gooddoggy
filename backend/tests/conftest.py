@@ -13,12 +13,20 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.conf import settings
+from django.contrib.auth.hashers import Argon2PasswordHasher
 from django.core.management import call_command
 from django.db import connection
 from psycopg.conninfo import make_conninfo
 from pytest_django import DjangoDbBlocker
 
 from config.env import database
+
+# CI-PERF-01: sigue siendo Argon2id (PASSWORD_HASHERS no cambia y test_accounts lo comprueba), pero
+# con el coste mínimo de argon2-cffi: con el de producción (100 MiB, p=8) cada `create_user` de la
+# suite costaba ~60-90 ms de CPU. Los hashes existentes se verifican con los parámetros que llevan.
+Argon2PasswordHasher.time_cost = 1
+Argon2PasswordHasher.memory_cost = 8
+Argon2PasswordHasher.parallelism = 1
 
 TENANT_TABLES: tuple[str, ...] = ("tenancy_app_widgetpart", "tenancy_app_widget", "org_sequences")
 TENANT_TABLES += ("outbox_events", "audit_logs")  # F1-06
@@ -39,6 +47,7 @@ TENANT_TABLES = ("data_import_rows", "data_imports", *TENANT_TABLES)  # F3-20: a
 # F4-01: delante, porque referencia a las membresías y a las sucursales.
 TENANT_TABLES = ("contacts", *TENANT_TABLES)
 TENANT_TABLES = ("notes", *TENANT_TABLES)  # F4-09: delante, referencia a los contactos
+TENANT_TABLES = ("contact_consent_events", "contact_consents", *TENANT_TABLES)  # F7-08
 TENANT_TABLES = ("price_lists", *TENANT_TABLES)  # F3-40: delante, referencia a las membresías
 TENANT_TABLES = ("tags", *TENANT_TABLES)  # F4-11
 TENANT_TABLES = ("contact_tags", *TENANT_TABLES)  # F4-11b: a contactos, etiquetas y membresías
@@ -47,9 +56,7 @@ TENANT_TABLES = ("variant_costs", *TENANT_TABLES)  # F3-46: delante de las varia
 TENANT_TABLES = ("promotion_items", "promotion_price_lists", "promotions", *TENANT_TABLES)  # F3-48
 # F5-01: delante, porque referencian a las membresías (y las etapas, a los pipelines)
 TENANT_TABLES = ("pipeline_stages", "pipelines", "lost_reasons", *TENANT_TABLES)
-# F5-03: delante de todo lo que referencian (etapas, motivos, contactos, variantes y membresías)
-TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
-# F6-01: delante de las oportunidades y de todo lo que referencian (contactos, equipos, personas)
+# F6-01: delante de todo lo que referencian (contactos, equipos, personas)
 TENANT_TABLES = (
     "messages",
     "conversation_assignments",
@@ -58,6 +65,9 @@ TENANT_TABLES = (
     "credentials",  # F7-02b: después de las cuentas, que la referencian
     *TENANT_TABLES,
 )
+# F5-03 y F6-06b: delante de todo lo que referencian (etapas, motivos, contactos, variantes,
+# membresías y, desde F6-06b, las conversaciones: por eso van delante de ellas)
+TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
@@ -122,7 +132,9 @@ def tenant_db(
             yield
         finally:
             connection.close()
-            for table in (
+            # CI-PERF-01: un solo mensaje (protocolo simple, una transacción implícita) en lugar de
+            # ~55 DELETE en autocommit, cada uno con su commit y su fsync. Mismo orden y tablas.
+            tables = (
                 "webhook_failures",  # F7-03b: de plataforma, antes que la ingesta
                 "webhook_ingress",
                 *TENANT_TABLES,
@@ -135,8 +147,18 @@ def tenant_db(
                 "user_mfa_code_attempts",  # F2-102: ídem
                 "users",
                 PLATFORM_AUDIT,
-            ):
-                migrator.execute(f"DELETE FROM {table}")  # noqa: S608 — nombres fijos
+            )
+            try:
+                migrator.execute("; ".join(f"DELETE FROM {table}" for table in tables))  # noqa: S608
+            except psycopg.Error:
+                for table in tables:  # el mensaje único no dice qué tabla falló: se localiza
+                    try:
+                        migrator.execute(f"DELETE FROM {table}")  # noqa: S608
+                    except psycopg.Error as exc:
+                        raise RuntimeError(
+                            f"la limpieza de tests falló en la tabla {table}"
+                        ) from exc
+                raise
 
 
 @pytest.fixture
@@ -154,3 +176,10 @@ def orgs(tenant_db: None, migrator: psycopg.Connection[Any]) -> dict[str, UUID]:
             [ids[f"widget_{org}"], ids[org], f"widget {org}"],
         )
     return ids
+
+
+@pytest.fixture(autouse=True)
+def no_realtime_broker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin broker, encolar el handler del WS del Inbox (F6-07a) dejaría eventos pendientes."""
+    target = "apps.conversations.tasks.publish_realtime.apply_async"
+    monkeypatch.setattr(target, lambda *args, **kwargs: None)

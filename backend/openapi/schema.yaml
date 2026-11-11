@@ -2704,8 +2704,9 @@ paths:
         la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send`
         y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta
         sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE`
-        (canal sin conectar) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto,
-        otra conversación u otra persona).'
+        (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana
+        de atención del canal desde el último mensaje del cliente) o `CLIENT_MESSAGE_ID_TAKEN`
+        (ese id es de otro texto, otra conversación u otra persona).'
       parameters:
       - in: path
         name: conversation_id
@@ -2766,6 +2767,54 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/messaging-policy/:
+    get:
+      operationId: conversation_messaging_policy_retrieve
+      description: 'La decisión de la política de mensajería (ADR-010) para escribir
+        ahora en la conversación, la misma que aplican el envío y el despachador.
+        Pide `conversations.view` y `messages.send`; 404: no existe, es de otra organización
+        o queda fuera del alcance de `messages.send`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagingPolicy'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -4249,7 +4298,10 @@ paths:
         quien la crea es su responsable. Con `opportunities.create` y `contacts.view`.
         400 en `contact_id` si no es un contacto vivo que quien crea pueda ver (el
         mismo error que para uno que no existe), en `pipeline_id` o en `items` (una
-        variante) si no son activos, y por cada dato inválido.
+        variante) si no son activos, en `conversation_id` si no es una conversación
+        de ese contacto dentro del alcance de `conversations.view` de quien crea (el
+        mismo error que para una que no existe o de otra organización), y por cada
+        dato inválido.
       parameters:
       - in: path
         name: org_slug
@@ -9514,7 +9566,7 @@ components:
           nullable: true
         message_type:
           type: string
-          description: '`TEXT` o `NOTE`.'
+          description: '`TEXT`, `NOTE` o `UNSUPPORTED`.'
         body:
           type: string
           nullable: true
@@ -9579,6 +9631,67 @@ components:
         * `TIER_100K` - TIER_100K
         * `TIER_UNLIMITED` - TIER_UNLIMITED
         * `TIER_NOT_SET` - TIER_NOT_SET
+    MessagingPolicy:
+      type: object
+      properties:
+        allowed:
+          type: boolean
+        mode:
+          $ref: '#/components/schemas/MessagingPolicyModeEnum'
+        reason:
+          nullable: true
+          description: |-
+            Por qué no; `null` si se puede.
+
+            * `INTERNAL_NOTE_NOT_SENDABLE` - INTERNAL_NOTE_NOT_SENDABLE
+            * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
+            * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
+            * `CONTACT_BLOCKED` - CONTACT_BLOCKED
+            * `WINDOW_CLOSED` - WINDOW_CLOSED
+          oneOf:
+          - $ref: '#/components/schemas/MessagingPolicyReasonEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        window_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cuándo cierra (o cerró) la ventana; `null` si no hay.
+        window_hours:
+          type: integer
+          nullable: true
+          description: '`null`: sin límite.'
+        evaluated_at:
+          type: string
+          format: date-time
+      required:
+      - allowed
+      - evaluated_at
+      - mode
+      - reason
+      - window_expires_at
+      - window_hours
+    MessagingPolicyModeEnum:
+      enum:
+      - FREE_FORM
+      - BLOCKED
+      type: string
+      description: |-
+        * `FREE_FORM` - FREE_FORM
+        * `BLOCKED` - BLOCKED
+    MessagingPolicyReasonEnum:
+      enum:
+      - INTERNAL_NOTE_NOT_SENDABLE
+      - CONVERSATION_CLOSED
+      - CHANNEL_UNAVAILABLE
+      - CONTACT_BLOCKED
+      - WINDOW_CLOSED
+      type: string
+      description: |-
+        * `INTERNAL_NOTE_NOT_SENDABLE` - INTERNAL_NOTE_NOT_SENDABLE
+        * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
+        * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
+        * `CONTACT_BLOCKED` - CONTACT_BLOCKED
+        * `WINDOW_CLOSED` - WINDOW_CLOSED
     MfaBackupCodes:
       type: object
       properties:
@@ -10111,6 +10224,11 @@ components:
           type: string
           format: uuid
           description: Un pipeline vivo y activo; sin él, el predeterminado.
+        conversation_id:
+          type: string
+          format: uuid
+          description: 'La conversación de origen: de ese contacto y dentro del alcance
+            de `conversations.view` de quien crea.'
       required:
       - contact_id
       - title
@@ -10203,6 +10321,11 @@ components:
         updated_at:
           type: string
           format: date-time
+        conversation_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: La conversación de origen, solo su id; `null` si no la tiene.
         items:
           type: array
           items:
@@ -10217,6 +10340,7 @@ components:
       - amount
       - assigned_user_id
       - contact
+      - conversation_id
       - created_at
       - currency
       - expected_close_date

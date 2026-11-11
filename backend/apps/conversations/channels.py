@@ -12,7 +12,10 @@ from typing import Protocol
 
 from apps.conversations.models import Message
 
-REASONS = ("CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "ADAPTER_REJECTED", "RETRIES_EXHAUSTED")
+REASONS = (  # los cuatro primeros son los de la política (`policy.REASONS`)
+    "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
+    "ADAPTER_REJECTED", "RETRIES_EXHAUSTED",
+)  # fmt: skip
 
 
 class TemporaryChannelError(Exception):
