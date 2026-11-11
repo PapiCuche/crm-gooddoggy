@@ -33,6 +33,13 @@ export function dayRange(now: number, zone: string) {
   return { start: instantAt(zone, year, month, day), next: instantAt(zone, year, month, day + 1) };
 }
 
+const two = (n: number) => String(n).padStart(2, "0");
+// Fecha y hora para los campos del formulario.
+export function fieldsOf(at: number, zone: string) {
+  const { year, month, day, hour, minute } = wall(at, zone);
+  return { date: `${year}-${two(month)}-${two(day)}`, time: `${two(hour)}:${two(minute)}` };
+}
+
 export const isOpen = (task: Task) => task.status === "PENDING" || task.status === "IN_PROGRESS";
 
 // Vencida: abierta y con la fecha ya pasada. Una de todo el día vence cuando acaba su día, no a

@@ -132,6 +132,39 @@ afterEach(() => {
 });
 
 describe("OpportunityDetail (F5-07)", () => {
+  it("con tasks.view enseña sus tareas y «Nueva tarea» las vincula a la oportunidad; sin él, nada", async () => {
+    const TASKS = `GET /api/v1/o/acme/tasks/?opportunity_id=${ID}&limit=200`;
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [TASKS]: ok({
+        results: [
+          {
+            ...{ id: "t1", type: "CALL", title: "Enviar la cotización" },
+            ...{ description: "", due_at: null, is_all_day: false, status: "PENDING" },
+            ...{ priority: "HIGH", contact: { id: "c1", display_name: "Rosa Díaz" } },
+          },
+        ],
+        next: null,
+      }),
+      "POST /api/v1/o/acme/tasks/": { status: 201, body: { id: "t2", due_at: null } },
+    });
+    show();
+    await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" });
+    expect(screen.queryByRole("heading", { name: "Tareas" })).toBeNull();
+    expect(api.mock.calls.some(([url]) => String(url).includes("/tasks/"))).toBe(false);
+    cleanup();
+    show(["opportunities.view", "tasks.view", "tasks.create"]);
+    expect(await screen.findByText("Enviar la cotización")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Nueva tarea" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Título" }), {
+      target: { value: "Llamar" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+    expect(await screen.findByText(/Tarea creada sin fecha/)).toBeVisible();
+    expect(sent(api, "POST")[0]).toMatchObject({ opportunity_id: ID, title: "Llamar" });
+  });
+
   it("enseña el cliente con su ficha, el importe, la etapa, el responsable, las líneas y el historial", async () => {
     mockApi({ [DETAIL]: ok(detail()), [PIPELINES]: pipelines });
     show();

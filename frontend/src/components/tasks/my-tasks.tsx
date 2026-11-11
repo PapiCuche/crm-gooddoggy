@@ -7,6 +7,7 @@ import { useTenant } from "@/components/app-shell/tenant-context";
 import type { TasksListParams } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
+import { NewTask } from "./new-task";
 import { dayRange } from "./task-time";
 import { TasksList } from "./tasks-list";
 
@@ -14,7 +15,8 @@ const TABS = ["today", "overdue", "upcoming"] as const;
 
 // «Mis tareas» (F5-08c, E10-01): las tareas de quien mira, en Hoy, Vencidas y Próximas. Los
 // límites del día salen de la zona de la pantalla y los pide el cliente (el servidor no los
-// calcula, F5-08b); la lista de vencidas descarta las de todo el día de hoy. Una tarea sin fecha no sale en ninguna.
+// calcula, F5-08b); la lista de vencidas descarta las de todo el día de hoy. Sin fecha, una tarea
+// no sale en ninguna: se avisa al crearla. «Nueva tarea» trae la fecha de hoy.
 export function MyTasks() {
   const t = useTranslations("tasks");
   const zone = useTimeZone() ?? "America/Lima";
@@ -53,6 +55,7 @@ export function MyTasks() {
         <h1 className="text-[28px] leading-tight font-bold tracking-[0.02em]">{t("title")}</h1>
         <p className="text-muted">{t("intro", { organization: organization.name })}</p>
       </div>
+      <NewTask withToday />
       <div
         role="tablist"
         aria-label={t("tabs.label")}

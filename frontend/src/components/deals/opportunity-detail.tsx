@@ -9,6 +9,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Plain } from "@/components/inbox/plain";
 import { useReads } from "@/components/inventory/cell-picker";
+import { LinkedTasks } from "@/components/tasks/linked-tasks";
 import { moneyText } from "@/components/pricing/margins";
 import { Button } from "@/components/ui/button";
 import { getOpportunitiesRetrieveQueryKey, opportunitiesRetrieve } from "@/lib/api/client";
@@ -36,7 +37,7 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
   const format = useFormatter();
   const you = useTranslations("deals.owner")("you");
   const client = useQueryClient();
-  const { organization, user } = useTenant();
+  const { organization, permissions, user } = useTenant();
   const slug = organization.slug;
   const { failed, retry } = useReads();
   const owners = useOwners();
@@ -171,6 +172,9 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
             void refetch();
           }}
         />
+        {permissions.some((grant) => grant.code === "tasks.view") ? (
+          <LinkedTasks link={{ opportunity_id: detail.id }} />
+        ) : null}
         <section className={BOX} aria-label={t("items.title")}>
           <h2 className="font-medium">{t("items.title")}</h2>
           {detail.items.length === 0 ? (
