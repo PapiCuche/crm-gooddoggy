@@ -201,3 +201,11 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         "apps.tasks.api.* -> apps.deals.api.inputs",  # F5-08b2: los serializadores estrictos
         "apps.tasks.api.tasks -> apps.deals.selectors",  # y la oportunidad en el alcance
     ]  # exactas: una arista distinta de tasks a deals no pasa en silencio
+    assert [e for e in layered["ignore_imports"] if e.startswith("apps.quotes")] == [  # F5-09a
+        "apps.quotes.commands -> apps.deals.models",  # la oportunidad de la cotización
+        "apps.quotes.commands -> apps.pricing.services",  # y los precios, del servicio
+    ]
+    quotes = [c for c in contracts if "apps.quotes.commands" in c.get("protected_modules", [])]
+    assert [(c["type"], c["allowed_importers"]) for c in quotes] == [
+        ("protected", ["apps.quotes.api"])
+    ]
