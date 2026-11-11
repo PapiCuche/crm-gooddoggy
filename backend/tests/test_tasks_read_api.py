@@ -191,7 +191,8 @@ def test_the_filters_combine_and_each_one_is_asked_once(board: SimpleNamespace) 
         board, "vera", "sam", "ana", "nobody"
     )  # vacío: sin filtro
     for bad in ({"status": "DONE", "mine": ["true", "false"]}, {"status": "SOON"}, {"mine": "x"},
-                {"due_from": "ayer"}, {"contact_id": "x"}):  # fmt: skip
+                {"due_from": "ayer"}, {"contact_id": "x"}, {"due_from": "2026-11-20T09:00:00"},
+                {"due_to": "2026-11-20"}):  # fmt: skip
         assert ana.get(TASKS, bad).status_code == 400, bad
     assert ids_of(signed(board.vera), mine="true") == pick(board, "vera")
 
@@ -203,6 +204,7 @@ def test_the_due_range_includes_its_start_and_excludes_its_end(board: SimpleName
     ana = signed(board.ana)
     assert ids_of(ana, due_from=edge.isoformat()) == pick(board, "sam")
     assert ids_of(ana, due_to=edge.isoformat()) == set()
+    assert ids_of(ana, due_from="2026-11-20T10:00:00-05:00") == pick(board, "sam")  # con zona
     assert ids_of(ana, due_to=(edge + timedelta(seconds=1)).isoformat()) == pick(board, "sam")
 
 

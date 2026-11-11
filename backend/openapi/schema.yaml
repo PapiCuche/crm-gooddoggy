@@ -7239,13 +7239,13 @@ paths:
         schema:
           type: string
           format: date-time
-        description: '`due_at` desde este instante.'
+        description: '`due_at` desde este instante, con zona horaria.'
       - in: query
         name: due_to
         schema:
           type: string
           format: date-time
-        description: '`due_at` antes de este instante.'
+        description: '`due_at` antes de este instante, con zona horaria.'
       - name: limit
         in: query
         required: false

@@ -15,11 +15,11 @@ export type TasksListParams = {
    */
   cursor?: string;
   /**
-   * `due_at` desde este instante.
+   * `due_at` desde este instante, con zona horaria.
    */
   due_from?: string;
   /**
-   * `due_at` antes de este instante.
+   * `due_at` antes de este instante, con zona horaria.
    */
   due_to?: string;
   /**

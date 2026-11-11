@@ -12,6 +12,7 @@ from typing import Any
 
 from django.db.models import OuterRef, QuerySet, Subquery
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.filters import BaseFilterBackend
@@ -56,6 +57,16 @@ class TaskSerializer(serializers.Serializer[Any]):
     version = serializers.IntegerField(help_text="Sube con cada cambio.")
 
 
+class Instant(serializers.DateTimeField):
+    """Un instante ISO 8601 con zona horaria: sin ella, 400 (el servidor no adivina la zona)."""
+
+    def to_internal_value(self, value: Any) -> Any:
+        parsed = parse_datetime(value) if isinstance(value, str) else None
+        if parsed is None or parsed.utcoffset() is None:
+            raise serializers.ValidationError("Una fecha y hora ISO 8601 con zona horaria.")
+        return super().to_internal_value(value)
+
+
 class TaskSearchSerializer(serializers.Serializer[Any]):
     mine = serializers.BooleanField(required=False, help_text="Las que tengo como responsable.")
     assigned_user_id = serializers.UUIDField(required=False)
@@ -63,8 +74,8 @@ class TaskSearchSerializer(serializers.Serializer[Any]):
     overdue = serializers.BooleanField(
         required=False, help_text="Abiertas con `due_at` ya pasado (`true`)."
     )
-    due_from = serializers.DateTimeField(required=False, help_text="`due_at` desde este instante.")
-    due_to = serializers.DateTimeField(required=False, help_text="`due_at` antes de este instante.")
+    due_from = Instant(required=False, help_text="`due_at` desde este instante, con zona horaria.")
+    due_to = Instant(required=False, help_text="`due_at` antes de este instante, con zona horaria.")
     contact_id = serializers.UUIDField(required=False)
     opportunity_id = serializers.UUIDField(required=False)
 
