@@ -20,7 +20,7 @@ def _revoke(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0009_webhook_processing"),
+        ("conversations", "0011_webhook_rate_limited_deferral"),
     ]
 
     operations = [

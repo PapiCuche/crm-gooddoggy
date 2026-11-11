@@ -247,7 +247,7 @@ def test_the_migration_goes_back_and_forward(migrator: Any) -> None:
     grant = "SELECT has_column_privilege('crm_app', 'messages', 'policy_decision', 'UPDATE')"
     assert migrator.execute(grant).fetchone() == (True,)  # la despachadora la reescribe
     with as_migrator():
-        call_command("migrate", "conversations", "0009", verbosity=0)
+        call_command("migrate", "conversations", "0011", verbosity=0)
     assert migrator.execute(column, ["messages", "policy_decision"]).fetchone() == (0,)
     with as_migrator():
         call_command("migrate", verbosity=0)
