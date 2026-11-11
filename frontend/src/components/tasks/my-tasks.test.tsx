@@ -1,4 +1,12 @@
-import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -236,6 +244,13 @@ describe("crear y cambiar una tarea", () => {
       .filter(({ init }) => init?.method === "POST")
       .map(({ init }) => JSON.parse(String(init!.body)));
 
+  it("sin tasks.update las filas no tienen «Editar»", async () => {
+    serve(() => page(task("1", { title: "Antigua" })));
+    show("tasks.view", "tasks.create");
+    await screen.findByText("Antigua");
+    expect(screen.queryByRole("button", { name: /Editar la tarea/ })).toBeNull();
+  });
+
   it("sin tasks.create no hay «Nueva tarea»", async () => {
     serve(() => page());
     show("tasks.view");
@@ -332,9 +347,59 @@ describe("crear y cambiar una tarea", () => {
     expect(await screen.findByText("Tarea guardada.")).toBeVisible();
     const patch = calls.find(({ init }) => init?.method === "PATCH")!;
     expect(patch.url.pathname).toBe(`${BASE}1/`);
-    expect(JSON.parse(String(patch.init!.body))).toMatchObject({
-      ...{ version: 5, title: "Nueva", due_at: "2026-11-11T19:30:00.000Z", is_all_day: false },
+    expect(JSON.parse(String(patch.init!.body))).toEqual({ version: 5, title: "Nueva" }); // solo lo cambiado
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Editar la tarea Antigua" })).toHaveFocus(),
+    );
+  });
+
+  it("cambia la fecha con la hora de la zona y quita la fecha con null", async () => {
+    const open = task("1", { title: "Antigua", due_at: "2026-11-11T19:30:00Z", version: 5 });
+    const calls = serve((url, init) =>
+      init?.method === "PATCH" ? { status: 200, body: open } : page(open),
+    );
+    show("tasks.view", "tasks.update");
+    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
+    fireEvent.change(await screen.findByLabelText("Hora"), { target: { value: "15:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+    await screen.findByText("Tarea guardada.");
+    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
+    fireEvent.change(await screen.findByLabelText(/^Fecha/), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+    await waitFor(() =>
+      expect(calls.filter(({ init }) => init?.method === "PATCH")).toHaveLength(2),
+    );
+    const bodies = calls
+      .filter(({ init }) => init?.method === "PATCH")
+      .map(({ init }) => JSON.parse(String(init!.body)));
+    expect(bodies[0]).toEqual({
+      version: 5,
+      due_at: "2026-11-11T20:00:00.000Z",
+      is_all_day: false,
     });
+    expect(bodies[1]).toEqual({ version: 5, due_at: null, is_all_day: false });
+  });
+
+  it("envía la versión que leyó al abrir, no la que traiga la lista después", async () => {
+    let version = 5;
+    const calls = serve((url, init) =>
+      init?.method === "PATCH"
+        ? { status: 409, body: { code: "STALE_VERSION" } }
+        : page(task("1", { title: version === 5 ? "Antigua" : "De otra persona", version })),
+    );
+    const { client } = show("tasks.view", "tasks.update");
+    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
+    await screen.findByRole("form", { name: "Editar la tarea" });
+    version = 6; // otra persona la cambió y la lista se vuelve a pedir mientras se escribe
+    await act(() => client.invalidateQueries());
+    await waitFor(() => expect(gets(calls).length).toBeGreaterThan(1));
+    fireEvent.change(screen.getByRole("textbox", { name: "Título" }), {
+      target: { value: "Mía" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+    await screen.findByText(/Otra persona cambió esta tarea/);
+    const patch = calls.find(({ init }) => init?.method === "PATCH")!;
+    expect(JSON.parse(String(patch.init!.body))).toEqual({ version: 5, title: "Mía" });
   });
 
   it("explica un 409 de versión o de tarea cerrada y un 404", async () => {

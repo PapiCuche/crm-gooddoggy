@@ -51,13 +51,16 @@ export function TaskForm({
   const zone = useTimeZone() ?? "America/Lima";
   const slug = useTenant().organization.slug;
   const client = useQueryClient();
-  const due = task?.due_at ? fieldsOf(Date.parse(task.due_at), zone) : null;
-  const [title, setTitle] = useState(task?.title ?? "");
-  const [type, setType] = useState<string>(task?.type ?? "FOLLOW_UP");
-  const [priority, setPriority] = useState<string>(task?.priority ?? "MEDIUM");
-  const [description, setDescription] = useState(task?.description ?? "");
+  // Lo que se leyó al abrir: la lista se vuelve a pedir mientras se escribe y `task` puede traer la
+  // versión de otra persona, que este formulario no ha visto (con ella se pisaría su cambio).
+  const [read] = useState(task);
+  const due = read?.due_at ? fieldsOf(Date.parse(read.due_at), zone) : null;
+  const [title, setTitle] = useState(read?.title ?? "");
+  const [type, setType] = useState<string>(read?.type ?? "FOLLOW_UP");
+  const [priority, setPriority] = useState<string>(read?.priority ?? "MEDIUM");
+  const [description, setDescription] = useState(read?.description ?? "");
   const [date, setDate] = useState(due?.date ?? today ?? "");
-  const [allDay, setAllDay] = useState(task ? task.is_all_day : true);
+  const [allDay, setAllDay] = useState(read ? read.is_all_day : true);
   const [time, setTime] = useState(due?.time ?? "");
   const [asked, setAsked] = useState(false); // intentó enviar con algo que falta
   const id = useId();
@@ -108,22 +111,36 @@ export function TaskForm({
       dueAt = new Date(instantAt(zone, y, m, d, h, min)).toISOString();
     }
     sending.current = true;
-    const common = {
+    const all = {
       ...{ title: title.trim(), type: type as TaskTypeEnum, priority: priority as PriorityEnum },
       ...{ description: description.trim(), due_at: dueAt, is_all_day: !!date && allDay },
     };
+    // Al cambiar solo viaja lo que cambió respecto de lo leído.
+    const same = (a: string | null, b: string | null) =>
+      (a === null ? null : Date.parse(a)) === (b === null ? null : Date.parse(b));
+    const common = read
+      ? {
+          ...(all.title !== read.title ? { title: all.title } : {}),
+          ...(all.type !== read.type ? { type: all.type } : {}),
+          ...(all.priority !== read.priority ? { priority: all.priority } : {}),
+          ...(all.description !== read.description ? { description: all.description } : {}),
+          ...(!same(dueAt, read.due_at) || all.is_all_day !== read.is_all_day
+            ? { due_at: dueAt, is_all_day: all.is_all_day }
+            : {}),
+        }
+      : all;
     const done = {
       onSuccess: (saved: Task) => {
         void client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
         onSaved(saved);
       },
     };
-    if (task)
+    if (read)
       update.mutate(
-        { orgSlug: slug, taskId: task.id, data: { ...common, version: task.version } },
+        { orgSlug: slug, taskId: read.id, data: { ...common, version: read.version } },
         done,
       );
-    else create.mutate({ orgSlug: slug, data: { ...common, ...link } }, done);
+    else create.mutate({ orgSlug: slug, data: { ...all, ...link } }, done);
   }
 
   const area = cn(

@@ -61,6 +61,11 @@ export function TasksList({
     getNextPageParam: (last) => last.next ?? undefined,
     gcTime: 0, // al salir no queda en memoria: cada visita pregunta a la API
   });
+  // Al cerrar el formulario, el foco vuelve al botón «Editar» de esa fila (si sigue abierta).
+  const leave = (id: string) => {
+    setEditing(null);
+    setTimeout(() => document.getElementById(`task-${id}`)?.querySelector("button")?.focus(), 0);
+  };
   const canEdit = permissions.some((grant) => grant.code === "tasks.update");
   const rows = (list.data?.pages.flatMap((page) => page.results) ?? [])
     .filter((task) => keep !== "overdue" || isOverdue(task, start, now))
@@ -99,9 +104,9 @@ export function TasksList({
               <li key={task.id}>
                 <TaskForm
                   task={task}
-                  onCancel={() => setEditing(null)}
+                  onCancel={() => leave(task.id)}
                   onSaved={() => {
-                    setEditing(null);
+                    leave(task.id);
                     setSaved(t("form.saved"));
                   }}
                 />
