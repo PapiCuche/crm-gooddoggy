@@ -140,6 +140,7 @@ import type {
   PatchedRoleUpdateRequest,
   PatchedStageUpdateRequest,
   PatchedTagUpdateRequest,
+  PatchedTaskUpdateRequest,
   PatchedTeamUpdateRequest,
   PatchedVariantUpdateRequest,
   PatchedWarehouseUpdateRequest,
@@ -176,6 +177,7 @@ import type {
   TagWriteRequest,
   TagsListParams,
   Task,
+  TaskCreateRequest,
   TasksListParams,
   Team,
   TeamCreateRequest,
@@ -14463,6 +14465,108 @@ export function useTasksList<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getTasksCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/`;
+};
+
+/**
+ * Crea una tarea abierta de quien la crea (su responsable), con `tasks.create`. 400 en `contact_id` u `opportunity_id` si no son de la organización, vivos y dentro del alcance de quien crea, o si la oportunidad no es del contacto (el mismo error que para uno que no existe), en `description` si lleva un carácter no imprimible (un tabulador) y por cada dato inválido.
+ */
+export const tasksCreate = async (
+  orgSlug: string,
+  taskCreateRequest: TaskCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Task>(getTasksCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(taskCreateRequest),
+  });
+};
+
+export const getTasksCreateMutationKey = () => ["tasksCreate"] as const;
+
+export const getTasksCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksCreate>>,
+    TError,
+    TasksCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksCreate>>,
+  TError,
+  TasksCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksCreate>>,
+    TasksCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return tasksCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksCreateMutationResult = NonNullable<Awaited<ReturnType<typeof tasksCreate>>>;
+export type TasksCreateMutationBody = TaskCreateRequest;
+export type TasksCreateMutationError = ErrorType<Error>;
+export type TasksCreateMutationVariables = { orgSlug: string; data: TaskCreateRequest };
+
+export const useTasksCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksCreate>>,
+      TError,
+      TasksCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksCreate>>,
+  TError,
+  TasksCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksCreateMutationOptions(options), queryClient);
+};
+
 export const getTasksRetrieveUrl = (orgSlug: string, taskId: string) => {
   return `/api/v1/o/${orgSlug}/tasks/${taskId}/`;
 };
@@ -14589,6 +14693,194 @@ export function useTasksRetrieve<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getTasksUpdateUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/`;
+};
+
+/**
+ * Cambia lo enviado de una tarea abierta si `version` sigue vigente; `status` solo `PENDING` o `IN_PROGRESS`. Con `tasks.view` y `tasks.update`; fuera del alcance de uno u otro: 404. 409: `STALE_VERSION`, `TASK_CLOSED`. No cambia el responsable ni los vínculos. Sin cambios no escribe ni sube `version`.
+ */
+export const tasksUpdate = async (
+  orgSlug: string,
+  taskId: string,
+  patchedTaskUpdateRequest: PatchedTaskUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Task>(getTasksUpdateUrl(orgSlug, taskId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedTaskUpdateRequest),
+  });
+};
+
+export const getTasksUpdateMutationKey = () => ["tasksUpdate"] as const;
+
+export const getTasksUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksUpdate>>,
+    TError,
+    TasksUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksUpdate>>,
+  TError,
+  TasksUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksUpdate>>,
+    TasksUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, taskId, data } = props ?? {};
+
+    return tasksUpdate(orgSlug, taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof tasksUpdate>>>;
+export type TasksUpdateMutationBody = PatchedTaskUpdateRequest;
+export type TasksUpdateMutationError = ErrorType<Error>;
+export type TasksUpdateMutationVariables = {
+  orgSlug: string;
+  taskId: string;
+  data: PatchedTaskUpdateRequest;
+};
+
+export const useTasksUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksUpdate>>,
+      TError,
+      TasksUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksUpdate>>,
+  TError,
+  TasksUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksUpdateMutationOptions(options), queryClient);
+};
+
+export const getTasksDeleteUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/`;
+};
+
+/**
+ * Borrado lógico, de una abierta o de una cerrada, sin versión. Con `tasks.view` y `tasks.update`; fuera del alcance, o ya borrada: 404 (no es idempotente).
+ */
+export const tasksDelete = async (
+  orgSlug: string,
+  taskId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getTasksDeleteUrl(orgSlug, taskId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getTasksDeleteMutationKey = () => ["tasksDelete"] as const;
+
+export const getTasksDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksDelete>>,
+    TError,
+    TasksDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksDelete>>,
+  TError,
+  TasksDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksDelete>>,
+    TasksDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, taskId } = props ?? {};
+
+    return tasksDelete(orgSlug, taskId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksDeleteMutationResult = NonNullable<Awaited<ReturnType<typeof tasksDelete>>>;
+
+export type TasksDeleteMutationError = ErrorType<Error>;
+export type TasksDeleteMutationVariables = { orgSlug: string; taskId: string };
+
+export const useTasksDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksDelete>>,
+      TError,
+      TasksDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksDelete>>,
+  TError,
+  TasksDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksDeleteMutationOptions(options), queryClient);
+};
 
 export const getTeamsListUrl = (orgSlug: string, params?: TeamsListParams) => {
   const normalizedParams = new URLSearchParams();

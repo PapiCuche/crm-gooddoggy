@@ -196,4 +196,6 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         "apps.tasks.models -> apps.deals.models",
         "apps.tasks.commands -> apps.deals.models",
         "apps.tasks.apps -> apps.deals.scopes",  # F5-08b: el alcance por responsable
+        "apps.tasks.api.* -> apps.deals.api.inputs",  # F5-08b2: los serializadores estrictos
+        "apps.tasks.api.tasks -> apps.deals.selectors",  # y la oportunidad en el alcance
     ]  # exactas: una arista distinta de tasks a deals no pasa en silencio

@@ -7325,6 +7325,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    post:
+      operationId: tasks_create
+      description: Crea una tarea abierta de quien la crea (su responsable), con `tasks.create`.
+        400 en `contact_id` u `opportunity_id` si no son de la organización, vivos
+        y dentro del alcance de quien crea, o si la oportunidad no es del contacto
+        (el mismo error que para uno que no existe), en `description` si lleva un
+        carácter no imprimible (un tabulador) y por cada dato inválido.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/tasks/{task_id}/:
     get:
       operationId: tasks_retrieve
@@ -7353,6 +7407,113 @@ paths:
               schema:
                 $ref: '#/components/schemas/Task'
           description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    patch:
+      operationId: tasks_update
+      description: 'Cambia lo enviado de una tarea abierta si `version` sigue vigente;
+        `status` solo `PENDING` o `IN_PROGRESS`. Con `tasks.view` y `tasks.update`;
+        fuera del alcance de uno u otro: 404. 409: `STALE_VERSION`, `TASK_CLOSED`.
+        No cambia el responsable ni los vínculos. Sin cambios no escribe ni sube `version`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTaskUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: tasks_delete
+      description: 'Borrado lógico, de una abierta o de una cerrada, sin versión.
+        Con `tasks.view` y `tasks.update`; fuera del alcance, o ya borrada: 404 (no
+        es idempotente).'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
         '401':
           content:
             application/json:
@@ -11377,6 +11538,52 @@ components:
         is_active:
           type: boolean
           description: '`false` la desactiva.'
+    PatchedTaskUpdateRequest:
+      type: object
+      description: Lo que se envía de una tarea al crearla o cambiarla.
+      properties:
+        type:
+          $ref: '#/components/schemas/TaskTypeEnum'
+        description:
+          type: string
+          maxLength: 5000
+        due_at:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria, como 2026-11-20T09:00:00-05:00.
+        is_all_day:
+          type: boolean
+          description: 'Importa el día, no la hora: el cliente muestra `due_at` sin
+            hora y envía el instante de las 00:00 locales del día elegido; el servidor
+            no reinterpreta zonas.'
+        reminder_at:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria, como 2026-11-20T09:00:00-05:00.
+            No se compara con `due_at`.
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          allOf:
+          - $ref: '#/components/schemas/TaskUpdateStatusEnum'
+          description: |-
+            `PENDING` o `IN_PROGRESS`.
+
+            * `PENDING` - PENDING
+            * `IN_PROGRESS` - IN_PROGRESS
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     PatchedTeamUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está. El `slug`
@@ -12757,6 +12964,48 @@ components:
       required:
       - display_name
       - id
+    TaskCreateRequest:
+      type: object
+      description: Lo que se envía de una tarea al crearla o cambiarla.
+      properties:
+        type:
+          $ref: '#/components/schemas/TaskTypeEnum'
+        description:
+          type: string
+          maxLength: 5000
+        due_at:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria, como 2026-11-20T09:00:00-05:00.
+        is_all_day:
+          type: boolean
+          description: 'Importa el día, no la hora: el cliente muestra `due_at` sin
+            hora y envía el instante de las 00:00 locales del día elegido; el servidor
+            no reinterpreta zonas.'
+        reminder_at:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria, como 2026-11-20T09:00:00-05:00.
+            No se compara con `due_at`.
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        title:
+          type: string
+          minLength: 1
+          description: Una línea de texto libre.
+          maxLength: 200
+        contact_id:
+          type: string
+          format: uuid
+          description: Un contacto vivo que quien crea puede ver.
+        opportunity_id:
+          type: string
+          format: uuid
+          description: Una oportunidad viva del contacto que quien crea puede ver.
+      required:
+      - title
     TaskSourceEnum:
       enum:
       - MANUAL
@@ -12799,6 +13048,14 @@ components:
         * `COLLECTION` - Collection
         * `DELIVERY` - Delivery
         * `OTHER` - Other
+    TaskUpdateStatusEnum:
+      enum:
+      - PENDING
+      - IN_PROGRESS
+      type: string
+      description: |-
+        * `PENDING` - PENDING
+        * `IN_PROGRESS` - IN_PROGRESS
     Team:
       type: object
       properties:
