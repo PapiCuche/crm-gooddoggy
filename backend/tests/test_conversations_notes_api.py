@@ -70,7 +70,7 @@ def test_a_note_is_internal_never_sent_and_idempotent(inbox: SimpleNamespace, mi
 
 def run_dispatch(inbox: SimpleNamespace, message: Message) -> Any:
     with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
-        return commands.dispatch_outbound(tenant, message_id=message.pk)
+        return commands.claim_outbound(tenant, message_id=message.pk)
 
 
 def test_the_note_scope_and_the_view_scope_both_have_to_reach_the_conversation(

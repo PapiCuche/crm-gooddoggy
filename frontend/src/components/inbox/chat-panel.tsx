@@ -38,6 +38,7 @@ import { Plain } from "./plain";
 const WHEN = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
 const MARKS: Record<string, ReactNode> = {
   QUEUED: <Clock aria-hidden />,
+  SENDING: <Clock aria-hidden />,
   SENT: <Check aria-hidden />,
   DELIVERED: <CheckCheck aria-hidden />,
   READ: <CheckCheck aria-hidden className="text-success" />,

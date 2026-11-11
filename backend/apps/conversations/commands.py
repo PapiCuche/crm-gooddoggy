@@ -19,11 +19,10 @@ retrocede el mensaje y no es un error (ADR-010, §E.6).
 
 import datetime as dt
 import unicodedata
-from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connections, transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -38,7 +37,7 @@ from apps.access.selectors import (
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
-from apps.conversations.channels import REASONS, ChannelAdapter, UnknownPlatform, adapter_for
+from apps.conversations.channels import REASONS, Claim, SendResult
 from apps.conversations.models import (
     BODY_MAX,
     PREVIEW_MAX,
@@ -46,6 +45,7 @@ from apps.conversations.models import (
     ChannelAccount,
     Conversation,
     ConversationAssignment,
+    Credential,
     Delivery,
     Message,
     MessageType,
@@ -62,11 +62,15 @@ from core.tenancy.scope import require_scope
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
 WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no reabre nada
-KEY, ORDER = "CONV", (Delivery.QUEUED, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
+KEY = "CONV"
+ORDER = (Delivery.QUEUED, Delivery.SENDING, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
 BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 LAST = ("last_message_at", "last_message_preview", "last_message_direction")
-STAMPS = {"SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at", "FAILED": "failed_at"}
+STAMPS = {
+    "SENDING": "sending_at", "SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at",
+    "FAILED": "failed_at",
+}  # fmt: skip
 EXTERNAL_MAX = 200
 NAME_MAX = 100
 EDITABLE = ("name", "display_identifier")  # la plataforma y el id externo no cambian
@@ -497,7 +501,7 @@ def _advances(old: str | None, new: str) -> bool:
     if old is None or old == Delivery.FAILED or new == old:
         return False
     if new == Delivery.FAILED:
-        return old in (Delivery.QUEUED, Delivery.SENT)
+        return old in (Delivery.QUEUED, Delivery.SENDING, Delivery.SENT)
     return ORDER.index(Delivery(new)) > ORDER.index(Delivery(old))
 
 
@@ -677,17 +681,12 @@ def release_conversation(
         return _assign(ctx, alias, convo, None, "MANUAL", expected)
 
 
-def dispatch_outbound(
-    ctx: TenantContext, *, message_id: UUID, resolve: Callable[[str], ChannelAdapter] = adapter_for
-) -> Message | None:
-    """Entrega un mensaje en cola por el adaptador de su canal (F6-04b): `QUEUED` → `SENT` →
-    `DELIVERED`, siempre con `advance_delivery`. Idempotente: solo actúa sobre un mensaje saliente
-    `QUEUED`; uno ya enviado, de otra organización, inexistente o que otro proceso está
-    despachando devuelve `None`. Con la conversación y la cuenta bloqueadas revalida la política
-    justo antes de llamar al adaptador (el estado se leyó sin bloquear al encolar, F6-04a): si ya
-    no se puede, el mensaje queda `FAILED` con un motivo corto. Un fallo pasajero del adaptador
-    (`TemporaryChannelError`) no escribe nada y sube para que la tarea reintente. Ni la auditoría
-    ni los registros llevan el texto."""
+def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
+    """Reclama un mensaje saliente `QUEUED` (F7-05b): `QUEUED` → `SENDING` y devuelve lo que el
+    adaptador necesita. Con la conversación bloqueada y la cuenta con `FOR SHARE` (desconectarla
+    espera; dos envíos de una cuenta no se serializan) re-evalúa la política justo antes de enviar:
+    si ya no se puede, queda `FAILED` con el motivo y devuelve `None`. Idempotente: lo que no está
+    `QUEUED`, ajeno, inexistente o que otro despachador reclama a la vez da `None`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
@@ -699,28 +698,63 @@ def dispatch_outbound(
             return None
         convo = _locked(alias, row["conversation_id"])  # el mismo orden que `record_outbound`
         message = queued.select_for_update(no_key=True, skip_locked=True).first()
-        if message is None:  # otro proceso lo despacha, o ya salió
+        if message is None:  # otro despachador lo reclama, o ya salió
             return None
-        account = ChannelAccount.objects.using(alias).select_for_update(no_key=True)
-        account = account.get(pk=convo.channel_account_id)
-        decision = messaging_decision(convo, account=account, alias=alias)  # justo antes de enviar
-        reason, result = decision.reason, None
-        queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
-        if reason is None:
-            try:
-                result = resolve(account.platform).send(message)
-            except UnknownPlatform:
-                reason = "CHANNEL_UNAVAILABLE"
-            else:
-                if not result.ok:
-                    reason = result.reason if result.reason in REASONS else "ADAPTER_REJECTED"
-        if reason is not None or result is None:
-            return advance_delivery(
-                ctx, message_id=message.pk, status=Delivery.FAILED, reason=reason
+        with connections[alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE", [convo.channel_account_id]
             )
-        found = Message.objects.using(alias).filter(pk=message.pk)
-        found.update(external_message_id=result.external_id)
-        sent = advance_delivery(ctx, message_id=message.pk, status=Delivery.SENT)
+        account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
+        decision = messaging_decision(convo, account=account, alias=alias)  # justo antes de enviar
+        queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
+        if decision.reason is not None:
+            advance_delivery(
+                ctx, message_id=message.pk, status=Delivery.FAILED, reason=decision.reason
+            )
+            return None
+        phone = Contact.objects.using(alias).filter(pk=convo.contact_id)
+        live = Credential.objects.using(alias).filter(
+            pk=account.credential_id, owner_id=account.pk, revoked_at__isnull=True
+        )  # viva y de esta cuenta
+        advance_delivery(ctx, message_id=message.pk, status=Delivery.SENDING)
+        return Claim(
+            message_id=message.pk, account_id=account.pk, platform=account.platform,
+            phone_number_id=account.external_account_id, body=message.body,
+            recipient=phone.values_list("primary_phone_e164", flat=True).first() or "",
+            credential=live.first() if account.credential_id else None,
+        )  # fmt: skip
+
+
+def release_outbound(ctx: TenantContext, *, message_id: UUID) -> bool:
+    """Devuelve a la cola un `SENDING` que seguro no salió, nunca tras un resultado ambiguo."""
+    alias = require_scope(ctx)
+    message_id = _uuid(message_id, "mensaje")
+    with transaction.atomic(using=alias):
+        held = Message.objects.using(alias).filter(pk=message_id, delivery_status="SENDING")
+        if not held.select_for_update(no_key=True).exists():
+            return False
+        held.update(delivery_status=Delivery.QUEUED, sending_at=None)
+        changes = {"delivery_status": [Delivery.SENDING, Delivery.QUEUED]}
+        record(ctx, "message.delivery_changed", Entity("message", message_id), changes, None)
+        return True
+
+
+def settle_outbound(ctx: TenantContext, *, message_id: UUID, result: SendResult) -> Message | None:
+    """Cierra un `SENDING` con la respuesta del adaptador: `SENT` (y `DELIVERED` si el canal lo
+    entregó) o `FAILED` con un motivo de `channels.REASONS` (uno raro: `ADAPTER_REJECTED`)."""
+    alias = require_scope(ctx)
+    message_id = _uuid(message_id, "mensaje")
+    with transaction.atomic(using=alias):
+        held = Message.objects.using(alias).filter(pk=message_id, delivery_status="SENDING")
+        if not held.select_for_update(no_key=True).exists():
+            return None
+        if not result.ok:
+            reason = result.reason if result.reason in REASONS else "ADAPTER_REJECTED"
+            return advance_delivery(
+                ctx, message_id=message_id, status=Delivery.FAILED, reason=reason
+            )
+        held.update(external_message_id=result.external_id)
+        sent = advance_delivery(ctx, message_id=message_id, status=Delivery.SENT)
         if result.delivered:
-            return advance_delivery(ctx, message_id=message.pk, status=Delivery.DELIVERED)
+            return advance_delivery(ctx, message_id=message_id, status=Delivery.DELIVERED)
         return sent
