@@ -21,7 +21,7 @@ from apps.access.selectors import can, scoped
 from apps.contacts.selectors import contacts
 from apps.conversations import commands, policy, selectors
 from apps.conversations.api import inputs
-from apps.conversations.models import Conversation, Direction, Message
+from apps.conversations.models import FAILURE_CODES, Conversation, Direction, Message
 from core.api.errors import ApiError
 from core.api.pagination import CursorPagination
 from core.api.schema import errors
@@ -49,6 +49,12 @@ class MessageSerializer(serializers.Serializer[Any]):
         allow_null=True, help_text="Solo en los mensajes salientes de quien consulta."
     )
     delivery_status = serializers.CharField(allow_null=True, help_text="Solo en lo saliente.")
+    provider_error_code = serializers.ChoiceField(
+        choices=[(code, code) for code in FAILURE_CODES],
+        allow_null=True,
+        help_text="Por qué un mensaje saliente quedó `FAILED`: un código cerrado propio, nunca el "
+        "texto del proveedor; `null` si no falló (o falló antes de que se guardara el motivo).",
+    )
     created_at = serializers.DateTimeField()
     sent_at = serializers.DateTimeField(allow_null=True)
     delivered_at = serializers.DateTimeField(allow_null=True)
