@@ -3,6 +3,7 @@
 con `crm_app`, la Graph API de Meta simulada (`tests/meta_sim`) servida por `core.http` con su
 política real."""
 
+import json
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -14,7 +15,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError
 
 from apps.access.selectors import AccessDenied
-from apps.conversations import accounts, commands, credentials, graph
+from apps.conversations import accounts, commands, credentials, graph, tasks
 from apps.conversations.models import ChannelAccount, Credential
 from core import http, sealed
 from core.tenancy.scope import tenant_scope
@@ -174,7 +175,7 @@ def test_rotating_replaces_the_token_and_wipes_the_old_one(
     rotated, new = run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
                        access_token=NEW_TOKEN)  # fmt: skip
     assert rotated.credential_id == new.pk != old.pk and new.rotated_at is not None
-    assert (rotated.status, rotated.status_detail, rotated.version) == ("ERROR", None, 2)
+    assert (rotated.status, rotated.status_detail, rotated.version) == ("CONNECTED", None, 2)
     gone = reload(crm.a, Credential, old.pk)
     assert (
         gone.ciphertext is None and gone.revoked_at is not None and gone.last_four == old.last_four
@@ -188,6 +189,40 @@ def test_rotating_replaces_the_token_and_wipes_the_old_one(
         run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
             access_token=TEST_TOKEN)  # fmt: skip
     assert reload(crm.a, ChannelAccount, account.pk).credential_id == new.pk  # nada cambió
+
+
+def test_rotating_an_account_in_error_audits_the_way_back_and_low_quality_degrades_it(
+    crm: SimpleNamespace, meta: FakeGraph, migrator: DB
+) -> None:
+    """`ERROR` no se comprueba nunca: el token nuevo, ya verificado por Meta, saca a la cuenta."""
+    account, _ = connect(crm)
+    meta.token = NEW_TOKEN
+
+    def broken(status: str = "ERROR", detail: str | None = "TOKEN_INVALID") -> None:
+        with tenant_scope(ctx(crm.a)):
+            ChannelAccount.objects.filter(pk=account.pk).update(status=status, status_detail=detail)
+
+    def rotate() -> ChannelAccount:
+        found = run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=account.pk,
+                    access_token=NEW_TOKEN)  # fmt: skip
+        done: ChannelAccount = found[0]
+        return done
+
+    broken()
+    assert (rotate().status, tasks.healthcheck_accounts()) == ("CONNECTED", {})  # reciente
+    changes = migrator.execute(
+        "SELECT changes::text FROM audit_logs WHERE action = 'channel_account.credentials_rotated'"
+    ).fetchall()
+    assert json.loads(changes[0][0])["status"] == ["ERROR", "CONNECTED"]
+    meta.quality = "RED"
+    broken()
+    degraded = rotate()
+    assert (degraded.status, degraded.status_detail) == ("DEGRADED", "QUALITY_LOW")
+    broken("ERROR", None)  # un `ERROR` que no es de este token no se toca
+    still = rotate()
+    assert (still.status, still.status_detail) == ("ERROR", None)
+    broken("CONNECTED", None)
+    assert rotate().status == "CONNECTED"  # lo sano sigue igual
 
 
 def test_an_account_that_is_not_a_live_whatsapp_account_of_the_organization_does_not_exist(
