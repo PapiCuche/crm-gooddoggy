@@ -55,8 +55,10 @@ export function TasksList({
   const [focus, setFocus] = useState<{ row?: string } | null>(null);
   useEffect(() => {
     if (!focus) return;
-    if (focus.row) document.getElementById(`task-${focus.row}`)?.querySelector("button")?.focus();
-    else if (document.activeElement === document.body) status.current?.focus();
+    const button =
+      focus.row && document.getElementById(`task-${focus.row}`)?.querySelector("button");
+    if (button) button.focus();
+    else if (document.activeElement === document.body) status.current?.focus(); // la fila se fue
   }, [focus]);
   const done = (text: string) => {
     setSaid(text);

@@ -234,8 +234,8 @@ describe("acciones de una tarea (F5-08c)", () => {
 
   it("un 409 o un 404 de una acción de un clic vuelve a pedir la lista y lo dice", async () => {
     for (const [reply, text] of [
-      [{ status: 409, body: { code: "STALE_VERSION" } }, /Ya actualizamos la lista/],
-      [{ status: 409, body: { code: "TASK_CLOSED" } }, /Ya actualizamos la lista/],
+      [{ status: 409, body: { code: "STALE_VERSION" } }, /Revisa la lista/],
+      [{ status: 409, body: { code: "TASK_CLOSED" } }, /Revisa la lista/],
       [{ status: 404, body: { code: "NOT_FOUND" } }, /ya no existe/],
     ] as const) {
       const calls = serve((url, init) =>

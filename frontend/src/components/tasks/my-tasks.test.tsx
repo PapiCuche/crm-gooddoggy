@@ -339,6 +339,26 @@ describe("crear y cambiar una tarea", () => {
     expect(bodies(calls, "PATCH")).toEqual([{ version: 5, title: "Mía" }]);
   });
 
+  it("si al guardar la fila sale de la lista (ya no vencida), el foco pasa al aviso", async () => {
+    let saved = false;
+    const old = task("1", { title: "Antigua", due_at: "2026-11-10T05:00:00Z", is_all_day: true });
+    serve((url, init) => {
+      if (init?.method === "PATCH") {
+        saved = true;
+        return { status: 200, body: old };
+      }
+      return page(...(saved ? [] : [old]));
+    });
+    show("tasks.view", "tasks.update");
+    fireEvent.click(await screen.findByRole("tab", { name: "Vencidas" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Título" }), {
+      target: { value: "Nueva" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+    await waitFor(() => expect(screen.getByText("Tarea guardada.")).toHaveFocus());
+  });
+
   it("explica un 409 de versión o de tarea cerrada y un 404", async () => {
     const open = task("1", { title: "Antigua" });
     for (const [status, code, text] of [

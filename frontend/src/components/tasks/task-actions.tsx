@@ -62,11 +62,11 @@ export function TaskActions({
     onSettled: () => {
       sending.current = false;
     },
-    onError: (error) => {
+    onError: async (error) => {
       // Lo mostrado ya no vale (otra persona cambió o borró la tarea): se vuelve a pedir la lista
-      // y, si la fila se va (404), se dice en el aviso de la lista, que no se va con ella.
+      // y, con la fila ya fuera (404), se dice en el aviso de la lista, que no se va con ella.
       if (error.status === 404 || error.status === 409) {
-        void client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
+        await client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
       }
       if (error.status === 404) onDone(t("form.gone"));
     },

@@ -2527,9 +2527,9 @@
       "cancelled": "Tarea cancelada.",
       "assigned": "Tarea reasignada.",
       "reopened": "Tarea reabierta.",
-      "stale": "Otra persona cambió esta tarea. Ya actualizamos la lista: revísala y vuelve a intentarlo.",
-      "closed": "Esta tarea ya está cerrada. Ya actualizamos la lista.",
-      "isOpen": "Esta tarea ya está abierta. Ya actualizamos la lista.",
+      "stale": "Otra persona cambió esta tarea. Revisa la lista y vuelve a intentarlo.",
+      "closed": "Esta tarea ya está cerrada. Revisa la lista.",
+      "isOpen": "Esta tarea ya está abierta. Revisa la lista.",
       "assigneeInvalid": "Esa persona ya no es miembro activo de la organización.",
       "reasonInvalid": "El motivo no es válido (hasta 500 caracteres, sin tabuladores).",
       "denied": "No tienes permiso para hacer esto con la tarea."
