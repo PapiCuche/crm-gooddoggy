@@ -7,7 +7,7 @@ import datetime as dt
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import urllib3
@@ -209,6 +209,19 @@ def test_a_tls_error_while_reading_the_answer_never_repeats_the_post_and_is_ambi
     assert http.never_connected(err.SSLError(ssl.SSLCertVerificationError("certificado")))
     assert not http.never_connected(err.SSLError(ssl.SSLError("alerta")))  # ni un cierre limpio
     assert not http.never_connected(err.SSLError(ssl.SSLZeroReturnError("cerrado")))
+
+
+def test_only_a_failure_before_the_request_is_sent_is_safe_to_repeat() -> None:
+    err, pool = urllib3.exceptions, cast("Any", None)
+    assert http.never_connected(http.BlockedDestination("x"))
+    assert http.never_connected(err.NewConnectionError(pool, "x"))
+    assert http.never_connected(err.ConnectTimeoutError(pool, "x"))
+    slow = err.ReadTimeoutError(pool, "u", "x")  # el tiempo de lectura es ambiguo, también envuelto
+    assert not http.never_connected(slow) and not http.never_connected(err.ProtocolError("x"))
+    assert not http.never_connected(err.MaxRetryError(pool, "u", reason=slow))
+    assert http.never_connected(
+        err.MaxRetryError(pool, "u", reason=err.NewConnectionError(pool, "x"))
+    )
 
 
 def test_no_token_or_text_in_the_logs_whatever_the_outcome(
