@@ -12,13 +12,9 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
-from apps.conversations.models import Credential
+from apps.conversations.models import FAILURE_CODES, Credential
 
-REASONS = (  # los cuatro primeros son los de la política (`policy.REASONS`)
-    "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
-    "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID", "RECIPIENT_UNREACHABLE",
-    "PROVIDER_REJECTED", "PROVIDER_UNKNOWN",
-)  # fmt: skip
+REASONS = FAILURE_CODES  # los motivos de un `FAILED` (los de la política, el despacho y Meta)
 
 
 class TemporaryChannelError(Exception):

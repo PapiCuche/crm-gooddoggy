@@ -516,8 +516,8 @@ def test_a_status_item_of_a_pending_account_is_the_seen_signal_too_but_creates_n
     from tests.test_meta_webhook import post
 
     post(webhooks.deliver(webhooks.encode(webhooks.envelope(value))))
-    assert ingress.process() == {"PROCESSED": 1}
-    assert detail(crm.a, mine.pk)[:2] == ("PENDING", None)
+    assert ingress.process() == {"FAILED": 1}  # no hay mensaje de ese estado (se reintenta)...
+    assert detail(crm.a, mine.pk)[:2] == ("PENDING", None)  # ...pero el evento firmado vale
     found = snap(crm.a)
     assert (found.contacts, found.messages) == ([], [])
 

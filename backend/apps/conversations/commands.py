@@ -540,7 +540,9 @@ def advance_delivery(
         moved = (
             Message.objects.using(alias)
             .filter(pk=message.pk, delivery_status=old)
-            .update(delivery_status=status, **{stamp: at or timezone.now()})
+            .update(
+                delivery_status=status, provider_error_code=reason, **{stamp: at or timezone.now()}
+            )
         )
         message.refresh_from_db(using=alias)
         if moved:

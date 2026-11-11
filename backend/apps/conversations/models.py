@@ -40,6 +40,17 @@ LIMIT_TIERS = (  # a confirmar con la documentación de Meta
 META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
 
 
+# Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
+# propios, nunca el título ni el texto del error del proveedor. Los de la política y el despachador
+# y los que salen de la tabla de errores de Meta (`delivery.CODES`).
+FAILURE_CODES = (
+    "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
+    "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID", "RECIPIENT_UNREACHABLE",
+    "PROVIDER_REJECTED", "PROVIDER_UNKNOWN", "RATE_LIMITED", "QUALITY_BLOCKED",
+    "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR",
+)  # fmt: skip
+
+
 class Status(models.TextChoices):
     OPEN = "OPEN"
     PENDING = "PENDING"  # en cola, sin tomar por un humano (D-INB-1)
@@ -416,6 +427,7 @@ class Message(TenantModel):
         max_length=10, choices=Delivery.choices, null=True, blank=True
     )
     sending_at = models.DateTimeField(null=True, blank=True)  # cuándo se reclamó (el barredor)
+    provider_error_code = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
     # Reintentos del canal (F7-05c): cuántas veces se devolvió el reclamo y no antes de cuándo
     # vuelve a intentarse (el barredor de la cola no lo reencola antes: no amplifica).
     dispatch_attempts = models.PositiveSmallIntegerField(default=0, db_default=0)
@@ -499,6 +511,14 @@ class Message(TenantModel):
                 condition=models.Q(body__regex=r"\S")
                 & models.Q(LessThanOrEqual(Length("body"), BODY_MAX)),
                 name="messages_body_ck",
+            ),
+            models.CheckConstraint(  # el motivo de un fallo: un código cerrado, solo con `FAILED`
+                condition=models.Q(provider_error_code__isnull=True)
+                | (
+                    models.Q(delivery_status="FAILED")
+                    & models.Q(provider_error_code__in=FAILURE_CODES)
+                ),
+                name="messages_error_code_ck",
             ),
             models.CheckConstraint(  # la decisión de la política es solo de lo saliente
                 condition=models.Q(policy_decision__isnull=True) | models.Q(direction="OUTBOUND"),

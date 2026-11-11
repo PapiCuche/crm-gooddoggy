@@ -21,7 +21,7 @@ from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
 from apps.audit.services import Entity, record
-from apps.conversations import inbound
+from apps.conversations import delivery, inbound
 from apps.conversations.models import ChannelAccount
 from core.observability.logging import get_logger
 from core.tenancy.context import ActorType, TenantContext
@@ -169,6 +169,14 @@ def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
         seen(context, account)
         if item.kind == "message" and (reason := inbound.receive(context, account, item.payload)):
             return "IGNORED", organization_id, account_id, reason
+        if item.kind == "status":
+            try:
+                if reason := delivery.apply(context, account, item.payload):
+                    return "IGNORED", organization_id, account_id, reason
+            except (
+                delivery.NotYet
+            ):  # antes de la confirmación del envío: se reintenta (y `seen` vale)
+                return "FAILED", None, None, "MESSAGE_NOT_FOUND"
     return "PROCESSED", organization_id, account_id, None
 
 
