@@ -51,4 +51,6 @@ export interface OpportunityCreateRequest {
   title: string;
   /** Un pipeline vivo y activo; sin él, el predeterminado. */
   pipeline_id?: string;
+  /** La conversación de origen: de ese contacto y dentro del alcance de `conversations.view` de quien crea. */
+  conversation_id?: string;
 }

@@ -123,6 +123,9 @@ layers = [
     "apps.audit | apps.files | apps.imports",
     "core",
 ]
+# F6-06b: la única arista de deals a conversations (el alcance de `conversations.view` al crear una
+# oportunidad desde una conversación); cualquier otra, y la inversa, siguen prohibidas.
+ignore_imports = ["apps.deals.api.opportunities -> apps.conversations.selectors"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"

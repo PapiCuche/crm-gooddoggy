@@ -236,6 +236,9 @@ class Opportunity(TenantModel):
     )
     status = models.CharField(max_length=4, choices=StageType.choices, default=StageType.OPEN)
     assigned_user_id = models.UUIDField(null=True, blank=True)
+    # La conversación de origen (F6-06b): FK compuesta `(organización, conversación)` en la
+    # migración; solo el id, sin relación de Django, como las personas.
+    conversation_id = models.UUIDField(null=True, blank=True)
     title = models.CharField(max_length=200)
     amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     currency = models.CharField(max_length=3)
