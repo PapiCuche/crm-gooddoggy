@@ -177,7 +177,10 @@ import type {
   TagWriteRequest,
   TagsListParams,
   Task,
+  TaskAssignRequest,
+  TaskCancelRequest,
   TaskCreateRequest,
+  TaskVersionRequest,
   TasksListParams,
   Team,
   TeamCreateRequest,
@@ -14880,6 +14883,434 @@ export const useTasksDelete = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getTasksDeleteMutationOptions(options), queryClient);
+};
+
+export const getTasksAssignUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/assign/`;
+};
+
+/**
+ * Deja la tarea abierta con ese responsable si `version` sigue vigente. 400 en `assigned_user_id` si no es un miembro activo; 409 `STALE_VERSION` o `TASK_CLOSED`. Si ya es el responsable no escribe. Con `tasks.view` y `tasks.assign`; fuera del alcance: 404.
+ */
+export const tasksAssign = async (
+  orgSlug: string,
+  taskId: string,
+  taskAssignRequest: TaskAssignRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Task>(getTasksAssignUrl(orgSlug, taskId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(taskAssignRequest),
+  });
+};
+
+export const getTasksAssignMutationKey = () => ["tasksAssign"] as const;
+
+export const getTasksAssignMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksAssign>>,
+    TError,
+    TasksAssignMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksAssign>>,
+  TError,
+  TasksAssignMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksAssignMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksAssign>>,
+    TasksAssignMutationVariables
+  > = (props) => {
+    const { orgSlug, taskId, data } = props ?? {};
+
+    return tasksAssign(orgSlug, taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksAssignMutationResult = NonNullable<Awaited<ReturnType<typeof tasksAssign>>>;
+export type TasksAssignMutationBody = TaskAssignRequest;
+export type TasksAssignMutationError = ErrorType<Error>;
+export type TasksAssignMutationVariables = {
+  orgSlug: string;
+  taskId: string;
+  data: TaskAssignRequest;
+};
+
+export const useTasksAssign = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksAssign>>,
+      TError,
+      TasksAssignMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksAssign>>,
+  TError,
+  TasksAssignMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksAssignMutationOptions(options), queryClient);
+};
+
+export const getTasksCancelUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/cancel/`;
+};
+
+/**
+ * Cancela una tarea abierta, con un motivo opcional (texto libre). 409: `STALE_VERSION`, `TASK_CLOSED`. Con `tasks.view` y `tasks.update`; fuera del alcance: 404.
+ */
+export const tasksCancel = async (
+  orgSlug: string,
+  taskId: string,
+  taskCancelRequest: TaskCancelRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Task>(getTasksCancelUrl(orgSlug, taskId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(taskCancelRequest),
+  });
+};
+
+export const getTasksCancelMutationKey = () => ["tasksCancel"] as const;
+
+export const getTasksCancelMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksCancel>>,
+    TError,
+    TasksCancelMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksCancel>>,
+  TError,
+  TasksCancelMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksCancelMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksCancel>>,
+    TasksCancelMutationVariables
+  > = (props) => {
+    const { orgSlug, taskId, data } = props ?? {};
+
+    return tasksCancel(orgSlug, taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksCancelMutationResult = NonNullable<Awaited<ReturnType<typeof tasksCancel>>>;
+export type TasksCancelMutationBody = TaskCancelRequest;
+export type TasksCancelMutationError = ErrorType<Error>;
+export type TasksCancelMutationVariables = {
+  orgSlug: string;
+  taskId: string;
+  data: TaskCancelRequest;
+};
+
+export const useTasksCancel = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksCancel>>,
+      TError,
+      TasksCancelMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksCancel>>,
+  TError,
+  TasksCancelMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksCancelMutationOptions(options), queryClient);
+};
+
+export const getTasksCompleteUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/complete/`;
+};
+
+/**
+ * Completa una tarea abierta: `DONE`, con su fecha y quien la completó. 409: `STALE_VERSION`, `TASK_CLOSED`. Con `tasks.view` y `tasks.update`; fuera del alcance: 404.
+ */
+export const tasksComplete = async (
+  orgSlug: string,
+  taskId: string,
+  taskVersionRequest: TaskVersionRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Task>(getTasksCompleteUrl(orgSlug, taskId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(taskVersionRequest),
+  });
+};
+
+export const getTasksCompleteMutationKey = () => ["tasksComplete"] as const;
+
+export const getTasksCompleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksComplete>>,
+    TError,
+    TasksCompleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksComplete>>,
+  TError,
+  TasksCompleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksCompleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksComplete>>,
+    TasksCompleteMutationVariables
+  > = (props) => {
+    const { orgSlug, taskId, data } = props ?? {};
+
+    return tasksComplete(orgSlug, taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksCompleteMutationResult = NonNullable<Awaited<ReturnType<typeof tasksComplete>>>;
+export type TasksCompleteMutationBody = TaskVersionRequest;
+export type TasksCompleteMutationError = ErrorType<Error>;
+export type TasksCompleteMutationVariables = {
+  orgSlug: string;
+  taskId: string;
+  data: TaskVersionRequest;
+};
+
+export const useTasksComplete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksComplete>>,
+      TError,
+      TasksCompleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksComplete>>,
+  TError,
+  TasksCompleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksCompleteMutationOptions(options), queryClient);
+};
+
+export const getTasksReopenUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/reopen/`;
+};
+
+/**
+ * Devuelve una tarea completada o cancelada a `PENDING`, sin fecha ni motivo. 409: `STALE_VERSION`, `TASK_OPEN` (está abierta). Con `tasks.view` y `tasks.update`; fuera del alcance: 404.
+ */
+export const tasksReopen = async (
+  orgSlug: string,
+  taskId: string,
+  taskVersionRequest: TaskVersionRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Task>(getTasksReopenUrl(orgSlug, taskId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(taskVersionRequest),
+  });
+};
+
+export const getTasksReopenMutationKey = () => ["tasksReopen"] as const;
+
+export const getTasksReopenMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof tasksReopen>>,
+    TError,
+    TasksReopenMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof tasksReopen>>,
+  TError,
+  TasksReopenMutationVariables,
+  TContext
+> => {
+  const mutationKey = getTasksReopenMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof tasksReopen>>,
+    TasksReopenMutationVariables
+  > = (props) => {
+    const { orgSlug, taskId, data } = props ?? {};
+
+    return tasksReopen(orgSlug, taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TasksReopenMutationResult = NonNullable<Awaited<ReturnType<typeof tasksReopen>>>;
+export type TasksReopenMutationBody = TaskVersionRequest;
+export type TasksReopenMutationError = ErrorType<Error>;
+export type TasksReopenMutationVariables = {
+  orgSlug: string;
+  taskId: string;
+  data: TaskVersionRequest;
+};
+
+export const useTasksReopen = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof tasksReopen>>,
+      TError,
+      TasksReopenMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof tasksReopen>>,
+  TError,
+  TasksReopenMutationVariables,
+  TContext
+> => {
+  return useMutation(getTasksReopenMutationOptions(options), queryClient);
 };
 
 export const getTeamsListUrl = (orgSlug: string, params?: TeamsListParams) => {

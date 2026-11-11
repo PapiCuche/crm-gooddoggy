@@ -39,6 +39,10 @@ def _instant(value: str) -> dt.datetime:
     return commands._moment(moment, "fecha y hora")
 
 
+def _reason(value: str) -> str | None:
+    return commands._text(value, "motivo", commands.REASON_MAX) or None
+
+
 class TaskFields(Closed, serializers.Serializer[Any]):
     """Lo que se envía de una tarea al crearla o cambiarla."""
 
@@ -74,3 +78,15 @@ class TaskUpdateSerializer(TaskFields):
     title = Checked(_title, max_length=commands.TITLE_MAX, required=False)
     status = Choice(choices=OPEN, required=False, help_text="`PENDING` o `IN_PROGRESS`.")
     version = Whole(min_value=1, max_value=2**31 - 1, help_text=VERSION)
+
+
+class TaskVersionSerializer(Closed, serializers.Serializer[Any]):
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text=VERSION)
+
+
+class TaskAssignSerializer(TaskVersionSerializer):
+    assigned_user_id = Id(help_text="El responsable: un miembro activo de la organización.")
+
+
+class TaskCancelSerializer(TaskVersionSerializer):
+    reason = Checked(_reason, max_length=commands.REASON_MAX, allow_null=True, required=False)
