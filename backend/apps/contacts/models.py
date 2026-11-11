@@ -62,6 +62,9 @@ class Contact(TenantModel):
     owner_user_id = models.UUIDField(null=True, blank=True)  # responsable
     branch_id = models.UUIDField(null=True, blank=True)
     source = models.CharField(max_length=24, choices=Source.choices, default=Source.MANUAL)
+    is_blocked = models.BooleanField(
+        default=False, db_default=False
+    )  # no recibe nada proactivo (ADR-010 §2.3)
     created_by_user_id = models.UUIDField(null=True, blank=True)
     updated_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -216,6 +219,144 @@ class ContactTag(TenantModel):
             models.Index(
                 fields=["organization_id", "tag", "contact"], name="contact_tags_org_tag_idx"
             )
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+class Channel(models.TextChoices):
+    """Canal de un consentimiento (§E.5); `ANY` expresa una exclusión o una concesión global."""
+
+    WHATSAPP = "WHATSAPP"
+    INSTAGRAM = "INSTAGRAM"
+    MESSENGER = "MESSENGER"
+    TIKTOK = "TIKTOK"
+    EMAIL = "EMAIL"
+    SMS = "SMS"
+    PHONE = "PHONE"
+    ANY = "ANY"
+
+
+class Purpose(models.TextChoices):
+    """Para qué se escribe al cliente; `ALL_PROACTIVE` cubre a todos los que inician el negocio."""
+
+    MARKETING = "MARKETING"
+    PROMOTIONS = "PROMOTIONS"
+    FOLLOW_UP = "FOLLOW_UP"
+    TRANSACTIONAL = "TRANSACTIONAL"
+    SURVEYS = "SURVEYS"
+    ALL_PROACTIVE = "ALL_PROACTIVE"
+
+
+class ConsentStatus(models.TextChoices):
+    GRANTED = "GRANTED"
+    REVOKED = "REVOKED"  # sin fila no hay dato: el consentimiento es desconocido
+
+
+class ConsentSource(models.TextChoices):
+    CHANNEL_OPT_IN = "CHANNEL_OPT_IN"
+    CUSTOMER_MESSAGE = "CUSTOMER_MESSAGE"
+    WEB_FORM = "WEB_FORM"
+    IN_STORE = "IN_STORE"
+    IMPORT = "IMPORT"
+    AGENT_RECORDED = "AGENT_RECORDED"
+    KEYWORD_STOP = "KEYWORD_STOP"  # el cliente escribió una palabra de baja: solo revoca
+
+
+class ContactConsent(TenantModel):
+    """El consentimiento vigente de un contacto por canal y propósito (§E.5, ADR-010): una fila
+    por combinación, la proyección rápida con la que decide la política. Lo que cambió y cuándo
+    está en `ContactConsentEvent`; aquí `crm_app` solo actualiza el estado, nunca borra."""
+
+    Channel = Channel
+    Purpose = Purpose
+    Status = ConsentStatus
+    Source = ConsentSource
+
+    id = uuid7_primary_key()
+    contact = models.ForeignKey(
+        Contact, models.PROTECT, related_name="consents", db_constraint=False, db_index=False
+    )
+    channel = models.CharField(max_length=10, choices=Channel.choices)
+    purpose = models.CharField(max_length=13, choices=Purpose.choices)
+    status = models.CharField(max_length=7, choices=ConsentStatus.choices)
+    source = models.CharField(max_length=17, choices=ConsentSource.choices)
+    granted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    evidence = models.JSONField(default=dict, blank=True)
+    recorded_by_user_id = models.UUIDField(null=True, blank=True)  # vacío: el sistema
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "contact_consents"
+        constraints = [
+            models.UniqueConstraint(  # una fila de estado vigente por combinación
+                fields=["organization_id", "contact", "channel", "purpose"],
+                name="contact_consents_org_combo_uq",
+            ),
+            *[
+                models.CheckConstraint(condition=models.Q(**{f"{c}__in": v.values}), name=n)
+                for c, v, n in (
+                    ("channel", Channel, "contact_consents_channel_ck"),
+                    ("purpose", Purpose, "contact_consents_purpose_ck"),
+                    ("status", ConsentStatus, "contact_consents_status_ck"),
+                    ("source", ConsentSource, "contact_consents_source_ck"),
+                )
+            ],
+            models.CheckConstraint(  # el estado dice qué marca de tiempo tiene que existir
+                condition=models.Q(status="GRANTED", granted_at__isnull=False)
+                | models.Q(status="REVOKED", revoked_at__isnull=False),
+                name="contact_consents_stamp_ck",
+            ),
+            models.CheckConstraint(  # la palabra de baja solo revoca
+                condition=~models.Q(source="KEYWORD_STOP") | models.Q(status="REVOKED"),
+                name="contact_consents_stop_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+class ContactConsentEvent(TenantModel):
+    """Cada concesión o revocación [INM] (§E.5): la prueba ante un reclamo. Nace y se lee; `crm_app`
+    no tiene UPDATE ni DELETE. La evidencia lleva ids (mensaje, formulario), nunca el texto."""
+
+    id = uuid7_primary_key()
+    contact = models.ForeignKey(
+        Contact, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    channel = models.CharField(max_length=10, choices=Channel.choices)
+    purpose = models.CharField(max_length=13, choices=Purpose.choices)
+    status = models.CharField(max_length=7, choices=ConsentStatus.choices)  # a lo que pasó
+    source = models.CharField(max_length=17, choices=ConsentSource.choices)
+    evidence = models.JSONField(default=dict, blank=True)
+    recorded_by_user_id = models.UUIDField(null=True, blank=True)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "contact_consent_events"
+        indexes = [
+            models.Index(
+                fields=["organization_id", "contact", "occurred_at", "id"],
+                name="consent_events_org_contact_idx",
+            ),
+        ]
+        constraints = [
+            *[
+                models.CheckConstraint(condition=models.Q(**{f"{c}__in": v.values}), name=n)
+                for c, v, n in (
+                    ("channel", Channel, "consent_events_channel_ck"),
+                    ("purpose", Purpose, "consent_events_purpose_ck"),
+                    ("status", ConsentStatus, "consent_events_status_ck"),
+                    ("source", ConsentSource, "consent_events_source_ck"),
+                )
+            ],
+            models.CheckConstraint(
+                condition=~models.Q(source="KEYWORD_STOP") | models.Q(status="REVOKED"),
+                name="consent_events_stop_ck",
+            ),
         ]
 
     def __str__(self) -> str:
