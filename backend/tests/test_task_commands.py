@@ -11,7 +11,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 from django.core.management import call_command
-from django.db import IntegrityError, ProgrammingError, connection, transaction
+from django.db import DatabaseError, IntegrityError, ProgrammingError, connection, transaction
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -265,6 +265,12 @@ def test_a_task_of_a_never_exists_for_b_and_the_database_keeps_its_rules(
             pytest.raises(ProgrammingError, match="permission denied"),
         ):
             cursor.execute("DELETE FROM tasks")  # `crm_app` no borra
+    with (
+        tenant_scope(ctx(world.b)),
+        connection.cursor() as cursor,
+        pytest.raises(ProgrammingError, match="permission denied"),
+    ):
+        cursor.execute("TRUNCATE tasks")  # ni vacía la tabla
     foreign = tables.contact(world.b).pk
     for fields, constraint in (
         ({"contact_id": foreign}, "tasks_contact_fk"),
@@ -273,6 +279,15 @@ def test_a_task_of_a_never_exists_for_b_and_the_database_keeps_its_rules(
         ({"status": "DONE"}, "tasks_closed_ck"),  # completada sin fecha
         ({"status": "PENDING", "cancel_reason": "x"}, "tasks_closed_ck"),
         ({"status": "CANCELLED", "completed_at": DUE}, "tasks_closed_ck"),
+        (
+            {"status": "DONE", "completed_at": DUE, "completed_by_user_id": world.luis.pk},
+            "tasks_completed_by_fk",
+        ),
+        ({"created_by_user_id": world.luis.pk}, "tasks_created_by_fk"),  # ni una persona ajena
+        ({"updated_by_user_id": world.luis.pk}, "tasks_updated_by_fk"),
+        ({"deleted_by_user_id": world.luis.pk}, "tasks_deleted_by_fk"),
+        ({"priority": "ASAP"}, "tasks_priority_ck"),
+        ({"source": "WEB"}, "tasks_source_ck"),
         ({"status": "SOON"}, "tasks_(status|closed)_ck"),
         ({"type": "X"}, "tasks_type_ck"),
         ({"title": "  "}, "tasks_title_ck"),
@@ -281,6 +296,34 @@ def test_a_task_of_a_never_exists_for_b_and_the_database_keeps_its_rules(
         with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match=constraint):
             with transaction.atomic():
                 Task.objects.filter(pk=mine.pk).update(**fields)
+
+
+ROW = (  # una fila completa, de la organización que se diga
+    "INSERT INTO tasks (id, organization_id, type, title, description, is_all_day, status,"
+    " priority, source, version, created_at, updated_at) VALUES (%s, %s, 'CALL', 'x', '', false,"
+    " 'PENDING', 'LOW', 'MANUAL', 1, now(), now())"
+)
+
+
+def sql(org: Any, statement: str, params: list[Any] | None = None) -> list[Any]:
+    with tenant_scope(ctx(org)), connection.cursor() as cursor:
+        cursor.execute(statement, params)
+        return cursor.fetchall() if cursor.description else [(cursor.rowcount,)]
+
+
+def test_row_level_security_itself_isolates_the_tasks_and_the_organization_is_a_real_reference(
+    world: SimpleNamespace, migrator: DB
+) -> None:
+    new(world)
+    assert sql(world.a, "SELECT count(*) FROM tasks") == [(1,)]
+    assert sql(world.b, "SELECT count(*) FROM tasks") == [(0,)]  # la base, no solo el manager
+    assert sql(world.b, "UPDATE tasks SET title = 'otra'") == [(0,)]  # ni las cambia
+    with pytest.raises(DatabaseError, match="row-level security"):  # ni las escribe en A
+        sql(world.b, ROW, [uuid4(), world.a])
+    with pytest.raises(DatabaseError, match="row-level security"):  # ni las mueve de organización
+        sql(world.a, "UPDATE tasks SET organization_id = %s", [world.b])
+    with pytest.raises(psycopg.errors.ForeignKeyViolation, match="tasks_organization_fk"):
+        migrator.execute(ROW, [uuid4(), uuid4()])  # una organización que no existe
 
 
 def test_two_completes_at_once_leave_one_and_a_stale_version(world: SimpleNamespace) -> None:
