@@ -320,6 +320,7 @@ META_ENV: dict[str, str | None] = {
     "META_ENABLED": "true",
     "META_APP_SECRETS": f"{META_SECRET},{META_NEXT}",
     "META_WEBHOOK_VERIFY_TOKEN": META_VERIFY,
+    "CELERY_BROKER_URL": "redis://redis:6379/0",  # el limitador de envíos (F7-05c) cuenta ahí
 }
 
 
@@ -418,3 +419,14 @@ def test_the_whatsapp_channel_on_refuses_a_limit_it_cannot_enforce(
     env.check_meta([good[0]], good[1], good[2], (5, 600))
     with pytest.raises(ImproperlyConfigured, match="CHANNEL_CHECK_THROTTLE"):
         env.check_meta([good[0]], good[1], good[2], throttle)
+
+
+@pytest.mark.parametrize(("send", "broker"), [((0, 1), "r"), ((61, 1), "r"), ((20, 0), "r"),
+                                              ((20, 61), "r"), ((20, 1), "")])  # fmt: skip
+def test_the_whatsapp_channel_on_needs_a_send_limit_and_a_broker_for_it(
+    send: tuple[int, int], broker: str
+) -> None:
+    from config import env
+
+    with pytest.raises(ImproperlyConfigured, match="CHANNEL_SEND_LIMIT"):
+        env.check_meta([META_SECRET], META_VERIFY, "v23.0", (5, 600), send, broker)

@@ -1,11 +1,13 @@
 """Cliente HTTP saliente con allowlist anti-SSRF (security-boundaries B9). Sin red."""
 
+import io
 import re
 import socket
 from pathlib import Path
 from typing import Any
 
 import pytest
+import urllib3
 from django.test import override_settings
 
 from core import http
@@ -50,6 +52,25 @@ def test_private_and_special_addresses_are_blocked(
 
 
 @ALLOWED
+def test_a_response_over_the_cap_is_cut_and_one_at_the_cap_is_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def answer(size: int) -> Any:
+        stream = io.BytesIO(b"x" * size)
+        reply = urllib3.HTTPResponse(body=stream, status=200, preload_content=False)
+        manager = type("M", (), {"request": lambda *a, **k: reply})()
+        monkeypatch.setattr(http, "_manager", manager)
+        return reply, stream
+
+    answer(http.MAX_RESPONSE)
+    assert len(http.request("GET", "https://api.example.com/x").data) == http.MAX_RESPONSE
+    _, stream = answer(http.MAX_RESPONSE + 10_000)
+    with pytest.raises(http.ResponseTooLarge):
+        http.request("GET", "https://api.example.com/x")
+    assert stream.tell() == http.MAX_RESPONSE + 1  # no leyó más de lo necesario
+
+
+@ALLOWED
 def test_allowlisted_host_resolving_to_metadata_ip_is_blocked_at_connect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -64,7 +85,13 @@ def test_public_resolution_pins_the_ip_and_no_redirects_are_followed(
     monkeypatch.setattr(socket, "getaddrinfo", resolving_to("93.184.216.34"))
     assert http.resolve_public("api.example.com", 443) == "93.184.216.34"
     calls: list[dict[str, Any]] = []
-    monkeypatch.setattr(http._manager, "request", lambda *a, **kw: calls.append(kw))
+    empty = urllib3.HTTPResponse(body=io.BytesIO(b""), preload_content=False)
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return empty
+
+    monkeypatch.setattr(http._manager, "request", request)
     with ALLOWED:
         http.request("GET", "https://API.example.com/x")  # el host se compara sin mayúsculas
     assert calls[0]["redirect"] is False and not {"timeout", "retries"} & set(calls[0])
@@ -108,3 +135,28 @@ def test_outbound_http_only_through_core_http() -> None:
         if path != root / "core" / "http.py" and pattern.search(path.read_text())
     ]  # fmt: skip
     assert offenders == []
+
+
+@ALLOWED
+def test_a_compressed_answer_is_decoded_once_and_a_bomb_stays_under_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gzip
+
+    def answer(payload: bytes) -> None:
+        reply = urllib3.HTTPResponse(
+            body=io.BytesIO(gzip.compress(payload)),
+            headers={"Content-Encoding": "gzip"},
+            status=200,
+            preload_content=False,
+        )
+        manager = type("M", (), {"request": lambda *a, **k: reply})()
+        monkeypatch.setattr(http, "_manager", manager)
+
+    answer(b'{"messages":[{"id":"wamid.X"}]}')
+    assert (
+        http.request("GET", "https://api.example.com/x").data == b'{"messages":[{"id":"wamid.X"}]}'
+    )
+    answer(b"\0" * (http.MAX_RESPONSE * 4))  # pequeña comprimida, enorme descomprimida
+    with pytest.raises(http.ResponseTooLarge):
+        http.request("GET", "https://api.example.com/x")

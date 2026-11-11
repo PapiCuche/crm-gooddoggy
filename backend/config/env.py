@@ -118,7 +118,12 @@ def database(url: str) -> dict[str, Any]:
 
 
 def check_meta(
-    secrets: list[str], verify_token: str, version: str, throttle: tuple[int, int]
+    secrets: list[str],
+    verify_token: str,
+    version: str,
+    throttle: tuple[int, int],
+    send_limit: tuple[int, int] = (20, 1),
+    broker: str = "redis://",
 ) -> None:
     """Valida los ajustes del canal de WhatsApp (ADR-029) con el canal encendido. Los errores solo
     nombran la variable: los valores son secretos."""
@@ -140,4 +145,9 @@ def check_meta(
     if not (1 <= limit <= 60 and 60 <= window <= 840):
         raise ImproperlyConfigured(
             "CHANNEL_CHECK_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s"
+        )
+    # El limitador de envíos (F7-05c) cuenta en Redis: sin broker o sin tope válido, no arranca.
+    if not 1 <= send_limit[0] <= 60 or not 1 <= send_limit[1] <= 60 or not broker:
+        raise ImproperlyConfigured(
+            "CHANNEL_SEND_LIMIT (1 a 60 envíos, ventana de 1 a 60 s) y CELERY_BROKER_URL"
         )

@@ -23,7 +23,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.access.selectors import (
@@ -550,16 +550,25 @@ def advance_delivery(
         return message
 
 
-def fail_queued(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message | None:
-    """Deja `FAILED` un mensaje que sigue `QUEUED` (los reintentos del despachador se agotaron).
-    Uno que ya salió, o que no existe, no se toca: devuelve `None`."""
+def _fail_from(ctx: TenantContext, message_id: UUID, reason: str, was: str) -> Message | None:
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
-        queued = Message.objects.using(alias).select_for_update(no_key=True)
-        if not queued.filter(pk=message_id, delivery_status="QUEUED").exists():
-            return None
+        locked = Message.objects.using(alias).select_for_update(no_key=True)
+        if not locked.filter(pk=message_id, delivery_status=was).exists():
+            return None  # ya salió, ya se cerró o no existe: no se toca
         return advance_delivery(ctx, message_id=message_id, status=Delivery.FAILED, reason=reason)
+
+
+def fail_queued(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message | None:
+    """Deja `FAILED` un mensaje que sigue `QUEUED` (los reintentos del despachador se agotaron)."""
+    return _fail_from(ctx, message_id, reason, "QUEUED")
+
+
+def fail_sending(ctx: TenantContext, *, message_id: UUID, reason: str) -> Message | None:
+    """Deja `FAILED` un mensaje que sigue `SENDING` (el barredor: venció el plazo sin saber si
+    salió, `PROVIDER_UNKNOWN`). Uno que ya se cerró, o que no existe, no se toca."""
+    return _fail_from(ctx, message_id, reason, "SENDING")
 
 
 def _assign(
@@ -686,12 +695,14 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
     adaptador necesita. Con la conversación bloqueada y la cuenta con `FOR SHARE` (desconectarla
     espera; dos envíos de una cuenta no se serializan) re-evalúa la política justo antes de enviar:
     si ya no se puede, queda `FAILED` con el motivo y devuelve `None`. Idempotente: lo que no está
-    `QUEUED`, ajeno, inexistente o que otro despachador reclama a la vez da `None`."""
+    `QUEUED`, ajeno, inexistente, aún dentro de su espera (`not_before`: un evento reentregado no
+    envía antes) o que otro despachador reclama a la vez da `None`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
+        waiting = Q(not_before__isnull=True) | Q(not_before__lte=timezone.now())  # tras su espera
         queued = Message.objects.using(alias).filter(
-            pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
+            waiting, pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
         )
         row = queued.values("conversation_id").first()
         if row is None:
@@ -725,18 +736,24 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         )  # fmt: skip
 
 
-def release_outbound(ctx: TenantContext, *, message_id: UUID) -> bool:
-    """Devuelve a la cola un `SENDING` que seguro no salió, nunca tras un resultado ambiguo."""
+def release_outbound(ctx: TenantContext, *, message_id: UUID, wait: dt.timedelta) -> int | None:
+    """Devuelve a la cola un `SENDING` que seguro no salió (nunca tras un resultado ambiguo), cuenta
+    el intento y no lo deja reintentar antes de `wait` (`not_before`: el barredor de la cola no lo
+    reencola antes). Devuelve los intentos, o `None` si ya no estaba `SENDING`."""
     alias = require_scope(ctx)
     message_id = _uuid(message_id, "mensaje")
     with transaction.atomic(using=alias):
         held = Message.objects.using(alias).filter(pk=message_id, delivery_status="SENDING")
         if not held.select_for_update(no_key=True).exists():
-            return False
-        held.update(delivery_status=Delivery.QUEUED, sending_at=None)
+            return None
+        held.update(
+            delivery_status=Delivery.QUEUED, sending_at=None, not_before=timezone.now() + wait,
+            dispatch_attempts=F("dispatch_attempts") + 1,
+        )  # fmt: skip
         changes = {"delivery_status": [Delivery.SENDING, Delivery.QUEUED]}
         record(ctx, "message.delivery_changed", Entity("message", message_id), changes, None)
-        return True
+        attempts: int = Message.objects.using(alias).get(pk=message_id).dispatch_attempts
+        return attempts
 
 
 def settle_outbound(ctx: TenantContext, *, message_id: UUID, result: SendResult) -> Message | None:
