@@ -2311,7 +2311,8 @@
     "sandbox": "Canal de pruebas: no sale a ningún proveedor. Sirve para probar el Inbox con mensajes simulados.",
     "platform": {
       "SANDBOX": "Sandbox",
-      "WHATSAPP": "WhatsApp"
+      "WHATSAPP": "WhatsApp",
+      "UNKNOWN": "Otro canal"
     },
     "status": {
       "PENDING": "Pendiente",
@@ -2327,7 +2328,8 @@
       "QUALITY_LOW": "Meta bajó la calidad del número.",
       "LIMIT_REACHED": "Se alcanzó el límite de mensajería.",
       "DISCONNECTED_BY_ADMIN": "La desconectó un administrador.",
-      "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación."
+      "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación.",
+      "UNKNOWN": "La cuenta informa de un motivo que esta versión no conoce."
     },
     "checklist": {
       "label": "Lo que falta para usar la cuenta",

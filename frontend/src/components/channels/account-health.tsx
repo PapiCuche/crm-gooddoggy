@@ -2,6 +2,12 @@ import { Check, Clock, TriangleAlert, Unplug, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import type { ChannelAccount } from "@/lib/api/model";
+import {
+  MessagingLimitTierEnum,
+  PlatformEnum,
+  QualityRatingEnum,
+  StatusDetailEnum,
+} from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 // La salud de una cuenta de WhatsApp (F7-07d), con lo que calcula F7-06b: cada estado y cada paso
@@ -19,6 +25,24 @@ const STATE = {
   bad: { Icon: X, tone: "text-danger" },
   wait: { Icon: Clock, tone: "text-muted" },
 } as const;
+
+// Los códigos que la API manda y que esta pantalla sabe traducir. Un código que no está (la API
+// puede crecer antes que la pantalla, o traer una clave como `constructor`) nunca se busca en los
+// mensajes: se dice con su texto de «desconocido», no con la clave en crudo.
+const CODES = {
+  detail: [StatusDetailEnum, "UNKNOWN"],
+  quality: [QualityRatingEnum, "UNKNOWN"],
+  tier: [MessagingLimitTierEnum, "TIER_NOT_SET"],
+  platform: [PlatformEnum, "UNKNOWN"],
+} as const;
+export function useCodeLabel() {
+  const t = useTranslations("channels");
+  return (group: keyof typeof CODES, value: string | null | undefined): string => {
+    const [known, fallback] = CODES[group];
+    const code = value != null && Object.hasOwn(known, value) ? value : fallback;
+    return t(`${group}.${code}` as never);
+  };
+}
 
 // El estado de la cuenta, con su icono.
 export function StatusMark({ status }: { status: ChannelAccount["status"] }) {

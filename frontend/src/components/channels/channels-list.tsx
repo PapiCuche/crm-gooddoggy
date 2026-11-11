@@ -10,7 +10,7 @@ import type { ChannelAccount } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { Plain } from "../inbox/plain";
-import { Checklist, StatusMark } from "./account-health";
+import { Checklist, StatusMark, useCodeLabel } from "./account-health";
 import { ConnectAccount } from "./connect-account";
 import { DisconnectAccount } from "./disconnect-account";
 import { RotateToken } from "./rotate-token";
@@ -53,6 +53,7 @@ function Account({
   refresh: () => void;
 }) {
   const t = useTranslations("channels");
+  const label = useCodeLabel();
   const format = useFormatter();
   const whatsapp = account.platform === "WHATSAPP";
   const detail = account.status_detail;
@@ -63,11 +64,11 @@ function Account({
           <span className="font-medium wrap-anywhere">
             <Plain>{account.name}</Plain>
           </span>
-          <span className="text-muted text-sm">{t(`platform.${account.platform}`)}</span>
+          <span className="text-muted text-sm">{label("platform", account.platform)}</span>
         </p>
         <StatusMark status={account.status} />
       </div>
-      {detail ? <p className="text-sm">{t(`detail.${detail}`)}</p> : null}
+      {detail ? <p className="text-sm">{label("detail", detail)}</p> : null}
       {whatsapp ? (
         <>
           <Checklist account={account} />
@@ -83,12 +84,8 @@ function Account({
             <Row label={t("fields.token")} mono>
               {account.token_last_four ? `…${account.token_last_four}` : t("fields.noToken")}
             </Row>
-            <Row label={t("fields.quality")}>
-              {t(`quality.${account.quality_rating ?? "UNKNOWN"}`)}
-            </Row>
-            <Row label={t("fields.tier")}>
-              {t(`tier.${account.messaging_limit_tier ?? "TIER_NOT_SET"}`)}
-            </Row>
+            <Row label={t("fields.quality")}>{label("quality", account.quality_rating)}</Row>
+            <Row label={t("fields.tier")}>{label("tier", account.messaging_limit_tier)}</Row>
             <Row label={t("fields.checked")}>
               {account.last_healthcheck_at
                 ? format.dateTime(new Date(account.last_healthcheck_at), {
@@ -109,9 +106,9 @@ function Account({
             </div>
           ) : null}
         </>
-      ) : (
+      ) : account.platform === "SANDBOX" ? (
         <p className="text-muted text-sm">{t("sandbox")}</p>
-      )}
+      ) : null}
     </>
   );
 }
