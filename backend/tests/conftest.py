@@ -68,6 +68,10 @@ TENANT_TABLES = (
 # F5-03 y F6-06b: delante de todo lo que referencian (etapas, motivos, contactos, variantes,
 # membresías y, desde F6-06b, las conversaciones: por eso van delante de ellas)
 TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
+TENANT_TABLES = (
+    "tasks",
+    *TENANT_TABLES,
+)  # F5-08a: delante de contactos, oportunidades y membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
