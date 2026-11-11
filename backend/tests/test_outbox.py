@@ -19,7 +19,7 @@ from core.tenancy.scope import tenant_scope
 from tests.tenancy_app import tasks
 from tests.test_tenancy import raw_count
 
-pytestmark = pytest.mark.usefixtures("tenant_db")
+pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 EVENT = "test.widget.created"
 
 

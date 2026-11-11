@@ -46,6 +46,7 @@ class Fake {
   constructor(readonly url: string) {
     Fake.all.push(this);
   }
+  send() {}
   close() {
     this.closed = true;
   }

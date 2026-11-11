@@ -24,7 +24,6 @@ from apps.conversations import accounts, commands, inbound
 from apps.conversations.models import ChannelAccount, Message
 from apps.conversations.whatsapp import EXTERNAL_ID
 from core.observability.logging import get_logger
-from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
@@ -102,10 +101,6 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
         )
         if moved.delivery_status == before:
             return None  # atrasado, repetido o tras `FAILED`: nada cambia
-        emit(  # una pista para la pantalla: solo ids
-            ctx, "message.updated", aggregate_type="message", aggregate_id=message.pk,
-            payload={"conversation_id": str(message.conversation_id)},
-        )  # fmt: skip
         if reason == "TOKEN_INVALID":
             accounts.mark_token_invalid(ctx, channel_account_id=account.pk)
         elif reason == "QUALITY_BLOCKED":

@@ -39,7 +39,10 @@ EVENTS = frozenset(
     ).split()
 )
 CLOSE_UNAUTHENTICATED, CLOSE_TOO_MANY, CLOSE_IDLE = 4401, 4429, 4408
-CLOSE_TOO_BIG, CLOSE_RETRY = 1009, 1013
+CLOSE_TOO_BIG, CLOSE_RETRY, CLOSE_RATE = 1009, 1013, 1008
+RATE_WINDOW = 60.0  # segundos de la ventana del límite de tramas del cliente
+# El cliente (`inbox-socket.ts`) solo conoce estos tipos: los del outbox se le mandan con ellos.
+CONTRACT = {"message.queued": "message.updated", "conversation.assigned": "conversation.updated"}
 _open: Counter[UUID] = Counter()  # conexiones abiertas por persona en este proceso
 
 
@@ -57,8 +60,14 @@ def outgoing(
         conversation_id = UUID(str(raw))
     except ValueError:
         return None
-    event = dict(type=event_type, id=str(aggregate_id), conversation_id=str(conversation_id), at=at)
-    return {"type": "inbox.event", "event": event}
+    event = dict(type=CONTRACT.get(event_type, event_type), conversation_id=str(conversation_id))
+    event["at"] = at
+    if event_type.startswith("message."):
+        event["message_id"] = str(aggregate_id)
+    message: dict[str, Any] = {"type": "inbox.event", "event": event}
+    if payload.get("previous_user_id") and event_type == "conversation.assigned":
+        message["previous_user_id"] = str(payload["previous_user_id"])  # no llega al cliente
+    return message
 
 
 def publish(organization_id: UUID, message: dict[str, Any]) -> bool:
@@ -74,7 +83,8 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
     user_id: UUID | None = None
     watcher: asyncio.Task[None] | None = None
     closed = False
-    last_seen = 0.0
+    last_seen = window = 0.0
+    frames = 0
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         self.base_send = send  # para poder cerrar aunque la capa falle al empezar
@@ -117,12 +127,14 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
             return False
 
     @staticmethod
-    def _visible(conversation_id: UUID) -> bool | None:
-        """`None`: sin permiso (se expulsa). Si no, ¿está la conversación en su alcance?"""
+    def _visible(conversation_id: UUID, previous_user_id: str | None) -> bool | None:
+        """`None`: sin permiso (se expulsa). Si no, ¿está la conversación en su alcance? Quien la
+        tenía y la perdió por una reasignación recibe ese último aviso."""
         ectx = execution_context(require())
         if not has_permission(ectx, VIEW):
             return None
-        return scoped(ectx, VIEW, Conversation.objects.filter(pk=conversation_id)).exists()
+        found = scoped(ectx, VIEW, Conversation.objects.filter(pk=conversation_id)).exists()
+        return found or str(ectx.tenant.user_id) == previous_user_id
 
     async def _close(self, code: int) -> None:
         if not self.closed:
@@ -135,7 +147,9 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
         if self.closed:
             return
         try:
-            seen = await self.in_tenant(self._visible, UUID(event["conversation_id"]))
+            seen = await self.in_tenant(
+                self._visible, UUID(event["conversation_id"]), message.get("previous_user_id")
+            )
         except AccessDenied:
             seen = None
         if seen is None:
@@ -145,7 +159,15 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
 
     async def receive(self, text_data: str | None = None, bytes_data: bytes | None = None) -> None:
         """Lo único que acepta el cliente es `{"type": "ping"}`; el resto se ignora."""
-        self.last_seen = time.monotonic()
+        now = self.last_seen = time.monotonic()
+        if now - self.window >= RATE_WINDOW:
+            self.window, self.frames = now, 0
+        self.frames += 1
+        if (
+            self.frames > settings.INBOX_WS_MAX_FRAMES
+        ):  # un cliente real manda unos 3 `ping` por minuto
+            await self._close(CLOSE_RATE)
+            return
         if bytes_data is not None or len(text_data or "") > settings.INBOX_WS_MAX_FRAME:
             await self._close(CLOSE_TOO_BIG)
             return
