@@ -6663,6 +6663,125 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/:
+    get:
+      operationId: quotes_list
+      description: 'Las cotizaciones dentro del alcance de `quotes.view` (las que
+        creó quien consulta; con alcance de equipo, también las de sus compañeros),
+        paginadas por creación (ADR-016). Los filtros se combinan y la página siguiente
+        se pide con los mismos: `mine`, `status`, `contact_id`, `opportunity_id`,
+        `number` (exacto) y `expired`. 400: un filtro repetido o inválido. Sin líneas:
+        están en el detalle.'
+      parameters:
+      - in: query
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - in: query
+        name: expired
+        schema:
+          type: boolean
+        description: Enviadas o vistas con la validez ya pasada, aún sin marcar como
+          vencidas.
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: query
+        name: mine
+        schema:
+          type: boolean
+        description: Las que creé yo.
+      - in: query
+        name: number
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 20
+          pattern: ^COT-[0-9]{6,}$
+        description: El número exacto.
+      - in: query
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: status
+        schema:
+          enum:
+          - DRAFT
+          - PENDING_APPROVAL
+          - APPROVED
+          - SENT
+          - VIEWED
+          - ACCEPTED
+          - REJECTED
+          - EXPIRED
+          - CANCELLED
+          type: string
+          minLength: 1
+        description: |-
+          * `DRAFT` - Draft
+          * `PENDING_APPROVAL` - Pending Approval
+          * `APPROVED` - Approved
+          * `SENT` - Sent
+          * `VIEWED` - Viewed
+          * `ACCEPTED` - Accepted
+          * `REJECTED` - Rejected
+          * `EXPIRED` - Expired
+          * `CANCELLED` - Cancelled
+      tags:
+      - quotes
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedQuoteList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/:
     get:
       operationId: roles_list
@@ -11331,6 +11450,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedQuoteList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Quote'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedRoleList:
       type: object
       required:
@@ -12628,6 +12761,130 @@ components:
         * `YELLOW` - YELLOW
         * `RED` - RED
         * `UNKNOWN` - UNKNOWN
+    Quote:
+      type: object
+      description: 'La cotización de la lista: sin líneas ni texto libre.'
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        number:
+          type: string
+          maxLength: 20
+        revision:
+          type: integer
+          maximum: 32767
+          minimum: 0
+        status:
+          $ref: '#/components/schemas/QuoteStatusEnum'
+        contact:
+          $ref: '#/components/schemas/QuoteContactRef'
+        opportunity_id:
+          type: string
+          format: uuid
+          nullable: true
+          readOnly: true
+        price_list_id:
+          type: string
+          format: uuid
+          readOnly: true
+        currency:
+          type: string
+          maxLength: 3
+        tax_mode:
+          $ref: '#/components/schemas/TaxModeEnum'
+        tax_rate:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,4})?$
+        subtotal:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        discount_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        tax_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+      required:
+      - contact
+      - created_at
+      - currency
+      - id
+      - number
+      - opportunity_id
+      - price_list_id
+      - status
+      - tax_mode
+      - tax_rate
+      - updated_at
+    QuoteContactRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+          nullable: true
+          description: '`null` si quien consulta no puede ver el contacto (`contacts.view`).'
+      required:
+      - display_name
+      - id
+    QuoteStatusEnum:
+      enum:
+      - DRAFT
+      - PENDING_APPROVAL
+      - APPROVED
+      - SENT
+      - VIEWED
+      - ACCEPTED
+      - REJECTED
+      - EXPIRED
+      - CANCELLED
+      type: string
+      description: |-
+        * `DRAFT` - Draft
+        * `PENDING_APPROVAL` - Pending Approval
+        * `APPROVED` - Approved
+        * `SENT` - Sent
+        * `VIEWED` - Viewed
+        * `ACCEPTED` - Accepted
+        * `REJECTED` - Rejected
+        * `EXPIRED` - Expired
+        * `CANCELLED` - Cancelled
     RevokedEnum:
       enum:
       - REVOKED
@@ -13366,6 +13623,14 @@ components:
           description: La que se leyó; si no, 409.
       required:
       - version
+    TaxModeEnum:
+      enum:
+      - INCLUDED
+      - EXCLUDED
+      type: string
+      description: |-
+        * `INCLUDED` - Included
+        * `EXCLUDED` - Excluded
     Team:
       type: object
       properties:
