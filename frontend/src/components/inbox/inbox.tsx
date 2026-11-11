@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { ChatPanel } from "./chat-panel";
 import { ConversationList, type Filters } from "./conversation-list";
 import { CustomerPanel } from "./customer-panel";
+import { useInboxRealtime } from "./use-inbox-realtime";
 
 // En pantalla ancha lista y chat conviven; en 390 px se ve uno u otro (lista y, al abrirla, el chat).
 const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 1024px)").matches;
@@ -20,6 +21,7 @@ const wide = () => typeof matchMedia === "function" && matchMedia("(min-width: 1
 export function Inbox() {
   const t = useTranslations("inbox");
   const { organization } = useTenant();
+  useInboxRealtime(); // los cambios llegan sin recargar (si el servicio de tiempo real está encendido)
   const [filters, setFilters] = useState<Filters>({ box: "all", status: "" });
   const [selected, setSelected] = useState<Conversation | null>(null);
   // El cliente que se ve en el panel (el del detalle de la conversación, no el de la fila de la lista);
