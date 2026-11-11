@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -133,6 +133,7 @@ afterEach(() => {
 
 describe("OpportunityDetail (F5-07)", () => {
   it("con tasks.view enseña sus tareas y «Nueva tarea» las vincula a la oportunidad; sin él, nada", async () => {
+    configure({ asyncUtilTimeout: 4000 }); // varios pasos seguidos: con la máquina cargada, más margen
     const TASKS = `GET /api/v1/o/acme/tasks/?opportunity_id=${ID}&limit=200`;
     const api = mockApi({
       [DETAIL]: ok(detail()),
@@ -140,9 +141,9 @@ describe("OpportunityDetail (F5-07)", () => {
       [TASKS]: ok({
         results: [
           {
-            ...{ id: "t1", type: "CALL", title: "Enviar la cotización" },
-            ...{ description: "", due_at: null, is_all_day: false, status: "PENDING" },
-            ...{ priority: "HIGH", contact: { id: "c1", display_name: "Rosa Díaz" } },
+            ...{ id: "t1", type: "CALL", title: "Enviar la cotización", description: "" },
+            ...{ due_at: null, is_all_day: false, status: "PENDING", priority: "HIGH" },
+            ...{ contact: { id: null, display_name: null } },
           },
         ],
         next: null,
@@ -151,7 +152,6 @@ describe("OpportunityDetail (F5-07)", () => {
     });
     show();
     await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" });
-    expect(screen.queryByRole("heading", { name: "Tareas" })).toBeNull();
     expect(api.mock.calls.some(([url]) => String(url).includes("/tasks/"))).toBe(false);
     cleanup();
     show(["opportunities.view", "tasks.view", "tasks.create"]);

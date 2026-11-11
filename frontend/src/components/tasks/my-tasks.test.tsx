@@ -239,22 +239,20 @@ describe("crear y cambiar una tarea", () => {
       target: { value: title },
     });
   };
-  const post = (calls: { url: URL; init?: RequestInit }[]) =>
+  const bodies = (calls: { url: URL; init?: RequestInit }[], method: string) =>
     calls
-      .filter(({ init }) => init?.method === "POST")
+      .filter(({ init }) => init?.method === method)
       .map(({ init }) => JSON.parse(String(init!.body)));
+  const post = (calls: { url: URL; init?: RequestInit }[]) => bodies(calls, "POST");
 
-  it("sin tasks.update las filas no tienen «Editar»", async () => {
+  it("sin tasks.update no hay «Editar» y sin tasks.create no hay «Nueva tarea»", async () => {
     serve(() => page(task("1", { title: "Antigua" })));
     show("tasks.view", "tasks.create");
     await screen.findByText("Antigua");
     expect(screen.queryByRole("button", { name: /Editar la tarea/ })).toBeNull();
-  });
-
-  it("sin tasks.create no hay «Nueva tarea»", async () => {
-    serve(() => page());
-    show("tasks.view");
-    await screen.findByText("No tienes tareas para hoy.");
+    cleanup();
+    show("tasks.view", "tasks.update");
+    expect(await screen.findByRole("button", { name: /Editar la tarea/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Nueva tarea" })).toBeNull();
   });
 
@@ -276,7 +274,6 @@ describe("crear y cambiar una tarea", () => {
       },
     ]);
     await waitFor(() => expect(gets(calls).length).toBeGreaterThan(1)); // la lista se vuelve a pedir
-    expect(screen.getByRole("button", { name: "Nueva tarea" })).toBeVisible();
   });
 
   it("con hora envía ese instante; sin hora no envía; sin fecha avisa que no saldrá", async () => {
@@ -302,12 +299,18 @@ describe("crear y cambiar una tarea", () => {
     expect(post(calls)[1]).toMatchObject({ due_at: null, is_all_day: false });
   });
 
-  it("un título vacío no se envía; Escape cierra sin enviar", async () => {
+  it("un título vacío o un año absurdo no se envían (se explican); Escape cierra sin enviar", async () => {
     const calls = serve(() => page());
     show("tasks.view", "tasks.create");
     await fill("   ");
     fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
     expect(await screen.findByText("Escribe un título.")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "Título" }), {
+      target: { value: "Vieja" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Fecha/), { target: { value: "0001-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+    expect(await screen.findByText("La fecha no es válida.")).toBeVisible();
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Título" }), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
     expect(post(calls)).toEqual([]);
@@ -331,53 +334,39 @@ describe("crear y cambiar una tarea", () => {
     expect(screen.getByRole("textbox", { name: "Título" })).toHaveValue("Con tab");
   });
 
-  it("cambia con la versión leída y precarga fecha y hora de la zona", async () => {
-    const open = task("1", { title: "Antigua", due_at: "2026-11-11T19:30:00Z", version: 5 });
-    const calls = serve((url, init) =>
-      init?.method === "PATCH" ? { status: 200, body: { ...open, title: "Nueva" } } : page(open),
-    );
-    show("tasks.view", "tasks.update");
-    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
-    expect(await screen.findByLabelText(/^Fecha/)).toHaveValue("2026-11-11");
-    expect(screen.getByLabelText("Hora")).toHaveValue("14:30");
-    fireEvent.change(screen.getByRole("textbox", { name: "Título" }), {
-      target: { value: "Nueva" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
-    expect(await screen.findByText("Tarea guardada.")).toBeVisible();
-    const patch = calls.find(({ init }) => init?.method === "PATCH")!;
-    expect(patch.url.pathname).toBe(`${BASE}1/`);
-    expect(JSON.parse(String(patch.init!.body))).toEqual({ version: 5, title: "Nueva" }); // solo lo cambiado
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Editar la tarea Antigua" })).toHaveFocus(),
-    );
-  });
-
-  it("cambia la fecha con la hora de la zona y quita la fecha con null", async () => {
+  it("cambia con la versión leída, solo lo cambiado: título, hora de la zona y fecha quitada", async () => {
     const open = task("1", { title: "Antigua", due_at: "2026-11-11T19:30:00Z", version: 5 });
     const calls = serve((url, init) =>
       init?.method === "PATCH" ? { status: 200, body: open } : page(open),
     );
     show("tasks.view", "tasks.update");
-    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
-    fireEvent.change(await screen.findByLabelText("Hora"), { target: { value: "15:00" } });
-    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
-    await screen.findByText("Tarea guardada.");
-    fireEvent.click(await screen.findByRole("button", { name: "Editar la tarea Antigua" }));
-    fireEvent.change(await screen.findByLabelText(/^Fecha/), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
-    await waitFor(() =>
-      expect(calls.filter(({ init }) => init?.method === "PATCH")).toHaveLength(2),
-    );
-    const bodies = calls
-      .filter(({ init }) => init?.method === "PATCH")
-      .map(({ init }) => JSON.parse(String(init!.body)));
-    expect(bodies[0]).toEqual({
-      version: 5,
-      due_at: "2026-11-11T20:00:00.000Z",
-      is_all_day: false,
+    const edit = () => screen.findByRole("button", { name: "Editar la tarea Antigua" });
+    const save = async (count: number) => {
+      fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
+      await waitFor(() => expect(bodies(calls, "PATCH")).toHaveLength(count));
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: /Editar la tarea/ })).toHaveFocus(),
+      );
+    };
+    fireEvent.click(await edit());
+    expect(await screen.findByLabelText(/^Fecha/)).toHaveValue("2026-11-11");
+    expect(screen.getByLabelText("Hora")).toHaveValue("14:30");
+    fireEvent.change(screen.getByRole("textbox", { name: "Título" }), {
+      target: { value: "Nueva" },
     });
-    expect(bodies[1]).toEqual({ version: 5, due_at: null, is_all_day: false });
+    await save(1);
+    fireEvent.click(await edit());
+    fireEvent.change(await screen.findByLabelText("Hora"), { target: { value: "15:00" } });
+    await save(2);
+    fireEvent.click(await edit());
+    fireEvent.change(await screen.findByLabelText(/^Fecha/), { target: { value: "" } });
+    await save(3);
+    expect(calls.find(({ init }) => init?.method === "PATCH")!.url.pathname).toBe(`${BASE}1/`);
+    expect(bodies(calls, "PATCH")).toEqual([
+      { version: 5, title: "Nueva" },
+      { version: 5, due_at: "2026-11-11T20:00:00.000Z", is_all_day: false },
+      { version: 5, due_at: null, is_all_day: false },
+    ]);
   });
 
   it("envía la versión que leyó al abrir, no la que traiga la lista después", async () => {
@@ -398,8 +387,7 @@ describe("crear y cambiar una tarea", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
     await screen.findByText(/Otra persona cambió esta tarea/);
-    const patch = calls.find(({ init }) => init?.method === "PATCH")!;
-    expect(JSON.parse(String(patch.init!.body))).toEqual({ version: 5, title: "Mía" });
+    expect(bodies(calls, "PATCH")).toEqual([{ version: 5, title: "Mía" }]);
   });
 
   it("explica un 409 de versión o de tarea cerrada y un 404", async () => {

@@ -53,48 +53,35 @@ afterEach(() => {
 });
 
 describe("ficha del cliente: pestaña «Tareas» (F5-08c)", () => {
-  it("solo con tasks.view, y no pide nada hasta abrirla", async () => {
+  it("solo con tasks.view y sin pedir nada hasta abrirla; «Nueva tarea» ya vinculada y sin fecha", async () => {
     const api = mockApi({
       [`GET /api/v1/o/acme/contacts/${ID}/`]: { status: 200, body: rosa },
       [`GET ${TASKS}`]: { status: 200, body: { results: [task], next: null } },
+      "POST /api/v1/o/acme/tasks/": { status: 201, body: { ...task, due_at: null } },
     });
     open("contacts.view");
     await screen.findByRole("heading", { level: 1, name: "Rosa Díaz" });
     expect(tabs().map((tab) => tab.textContent)).toEqual(["Resumen", "Notas"]);
     cleanup();
-    open("contacts.view", "tasks.view");
+    open("contacts.view", "tasks.view", "tasks.create");
     await screen.findByRole("heading", { level: 1, name: "Rosa Díaz" });
     expect(tabs().map((tab) => tab.textContent)).toEqual(["Resumen", "Notas", "Tareas"]);
     expect(api.mock.calls.some(([url]) => String(url) === TASKS)).toBe(false);
     fireEvent.click(screen.getByRole("tab", { name: "Tareas" }));
-    // Las de ese cliente, también las cerradas y sin fecha; el cliente no se repite en la fila.
     expect(await screen.findByText("Llamar a Rosa")).toBeVisible();
     expect(screen.getByText("Completada")).toBeVisible();
     expect(screen.getByText("Sin fecha")).toBeVisible();
     expect(screen.queryByRole("link", { name: /Cliente:/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Nueva tarea" })).toBeNull();
-  });
-
-  it("«Nueva tarea» ya vinculada al cliente y sin fecha de hoy", async () => {
-    const api = mockApi({
-      [`GET /api/v1/o/acme/contacts/${ID}/`]: { status: 200, body: rosa },
-      [`GET ${TASKS}`]: { status: 200, body: { results: [], next: null } },
-      "POST /api/v1/o/acme/tasks/": { status: 201, body: { ...task, due_at: null } },
-    });
-    open("contacts.view", "tasks.view", "tasks.create");
-    await screen.findByRole("heading", { level: 1, name: "Rosa Díaz" });
-    fireEvent.click(screen.getByRole("tab", { name: "Tareas" }));
-    expect(await screen.findByText("Todavía no hay tareas.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Nueva tarea" }));
     expect(await screen.findByLabelText(/^Fecha/)).toHaveValue("");
     fireEvent.change(screen.getByRole("textbox", { name: "Título" }), {
-      target: { value: "Llamar a Rosa" },
+      target: { value: "Otra" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
     expect(await screen.findByText(/Tarea creada sin fecha/)).toBeVisible();
     const post = api.mock.calls.find(([, init]) => init?.method === "POST")!;
     expect(JSON.parse(String(post[1]!.body))).toMatchObject({
-      ...{ contact_id: ID, title: "Llamar a Rosa", due_at: null, is_all_day: false },
+      ...{ contact_id: ID, title: "Otra", due_at: null, is_all_day: false },
     });
   });
 });

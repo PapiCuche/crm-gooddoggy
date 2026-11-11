@@ -7,9 +7,9 @@ import { NewTask } from "./new-task";
 import type { TaskLink } from "./task-form";
 import { TasksList } from "./tasks-list";
 
-// Las tareas de un cliente o de una oportunidad (F5-08c): la pestaña «Tareas» de la ficha y la
-// sección del detalle. Todas las del vínculo dentro del alcance de quien mira (no solo las
-// suyas, y también las cerradas, con la fecha que tengan o sin ella) y «Nueva tarea» ya vinculada.
+// Las tareas de un cliente o de una oportunidad (F5-08c): la pestaña de la ficha y la sección del
+// detalle. Todas las del vínculo dentro del alcance de quien mira, abiertas o cerradas, con fecha
+// o sin ella, y «Nueva tarea» ya vinculada.
 export function LinkedTasks({ link }: { link: TaskLink }) {
   const t = useTranslations("tasks");
   const [now] = useState(() => Date.now());

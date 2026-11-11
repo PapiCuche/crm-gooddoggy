@@ -9,10 +9,9 @@ import { Button } from "@/components/ui/button";
 import { TaskForm, type TaskLink } from "./task-form";
 import { fieldsOf } from "./task-time";
 
-// «Nueva tarea» (F5-08c): el botón, el formulario y el aviso del resultado, solo con
-// `tasks.create` (la API lo vuelve a comprobar). Desde «Mis tareas» la fecha trae hoy
-// (`withToday`); desde una ficha o una oportunidad `link` deja la tarea ya vinculada. Al cerrar,
-// el foco vuelve al botón.
+// «Nueva tarea» (F5-08c): botón, formulario y aviso, solo con `tasks.create` (la API lo vuelve a
+// comprobar). Desde «Mis tareas» la fecha trae hoy (`withToday`); `link` deja la tarea vinculada.
+// Al cerrar, el foco vuelve al botón.
 export function NewTask({ link, withToday }: { link?: TaskLink; withToday?: boolean }) {
   const t = useTranslations("tasks");
   const zone = useTimeZone() ?? "America/Lima";

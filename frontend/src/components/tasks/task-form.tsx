@@ -25,14 +25,18 @@ const TYPES = [
   "DELIVERY",
   "OTHER",
 ];
+// Un año absurdo escrito a mano haría lanzar `toISOString` (`RangeError`): se acota.
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const inRange = (value: string) =>
+  DAY.test(value) && +value.slice(0, 4) >= 1970 && +value.slice(0, 4) <= 2200;
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"];
 export type TaskLink = { contact_id?: string; opportunity_id?: string };
 
-// Crear o cambiar una tarea (F5-08c) con `POST …/tasks/` o `PATCH …/tasks/{id}/` (F5-08b2). La
-// fecha es opcional: con ella, «Todo el día» envía el instante de las 00:00 de ese día en la zona
-// de la pantalla y sin él, el de la hora elegida. Cambiar manda la `version` leída; un 409 se
-// explica en lugar de pisar lo de otra persona. El responsable es quien crea (se reasigna aparte)
-// y el vínculo (`link`) no se cambia. Lo escrito se conserva si la API rechaza; Escape cierra.
+// Crear o cambiar una tarea (F5-08c) con `POST …/tasks/` o `PATCH …/tasks/{id}/`. La fecha es
+// opcional: «Todo el día» envía las 00:00 de ese día en la zona de la pantalla y sin él, la hora
+// elegida. Cambiar manda la `version` leída al abrir y solo lo cambiado; un 409 se explica. El
+// responsable es quien crea y el vínculo (`link`) no se cambia. Lo escrito se conserva si la API
+// rechaza; Escape cierra.
 export function TaskForm({
   task,
   link,
@@ -66,7 +70,6 @@ export function TaskForm({
   const id = useId();
   const titleInput = useRef<HTMLInputElement>(null);
   const sending = useRef(false);
-
   const options = { mutation: { networkMode: "always" as const } };
   const create = useTasksCreate(options);
   const update = useTasksUpdate(options);
@@ -81,7 +84,7 @@ export function TaskForm({
       (bad("title") && t("form.titleInvalid")),
     time: asked && !allDay && date && !time && t("form.timeRequired"),
     description: bad("description") && t("form.descriptionInvalid"),
-    date: bad("due_at") && t("form.dueInvalid"),
+    date: ((asked && date && !inRange(date)) || bad("due_at")) && t("form.dueInvalid"),
   };
   let formError: string | null = null;
   if (error && !bad("title") && !bad("description") && !bad("due_at")) {
@@ -103,7 +106,8 @@ export function TaskForm({
 
   function submit() {
     setAsked(true);
-    if (sending.current || !title.trim() || (date && !allDay && !time)) return;
+    if (sending.current || !title.trim() || (date && (!inRange(date) || (!allDay && !time))))
+      return;
     let dueAt: string | null = null;
     if (date) {
       const [y, m, d] = date.split("-").map(Number) as [number, number, number];
@@ -115,20 +119,19 @@ export function TaskForm({
       ...{ title: title.trim(), type: type as TaskTypeEnum, priority: priority as PriorityEnum },
       ...{ description: description.trim(), due_at: dueAt, is_all_day: !!date && allDay },
     };
-    // Al cambiar solo viaja lo que cambió respecto de lo leído.
-    const same = (a: string | null, b: string | null) =>
-      (a === null ? null : Date.parse(a)) === (b === null ? null : Date.parse(b));
-    const common = read
-      ? {
-          ...(all.title !== read.title ? { title: all.title } : {}),
-          ...(all.type !== read.type ? { type: all.type } : {}),
-          ...(all.priority !== read.priority ? { priority: all.priority } : {}),
-          ...(all.description !== read.description ? { description: all.description } : {}),
-          ...(!same(dueAt, read.due_at) || all.is_all_day !== read.is_all_day
-            ? { due_at: dueAt, is_all_day: all.is_all_day }
-            : {}),
-        }
-      : all;
+    // Al cambiar solo viaja lo que cambió respecto de lo leído (la fecha y «todo el día» juntas).
+    const instant = (at: string | null) => (at === null ? null : Date.parse(at));
+    const sameDue =
+      read && instant(dueAt) === instant(read.due_at) && all.is_all_day === read.is_all_day;
+    const common = Object.fromEntries(
+      Object.entries(all).filter(([key, value]) =>
+        !read
+          ? true
+          : key === "due_at" || key === "is_all_day"
+            ? !sameDue
+            : value !== read[key as keyof Task],
+      ),
+    );
     const done = {
       onSuccess: (saved: Task) => {
         void client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
@@ -143,10 +146,6 @@ export function TaskForm({
     else create.mutate({ orgSlug: slug, data: { ...all, ...link } }, done);
   }
 
-  const area = cn(
-    "bg-surface border-foreground/50 min-h-24 resize-y rounded-[10px] border px-3 py-2.5 text-[16px] leading-relaxed",
-    "focus-visible:border-foreground aria-invalid:border-danger",
-  );
   return (
     <form
       noValidate
@@ -191,7 +190,10 @@ export function TaskForm({
           aria-invalid={fieldError.description ? true : undefined}
           aria-describedby={`${id}-description-note`}
           readOnly={busy}
-          className={area}
+          className={cn(
+            "bg-surface border-foreground/50 min-h-24 resize-y rounded-[10px] border px-3 py-2.5 text-[16px] leading-relaxed",
+            "focus-visible:border-foreground aria-invalid:border-danger",
+          )}
           onChange={(event) => setDescription(event.target.value)}
         />
         <p
@@ -211,6 +213,8 @@ export function TaskForm({
       />
       <TextField
         type="date"
+        min="1970-01-01"
+        max="2200-12-31"
         label={t("form.date")}
         value={date}
         hint={t("form.dateHint", { zone })}
