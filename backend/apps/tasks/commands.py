@@ -2,8 +2,8 @@
 cancelar, reabrir y borrar. No comprueban permisos: los declarará la API (F5-08b), la única que los
 importa (contrato de import-linter). Validan los tipos exactos (`ValueError`, nunca `TypeError` ni
 `IntegrityError`) y auditan con el antes y el después; el texto libre (título, descripción, motivo)
-se audita como `[texto]`. Sin cambios no escriben ni auditan. Bloqueos: contacto y oportunidad
-(`FOR SHARE`), la tarea y el miembro (`FOR NO KEY UPDATE`).
+se audita como `[texto]`. Sin cambios no escriben ni auditan. Bloqueos, todos `FOR NO KEY UPDATE`:
+contacto y oportunidad vivos (borrarlos a la vez espera y el alta falla), la tarea y el miembro.
 """
 
 import datetime as dt

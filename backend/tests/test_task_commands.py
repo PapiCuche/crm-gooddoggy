@@ -14,8 +14,10 @@ from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, ProgrammingError, connection, transaction
 from django.utils import timezone
 
+from apps.contacts.commands import delete_contact
 from apps.contacts.models import Contact
 from apps.deals.models import Opportunity
+from apps.deals.opportunities import delete_opportunity
 from apps.tasks import commands
 from apps.tasks.commands import BadReference, StaleVersion, TaskClosed, TaskOpen
 from apps.tasks.models import Task
@@ -332,6 +334,34 @@ def test_two_completes_at_once_leave_one_and_a_stale_version(world: SimpleNamesp
     first, second = race(world.a, world.ana, [complete, complete])
     assert first.status == "DONE" and second == "StaleVersion"
     assert reload(world, made.pk).version == 2
+
+
+def test_deleting_the_contact_or_the_opportunity_at_once_never_leaves_a_task_linked(
+    world: SimpleNamespace,
+) -> None:
+    for gone, field in (
+        (partial(delete_contact, contact_id=tables.contact(world.a).pk), "contact_id"),
+        (partial(delete_opportunity, opportunity_id=tables.make(world.a).pk), "opportunity_id"),
+    ):
+        target = gone.keywords.get("contact_id") or gone.keywords["opportunity_id"]
+        create = partial(commands.create_task, title="x", **{field: target})
+        assert (
+            race(world.a, world.ana, [gone, create])[1] == "BadReference"
+        )  # el alta espera y falla
+
+
+def test_the_layers_contract_allows_only_the_two_edges_tasks_needs() -> None:
+    import tomllib
+    from pathlib import Path
+
+    toml = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    layers = next(c for c in toml["tool"]["importlinter"]["contracts"] if c["type"] == "layers")
+    assert "apps.tasks" in layers["layers"][0].split(" | ")  # en la fila de deals, no encima
+    edges = {"apps.tasks.models -> apps.deals.models", "apps.tasks.commands -> apps.deals.models"}
+    assert edges <= set(layers["ignore_imports"])  # y ninguna otra de tasks
+    assert not [
+        e for e in layers["ignore_imports"] if e.startswith("apps.tasks") and e not in edges
+    ]
 
 
 def test_the_migration_goes_back_and_forward(world: SimpleNamespace, migrator: DB) -> None:
