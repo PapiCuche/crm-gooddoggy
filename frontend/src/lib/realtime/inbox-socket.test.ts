@@ -287,4 +287,12 @@ describe("latido", () => {
     stop();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("para el latido al parar con la conexión abierta y manda varios por debajo del plazo del servidor", () => {
+    expect(PING_EVERY * 3).toBeLessThan(90_000); // el servidor cierra a los 90 s sin tramas
+    const { stop } = start();
+    last().open();
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
