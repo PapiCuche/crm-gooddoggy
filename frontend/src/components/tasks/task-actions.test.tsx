@@ -218,6 +218,45 @@ describe("acciones de una tarea (F5-08c)", () => {
     );
   });
 
+  it("sin directorio, reasignar ofrece solo a uno mismo y a quien la tiene, sin nombrar a nadie más", async () => {
+    world(() => changed({}), { assigned_user_id: "u3" });
+    show("tasks.view", "tasks.assign"); // sin `users.view`: no se lee el directorio
+    fireEvent.click(await labelled("Reasignar la tarea Llamar"));
+    const form = await screen.findByRole("form", { name: "Reasignar la tarea" });
+    const select = within(form).getByRole("combobox", { name: "Responsable" });
+    expect(
+      within(select)
+        .getAllByRole("option")
+        .map((one) => one.textContent),
+    ).toEqual(["Yo", "Otro miembro"]);
+    expect(select).toHaveValue("u3"); // por omisión, quien la tiene
+  });
+
+  it("un 409 o un 404 de una acción de un clic vuelve a pedir la lista y lo dice", async () => {
+    for (const [reply, text] of [
+      [{ status: 409, body: { code: "STALE_VERSION" } }, /Ya actualizamos la lista/],
+      [{ status: 409, body: { code: "TASK_CLOSED" } }, /Ya actualizamos la lista/],
+      [{ status: 404, body: { code: "NOT_FOUND" } }, /ya no existe/],
+    ] as const) {
+      const calls = serve((url, init) =>
+        init?.method === "POST"
+          ? reply
+          : url.pathname === MEMBERS
+            ? people
+            : page(task("1", { title: "Llamar" })),
+      );
+      const reads = () =>
+        calls.filter(
+          ({ url, init }) => url.pathname === BASE && (!init?.method || init.method === "GET"),
+        ).length;
+      show("tasks.view", "tasks.update");
+      fireEvent.click(await labelled("Completar la tarea Llamar"));
+      expect(await screen.findByText(text)).toBeVisible();
+      await waitFor(() => expect(reads()).toBeGreaterThan(1)); // la lista se volvió a pedir
+      cleanup();
+    }
+  });
+
   it("cancelar y reasignar mandan la versión leída al abrir el formulario, no la que traiga la lista después", async () => {
     const { state, posts } = world(() => ({ status: 409, body: { code: "STALE_VERSION" } }));
     const { client } = show("tasks.view", "tasks.update", "tasks.assign");

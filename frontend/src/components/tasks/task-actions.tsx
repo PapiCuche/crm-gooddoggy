@@ -62,6 +62,14 @@ export function TaskActions({
     onSettled: () => {
       sending.current = false;
     },
+    onError: (error) => {
+      // Lo mostrado ya no vale (otra persona cambió o borró la tarea): se vuelve a pedir la lista
+      // y, si la fila se va (404), se dice en el aviso de la lista, que no se va con ella.
+      if (error.status === 404 || error.status === 409) {
+        void client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
+      }
+      if (error.status === 404) onDone(t("form.gone"));
+    },
     onSuccess: async (_, { done }) => {
       await client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
       setPanel(null);
@@ -84,10 +92,11 @@ export function TaskActions({
   if (error) {
     if (bad("assigned_user_id")) problem = t("actions.assigneeInvalid");
     else if (bad("reason")) problem = t("actions.reasonInvalid");
-    else if (error.code === "STALE_VERSION") problem = t("form.stale");
+    else if (error.code === "STALE_VERSION") problem = t(panel ? "form.stale" : "actions.stale");
     else if (error.code === "TASK_CLOSED") problem = t("actions.closed");
     else if (error.code === "TASK_OPEN") problem = t("actions.isOpen");
-    else if (error.status === 404) problem = t("form.gone");
+    else if (error.status === 404)
+      problem = null; // lo dice el aviso de la lista
     else if (error.code === "PERMISSION_DENIED") problem = t("actions.denied");
     else
       problem = errors(error.code === "VALIDATION_ERROR" ? "INTERNAL_ERROR" : apiErrorKey(error));
