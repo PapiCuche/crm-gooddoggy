@@ -67,6 +67,19 @@ _manager = urllib3.PoolManager(
 _manager.pool_classes_by_scheme = {"https": _GuardedPool}
 
 
+def never_connected(error: BaseException) -> bool:
+    """¿El fallo ocurrió antes de enviar la petición (no se pudo conectar, la IP no era pública,
+    TLS falló)? Entonces el servidor no recibió nada y repetirla es seguro; cualquier otro fallo
+    (tiempo de lectura agotado, conexión cortada) es ambiguo: la petición pudo llegar."""
+    if isinstance(error, urllib3.exceptions.MaxRetryError):
+        error = error.reason or error
+    connect = (
+        BlockedDestination, urllib3.exceptions.ConnectTimeoutError,
+        urllib3.exceptions.NewConnectionError, urllib3.exceptions.SSLError,
+    )  # fmt: skip
+    return isinstance(error, connect)
+
+
 def check_url(url: str) -> None:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()

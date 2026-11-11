@@ -1,25 +1,50 @@
-"""Adaptadores de canal (F6-04b, ADR-010): lo único que cambia de un canal a otro.
+"""Adaptadores de canal (F6-04b, F7-05b; ADR-010, ADR-029 §6): lo único que cambia de un canal a
+otro.
 
-`ChannelAdapter.send` recibe el mensaje que el despachador ya validó (conversación abierta, cuenta
-conectada, estado `QUEUED`) y devuelve el resultado; no escribe en la base de datos. Un fallo
-definitivo es un `SendResult` con un motivo corto y fijo (nunca el texto del mensaje ni el error
-del proveedor); un fallo pasajero lanza `TemporaryChannelError` y el despachador reintenta. La
-Fase 7 sustituye `SandboxAdapter` por proveedores reales sin tocar el despachador.
+`ChannelAdapter.send` recibe un `Claim`: el mensaje que el despachador ya reclamó (`SENDING`) con
+todo lo que hace falta para enviarlo, leído antes; **no toca la base de datos y se llama fuera de
+toda transacción**. Devuelve un `SendResult` (un fallo definitivo lleva un motivo corto y fijo,
+nunca el texto del mensaje ni el error del proveedor) o lanza: `TemporaryChannelError` cuando el
+canal seguro no recibió nada (el despachador devuelve el reclamo y reintenta) o
+`AmbiguousChannelError` cuando pudo recibirlo y no se sabe (no se reenvía a ciegas: Meta no
+deduplica).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
+from uuid import UUID
 
-from apps.conversations.models import Message
+from apps.conversations.models import Credential
 
 REASONS = (  # los cuatro primeros son los de la política (`policy.REASONS`)
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
-    "ADAPTER_REJECTED", "RETRIES_EXHAUSTED",
+    "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID", "RECIPIENT_UNREACHABLE",
+    "PROVIDER_REJECTED",
 )  # fmt: skip
 
 
 class TemporaryChannelError(Exception):
-    """El canal no respondió ahora; vale reintentar (con espera creciente)."""
+    """Seguro que el canal no recibió el mensaje (no se llegó a él, o «demasiado rápido»): se
+    reintenta con espera creciente."""
+
+
+class AmbiguousChannelError(Exception):
+    """La petición pudo llegar y no hay respuesta que lo diga (tiempo agotado, corte, 5xx):
+    reenviar podría duplicar el mensaje, así que se queda `SENDING`."""
+
+
+@dataclass(frozen=True, slots=True)
+class Claim:
+    """Lo que el adaptador necesita de un mensaje reclamado, ya leído. `credential` es la fila
+    cifrada de la cuenta: el token solo se abre durante la llamada (`credentials.open_token`)."""
+
+    message_id: UUID
+    account_id: UUID
+    platform: str
+    phone_number_id: str  # el `external_account_id` de la cuenta
+    recipient: str  # el teléfono del contacto en E.164; vacío si no tiene
+    body: str = field(repr=False)
+    credential: Credential | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,31 +59,35 @@ class SendResult:
 
 
 class ChannelAdapter(Protocol):
-    """Contrato (ADR-010): el despachador entrega al menos una vez, así que `send` puede llamarse
-    más de una vez para el mismo mensaje (el barredor, un reintento, o un fallo tras enviar y antes
-    de confirmar en la base) y **debe ser idempotente**: la clave es `message.pk` (o su
-    `client_message_id`). Un `TemporaryChannelError` no lleva el texto del mensaje ni el cuerpo de
-    la respuesta del proveedor: lo registran Celery y los registros."""
+    """Contrato (ADR-010, ADR-029 §6): el despachador reclama el mensaje (`SENDING`) y llama una
+    vez por reclamo; un reclamo devuelto (`TemporaryChannelError`) o un proceso que cayó tras
+    reclamar pueden repetirlo, así que `send` **debe ser idempotente** con la clave
+    `claim.message_id` donde el canal lo permita. Ningún error lleva el texto del mensaje ni el
+    cuerpo de la respuesta del proveedor."""
 
-    def send(self, message: Message) -> SendResult: ...
+    def send(self, claim: Claim) -> SendResult: ...
 
 
 class SandboxAdapter:
     """Siempre acepta y entrega, con un id externo sintético y estable: reenviar el mismo mensaje
     da el mismo id."""
 
-    def send(self, message: Message) -> SendResult:
-        return SendResult(True, f"sandbox-{message.pk}", delivered=True)
+    def send(self, claim: Claim) -> SendResult:
+        return SendResult(True, f"sandbox-{claim.message_id}", delivered=True)
 
 
 class UnknownPlatform(LookupError):
-    """La plataforma de la cuenta no tiene adaptador (hasta la Fase 7, solo `SANDBOX`)."""
+    """La plataforma de la cuenta no tiene adaptador (`SANDBOX` y `WHATSAPP`)."""
 
 
 ADAPTERS: dict[str, ChannelAdapter] = {"SANDBOX": SandboxAdapter()}
 
 
 def adapter_for(platform: str) -> ChannelAdapter:
+    if platform == "WHATSAPP":  # se importa aquí: `whatsapp` usa los tipos de este módulo
+        from apps.conversations.whatsapp import WhatsAppAdapter
+
+        return ADAPTERS.setdefault(platform, WhatsAppAdapter())
     try:
         return ADAPTERS[platform]
     except KeyError:

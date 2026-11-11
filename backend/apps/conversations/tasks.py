@@ -1,14 +1,17 @@
-"""Tareas del Inbox (F6-04b): la salida de los mensajes en cola y el barredor de los que se quedan.
+"""Tareas del Inbox (F6-04b, F7-05b): la salida de los mensajes en cola y el barredor de los que
+se quedan.
 
-`message.queued` (outbox, F6-04a) trae el id del mensaje; la organización llega en el contexto de
-la tarea (`@tenant_task`), nunca en un dato del evento. La entrega es idempotente:
-`dispatch_outbound` solo actúa sobre un mensaje `QUEUED`, así que repetir la tarea, o que el
-barredor y el evento coincidan, no envía dos veces. Un fallo pasajero del canal reintenta con
-espera creciente y acotada; al agotarse queda `FAILED` (`RETRIES_EXHAUSTED`). Ningún registro
-lleva el texto.
+`message.queued` (outbox, F6-04a) trae el id del mensaje. El despachador **reclama** el mensaje
+(`QUEUED` → `SENDING`), llama al canal **fuera de toda transacción** y cierra el resultado en otra
+(ADR-029 §6): `dispatch_message` es una tarea de plataforma que abre su `tenant_scope` en cada paso.
+Dos despachadores a la vez no envían dos veces (solo se reclama un `QUEUED`). Un fallo pasajero
+(seguro que el canal no recibió nada) devuelve el reclamo y reintenta con espera creciente; al
+agotarse queda `FAILED` (`RETRIES_EXHAUSTED`). Un resultado ambiguo no se reenvía: sigue `SENDING`.
+Ningún registro lleva el texto.
 """
 
 import datetime as dt
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -16,8 +19,15 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
-from apps.conversations import commands, credentials, ingress
-from apps.conversations.channels import TemporaryChannelError
+from apps.conversations import accounts, commands, credentials, ingress
+from apps.conversations.channels import (
+    AmbiguousChannelError,
+    ChannelAdapter,
+    SendResult,
+    TemporaryChannelError,
+    UnknownPlatform,
+    adapter_for,
+)
 from apps.conversations.models import Message
 from core.observability.logging import get_logger
 from core.outbox import subscribe
@@ -31,34 +41,59 @@ MAX_RETRIES = 5
 BACKOFF_SECONDS, BACKOFF_MAX = 30, 600
 
 
-def deliver(task: Any, message_id: UUID) -> None:
-    """Despacha un mensaje; un fallo pasajero reintenta (30 s, 60 s, 120 s… hasta 10 minutos) y, al
-    agotar los reintentos, lo deja `FAILED`."""
+def deliver(
+    task: Any, organization_id: UUID, message_id: UUID,
+    resolve: Callable[[str], ChannelAdapter] = adapter_for,
+) -> None:  # fmt: skip
+    """Despacha un mensaje: reclamar, llamar al canal sin transacción y cerrar el resultado."""
+    ctx = TenantContext(organization_id, "celery")
+    with tenant_scope(ctx):
+        claim = commands.claim_outbound(ctx, message_id=message_id)
+    if claim is None:  # ya salió, otro lo reclama, o la política lo falló
+        return
     try:
-        commands.dispatch_outbound(require(), message_id=message_id)
-    except TemporaryChannelError as error:
-        retries = task.request.retries
-        if retries >= MAX_RETRIES:
-            logger.warning("inbox.dispatch_gave_up", message_id=str(message_id))
-            commands.fail_queued(require(), message_id=message_id, reason="RETRIES_EXHAUSTED")
-            return
-        countdown = min(BACKOFF_SECONDS * 2**retries, BACKOFF_MAX)
+        result = resolve(claim.platform).send(claim)
+    except UnknownPlatform:
+        result = SendResult(False, reason="CHANNEL_UNAVAILABLE")
+    except AmbiguousChannelError:  # pudo llegar: no se reenvía; sigue `SENDING`
+        return
+    except TemporaryChannelError as error:  # seguro que no llegó: se devuelve y se reintenta
+        with tenant_scope(ctx):
+            commands.release_outbound(ctx, message_id=message_id)
+            if task.request.retries >= MAX_RETRIES:
+                logger.warning("inbox.dispatch_gave_up", message_id=str(message_id))
+                commands.fail_queued(ctx, message_id=message_id, reason="RETRIES_EXHAUSTED")
+                return
+        countdown = min(BACKOFF_SECONDS * 2**task.request.retries, BACKOFF_MAX)
         raise task.retry(exc=error, countdown=countdown, max_retries=MAX_RETRIES) from None
+    with tenant_scope(ctx):
+        commands.settle_outbound(ctx, message_id=message_id, result=result)
+    if result.reason == "TOKEN_INVALID":  # Meta no acepta el token: la cuenta deja de enviar
+        with tenant_scope(ctx):
+            accounts.mark_token_invalid(ctx, channel_account_id=claim.account_id)
 
 
 @subscribe("message.queued")
 @tenant_task(name="conversations.dispatch_event", bind=True, ignore_result=True, acks_late=True)
 def dispatch_event(task: Any, event_id: str) -> None:
-    """Handler del outbox: el evento (de esta organización) dice qué mensaje salir."""
+    """Handler del outbox: el evento (de esta organización) dice qué mensaje salir. No despacha
+    aquí, dentro de su transacción: encola `dispatch_message`."""
     event = OutboxEvent.objects.filter(id=event_id, event_type="message.queued").first()
     if event is not None:
-        deliver(task, event.aggregate_id)
+        dispatch_message.apply_async(
+            kwargs={
+                "message_id": str(event.aggregate_id),
+                "organization_id": str(require().organization_id),
+            }  # fmt: skip
+        )
 
 
-@tenant_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
-def dispatch_message(task: Any, message_id: str) -> None:
-    """Lo mismo por el id del mensaje: lo usa el barredor."""
-    deliver(task, UUID(message_id))
+@platform_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
+def dispatch_message(task: Any, message_id: str, organization_id: str) -> None:
+    """Despacha un mensaje por su id y su organización (las pone quien encola: el handler del
+    evento o el barredor); cada paso abre su `tenant_scope`, así que un mensaje de otra
+    organización no existe."""
+    deliver(task, UUID(organization_id), UUID(message_id))
 
 
 def queued_organizations(before: dt.datetime, limit: int) -> list[UUID]:

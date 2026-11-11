@@ -2178,6 +2178,7 @@
     },
     "delivery": {
       "QUEUED": "En cola",
+      "SENDING": "Enviando",
       "SENT": "Enviado",
       "DELIVERED": "Entregado",
       "READ": "Leído",
