@@ -118,7 +118,12 @@ describe("Canales (F7-07b)", () => {
       ...{ last_healthcheck_at: "2026-11-05T15:30:00Z", token_last_four: "WXYZ" },
     });
     const broken = account("a3", { name: "Rota", status: "ERROR", status_detail: "TOKEN_INVALID" });
-    mockApi({ [LIST]: page([sandbox, wa, live, broken]) });
+    const low = account("a4", {
+      ...{ name: "Con calidad baja", status: "DEGRADED", status_detail: "QUALITY_LOW" },
+      ...{ quality_rating: "RED", messaging_limit_tier: "TIER_250" },
+      ...{ last_healthcheck_at: "2026-11-05T16:00:00Z" },
+    });
+    mockApi({ [LIST]: page([sandbox, wa, live, broken, low]) });
     show();
     expect(screen.getByRole("status")).toHaveTextContent("Cargando canales");
     // una por cuenta (los pasos del checklist son otras listas)
@@ -141,6 +146,11 @@ describe("Canales (F7-07b)", () => {
     expect(items[3]).toHaveTextContent("Con error");
     expect(within(items[3]!).getByText("Falta un token válido")).toBeVisible();
     expect(items[3]).toHaveTextContent("El token ya no es válido: rótalo");
+    expect(items[4]).toHaveTextContent("Con problemas");
+    expect(items[4]).toHaveTextContent("Meta bajó la calidad del número.");
+    expect(items[4]).toHaveTextContent("CalidadBaja");
+    expect(items[4]).toHaveTextContent("Nivel de mensajería250");
+    expect(within(items[4]!).getByText("La calidad del número bajó")).toBeVisible();
   });
 
   it("los nombres de cuenta van como texto aislado, nunca como HTML", async () => {

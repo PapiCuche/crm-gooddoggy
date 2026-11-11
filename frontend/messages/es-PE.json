@@ -2332,11 +2332,16 @@
       "label": "Lo que falta para usar la cuenta",
       "token": {
         "ok": "Token válido",
-        "missing": "Falta un token válido"
+        "bad": "Falta un token válido"
       },
       "webhook": {
         "ok": "Mensajes de Meta recibidos",
-        "missing": "Falta recibir el primer mensaje de Meta"
+        "wait": "Falta recibir el primer mensaje de Meta"
+      },
+      "quality": {
+        "ok": "Calidad del número buena",
+        "warn": "La calidad del número bajó",
+        "wait": "Falta la primera comprobación de calidad"
       }
     },
     "fields": {

@@ -1,6 +1,5 @@
 "use client";
 
-import { Check, Clock, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import { useRef } from "react";
 
@@ -11,6 +10,7 @@ import type { ChannelAccount } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { Plain } from "../inbox/plain";
+import { Checklist, StatusMark } from "./account-health";
 import { ConnectAccount } from "./connect-account";
 import { DisconnectAccount } from "./disconnect-account";
 import { RotateToken } from "./rotate-token";
@@ -56,12 +56,6 @@ function Account({
   const format = useFormatter();
   const whatsapp = account.platform === "WHATSAPP";
   const detail = account.status_detail;
-  // Lo que falta, de `status_detail` (la API manda un código, no un texto): el token vale si no
-  // está invalidado y hay credencial; el webhook, si ya llegó el primer evento firmado.
-  const steps = [
-    { key: "token", ok: account.token_last_four !== null && detail !== "TOKEN_INVALID" },
-    { key: "webhook", ok: detail !== "WEBHOOK_NOT_SEEN" && account.status !== "PENDING" },
-  ] as const;
   return (
     <>
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-1">
@@ -71,25 +65,12 @@ function Account({
           </span>
           <span className="text-muted text-sm">{t(`platform.${account.platform}`)}</span>
         </p>
-        <p className="text-sm font-medium">{t(`status.${account.status}`)}</p>
+        <StatusMark status={account.status} />
       </div>
       {detail ? <p className="text-sm">{t(`detail.${detail}`)}</p> : null}
       {whatsapp ? (
         <>
-          <ul aria-label={t("checklist.label")} className="flex flex-col gap-1 text-sm">
-            {steps.map(({ key, ok }) => (
-              <li key={key} className="flex items-center gap-2">
-                {ok ? (
-                  <Check aria-hidden className="text-success size-4 shrink-0" />
-                ) : key === "webhook" ? (
-                  <Clock aria-hidden className="size-4 shrink-0" />
-                ) : (
-                  <X aria-hidden className="text-danger size-4 shrink-0" />
-                )}
-                <span>{t(`checklist.${key}.${ok ? "ok" : "missing"}`)}</span>
-              </li>
-            ))}
-          </ul>
+          <Checklist account={account} />
           <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
             <Row label={t("fields.phone")} mono>
               {account.external_account_id}
