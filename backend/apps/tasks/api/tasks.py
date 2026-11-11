@@ -42,10 +42,12 @@ from core.tenancy import context
 
 STALE = "Otra persona cambió la tarea: vuelve a cargarla y repite el cambio."
 CLOSED = "Está completada o cancelada: reábrela antes de cambiarla."
+OPEN = "Está abierta: solo se reabre una completada o cancelada."
 GENERIC = "Dato no admitido."
 BAD_REFERENCE = {  # sin repetir el id recibido
     "contact_id": "No es un contacto de la organización que puedas ver.",
     "opportunity_id": "No es una oportunidad de ese contacto que puedas ver.",
+    "assigned_user_id": "No es un miembro activo de la organización.",
 }
 
 
@@ -160,6 +162,8 @@ def domain() -> Iterator[None]:
         raise ApiError("STALE_VERSION", 409, STALE) from None
     except commands.TaskClosed:
         raise ApiError("TASK_CLOSED", 409, CLOSED) from None
+    except commands.TaskOpen:
+        raise ApiError("TASK_OPEN", 409, OPEN) from None
     except commands.BadReference as bad:
         message = BAD_REFERENCE.get(bad.field, "No es de la organización.")
         raise serializers.ValidationError({bad.field: [message]}) from None
@@ -284,3 +288,66 @@ class TaskView(TasksQuery, generics.RetrieveAPIView):
         with domain():
             commands.delete_task(_tenant(), task_id=found.pk)
         return Response(status=204)
+
+
+class TaskWrite(TasksQuery, generics.GenericAPIView):
+    """Una escritura sobre una tarea: la fila queda bloqueada al decidir el alcance."""
+
+    serializer_class = TaskSerializer
+    lookup_url_kwarg = "task_id"
+
+    def get_queryset(self) -> QuerySet[Task]:
+        return locked(super().get_queryset())
+
+
+def action(
+    name: str, command: Any, body: Any, permission: str, summary: str, errors_: tuple[int, ...]
+) -> type[TaskWrite]:
+    """Una transición `POST …/{id}/<name>/`: `tasks.view` y el permiso de la acción, sobre la fila
+    bloqueada; responde con el detalle."""
+
+    class Action(TaskWrite):
+        required_permissions = {"POST": ("tasks.view", permission)}
+
+        def post(self, request: Request, task_id: UUID, **kwargs: Any) -> Response:
+            wanted = body(data=request.data)
+            wanted.is_valid(raise_exception=True)
+            found = self.get_object()
+            with domain():
+                command(_tenant(), task_id=found.pk, **wanted.validated_data)
+            return reply(request, found.pk)
+
+    Action.__name__ = f"Task{name.title()}View"
+    view: type[TaskWrite] = extend_schema_view(
+        post=extend_schema(
+            operation_id=f"tasks_{name}",
+            tags=["tasks"],
+            request=body,
+            responses={200: TaskSerializer, **errors(*errors_)},
+            description=f"{summary} Con `tasks.view` y `{permission}`; fuera del alcance: 404.",
+        )
+    )(Action)
+    return view
+
+
+TaskAssignView = action(
+    "assign", commands.assign_task, inputs.TaskAssignSerializer, "tasks.assign",
+    "Deja la tarea abierta con ese responsable si `version` sigue vigente. 400 en "
+    "`assigned_user_id` si no es un miembro activo; 409 `STALE_VERSION` o `TASK_CLOSED`. Si ya es "
+    "el responsable no escribe.", (400, 401, 403, 404, 409),
+)  # fmt: skip
+TaskCompleteView = action(
+    "complete", commands.complete_task, inputs.TaskVersionSerializer, "tasks.update",
+    "Completa una tarea abierta: `DONE`, con su fecha y quien la completó. 409: `STALE_VERSION`, "
+    "`TASK_CLOSED`.", (400, 401, 403, 404, 409),
+)  # fmt: skip
+TaskCancelView = action(
+    "cancel", commands.cancel_task, inputs.TaskCancelSerializer, "tasks.update",
+    "Cancela una tarea abierta, con un motivo opcional (texto libre). 409: `STALE_VERSION`, "
+    "`TASK_CLOSED`.", (400, 401, 403, 404, 409),
+)  # fmt: skip
+TaskReopenView = action(
+    "reopen", commands.reopen_task, inputs.TaskVersionSerializer, "tasks.update",
+    "Devuelve una tarea completada o cancelada a `PENDING`, sin fecha ni motivo. 409: "
+    "`STALE_VERSION`, `TASK_OPEN` (está abierta).", (400, 401, 403, 404, 409),
+)  # fmt: skip

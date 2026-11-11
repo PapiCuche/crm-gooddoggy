@@ -7532,6 +7532,267 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/tasks/{task_id}/assign/:
+    post:
+      operationId: tasks_assign
+      description: 'Deja la tarea abierta con ese responsable si `version` sigue vigente.
+        400 en `assigned_user_id` si no es un miembro activo; 409 `STALE_VERSION`
+        o `TASK_CLOSED`. Si ya es el responsable no escribe. Con `tasks.view` y `tasks.assign`;
+        fuera del alcance: 404.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskAssignRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/tasks/{task_id}/cancel/:
+    post:
+      operationId: tasks_cancel
+      description: 'Cancela una tarea abierta, con un motivo opcional (texto libre).
+        409: `STALE_VERSION`, `TASK_CLOSED`. Con `tasks.view` y `tasks.update`; fuera
+        del alcance: 404.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCancelRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/tasks/{task_id}/complete/:
+    post:
+      operationId: tasks_complete
+      description: 'Completa una tarea abierta: `DONE`, con su fecha y quien la completó.
+        409: `STALE_VERSION`, `TASK_CLOSED`. Con `tasks.view` y `tasks.update`; fuera
+        del alcance: 404.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/tasks/{task_id}/reopen/:
+    post:
+      operationId: tasks_reopen
+      description: 'Devuelve una tarea completada o cancelada a `PENDING`, sin fecha
+        ni motivo. 409: `STALE_VERSION`, `TASK_OPEN` (está abierta). Con `tasks.view`
+        y `tasks.update`; fuera del alcance: 404.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/teams/:
     get:
       operationId: teams_list
@@ -12949,6 +13210,42 @@ components:
       - type
       - updated_at
       - version
+    TaskAssignRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        assigned_user_id:
+          type: string
+          format: uuid
+          description: 'El responsable: un miembro activo de la organización.'
+      required:
+      - assigned_user_id
+      - version
+    TaskCancelRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        reason:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 500
+      required:
+      - version
     TaskContactRef:
       type: object
       properties:
@@ -13056,6 +13353,19 @@ components:
       description: |-
         * `PENDING` - PENDING
         * `IN_PROGRESS` - IN_PROGRESS
+    TaskVersionRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     Team:
       type: object
       properties:
