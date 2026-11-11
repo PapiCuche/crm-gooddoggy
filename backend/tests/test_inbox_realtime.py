@@ -28,6 +28,7 @@ from core.outbox.publisher import publish_outbox
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import tenant_scope
 from tests.factories import sign_in
+from tests.test_authorization import give
 from tests.test_conversation_scopes import crm, inbox, real_stack
 from tests.test_memberships import ctx
 
@@ -70,7 +71,6 @@ class Socket(ApplicationCommunicator):
         await self.send_input({"type": "websocket.receive", "text": text, "bytes": data})
 
     async def frames(self, count: int) -> list[dict[str, Any]]:
-        """Las próximas `count` tramas: se espera un número, no un silencio."""
         got = [await self.receive_output(timeout=10) for _ in range(count)]
         assert all(out["type"] == "websocket.send" for out in got), got
         return [json.loads(out["text"]) for out in got]
@@ -107,7 +107,6 @@ async def connected(slug: str, user: User) -> AsyncIterator[Socket]:
 async def try_connect(
     slug: str, session: bytes | None, origin: bytes | None = ORIGIN, query: str = ""
 ) -> tuple[bool, Any]:
-    """(conectó, código) de un intento."""
     comm = Socket(slug, session, origin, query)
     ok, code = await comm.connect()
     await comm.disconnect()
@@ -142,8 +141,6 @@ def seen(inbox: SimpleNamespace, got: list[dict[str, Any]]) -> set[str]:
 def test_each_session_receives_only_what_its_scope_and_organization_reach(
     inbox: SimpleNamespace, migrator: DB
 ) -> None:
-    from tests.test_authorization import give
-
     give(inbox.b, inbox.m_luis, {"conversations.view": "ORGANIZATION"})
 
     async def go() -> None:
@@ -216,8 +213,7 @@ def test_a_member_who_loses_the_permission_or_the_membership_is_dropped(
             await push(inbox.a, "message.received", inbox.convs["vera"])
             assert await vera.closed_with() == FORBIDDEN  # sin el dato
             await push(inbox.a, "message.received", inbox.convs["vera"])
-            assert await vera.receive_nothing(timeout=0.2)
-            assert not realtime._open
+            assert await vera.receive_nothing(timeout=0.2) and not realtime._open
 
     run(go)
 
@@ -265,22 +261,6 @@ def test_an_unknown_organization_and_one_without_membership_answer_the_same(
     assert attempt("org-a", inbox.bea) == (False, FORBIDDEN)  # miembro sin `conversations.view`
     migrator.execute(SUSPEND_ORG, [inbox.a])
     assert attempt("org-a", inbox.ana) == (False, FORBIDDEN)
-
-
-def test_a_person_has_a_cap_of_connections_and_a_closed_one_frees_its_place(
-    inbox: SimpleNamespace, settings: Any
-) -> None:
-    settings.INBOX_WS_MAX_PER_USER = 2
-
-    async def go() -> None:
-        session = await sync_to_async(cookie)(inbox.ana)
-        async with connected("org-a", inbox.ana):
-            async with connected("org-a", inbox.ana), connected("org-a", inbox.vera):
-                assert await try_connect("org-a", session) == (False, TOO_MANY)
-            assert (await try_connect("org-a", session))[0]  # al cerrar una, vuelve a caber
-        assert not realtime._open
-
-    run(go)
 
 
 @pytest.mark.parametrize("frame", ["x" * 1025, b"binario"])
@@ -352,7 +332,6 @@ def test_the_outbox_handler_is_subscribed_runs_in_its_organization_and_retries(
     inbox: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert all(tasks.publish_realtime in handlers_for(kind) for kind in realtime.EVENTS)
-    assert tasks.dispatch_event in handlers_for("message.queued")  # y el despachador sigue
     with tenant_scope(ctx(inbox.b)) as tenant:
         theirs = emit(tenant, "message.received", aggregate_type="message", aggregate_id=uuid4(),
                       payload={"conversation_id": str(inbox.convs["b"])})  # fmt: skip

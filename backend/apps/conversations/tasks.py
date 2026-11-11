@@ -5,7 +5,7 @@ la tarea (`@tenant_task`), nunca en un dato del evento. La entrega es idempotent
 `dispatch_outbound` solo actúa sobre un mensaje `QUEUED`, así que repetir la tarea, o que el
 barredor y el evento coincidan, no envía dos veces. Un fallo pasajero del canal reintenta con
 espera creciente y acotada; al agotarse queda `FAILED` (`RETRIES_EXHAUSTED`). Ningún registro
-lleva el texto. `publish_realtime` (F6-07a) reenvía al WebSocket del Inbox el tipo y los ids.
+lleva el texto. `publish_realtime` (F6-07a): el tipo y los ids al WebSocket del Inbox.
 """
 
 import datetime as dt

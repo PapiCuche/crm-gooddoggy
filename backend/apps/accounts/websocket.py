@@ -32,11 +32,6 @@ def user_for(session_key: str | None) -> Any:
     return user if is_current(session, user, int(time.time())) else AnonymousUser()
 
 
-def cookie_value(scope: dict[str, Any]) -> str | None:
-    header = "; ".join(v.decode("latin-1") for k, v in scope.get("headers", ()) if k == b"cookie")
-    return parse_cookie(header).get(settings.SESSION_COOKIE_NAME)
-
-
 class ExactOriginValidator(OriginValidator):  # type: ignore[misc]
     """`OriginValidator` que rechaza un `Origin` mal formado (`urlparse` lanza `ValueError`)."""
 
@@ -58,7 +53,8 @@ class SessionAuthMiddleware:
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> Any:
         if scope["type"] == "websocket":
-            key = cookie_value(scope)
+            header = "; ".join(v.decode("latin-1") for k, v in scope["headers"] if k == b"cookie")
+            key = parse_cookie(header).get(settings.SESSION_COOKIE_NAME)
             user = await database_sync_to_async(user_for)(key)
             scope = {**scope, "user": user, "session_key": key}
         return await self.inner(scope, receive, send)

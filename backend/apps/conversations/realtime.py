@@ -1,11 +1,9 @@
 """Tiempo real del Inbox (F6-07a; ADR-003 §6, tenancy-context §4).
 
-`publish` (lo llama la tarea del outbox) manda al grupo de la organización el tipo del evento y sus
-ids, nunca texto, nombre ni teléfono: es una pista, el cliente vuelve a pedir por la API.
-`InboxConsumer` (`/ws/o/<slug>/inbox/`) saca la organización de la sesión y de la membresía del
-slug, nunca de un mensaje del cliente (solo `ping`), y evalúa cada evento al entregarlo con el
-permiso y el alcance de `conversations.view` de ese momento (`scoped`, con RLS).
-
+`publish` (lo llama la tarea del outbox) manda al grupo de la organización solo el tipo del evento
+y sus ids: es una pista, el cliente vuelve a pedir por la API. `InboxConsumer`
+(`/ws/o/<slug>/inbox/`) saca la organización de la sesión y la membresía, nunca del cliente (solo
+`ping`), y evalúa cada evento al entregarlo con el permiso y el alcance de `conversations.view`.
 Cierres: 4401 sin sesión, 4404 sin organización o membresía (indistinguibles), 4403 sin permiso,
 4429 tope, 1013 capa caída, 1009 trama grande, 4408 inactividad. Ningún registro lleva ids.
 """
@@ -52,7 +50,6 @@ def group_name(organization_id: UUID) -> str:
 def outgoing(
     event_type: str, aggregate_id: UUID, payload: dict[str, Any], at: str
 ) -> dict[str, Any] | None:
-    """El evento tal como viaja (tipo, ids y hora); `None` si no es del Inbox."""
     if event_type not in EVENTS:
         return None
     raw = aggregate_id if event_type.startswith("conversation.") else payload.get("conversation_id")
@@ -65,8 +62,7 @@ def outgoing(
 
 
 def publish(organization_id: UUID, message: dict[str, Any]) -> bool:
-    """Manda el evento al grupo. `False` sin capa de canales; los fallos de Redis suben (la tarea
-    reintenta). `channels_redis` cierra sus conexiones al cerrarse el bucle de cada llamada."""
+    """Manda el evento al grupo; `False` sin capa de canales. Los fallos de Redis suben."""
     layer = get_channel_layer()
     if layer is None:
         return False
@@ -129,14 +125,12 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
         return scoped(ectx, VIEW, Conversation.objects.filter(pk=conversation_id)).exists()
 
     async def _close(self, code: int) -> None:
-        """Cierra una vez; después no se entrega nada más."""
         if not self.closed:
             self.closed = True
             await self.close(code=code)
             self._release()
 
     async def inbox_event(self, message: dict[str, Any]) -> None:
-        """Un evento del grupo, evaluado AHORA para esta persona."""
         event = message["event"]
         if self.closed:
             return
@@ -183,10 +177,8 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
                         await layer.group_add(group_name(tenant.organization_id), self.channel_name)
         except Exception as error:  # noqa: BLE001 — BD o Redis caídas: se cierra, nunca se sigue
             logger.warning("inbox.ws_watch_failed", error=type(error).__name__)
-            try:
+            with suppress(Exception):  # ya cerrada: nada más que hacer
                 await self._close(CLOSE_RETRY)
-            except Exception:  # noqa: BLE001, S110 — ya cerrada: nada más que hacer
-                pass
 
     async def _still_allowed(self) -> bool:
         tenant = self.tenant
