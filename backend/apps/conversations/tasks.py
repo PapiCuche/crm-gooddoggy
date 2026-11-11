@@ -7,7 +7,7 @@ se quedan.
 Dos despachadores a la vez no envían dos veces (solo se reclama un `QUEUED`). Un fallo pasajero
 (seguro que el canal no recibió nada) devuelve el reclamo y reintenta con espera creciente; al
 agotarse queda `FAILED` (`RETRIES_EXHAUSTED`). Un resultado ambiguo no se reenvía: sigue `SENDING`.
-Ningún registro lleva el texto. `publish_realtime` (F6-07a): el tipo y los ids al WebSocket del Inbox.
+Ningún registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket del Inbox.
 """
 
 import datetime as dt
