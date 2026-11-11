@@ -416,6 +416,10 @@ class Message(TenantModel):
         max_length=10, choices=Delivery.choices, null=True, blank=True
     )
     sending_at = models.DateTimeField(null=True, blank=True)  # cuándo se reclamó (el barredor)
+    # Reintentos del canal (F7-05c): cuántas veces se devolvió el reclamo y no antes de cuándo
+    # vuelve a intentarse (el barredor de la cola no lo reencola antes: no amplifica).
+    dispatch_attempts = models.PositiveSmallIntegerField(default=0, db_default=0)
+    not_before = models.DateTimeField(null=True, blank=True)
     sent_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     read_at = models.DateTimeField(null=True, blank=True)
@@ -436,6 +440,11 @@ class Message(TenantModel):
                 fields=["organization_id", "id"],
                 condition=models.Q(delivery_status="QUEUED"),
                 name="messages_queued_idx",
+            ),
+            models.Index(  # el barredor de F7-05c: solo lo que sigue `SENDING` (pocas filas)
+                fields=["organization_id", "sending_at"],
+                condition=models.Q(delivery_status="SENDING"),
+                name="messages_sending_idx",
             ),
         ]
         constraints = [

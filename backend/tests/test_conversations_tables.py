@@ -516,6 +516,8 @@ def test_the_delivery_status_only_advances(world: SimpleNamespace) -> None:
         "failed_at",
         "policy_decision",  # F7-05a: el despachador la reescribe al revaluar antes de enviar
         "sending_at",  # F7-05b: cuándo se reclamó
+        "dispatch_attempts",  # F7-05c: reintentos devueltos y no antes de cuándo
+        "not_before",
     )
     asked_column = "SELECT has_column_privilege(current_user, 'messages', %s, 'UPDATE')"
     sql(

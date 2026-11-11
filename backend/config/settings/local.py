@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+from typing import Any
 
 os.environ.setdefault("DJANGO_SECRET_KEY", "django-insecure-local-only-not-for-production")
 os.environ.setdefault("DATABASE_URL", "postgres://crm_app:change-me-local-app@localhost:5432/crm")
@@ -25,8 +26,9 @@ CSRF_TRUSTED_ORIGINS = [
 # ADR-029: con el canal de WhatsApp encendido (contra el simulador), los mismos ajustes que en
 # production; apagado, nada.
 if META_ENABLED:  # noqa: F405
-    _meta = (META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION)  # noqa: F405
-    env.check_meta(*_meta, CHANNEL_CHECK_THROTTLE)  # noqa: F405
+    _meta: list[Any] = [META_APP_SECRETS, META_WEBHOOK_VERIFY_TOKEN, META_GRAPH_VERSION]  # noqa: F405
+    _meta += [CHANNEL_CHECK_THROTTLE, CHANNEL_SEND_LIMIT, CELERY_BROKER_URL]  # noqa: F405
+    env.check_meta(*_meta)
 
 # Sin `SECRETS_KEKS`, una clave de desarrollo derivada de la SECRET_KEY local (ADR-022 §6): el
 # cifrado de secretos funciona sin configurar nada. Nunca en production, que no hereda de aquí.

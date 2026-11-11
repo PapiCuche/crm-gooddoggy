@@ -137,11 +137,15 @@ INBOX_WS_TICK_SECONDS = 5.0
 INBOX_SWEEP_AFTER_MINUTES = env.integer("INBOX_SWEEP_AFTER_MINUTES", 5)
 # ...y a partir de cuántos el barredor lo da por fallido (un tope a los reintentos sin fin).
 INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
+# F7-05c: minutos que un mensaje puede seguir `SENDING` (resultado ambiguo o proceso caído) antes
+# de quedar `FAILED` con `PROVIDER_UNKNOWN`; Meta no deduplica, así que no se reenvía.
+INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 15)
 # Outbox (F1-06): el publisher corre cada segundo en beat.
 CELERY_BEAT_SCHEDULE = {
     "core.publish_outbox": {"task": "core.publish_outbox", "schedule": 1.0},
     # F6-04b: cada minuto vuelve a encolar los mensajes del Inbox que llevan demasiado en cola.
     "conversations.sweep_queued": {"task": "conversations.sweep_queued", "schedule": 60.0},
+    "conversations.sweep_sending": {"task": "conversations.sweep_sending", "schedule": 60.0},
     # D-F2-2: una vez al día, a hora fija (UTC). Un intervalo de 24 horas se cuenta desde que
     # beat arranca: si el contenedor se recrea a diario, la purga no se ejecutaría nunca.
     "accounts.purge_expired_sessions": {
@@ -299,6 +303,9 @@ META_WEBHOOK_VERIFY_TOKEN = env.optional("META_WEBHOOK_VERIFY_TOKEN", "")
 # fixtures del simulador. A confirmar con la versión vigente de Meta y su fecha de retirada.
 META_GRAPH_VERSION = "v23.0"
 META_GRAPH_HOST = "graph.facebook.com"
+# F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
+# broker. Validado al arrancar con el canal encendido (`env.check_meta`).
+CHANNEL_SEND_LIMIT = (20, 1)
 if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
     HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.

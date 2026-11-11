@@ -31,7 +31,8 @@
       "prices": "Precios",
       "opportunities": "Oportunidades",
       "inbox": "Inbox",
-      "channels": "Canales"
+      "channels": "Canales",
+      "tasks": "Mis tareas"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -2415,6 +2416,59 @@
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
       "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista."
+    }
+  },
+  "tasks": {
+    "eyebrow": "Good Doggy / Tareas",
+    "title": "Mis tareas",
+    "intro": "Tus tareas en {organization}, por día de vencimiento.",
+    "tabs": {
+      "label": "Mis tareas por fecha",
+      "today": "Hoy",
+      "overdue": "Vencidas",
+      "upcoming": "Próximas"
+    },
+    "loading": "Cargando tareas…",
+    "denied": "No tienes permiso para ver las tareas de esta organización.",
+    "empty": {
+      "today": "No tienes tareas para hoy.",
+      "overdue": "No tienes tareas vencidas.",
+      "upcoming": "No tienes tareas próximas."
+    },
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "overdueCount": "{count, plural, one {# tarea vencida} other {# tareas vencidas}}",
+    "types": {
+      "CALL": "Llamada",
+      "MESSAGE": "Mensaje",
+      "MEETING": "Reunión",
+      "FOLLOW_UP": "Seguimiento",
+      "QUOTE": "Cotización",
+      "COLLECTION": "Cobranza",
+      "DELIVERY": "Entrega",
+      "OTHER": "Otra"
+    },
+    "priorities": {
+      "LOW": "Baja",
+      "MEDIUM": "Media",
+      "HIGH": "Alta",
+      "URGENT": "Urgente"
+    },
+    "statuses": {
+      "PENDING": "Pendiente",
+      "IN_PROGRESS": "En curso",
+      "DONE": "Completada",
+      "CANCELLED": "Cancelada"
+    },
+    "row": {
+      "priority": "Prioridad {priority}",
+      "noDue": "Sin fecha",
+      "dueAt": "Vence {when}",
+      "dueDay": "Vence el {day}",
+      "overdue": "Vencida",
+      "contact": "Cliente:",
+      "contactHidden": "Cliente (sin permiso para ver su nombre)",
+      "opportunity": "Ver la oportunidad"
     }
   }
 }

@@ -151,5 +151,6 @@ def test_the_sweeper_queues_the_dispatcher_through_the_real_validation(
     message = queue(world)
     backdate(migrator, message, 30)
     assert inbox_tasks.sweep_queued() == 1 and len(broker) == 1  # validación real, sin ejecutar
+    migrator.execute("UPDATE messages SET not_before = NULL")  # pasó su espera (el `countdown`)
     assert inbox_tasks.dispatch_message.apply(kwargs=broker[0][1]).successful()
     assert state(world, message).delivery_status == "DELIVERED"
