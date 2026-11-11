@@ -339,12 +339,6 @@ class Migration(migrations.Migration):
                 condition=models.Q(("version__gte", 1)), name="quotes_version_ck"
             ),
         ),
-        migrations.AddIndex(
-            model_name="quoteitem",
-            index=models.Index(
-                fields=["organization_id", "quote", "sort_order"], name="quote_items_org_quote_idx"
-            ),
-        ),
         migrations.AddConstraint(
             model_name="quoteitem",
             constraint=models.UniqueConstraint(
@@ -369,6 +363,20 @@ class Migration(migrations.Migration):
             constraint=models.CheckConstraint(
                 condition=models.Q(("discount_type__in", ["NONE", "PERCENT", "AMOUNT"])),
                 name="quote_items_discount_ck",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="quoteitem",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    ("discount_value__gte", 0),
+                    models.Q(
+                        models.Q(("discount_type", "PERCENT"), _negated=True),
+                        ("discount_value__lte", 100),
+                        _connector="OR",
+                    ),
+                ),
+                name="quote_items_discount_value_ck",
             ),
         ),
         migrations.AddConstraint(

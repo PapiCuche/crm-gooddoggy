@@ -187,7 +187,9 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         )
     ]
     layered = next(c for c in contracts if c["type"] == "layers")
-    row = "apps.inventory | apps.pricing | apps.deals | apps.conversations | apps.tasks"
+    row = (
+        "apps.inventory | apps.pricing | apps.deals | apps.conversations | apps.tasks | apps.quotes"
+    )
     assert row in layered["layers"]  # sobre contacts, no al revés
     assert [e for e in layered["ignore_imports"] if e.startswith("apps.deals")] == [
         "apps.deals.api.opportunities -> apps.conversations.selectors"  # F6-06b: la única de deals

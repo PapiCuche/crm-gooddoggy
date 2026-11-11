@@ -124,6 +124,8 @@ def test_a_complete_quote_with_a_promotion_and_a_cancelled_one_are_valid(
                   discount_amount=10, final_unit_price=Decimal("90"), quantity=1,
                   line_total=Decimal("90"))  # fmt: skip
     assert (manual.unit_price, manual.final_unit_price) == (MONEY, Decimal("90"))
+    big = line(world, made, sort_order=3, discount_type="AMOUNT", discount_value=150)
+    assert big.discount_value == 150  # solo el porcentaje se limita a 100
     gone = quote(world, number="COT-000002", status="CANCELLED", cancelled_at=NOW,
                  cancel_reason="El cliente ya no quiere")  # fmt: skip
     assert (gone.status, gone.revision) == ("CANCELLED", 1)
@@ -200,6 +202,8 @@ def test_the_database_refuses_a_bad_quote(
         ({"quantity": 0}, "quote_items_quantity_ck"),
         ({"quantity": 1_000_001}, "quote_items_quantity_ck"),
         ({"discount_type": "X"}, "quote_items_discount_ck"),
+        ({"discount_value": Decimal("-1")}, "quote_items_discount_value_ck"),
+        ({"discount_type": "PERCENT", "discount_value": Decimal("100.01")}, "discount_value_ck"),
         ({"list_unit_price": Decimal("0")}, "quote_items_prices_ck"),
         ({"final_unit_price": Decimal("0"), "line_total": Decimal("0")}, "quote_items_prices_ck"),
         ({"discount_amount": Decimal("-1")}, "quote_items_prices_ck"),

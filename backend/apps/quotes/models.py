@@ -187,13 +187,8 @@ class QuoteItem(TenantModel):
 
     class Meta:
         db_table = "quote_items"
-        indexes = [
-            models.Index(
-                fields=["organization_id", "quote", "sort_order"], name="quote_items_org_quote_idx"
-            )
-        ]
         constraints = [
-            models.UniqueConstraint(
+            models.UniqueConstraint(  # también el índice de las líneas de una cotización, en orden
                 fields=["organization_id", "quote", "sort_order"], name="quote_items_order_uq"
             ),
             models.UniqueConstraint(
@@ -206,6 +201,11 @@ class QuoteItem(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(discount_type__in=DiscountType.values),
                 name="quote_items_discount_ck",
+            ),
+            models.CheckConstraint(  # un descuento no es negativo; en porcentaje, hasta 100
+                condition=models.Q(discount_value__gte=0)
+                & (~models.Q(discount_type="PERCENT") | models.Q(discount_value__lte=100)),
+                name="quote_items_discount_value_ck",
             ),
             models.CheckConstraint(  # el precio solo baja: lista, promoción, descuento
                 condition=models.Q(
