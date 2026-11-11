@@ -2558,5 +2558,65 @@
       "reasonInvalid": "El motivo no es válido (hasta 500 caracteres, sin tabuladores).",
       "denied": "No tienes permiso para hacer esto con la tarea."
     }
+  },
+  "quotes": {
+    "statuses": {
+      "DRAFT": "Borrador",
+      "PENDING_APPROVAL": "Por aprobar",
+      "APPROVED": "Aprobada",
+      "SENT": "Enviada",
+      "VIEWED": "Vista",
+      "ACCEPTED": "Aceptada",
+      "REJECTED": "Rechazada",
+      "EXPIRED": "Vencida",
+      "CANCELLED": "Cancelada",
+      "UNKNOWN": "Estado desconocido"
+    },
+    "detail": {
+      "loading": "Cargando la cotización…",
+      "denied": "No tienes permiso para ver esta cotización.",
+      "back": "Cotizaciones",
+      "facts": "Datos de la cotización",
+      "contact": "Cliente",
+      "opportunity": "Oportunidad",
+      "viewOpportunity": "Ver la oportunidad",
+      "noContact": "Sin permiso para ver su nombre",
+      "validUntil": "Válida hasta",
+      "created": "Creada",
+      "currency": "Moneda",
+      "tax": "IGV",
+      "taxIncluded": "{rate} % incluido en los precios",
+      "taxExcluded": "{rate} % no incluido en los precios",
+      "taxRate": "{rate} %",
+      "none": "—",
+      "items": {
+        "title": "Líneas",
+        "label": "Líneas de la cotización",
+        "product": "Producto",
+        "quantity": "Cantidad",
+        "list": "Precio de lista",
+        "promotion": "Promoción",
+        "discount": "Descuento",
+        "final": "Precio final",
+        "total": "Total de la línea",
+        "empty": "Esta cotización no tiene líneas."
+      },
+      "totals": {
+        "title": "Totales",
+        "subtotal": "Subtotal",
+        "tax": "IGV incluido",
+        "taxPlain": "IGV",
+        "discount": "Ahorro frente a la lista",
+        "total": "Total"
+      },
+      "notes": {
+        "customer": "Notas para el cliente",
+        "internal": "Notas internas (no las ve el cliente)",
+        "cancel": "Motivo de la cancelación",
+        "cancelledAt": "Cancelada el {date}"
+      },
+      "revision": "Revisión {number}",
+      "late": "Vencida"
+    }
   }
 }
