@@ -28,4 +28,5 @@ urlpatterns = [
     path("api/v1/o/<slug:org_slug>/", include("apps.pricing.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.deals.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.conversations.api.urls")),
+    path("api/v1/o/<slug:org_slug>/", include("apps.tasks.api.urls")),
 ]

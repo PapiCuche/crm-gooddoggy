@@ -62,6 +62,9 @@ def test_assigning_gives_the_permissions_at_once_and_removing_takes_them_away(
         "organization.view",
         "prices.view",  # F3-40
         "products.view",
+        "tasks.create",  # F5-08b
+        "tasks.update",
+        "tasks.view",
     ]  # en su siguiente petición
     listed = ana.get("/api/v1/o/org-a/members/").json()["results"]
     held = {row["id"]: row["roles"] for row in listed}[str(rbac.m_eva)]
