@@ -105,6 +105,11 @@ class OpportunityCreateSerializer(OpportunityFields):
     pipeline_id = Id(
         required=False, help_text="Un pipeline vivo y activo; sin él, el predeterminado."
     )
+    conversation_id = Id(
+        required=False,
+        help_text="La conversación de origen: de ese contacto y dentro del alcance de "
+        "`conversations.view` de quien crea.",
+    )
 
 
 @version_required

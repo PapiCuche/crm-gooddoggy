@@ -48,10 +48,12 @@ from apps.conversations.models import (
     ConversationAssignment,
     Delivery,
     Message,
+    MessageType,
     Platform,
     Status,
 )
-from apps.conversations.policy import ChannelUnavailable, ConversationClosed, check_send
+from apps.conversations.policy import ConversationClosed, require_allowed
+from apps.conversations.selectors import messaging_decision
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
 from core.sequences import allocate
@@ -59,6 +61,7 @@ from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
+WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no reabre nada
 KEY, ORDER = "CONV", (Delivery.QUEUED, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
 BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
@@ -293,13 +296,21 @@ def record_inbound(
     channel_account_id: UUID,
     external_message_id: str,
     body: str,
+    message_type: str = MessageType.TEXT,
+    provider_at: dt.datetime | None = None,
 ) -> tuple[Message, bool]:
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
     pone `last_inbound_at` y `last_message_at` y, según D-INB-2, pasa a `OPEN` una conversación en
     `WAITING_CUSTOMER` o `RESOLVED` dentro del plazo. Audita `message.received` y deja el evento
-    `message.received` en el outbox (solo ids)."""
+    `message.received` en el outbox (solo ids). `message_type` es `TEXT` o `UNSUPPORTED` (un
+    marcador: el cuerpo es una frase fija del canal). `provider_at` es el instante que informa el
+    canal: ancla de la ventana de 24 h (`last_inbound_at`, acotado a «ahora» y sin retroceder); el
+    orden del chat sigue siendo el de llegada. Con más de 24 h de antigüedad no reabre una
+    conversación `WAITING_CUSTOMER` ni `RESOLVED` (se anota sin cambiarle el estado)."""
     alias = require_scope(ctx)
+    if message_type not in (MessageType.TEXT, MessageType.UNSUPPORTED):
+        raise ValueError("tipo: TEXT o UNSUPPORTED")
     contact_id, account_id = _uuid(contact_id, "contacto"), _uuid(channel_account_id, "cuenta")
     external, text = _external(external_message_id), _body(body)
     same = Message.objects.using(alias).filter(
@@ -310,22 +321,26 @@ def record_inbound(
             return found, False
         convo, _ = _open(ctx, alias, contact_id, account_id)
         now = timezone.now()
+        seen = min(provider_at, now) if provider_at is not None else None
+        stale = provider_at is not None and now - provider_at > dt.timedelta(hours=WINDOW_HOURS)
         try:
             with transaction.atomic(using=alias):
                 message: Message = Message.objects.using(alias).create(
                     conversation_id=convo.pk, channel_account_id=account_id, direction="INBOUND",
                     sender_type="CONTACT", body=text, external_message_id=external,
+                    message_type=message_type, provider_timestamp=seen,
                 )  # fmt: skip
         except IntegrityError as error:
             if "messages_external_uq" not in str(error):
                 raise
             return same.get(), False  # el mismo mensaje, a la vez
-        convo.last_inbound_at = convo.last_message_at = now
+        anchor = max(convo.last_inbound_at, seen or now) if convo.last_inbound_at else seen or now
+        convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
-        if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED):
+        if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED) and not stale:
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
-                last_inbound_at=now, last_message_at=now,
+                last_inbound_at=anchor, last_message_at=now,
                 last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
             )  # fmt: skip
         else:
@@ -402,10 +417,11 @@ def record_outbound(
     sobrescritura). Siempre nace `QUEUED`: ningún argumento elige otro estado. Cuenta como
     actividad y, si la conversación estaba en cola (`PENDING`), la pasa a `OPEN` (D-INB-1). Audita
     `message.queued` y deja el evento `message.queued` en el outbox (ids, sin texto).
-    `ConversationClosed` si está cerrada y `ChannelUnavailable` si el canal no está conectado
-    (política mínima, `policy.check_send`; un reenvío de lo ya guardado sí se devuelve);
+    `ConversationClosed` si está cerrada, `ChannelUnavailable` si el canal no está conectado,
+    `ContactBlocked` si el contacto está bloqueado y `WindowClosed` si pasó la ventana del canal
+    (`policy.evaluate`, que se guarda en el mensaje; un reenvío de lo ya guardado sí se devuelve);
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
-    `AccessDenied` sin el permiso. La ventana de 24 horas y las plantillas son del despachador."""
+    `AccessDenied` sin el permiso. Las plantillas y el consentimiento son de F7-08 y F7-10."""
     alias = require_scope(ctx)
     conversation_id, client_id = (
         _uuid(conversation_id, "conversación"),
@@ -417,12 +433,15 @@ def record_outbound(
         convo = _locked(alias, conversation_id)
         _in_scope(ectx, "messages.send", convo)
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
+        snapshot = None
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
-            account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
-            check_send(convo.status, account.status, deleted=account.deleted_at is not None)
+            decision = messaging_decision(convo, alias=alias)
+            require_allowed(decision)  # cerrada, sin canal, contacto bloqueado o ventana cerrada
+            snapshot = decision.as_json()
         message, created = _insert(
-            ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED"
-        )
+            ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",
+            policy_decision=snapshot,
+        )  # fmt: skip
         if created:
             now = timezone.now()
             if convo.status == Status.PENDING:  # con la marca: `update_fields` no la guardaría sola
@@ -658,17 +677,6 @@ def release_conversation(
         return _assign(ctx, alias, convo, None, "MANUAL", expected)
 
 
-def _blocked(convo: Conversation, account: ChannelAccount) -> str | None:
-    """Por qué ya no se puede enviar (un motivo de `channels.REASONS`), o `None`."""
-    try:
-        check_send(convo.status, account.status, deleted=account.deleted_at is not None)
-    except ConversationClosed:
-        return "CONVERSATION_CLOSED"
-    except ChannelUnavailable:
-        return "CHANNEL_UNAVAILABLE"
-    return None
-
-
 def dispatch_outbound(
     ctx: TenantContext, *, message_id: UUID, resolve: Callable[[str], ChannelAdapter] = adapter_for
 ) -> Message | None:
@@ -695,7 +703,9 @@ def dispatch_outbound(
             return None
         account = ChannelAccount.objects.using(alias).select_for_update(no_key=True)
         account = account.get(pk=convo.channel_account_id)
-        reason, result = _blocked(convo, account), None
+        decision = messaging_decision(convo, account=account, alias=alias)  # justo antes de enviar
+        reason, result = decision.reason, None
+        queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
         if reason is None:
             try:
                 result = resolve(account.platform).send(message)

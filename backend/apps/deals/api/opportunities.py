@@ -15,7 +15,9 @@ de otro no da sus clientes. Ningún otro dato del contacto sale por aquí.
 Crear pide `opportunities.create` y `contacts.view`, comprobados antes de leer nada: el contacto
 ha de estar en el alcance de `contacts.view`, y si no lo está (o no existe, o es de otra
 organización) el 400 de `contact_id` es el mismo, así que crear no sirve para sondear contactos.
-Quien crea es el creador y el responsable; el responsable se cambia con `…/assign/`. Cambiar pide
+`conversation_id` (la conversación de origen, F6-06b) ha de ser de ese contacto y estar en el
+alcance de `conversations.view`: si no, el mismo 400 que para una que no existe. Quien crea es el
+creador y el responsable; el responsable se cambia con `…/assign/`. Cambiar pide
 `opportunities.view` y `opportunities.update`: el alcance de los dos se cruza en SQL, sobre la fila
 bloqueada (`FOR NO KEY UPDATE`) hasta el final de la petición, y fuera de él es el mismo 404 que un
 id que no existe. Las escrituras responden con el detalle, como lo lee `GET`: quien escribe puede
@@ -39,6 +41,7 @@ from rest_framework.response import Response
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
+from apps.conversations.selectors import conversations
 from apps.deals import commands as pipeline_commands
 from apps.deals import opportunities as commands
 from apps.deals import opportunity_stages as stages
@@ -59,6 +62,7 @@ UNAVAILABLE = "El pipeline de la oportunidad no está activo."
 GENERIC = "Dato no admitido."
 BAD_REFERENCE = {  # sin repetir el id recibido
     "contact_id": "No es un contacto de la organización que puedas ver.",
+    "conversation_id": "No es una conversación de este contacto que puedas ver.",
     "pipeline_id": "No es un pipeline activo de la organización.",
     "variant_id": "No es una variante activa de la organización.",
     "assigned_user_id": "No es un miembro activo de la organización.",
@@ -139,6 +143,9 @@ class OpportunityDetailSerializer(OpportunitySerializer):
     lost_reason_note = serializers.CharField(allow_null=True, help_text="Texto libre.")
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()
+    conversation_id = serializers.UUIDField(
+        allow_null=True, help_text="La conversación de origen, solo su id; `null` si no la tiene."
+    )
     items = ItemSerializer(many=True, help_text="Por id.")
     history = HistorySerializer(many=True, help_text="De la primera etapa a la última.")
 
@@ -262,6 +269,19 @@ def _seen_contact(request: Request, contact_id: UUID) -> None:
         raise commands.BadReference("contact_id")
 
 
+def _seen_conversation(request: Request, conversation_id: UUID, contact_id: UUID) -> None:
+    """La conversación es de ese contacto y está en el alcance de `conversations.view` de quien
+    crea. `BadReference("conversation_id")` si no: el mismo error que para una que no existe, de
+    otro contacto o de otra organización (el comando comprueba la organización y el contacto)."""
+    ectx = request_context(request)
+    assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+    mine = scoped(ectx, "conversations.view", conversations()).filter(
+        pk=conversation_id, contact_id=contact_id
+    )
+    if not mine.values_list("pk", flat=True)[:1]:
+        raise commands.BadReference("conversation_id")
+
+
 class OpportunitiesQuery:
     def get_queryset(self) -> QuerySet[Opportunity]:
         found = selectors.opportunities()
@@ -292,7 +312,10 @@ class OpportunitiesQuery:
         "pipeline elegido (o del predeterminado), con su número `OPP-…`; quien la crea es su "
         "responsable. Con `opportunities.create` y `contacts.view`. 400 en `contact_id` si no es "
         "un contacto vivo que quien crea pueda ver (el mismo error que para uno que no existe), "
-        "en `pipeline_id` o en `items` (una variante) si no son activos, y por cada dato inválido.",
+        "en `pipeline_id` o en `items` (una variante) si no son activos, en `conversation_id` "
+        "si no es una conversación de ese contacto dentro del alcance de `conversations.view` de "
+        "quien crea (el mismo error que para una que no existe o de otra organización), y por "
+        "cada dato inválido.",
     ),
 )
 class OpportunitiesView(OpportunitiesQuery, generics.ListAPIView):
@@ -310,6 +333,8 @@ class OpportunitiesView(OpportunitiesQuery, generics.ListAPIView):
         contact_id = fields.pop("contact_id")
         with domain():
             _seen_contact(request, contact_id)
+            if (origin := fields.get("conversation_id")) is not None:
+                _seen_conversation(request, origin, contact_id)
             made = commands.create_opportunity(_tenant(), contact_id=contact_id, **fields)
         return reply(request, made.pk, 201)
 

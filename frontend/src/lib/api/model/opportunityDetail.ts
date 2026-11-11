@@ -70,6 +70,11 @@ export interface OpportunityDetail {
   lost_reason_note: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * La conversación de origen, solo su id; `null` si no la tiene.
+   * @nullable
+   */
+  conversation_id: string | null;
   /** Por id. */
   items: Item[];
   /** De la primera etapa a la última. */
