@@ -154,3 +154,12 @@ def orgs(tenant_db: None, migrator: psycopg.Connection[Any]) -> dict[str, UUID]:
             [ids[f"widget_{org}"], ids[org], f"widget {org}"],
         )
     return ids
+
+
+@pytest.fixture(autouse=True)
+def no_realtime_broker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin broker de Celery, encolar el handler del WebSocket del Inbox (F6-07a) fallaría y dejaría
+    pendientes los eventos de mensajes. Los tests de tiempo real lo ejecutan en el momento."""
+    from apps.conversations import tasks
+
+    monkeypatch.setattr(tasks.publish_realtime, "apply_async", lambda *args, **kwargs: None)

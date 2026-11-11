@@ -9,6 +9,7 @@ dependencies = [
     "boto3==1.43.105",
     "celery==5.6.3",
     "channels==4.3.2",
+    "channels-redis==4.3.0",
     "cryptography==50.0.1",
     "defusedxml==0.7.1",
     "django==5.2.17",
@@ -80,7 +81,7 @@ disallow_subclassing_any = false
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]  # asgiref.testing sin anotaciones
-module = ["tests.test_entrypoints"]
+module = ["tests.test_entrypoints", "tests.test_inbox_realtime"]
 disallow_untyped_calls = false
 
 [tool.django-stubs]

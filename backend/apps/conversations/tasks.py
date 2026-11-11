@@ -5,7 +5,7 @@ la tarea (`@tenant_task`), nunca en un dato del evento. La entrega es idempotent
 `dispatch_outbound` solo actúa sobre un mensaje `QUEUED`, así que repetir la tarea, o que el
 barredor y el evento coincidan, no envía dos veces. Un fallo pasajero del canal reintenta con
 espera creciente y acotada; al agotarse queda `FAILED` (`RETRIES_EXHAUSTED`). Ningún registro
-lleva el texto.
+lleva el texto. `publish_realtime` (F6-07a) reenvía al WebSocket del Inbox el tipo y los ids.
 """
 
 import datetime as dt
@@ -16,7 +16,7 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
-from apps.conversations import commands, credentials, ingress
+from apps.conversations import commands, credentials, ingress, realtime
 from apps.conversations.channels import TemporaryChannelError
 from apps.conversations.models import Message
 from core.observability.logging import get_logger
@@ -29,6 +29,7 @@ from core.tenancy.scope import tenant_scope
 logger = get_logger(__name__)
 MAX_RETRIES = 5
 BACKOFF_SECONDS, BACKOFF_MAX = 30, 600
+REALTIME_RETRIES = 3
 
 
 def deliver(task: Any, message_id: UUID) -> None:
@@ -53,6 +54,30 @@ def dispatch_event(task: Any, event_id: str) -> None:
     event = OutboxEvent.objects.filter(id=event_id, event_type="message.queued").first()
     if event is not None:
         deliver(task, event.aggregate_id)
+
+
+@subscribe(*realtime.EVENTS)
+@tenant_task(name="conversations.publish_realtime", bind=True, ignore_result=True, acks_late=True)
+def publish_realtime(task: Any, event_id: str) -> None:
+    """Handler del outbox para el WebSocket del Inbox (F6-07a): reenvía el evento (de esta
+    organización) con solo su tipo y sus ids. Sin Redis reintenta y, agotados los intentos, lo
+    descarta (el cliente se pone al día al reconectar)."""
+    event = OutboxEvent.objects.filter(id=event_id).first()
+    if event is None:
+        return
+    at = event.occurred_at.isoformat()
+    message = realtime.outgoing(event.event_type, event.aggregate_id, event.payload, at)
+    if message is None:
+        return
+    try:
+        sent = realtime.publish(require().organization_id, message)
+    except Exception as error:  # noqa: BLE001 — Redis caído: se reintenta; nunca se registra el evento
+        if task.request.retries >= REALTIME_RETRIES:
+            logger.warning("inbox.realtime_dropped", error=type(error).__name__)
+            return
+        raise task.retry(countdown=2**task.request.retries, max_retries=REALTIME_RETRIES) from None
+    if not sent:
+        logger.warning("inbox.realtime_no_layer")
 
 
 @tenant_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)

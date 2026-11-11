@@ -16,17 +16,25 @@ from channels.security.websocket import (  # noqa: E402
 )
 from django.conf import settings  # noqa: E402
 from django.db import OperationalError, connection  # noqa: E402
-from django.urls import re_path  # noqa: E402
+from django.urls import path, re_path  # noqa: E402
+
+from apps.accounts.websocket import SessionAuthMiddleware  # noqa: E402
+from apps.conversations.realtime import InboxConsumer  # noqa: E402
 
 # Rutas WS de tenant (`/ws/o/<org_slug>/…`, consumers con TenantConsumerMixin): llegan con sus
-# módulos. La sesión (AuthMiddlewareStack) se añade con la autenticación de la Fase 2.
-websocket_urlpatterns: list[object] = []
+# módulos. Origen (host permitido; sin `Origin`, rechazo) y después la sesión por la cookie
+# (ADR-003 §6): una ruta WS sin sesión válida la rechaza su consumer.
+websocket_urlpatterns: list[object] = [
+    path("ws/o/<slug:org_slug>/inbox/", InboxConsumer.as_asgi()),  # F6-07a
+]
 application = ProtocolTypeRouter(
     {
         "http": django_application,
         # Ruta WS desconocida: rechazo limpio (403), no un 500 por "No route found".
         "websocket": AllowedHostsOriginValidator(
-            URLRouter([*websocket_urlpatterns, re_path(r"", WebsocketDenier.as_asgi())])
+            SessionAuthMiddleware(
+                URLRouter([*websocket_urlpatterns, re_path(r"", WebsocketDenier.as_asgi())])
+            )
         ),
     }
 )
