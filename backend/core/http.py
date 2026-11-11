@@ -3,6 +3,7 @@ redirects ni proxies. Único módulo con urllib3. Diseño: docs/architecture/sto
 
 import ipaddress
 import socket
+import ssl
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -62,7 +63,9 @@ class _GuardedPool(HTTPSConnectionPool):
 
 _manager = urllib3.PoolManager(
     timeout=urllib3.Timeout(connect=5.0, read=15.0),
-    retries=urllib3.Retry(total=2, redirect=False, raise_on_redirect=False),
+    # `other=0`: urllib3 repite un POST ante un error TLS «de otro tipo» (`SSLError`) aunque la
+    # petición ya se enviara y el fallo llegara al leer la respuesta: un envío duplicado.
+    retries=urllib3.Retry(total=2, redirect=False, raise_on_redirect=False, other=0),
 )
 _manager.pool_classes_by_scheme = {"https": _GuardedPool}
 
@@ -73,9 +76,14 @@ def never_connected(error: BaseException) -> bool:
     (tiempo de lectura agotado, conexión cortada) es ambiguo: la petición pudo llegar."""
     if isinstance(error, urllib3.exceptions.MaxRetryError):
         error = error.reason or error
+    if isinstance(error, urllib3.exceptions.SSLError):
+        # Un error TLS también puede llegar al leer la respuesta, con la petición ya enviada: solo
+        # un certificado que no vale (apretón de manos) es seguro; cualquier otro es ambiguo.
+        inner = error.args[0] if error.args else None
+        return isinstance(inner, ssl.SSLCertVerificationError)
     connect = (
         BlockedDestination, urllib3.exceptions.ConnectTimeoutError,
-        urllib3.exceptions.NewConnectionError, urllib3.exceptions.SSLError,
+        urllib3.exceptions.NewConnectionError,
     )  # fmt: skip
     return isinstance(error, connect)
 

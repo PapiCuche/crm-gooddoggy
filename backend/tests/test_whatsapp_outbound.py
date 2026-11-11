@@ -212,6 +212,74 @@ def test_a_failure_before_the_request_is_safe_to_repeat_and_one_after_it_is_not(
     assert "POST" not in retries.allowed_methods  # una lectura fallida de un POST no se repite
 
 
+def test_a_tls_error_while_reading_the_answer_never_repeats_the_post_and_is_ambiguous() -> None:
+    """urllib3 trataba un `SSLError` como «otro» error y repetía un POST ya enviado (3 envíos)."""
+    import ssl
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits: list[int] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            hits.append(1)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    real = urllib3.connection.HTTPConnection.getresponse
+
+    def cut(self: Any, *args: Any, **kwargs: Any) -> Any:
+        real(self, *args, **kwargs)  # el servidor ya tiene la petición
+        raise ssl.SSLError("tlsv1 alert internal error")
+
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(urllib3.connection.HTTPConnection, "getresponse", cut)
+            with pytest.raises(urllib3.exceptions.HTTPError) as caught:
+                url = f"http://127.0.0.1:{server.server_address[1]}/x"
+                plain = urllib3.PoolManager(retries=http._manager.connection_pool_kw["retries"])
+                plain.request("POST", url, json={"a": 1}, redirect=False)  # los mismos reintentos
+    finally:
+        server.shutdown()
+    assert len(hits) == 1 and not http.never_connected(caught.value)
+    err = urllib3.exceptions
+    assert http.never_connected(err.SSLError(ssl.SSLCertVerificationError("certificado")))
+    assert not http.never_connected(err.SSLError(ssl.SSLError("alerta")))  # ni un cierre limpio
+    assert not http.never_connected(err.SSLError(ssl.SSLZeroReturnError("cerrado")))
+
+
+def test_no_token_or_text_in_the_logs_whatever_the_outcome(
+    world: SimpleNamespace, graph: FakeGraph, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("DEBUG")
+    convo = talk(world)
+    for outcome in ("cut", "timeout_after", "server", "window_closed", "quality", "token"):
+        graph.then(outcome)
+        send(world, convo)
+    assert TEST_TOKEN not in caplog.text and "Hola, ¿en" not in caplog.text
+
+
+def test_a_phone_number_id_that_is_not_digits_never_reaches_the_url(
+    monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    settings.META_ENABLED = True
+    calls: list[str] = []
+    monkeypatch.setattr(http, "request", lambda *a, **k: calls.append(a[1]))
+    mine = new_id()
+    box = sealed.seal(TOKEN_PURPOSE, credentials.owner(mine), TEST_TOKEN.encode())
+    for bad in ("123/../x", "12345?a=b", "12345@evil.io", "1234"):
+        claim = channels.Claim(new_id(), mine, "WHATSAPP", bad, PHONE, "x",
+                               Credential(owner_id=mine, ciphertext=box))  # fmt: skip
+        with pytest.raises(ValueError, match="identificador"):
+            whatsapp.WhatsAppAdapter().send(claim)
+    assert calls == []
+
+
 MOVES = [("QUEUED", "SENDING", True), ("SENDING", "QUEUED", True), ("SENDING", "SENT", True),
          ("SENDING", "READ", True), ("SENDING", "FAILED", True), ("SENT", "QUEUED", False),
          ("SENT", "SENDING", False), ("DELIVERED", "SENDING", False)]  # fmt: skip
