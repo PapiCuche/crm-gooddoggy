@@ -5,6 +5,7 @@ import type { Quote, QuoteDetail, SelfContext } from "@/lib/api/model";
 import { renderApp } from "@/test-utils";
 
 export const NOW = Date.parse("2026-11-11T15:00:00Z");
+export const BASE = "/api/v1/o/acme/quotes/";
 const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
@@ -51,6 +52,7 @@ export function serve(handler: (url: URL) => Reply) {
   );
   return urls;
 }
+export const page = (...results: unknown[]) => ({ status: 200, body: { results, next: null } });
 export const withTenant = (node: React.ReactNode, ...codes: string[]) =>
   renderApp(
     <TenantProvider value={{ ...tenant, permissions: codes.map((code) => ({ code, scopes: [] })) }}>

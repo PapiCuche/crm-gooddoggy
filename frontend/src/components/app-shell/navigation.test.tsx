@@ -53,6 +53,16 @@ describe("navegación del shell", () => {
     ]);
   });
 
+  it("«Cotizaciones» solo sale con quotes.view y marca también el detalle", async () => {
+    route.pathname = "/o/acme/cotizaciones/abc";
+    expect(await links([{ code: "quotes.create", scopes: [] }])).toEqual([["/o/acme", null]]);
+    cleanup();
+    expect(await links([{ code: "quotes.view", scopes: [] }])).toContainEqual([
+      "/o/acme/cotizaciones",
+      "true",
+    ]);
+  });
+
   it("la lista con el permiso, y marca solo la entrada de la ruta actual", async () => {
     expect(await links([{ code: "users.view", scopes: [] }])).toEqual([
       ["/o/acme", null],
