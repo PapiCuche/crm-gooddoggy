@@ -110,6 +110,8 @@ def test_the_queue_sweeper_waits_for_not_before_and_gives_up_after_too_many_atte
     assert tasks.sweep_queued() == 1 and [k["message_id"] for k in sent] == [str(ready.pk)]
     assert state(world, spent).delivery_status == "FAILED"  # ya no se reencola, ni amplifica
     assert state(world, waiting).delivery_status == "QUEUED"
+    left = (state(world, waiting).not_before - timezone.now()).total_seconds()  # type: ignore[operator]
+    assert left > 500  # su espera no se toca: solo lo que se reencola recibe la nueva
     wait = (state(world, ready).not_before - timezone.now()).total_seconds()  # type: ignore[operator]
     assert 110 < wait <= tasks.REQUEUE_WAIT and waits == [tasks.REQUEUE_WAIT + 1]
     assert tasks.sweep_queued() == 0  # el minuto siguiente no lo reencola otra vez
