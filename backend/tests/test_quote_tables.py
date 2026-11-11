@@ -100,6 +100,15 @@ def test_the_organization_is_a_real_reference_and_rls_refuses_a_foreign_insert(
         migrator.execute(ROW, [uuid4(), uuid4(), uuid4(), uuid4()])  # una organización inventada
 
 
+def test_both_organization_references_exist_in_the_catalog(migrator: DB) -> None:
+    """Por el catálogo y no por el orden en que PostgreSQL dispara las FKs de una fila inventada."""
+    for table in ("quotes", "quote_items"):
+        assert migrator.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s",
+            [f"{table}_organization_fk"],
+        ).fetchone() == ("FOREIGN KEY (organization_id) REFERENCES organizations(id)",)
+
+
 def test_a_complete_quote_with_a_promotion_and_a_cancelled_one_are_valid(
     world: SimpleNamespace,
 ) -> None:
@@ -147,6 +156,9 @@ def test_composite_foreign_keys_keep_every_reference_in_the_organization(
     with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="quote_items_variant_fk"):
         with transaction.atomic():
             QuoteItem.objects.filter(pk=row.pk).update(variant_id=other_variant)
+    with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="quote_items_quote_fk"):
+        with transaction.atomic():  # una línea no cambia de moneda respecto a su cotización
+            QuoteItem.objects.filter(pk=row.pk).update(currency="USD")
     foreign_quote = quote(world, "b").pk
     with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="quote_items_quote_fk"):
         with transaction.atomic():

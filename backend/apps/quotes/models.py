@@ -102,6 +102,9 @@ class Quote(TenantModel):
         ]
         constraints = [
             models.UniqueConstraint(fields=["organization_id", "id"], name="quotes_org_id_uq"),
+            models.UniqueConstraint(  # las líneas apuntan a la cotización con su moneda
+                fields=["organization_id", "id", "currency"], name="quotes_org_id_currency_uq"
+            ),
             models.UniqueConstraint(
                 fields=["organization_id", "number", "revision"], name="quotes_number_uq"
             ),

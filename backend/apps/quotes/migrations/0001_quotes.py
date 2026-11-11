@@ -405,6 +405,12 @@ class Migration(migrations.Migration):
                 name="quote_items_currency_ck",
             ),
         ),
+        migrations.AddConstraint(  # a lo que apunta cada línea: la cotización y su moneda
+            model_name="quote",
+            constraint=models.UniqueConstraint(
+                fields=("organization_id", "id", "currency"), name="quotes_org_id_currency_uq"
+            ),
+        ),
         # FKs de tenant y ADR-001 §3: el contacto, la oportunidad, la lista (con su moneda: la
         # cotización no cambia de moneda), la variante y las personas son de esta organización.
         *(
@@ -436,8 +442,8 @@ class Migration(migrations.Migration):
         fk(
             "quote_items",
             "quote_items_quote_fk",
-            "organization_id, quote_id",
-            "quotes (organization_id, id)",
+            "organization_id, quote_id, currency",  # la línea es de la moneda de su cotización
+            "quotes (organization_id, id, currency)",
         ),
         fk(
             "quote_items",
