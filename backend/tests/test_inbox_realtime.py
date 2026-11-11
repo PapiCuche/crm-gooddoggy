@@ -257,7 +257,9 @@ def test_without_a_valid_session_in_the_cookie_the_connection_is_refused(
 
 
 @pytest.mark.parametrize("origin", [None, b"http://evil.example", b"https://testserver.evil.io"]
-                         + [b"null", b"https://testserver", b"http://testserver:8000"])  # fmt: skip
+                         + [b"null", b"https://testserver", b"http://testserver:8000"]
+                         + [b"http://testserver:99999", b"http://testserver:80.evil.io"]
+                         + [b"http://[::1", b"http://testserver:-1"])  # fmt: skip
 def test_a_missing_or_foreign_origin_is_refused_even_with_a_valid_session(
     inbox: SimpleNamespace, origin: bytes | None
 ) -> None:
