@@ -41,7 +41,7 @@ class MessageSerializer(serializers.Serializer[Any]):
     direction = serializers.ChoiceField(choices=Direction.choices)
     sender_type = serializers.CharField()
     sender_user_id = serializers.UUIDField(allow_null=True)
-    message_type = serializers.CharField(help_text="`TEXT` o `NOTE`.")
+    message_type = serializers.CharField(help_text="`TEXT`, `NOTE` o `UNSUPPORTED`.")
     body = serializers.CharField(
         allow_null=True, help_text="`null` si no se puede ver el contacto (`contacts.view`)."
     )
@@ -77,6 +77,9 @@ REASONS = {
     "vuelva a escribir.",
     "CHANNEL_UNAVAILABLE": "El canal de esta conversación no está conectado. Reconéctalo para "
     "enviar mensajes.",
+    "CONTACT_BLOCKED": "Este contacto está bloqueado: no se le pueden enviar mensajes.",
+    "WINDOW_CLOSED": "Ya pasó la ventana de atención del canal desde el último mensaje del "
+    "cliente. Podrás responder cuando el cliente vuelva a escribir.",
     "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío.",
 }
 
@@ -104,8 +107,10 @@ REASONS = {
         "tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el "
         "mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no "
         "hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: "
-        "`CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar) o "
-        "`CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).",
+        "`CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, "
+        "`WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del "
+        "cliente) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra "
+        "persona).",
     ),
 )
 class MessagesView(generics.ListAPIView):
@@ -148,12 +153,8 @@ class MessagesView(generics.ListAPIView):
                     tenant, conversation_id=found.pk, body=wanted.validated_data["body"],
                     client_message_id=wanted.validated_data["client_message_id"],
                 )  # fmt: skip
-        except (policy.ConversationClosed, policy.ChannelUnavailable) as blocked:
-            code = (
-                "CONVERSATION_CLOSED"
-                if isinstance(blocked, policy.ConversationClosed)
-                else ("CHANNEL_UNAVAILABLE")
-            )
+        except tuple(policy.DENIALS.values()) as blocked:  # la política dijo que no
+            code = policy.CODES[type(blocked)]
             raise ApiError(code, 409, REASONS[code]) from None
         except commands.ClientMessageConflict:
             raise ApiError(
@@ -163,6 +164,47 @@ class MessagesView(generics.ListAPIView):
             raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"])
         shown = MessageSerializer(message, context={"show_body": shows_body(ectx, found)})
         return Response(shown.data, status=202 if created else 200)
+
+
+class MessagingPolicySerializer(serializers.Serializer[Any]):
+    allowed = serializers.BooleanField()
+    mode = serializers.ChoiceField(
+        choices=[(policy.FREE_FORM, policy.FREE_FORM), (policy.BLOCKED, policy.BLOCKED)]
+    )
+    reason = serializers.ChoiceField(
+        choices=[(reason, reason) for reason in policy.REASONS],
+        allow_null=True,
+        help_text="Por qué no; `null` si se puede.",
+    )
+    window_expires_at = serializers.DateTimeField(
+        allow_null=True, help_text="Cuándo cierra (o cerró) la ventana; `null` si no hay."
+    )
+    window_hours = serializers.IntegerField(allow_null=True, help_text="`null`: sin límite.")
+    evaluated_at = serializers.DateTimeField()
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="conversation_messaging_policy_retrieve",
+        tags=["conversations"],
+        responses={200: MessagingPolicySerializer, **errors(401, 403, 404)},
+        description="La decisión de la política de mensajería (ADR-010) para escribir ahora en la "
+        "conversación, la misma que aplican el envío y el despachador. Pide `conversations.view` y "
+        "`messages.send`; 404: no existe, es de otra organización o queda fuera del alcance de "
+        "`messages.send`.",
+    ),
+)
+class MessagingPolicyView(APIView):
+    required_permissions = {"GET": ("conversations.view", "messages.send")}
+
+    def get(self, request: Request, **kwargs: Any) -> Response:
+        ectx = request_context(request)
+        assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        mine = scoped(ectx, "conversations.view", Conversation.objects.all())
+        found = mine.filter(pk=self.kwargs["conversation_id"]).first()
+        if found is None or not can(ectx, "messages.send", found):  # el mismo 404 en todo caso
+            raise NotFound
+        return Response(MessagingPolicySerializer(selectors.messaging_decision(found)).data)
 
 
 @extend_schema_view(

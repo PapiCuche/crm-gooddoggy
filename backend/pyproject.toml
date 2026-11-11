@@ -9,6 +9,7 @@ dependencies = [
     "boto3==1.43.105",
     "celery==5.6.3",
     "channels==4.3.2",
+    "channels-redis==4.3.0",
     "cryptography==50.0.1",
     "defusedxml==0.7.1",
     "django==5.2.17",
@@ -80,7 +81,7 @@ disallow_subclassing_any = false
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]  # asgiref.testing sin anotaciones
-module = ["tests.test_entrypoints"]
+module = ["tests.test_entrypoints", "tests.test_inbox_realtime"]
 disallow_untyped_calls = false
 
 [tool.django-stubs]
@@ -123,6 +124,9 @@ layers = [
     "apps.audit | apps.files | apps.imports",
     "core",
 ]
+# F6-06b: la única arista de deals a conversations (el alcance de `conversations.view` al crear una
+# oportunidad desde una conversación); cualquier otra, y la inversa, siguen prohibidas.
+ignore_imports = ["apps.deals.api.opportunities -> apps.conversations.selectors"]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
@@ -185,7 +189,12 @@ forbidden_modules = ["apps.pricing.costs"]
 [[tool.importlinter.contracts]]
 name = "Comandos de contactos: solo su API los importa (F4-01, F4-11, F7-04)"
 type = "protected"
-protected_modules = ["apps.contacts.commands", "apps.contacts.notes", "apps.contacts.tags"]
+protected_modules = [
+    "apps.contacts.commands",
+    "apps.contacts.consents",
+    "apps.contacts.notes",
+    "apps.contacts.tags",
+]
 allowed_importers = ["apps.contacts.api", "apps.conversations.inbound"]  # F7-04: crea el contacto
 
 [[tool.importlinter.contracts]]

@@ -32,4 +32,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # --proxy-headers: confía en X-Forwarded-* solo de FORWARDED_ALLOW_IPS, obligatoria con la
 # configuración por defecto de la imagen (production): ver «Dirección del cliente» en el README.
 # --no-access-log: el log de acceso de uvicorn no pasa por el redactor (incluye query strings).
-CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-access-log"]
+# --ws-max-size: tope de una trama WebSocket (F6-07a).
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-access-log", "--ws-max-size", "16384"]

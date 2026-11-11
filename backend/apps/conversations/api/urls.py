@@ -15,6 +15,11 @@ urlpatterns = [
         name="conversation-messages",
     ),
     path(
+        "conversations/<uuid:conversation_id>/messaging-policy/",
+        messages.MessagingPolicyView.as_view(),
+        name="conversation-messaging-policy",
+    ),
+    path(
         "conversations/<uuid:conversation_id>/notes/",
         messages.NotesView.as_view(),
         name="conversation-notes",

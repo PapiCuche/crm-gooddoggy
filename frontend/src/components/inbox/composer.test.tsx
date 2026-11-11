@@ -245,6 +245,24 @@ describe("cuadro de redacción (F6-04c)", () => {
     expect(s.posts()).toHaveLength(1);
   });
 
+  it.each(["CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED"])(
+    "un 409 %s vuelve a pedir la conversación",
+    async (code) => {
+      const s = server({ send: () => ({ status: 409, body: { code } }) });
+      show();
+      await openChat();
+      const reads = () =>
+        s.api.mock.calls.filter(
+          ([url, init]) => String(url).endsWith("/conversations/1/") && init?.method !== "POST",
+        ).length;
+      await type("Hola");
+      const before = reads();
+      fireEvent.click(sendButton());
+      await screen.findByRole("alert");
+      await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    },
+  );
+
   it("tras enviar se vuelve a pedir la lista de mensajes (el estado de entrega avanza)", async () => {
     const s = server();
     show();

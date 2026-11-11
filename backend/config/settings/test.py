@@ -10,6 +10,7 @@ from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
 ALLOWED_HOSTS = ["testserver"]
+CSRF_TRUSTED_ORIGINS = ["http://testserver"]  # también el origen del WebSocket (F6-07a)
 INSTALLED_APPS = [*INSTALLED_APPS, "tests.tenancy_app"]  # noqa: F405 — solo tests (RLS)
 # Migraciones de la BD de test: como crm_migrator (tests/conftest.py). Los tests corren como
 # el rol de DATABASE_URL, que debe ser crm_app (ni superusuario ni BYPASSRLS).
@@ -18,6 +19,8 @@ MIGRATOR_DATABASE_URL = os.environ.get("DATABASE_MIGRATOR_URL", "")
 ROOT_URLCONF = "tests.urls"
 MIDDLEWARE = [*MIDDLEWARE[:-1], "tests.fakes.FakeAuthMiddleware", MIDDLEWARE[-1]]  # noqa: F405
 TENANCY_MEMBERSHIP_RESOLVER = "tests.fakes.membership"
+# F6-07a: la capa de canales en memoria (un solo proceso); la real, con Redis, no se usa en tests.
+CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 STORAGE_BACKEND = "memory"  # la suite de contrato usa Garage vía STORAGE_* (tests/test_storage.py)
 MAIL_BACKEND = "memory"  # los correos quedan en `django.core.mail.outbox`
 DEFAULT_FROM_EMAIL = "no-reply@crm.test"

@@ -13,7 +13,7 @@ export interface Message {
   sender_type: string;
   /** @nullable */
   sender_user_id: string | null;
-  /** `TEXT` o `NOTE`. */
+  /** `TEXT`, `NOTE` o `UNSUPPORTED`. */
   message_type: string;
   /**
    * `null` si no se puede ver el contacto (`contacts.view`).

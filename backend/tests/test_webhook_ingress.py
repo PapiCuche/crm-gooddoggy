@@ -365,6 +365,39 @@ def test_a_failure_waits_longer_each_time_and_the_eighth_is_dead(migrator: DB) -
     assert row(migrator, "k")["status"] == "DEAD"
 
 
+def test_a_rate_limited_close_never_kills_an_item_that_already_failed_seven_times(
+    migrator: DB,
+) -> None:
+    put("k")
+    for attempt in range(1, 8):
+        force(migrator, "k", "next_attempt_at = now() - interval '1 second'")
+        [item] = ingress.claim(1)
+        assert item.attempts == attempt
+        assert ingress.mark(item, "FAILED", reason="ERROR") == "FAILED"
+    force(migrator, "k", "next_attempt_at = now() - interval '1 second'")
+    [item] = ingress.claim(1)
+    assert item.attempts == 8  # el octavo reclamo: un fallo de verdad lo daría por DEAD
+    assert ingress.mark(item, "FAILED", reason="RATE_LIMITED") == "FAILED"
+    waiting = row(migrator, "k")
+    assert (waiting["status"], waiting["attempts"]) == ("FAILED", 7) and waiting["payload"]
+    assert migrator.execute("SELECT count(*) FROM webhook_failures").fetchone() == (7,)
+    force(migrator, "k", "next_attempt_at = now() - interval '1 second'")
+    [item] = ingress.claim(1)
+    assert item.attempts == 8 and ingress.mark(item, "FAILED", reason="ERROR") == "DEAD"
+
+
+def test_a_failure_without_a_reason_is_recorded_as_error_and_spends_the_attempt(
+    migrator: DB,
+) -> None:
+    put("k")
+    [item] = ingress.claim(1)
+    assert ingress.mark(item, "FAILED") == "FAILED"
+    assert migrator.execute("SELECT reason, attempt FROM webhook_failures").fetchall() == [
+        ("ERROR", 1)
+    ]
+    assert row(migrator, "k")["attempts"] == 1
+
+
 def test_the_list_gives_only_metadata_never_the_payload() -> None:
     put("a", texto="el contenido del cliente")
     put("b")
