@@ -201,3 +201,61 @@ def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
     only = ("CONNECTED",)
     return _demote(ctx, channel_account_id, only=only, to="DEGRADED", detail="QUALITY_LOW",
                    action="channel_account.degraded")  # fmt: skip
+
+
+def health_target(
+    ctx: TenantContext, *, channel_account_id: UUID
+) -> tuple[str, str, Credential] | None:
+    """Lo que la comprobación de salud necesita de una cuenta viva `PENDING`, `CONNECTED` o
+    `DEGRADED`: su WABA, su número y su credencial viva (la fila cifrada: el token se abre solo
+    durante la llamada a Meta). `None` si ya no se comprueba o no tiene credencial."""
+    alias = require_scope(ctx)
+    account = _live().using(alias).filter(
+        pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
+    ).first()  # fmt: skip
+    live = Credential.objects.using(alias).filter(
+        pk=account.credential_id if account else None, owner_id=channel_account_id,
+        revoked_at__isnull=True,
+    )  # fmt: skip
+    if account is None or (credential := live.first()) is None:
+        return None
+    return account.external_parent_id or "", account.external_account_id, credential
+
+
+def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, tier: str) -> bool:
+    """Una comprobación de salud correcta (ADR-029 §12): guarda la calidad, el nivel de mensajería
+    y la hora; una cuenta `PENDING` con el webhook ya visto pasa a `CONNECTED`; calidad `YELLOW` o
+    `RED` deja `DEGRADED` (`QUALITY_LOW`) y calidad recuperada vuelve a `CONNECTED` (solo la
+    degradada por calidad). Audita y avisa solo si algo cambió, con ids y valores cerrados.
+    `False` si la cuenta ya no se comprueba (desconectada, en `ERROR`, borrada)."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        found = _live().using(alias).select_for_update(no_key=True)
+        account = found.filter(
+            pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
+        ).first()  # fmt: skip
+        if account is None:
+            return False
+        before = {"status": account.status, "quality_rating": account.quality_rating,
+                  "messaging_limit_tier": account.messaging_limit_tier}  # fmt: skip
+        low = quality in ("YELLOW", "RED")
+        if account.status == "PENDING" and account.status_detail is None:  # el webhook ya se vio
+            account.status = "DEGRADED" if low else "CONNECTED"
+        elif account.status == "CONNECTED" and low:
+            account.status = "DEGRADED"
+        elif account.status == "DEGRADED" and account.status_detail == "QUALITY_LOW" and not low:
+            account.status = "CONNECTED"
+        if account.status != before["status"]:
+            account.status_detail = "QUALITY_LOW" if account.status == "DEGRADED" else None
+        account.quality_rating, account.messaging_limit_tier = quality, tier
+        changes = {key: [was, getattr(account, key)] for key, was in before.items()
+                   if getattr(account, key) != was}  # fmt: skip
+        account.last_healthcheck_at = timezone.now()
+        fields = ["status", "status_detail", "quality_rating", "messaging_limit_tier"]
+        if changes:
+            account.version += 1
+            fields.append("version")
+        account.save(using=alias, update_fields=[*fields, "last_healthcheck_at", "updated_at"])
+        if changes:
+            _announce(ctx, "channel_account.health", account, changes, None)
+        return True

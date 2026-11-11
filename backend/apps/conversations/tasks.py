@@ -10,6 +10,7 @@ registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket de
 """
 
 import datetime as dt
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID
@@ -19,7 +20,7 @@ from django.db import connection
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.conversations import accounts, commands, credentials, ingress, realtime
+from apps.conversations import accounts, commands, credentials, graph, ingress, realtime
 from apps.conversations.channels import (
     AmbiguousChannelError,
     ChannelAdapter,
@@ -29,6 +30,7 @@ from apps.conversations.channels import (
     adapter_for,
 )
 from apps.conversations.models import Message
+from core import sealed
 from core.observability.logging import get_logger
 from core.outbox import subscribe
 from core.outbox.models import OutboxEvent
@@ -190,6 +192,62 @@ def sweep_sending(batch_size: int = 100, max_orgs: int = 50) -> int:
                 )
                 closed += done is not None
     return closed
+
+
+def health_due(before: dt.datetime, limit: int) -> list[tuple[UUID, UUID]]:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT * FROM public.channel_accounts_health_due(%s, %s)", [before, limit])
+        return [(UUID(str(org)), UUID(str(account))) for org, account in cursor.fetchall()]
+
+
+def check_account(organization_id: UUID, account_id: UUID) -> str:
+    """Comprueba una cuenta con la Graph API (ADR-029 §12): lee en su scope, llama **sin
+    transacción** con el token abierto solo durante la llamada y guarda en otro scope. Meta que
+    rechaza el token deja la cuenta en `ERROR`; Meta caída no cambia nada. Devuelve un resultado
+    corto (`OK`, `REJECTED`, `UNAVAILABLE`, `SKIPPED`)."""
+    ctx = TenantContext(organization_id, "celery")
+    with tenant_scope(ctx):
+        target = accounts.health_target(ctx, channel_account_id=account_id)
+    if target is None:
+        return "SKIPPED"
+    waba, number, credential = target
+    try:
+        token = credentials.open_token(credential)
+        try:
+            seen = graph.phone_number(token, waba, number)
+        finally:
+            del token
+    except graph.GraphRejected, sealed.SealError:  # el token ya no abre ese número
+        with tenant_scope(ctx):
+            accounts.mark_token_invalid(ctx, channel_account_id=account_id)
+        return "REJECTED"
+    except graph.GraphUnavailable, graph.ChannelNotEnabled:
+        return "UNAVAILABLE"  # Meta caída: no cambia nada y se reintenta en la siguiente pasada
+    with tenant_scope(ctx):
+        accounts.apply_health(
+            ctx, channel_account_id=account_id, quality=seen["quality_rating"],
+            tier=seen["messaging_limit_tier"],
+        )  # fmt: skip
+    return "OK"
+
+
+@platform_task(name="conversations.healthcheck_accounts", ignore_result=True)
+def healthcheck_accounts(batch_size: int = 50) -> dict[str, int]:
+    """Comprueba la salud de las cuentas de WhatsApp a las que les toca (sin comprobación desde
+    `CHANNEL_HEALTH_INTERVAL_MINUTES`): descubre (organización, cuenta) con una función SECURITY
+    DEFINER (solo ids) y trabaja en el scope de cada una. Un fallo en una cuenta no detiene las
+    demás y solo se registra su tipo. Con el canal apagado no hace nada."""
+    if not settings.META_ENABLED:
+        return {}
+    before = timezone.now() - dt.timedelta(minutes=settings.CHANNEL_HEALTH_INTERVAL_MINUTES)
+    done: Counter[str] = Counter()
+    for organization_id, account_id in health_due(before, batch_size):
+        try:
+            done[check_account(organization_id, account_id)] += 1
+        except Exception as error:  # una cuenta no detiene a las demás; nada del error ni del token
+            logger.error("channel.healthcheck_failed", error=type(error).__name__)
+            done["ERROR"] += 1
+    return dict(done)
 
 
 @platform_task(name="conversations.reseal_credentials")
