@@ -52,7 +52,8 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
-from apps.conversations.policy import ChannelUnavailable, ConversationClosed, check_send
+from apps.conversations.policy import ConversationClosed, require_allowed
+from apps.conversations.selectors import messaging_decision
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
 from core.sequences import allocate
@@ -416,10 +417,11 @@ def record_outbound(
     sobrescritura). Siempre nace `QUEUED`: ningún argumento elige otro estado. Cuenta como
     actividad y, si la conversación estaba en cola (`PENDING`), la pasa a `OPEN` (D-INB-1). Audita
     `message.queued` y deja el evento `message.queued` en el outbox (ids, sin texto).
-    `ConversationClosed` si está cerrada y `ChannelUnavailable` si el canal no está conectado
-    (política mínima, `policy.check_send`; un reenvío de lo ya guardado sí se devuelve);
+    `ConversationClosed` si está cerrada, `ChannelUnavailable` si el canal no está conectado,
+    `ContactBlocked` si el contacto está bloqueado y `WindowClosed` si pasó la ventana del canal
+    (`policy.evaluate`, que se guarda en el mensaje; un reenvío de lo ya guardado sí se devuelve);
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
-    `AccessDenied` sin el permiso. La ventana de 24 horas y las plantillas son del despachador."""
+    `AccessDenied` sin el permiso. Las plantillas y el consentimiento son de F7-08 y F7-10."""
     alias = require_scope(ctx)
     conversation_id, client_id = (
         _uuid(conversation_id, "conversación"),
@@ -431,12 +433,15 @@ def record_outbound(
         convo = _locked(alias, conversation_id)
         _in_scope(ectx, "messages.send", convo)
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
+        snapshot = None
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
-            account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
-            check_send(convo.status, account.status, deleted=account.deleted_at is not None)
+            decision = messaging_decision(convo, alias=alias)
+            require_allowed(decision)  # cerrada, sin canal, contacto bloqueado o ventana cerrada
+            snapshot = decision.as_json()
         message, created = _insert(
-            ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED"
-        )
+            ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",
+            policy_decision=snapshot,
+        )  # fmt: skip
         if created:
             now = timezone.now()
             if convo.status == Status.PENDING:  # con la marca: `update_fields` no la guardaría sola
@@ -672,17 +677,6 @@ def release_conversation(
         return _assign(ctx, alias, convo, None, "MANUAL", expected)
 
 
-def _blocked(convo: Conversation, account: ChannelAccount) -> str | None:
-    """Por qué ya no se puede enviar (un motivo de `channels.REASONS`), o `None`."""
-    try:
-        check_send(convo.status, account.status, deleted=account.deleted_at is not None)
-    except ConversationClosed:
-        return "CONVERSATION_CLOSED"
-    except ChannelUnavailable:
-        return "CHANNEL_UNAVAILABLE"
-    return None
-
-
 def dispatch_outbound(
     ctx: TenantContext, *, message_id: UUID, resolve: Callable[[str], ChannelAdapter] = adapter_for
 ) -> Message | None:
@@ -709,7 +703,9 @@ def dispatch_outbound(
             return None
         account = ChannelAccount.objects.using(alias).select_for_update(no_key=True)
         account = account.get(pk=convo.channel_account_id)
-        reason, result = _blocked(convo, account), None
+        decision = messaging_decision(convo, account=account, alias=alias)  # justo antes de enviar
+        reason, result = decision.reason, None
+        queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
         if reason is None:
             try:
                 result = resolve(account.platform).send(message)

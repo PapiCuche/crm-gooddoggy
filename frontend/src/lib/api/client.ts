@@ -71,6 +71,7 @@ import type {
   MemberStatusChangeRequest,
   MembersListParams,
   Message,
+  MessagingPolicy,
   MfaBackupCodes,
   MfaDisableRequest,
   MfaEnrollment,
@@ -5662,7 +5663,7 @@ export const getConversationMessagesSendUrl = (orgSlug: string, conversationId: 
 };
 
 /**
- * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
+ * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
  */
 export const conversationMessagesSend = async (
   orgSlug: string,
@@ -5765,6 +5766,187 @@ export const useConversationMessagesSend = <TError = ErrorType<Error>, TContext 
 > => {
   return useMutation(getConversationMessagesSendMutationOptions(options), queryClient);
 };
+
+export const getConversationMessagingPolicyRetrieveUrl = (
+  orgSlug: string,
+  conversationId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/messaging-policy/`;
+};
+
+/**
+ * La decisión de la política de mensajería (ADR-010) para escribir ahora en la conversación, la misma que aplican el envío y el despachador. Pide `conversations.view` y `messages.send`; 404: no existe, es de otra organización o queda fuera del alcance de `messages.send`.
+ */
+export const conversationMessagingPolicyRetrieve = async (
+  orgSlug: string,
+  conversationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MessagingPolicy> => {
+  return apiFetch<MessagingPolicy>(
+    getConversationMessagingPolicyRetrieveUrl(orgSlug, conversationId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getConversationMessagingPolicyRetrieveQueryKey = (
+  orgSlug: string,
+  conversationId: string,
+) => {
+  return [`/api/v1/o/${orgSlug}/conversations/${conversationId}/messaging-policy/`] as const;
+};
+
+export const getConversationMessagingPolicyRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+        TError,
+        TData
+      >
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getConversationMessagingPolicyRetrieveQueryKey(orgSlug, conversationId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>> = ({
+    signal,
+  }) => conversationMessagingPolicyRetrieve(orgSlug, conversationId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      conversationId !== null &&
+      conversationId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ConversationMessagingPolicyRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>
+>;
+export type ConversationMessagingPolicyRetrieveQueryError = ErrorType<Error>;
+
+export function useConversationMessagingPolicyRetrieve<
+  TData = Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationMessagingPolicyRetrieve<
+  TData = Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationMessagingPolicyRetrieve<
+  TData = Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+        TError,
+        TData
+      >
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationMessagingPolicyRetrieve<
+  TData = Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof conversationMessagingPolicyRetrieve>>,
+        TError,
+        TData
+      >
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationMessagingPolicyRetrieveQueryOptions(
+    orgSlug,
+    conversationId,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getConversationNotesCreateUrl = (orgSlug: string, conversationId: string) => {
   return `/api/v1/o/${orgSlug}/conversations/${conversationId}/notes/`;
