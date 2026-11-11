@@ -131,6 +131,8 @@ ignore_imports = [
     "apps.tasks.commands -> apps.deals.models",
     "apps.deals.api.opportunities -> apps.conversations.selectors",
     "apps.tasks.apps -> apps.deals.scopes",  # F5-08b: el alcance por responsable es el mismo
+    "apps.tasks.api.* -> apps.deals.api.inputs",  # los serializadores estrictos
+    "apps.tasks.api.tasks -> apps.deals.selectors",  # la oportunidad en el alcance de quien crea
 ]
 
 [[tool.importlinter.contracts]]
