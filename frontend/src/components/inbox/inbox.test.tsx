@@ -2,7 +2,13 @@ import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { Conversation, Message, SelfContext } from "@/lib/api/model";
+import {
+  type Conversation,
+  type Message,
+  ProviderErrorCodeEnum,
+  type SelfContext,
+} from "@/lib/api/model";
+import messages from "../../../messages/es-PE.json";
 import { mockApi, renderApp } from "@/test-utils";
 
 type Routes = Parameters<typeof mockApi>[0];
@@ -216,6 +222,39 @@ describe("Inbox, motivo de un fallo (F7-06c)", () => {
     expect(row("b")).toHaveTextContent("No se pudo enviar"); // sin motivo guardado: el texto de antes
     expect(row("b").querySelectorAll("p.text-danger")).toHaveLength(0);
     expect(row("a")).not.toHaveTextContent("Pasaron más de 24 horas"); // solo con `FAILED`
+  });
+});
+
+describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
+  it("cada código del contrato tiene su texto en español", () => {
+    for (const code of Object.values(ProviderErrorCodeEnum)) {
+      expect(typeof (messages.inbox.failure as Record<string, unknown>)[code]).toBe("string");
+    }
+  });
+
+  it("claves del prototipo que llegaran como código no se pintan ni rompen la burbuja", async () => {
+    const failed = (id: string, code: string) =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: "FAILED",
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+      });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([failed("b", "toString"), failed("a", "constructor")]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("a")).toHaveTextContent("No se pudo enviar");
+    expect(row("a").querySelectorAll("p.text-danger")).toHaveLength(0);
+    expect(row("b").querySelectorAll("p.text-danger")).toHaveLength(0);
   });
 });
 

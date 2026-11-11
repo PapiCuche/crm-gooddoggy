@@ -22,11 +22,12 @@ import {
   conversationsRetrieve,
   getConversationsRetrieveQueryKey,
 } from "@/lib/api/client";
-import type {
-  Conversation,
-  ConversationDetail,
-  Message,
-  PaginatedMessageList,
+import {
+  type Conversation,
+  type ConversationDetail,
+  type Message,
+  type PaginatedMessageList,
+  ProviderErrorCodeEnum,
 } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
@@ -271,6 +272,8 @@ export function ChatPanel({
   );
 }
 
+const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
+
 function Bubble({ message }: { message: Message }) {
   const t = useTranslations("inbox");
   const format = useFormatter();
@@ -281,7 +284,10 @@ function Bubble({ message }: { message: Message }) {
   // El motivo de un fallo sale de una tabla de textos por código cerrado; un código que la tabla
   // no conoce (o ninguno) no muestra nada más que «No se pudo enviar»: nunca el valor crudo.
   const code = message.provider_error_code;
-  const reason = state === "FAILED" && code && t.has(`failure.${code}`) ? code : null;
+  // `t.has` también dice que sí de `constructor` o `toString` (claves del prototipo): se exige
+  // además que el código sea uno del conjunto cerrado del contrato.
+  const reason =
+    state === "FAILED" && code && CODES.includes(code) && t.has(`failure.${code}`) ? code : null;
   return (
     <li
       className={cn(
