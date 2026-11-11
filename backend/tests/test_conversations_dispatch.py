@@ -11,7 +11,11 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.conversations import channels, commands, tasks
-from apps.conversations.channels import SendResult, TemporaryChannelError
+from apps.conversations.channels import (
+    Claim,
+    SendResult,
+    TemporaryChannelError,
+)
 from apps.conversations.models import ChannelAccount, Conversation, Message
 from core.outbox import emit, handlers_for
 from core.outbox.publisher import publish_outbox
@@ -27,7 +31,6 @@ from tests.test_conversation_commands import (
     world,
     writer,
 )
-from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 
 __all__ = ["world", "writer"]  # los fixtures, para pytest
@@ -41,11 +44,11 @@ class Counting:
     def __init__(self, result: SendResult | None = None, boom: Exception | None = None) -> None:
         self.calls, self.result, self.boom = 0, result, boom
 
-    def send(self, message: Message) -> SendResult:
+    def send(self, claim: Claim) -> SendResult:
         self.calls += 1
         if self.boom:
             raise self.boom
-        return self.result or channels.SandboxAdapter().send(message)
+        return self.result or channels.SandboxAdapter().send(claim)
 
     def resolve(self, platform: str) -> Counting:
         return self
@@ -68,10 +71,11 @@ def queue_in_b(world: SimpleNamespace) -> Message:
 
 
 def dispatch(world: SimpleNamespace, message: Any, adapter: Counting | None = None) -> Any:
-    wanted: dict[str, Any] = {"message_id": message.pk}
-    if adapter is not None:
-        wanted["resolve"] = adapter.resolve
-    return run(world, commands.dispatch_outbound, **wanted)
+    """Despacha como la tarea (cada paso abre su `tenant_scope`) y devuelve el mensaje o `None`."""
+    resolve = channels.adapter_for if adapter is None else adapter.resolve
+    tasks.deliver(Retrying(0), world.a, message.pk, resolve)
+    with tenant_scope(ctx(world.a)):
+        return Message.objects.filter(pk=message.pk).first()
 
 
 def state(world: SimpleNamespace, message: Message) -> Message:
@@ -95,9 +99,10 @@ def test_the_sandbox_adapter_sends_and_delivers_and_a_second_run_does_nothing(
     moves = [
         (c["delivery_status"]) for a, c, m in audit(migrator) if a.endswith("delivery_changed")
     ]
-    assert moves == [["QUEUED", "SENT"], ["SENT", "DELIVERED"]]
-    assert dispatch(world, message) is None  # ya salió: ni se vuelve a enviar ni se audita
-    assert len([a for a, _, _ in audit(migrator) if a.endswith("delivery_changed")]) == 2
+    assert moves == [["QUEUED", "SENDING"], ["SENDING", "SENT"], ["SENT", "DELIVERED"]]
+    assert saved.sending_at is not None
+    dispatch(world, message)  # ya salió: ni se vuelve a enviar ni se audita
+    assert len([a for a, _, _ in audit(migrator) if a.endswith("delivery_changed")]) == 3
     assert SECRET not in str(audit(migrator))  # nada del texto en la auditoría
 
 
@@ -105,10 +110,10 @@ def test_a_message_that_is_not_queued_or_not_outbound_is_left_alone(
     world: SimpleNamespace,
 ) -> None:
     inbound_message, _ = inbound(world)
-    assert dispatch(world, inbound_message) is None  # lo entrante no sale
+    assert dispatch(world, inbound_message).delivery_status is None  # lo entrante no sale
     assert dispatch(world, SimpleNamespace(pk=UUID(int=3))) is None  # inexistente
     with pytest.raises(ValueError):  # noqa: PT011
-        run(world, commands.dispatch_outbound, message_id="no-es-un-id")
+        tasks.deliver(Retrying(0), world.a, "no-es-un-id")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -159,7 +164,8 @@ def test_a_rejection_by_the_adapter_fails_with_a_short_known_reason(
     )
     rejected = dispatch(world, second, Counting(SendResult(False, reason="ADAPTER_REJECTED")))
     assert rejected.delivery_status == "FAILED"
-    reasons = [m for _, c, m in audit(migrator) if c.get("delivery_status") == ["QUEUED", "FAILED"]]
+    moved = ["SENDING", "FAILED"]
+    reasons = [m for _, c, m in audit(migrator) if c.get("delivery_status") == moved]
     assert reasons == [{"reason": "ADAPTER_REJECTED"}] * 2  # lo desconocido se normaliza
 
 
@@ -169,19 +175,20 @@ def test_an_unknown_platform_fails_as_an_unavailable_channel(world: SimpleNamesp
     def unknown(platform: str) -> Any:
         raise channels.UnknownPlatform(platform)
 
-    done = run(world, commands.dispatch_outbound, message_id=message.pk, resolve=unknown)
-    assert done.delivery_status == "FAILED"
+    tasks.deliver(Retrying(0), world.a, message.pk, unknown)
+    assert state(world, message).delivery_status == "FAILED"
 
 
-def test_a_temporary_failure_writes_nothing_and_lets_the_task_retry(
+def test_a_temporary_failure_returns_the_claim_and_lets_the_task_retry(
     world: SimpleNamespace, migrator: DB
 ) -> None:
     message = queue(world)
-    flaky = Counting(boom=TemporaryChannelError())
-    with pytest.raises(TemporaryChannelError):
-        dispatch(world, message, flaky)
+    flaky, task = Counting(boom=TemporaryChannelError()), Retrying(0)
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(task, world.a, message.pk, flaky.resolve)
     assert state(world, message).delivery_status == "QUEUED" and flaky.calls == 1
-    assert deliveries(migrator) == []  # ni estado ni auditoría
+    assert state(world, message).sending_at is None and task.asked == [30]
+    assert [c for c, _ in deliveries(migrator)] == [["QUEUED", "SENDING"], ["SENDING", "QUEUED"]]
     assert dispatch(world, message, Counting()).delivery_status == "DELIVERED"  # y luego sale
 
 
@@ -205,8 +212,8 @@ def test_retries_back_off_up_to_a_bound_and_then_the_message_fails(
     monkeypatch.setattr(tasks, "MAX_RETRIES", 10)  # para llegar al tope de la espera
     monkeypatch.setitem(channels.ADAPTERS, "SANDBOX", Counting(boom=TemporaryChannelError()))
     task = Retrying(retries)
-    with tenant_scope(ctx(world.a)), pytest.raises(RuntimeError, match="retry"):
-        tasks.deliver(task, message.pk)
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(task, world.a, message.pk)
     assert task.asked == [countdown] and state(world, message).delivery_status == "QUEUED"
     assert tasks.BACKOFF_MAX >= countdown
 
@@ -218,8 +225,7 @@ def test_when_the_retries_run_out_the_message_fails_without_overriding_a_sent_on
     dispatch(world, sent, Counting(SendResult(True, "x-1")))  # ya salió (SENT), sin entregar
     monkeypatch.setitem(channels.ADAPTERS, "SANDBOX", Counting(boom=TemporaryChannelError()))
     for message in (gone, sent):
-        with tenant_scope(ctx(world.a)):
-            tasks.deliver(Retrying(tasks.MAX_RETRIES), message.pk)
+        tasks.deliver(Retrying(tasks.MAX_RETRIES), world.a, message.pk)
     assert state(world, gone).delivery_status == "FAILED"
     assert state(world, sent).delivery_status == "SENT"  # lo enviado no se pisa
     assert run(world, commands.fail_queued, message_id=sent.pk, reason="RETRIES_EXHAUSTED") is None
@@ -261,7 +267,12 @@ def test_the_outbox_event_reaches_the_dispatcher_end_to_end(
     monkeypatch.setattr(
         tasks.dispatch_event, "apply_async", lambda **kw: tasks.dispatch_event.apply(**kw)
     )
+    queued: list[dict[str, Any]] = []  # el evento encola el despacho: corre después, en su worker
+    monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: queued.append(kwargs))
     assert publish_outbox() == 1
+    assert queued == [{"message_id": str(message.pk), "organization_id": str(world.a)}]
+    assert state(world, message).delivery_status == "QUEUED"
+    assert tasks.dispatch_message.apply(kwargs=queued[0]).successful()
     assert state(world, message).delivery_status == "DELIVERED"
     assert migrator.execute(
         "SELECT count(*) FROM outbox_events WHERE published_at IS NULL"
@@ -287,17 +298,6 @@ def test_an_event_of_another_type_does_not_dispatch(world: SimpleNamespace) -> N
     kwargs = {"event_id": str(event), "organization_id": str(world.a)}
     assert tasks.dispatch_event.apply(kwargs=kwargs).successful()
     assert state(world, message).delivery_status == "QUEUED"
-
-
-def test_the_handler_and_the_sweeper_at_once_send_it_once(world: SimpleNamespace) -> None:
-    message = queue(world)
-    adapter = Counting()
-
-    def go(tenant: Any) -> Any:
-        return commands.dispatch_outbound(tenant, message_id=message.pk, resolve=adapter.resolve)
-
-    first, second = race(world.a, world.ana, [go, go])  # el segundo espera el bloqueo del primero
-    assert first.delivery_status == "DELIVERED" and second is None and adapter.calls == 1
 
 
 def backdate(migrator: DB, message: Message, minutes: int) -> None:
@@ -337,16 +337,14 @@ def test_an_unexpected_adapter_error_is_retried_only_until_the_sweeper_gives_up(
     run_it = tasks.dispatch_message.apply(
         kwargs={"message_id": str(stuck.pk), "organization_id": str(world.a)}
     )
-    assert run_it.failed() and state(world, stuck).delivery_status == "QUEUED"  # no escribe nada
-    backdate(migrator, stuck, 600)  # lleva más de INBOX_GIVE_UP_AFTER_MINUTES en cola
+    # un error que no es del canal no dice si salió: se queda `SENDING`, no se reenvía a ciegas
+    assert run_it.failed() and state(world, stuck).delivery_status == "SENDING"
+    backdate(migrator, stuck, 600)
     backdate(migrator, recent, 30)
     sent: list[dict[str, str]] = []
     monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: sent.append(kwargs))
     assert tasks.sweep_queued() == 1 and [k["message_id"] for k in sent] == [str(recent.pk)]
-    assert state(world, stuck).delivery_status == "FAILED"  # ya no se reintenta
-    reasons = [m for _, c, m in audit(migrator) if c.get("delivery_status") == ["QUEUED", "FAILED"]]
-    assert reasons == [{"reason": "RETRIES_EXHAUSTED"}] and SECRET not in str(audit(migrator))
-    assert tasks.sweep_queued() == 1 and len(sent) == 2  # solo la reciente, otra vez
+    assert state(world, stuck).delivery_status == "SENDING" and SECRET not in str(audit(migrator))
 
 
 def test_the_sweeper_lists_organizations_through_a_function_that_only_returns_ids(

@@ -46,7 +46,7 @@ def tenant_tasks() -> list[Task]:
 
 def test_every_tenant_task_header_takes_the_tenant_arguments() -> None:
     found = {t.name for t in tenant_tasks()}
-    assert {"conversations.dispatch_event", "conversations.dispatch_message"} <= found
+    assert "conversations.dispatch_event" in found  # `dispatch_message` es de plataforma (F7-05b)
     assert {"tenancy_app.outbox_probe", "tenancy_app.bound_probe"} <= found  # con y sin `bind`
     for task in tenant_tasks():
         assert TENANT <= set(inspect.signature(task.__header__).parameters), task.name
@@ -86,7 +86,6 @@ def test_each_tenant_argument_name_is_reserved(name: str) -> None:
         (tasks.bound_probe, {"widget_ref": "w"}),
         (tasks.visible_widgets, {}),
         (inbox_tasks.dispatch_event, {"event_id": "x"}),
-        (inbox_tasks.dispatch_message, {"message_id": "x"}),
     ],
 )
 def test_apply_async_validates_and_publishes_with_the_tenant_arguments(
@@ -139,15 +138,18 @@ def test_the_outbox_publisher_queues_the_dispatcher_and_the_message_is_delivered
     message = queue(world)
     published = real_apply_async(monkeypatch, inbox_tasks.dispatch_event)
     assert publish_outbox() == 1 and len(published) == 1  # sin el arreglo: TypeError, 0 publicados
+    names = [name for name, _ in broker]  # el evento encola el despacho, que corre en su worker
+    assert names == ["conversations.dispatch_event", "conversations.dispatch_message"]
+    assert state(world, message).delivery_status == "QUEUED"
+    assert inbox_tasks.dispatch_message.apply(kwargs=broker[1][1]).successful()
     assert state(world, message).delivery_status == "DELIVERED"
-    assert [name for name, _ in broker] == ["conversations.dispatch_event"]
 
 
 def test_the_sweeper_queues_the_dispatcher_through_the_real_validation(
-    world: Any, migrator: Any, monkeypatch: pytest.MonkeyPatch, broker: list[Any]
+    world: Any, migrator: Any, broker: list[Any]
 ) -> None:
     message = queue(world)
     backdate(migrator, message, 30)
-    published = real_apply_async(monkeypatch, inbox_tasks.dispatch_message)
-    assert inbox_tasks.sweep_queued() == 1 and len(published) == 1
+    assert inbox_tasks.sweep_queued() == 1 and len(broker) == 1  # validación real, sin ejecutar
+    assert inbox_tasks.dispatch_message.apply(kwargs=broker[0][1]).successful()
     assert state(world, message).delivery_status == "DELIVERED"
