@@ -226,7 +226,7 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
         finally:
             del token
     except sealed.SealError:
-        if credential.key_version not in settings.SECRETS_KEKS:
+        if not sealed.has_key(credential.key_version):
             # La clave de esa versión no está en este despliegue: es de la configuración, no del
             # token. No pone la cuenta en `ERROR` (un despliegue sin la clave vieja las pondría
             # todas); se reintenta cuando la clave vuelva.
