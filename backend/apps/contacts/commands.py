@@ -293,3 +293,25 @@ def delete_contact(ctx: TenantContext, *, contact_id: UUID) -> None:
             using=alias, update_fields=["deleted_at", "deleted_by_user_id", "version", "updated_at"]
         )
         record(ctx, "contact.deleted", Entity("contact", contact.pk))
+
+
+def set_blocked(ctx: TenantContext, *, contact_id: UUID, blocked: bool) -> Contact:
+    """Bloquea o desbloquea a un contacto vivo (F7-08): un contacto bloqueado no recibe nada
+    proactivo (ADR-010 §2.3). Audita `contact.blocked` o `contact.unblocked`; si ya estaba así, no
+    escribe. `DoesNotExist` si no es de la organización o está borrado."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        contact: Contact = _live(alias).select_for_update(no_key=True).get(pk=contact_id)
+        if contact.is_blocked != blocked:
+            contact.is_blocked, contact.updated_by_user_id = blocked, ctx.user_id
+            contact.version = F("version") + 1
+            contact.save(
+                using=alias,
+                update_fields=["is_blocked", "updated_by_user_id", "version", "updated_at"],
+            )
+            contact.refresh_from_db(using=alias, fields=["version"])
+            action = "contact.blocked" if blocked else "contact.unblocked"
+            record(
+                ctx, action, Entity("contact", contact.pk), {"is_blocked": [not blocked, blocked]}
+            )
+    return contact
