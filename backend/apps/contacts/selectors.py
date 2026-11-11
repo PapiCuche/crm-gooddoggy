@@ -10,7 +10,15 @@ from django.db.models import Exists, F, OuterRef, Prefetch, Q, QuerySet, prefetc
 from django.db.models.functions import Lower
 from django.db.models.lookups import BuiltinLookup
 
-from apps.contacts.models import Contact, ContactTag, Note, Tag, dialed
+from apps.contacts.models import (
+    Contact,
+    ContactConsent,
+    ContactConsentEvent,
+    ContactTag,
+    Note,
+    Tag,
+    dialed,
+)
 
 _PHONE_QUERY = re.compile(r"\+[0-9]{1,15}")  # el comienzo de un E.164, solo cifras ASCII
 
@@ -76,3 +84,22 @@ def tagged(found: QuerySet[Contact], tag_id: UUID) -> QuerySet[Contact]:
     """Los de `found` que llevan la etiqueta, activa o no. Una de otra organización no casa."""
     links = ContactTag.objects.filter(contact_id=OuterRef("pk"), tag_id=tag_id)
     return found.filter(Exists(links))
+
+
+def consents_of(contact_id: UUID) -> QuerySet[ContactConsent]:
+    """El consentimiento vigente de un contacto, por canal y propósito."""
+    return ContactConsent.objects.filter(contact_id=contact_id).order_by("channel", "purpose")
+
+
+def consent_history(contact_id: UUID) -> QuerySet[ContactConsentEvent]:
+    """Cada concesión y revocación de un contacto, la más reciente primero."""
+    return ContactConsentEvent.objects.filter(contact_id=contact_id).order_by("-occurred_at", "-id")
+
+
+def is_revoked(contact_id: UUID, channel: str, purpose: str) -> bool:
+    """Si hay una revocación que alcance a ese canal y propósito (ADR-010 §2.7): la del mismo canal
+    o `ANY`, la del mismo propósito o `ALL_PROACTIVE`."""
+    return ContactConsent.objects.filter(
+        contact_id=contact_id, status="REVOKED", channel__in=[channel, "ANY"],
+        purpose__in=[purpose, "ALL_PROACTIVE"],
+    ).exists()  # fmt: skip
