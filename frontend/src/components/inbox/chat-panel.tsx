@@ -22,11 +22,12 @@ import {
   conversationsRetrieve,
   getConversationsRetrieveQueryKey,
 } from "@/lib/api/client";
-import type {
-  Conversation,
-  ConversationDetail,
-  Message,
-  PaginatedMessageList,
+import {
+  type Conversation,
+  type ConversationDetail,
+  type Message,
+  type PaginatedMessageList,
+  ProviderErrorCodeEnum,
 } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
@@ -271,6 +272,11 @@ export function ChatPanel({
   );
 }
 
+const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
+// `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
+// `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
+const STATES: readonly string[] = Object.keys(MARKS);
+
 function Bubble({ message }: { message: Message }) {
   const t = useTranslations("inbox");
   const format = useFormatter();
@@ -278,6 +284,15 @@ function Bubble({ message }: { message: Message }) {
   const note = message.message_type === "NOTE" || message.direction === "INTERNAL";
   const outbound = message.direction === "OUTBOUND";
   const state = outbound && message.delivery_status ? message.delivery_status : null;
+  // El motivo de un fallo sale de una tabla de textos por código cerrado; un código que la tabla
+  // no conoce (o ninguno) no muestra nada más que «No se pudo enviar»: nunca el valor crudo.
+  const code = message.provider_error_code;
+  // `t.has` también dice que sí de `constructor` o `toString` (claves del prototipo): se exige
+  // además que el código sea uno del conjunto cerrado del contrato.
+  const reason =
+    state === "FAILED" && code && CODES.includes(code) && t.has(`failure.${code}`) ? code : null;
+  // «Puede que sí se haya enviado» no es un fallo seguro: tono neutro, no el rojo de un error.
+  const unsure = reason === "PROVIDER_UNKNOWN";
   return (
     <li
       className={cn(
@@ -306,11 +321,11 @@ function Bubble({ message }: { message: Message }) {
         <time dateTime={message.created_at}>
           {format.dateTime(new Date(message.created_at), WHEN)}
         </time>
-        {state && t.has(`delivery.${state}`) ? (
+        {state && STATES.includes(state) && t.has(`delivery.${state}`) ? (
           <span
             className={cn(
               "inline-flex items-center gap-1 [&_svg]:size-3.5",
-              state === "FAILED" && "text-danger font-semibold",
+              state === "FAILED" && !unsure && "text-danger font-semibold",
             )}
           >
             {MARKS[state]}
@@ -318,6 +333,11 @@ function Bubble({ message }: { message: Message }) {
           </span>
         ) : null}
       </p>
+      {reason ? (
+        <p className={cn("text-xs", unsure ? "text-foreground" : "text-danger")}>
+          {t(`failure.${reason}`)}
+        </p>
+      ) : null}
     </li>
   );
 }

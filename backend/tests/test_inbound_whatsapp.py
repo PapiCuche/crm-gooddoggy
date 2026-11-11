@@ -37,7 +37,7 @@ from tests.test_webhook_ingress import deliver, put, rows
 from tests.test_whatsapp_account import credential, make
 
 __all__ = ["broker", "channel", "crm", "real_stack"]  # las fixtures, para pytest
-pytestmark = pytest.mark.usefixtures("tenant_db")
+pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 DB = psycopg.Connection[Any]
 PRIVATE = "Mi DNI es 12345678"  # noqa: S105 — texto de prueba: nunca debe llegar a un log
 
