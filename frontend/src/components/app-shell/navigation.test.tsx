@@ -43,6 +43,16 @@ describe("navegación del shell", () => {
     expect(await links([{ code: "users.invite", scopes: [] }])).toEqual([["/o/acme", null]]);
   });
 
+  it("«Mis tareas» solo sale con tasks.view y marca sus páginas", async () => {
+    route.pathname = "/o/acme/tareas";
+    expect(await links([{ code: "tasks.create", scopes: [] }])).toEqual([["/o/acme", null]]);
+    cleanup();
+    expect(await links([{ code: "tasks.view", scopes: [] }])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/tareas", "page"],
+    ]);
+  });
+
   it("la lista con el permiso, y marca solo la entrada de la ruta actual", async () => {
     expect(await links([{ code: "users.view", scopes: [] }])).toEqual([
       ["/o/acme", null],

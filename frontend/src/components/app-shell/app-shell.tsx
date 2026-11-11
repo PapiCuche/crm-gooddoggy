@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect } from "react";
 
+import { OverdueCount } from "@/components/tasks/overdue-count";
 import { cn } from "@/lib/utils";
 
 import { MobileMenu } from "./mobile-menu";
@@ -60,6 +61,7 @@ function Sidebar({ label, current }: { label: string; current: string }) {
                     className={cn("size-3 rounded-[3px]", active ? "bg-surface" : "bg-foreground")}
                   />
                   {t(`shell.nav.${item.key}`)}
+                  {item.key === "tasks" ? <OverdueCount /> : null}
                 </Link>
               </li>
             );
