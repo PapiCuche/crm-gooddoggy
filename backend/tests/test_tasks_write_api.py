@@ -237,6 +237,17 @@ def test_updating_needs_view_and_update_together(board: SimpleNamespace) -> None
     assert patch(signed(board.bea), task, {"version": 1, "title": "x"}).status_code == 200
 
 
+def test_the_scope_of_view_and_the_scope_of_update_are_crossed(board: SimpleNamespace) -> None:
+    give(board.a, board.m["bea"], {"tasks.view": "ORGANIZATION", "tasks.update": "OWN"})
+    with tenant_scope(ctx(board.a)):
+        mine = Task.objects.create(title="De bea", assigned_user_id=board.bea.pk).pk
+    bea, other = signed(board.bea), board.tasks["vera"]
+    assert bea.get(f"{TASKS}{other}/").status_code == 200  # la ve (`tasks.view` es de todas)
+    assert reply(patch(bea, other, {"version": 1, "title": "x"})) == NOT_FOUND  # no la cambia
+    assert reply(send(bea, "delete", f"{TASKS}{other}/", {})) == NOT_FOUND  # ni la borra
+    assert patch(bea, mine, {"version": 1, "title": "Suya"}).status_code == 200  # la suya, sí
+
+
 def test_the_scope_is_decided_on_the_locked_row(board: SimpleNamespace) -> None:
     with CaptureQueriesContext(connection) as queries:
         assert (
