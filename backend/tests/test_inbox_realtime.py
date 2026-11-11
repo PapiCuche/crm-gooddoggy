@@ -414,3 +414,13 @@ def test_the_watcher_renews_the_group_and_a_failure_in_it_closes_the_socket(
             assert await vera.closed_with() == 1013 and not realtime._open  # antes: seguía abierta
 
     run(go)
+
+
+@pytest.mark.parametrize("key", ["../XXXXXXXX", "a" * 31, "a" * 33, "A" * 32, "a" * 31 + "\n"])
+def test_a_session_key_outside_the_django_format_never_touches_the_database(
+    key: str, django_assert_num_queries: Any
+) -> None:
+    from apps.accounts.websocket import user_for
+
+    with django_assert_num_queries(0):
+        assert not user_for(key).is_authenticated
