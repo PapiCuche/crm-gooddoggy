@@ -215,7 +215,8 @@ allowed_importers = ["apps.deals.api", "apps.deals.opportunities", "apps.deals.o
 name = "Entrantes y estados de WhatsApp: solo el procesador los importa (F7-04a, F7-06a; actor de sistema)"
 type = "protected"
 protected_modules = ["apps.conversations.inbound", "apps.conversations.delivery"]
-allowed_importers = ["apps.conversations.ingress"]
+# `delivery` usa el instante creíble de `inbound` (`inbound.instant`)
+allowed_importers = ["apps.conversations.ingress", "apps.conversations.delivery"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de tareas: solo su API los importa (F5-08a)"
