@@ -189,6 +189,7 @@ def test_a_temporary_failure_returns_the_claim_and_lets_the_task_retry(
     assert state(world, message).delivery_status == "QUEUED" and flaky.calls == 1
     assert state(world, message).sending_at is None and task.asked == [30]
     assert [c for c, _ in deliveries(migrator)] == [["QUEUED", "SENDING"], ["SENDING", "QUEUED"]]
+    migrator.execute("UPDATE messages SET not_before = NULL")  # pasada su espera
     assert dispatch(world, message, Counting()).delivery_status == "DELIVERED"  # y luego sale
 
 
@@ -316,7 +317,9 @@ def test_the_sweeper_requeues_only_the_old_queued_messages_with_their_own_organi
     for message in (old, done, other):
         backdate(migrator, message, 30)
     sent: list[dict[str, str]] = []
-    monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: sent.append(kwargs))
+    monkeypatch.setattr(
+        tasks.dispatch_message, "apply_async", lambda kwargs, **_: sent.append(kwargs)
+    )
     assert tasks.sweep_queued() == 2
     assert sorted(sent, key=lambda k: k["message_id"]) == sorted(
         [
@@ -326,6 +329,7 @@ def test_the_sweeper_requeues_only_the_old_queued_messages_with_their_own_organi
         key=lambda k: k["message_id"],
     )  # sin la reciente ni la ya entregada; cada una con su organización
     assert str(fresh.pk) not in {k["message_id"] for k in sent}
+    migrator.execute("UPDATE messages SET not_before = NULL")  # pasada su espera
     assert tasks.sweep_queued(batch_size=1) == 2  # un lote de 1 por organización
 
 
@@ -342,7 +346,9 @@ def test_an_unexpected_adapter_error_is_retried_only_until_the_sweeper_gives_up(
     backdate(migrator, stuck, 600)
     backdate(migrator, recent, 30)
     sent: list[dict[str, str]] = []
-    monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: sent.append(kwargs))
+    monkeypatch.setattr(
+        tasks.dispatch_message, "apply_async", lambda kwargs, **_: sent.append(kwargs)
+    )
     assert tasks.sweep_queued() == 1 and [k["message_id"] for k in sent] == [str(recent.pk)]
     assert state(world, stuck).delivery_status == "SENDING" and SECRET not in str(audit(migrator))
 

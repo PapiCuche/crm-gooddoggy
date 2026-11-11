@@ -17,7 +17,7 @@ from apps.conversations.models import Credential
 REASONS = (  # los cuatro primeros son los de la política (`policy.REASONS`)
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
     "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID", "RECIPIENT_UNREACHABLE",
-    "PROVIDER_REJECTED",
+    "PROVIDER_REJECTED", "PROVIDER_UNKNOWN",
 )  # fmt: skip
 
 
