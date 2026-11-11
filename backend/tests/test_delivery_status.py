@@ -181,6 +181,11 @@ def test_a_status_for_a_message_the_crm_never_sent_is_closed_as_ignored_with_its
         {"IGNORED": 1},
     ]  # solo la carrera se reintenta
     row = migrator.execute("SELECT status, ignored_reason, payload FROM webhook_ingress").fetchone()
+    routed = migrator.execute(
+        "SELECT routed_organization_id IS NOT NULL, routed_channel_account_id IS NOT NULL"
+        " FROM webhook_ingress"
+    ).fetchone()
+    assert routed == (True, True)  # el rastro de a qué cuenta iba, aunque no tenga mensaje
     assert row == ("IGNORED", "UNKNOWN_MESSAGE", None)  # sin el teléfono del cliente (recipient_id)
     assert "wamid.DEL-TELEFONO" not in caplog.text and webhooks.CUSTOMER not in caplog.text
 
