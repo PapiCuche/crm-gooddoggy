@@ -380,3 +380,23 @@ def test_deleting_the_contact_or_the_opportunity_at_once_never_leaves_a_quote_li
         remove = partial(gone, **{field: target})
         create = partial(commands.create_quote, items=lines((shop.iphone, 1)), **{field: target})
         assert race(shop.a, shop.quoter, [remove, create])[1] == "BadReference"
+
+
+def test_the_totals_of_a_quote_always_agree_with_its_lines_after_every_command(
+    shop: SimpleNamespace,
+) -> None:
+    """Ninguna restricción lo impone (haría falta un disparador diferido): lo garantizan los
+    comandos, y esta comprobación lo verifica tras crear y tras cambiar las líneas."""
+    promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
+          starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
+    made = new(shop, items=lines((shop.iphone, 3), (shop.case, 7)))
+    for step in range(2):
+        quote = made if step == 0 else move(shop, commands.update_quote, made,
+                                            items=lines((shop.case, 2)))  # fmt: skip
+        rows = stored(shop.a, quote)
+        assert quote.total == sum(r.line_total for r in rows)
+        assert quote.total == quote.subtotal + quote.tax_total
+        assert quote.discount_total == sum(r.quantity * (r.list_unit_price - r.final_unit_price)
+                                           for r in rows)  # fmt: skip
+        assert all(r.line_total == r.quantity * r.final_unit_price for r in rows)
+        assert all(r.discount_amount == 0 and r.unit_price == r.final_unit_price for r in rows)
