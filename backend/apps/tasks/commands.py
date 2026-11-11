@@ -71,11 +71,8 @@ def _uuid(value: Any, what: str) -> UUID:
 
 
 def _moment(value: Any, what: str) -> dt.datetime:
-    if not (
-        isinstance(value, dt.datetime)
-        and value.utcoffset() is not None
-        and _EARLIEST <= value <= _LATEST
-    ):
+    if not (isinstance(value, dt.datetime) and value.utcoffset() is not None
+            and _EARLIEST <= value <= _LATEST):  # fmt: skip
         raise ValueError(f"{what}: fecha y hora con zona horaria, entre los años 2000 y 2100")
     return value.astimezone(dt.UTC)
 
@@ -118,10 +115,6 @@ def _audited(field: str, value: Any) -> Any:
     return "[texto]" if field in ("title", "description", "cancel_reason") and value else value
 
 
-def _entity(task: Task) -> Entity:
-    return Entity("task", task.pk)
-
-
 def _reference(error: IntegrityError) -> Exception:
     for constraint, field in _REFERENCES.items():
         if constraint in str(error):
@@ -162,16 +155,11 @@ def _change(
             if (task.status in _OPEN) == closed:
                 raise TaskOpen(task.pk) if closed else TaskClosed(task.pk)
             wanted = change(alias, task)
-            if diff := {
-                f: [getattr(task, f), v] for f, v in wanted.items() if getattr(task, f) != v
-            }:
+            changes = {f: [getattr(task, f), v] for f, v in wanted.items()}
+            if diff := {f: pair for f, pair in changes.items() if pair[0] != pair[1]}:
                 _stamp(ctx, alias, task, diff)
-                record(
-                    ctx,
-                    action,
-                    _entity(task),
-                    {k: [_audited(k, a), _audited(k, b)] for k, (a, b) in diff.items()},
-                )
+                shown = {k: [_audited(k, a), _audited(k, b)] for k, (a, b) in diff.items()}
+                record(ctx, action, Entity("task", task.pk), shown)
     except IntegrityError as error:
         raise _reference(error) from None
     return task
@@ -225,12 +213,8 @@ def create_task(
             )  # fmt: skip
             shown = {**values, "assigned_user_id": owner, "contact_id": contact_id,
                      "opportunity_id": opportunity_id, "status": TaskStatus.PENDING}  # fmt: skip
-            record(
-                ctx,
-                "task.created",
-                _entity(task),
-                {k: [None, _audited(k, v)] for k, v in shown.items()},
-            )
+            created = {k: [None, _audited(k, v)] for k, v in shown.items()}
+            record(ctx, "task.created", Entity("task", task.pk), created)
     except IntegrityError as error:
         raise _reference(error) from None
     return task
@@ -263,11 +247,8 @@ def assign_task(ctx: TenantContext, *, task_id: UUID, version: int, assigned_use
 
 def complete_task(ctx: TenantContext, *, task_id: UUID, version: int) -> Task:
     """Completa una tarea abierta: `DONE`, con su fecha y quien la completó (`task.completed`)."""
-    done = {
-        "status": TaskStatus.DONE,
-        "completed_at": timezone.now(),
-        "completed_by_user_id": ctx.user_id,
-    }
+    done = {"status": TaskStatus.DONE, "completed_at": timezone.now(),
+            "completed_by_user_id": ctx.user_id}  # fmt: skip
     return _change(ctx, task_id, version, "task.completed", lambda alias, task: done, closed=False)
 
 
@@ -295,6 +276,6 @@ def delete_task(ctx: TenantContext, *, task_id: UUID) -> None:
             task = _locked(alias, task_id)
             gone = {"deleted_at": [None, timezone.now()], "deleted_by_user_id": [None, ctx.user_id]}
             _stamp(ctx, alias, task, gone)
-            record(ctx, "task.deleted", _entity(task))
+            record(ctx, "task.deleted", Entity("task", task.pk))
     except IntegrityError as error:
         raise _reference(error) from None

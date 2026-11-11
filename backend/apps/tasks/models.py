@@ -101,17 +101,16 @@ class Task(TenantModel):
         ]
         constraints = [
             models.CheckConstraint(condition=models.Q(title__regex=r"\S"), name="tasks_title_ck"),
-            models.CheckConstraint(
-                condition=models.Q(type__in=TaskType.values), name="tasks_type_ck"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(status__in=TaskStatus.values), name="tasks_status_ck"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(priority__in=Priority.values), name="tasks_priority_ck"
-            ),
-            models.CheckConstraint(
-                condition=models.Q(source__in=TaskSource.values), name="tasks_source_ck"
+            *(
+                models.CheckConstraint(
+                    condition=models.Q(**{f"{field}__in": choices.values}), name=f"tasks_{field}_ck"
+                )
+                for field, choices in (
+                    ("type", TaskType),
+                    ("status", TaskStatus),
+                    ("priority", Priority),
+                    ("source", TaskSource),
+                )  # fmt: skip
             ),
             models.CheckConstraint(  # lo completado lleva su fecha; el motivo, solo lo cancelado
                 condition=(

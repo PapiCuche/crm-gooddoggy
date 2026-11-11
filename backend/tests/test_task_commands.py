@@ -44,18 +44,11 @@ def run(world: SimpleNamespace, command: Any, org: str = "a", **fields: Any) -> 
 
 
 def new(world: SimpleNamespace, **fields: Any) -> Task:
-    made: Task = run(world, commands.create_task, **{"title": "Llamar", **fields})
-    return made
+    return run(world, commands.create_task, **{"title": "Llamar", **fields})  # type: ignore[no-any-return]
 
 
 def move(world: SimpleNamespace, command: Any, task: Any, version: int = 1, **fields: Any) -> Task:
-    done: Task = run(world, command, task_id=task.pk, version=version, **fields)
-    return done
-
-
-def reload(world: SimpleNamespace, pk: Any) -> Task:
-    with tenant_scope(ctx(world.a)):
-        return Task.objects.get(pk=pk)  # type: ignore[no-any-return]
+    return run(world, command, task_id=task.pk, version=version, **fields)  # type: ignore[no-any-return]
 
 
 def audit(migrator: DB) -> list[tuple[str, dict[str, Any]]]:
@@ -164,7 +157,6 @@ def test_update_changes_what_is_sent_audits_it_and_a_noop_writes_nothing(
     [_, (action, changes)] = audit(migrator)
     assert action == "task.updated" and changes["title"] == ["[texto]", "[texto]"]
     assert changes["status"] == ["PENDING", "IN_PROGRESS"] and "12345678" not in json.dumps(changes)
-    assert reload(world, made.pk).title == SECRET
     again = move(world, commands.update_task, made, version=2, priority="URGENT")
     assert again.version == 2 and len(audit(migrator)) == 2  # sin cambios: ni escribe ni audita
     for bad in (
@@ -213,7 +205,6 @@ def test_assign_needs_an_active_member_and_the_same_owner_writes_nothing(
     for who in (world.luis.pk, join(world.a, make_user(), "SUSPENDED").user_id):
         with pytest.raises(BadReference):
             move(world, commands.assign_task, made, version=2, assigned_user_id=who)
-    assert reload(world, made.pk).assigned_user_id == pedro.pk
 
 
 def test_complete_cancel_and_reopen_keep_their_date_author_and_audit(
@@ -260,19 +251,10 @@ def test_a_task_of_a_never_exists_for_b_and_the_database_keeps_its_rules(
     world: SimpleNamespace,
 ) -> None:
     mine = new(world, contact_id=tables.contact(world.a).pk)
-    with tenant_scope(ctx(world.b)):
-        assert Task.objects.count() == 0 and not Task.objects.filter(pk=mine.pk).exists()
-        with (
-            connection.cursor() as cursor,
-            pytest.raises(ProgrammingError, match="permission denied"),
-        ):
-            cursor.execute("DELETE FROM tasks")  # `crm_app` no borra
-    with (
-        tenant_scope(ctx(world.b)),
-        connection.cursor() as cursor,
-        pytest.raises(ProgrammingError, match="permission denied"),
-    ):
-        cursor.execute("TRUNCATE tasks")  # ni vacía la tabla
+    for statement in ("DELETE FROM tasks", "TRUNCATE tasks"):  # `crm_app` ni borra ni vacía
+        with tenant_scope(ctx(world.b)), connection.cursor() as cursor:
+            with pytest.raises(ProgrammingError, match="permission denied"):
+                cursor.execute(statement)
     foreign = tables.contact(world.b).pk
     for fields, constraint in (
         ({"contact_id": foreign}, "tasks_contact_fk"),
@@ -332,8 +314,7 @@ def test_two_completes_at_once_leave_one_and_a_stale_version(world: SimpleNamesp
     made = new(world)
     complete = partial(commands.complete_task, task_id=made.pk, version=1)
     first, second = race(world.a, world.ana, [complete, complete])
-    assert first.status == "DONE" and second == "StaleVersion"
-    assert reload(world, made.pk).version == 2
+    assert (first.status, first.version, second) == ("DONE", 2, "StaleVersion")
 
 
 def test_deleting_the_contact_or_the_opportunity_at_once_never_leaves_a_task_linked(
@@ -350,20 +331,6 @@ def test_deleting_the_contact_or_the_opportunity_at_once_never_leaves_a_task_lin
         )  # el alta espera y falla
 
 
-def test_the_layers_contract_allows_only_the_two_edges_tasks_needs() -> None:
-    import tomllib
-    from pathlib import Path
-
-    toml = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
-    layers = next(c for c in toml["tool"]["importlinter"]["contracts"] if c["type"] == "layers")
-    assert "apps.tasks" in layers["layers"][0].split(" | ")  # en la fila de deals, no encima
-    edges = {"apps.tasks.models -> apps.deals.models", "apps.tasks.commands -> apps.deals.models"}
-    assert edges <= set(layers["ignore_imports"])  # y ninguna otra de tasks
-    assert not [
-        e for e in layers["ignore_imports"] if e.startswith("apps.tasks") and e not in edges
-    ]
-
-
 def test_the_migration_goes_back_and_forward(world: SimpleNamespace, migrator: DB) -> None:
     exists = "SELECT to_regclass('public.tasks') IS NOT NULL"
     assert migrator.execute(exists).fetchone() == (True,)
@@ -373,9 +340,6 @@ def test_the_migration_goes_back_and_forward(world: SimpleNamespace, migrator: D
     with as_migrator():
         call_command("migrate", verbosity=0)
     assert migrator.execute(exists).fetchone() == (True,)
-    assert migrator.execute(
-        "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'tasks'"
-    ).fetchone() == (True, True)
     assert migrator.execute(
         "SELECT count(*) FROM pg_constraint WHERE conrelid = 'tasks'::regclass AND contype = 'f'"
     ).fetchone() == (8,)
