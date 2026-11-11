@@ -70,6 +70,10 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/channels/whatsapp/{account_id}/token/",
         "/api/v1/o/{org_slug}/tasks/",  # F5-08b
         "/api/v1/o/{org_slug}/tasks/{task_id}/",
+        "/api/v1/o/{org_slug}/tasks/{task_id}/assign/",  # F5-08b3
+        "/api/v1/o/{org_slug}/tasks/{task_id}/complete/",
+        "/api/v1/o/{org_slug}/tasks/{task_id}/cancel/",
+        "/api/v1/o/{org_slug}/tasks/{task_id}/reopen/",
         "/api/v1/o/{org_slug}/pipelines/",
         "/api/v1/o/{org_slug}/pipelines/{pipeline_id}/",  # F5-02d
         "/api/v1/o/{org_slug}/pipelines/{pipeline_id}/stages/",  # F5-02e
