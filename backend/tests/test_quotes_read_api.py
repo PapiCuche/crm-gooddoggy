@@ -87,7 +87,10 @@ def test_the_catalog_and_the_templates_carry_the_quote_permissions() -> None:
     }
     every = {**dict.fromkeys(SCOPED, Scope.ORGANIZATION), **dict.fromkeys(UNSCOPED)}
     assert held["owner"] == held["admin"] == every
-    assert held["supervisor"] == {**dict.fromkeys(SCOPED, Scope.TEAM), **dict.fromkeys(UNSCOPED)}
+    assert held["supervisor"] == {  # aprueba, pero no escribe un precio manual (a decidir)
+        **dict.fromkeys(SCOPED, Scope.TEAM),
+        **{k: None for k in UNSCOPED if k != "quotes.override_price"},
+    }
     assert held["seller"] == {  # crea y descuenta (con su límite); no aprueba ni fija un precio
         **dict.fromkeys(SCOPED, Scope.OWN), "quotes.create": None, "quotes.discount": None,
     }  # fmt: skip

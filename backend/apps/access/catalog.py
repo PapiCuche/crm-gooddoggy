@@ -210,9 +210,8 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "tasks.create",  # F5-08b: crea y reparte las de su equipo
             "tasks.assign",
             "quotes.create",  # F5-09d: crea y aprueba las de su equipo
-            "quotes.approve",
-            "quotes.override_price",  # a confirmar, como en el Administrador
-            "quotes.discount",
+            "quotes.approve",  # sin `quotes.override_price`: 03 §H no lo lista y el precio manual
+            "quotes.discount",  # puede ir bajo el costo sin que la cotización lo vea (a decidir)
             "conversations.assign",  # F6-01: reparte las de su equipo
         )
         | {"contacts.view": Scope.TEAM}
