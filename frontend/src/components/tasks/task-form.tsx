@@ -133,8 +133,9 @@ export function TaskForm({
       ),
     );
     const done = {
-      onSuccess: (saved: Task) => {
-        void client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
+      // Se espera a la lista nueva antes de cerrar: si la fila ya no está en ella, el foco lo sabe.
+      onSuccess: async (saved: Task) => {
+        await client.invalidateQueries({ queryKey: getTasksListQueryKey(slug) });
         onSaved(saved);
       },
     };

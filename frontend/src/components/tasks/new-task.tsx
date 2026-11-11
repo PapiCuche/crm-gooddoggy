@@ -1,7 +1,7 @@
 "use client";
 
 import { useTimeZone, useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
@@ -20,9 +20,15 @@ export function NewTask({ link, withToday }: { link?: TaskLink; withToday?: bool
   const [said, setSaid] = useState("");
   const [today, setToday] = useState<string>(); // el día en que se abrió el formulario
   const trigger = useRef<HTMLButtonElement>(null);
+  const [back, setBack] = useState(0);
+  // El foco vuelve al botón con un efecto, no con un temporizador: en producción React pinta
+  // después de un `setTimeout(0)` y el botón aún no existiría.
+  useEffect(() => {
+    if (back) trigger.current?.focus();
+  }, [back]);
   const close = () => {
     setCreating(false);
-    setTimeout(() => trigger.current?.focus(), 0);
+    setBack((count) => count + 1);
   };
   if (!permissions.some((grant) => grant.code === "tasks.create")) return null;
   return (
