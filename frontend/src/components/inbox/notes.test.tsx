@@ -242,7 +242,9 @@ describe("notas internas en el cuadro de redacción (F6-05c)", () => {
     server();
     show();
     await openChat();
-    const panel = screen.getByRole("region", { name: "Conversación" }).firstElementChild!;
+    // el panel del chat va en un `div` que se oculta (sin desmontarlo) cuando se ve al cliente
+    const panel = screen.getByRole("region", { name: "Conversación" }).firstElementChild!
+      .firstElementChild!;
     expect(panel).toHaveClass(
       "h-[calc(100dvh-8rem)]",
       "min-h-[29rem]",
