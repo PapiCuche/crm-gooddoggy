@@ -130,6 +130,7 @@ CHANNEL_LAYERS = (
 # WebSocket del Inbox: tope por persona y proceso, trama máxima, inactividad y revisión (segundos).
 INBOX_WS_MAX_PER_USER = 8
 INBOX_WS_MAX_FRAME = 1024
+INBOX_WS_MAX_FRAMES = 30  # tramas del cliente por minuto y conexión
 INBOX_WS_IDLE_SECONDS = 90.0
 INBOX_WS_RECHECK_SECONDS = 60.0
 INBOX_WS_TICK_SECONDS = 5.0

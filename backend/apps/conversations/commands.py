@@ -169,6 +169,9 @@ def _status(
     convo.version += 1
     convo.save(using=alias, update_fields=["status", *stamps, "version", "updated_at"])
     record(ctx, action, Entity("conversation", convo.pk, convo.number), {"status": [old, new]})
+    emit(  # una pista para la pantalla: solo ids
+        ctx, "conversation.updated", aggregate_type="conversation", aggregate_id=convo.pk,
+    )  # fmt: skip
 
 
 def ensure_sandbox_account(ctx: TenantContext) -> ChannelAccount:
@@ -555,6 +558,10 @@ def advance_delivery(
             why = None if reason is None else {"reason": reason}
             why = {"reconciled": "PROVIDER_UNKNOWN"} if late else why
             record(ctx, "message.delivery_changed", Entity("message", message.pk), changes, why)
+            emit(  # una pista para la pantalla: solo ids
+                ctx, "message.updated", aggregate_type="message", aggregate_id=message.pk,
+                payload={"conversation_id": str(message.conversation_id)},
+            )  # fmt: skip
         return message
 
 
