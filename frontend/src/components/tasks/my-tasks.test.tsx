@@ -1,4 +1,4 @@
-import { cleanup, configure, fireEvent, screen, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -111,6 +111,34 @@ describe("Mis tareas (F5-08c)", () => {
       (url) => url.searchParams.get("due_from") === "2026-11-12T05:00:00.000Z",
     );
     expect(upcoming?.searchParams.get("due_to")).toBeNull();
+  });
+
+  it("una pestaña abierta de un día para otro pide el día nuevo al volver a ella", async () => {
+    const calls = serve(() => page(task("1")));
+    show("tasks.view");
+    await screen.findByText("Tarea 1");
+    expect(gets(calls)[0]!.searchParams.get("due_from")).toBe("2026-11-11T05:00:00.000Z");
+    vi.setSystemTime(Date.parse("2026-11-12T15:00:00Z")); // pasó la medianoche de Lima
+    fireEvent.focus(window);
+    await waitFor(() =>
+      expect(gets(calls).at(-1)!.searchParams.get("due_from")).toBe("2026-11-12T05:00:00.000Z"),
+    );
+    expect(gets(calls).at(-1)!.searchParams.get("due_to")).toBe("2026-11-13T05:00:00.000Z");
+  });
+
+  it("Inicio, Fin y la flecha izquierda dan la vuelta entre pestañas", async () => {
+    serve(() => page(task("1")));
+    show("tasks.view");
+    await screen.findByText("Tarea 1");
+    const tabs = () => screen.getByRole("tablist");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Hoy" }), { key: "End" });
+    expect(screen.getByRole("tab", { name: "Próximas" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tabs(), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Hoy" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tabs(), { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "Próximas" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tabs(), { key: "Home" });
+    expect(screen.getByRole("tab", { name: "Hoy" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("el texto de otra persona es texto: no se interpreta y va aislado", async () => {

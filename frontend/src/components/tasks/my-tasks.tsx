@@ -1,7 +1,7 @@
 "use client";
 
 import { useTimeZone, useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import type { TasksListParams } from "@/lib/api/model";
@@ -19,7 +19,20 @@ export function MyTasks() {
   const t = useTranslations("tasks");
   const zone = useTimeZone() ?? "America/Lima";
   const { organization } = useTenant();
-  const [now] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    // Una pestaña que se deja abierta pasa de día: al volver a ella, «hoy» y lo vencido se
+    // calculan con la hora de ahora (los límites del día cambian y las listas se vuelven a pedir).
+    const refresh = () => {
+      if (document.visibilityState !== "hidden") setNow(Date.now());
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
   const [tab, setTab] = useState<(typeof TABS)[number]>("today");
   const buttons = useRef<Partial<Record<string, HTMLButtonElement | null>>>({});
   const { start, next } = dayRange(now, zone);

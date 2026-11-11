@@ -24,6 +24,15 @@ describe("instantes de las tareas", () => {
     expect((next - start) / 3_600_000).toBe(23);
   });
 
+  it("la medianoche de un día de cambio de hora al este de UTC también es la de la zona", () => {
+    // Sídney adelantó el reloj el 4 de octubre de 2026 a las 02:00: sus 00:00 son las 14:00Z del 3.
+    expect(new Date(instantAt("Australia/Sydney", 2026, 10, 4)).toISOString()).toBe(
+      "2026-10-03T14:00:00.000Z",
+    );
+    const { start, next } = dayRange(Date.parse("2026-10-04T05:00:00Z"), "Australia/Sydney");
+    expect((next - start) / 3_600_000).toBe(23);
+  });
+
   it("el día pasado de rango pasa al mes siguiente", () => {
     expect(instantAt("America/Lima", 2026, 11, 31)).toBe(instantAt("America/Lima", 2026, 12, 1));
   });
