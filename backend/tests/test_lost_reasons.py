@@ -192,4 +192,8 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
     assert [e for e in layered["ignore_imports"] if e.startswith("apps.deals")] == [
         "apps.deals.api.opportunities -> apps.conversations.selectors"  # F6-06b: la única de deals
     ]
-    assert len([e for e in layered["ignore_imports"] if e.startswith("apps.tasks")]) == 3  # F5-08
+    assert [e for e in layered["ignore_imports"] if e.startswith("apps.tasks")] == [  # F5-08
+        "apps.tasks.models -> apps.deals.models",
+        "apps.tasks.commands -> apps.deals.models",
+        "apps.tasks.apps -> apps.deals.scopes",  # F5-08b: el alcance por responsable
+    ]  # exactas: una arista distinta de tasks a deals no pasa en silencio
