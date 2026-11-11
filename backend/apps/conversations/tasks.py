@@ -10,6 +10,7 @@ registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket de
 """
 
 import datetime as dt
+import time
 from collections import Counter
 from collections.abc import Callable
 from typing import Any
@@ -42,6 +43,7 @@ logger = get_logger(__name__)
 MAX_RETRIES = 5
 BACKOFF_SECONDS, BACKOFF_MAX = 30, 600
 REALTIME_RETRIES = 3
+HEALTH_PASS_SECONDS = 120  # lo máximo que una pasada de la comprobación de salud retiene un worker
 REQUEUE_WAIT = 120  # segundos: lo que el barredor de la cola deja pasar antes de repetir un mensaje
 
 
@@ -218,8 +220,10 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
         finally:
             del token
     except graph.GraphRejected, sealed.SealError:  # el token ya no abre ese número
-        with tenant_scope(ctx):
-            accounts.mark_token_invalid(ctx, channel_account_id=account_id)
+        with tenant_scope(ctx):  # solo si la credencial comprobada sigue siendo la de la cuenta
+            accounts.mark_token_invalid(
+                ctx, channel_account_id=account_id, credential_id=credential.pk
+            )
         return "REJECTED"
     except graph.GraphUnavailable, graph.ChannelNotEnabled:
         return "UNAVAILABLE"  # Meta caída: no cambia nada y se reintenta en la siguiente pasada
@@ -241,7 +245,10 @@ def healthcheck_accounts(batch_size: int = 50) -> dict[str, int]:
         return {}
     before = timezone.now() - dt.timedelta(minutes=settings.CHANNEL_HEALTH_INTERVAL_MINUTES)
     done: Counter[str] = Counter()
+    started = time.monotonic()
     for organization_id, account_id in health_due(before, batch_size):
+        if time.monotonic() - started > HEALTH_PASS_SECONDS:
+            break  # con Meta lenta, una pasada no ocupa el worker más que esto: sigue la próxima
         try:
             done[check_account(organization_id, account_id)] += 1
         except Exception as error:  # una cuenta no detiene a las demás; nada del error ni del token

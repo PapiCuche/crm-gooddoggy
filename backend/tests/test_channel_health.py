@@ -12,6 +12,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.conversations import accounts, credentials, tasks
+from apps.conversations import graph as graph_api
 from apps.conversations.models import ChannelAccount, Credential
 from core import http
 from core.ids import new_id
@@ -232,3 +233,76 @@ def test_one_failing_account_does_not_stop_the_others_and_each_runs_in_its_own_o
     assert read(world.b, second).last_healthcheck_at > OLD  # type: ignore[operator]
     assert read(world.a, first).last_healthcheck_at == OLD
     assert settings.CELERY_BEAT_SCHEDULE["conversations.healthcheck_accounts"]["schedule"] == 300.0
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(400, 4), (400, 17), (400, 613), (400, 80007), (400, 130429), (429, None), (400, 131056)],
+)
+def test_a_rate_limit_from_meta_is_not_a_rejected_token_and_changes_nothing(
+    world: SimpleNamespace,
+    graph: FakeGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    code: int | None,
+) -> None:
+    mine = account(world.a)
+    body = b"{}" if code is None else b'{"error": {"code": %d}}' % code
+    monkeypatch.setattr(http, "request", lambda *a, **k: SimpleNamespace(status=status, data=body))
+    assert tasks.healthcheck_accounts() == {"UNAVAILABLE": 1}
+    saved = read(world.a, mine)
+    assert (saved.status, saved.status_detail, saved.last_healthcheck_at) == (
+        "CONNECTED",
+        None,
+        OLD,
+    )
+
+
+def test_a_token_rejected_for_a_credential_that_was_rotated_meanwhile_does_not_break_the_account(
+    world: SimpleNamespace, graph: FakeGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine = account(world.a)
+    real = graph_api.phone_number
+
+    def rotated_then_rejected(token: str, waba: str, number: str) -> Any:
+        with tenant_scope(ctx(world.a)) as tenant:  # la persona rota el token durante la llamada
+            credentials.revoke(tenant, read(world.a, mine).credential_id)
+            fresh = credentials.store(tenant, mine, TEST_TOKEN, rotated=True)
+            ChannelAccount.objects.filter(pk=mine).update(credential_id=fresh.pk)
+        return real("otro-token", waba, number)  # y el token viejo ya no vale en Meta
+
+    monkeypatch.setattr(graph_api, "phone_number", rotated_then_rejected)
+    assert tasks.healthcheck_accounts() == {"REJECTED": 1}  # la comprobación sí lo rechazó...
+    assert read(world.a, mine).status == "CONNECTED"  # ...pero el token de ahora es otro y sirve
+
+
+def test_a_slow_pass_stops_at_its_time_budget_and_the_rest_wait_for_the_next(
+    world: SimpleNamespace, graph: FakeGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph.numbers["100000000000011"] = WABA_ID
+    account(world.a)
+    account(world.b, "100000000000011")
+    clock = iter([0.0, 0.0, tasks.HEALTH_PASS_SECONDS + 1])
+    monkeypatch.setattr(
+        "apps.conversations.tasks.time", SimpleNamespace(monotonic=lambda: next(clock))
+    )
+    assert tasks.healthcheck_accounts() == {"OK": 1}  # la segunda ya no cabe en esta pasada
+
+
+def test_an_unexpected_failure_logs_only_its_type_and_the_discovery_limit_is_clamped(
+    world: SimpleNamespace,
+    graph: FakeGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    account(world.a)
+
+    def boom(org: UUID, pk: UUID) -> str:
+        raise RuntimeError(f"Bearer {TEST_TOKEN} https://graph.facebook.com/?access_token=x")
+
+    monkeypatch.setattr(tasks, "check_account", boom)
+    assert tasks.healthcheck_accounts() == {"ERROR": 1}
+    assert TEST_TOKEN not in caplog.text and "graph.facebook.com" not in caplog.text
+    now = timezone.now()
+    assert tasks.health_due(now, -5) == [] and tasks.health_due(now, 0) == []
+    assert len(tasks.health_due(now, 10**6)) == 1  # el tope va dentro de la función

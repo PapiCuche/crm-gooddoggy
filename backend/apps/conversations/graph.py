@@ -16,6 +16,9 @@ from core import http
 
 FIELDS = "id,display_phone_number,quality_rating,messaging_limit_tier"
 BODY_MAX = 1 << 20  # una respuesta mayor no es de Meta
+# Códigos de límite de tasa de Meta: llegan con 400, pero no son un token rechazado (los mismos que
+# el adaptador de salida reintenta, `whatsapp.TOO_FAST`).
+THROTTLED = (4, 17, 613, 80007, 130429, 131056)
 
 
 class ChannelNotEnabled(Exception):
@@ -28,6 +31,15 @@ class GraphRejected(Exception):
 
 class GraphUnavailable(Exception):
     """No se pudo preguntar a Meta ahora (red, tiempo agotado o error suyo): vale reintentar."""
+
+
+def _code(raw: bytes) -> int | None:
+    """El `error.code` de una respuesta de Meta, o `None` si no es lo que se espera."""
+    try:
+        code = json.loads(raw)["error"]["code"]
+    except ValueError, KeyError, TypeError, RecursionError:
+        return None
+    return code if isinstance(code, int) and not isinstance(code, bool) else None
 
 
 def phone_number(token: str, waba_id: str, phone_number_id: str) -> dict[str, Any]:
@@ -47,6 +59,8 @@ def phone_number(token: str, waba_id: str, phone_number_id: str) -> dict[str, An
         status, raw = reply.status, reply.data
     except http.BlockedDestination, http.HTTPError, OSError:
         raise GraphUnavailable from None  # sin el mensaje: puede llevar la URL
+    if status == 429 or _code(raw) in THROTTLED:  # un límite de tasa no dice nada del token
+        raise GraphUnavailable
     if status in (400, 401, 403, 404):
         raise GraphRejected
     if status != 200 or len(raw) > BODY_MAX:

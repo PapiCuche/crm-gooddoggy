@@ -170,13 +170,17 @@ def _demote(
     to: str,
     detail: str,
     action: str,
+    credential_id: UUID | None = None,
 ) -> bool:
     """Cambia el estado de una cuenta viva que está en uno de `only` (lo que informa el proveedor,
     sin permiso de persona): `to` con su `detail`, auditado y con evento, solo con ids."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         found = _live().using(alias).select_for_update(no_key=True)
-        if (account := found.filter(pk=account_id, status__in=only).first()) is None:
+        found = found.filter(pk=account_id, status__in=only)
+        if credential_id is not None:  # el resultado es de ESA credencial: ¿se rotó mientras tanto?
+            found = found.filter(credential_id=credential_id)
+        if (account := found.first()) is None:
             return False
         old, account.status, account.status_detail = account.status, to, detail
         account.version += 1
@@ -187,12 +191,14 @@ def _demote(
         return True
 
 
-def mark_token_invalid(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
+def mark_token_invalid(
+    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID | None = None
+) -> bool:
     """Meta rechazó el token (ADR-029 §8): la cuenta pasa a `ERROR` (`TOKEN_INVALID`) y deja de
     enviar hasta que se rote. `False` si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva."""
     only = ("PENDING", "CONNECTED", "DEGRADED")
     return _demote(ctx, channel_account_id, only=only, to="ERROR", detail="TOKEN_INVALID",
-                   action="channel_account.token_invalid")  # fmt: skip
+                   action="channel_account.token_invalid", credential_id=credential_id)  # fmt: skip
 
 
 def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
