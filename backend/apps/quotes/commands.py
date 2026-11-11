@@ -1,15 +1,14 @@
-"""Comandos de cotizaciones (F5-09a; E13-01, modelo de datos §E.6): crear un borrador desde un
-contacto o una oportunidad, cambiarlo y cancelarlo. No comprueban permisos: los declarará la API
-(F5-09d y F5-09e), la única que los importa (contrato de import-linter). Validan los tipos exactos
-(`ValueError`, nunca `TypeError` ni `IntegrityError`) y auditan con el antes y el después; las
-notas libres se auditan como `[texto]`.
+"""Comandos de cotizaciones (F5-09a2; E13-01): crear un borrador desde un contacto o una
+oportunidad, cambiarlo y cancelarlo. No comprueban permisos: los declarará la API (F5-09d y
+F5-09e), la única que los importa (contrato de import-linter). Validan los tipos exactos
+(`ValueError`, nunca `TypeError` ni `IntegrityError`) y auditan con el antes y el después; el
+texto libre se audita como `[texto]`.
 
-Los precios salen del `PricingService` (ADR-006): una variante sin precio vigente, o una lista que
-quien actúa no ve, es un `BadReference`; nada se estima. Cada línea congela el nombre, el SKU, el
-precio de lista, la promoción y el precio final; los importes son `Decimal` con dos decimales y los
-precios llevan IGV (D-PRC-1): `total` es lo que paga el cliente y `tax_total` el IGV que lleva.
-Bloqueos: contacto y oportunidad (`FOR NO KEY UPDATE`) y la cotización. La membresía de quien actúa
-no se bloquea: la FK compuesta de la autoría la rechaza (`BadReference`) si no es miembro.
+Los precios salen del `PricingService` (ADR-006): una variante sin precio vigente, una lista que
+quien actúa no ve o un precio sin IGV incluido es un `BadReference`; nada se estima. Cada línea
+congela nombre, SKU, precio de lista, promoción y precio final; los importes son `Decimal` con dos
+decimales y llevan IGV (D-PRC-1). Bloqueos: contacto y oportunidad (`FOR NO KEY UPDATE`) y la
+cotización; la membresía de quien actúa no, porque la FK de la autoría la rechaza.
 """
 
 import datetime as dt

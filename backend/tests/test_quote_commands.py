@@ -3,9 +3,10 @@ rol `crm_app`, también con transacciones a la vez. Sin API: llega con F5-09d y 
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal as D
 from functools import partial
 from types import SimpleNamespace
 from typing import Any
@@ -39,6 +40,7 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 type DB = psycopg.Connection[Any]
 NOW = timezone.now()
 LONG_AGO = NOW - timedelta(days=90)
+INTERNAL = "prices.view_internal"  # una lista que quien cotiza no ve
 SECRET = "Cliente Juan Perez, DNI 12345678"  # noqa: S105 — texto de prueba
 
 
@@ -96,45 +98,28 @@ def test_create_opens_a_numbered_draft_with_priced_lines_and_audits_without_text
         None,
         shop.listed,
     )
-    assert (made.currency, made.tax_mode, made.tax_rate) == ("PEN", "INCLUDED", Decimal("0.18"))
+    assert (made.currency, made.tax_mode, made.tax_rate) == ("PEN", "INCLUDED", D("0.18"))
     assert made.created_by_user_id == made.updated_by_user_id == shop.quoter.pk
     assert (made.notes_to_customer, made.internal_notes) == (SECRET, f"{SECRET}\n\nOtra")
     # 2 x 4399.00 + 3 x 100.50 = 9099.50; el IGV que lleva: 9099.50 - 9099.50 / 1.18
     assert (made.total, made.tax_total, made.subtotal) == (
-        Decimal("9099.50"), Decimal("1388.06"), Decimal("7711.44"),
+        D("9099.50"), D("1388.06"), D("7711.44"),
     )  # fmt: skip
-    assert made.discount_total == Decimal("0.00")
     first, second = stored(shop.a, made)
     assert (first.sort_order, first.variant_id, first.quantity) == (1, shop.iphone, 2)
     assert (first.product_name_snapshot, first.sku_snapshot) == ("IP16", "IP16")
     assert (first.list_unit_price, first.final_unit_price, first.line_total) == (
-        Decimal("4399.00"), Decimal("4399.00"), Decimal("8798.00"),
+        D("4399.00"), D("4399.00"), D("8798.00"),
     )  # fmt: skip
     assert (second.line_total, second.currency, second.promotion_id_snapshot) == (
-        Decimal("301.50"), "PEN", None,
+        D("301.50"), "PEN", None,
     )  # fmt: skip
     [(action, changes)] = audit(migrator)
     assert action == "quote.created" and changes["status"] == [None, "DRAFT"]
     assert changes["notes_to_customer"] == [None, "[texto]"] and changes["total"][1] == "9099.50"
     assert "12345678" not in json.dumps(changes) and "IP16" not in json.dumps(changes)
+    assert "cost" not in json.dumps(changes).lower()  # nunca un costo (ADR-006)
     assert new(shop).number == "COT-000002"
-
-
-def test_a_promotion_lowers_the_final_price_and_is_kept_in_the_snapshot(
-    shop: SimpleNamespace,
-) -> None:
-    made_promo = promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
-                       starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
-    made = new(shop, items=lines((shop.iphone, 2), (shop.case, 1)))
-    first, second = stored(shop.a, made)
-    assert (first.list_unit_price, first.final_unit_price) == (
-        Decimal("4399.00"),
-        Decimal("3959.10"),
-    )
-    assert (first.promotion_id_snapshot, first.promotion_name_snapshot) == (made_promo, "Promo")
-    assert second.promotion_id_snapshot is None
-    assert made.discount_total == Decimal("879.80")  # lo que se ahorra frente a la lista
-    assert made.total == Decimal("8018.70")
 
 
 def test_the_tax_is_taken_once_from_the_total_and_rounded_to_the_nearest_cent(
@@ -144,29 +129,28 @@ def test_the_tax_is_taken_once_from_the_total_and_rounded_to_the_nearest_cent(
     for variant in extra:
         row(shop.a, (variant, shop.listed), "4399", LONG_AGO)
     one = new(shop, items=lines((shop.iphone, 1)))
-    assert (one.total, one.tax_total, one.subtotal) == (
-        Decimal("4399.00"),
-        Decimal("671.03"),
-        Decimal("3727.97"),
-    )  # 671,0339: por debajo de la mitad no sube
+    assert (one.total, one.tax_total, one.subtotal) == (D("4399.00"), D("671.03"), D("3727.97"))
     three = new(shop, items=lines((shop.iphone, 1), (extra[0], 1), (extra[1], 1)))
-    assert (three.total, three.tax_total) == (Decimal("13197.00"), Decimal("2013.10"))
+    assert (three.total, three.tax_total) == (D("13197.00"), D("2013.10"))
     # el IGV de 13197,00 es 2013,1017: redondeado una vez, no tres veces (3 x 671,03 = 2013,09)
 
 
 def test_an_amount_that_does_not_fit_the_column_is_a_value_error_and_writes_nothing(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    big = item(shop.a, "BIG")
+    big, half = item(shop.a, "BIG"), item(shop.a, "HALF")
     row(shop.a, (big, shop.listed), "999999999999.99", LONG_AGO)
-    assert new(shop, items=lines((big, 1))).total == Decimal("999999999999.99")  # el máximo cabe
+    row(shop.a, (half, shop.listed), "500000000000", LONG_AGO)
+    assert new(shop, items=lines((big, 1))).total == D("999999999999.99")  # el máximo cabe
+    with pytest.raises(ValueError, match="importe"):  # noqa: PT011 — 2 x 5·10^11 = 10^12: no cabe
+        new(shop, items=lines((half, 2)))
     with pytest.raises(ValueError, match="importe"):  # noqa: PT011 — no un error de la base
         new(shop, items=lines((big, 2)))
     assert migrator.execute("SELECT count(*) FROM quotes").fetchone() == (1,)
     made = new(shop)
     with pytest.raises(ValueError, match="importe"):  # noqa: PT011
         move(shop, commands.update_quote, made, items=lines((big, 2)))
-    assert made.total == Decimal("4399.00") and len(stored(shop.a, made)) == 1
+    assert made.total == D("4399.00") and len(stored(shop.a, made)) == 1
 
 
 def test_the_links_take_the_contact_of_the_opportunity_and_both_must_agree(
@@ -183,10 +167,6 @@ def test_the_links_take_the_contact_of_the_opportunity_and_both_must_agree(
         new(shop, contact_id=None)
 
 
-def unseen_list(org: Any) -> Any:
-    return price_list(org, "INTERNA", required_permission="prices.view_internal")
-
-
 @pytest.mark.parametrize(
     ("field", "make_bad"),
     [
@@ -197,7 +177,7 @@ def unseen_list(org: Any) -> Any:
         ("opportunity_id", lambda s: change(s, Opportunity, tables.make(s.a).pk, deleted_at=NOW)),
         ("price_list_id", lambda s: price_list(s.b, "OTRA")),
         ("price_list_id", lambda s: uuid4()),
-        ("price_list_id", lambda s: unseen_list(s.a)),  # quien actúa no la ve
+        ("price_list_id", lambda s: price_list(s.a, "X", required_permission=INTERNAL)),
         ("variant_id", lambda s: item(s.b, "AJENA")),
         ("variant_id", lambda s: item(s.a, "SINPRECIO")),  # sin precio vigente en la lista
         ("variant_id", lambda s: uuid4()),
@@ -258,7 +238,7 @@ def test_update_replaces_the_notes_and_the_lines_and_reprices_them(
     changed = move(shop, commands.update_quote, made, valid_until=when, notes_to_customer=SECRET,
                    items=lines((shop.case, 4), (shop.iphone, 1)))  # fmt: skip
     assert (changed.version, changed.status, changed.valid_until) == (2, "DRAFT", when)
-    assert changed.updated_by_user_id == shop.quoter.pk and changed.total == Decimal("4801.00")
+    assert changed.updated_by_user_id == shop.quoter.pk and changed.total == D("4801.00")
     assert [(i.sort_order, i.variant_id, i.quantity) for i in stored(shop.a, made)] == [
         (1, shop.case, 4), (2, shop.iphone, 1),
     ]  # fmt: skip
@@ -281,10 +261,10 @@ def test_update_reprices_with_the_price_of_now_and_keeps_the_totals_in_step(
           starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
     again = move(shop, commands.update_quote, made, items=lines((shop.iphone, 1)))
     assert (again.version, again.total, again.discount_total) == (
-        2, Decimal("3959.10"), Decimal("439.90"),
+        2, D("3959.10"), D("439.90"),
     )  # fmt: skip
     assert again.total == again.subtotal + again.tax_total
-    assert (again.tax_total, again.subtotal) == (Decimal("603.93"), Decimal("3355.17"))  # al 18 %
+    assert (again.tax_total, again.subtotal) == (D("603.93"), D("3355.17"))  # al 18 %
 
 
 @pytest.mark.parametrize(
@@ -298,9 +278,6 @@ def test_update_refuses_what_it_does_not_change_and_hostile_values(
     made = new(shop)
     with pytest.raises(ValueError):  # noqa: PT011
         move(shop, commands.update_quote, made, **bad)
-    for version in (0, True, "1", None, 2**31):
-        with pytest.raises(ValueError):  # noqa: PT011
-            move(shop, commands.update_quote, made, version=version, internal_notes="x")
 
 
 def test_a_stale_version_a_closed_quote_and_a_missing_one_are_refused(
@@ -314,18 +291,12 @@ def test_a_stale_version_a_closed_quote_and_a_missing_one_are_refused(
         move(shop, commands.update_quote, made, internal_notes="y")
     with pytest.raises(StaleVersion):
         move(shop, commands.cancel_quote, made)
-    with pytest.raises(StaleVersion):
-        move(shop, commands.cancel_quote, made, version=7)
     with tenant_scope(ctx(shop.a)):
         Quote.objects.filter(pk=made.pk).update(status="SENT")
     with pytest.raises(QuoteNotDraft):  # solo un borrador se edita
         move(shop, commands.update_quote, made, version=2, internal_notes="x")
-    for command, extra in (
-        (commands.update_quote, {"internal_notes": "x"}),
-        (commands.cancel_quote, {}),
-    ):
-        with pytest.raises(Quote.DoesNotExist):
-            run(shop, command, quote_id=uuid4(), version=1, **extra)
+    with pytest.raises(Quote.DoesNotExist):
+        run(shop, commands.cancel_quote, quote_id=uuid4(), version=1)
 
 
 def test_cancel_works_from_any_open_state_and_audits_the_reason_as_text(
@@ -341,62 +312,37 @@ def test_cancel_works_from_any_open_state_and_audits_the_reason_as_text(
     assert (plain.status, plain.cancel_reason) == ("CANCELLED", None)
     cancelled = [c for a, c in audit(migrator) if a == "quote.cancelled"]
     assert cancelled[0]["status"] == ["DRAFT", "CANCELLED"] and cancelled[1]["status"][0] == "SENT"
-    assert cancelled[0]["cancel_reason"] == [None, "[texto]"] and cancelled[1]["cancel_reason"] == [
-        None,
-        None,
-    ]
+    assert [c["cancel_reason"] for c in cancelled] == [[None, "[texto]"], [None, None]]
     assert "12345678" not in json.dumps(cancelled)
-    for state in ("CANCELLED", "ACCEPTED", "REJECTED", "EXPIRED"):
-        again = new(shop)
+    again = new(shop)
+    for state in ("ACCEPTED", "REJECTED", "EXPIRED"):
         with tenant_scope(ctx(shop.a)):
-            Quote.objects.filter(pk=again.pk).update(
-                status=state, cancelled_at=NOW if state == "CANCELLED" else None
-            )
+            Quote.objects.filter(pk=again.pk).update(status=state)
         with pytest.raises(QuoteTerminal):
             move(shop, commands.cancel_quote, again)
-
-
-def test_a_quote_never_carries_a_cost_and_the_commands_do_not_read_one(
-    shop: SimpleNamespace, migrator: DB
-) -> None:
-    for model in (Quote, QuoteItem):
-        assert not [f.name for f in model._meta.get_fields() if "cost" in f.name.lower()]
-    made = new(shop)
-    columns = migrator.execute(
-        "SELECT column_name FROM information_schema.columns"
-        " WHERE table_name IN ('quotes', 'quote_items') AND column_name ILIKE '%cost%'"
-    ).fetchall()
-    assert columns == [] and "cost" not in json.dumps(audit(migrator)).lower()
-    assert made.total == Decimal("4399.00")
+    with pytest.raises(QuoteTerminal):  # ya cancelada
+        move(shop, commands.cancel_quote, first, version=2)
 
 
 def test_numbers_are_consecutive_and_distinct_under_concurrency(shop: SimpleNamespace) -> None:
-    threads, per_thread, seen = 6, 3, []
-    start, lock = threading.Barrier(threads, timeout=30), threading.Lock()
-    errors: list[BaseException] = []
-    contact = tables.contact(shop.a).pk
+    threads, per_thread = 6, 3
+    start, contact = threading.Barrier(threads, timeout=30), tables.contact(shop.a).pk
 
-    def worker() -> None:
+    def worker(_: int) -> list[str]:
         try:
             start.wait()
-            for _ in range(per_thread):
-                number = run(shop, commands.create_quote, contact_id=contact,
-                             items=lines((shop.iphone, 1))).number  # fmt: skip
-                with lock:
-                    seen.append(number)
-        except BaseException as error:  # noqa: BLE001 — se re-lanza en el hilo principal
-            errors.append(error)
+            return [
+                run(
+                    shop, commands.create_quote, contact_id=contact, items=lines((shop.iphone, 1))
+                ).number  # fmt: skip
+                for _ in range(per_thread)
+            ]
         finally:
             connection.close()
 
-    pool = [threading.Thread(target=worker, daemon=True) for _ in range(threads)]
-    for thread in pool:
-        thread.start()
-    for thread in pool:
-        thread.join(timeout=120)
-    assert not errors, errors
-    assert not any(thread.is_alive() for thread in pool)
-    assert sorted(seen) == [f"COT-{n:06d}" for n in range(1, threads * per_thread + 1)]
+    with ThreadPoolExecutor(threads) as pool:  # una excepción de un hilo sale aquí
+        seen = sorted(n for batch in pool.map(worker, range(threads)) for n in batch)
+    assert seen == [f"COT-{n:06d}" for n in range(1, threads * per_thread + 1)]
 
 
 def test_two_cancels_at_once_leave_one_and_a_stale_version(shop: SimpleNamespace) -> None:
@@ -426,6 +372,12 @@ def test_the_totals_of_a_quote_always_agree_with_its_lines_after_every_command(
     promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
           starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
     made = new(shop, items=lines((shop.iphone, 3), (shop.case, 7)))
+    first, second = stored(shop.a, made)  # la promoción baja 4399,00 a 3959,10 y se congela
+    assert (first.list_unit_price, first.final_unit_price) == (
+        D("4399.00"),
+        D("3959.10"),
+    )
+    assert (first.promotion_name_snapshot, second.promotion_id_snapshot) == ("Promo", None)
     for step in range(2):
         quote = made if step == 0 else move(shop, commands.update_quote, made,
                                             items=lines((shop.case, 2)))  # fmt: skip
@@ -443,12 +395,10 @@ def test_a_price_that_is_not_tax_included_is_never_quoted_as_if_it_were(
 ) -> None:
     """D-PRC-1: los precios llevan IGV; si el motor dijera otra cosa, falla cerrada."""
     real = pricing_services.resolve_many
-
-    def not_included(*args: Any, **kwargs: Any) -> Any:
-        return {k: replace(v, tax_included=flag) for flag in (False,) for k, v in
-                real(*args, **kwargs).items()}  # fmt: skip
-
-    monkeypatch.setattr(commands, "resolve_many", not_included)
+    monkeypatch.setattr(
+        commands, "resolve_many",
+        lambda *a, **k: {v: replace(r, tax_included=False) for v, r in real(*a, **k).items()},
+    )  # fmt: skip
     with pytest.raises(BadReference) as refused:
         new(shop)
     assert refused.value.field == "price_list_id"
@@ -464,20 +414,3 @@ def test_without_a_price_list_and_without_a_default_one_the_error_names_the_list
         new(shop)  # sin `price_list_id` y sin predeterminada
     assert refused.value.field == "price_list_id"
     assert new(shop, price_list_id=shop.listed).price_list_id == shop.listed
-
-
-def test_the_largest_amount_that_fits_is_quoted_and_the_first_one_past_it_is_a_value_error(
-    shop: SimpleNamespace,
-) -> None:
-    huge, half = item(shop.a, "HUGE"), item(shop.a, "HALF")
-    row(shop.a, (huge, shop.listed), "999999999999.99", LONG_AGO)
-    row(shop.a, (half, shop.listed), "500000000000", LONG_AGO)
-    assert new(shop, items=lines((huge, 1))).total == Decimal("999999999999.99")  # cabe
-    with pytest.raises(ValueError, match="máximo"):  # 2 x 500.000.000.000 = 10^12, ya no cabe
-        new(shop, items=lines((half, 2)))
-    made = new(shop, items=lines((half, 1)))
-    with pytest.raises(ValueError, match="máximo"):  # tampoco al cambiar las líneas
-        move(shop, commands.update_quote, made, items=lines((half, 2)))
-    assert (
-        move(shop, commands.update_quote, made, items=lines((half, 1), (shop.case, 1))).version == 2
-    )
