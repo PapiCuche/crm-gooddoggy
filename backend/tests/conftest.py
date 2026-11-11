@@ -176,3 +176,10 @@ def orgs(tenant_db: None, migrator: psycopg.Connection[Any]) -> dict[str, UUID]:
             [ids[f"widget_{org}"], ids[org], f"widget {org}"],
         )
     return ids
+
+
+@pytest.fixture(autouse=True)
+def no_realtime_broker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin broker, encolar el handler del WS del Inbox (F6-07a) dejaría eventos pendientes."""
+    target = "apps.conversations.tasks.publish_realtime.apply_async"
+    monkeypatch.setattr(target, lambda *args, **kwargs: None)
