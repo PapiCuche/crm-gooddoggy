@@ -116,6 +116,7 @@ import type {
   PaginatedPriceListList,
   PaginatedProductList,
   PaginatedPromotionList,
+  PaginatedQuoteList,
   PaginatedRoleList,
   PaginatedStockImportRowList,
   PaginatedTagList,
@@ -161,6 +162,7 @@ import type {
   Promotion,
   PromotionCreateRequest,
   PromotionsListParams,
+  QuotesListParams,
   Role,
   RoleCreateRequest,
   RolesListParams,
@@ -13351,6 +13353,145 @@ export const useVariantsDelete = <TError = ErrorType<Error>, TContext = unknown>
 > => {
   return useMutation(getVariantsDeleteMutationOptions(options), queryClient);
 };
+
+export const getQuotesListUrl = (orgSlug: string, params?: QuotesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/quotes/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/quotes/`;
+};
+
+/**
+ * Las cotizaciones dentro del alcance de `quotes.view` (las que creó quien consulta; con alcance de equipo, también las de sus compañeros), paginadas por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los mismos: `mine`, `status`, `contact_id`, `opportunity_id`, `number` (exacto) y `expired`. 400: un filtro repetido o inválido. Sin líneas: están en el detalle.
+ */
+export const quotesList = async (
+  orgSlug: string,
+  params?: QuotesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedQuoteList> => {
+  return apiFetch<PaginatedQuoteList>(getQuotesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getQuotesListQueryKey = (orgSlug: string, params?: QuotesListParams) => {
+  return [`/api/v1/o/${orgSlug}/quotes/`, ...(params ? [params] : [])] as const;
+};
+
+export const getQuotesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof quotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getQuotesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof quotesList>>> = ({ signal }) =>
+    quotesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof quotesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type QuotesListQueryResult = NonNullable<Awaited<ReturnType<typeof quotesList>>>;
+export type QuotesListQueryError = ErrorType<Error>;
+
+export function useQuotesList<
+  TData = Awaited<ReturnType<typeof quotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | QuotesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quotesList>>,
+          TError,
+          Awaited<ReturnType<typeof quotesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuotesList<
+  TData = Awaited<ReturnType<typeof quotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quotesList>>,
+          TError,
+          Awaited<ReturnType<typeof quotesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuotesList<
+  TData = Awaited<ReturnType<typeof quotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useQuotesList<
+  TData = Awaited<ReturnType<typeof quotesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuotesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getQuotesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
   const normalizedParams = new URLSearchParams();

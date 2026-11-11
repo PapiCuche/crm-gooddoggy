@@ -81,6 +81,10 @@ ADMIN_REST = (
     "opportunities.assign",
     "tasks.create",  # F5-08b
     "tasks.assign",
+    "quotes.create",  # F5-09d
+    "quotes.approve",
+    "quotes.override_price",
+    "quotes.discount",
     "pipelines.manage",  # F5-02
     "conversations.assign",  # F6-01: el Inbox
     "channels.manage",
@@ -99,6 +103,10 @@ SCOPED_REST = (
     "messages.note",
     "tasks.view",  # F5-08b
     "tasks.update",
+    "quotes.view",  # F5-09d
+    "quotes.update",
+    "quotes.send",
+    "quotes.cancel",
 )  # con `ORGANIZATION`
 ADMIN = dict.fromkeys(ADMIN_REST) | dict.fromkeys(SCOPED_REST, "ORGANIZATION")
 STATE = (
