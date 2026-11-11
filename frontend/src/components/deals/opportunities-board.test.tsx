@@ -81,6 +81,20 @@ afterEach(() => {
 });
 
 describe("OpportunitiesBoard", () => {
+  it("el título de cada tarjeta y de cada fila de la tabla abre el detalle de la oportunidad", async () => {
+    mockApi({ [PIPELINES]: page([sales]), [LIST]: page([rocky]) });
+    show();
+    const card = await screen.findByRole("link", { name: "Collar para Rocky" });
+    expect(card).toHaveAttribute("href", "/o/acme/oportunidades/1");
+    fireEvent.click(screen.getByRole("button", { name: "Tabla" }));
+    const row = within(await screen.findByRole("table")).getByRole("link", {
+      name: "Collar para Rocky",
+    });
+    expect(row).toHaveAttribute("href", "/o/acme/oportunidades/1");
+    // lo que escribió otra persona va aislado (`<bdi dir="auto">`), también en el título
+    expect(row.querySelector("bdi")).toHaveAttribute("dir", "auto");
+  });
+
   it("una columna por etapa activa con su recuento y su total, y las tarjetas con sus datos", async () => {
     const api = mockApi({ [PIPELINES]: page([sales]), [LIST]: page([rocky, luna, mimi]) });
     show();

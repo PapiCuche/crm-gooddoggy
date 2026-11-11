@@ -15,7 +15,11 @@ export function useChannelWrite() {
   const [state, setState] = useState<{ pending: boolean; error: ApiError | null }>({
     ...{ pending: false, error: null },
   });
-  function run(action: () => Promise<unknown>, done: () => void) {
+  function run(
+    action: () => Promise<unknown>,
+    done: () => void,
+    failed?: (error: ApiError) => void, // lo que la pantalla hace además de explicar el error
+  ) {
     setState({ pending: true, error: null });
     withStepUp(action).then(
       () => {
@@ -23,8 +27,10 @@ export function useChannelWrite() {
         done();
       },
       // Cancelar el código no es un fallo: el formulario sigue como estaba.
-      (error: ApiError) =>
-        setState({ pending: false, error: isStepUpCancelled(error) ? null : error }),
+      (error: ApiError) => {
+        setState({ pending: false, error: isStepUpCancelled(error) ? null : error });
+        if (!isStepUpCancelled(error)) failed?.(error);
+      },
     );
   }
   const write = {

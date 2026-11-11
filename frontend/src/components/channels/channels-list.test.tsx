@@ -10,6 +10,8 @@ import { ChannelsList } from "./channels-list";
 const BASE = "/api/v1/o/acme/channels";
 const LIST = `GET ${BASE}/`;
 const CONNECT = `POST ${BASE}/whatsapp/`;
+const ROTATE = `POST ${BASE}/whatsapp/a1/token/`;
+const DISCONNECT = `DELETE ${BASE}/whatsapp/a1/`;
 const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
 const SECRET = "EAAGsecretTOKEN0123456789";
 const tenant: SelfContext = {
@@ -58,6 +60,22 @@ const fillConnect = (token = SECRET) => {
 const open = async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Conectar WhatsApp" }));
   await screen.findByRole("form", { name: "Conectar una cuenta de WhatsApp" });
+};
+// Cuántas veces se pidió la lista (la primera carga y cada refresco).
+const listReads = (api: ReturnType<typeof mockApi>) =>
+  sent(api).filter((call) => call.method === "GET" && call.url === `${BASE}/`).length;
+// Los formularios y confirmaciones aparecen tras una acción: se espera a que estén antes de usarlos.
+const openRotate = async () => {
+  fireEvent.click(await screen.findByRole("button", { name: "Rotar token" }));
+  return screen.findByRole("form", { name: "Rotar el token" });
+};
+const rotate = (token = SECRET) => {
+  fireEvent.change(field(/^Token nuevo/), { target: { value: token } });
+  fireEvent.click(screen.getByRole("button", { name: "Rotar" }));
+};
+const askDisconnect = async () => {
+  fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+  return screen.findByRole("group", { name: "Desconectar Tienda Lima" });
 };
 const submit = () => fireEvent.click(screen.getByRole("button", { name: "Conectar" }));
 const noSecret = () => {
@@ -108,7 +126,7 @@ describe("Canales (F7-07b)", () => {
       ...(await screen.findByRole("list", { name: "Canales" })).querySelectorAll(":scope > li"),
     ] as HTMLElement[];
     expect(items[0]).toHaveTextContent("Canal de pruebas"); // la Sandbox, claramente
-    expect(within(items[0]!).queryByRole("button")).toBeNull(); // la Sandbox no tiene acciones
+    expect(within(items[0]!).queryByRole("button")).toBeNull(); // sin rotar ni desconectar
     expect(items[1]).toHaveTextContent("Pendiente");
     expect(items[1]).toHaveTextContent("Todavía no llega ningún mensaje de Meta a esta cuenta.");
     expect(within(items[1]!).getByText("Token válido")).toBeVisible();
@@ -318,5 +336,194 @@ describe("Canales (F7-07b)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByRole("alert")).toBeNull();
     expect(field(/^Token de acceso/).value).toBe("");
+  });
+
+  it("rotar el token: campo de contraseña por POST, un solo envío, el campo vacío y el foco de vuelta", async () => {
+    const logged = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => {}),
+    );
+    const api = mockApi({ [LIST]: page([wa]), [ROTATE]: { status: 200, body: { ...wa } } });
+    show();
+    const form = await openRotate();
+    expect(form).toHaveAttribute("method", "post"); // un envío nativo nunca llevaría el token a la URL
+    const token = field(/^Token nuevo/);
+    expect(token).toHaveAttribute("type", "password");
+    expect(token).toHaveAttribute("autocomplete", "new-password");
+    expect(token).not.toHaveAttribute("aria-label");
+    expect(token).not.toHaveAttribute("title");
+    rotate();
+    expect(await screen.findByText("El token se rotó.")).toBeVisible();
+    await waitFor(() => expect(listReads(api)).toBe(2)); // la lista se vuelve a pedir tras rotar
+    const posts = sent(api).filter((call) => call.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0]!.body))).toEqual({ access_token: SECRET });
+    noSecret();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Rotar token" })).toHaveFocus());
+    // nunca en la consola
+    expect(JSON.stringify(logged.flatMap((spy) => spy.mock.calls))).not.toContain(SECRET);
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    [409, "CHANNEL_NOT_ENABLED", /no está habilitado en este despliegue/],
+    [503, "CHANNEL_PROVIDER_UNAVAILABLE", /Meta no responde ahora/],
+    [400, "CHANNEL_CREDENTIALS_REJECTED", /Meta no aceptó ese token/],
+    [403, "PERMISSION_DENIED", /No tienes permiso para gestionar los canales/],
+    [500, "CODIGO_NUEVO_DEL_SERVIDOR", /Algo salió mal de nuestro lado/],
+  ])(
+    "rotar: un %i %s se explica por su código y el token escrito ya se borró",
+    async (status, code, text) => {
+      mockApi({ [LIST]: page([wa]), [ROTATE]: { status, body: { code, detail: "TEXTO AJENO" } } });
+      show();
+      await openRotate();
+      rotate();
+      expect(await screen.findByRole("alert")).toHaveTextContent(text);
+      expect(field(/^Token nuevo/).value).toBe("");
+      expect(document.body.textContent).not.toContain("TEXTO AJENO");
+      expect(document.body.textContent).not.toContain("CODIGO_NUEVO");
+      noSecret();
+    },
+  );
+
+  it("rotar: un 404 (la cuenta ya no existe) lo dice y vuelve a leer la lista", async () => {
+    const api = mockApi({
+      [LIST]: page([wa]),
+      [ROTATE]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    show();
+    await openRotate();
+    rotate();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Esa cuenta ya no existe. Actualizamos la lista.",
+    );
+    await waitFor(() => expect(listReads(api)).toBe(2));
+    expect(field(/^Token nuevo/).value).toBe("");
+    noSecret();
+  });
+
+  it("rotar: 429 dice cuánto esperar", async () => {
+    mockApi({
+      [LIST]: page([wa]),
+      [ROTATE]: { status: 429, body: { code: "RATE_LIMITED" }, headers: { "Retry-After": "300" } },
+    });
+    show();
+    await openRotate();
+    rotate();
+    expect(
+      await screen.findByText("Demasiados intentos. Vuelve a probar en 5 minutos."),
+    ).toBeVisible();
+  });
+
+  it("rotar: STEP_UP_REQUIRED pide el código y repite la petición una sola vez con el mismo token", async () => {
+    let posts = 0;
+    const api = mockApi({
+      [LIST]: page([wa]),
+      [ROTATE]: () => {
+        posts += 1;
+        return posts === 1
+          ? { status: 403, body: { code: "STEP_UP_REQUIRED" } }
+          : { status: 200, body: { ...wa } };
+      },
+      [STEP_UP]: { status: 200, body: { step_up_expires_in: 900 } },
+    });
+    show();
+    await openRotate();
+    rotate();
+    // el `<dialog>` solo es accesible cuando está abierto: se espera a eso y se consulta dentro
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText(/^Código/), { target: { value: "123456" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Verificar" }));
+    expect(await screen.findByText("El token se rotó.")).toBeVisible();
+    const bodies = sent(api)
+      .filter((call) => call.url === `${BASE}/whatsapp/a1/token/`)
+      .map((call) => JSON.parse(String(call.body)).access_token);
+    expect(bodies).toEqual([SECRET, SECRET]); // el mismo, una sola repetición
+    noSecret();
+  });
+
+  it("rotar: cancelar el código no es un fallo y el token ya se borró", async () => {
+    mockApi({ [LIST]: page([wa]), [ROTATE]: { status: 403, body: { code: "STEP_UP_REQUIRED" } } });
+    show();
+    await openRotate();
+    rotate();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(field(/^Token nuevo/).value).toBe("");
+  });
+
+  it("desconectar pide confirmación que explica el efecto, con el foco en «Cancelar»", async () => {
+    let listed = 0;
+    const api = mockApi({
+      [LIST]: () => {
+        listed += 1;
+        return page(listed === 1 ? [wa] : []);
+      },
+      [DISCONNECT]: { status: 204 },
+    });
+    show();
+    const group = await askDisconnect();
+    expect(group).toHaveTextContent("¿Desconectar «Tienda Lima»?");
+    expect(group).toHaveTextContent("Reconectarla es crear una cuenta nueva.");
+    await waitFor(() =>
+      expect(within(group).getByRole("button", { name: "Cancelar" })).toHaveFocus(),
+    );
+    fireEvent.click(within(group).getByRole("button", { name: "Cancelar" })); // no hace nada
+    expect(sent(api).filter((call) => call.method === "DELETE")).toEqual([]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Desconectar" })).toHaveFocus());
+    const again = await askDisconnect();
+    fireEvent.click(within(again).getByRole("button", { name: "Sí, desconectar" }));
+    await waitFor(() => expect(screen.queryByText("Tienda Lima")).toBeNull()); // la lista nueva
+    expect(sent(api).filter((call) => call.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("la confirmación aísla el nombre de la cuenta: un carácter de dirección no reordena la pregunta", async () => {
+    mockApi({ [LIST]: page([account("a1", { name: "Tienda‮abc" })]) });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+    const group = await screen.findByRole("group", { name: /^Desconectar / });
+    const bdi = group.querySelector("p bdi")!;
+    expect(bdi.textContent).toBe("Tienda‮abc");
+    expect(bdi).toHaveAttribute("dir", "auto");
+  });
+
+  it.each([
+    [404, "NOT_FOUND", "Esa cuenta ya no existe. Actualizamos la lista."],
+    [403, "PERMISSION_DENIED", "No tienes permiso para gestionar los canales."],
+    [
+      500,
+      "CODIGO_NUEVO_DEL_SERVIDOR",
+      "Algo salió mal de nuestro lado. Inténtalo de nuevo en unos minutos.",
+    ],
+  ])("desconectar: un %i %s se explica por su código", async (status, code, text) => {
+    const api = mockApi({
+      [LIST]: page([wa]),
+      [DISCONNECT]: { status, body: { code, detail: "TEXTO AJENO" } },
+    });
+    show();
+    const group = await askDisconnect();
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
+    expect(await screen.findByText(text)).toBeVisible();
+    // solo un 404 (la cuenta ya no está) vuelve a leer la lista
+    if (status === 404) await waitFor(() => expect(listReads(api)).toBe(2));
+    else expect(listReads(api)).toBe(1);
+    expect(document.body.textContent).not.toContain("TEXTO AJENO");
+    expect(document.body.textContent).not.toContain("CODIGO_NUEVO");
+  });
+
+  it("la Sandbox y una lista sin permiso no ofrecen acciones", async () => {
+    mockApi({ [LIST]: page([sandbox]) });
+    show();
+    const card = (await screen.findByText("Canal de pruebas", { exact: false })).closest("li")!;
+    expect(within(card).queryByRole("button")).toBeNull();
+    cleanup();
+    mockApi({ [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
+    show();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No tienes permiso para ver los canales",
+    );
+    expect(screen.queryByRole("button", { name: "Rotar token" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Desconectar" })).toBeNull();
   });
 });
