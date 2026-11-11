@@ -71,6 +71,34 @@ describe("salud de la cuenta (F7-07d)", () => {
     expect(steps({ token_last_four: null })[0]).toEqual(["Falta un token válido", "text-danger"]);
   });
 
+  it("DEGRADED por QUALITY_LOW avisa de la calidad aunque la última comprobación diga buena", () => {
+    expect(
+      steps({ status: "DEGRADED", status_detail: "QUALITY_LOW", quality_rating: "GREEN" })[2],
+    ).toEqual(["La calidad del número bajó", "text-danger"]);
+    expect(steps({ status: "DEGRADED", status_detail: "QUALITY_LOW" })[2]).toEqual([
+      "La calidad del número bajó",
+      "text-danger",
+    ]);
+  });
+
+  it("calidad media o baja avisa también sin el motivo de la cuenta", () => {
+    for (const quality of ["YELLOW", "RED"] as const) {
+      expect(steps({ status: "CONNECTED", quality_rating: quality })[2]).toEqual([
+        "La calidad del número bajó",
+        "text-danger",
+      ]);
+    }
+  });
+
+  it("un estado que la pantalla no conoce no la rompe ni enseña el valor crudo", () => {
+    for (const status of ["SUSPENDED", "constructor", "toString"]) {
+      renderIntl(<StatusMark status={status as ChannelAccount["status"]} />);
+      expect(screen.getByText("Estado desconocido")).toBeVisible();
+      expect(document.body.textContent).not.toContain(status);
+      cleanup();
+    }
+  });
+
   it("cada estado se dice con texto y con su icono", () => {
     const expected = {
       PENDING: ["Pendiente", "text-muted"],

@@ -23,11 +23,14 @@ const STATE = {
 // El estado de la cuenta, con su icono.
 export function StatusMark({ status }: { status: ChannelAccount["status"] }) {
   const t = useTranslations("channels");
-  const { Icon, tone } = STATUS[status];
+  // Un estado que esta versión no conoce (la API puede crecer antes que la pantalla) no la rompe:
+  // se dice como desconocido, con el icono de «esperando». Solo claves propias: `Object.hasOwn`.
+  const known = Object.hasOwn(STATUS, status);
+  const { Icon, tone } = known ? STATUS[status] : STATUS.PENDING;
   return (
     <p className="flex items-center gap-1.5 text-sm font-medium">
       <Icon aria-hidden className={cn("size-4 shrink-0", tone)} />
-      {t(`status.${status}`)}
+      {t(known ? `status.${status}` : "status.UNKNOWN")}
     </p>
   );
 }
@@ -47,8 +50,14 @@ export function Checklist({ account }: { account: ChannelAccount }) {
     { key: "webhook", state: detail === "WEBHOOK_NOT_SEEN" ? "wait" : "ok" },
     {
       key: "quality",
+      // `QUALITY_LOW` (la cuenta quedó `DEGRADED` porque Meta rechazó un envío por la calidad) avisa
+      // aunque la última comprobación aún diga «buena»: no se contradice con el motivo de arriba.
       state:
-        quality === "GREEN" ? "ok" : quality === "YELLOW" || quality === "RED" ? "warn" : "wait",
+        detail === "QUALITY_LOW" || quality === "YELLOW" || quality === "RED"
+          ? "warn"
+          : quality === "GREEN"
+            ? "ok"
+            : "wait",
     },
   ] as const;
   return (

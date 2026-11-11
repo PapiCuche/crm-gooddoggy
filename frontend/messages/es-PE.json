@@ -2318,7 +2318,8 @@
       "CONNECTED": "Conectada",
       "DEGRADED": "Con problemas",
       "DISCONNECTED": "Desconectada",
-      "ERROR": "Con error"
+      "ERROR": "Con error",
+      "UNKNOWN": "Estado desconocido"
     },
     "detail": {
       "TOKEN_INVALID": "El token ya no es válido: rótalo para volver a enviar y recibir.",
