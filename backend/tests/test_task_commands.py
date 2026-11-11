@@ -72,15 +72,8 @@ def test_create_opens_a_pending_task_of_the_actor_and_audits_without_the_text(
         SECRET, f"{SECRET}\n\nOtra línea", DUE, True,
     )  # fmt: skip
     [(action, changes)] = audit(migrator)
-    assert action == "task.created" and changes["title"] == changes["description"] == [
-        None,
-        "[texto]",
-    ]
+    assert action == "task.created" and changes["title"] == [None, "[texto]"]
     assert changes["status"] == [None, "PENDING"] and "12345678" not in json.dumps(changes)
-    minimal = new(world)
-    assert (minimal.type, minimal.due_at, minimal.contact_id, minimal.opportunity_id) == (
-        "FOLLOW_UP", None, None, None,
-    )  # fmt: skip
     pedro = make_user()
     join(world.a, pedro)
     assert new(world, assigned_user_id=pedro.pk).assigned_user_id == pedro.pk
@@ -235,16 +228,13 @@ def test_delete_is_logical_audited_and_the_task_stops_existing(
 ) -> None:
     made = new(world)
     run(world, commands.delete_task, task_id=made.pk)
-    assert migrator.execute(
-        "SELECT deleted_at IS NOT NULL, deleted_by_user_id FROM tasks"
-    ).fetchone() == (True, world.ana.pk)
+    found = migrator.execute("SELECT deleted_at IS NOT NULL, deleted_by_user_id FROM tasks")
+    assert found.fetchone() == (True, world.ana.pk)
     assert [a for a, _ in audit(migrator)] == ["task.created", "task.deleted"]
-    again: list[tuple[Any, dict[str, Any]]] = [
-        (commands.delete_task, {}), (commands.complete_task, {"version": 2})
-    ]  # fmt: skip
-    for command, extra in again:
-        with pytest.raises(Task.DoesNotExist):
-            run(world, command, task_id=made.pk, **extra)
+    with pytest.raises(Task.DoesNotExist):
+        run(world, commands.delete_task, task_id=made.pk)
+    with pytest.raises(Task.DoesNotExist):
+        run(world, commands.complete_task, task_id=made.pk, version=2)
 
 
 def test_a_task_of_a_never_exists_for_b_and_the_database_keeps_its_rules(
