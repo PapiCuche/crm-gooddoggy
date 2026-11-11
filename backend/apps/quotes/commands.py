@@ -8,7 +8,8 @@ Los precios salen del `PricingService` (ADR-006): una variante sin precio vigent
 quien actúa no ve, es un `BadReference`; nada se estima. Cada línea congela el nombre, el SKU, el
 precio de lista, la promoción y el precio final; los importes son `Decimal` con dos decimales y los
 precios llevan IGV (D-PRC-1): `total` es lo que paga el cliente y `tax_total` el IGV que lleva.
-Bloqueos: contacto y oportunidad (`FOR NO KEY UPDATE`), la cotización, la membresía de quien actúa.
+Bloqueos: contacto y oportunidad (`FOR NO KEY UPDATE`) y la cotización. La membresía de quien actúa
+no se bloquea: la FK compuesta de la autoría la rechaza (`BadReference`) si no es miembro.
 """
 
 import datetime as dt
@@ -139,7 +140,7 @@ def _lines(
 ) -> tuple[list[dict[str, Any]], PriceResolution]:
     """Las líneas con su precio y su snapshot, en una sola resolución del `PricingService` (la
     lista, el instante y las promociones son los mismos para todas). `BadReference` si la lista no
-    se ve o una variante no tiene precio vigente."""
+    se ve o no lleva el IGV incluido, o una variante no tiene precio vigente."""
     ids = [variant for variant, _ in wanted]
     try:
         found = resolve_many(execution_context(ctx), ids, price_list_id)
@@ -153,6 +154,8 @@ def _lines(
         price = found[variant]
         if not price.found or variant not in variants:
             raise BadReference("variant_id")
+        if price.tax_included is not True:  # D-PRC-1: solo se cotiza con IGV incluido
+            raise BadReference("price_list_id")
         assert price.base_amount is not None and price.final_amount is not None  # noqa: S101
         rows.append({
             "sort_order": order, "variant_id": variant, "quantity": quantity,

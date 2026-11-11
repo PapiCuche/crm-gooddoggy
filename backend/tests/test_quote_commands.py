@@ -3,6 +3,7 @@ rol `crm_app`, también con transacciones a la vez. Sin API: llega con F5-09d y 
 
 import json
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from functools import partial
@@ -19,6 +20,8 @@ from apps.contacts.commands import delete_contact
 from apps.contacts.models import Contact
 from apps.deals.models import Opportunity
 from apps.deals.opportunities import delete_opportunity
+from apps.pricing import services as pricing_services
+from apps.pricing.models import PriceList
 from apps.quotes import commands
 from apps.quotes.commands import BadReference, QuoteNotDraft, QuoteTerminal, StaleVersion
 from apps.quotes.models import Quote, QuoteItem
@@ -433,3 +436,48 @@ def test_the_totals_of_a_quote_always_agree_with_its_lines_after_every_command(
                                            for r in rows)  # fmt: skip
         assert all(r.line_total == r.quantity * r.final_unit_price for r in rows)
         assert all(r.discount_amount == 0 and r.unit_price == r.final_unit_price for r in rows)
+
+
+def test_a_price_that_is_not_tax_included_is_never_quoted_as_if_it_were(
+    shop: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, migrator: DB
+) -> None:
+    """D-PRC-1: los precios llevan IGV; si el motor dijera otra cosa, falla cerrada."""
+    real = pricing_services.resolve_many
+
+    def not_included(*args: Any, **kwargs: Any) -> Any:
+        return {k: replace(v, tax_included=flag) for flag in (False,) for k, v in
+                real(*args, **kwargs).items()}  # fmt: skip
+
+    monkeypatch.setattr(commands, "resolve_many", not_included)
+    with pytest.raises(BadReference) as refused:
+        new(shop)
+    assert refused.value.field == "price_list_id"
+    assert migrator.execute("SELECT count(*) FROM quotes").fetchone() == (0,)
+
+
+def test_without_a_price_list_and_without_a_default_one_the_error_names_the_list(
+    shop: SimpleNamespace,
+) -> None:
+    with tenant_scope(ctx(shop.a)):
+        PriceList.objects.filter(pk=shop.listed).update(is_default=False)
+    with pytest.raises(BadReference) as refused:
+        new(shop)  # sin `price_list_id` y sin predeterminada
+    assert refused.value.field == "price_list_id"
+    assert new(shop, price_list_id=shop.listed).price_list_id == shop.listed
+
+
+def test_the_largest_amount_that_fits_is_quoted_and_the_first_one_past_it_is_a_value_error(
+    shop: SimpleNamespace,
+) -> None:
+    huge, half = item(shop.a, "HUGE"), item(shop.a, "HALF")
+    row(shop.a, (huge, shop.listed), "999999999999.99", LONG_AGO)
+    row(shop.a, (half, shop.listed), "500000000000", LONG_AGO)
+    assert new(shop, items=lines((huge, 1))).total == Decimal("999999999999.99")  # cabe
+    with pytest.raises(ValueError, match="máximo"):  # 2 x 500.000.000.000 = 10^12, ya no cabe
+        new(shop, items=lines((half, 2)))
+    made = new(shop, items=lines((half, 1)))
+    with pytest.raises(ValueError, match="máximo"):  # tampoco al cambiar las líneas
+        move(shop, commands.update_quote, made, items=lines((half, 2)))
+    assert (
+        move(shop, commands.update_quote, made, items=lines((half, 1), (shop.case, 1))).version == 2
+    )
