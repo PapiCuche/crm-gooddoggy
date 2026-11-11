@@ -68,6 +68,10 @@ TENANT_TABLES = (
 # F5-03 y F6-06b: delante de todo lo que referencian (etapas, motivos, contactos, variantes,
 # membresías y, desde F6-06b, las conversaciones: por eso van delante de ellas)
 TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
+TENANT_TABLES = (
+    "tasks",
+    *TENANT_TABLES,
+)  # F5-08a: delante de contactos, oportunidades y membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
@@ -176,3 +180,10 @@ def orgs(tenant_db: None, migrator: psycopg.Connection[Any]) -> dict[str, UUID]:
             [ids[f"widget_{org}"], ids[org], f"widget {org}"],
         )
     return ids
+
+
+@pytest.fixture(autouse=True)
+def no_realtime_broker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin broker, encolar el handler del WS del Inbox (F6-07a) dejaría eventos pendientes."""
+    target = "apps.conversations.tasks.publish_realtime.apply_async"
+    monkeypatch.setattr(target, lambda *args, **kwargs: None)

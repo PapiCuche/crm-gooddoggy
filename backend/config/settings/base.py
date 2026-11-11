@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.pricing",
     "apps.deals",
     "apps.conversations",
+    "apps.tasks",
 ]
 
 MIDDLEWARE = [
@@ -116,6 +117,21 @@ TENANCY_ORGANIZATION_SELECTOR = "apps.organizations.selectors.organization_by_sl
 TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  # F2-02
 # Celery (F1-10): broker Redis por entorno (compose: redis://redis:6379/0).
 CELERY_BROKER_URL = env.optional("CELERY_BROKER_URL", "")
+# Capa de canales (F6-07a): Redis; sin URL, el WebSocket del Inbox no abre (1013). Test: memoria.
+CHANNEL_LAYER_REDIS_URL = env.optional("CHANNEL_LAYER_REDIS_URL", CELERY_BROKER_URL)
+_HOST = {"address": CHANNEL_LAYER_REDIS_URL, "socket_connect_timeout": 5, "socket_timeout": 15}
+_REDIS = {"hosts": [_HOST], "expiry": 30, "capacity": 200}
+CHANNEL_LAYERS = (
+    {"default": {"BACKEND": "channels_redis.core.RedisChannelLayer", "CONFIG": _REDIS}}
+    if CHANNEL_LAYER_REDIS_URL
+    else {}
+)
+# WebSocket del Inbox: tope por persona y proceso, trama máxima, inactividad y revisión (segundos).
+INBOX_WS_MAX_PER_USER = 8
+INBOX_WS_MAX_FRAME = 1024
+INBOX_WS_IDLE_SECONDS = 90.0
+INBOX_WS_RECHECK_SECONDS = 60.0
+INBOX_WS_TICK_SECONDS = 5.0
 # F6-04b: minutos que un mensaje saliente puede seguir en cola antes de que el barredor lo recoja.
 INBOX_SWEEP_AFTER_MINUTES = env.integer("INBOX_SWEEP_AFTER_MINUTES", 5)
 # ...y a partir de cuántos el barredor lo da por fallido (un tope a los reintentos sin fin).

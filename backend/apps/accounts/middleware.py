@@ -13,11 +13,13 @@
   no coincide, se destruye (D-F2-11). Una sesión sin época (anterior a F2-20) cuenta como de
   la época 0: vale hasta la primera revocación. El usuario ya está cargado: sin otra consulta.
 
-Solo cubre HTTP: una conexión WebSocket deberá comprobar lo mismo al abrirse (OBS-F2-03C-1).
+La caducidad absoluta, el usuario activo y la revocación las comparte `is_current` con el
+WebSocket del Inbox (`apps.accounts.websocket`, OBS-F2-03C-1).
 """
 
 import time
 from collections.abc import Callable
+from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import SESSION_KEY
@@ -28,6 +30,15 @@ from django.utils.cache import patch_vary_headers
 from django.utils.http import http_date
 
 from apps.accounts.services import AUTH_AT, EPOCH, SEEN_AT
+
+
+def is_current(session: Any, user: Any, now: int) -> bool:
+    """¿Sigue vigente? No vencida (absoluta), usuario activo y misma época (D-F2-11)."""
+    started = session.get(AUTH_AT)
+    age = now - started if isinstance(started, int) else settings.SESSION_ABSOLUTE_AGE
+    if age >= settings.SESSION_ABSOLUTE_AGE or not user.is_authenticated:
+        return False
+    return bool(session.get(EPOCH, 0) == user.session_epoch)
 
 
 def _end(request: HttpRequest) -> None:
@@ -59,13 +70,9 @@ class SessionLifetimeMiddleware:
     def __call__(self, request: HttpRequest) -> HttpResponseBase:
         session, renewed = request.session, False
         if SESSION_KEY in session:  # una sesión de usuario, siga valiendo o no
-            now, started, seen = int(time.time()), session.get(AUTH_AT), session.get(SEEN_AT)
-            age = now - started if isinstance(started, int) else settings.SESSION_ABSOLUTE_AGE
-            user = request.user
-            if age >= settings.SESSION_ABSOLUTE_AGE or not user.is_authenticated:
-                _end(request)
-            elif session.get(EPOCH, 0) != user.session_epoch:  # revocada (D-F2-11)
-                _end(request)
+            now, seen = int(time.time()), session.get(SEEN_AT)
+            if not is_current(session, request.user, now):
+                _end(request)  # vencida, sin usuario activo o revocada (D-F2-11)
             elif not isinstance(seen, int) or now - seen >= settings.SESSION_REFRESH_INTERVAL:
                 session[SEEN_AT] = now
                 try:
