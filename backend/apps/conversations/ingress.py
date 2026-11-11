@@ -21,7 +21,7 @@ from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
 from apps.audit.services import Entity, record
-from apps.conversations import inbound
+from apps.conversations import delivery, inbound
 from apps.conversations.models import ChannelAccount
 from core.observability.logging import get_logger
 from core.tenancy.context import ActorType, TenantContext
@@ -32,6 +32,7 @@ PROVIDER = "meta"
 LEASE_SECONDS = 60  # el reclamo caduca: un proceso que muere no deja el ítem para siempre
 BROKER_WAIT = 3  # segundos que la ruta pública espera a un broker que no contesta
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
+UNKNOWN_AFTER = 3  # intentos tras los que un estado sin mensaje se cierra como `IGNORED`
 WAKE_EVERY = 1.0  # segundos entre dos avisos de un mismo proceso: el resto lo recoge el barrido
 _last_wake = 0.0
 _now = time.monotonic  # separado para que una prueba mueva el reloj
@@ -169,6 +170,15 @@ def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
         seen(context, account)
         if item.kind == "message" and (reason := inbound.receive(context, account, item.payload)):
             return "IGNORED", organization_id, account_id, reason
+        if item.kind == "status":
+            try:
+                if reason := delivery.apply(context, account, item.payload):
+                    return "IGNORED", organization_id, account_id, reason
+            except delivery.NotYet:  # `seen` vale; el reintento cubre solo la carrera con el envío
+                if item.attempts >= UNKNOWN_AFTER:  # un mensaje que no salió por el CRM: se cierra
+                    logger.info("meta.webhook.status_unknown_message")  # y su payload se vacía
+                    return "IGNORED", organization_id, account_id, "UNKNOWN_MESSAGE"
+                return "FAILED", None, None, "MESSAGE_NOT_FOUND"
     return "PROCESSED", organization_id, account_id, None
 
 
