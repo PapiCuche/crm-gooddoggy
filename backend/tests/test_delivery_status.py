@@ -10,13 +10,13 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
-from apps.conversations import ingress, tasks
+from apps.conversations import delivery, ingress, tasks
 from apps.conversations.models import ChannelAccount, Message
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
-from tests.test_conversation_commands import audit, world, writer
+from tests.test_conversation_commands import audit, outbound, world, writer
 from tests.test_conversations_dispatch import deliveries, state
 from tests.test_memberships import ctx
 from tests.test_meta_webhook import channel, post
@@ -294,3 +294,47 @@ def test_the_trigger_lets_only_an_unknown_failure_become_delivered_and_never_go_
     with pytest.raises(Exception, match="solo avanza"):  # y desde ahí, `FAILED` ya no
         migrator.execute(update, ["FAILED", "WINDOW_CLOSED", message.pk])
     migrator.rollback()
+
+
+def test_the_opaque_data_never_reconciles_a_queued_or_a_definitively_failed_message(
+    world: SimpleNamespace, graph: Any, migrator: Any
+) -> None:
+    """Solo un `SENDING` (o el que cerró el plazo) sin `wamid`: un `delivered` no puede dar por
+    entregado lo que nunca salió."""
+    convo = talk(world)
+    queued, _ = outbound(world, convo)
+    refused, _ = outbound(world, convo)
+    migrator.execute(
+        "UPDATE messages SET delivery_status = 'FAILED', provider_error_code = 'RETRIES_EXHAUSTED' "
+        "WHERE id = %s", [refused.pk])  # fmt: skip
+    for n, message in enumerate((queued, refused)):
+        status = webhooks.status(f"wamid.NEVER{n}", "delivered", opaque=str(message.pk))
+        assert run(status) == {"FAILED": 1}
+        migrator.execute("UPDATE webhook_ingress SET status = 'PROCESSED', payload = NULL")
+    assert stamp(world, queued).delivery_status == "QUEUED"
+    assert stamp(world, refused).provider_error_code == "RETRIES_EXHAUSTED"
+    assert stamp(world, queued).external_message_id is None
+
+
+def test_a_failed_status_after_the_deadline_leaves_the_unknown_reason_alone(
+    world: SimpleNamespace, graph: Any, migrator: Any
+) -> None:
+    graph.then("cut_after")
+    unknown, _ = send(world, talk(world))
+    migrator.execute("UPDATE messages SET sending_at = now() - interval '1 hour'")
+    assert tasks.sweep_sending() == 1
+    assert run(webhooks.status(WAMID, "failed", opaque=str(unknown.pk), error=(131047, "x"))) == {
+        "PROCESSED": 1
+    }  # ni error ni cambio: el único camino fuera de `FAILED` es hacia lo entregado
+    saved = stamp(world, unknown)
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "PROVIDER_UNKNOWN")
+
+
+@pytest.mark.parametrize(
+    ("code", "own"),
+    [(132000, "TEMPLATE_UNAVAILABLE"), (132999, "TEMPLATE_UNAVAILABLE"),
+     (133000, "PROVIDER_REJECTED"), (131999, "PROVIDER_REJECTED"), (True, "PROVIDER_REJECTED"),
+     ("190", "PROVIDER_REJECTED"), (None, "PROVIDER_REJECTED"), (2, "PROVIDER_ERROR")],
+)  # fmt: skip
+def test_the_error_table_edges_and_a_code_that_is_not_a_number(code: Any, own: str) -> None:
+    assert delivery.code_for(code) == own
