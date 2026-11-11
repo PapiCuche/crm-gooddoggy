@@ -8,6 +8,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CustomerOpportunities } from "@/components/deals/customer-opportunities";
+import { LinkedTasks } from "@/components/tasks/linked-tasks";
 import { Button } from "@/components/ui/button";
 import { contactsRetrieve, getContactsRetrieveQueryKey } from "@/lib/api/client";
 import type { Contact } from "@/lib/api/model";
@@ -19,7 +20,7 @@ import { useContactNames } from "./contact-names";
 import { ContactNotes } from "./contact-notes";
 import { ContactTags } from "./contact-tagging";
 
-type Tab = "summary" | "notes" | "opportunities";
+type Tab = "summary" | "notes" | "opportunities" | "tasks";
 const BOX = "border-border bg-surface flex flex-col gap-4 rounded-lg border p-4";
 
 // La ficha del cliente (F4-06), de solo lectura, con `GET /api/v1/o/{slug}/contacts/{id}/`.
@@ -36,10 +37,12 @@ export function ContactCard({ contactId }: { contactId: string }) {
   const held = (code: string) => permissions.some((grant) => grant.code === code);
   const notes = held("contacts.view");
   const deals = held("opportunities.view");
+  const tasks = held("tasks.view");
   const order: readonly Tab[] = [
     "summary",
     ...(notes ? ["notes" as const] : []),
     ...(deals ? ["opportunities" as const] : []),
+    ...(tasks ? ["tasks" as const] : []),
   ];
   const { owner, branch } = useContactNames("contacts.card");
   const card = useQuery<Contact, ApiError>({
@@ -223,6 +226,18 @@ export function ContactCard({ contactId }: { contactId: string }) {
             {seen.includes("opportunities") ? (
               <CustomerOpportunities contactId={contactId} contactName={contact.display_name} />
             ) : null}
+          </div>
+        ) : null}
+        {tasks ? (
+          <div
+            role="tabpanel"
+            tabIndex={0}
+            id={`${id}-tasks-panel`}
+            aria-labelledby={`${id}-tasks-tab`}
+            hidden={tab !== "tasks"}
+            className="flex flex-col gap-4"
+          >
+            {seen.includes("tasks") ? <LinkedTasks link={{ contact_id: contactId }} /> : null}
           </div>
         ) : null}
       </>

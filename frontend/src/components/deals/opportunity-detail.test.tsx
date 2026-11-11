@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, configure, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
@@ -132,6 +132,26 @@ afterEach(() => {
 });
 
 describe("OpportunityDetail (F5-07)", () => {
+  it("con tasks.view enseña las tareas de esa oportunidad; sin él, no las pide", async () => {
+    configure({ asyncUtilTimeout: 4000 }); // varios pasos seguidos: con la máquina cargada, más margen
+    const TASKS = `GET /api/v1/o/acme/tasks/?opportunity_id=${ID}&limit=200`;
+    const row = { id: "t1", type: "CALL", title: "Enviar la cotización", description: "" };
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [TASKS]: ok({
+        results: [{ ...row, due_at: null, is_all_day: false, status: "PENDING", priority: "HIGH" }],
+        next: null,
+      }),
+    });
+    show();
+    await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" });
+    expect(api.mock.calls.some(([url]) => String(url).includes("/tasks/"))).toBe(false);
+    cleanup();
+    show(["opportunities.view", "tasks.view"]);
+    expect(await screen.findByText("Enviar la cotización")).toBeVisible();
+  });
+
   it("enseña el cliente con su ficha, el importe, la etapa, el responsable, las líneas y el historial", async () => {
     mockApi({ [DETAIL]: ok(detail()), [PIPELINES]: pipelines });
     show();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dayRange, instantAt } from "./task-time";
+import { dayRange, fieldsOf, instantAt } from "./task-time";
 
 describe("instantes de las tareas", () => {
   it("las 00:00 de un día en Lima son las 05:00 UTC", () => {
@@ -20,5 +20,12 @@ describe("instantes de las tareas", () => {
     );
     const { start, next } = dayRange(Date.parse("2026-10-04T05:00:00Z"), "Australia/Sydney");
     expect((next - start) / 3_600_000).toBe(23);
+  });
+
+  it("los campos del formulario son la fecha y la hora de la zona", () => {
+    expect(fieldsOf(Date.parse("2026-11-12T03:05:00Z"), "America/Lima")).toEqual({
+      date: "2026-11-11",
+      time: "22:05",
+    });
   });
 });
