@@ -72,6 +72,8 @@ TENANT_TABLES = (
     "tasks",
     *TENANT_TABLES,
 )  # F5-08a: delante de contactos, oportunidades y membresías
+# F5-09a: delante de contactos, oportunidades, listas, variantes y membresías
+TENANT_TABLES = ("quote_items", "quotes", *TENANT_TABLES)
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 
