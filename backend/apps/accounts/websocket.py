@@ -1,7 +1,6 @@
 """Autenticación de un WebSocket por la cookie de sesión (ADR-003 §6): la misma sesión que HTTP
-(fila de `django_session` y reglas de `is_current`), nunca un token en la URL. Solo lee: no renueva
-la caducidad. Una sesión que no vale es un usuario anónimo, sin distinguir por qué. Ni la cookie ni
-la clave de sesión se registran."""
+(`django_session` e `is_current`), nunca un token en la URL; solo lee. Una sesión que no vale es un
+usuario anónimo. Ni la cookie ni la clave de sesión se registran."""
 
 import re
 import time
@@ -39,8 +38,7 @@ def cookie_value(scope: dict[str, Any]) -> str | None:
 
 
 class ExactOriginValidator(OriginValidator):  # type: ignore[misc]
-    """`OriginValidator` que rechaza, en vez de fallar, un `Origin` mal formado (puerto fuera de
-    rango o no numérico, dirección entre corchetes rota): `urlparse` lanza `ValueError`."""
+    """`OriginValidator` que rechaza un `Origin` mal formado (`urlparse` lanza `ValueError`)."""
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> Any:
         for name, value in scope.get("headers", ()):

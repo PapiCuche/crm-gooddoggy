@@ -19,8 +19,7 @@ from apps.accounts.websocket import ExactOriginValidator, SessionAuthMiddleware 
 from apps.conversations.realtime import InboxConsumer  # noqa: E402
 
 # Rutas WS de tenant (`/ws/o/<org_slug>/…`, consumers con TenantConsumerMixin): llegan con sus
-# módulos. Origen (esquema, host y puerto exactos de APP_ORIGIN o CSRF_TRUSTED_ORIGINS; sin
-# `Origin`, rechazo) y después la sesión por la cookie (ADR-003 §6).
+# módulos. Origen exacto (APP_ORIGIN o CSRF_TRUSTED_ORIGINS), luego la sesión (ADR-003 §6).
 websocket_urlpatterns: list[object] = [
     path("ws/o/<slug:org_slug>/inbox/", InboxConsumer.as_asgi()),  # F6-07a
 ]

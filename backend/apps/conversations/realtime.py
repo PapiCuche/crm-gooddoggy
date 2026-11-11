@@ -77,7 +77,6 @@ def publish(organization_id: UUID, message: dict[str, Any]) -> bool:
 class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignore[misc]
     user_id: UUID | None = None
     watcher: asyncio.Task[None] | None = None
-    counted = False
     closed = False
     last_seen = 0.0
 
@@ -109,7 +108,6 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
             return
         self.user_id = tenant.user_id
         _open[self.user_id] += 1  # se reserva sin un `await` tras comprobar el tope
-        self.counted = True
         await layer.group_add(group_name(tenant.organization_id), self.channel_name)
         self.last_seen = time.monotonic()
         await self.accept()
@@ -117,7 +115,6 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
 
     @staticmethod
     def _may_view() -> bool:
-        """¿Es miembro activo y tiene el permiso, ahora?"""
         try:
             return has_permission(execution_context(require()), VIEW)
         except AccessDenied:
@@ -220,8 +217,8 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
             if self.watcher is not asyncio.current_task():
                 self.watcher.cancel()
             self.watcher = None
-        if self.counted and self.user_id is not None:
-            self.counted = False
-            _open[self.user_id] -= 1
+        if self.user_id is not None:
+            _open.subtract([self.user_id])
             if _open[self.user_id] <= 0:
                 del _open[self.user_id]
+            self.user_id = None

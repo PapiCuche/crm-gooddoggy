@@ -33,8 +33,7 @@ from apps.accounts.services import AUTH_AT, EPOCH, SEEN_AT
 
 
 def is_current(session: Any, user: Any, now: int) -> bool:
-    """¿Sigue vigente la sesión de `user`? No vencida (absoluta; sin marca de inicio, vencida),
-    con un usuario activo y de la misma época (D-F2-11). La inactividad la decide la fila."""
+    """¿Sigue vigente? No vencida (absoluta), usuario activo y misma época (D-F2-11)."""
     started = session.get(AUTH_AT)
     age = now - started if isinstance(started, int) else settings.SESSION_ABSOLUTE_AGE
     if age >= settings.SESSION_ABSOLUTE_AGE or not user.is_authenticated:
