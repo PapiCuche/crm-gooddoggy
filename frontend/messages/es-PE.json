@@ -2327,14 +2327,16 @@
     "sandbox": "Canal de pruebas: no sale a ningún proveedor. Sirve para probar el Inbox con mensajes simulados.",
     "platform": {
       "SANDBOX": "Sandbox",
-      "WHATSAPP": "WhatsApp"
+      "WHATSAPP": "WhatsApp",
+      "UNKNOWN": "Otro canal"
     },
     "status": {
       "PENDING": "Pendiente",
       "CONNECTED": "Conectada",
       "DEGRADED": "Con problemas",
       "DISCONNECTED": "Desconectada",
-      "ERROR": "Con error"
+      "ERROR": "Con error",
+      "UNKNOWN": "Estado desconocido"
     },
     "detail": {
       "TOKEN_INVALID": "El token ya no es válido: rótalo para volver a enviar y recibir.",
@@ -2342,17 +2344,23 @@
       "QUALITY_LOW": "Meta bajó la calidad del número.",
       "LIMIT_REACHED": "Se alcanzó el límite de mensajería.",
       "DISCONNECTED_BY_ADMIN": "La desconectó un administrador.",
-      "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación."
+      "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación.",
+      "UNKNOWN": "La cuenta informa de un motivo que esta versión no conoce."
     },
     "checklist": {
       "label": "Lo que falta para usar la cuenta",
       "token": {
         "ok": "Token válido",
-        "missing": "Falta un token válido"
+        "bad": "Falta un token válido"
       },
       "webhook": {
         "ok": "Mensajes de Meta recibidos",
-        "missing": "Falta recibir el primer mensaje de Meta"
+        "wait": "Falta recibir el primer mensaje de Meta"
+      },
+      "quality": {
+        "ok": "Calidad del número buena",
+        "warn": "La calidad del número bajó",
+        "wait": "Falta la primera comprobación de calidad"
       }
     },
     "fields": {
