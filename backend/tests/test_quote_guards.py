@@ -445,7 +445,9 @@ def test_the_legal_paths_and_the_open_request_go_together(world: SimpleNamespace
     decide(
         world, asked, status="REJECTED", decided_by_user_id=boss.pk, decided_at=now, comment="Baja"
     )
-    fails(world, "needs an approved request", lambda: go(world, made, "APPROVED"))  # rechazada
+    fails(
+        world, "needs the latest request approved", lambda: go(world, made, "APPROVED")
+    )  # rechazada
     go(world, made, "DRAFT")  # el rechazo la devuelve al borrador
     again = approval(world, made)
     go(world, made, "PENDING_APPROVAL")
@@ -453,6 +455,20 @@ def test_the_legal_paths_and_the_open_request_go_together(world: SimpleNamespace
     go(world, made, "APPROVED", "SENT", "VIEWED", "ACCEPTED")
     direct = quote(world, number="COT-900400")  # dentro del límite: sin solicitud
     go(world, direct, "APPROVED", "SENT")
+
+
+def test_an_old_approval_does_not_approve_a_later_request(
+    world: SimpleNamespace, boss: Any
+) -> None:
+    made, now = quote(world), timezone.now()
+    first = approval(world, made)
+    go(world, made, "PENDING_APPROVAL")
+    decide(world, first, status="APPROVED", decided_by_user_id=boss.pk, decided_at=now)
+    go(world, made, "DRAFT")  # se edita después de aprobada: hace falta otra solicitud
+    second = approval(world, made)
+    go(world, made, "PENDING_APPROVAL")
+    decide(world, second, status="CANCELLED", decided_at=now)  # el sistema la retira
+    fails(world, "latest request approved", lambda: go(world, made, "APPROVED"))  # la vieja no vale
 
 
 def test_a_draft_with_an_open_request_cannot_skip_to_approved_or_sent(

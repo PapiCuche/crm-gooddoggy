@@ -81,10 +81,11 @@ BEGIN
     {_fail("quotes_pending_approval", "quotes: decide the open request first")}
   END IF;
   IF OLD.status = 'PENDING_APPROVAL' AND NEW.status = 'APPROVED' THEN
-    SELECT EXISTS (SELECT 1 FROM quote_approvals a WHERE a.organization_id = NEW.organization_id
-                   AND a.quote_id = NEW.id AND a.status = 'APPROVED') INTO approved;
-    IF NOT approved THEN
-      {_fail("quotes_needs_approval", "quotes: APPROVED needs an approved request")}
+    SELECT a.status = 'APPROVED' INTO approved FROM quote_approvals a  -- la última solicitud
+     WHERE a.organization_id = NEW.organization_id AND a.quote_id = NEW.id
+     ORDER BY a.created_at DESC, a.id DESC LIMIT 1;
+    IF approved IS NOT TRUE THEN
+      {_fail("quotes_needs_approval", "quotes: APPROVED needs the latest request approved")}
     END IF;
   END IF;
   RETURN NEW;
