@@ -18,8 +18,10 @@ const tenant: SelfContext = {
   permissions: [{ code: "tasks.view", scopes: [] }],
 };
 const URL = "GET /api/v1/o/acme/tasks/?mine=true&overdue=true&limit=100";
-const task = (due_at: string, is_all_day: boolean) =>
+const due = (due_at: string, is_all_day = false) =>
   ({ id: due_at, status: "PENDING", due_at, is_all_day }) as Task;
+const serve = (results: Task[], next: string | null = null, status = 200) =>
+  mockApi({ [URL]: { status, body: status === 200 ? { results, next } : { code: "X" } } });
 const show = () =>
   renderApp(
     <TenantProvider value={tenant}>
@@ -36,39 +38,27 @@ afterEach(() => {
 
 describe("contador de vencidas del menú", () => {
   it("cuenta las vencidas sin las de todo el día de hoy y lo dice también a los lectores", async () => {
-    mockApi({
-      [URL]: {
-        status: 200,
-        body: {
-          results: [
-            task("2026-11-10T05:00:00Z", true),
-            task("2026-11-11T14:00:00Z", false),
-            task("2026-11-11T05:00:00Z", true), // hoy: aún no vence
-          ],
-          next: null,
-        },
-      },
-    });
+    // ayer (todo el día), hoy a las 09:00 de Lima, y hoy (todo el día): aún no vence
+    serve([
+      due("2026-11-10T05:00:00Z", true),
+      due("2026-11-11T14:00:00Z"),
+      due("2026-11-11T05:00:00Z", true),
+    ]);
     show();
     expect(await screen.findByText("2")).toBeVisible();
     expect(screen.getByText(/2 tareas vencidas/)).toBeInTheDocument();
   });
 
   it("con más de una página añade «+»; sin vencidas o con un fallo no pinta nada", async () => {
-    mockApi({
-      [URL]: { status: 200, body: { results: [task("2026-11-10T05:00:00Z", true)], next: "x" } },
-    });
+    serve([due("2026-11-10T05:00:00Z", true)], "x");
     show();
     expect(await screen.findByText("1+")).toBeVisible();
-    cleanup();
-    mockApi({ [URL]: { status: 200, body: { results: [], next: null } } });
-    const none = show();
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    expect(none.container).toBeEmptyDOMElement();
-    cleanup();
-    mockApi({ [URL]: { status: 500, body: { code: "INTERNAL_ERROR" } } });
-    const failed = show();
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    expect(failed.container).toBeEmptyDOMElement();
+    for (const mock of [() => serve([]), () => serve([], null, 500)]) {
+      cleanup();
+      mock();
+      const view = show();
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+      expect(view.container).toBeEmptyDOMElement();
+    }
   });
 });

@@ -2433,8 +2433,7 @@
     "empty": {
       "today": "No tienes tareas para hoy.",
       "overdue": "No tienes tareas vencidas.",
-      "upcoming": "No tienes tareas próximas.",
-      "linked": "Todavía no hay tareas."
+      "upcoming": "No tienes tareas próximas."
     },
     "more": "Cargar más",
     "loadingMore": "Cargando más…",

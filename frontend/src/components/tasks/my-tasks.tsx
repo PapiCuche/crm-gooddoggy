@@ -59,6 +59,7 @@ export function MyTasks() {
         className="flex flex-wrap gap-2"
         // Las flechas, Inicio y Fin mueven entre pestañas y las abren (APG, activación automática).
         onKeyDown={(event) => {
+          if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return; // Alt+flecha: atrás
           const at = TABS.indexOf(tab);
           const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: -1 }[event.key];
           if (to === undefined) return;

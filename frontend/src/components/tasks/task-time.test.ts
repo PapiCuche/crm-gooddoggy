@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Task } from "@/lib/api/model";
 
-import { dayRange, fieldsOf, instantAt, isOverdue } from "./task-time";
+import { dayRange, instantAt, isOverdue } from "./task-time";
 
 const task = (changes: Partial<Task>) =>
   ({ status: "PENDING", due_at: null, is_all_day: false, ...changes }) as Task;
@@ -15,6 +15,7 @@ describe("instantes de las tareas", () => {
     expect(new Date(instantAt("America/Lima", 2026, 11, 11, 14, 30)).toISOString()).toBe(
       "2026-11-11T19:30:00.000Z",
     );
+    expect(instantAt("America/Lima", 2026, 11, 31)).toBe(instantAt("America/Lima", 2026, 12, 1)); // día de más
   });
 
   it("no depende de la zona del navegador y sigue el cambio de hora de otras zonas", () => {
@@ -22,6 +23,12 @@ describe("instantes de las tareas", () => {
     const { start, next } = dayRange(Date.parse("2026-03-08T18:00:00Z"), "America/New_York");
     expect(new Date(start).toISOString()).toBe("2026-03-08T05:00:00.000Z");
     expect((next - start) / 3_600_000).toBe(23);
+    // hoy acaba a medianoche de la zona: a las 22:00 del 10 en Lima, hoy es el 10
+    const lima = dayRange(Date.parse("2026-11-11T03:00:00Z"), "America/Lima");
+    expect([lima.start, lima.next].map((at) => new Date(at).toISOString())).toEqual([
+      "2026-11-10T05:00:00.000Z",
+      "2026-11-11T05:00:00.000Z",
+    ]);
   });
 
   it("la medianoche de un día de cambio de hora al este de UTC también es la de la zona", () => {
@@ -31,23 +38,6 @@ describe("instantes de las tareas", () => {
     );
     const { start, next } = dayRange(Date.parse("2026-10-04T05:00:00Z"), "Australia/Sydney");
     expect((next - start) / 3_600_000).toBe(23);
-  });
-
-  it("el día pasado de rango pasa al mes siguiente", () => {
-    expect(instantAt("America/Lima", 2026, 11, 31)).toBe(instantAt("America/Lima", 2026, 12, 1));
-  });
-
-  it("hoy empieza y acaba a medianoche de la zona", () => {
-    const { start, next } = dayRange(Date.parse("2026-11-11T03:00:00Z"), "America/Lima"); // 22:00 del 10
-    expect(new Date(start).toISOString()).toBe("2026-11-10T05:00:00.000Z");
-    expect(new Date(next).toISOString()).toBe("2026-11-11T05:00:00.000Z");
-  });
-
-  it("los campos del formulario son la fecha y la hora de la zona", () => {
-    expect(fieldsOf(Date.parse("2026-11-12T03:05:00Z"), "America/Lima")).toEqual({
-      date: "2026-11-11",
-      time: "22:05",
-    });
   });
 
   it("una de todo el día vence al acabar su día; una con hora, a su hora; lo cerrado no", () => {

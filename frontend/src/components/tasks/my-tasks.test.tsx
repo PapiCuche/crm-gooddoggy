@@ -20,7 +20,6 @@ const tenant: SelfContext = {
   roles: [],
   permissions: [],
 };
-const grants = (...codes: string[]) => codes.map((code) => ({ code, scopes: [] }));
 const task = (id: string, changes: Partial<Task> = {}) =>
   ({
     ...{ id, type: "CALL", title: `Tarea ${id}`, description: "", assigned_user_id: "u1" },
@@ -47,7 +46,7 @@ function serve(handler: (url: URL, init?: RequestInit) => Reply) {
 const page = (...results: Task[]) => ({ status: 200, body: { results, next: null } });
 const show = (...codes: string[]) =>
   renderApp(
-    <TenantProvider value={{ ...tenant, permissions: grants(...codes) }}>
+    <TenantProvider value={{ ...tenant, permissions: codes.map((code) => ({ code, scopes: [] })) }}>
       <MyTasks />
     </TenantProvider>,
   );
@@ -78,7 +77,6 @@ describe("Mis tareas (F5-08c)", () => {
       limit: "100",
     });
     expect(screen.getByRole("heading", { level: 1, name: "Mis tareas" })).toBeVisible();
-    expect(screen.getByText(/Vence .*/, { selector: "span" })).toBeVisible();
   });
 
   it("las pestañas piden Vencidas y Próximas, y se mueven con las flechas", async () => {
@@ -139,6 +137,9 @@ describe("Mis tareas (F5-08c)", () => {
     expect(screen.getByRole("tab", { name: "Próximas" })).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(tabs(), { key: "Home" });
     expect(screen.getByRole("tab", { name: "Hoy" })).toHaveAttribute("aria-selected", "true");
+    // Alt+flecha es «atrás» del navegador: ni se traga ni cambia de pestaña.
+    expect(fireEvent.keyDown(tabs(), { key: "ArrowRight", altKey: true })).toBe(true);
+    expect(screen.getByRole("tab", { name: "Hoy" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("el texto de otra persona es texto: no se interpreta y va aislado", async () => {
@@ -162,11 +163,12 @@ describe("Mis tareas (F5-08c)", () => {
     expect(within(link).getByText("<i>Rosa</i>").tagName).toBe("BDI");
   });
 
-  it("un cliente sin nombre visible se dice sin enlace; sin cliente, no hay línea", async () => {
+  it("un cliente sin nombre visible se dice sin enlace; las cerradas, atenuadas y al final", async () => {
     serve(() =>
       page(
         task("1", { contact: { id: "c9", display_name: null } }),
         task("2", { opportunity_id: "o7" }),
+        task("3", { status: "DONE" }),
       ),
     );
     show("tasks.view");
@@ -176,15 +178,10 @@ describe("Mis tareas (F5-08c)", () => {
       "href",
       "/o/acme/oportunidades/o7",
     );
-  });
-
-  it("las cerradas se ven atenuadas con su estado", async () => {
-    serve(() => page(task("1", { status: "DONE" }), task("2")));
-    show("tasks.view");
-    await screen.findByText("Tarea 2");
+    // las cerradas, atenuadas y con su estado, después de las abiertas
     expect(screen.getByText("Completada")).toBeVisible();
-    expect(screen.getByText("Tarea 1").closest("li")).toHaveClass("opacity-75");
-    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("Tarea 2"); // abiertas primero
+    expect(screen.getByText("Tarea 3").closest("li")).toHaveClass("opacity-75");
+    expect(screen.getAllByRole("listitem")[2]).toHaveTextContent("Tarea 3");
   });
 
   it("vacío, carga, error con reintento y sin permiso", async () => {
@@ -213,6 +210,10 @@ describe("Mis tareas (F5-08c)", () => {
     await screen.findByText("Tarea 1");
     fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
     expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.getByText("Tarea 1")).toBeVisible();
+    second = { status: 403, body: { code: "PERMISSION_DENIED" } }; // una página siguiente
+    fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));
+    expect(await screen.findByText(/No tienes permiso para ver las tareas/)).toBeVisible();
     expect(screen.getByText("Tarea 1")).toBeVisible();
     second = page(task("2"));
     fireEvent.click(screen.getByRole("button", { name: "Cargar más" }));

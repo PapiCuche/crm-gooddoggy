@@ -61,7 +61,7 @@ export function TasksList({
   const denied = list.error?.status === 403;
   const problem = failed(list, t("denied"));
 
-  if (denied) return <p role="alert">{t("denied")}</p>;
+  if (denied && !list.data) return <p role="alert">{t("denied")}</p>; // una página siguiente no borra lo cargado
   if (!list.data && problem) {
     return (
       <div className="flex flex-col items-start gap-3">
