@@ -362,3 +362,21 @@ def test_a_failed_status_after_the_deadline_leaves_the_unknown_reason_alone(
 )  # fmt: skip
 def test_the_error_table_edges_and_a_code_that_is_not_a_number(code: Any, own: str) -> None:
     assert delivery.code_for(code) == own
+
+
+def test_a_late_190_for_a_message_claimed_before_the_rotation_does_not_break_the_account(
+    world: SimpleNamespace, graph: Any
+) -> None:
+    from apps.conversations import credentials
+    from tests.meta_sim.graph import TEST_TOKEN
+
+    message = sent(world, graph)
+    with tenant_scope(ctx(world.a)) as tenant:  # se rota el token y la cuenta sigue sana
+        account = ChannelAccount.objects.get(platform="WHATSAPP")
+        credentials.revoke(tenant, account.credential_id)
+        fresh = credentials.store(tenant, account.pk, TEST_TOKEN, rotated=True)
+        ChannelAccount.objects.filter(pk=account.pk).update(credential_id=fresh.pk)
+    run(webhooks.status(WAMID, "failed", error=(190, "x")))  # llega tarde: era del token viejo
+    assert stamp(world, message).provider_error_code == "TOKEN_INVALID"
+    with tenant_scope(ctx(world.a)):
+        assert ChannelAccount.objects.get(pk=account.pk).status == "CONNECTED"

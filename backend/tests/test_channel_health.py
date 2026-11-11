@@ -19,9 +19,10 @@ from core.ids import new_id
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim.graph import TEST_TOKEN, FakeGraph
 from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
-from tests.test_conversation_commands import audit, world, writer
+from tests.test_conversation_commands import audit, outbound, world, writer
+from tests.test_conversations_dispatch import Retrying, state
 from tests.test_memberships import ctx
-from tests.test_whatsapp_outbound import graph, redis
+from tests.test_whatsapp_outbound import graph, redis, talk
 
 __all__ = ["graph", "redis", "world", "writer"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -324,3 +325,41 @@ def test_an_unexpected_failure_logs_only_its_type_and_the_discovery_limit_is_cla
     now = timezone.now()
     assert tasks.health_due(now, -5) == [] and tasks.health_due(now, 0) == []
     assert len(tasks.health_due(now, 10**6)) == 1  # el tope va dentro de la función
+
+
+def rotate_under(world: SimpleNamespace, account_id: UUID) -> None:
+    """Lo que hace rotar el token: la credencial vieja se invalida y la cuenta guarda otra."""
+    with tenant_scope(ctx(world.a)) as tenant:
+        credentials.revoke(tenant, ChannelAccount.objects.get(pk=account_id).credential_id)
+        fresh = credentials.store(tenant, account_id, TEST_TOKEN, rotated=True)
+        ChannelAccount.objects.filter(pk=account_id).update(credential_id=fresh.pk)
+
+
+def test_a_token_rejection_of_a_send_made_with_the_old_token_does_not_break_the_rotated_account(
+    world: SimpleNamespace, graph: FakeGraph
+) -> None:
+    convo = talk(world)
+    message, _ = outbound(world, convo)
+
+    class Rotating:
+        def send(self, claim: Any) -> Any:
+            from apps.conversations.channels import SendResult
+
+            rotate_under(world, claim.account_id)  # la persona rota el token durante el envío
+            return SendResult(False, reason="TOKEN_INVALID")  # y Meta rechaza el viejo
+
+    tasks.deliver(Retrying(0), world.a, message.pk, resolve=lambda platform: Rotating())
+    assert state(world, message).delivery_status == "FAILED"
+    assert read(world.a, convo.channel_account_id).status == "CONNECTED"
+
+
+def test_a_missing_key_at_send_time_is_a_retry_not_a_rejected_token(
+    world: SimpleNamespace, graph: FakeGraph, settings: Any
+) -> None:
+    convo = talk(world)
+    message, _ = outbound(world, convo)
+    settings.SECRETS_KEKS = {2: bytes(32)}  # el despliegue ya no tiene la clave de la credencial
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(Retrying(0), world.a, message.pk)
+    assert graph.requests == [] and state(world, message).delivery_status == "QUEUED"
+    assert read(world.a, convo.channel_account_id).status == "CONNECTED"

@@ -76,8 +76,12 @@ def deliver(
     with tenant_scope(ctx):
         commands.settle_outbound(ctx, message_id=message_id, result=result)
     if result.reason == "TOKEN_INVALID":  # Meta no acepta el token: la cuenta deja de enviar
-        with tenant_scope(ctx):
-            accounts.mark_token_invalid(ctx, channel_account_id=claim.account_id)
+        with tenant_scope(ctx):  # solo si ese token sigue siendo el de la cuenta (¿se rotó?)
+            accounts.mark_token_invalid(
+                ctx,
+                channel_account_id=claim.account_id,
+                credential_id=claim.credential.pk if claim.credential else None,
+            )
 
 
 @subscribe("message.queued")
