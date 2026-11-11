@@ -29,18 +29,21 @@ def teammates(ectx: ExecutionContext) -> QuerySet[TeamMember]:
 
 @dataclass(frozen=True, slots=True)
 class AssignedTo:
+    """Por la columna de la persona que tiene el recurso: `assigned_user_id` (oportunidades y
+    tareas) o la que se diga (las cotizaciones, por quien las creó: `created_by_user_id`)."""
+
+    column: str = "assigned_user_id"
+
     def q(self, scope: Scope, ectx: ExecutionContext) -> Q:
-        if (
-            ectx.tenant.user_id is None
-        ):  # `assigned_user_id=None` sería `IS NULL`: las sin responsable
+        if ectx.tenant.user_id is None:  # `column=None` sería `IS NULL`: las sin responsable
             return Q(pk__in=[])
-        own = Q(assigned_user_id=ectx.tenant.user_id)
+        own = Q(**{self.column: ectx.tenant.user_id})
         if scope != Scope.TEAM or not ectx.team_ids:
             return own
-        return own | Q(assigned_user_id__in=teammates(ectx).values("membership__user_id"))
+        return own | Q(**{f"{self.column}__in": teammates(ectx).values("membership__user_id")})
 
     def allows(self, scope: Scope, ectx: ExecutionContext, obj: Model) -> bool:
-        assigned: UUID | None = getattr(obj, "assigned_user_id", None)
+        assigned: UUID | None = getattr(obj, self.column, None)
         if assigned is None:  # nadie la tiene: solo `ORGANIZATION`
             return False
         if assigned == ectx.tenant.user_id:
