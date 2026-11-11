@@ -21,7 +21,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.conversations import accounts, commands, inbound
-from apps.conversations.models import ChannelAccount, Message
+from apps.conversations.models import ChannelAccount, Credential, Message
 from apps.conversations.whatsapp import EXTERNAL_ID
 from core.observability.logging import get_logger
 from core.outbox import emit
@@ -77,6 +77,19 @@ def _find(alias: str, account: ChannelAccount, wamid: str, opaque: UUID | None) 
     return mine.filter(unsure, pk=opaque, external_message_id__isnull=True).first()
 
 
+def _before_rotation(alias: str, account: ChannelAccount, message: Message) -> bool:
+    """¿Se reclamó el mensaje antes de que existiera la credencial vigente de la cuenta? Entonces un
+    `190` tardío es del token que ya se cambió, no del de ahora."""
+    claimed = message.sending_at
+    made = (
+        Credential.objects.using(alias)
+        .filter(pk=account.credential_id)
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    return claimed is not None and made is not None and claimed < made
+
+
 def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) -> str | None:
     """Aplica un estado a su mensaje. Devuelve el motivo si se ignora (`BAD_STATUS`: sin id válido
     o con un estado que no es de entrega) o `None`; `NotYet` si el mensaje aún no se conoce."""
@@ -107,6 +120,8 @@ def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) 
             payload={"conversation_id": str(message.conversation_id)},
         )  # fmt: skip
         if reason == "TOKEN_INVALID":
+            if _before_rotation(alias, account, message):
+                return None  # un fallo del token anterior: el nuevo (ya verificado) no se toca
             accounts.mark_token_invalid(ctx, channel_account_id=account.pk)
         elif reason == "QUALITY_BLOCKED":
             accounts.mark_degraded(ctx, channel_account_id=account.pk)

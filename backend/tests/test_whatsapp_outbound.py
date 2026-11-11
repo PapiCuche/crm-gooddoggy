@@ -386,7 +386,10 @@ def test_every_shape_of_answer_is_a_closed_outcome_and_an_unclear_success_is_nev
                            Credential(owner_id=mine, ciphertext=box))  # fmt: skip
     nobody = dataclasses.replace(claim, recipient="")  # un contacto sin teléfono: no hay a quién
     assert whatsapp.WhatsAppAdapter().send(nobody).reason == "RECIPIENT_UNREACHABLE"
-    copied = dataclasses.replace(claim, credential=Credential(owner_id=new_id(), ciphertext=box))
+    copied = dataclasses.replace(
+        claim,
+        credential=Credential(owner_id=new_id(), ciphertext=box, key_version=sealed.current()),
+    )
     assert whatsapp.WhatsAppAdapter().send(copied).reason == "TOKEN_INVALID"  # no se abre
     if isinstance(outcome, str):
         assert whatsapp.WhatsAppAdapter().send(claim) == channels.SendResult(False, reason=outcome)

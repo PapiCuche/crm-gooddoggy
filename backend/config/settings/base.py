@@ -140,12 +140,18 @@ INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
 # F7-05c: minutos que un mensaje puede seguir `SENDING` (resultado ambiguo o proceso caído) antes
 # de quedar `FAILED` con `PROVIDER_UNKNOWN`; Meta no deduplica, así que no se reenvía.
 INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 15)
+# F7-06b: cada cuánto se comprueba la salud de cada cuenta de WhatsApp (calidad, nivel, token).
+CHANNEL_HEALTH_INTERVAL_MINUTES = env.integer("CHANNEL_HEALTH_INTERVAL_MINUTES", 15)
 # Outbox (F1-06): el publisher corre cada segundo en beat.
 CELERY_BEAT_SCHEDULE = {
     "core.publish_outbox": {"task": "core.publish_outbox", "schedule": 1.0},
     # F6-04b: cada minuto vuelve a encolar los mensajes del Inbox que llevan demasiado en cola.
     "conversations.sweep_queued": {"task": "conversations.sweep_queued", "schedule": 60.0},
     "conversations.sweep_sending": {"task": "conversations.sweep_sending", "schedule": 60.0},
+    "conversations.healthcheck_accounts": {
+        "task": "conversations.healthcheck_accounts",
+        "schedule": 300.0,  # F7-06b: cada 5 minutos revisa las cuentas a las que les toca
+    },
     # D-F2-2: una vez al día, a hora fija (UTC). Un intervalo de 24 horas se cuenta desde que
     # beat arranca: si el contenedor se recrea a diario, la purga no se ejecutaría nunca.
     "accounts.purge_expired_sessions": {
