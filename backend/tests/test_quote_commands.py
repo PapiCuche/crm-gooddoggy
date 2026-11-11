@@ -134,6 +134,38 @@ def test_a_promotion_lowers_the_final_price_and_is_kept_in_the_snapshot(
     assert made.total == Decimal("8018.70")
 
 
+def test_the_tax_is_taken_once_from_the_total_and_rounded_to_the_nearest_cent(
+    shop: SimpleNamespace,
+) -> None:
+    extra = [item(shop.a, f"EXTRA{n}") for n in range(2)]
+    for variant in extra:
+        row(shop.a, (variant, shop.listed), "4399", LONG_AGO)
+    one = new(shop, items=lines((shop.iphone, 1)))
+    assert (one.total, one.tax_total, one.subtotal) == (
+        Decimal("4399.00"),
+        Decimal("671.03"),
+        Decimal("3727.97"),
+    )  # 671,0339: por debajo de la mitad no sube
+    three = new(shop, items=lines((shop.iphone, 1), (extra[0], 1), (extra[1], 1)))
+    assert (three.total, three.tax_total) == (Decimal("13197.00"), Decimal("2013.10"))
+    # el IGV de 13197,00 es 2013,1017: redondeado una vez, no tres veces (3 x 671,03 = 2013,09)
+
+
+def test_an_amount_that_does_not_fit_the_column_is_a_value_error_and_writes_nothing(
+    shop: SimpleNamespace, migrator: DB
+) -> None:
+    big = item(shop.a, "BIG")
+    row(shop.a, (big, shop.listed), "999999999999.99", LONG_AGO)
+    assert new(shop, items=lines((big, 1))).total == Decimal("999999999999.99")  # el máximo cabe
+    with pytest.raises(ValueError, match="importe"):  # noqa: PT011 — no un error de la base
+        new(shop, items=lines((big, 2)))
+    assert migrator.execute("SELECT count(*) FROM quotes").fetchone() == (1,)
+    made = new(shop)
+    with pytest.raises(ValueError, match="importe"):  # noqa: PT011
+        move(shop, commands.update_quote, made, items=lines((big, 2)))
+    assert made.total == Decimal("4399.00") and len(stored(shop.a, made)) == 1
+
+
 def test_the_links_take_the_contact_of_the_opportunity_and_both_must_agree(
     shop: SimpleNamespace,
 ) -> None:
@@ -249,6 +281,7 @@ def test_update_reprices_with_the_price_of_now_and_keeps_the_totals_in_step(
         2, Decimal("3959.10"), Decimal("439.90"),
     )  # fmt: skip
     assert again.total == again.subtotal + again.tax_total
+    assert (again.tax_total, again.subtotal) == (Decimal("603.93"), Decimal("3355.17"))  # al 18 %
 
 
 @pytest.mark.parametrize(

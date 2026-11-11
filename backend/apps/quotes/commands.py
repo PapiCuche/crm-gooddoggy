@@ -35,6 +35,7 @@ from core.text import line
 ITEMS_MAX, NOTE_MAX, REASON_MAX = 50, 2000, 500
 TAX_RATE = Decimal("0.1800")  # IGV (D-PRC-1: los precios lo llevan incluido)
 CENT = Decimal("0.01")
+MONEY_MAX = Decimal(10) ** 12  # `numeric(14,2)`: un importe de la tabla es menor que esto
 _ITEM = frozenset({"variant_id", "quantity"})
 _FIELDS = frozenset({"valid_until", "notes_to_customer", "internal_notes"})
 _REFERENCES = {  # FK compuesta violada → el campo que la causó
@@ -173,6 +174,8 @@ def _totals(rows: list[dict[str, Any]], rate: Decimal) -> dict[str, Decimal]:
     saved = sum(
         (r["quantity"] * (r["list_unit_price"] - r["final_unit_price"]) for r in rows), Decimal(0)
     )
+    if max(total, saved) >= MONEY_MAX:  # no cabe en la columna: un error claro, no uno de la base
+        raise ValueError("importe: la cotización pasa del máximo")
     tax = _round(total - total / (1 + rate))
     return {"subtotal": total - tax, "discount_total": saved, "tax_total": tax, "total": total}
 
@@ -299,6 +302,7 @@ def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: 
                     audited[field] = ["[texto]", "[texto]"]
             if wanted is not None:
                 rows, _ = _lines(alias, ctx, wanted, quote.price_list_id)
+                totals = _totals(rows, quote.tax_rate)  # antes de tocar nada: puede no caber
                 kept = (
                     QuoteItem.objects.using(alias).filter(quote_id=quote.pk).order_by("sort_order")
                 )
@@ -315,7 +319,7 @@ def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: 
                         QuoteItem(organization_id=ctx.organization_id, quote=quote, **row)
                         for row in rows
                     )
-                    changes |= _totals(rows, quote.tax_rate)
+                    changes |= totals
                     audited["items"] = [None, _shown(rows)]
                     audited["total"] = [quote.total, changes["total"]]
             if changes:
