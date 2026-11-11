@@ -213,6 +213,8 @@
       "PROMOTION_ENDED": "La vigencia de la promoción ya terminó: no se puede publicar.",
       "CONVERSATION_CLOSED": "La conversación está cerrada. Podrás responder cuando el cliente vuelva a escribir.",
       "CHANNEL_UNAVAILABLE": "El canal de esta conversación no está conectado. Reconéctalo para enviar mensajes.",
+      "CONTACT_BLOCKED": "Este contacto está bloqueado: no se le pueden enviar mensajes.",
+      "WINDOW_CLOSED": "Ya pasó la ventana de atención del canal desde el último mensaje del cliente. Podrás responder cuando el cliente vuelva a escribir.",
       "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el texto."
     }
   },
