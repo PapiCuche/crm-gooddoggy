@@ -48,6 +48,7 @@ from apps.conversations.models import (
     ConversationAssignment,
     Delivery,
     Message,
+    MessageType,
     Platform,
     Status,
 )
@@ -60,6 +61,7 @@ from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
 REOPEN_HOURS = 72  # D-INB-2: una RESOLVED recibe mensajes hasta 72 h después; luego se cierra
+WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no reabre nada
 KEY, ORDER = "CONV", (Delivery.QUEUED, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
 BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
@@ -294,13 +296,21 @@ def record_inbound(
     channel_account_id: UUID,
     external_message_id: str,
     body: str,
+    message_type: str = MessageType.TEXT,
+    provider_at: dt.datetime | None = None,
 ) -> tuple[Message, bool]:
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
     pone `last_inbound_at` y `last_message_at` y, según D-INB-2, pasa a `OPEN` una conversación en
     `WAITING_CUSTOMER` o `RESOLVED` dentro del plazo. Audita `message.received` y deja el evento
-    `message.received` en el outbox (solo ids)."""
+    `message.received` en el outbox (solo ids). `message_type` es `TEXT` o `UNSUPPORTED` (un
+    marcador: el cuerpo es una frase fija del canal). `provider_at` es el instante que informa el
+    canal: ancla de la ventana de 24 h (`last_inbound_at`, acotado a «ahora» y sin retroceder); el
+    orden del chat sigue siendo el de llegada. Con más de 24 h de antigüedad no reabre una
+    conversación `WAITING_CUSTOMER` ni `RESOLVED` (se anota sin cambiarle el estado)."""
     alias = require_scope(ctx)
+    if message_type not in (MessageType.TEXT, MessageType.UNSUPPORTED):
+        raise ValueError("tipo: TEXT o UNSUPPORTED")
     contact_id, account_id = _uuid(contact_id, "contacto"), _uuid(channel_account_id, "cuenta")
     external, text = _external(external_message_id), _body(body)
     same = Message.objects.using(alias).filter(
@@ -311,22 +321,26 @@ def record_inbound(
             return found, False
         convo, _ = _open(ctx, alias, contact_id, account_id)
         now = timezone.now()
+        seen = min(provider_at, now) if provider_at is not None else None
+        stale = provider_at is not None and now - provider_at > dt.timedelta(hours=WINDOW_HOURS)
         try:
             with transaction.atomic(using=alias):
                 message: Message = Message.objects.using(alias).create(
                     conversation_id=convo.pk, channel_account_id=account_id, direction="INBOUND",
                     sender_type="CONTACT", body=text, external_message_id=external,
+                    message_type=message_type, provider_timestamp=seen,
                 )  # fmt: skip
         except IntegrityError as error:
             if "messages_external_uq" not in str(error):
                 raise
             return same.get(), False  # el mismo mensaje, a la vez
-        convo.last_inbound_at = convo.last_message_at = now
+        anchor = max(convo.last_inbound_at, seen or now) if convo.last_inbound_at else seen or now
+        convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
-        if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED):
+        if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED) and not stale:
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
-                last_inbound_at=now, last_message_at=now,
+                last_inbound_at=anchor, last_message_at=now,
                 last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
             )  # fmt: skip
         else:

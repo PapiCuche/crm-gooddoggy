@@ -71,6 +71,9 @@ class SenderType(models.TextChoices):
 class MessageType(models.TextChoices):
     TEXT = "TEXT"
     NOTE = "NOTE"  # solo INTERNAL: nunca sale hacia un canal (ADR-010)
+    UNSUPPORTED = (
+        "UNSUPPORTED"  # entrante que el canal aún no entiende: el cuerpo es una frase fija
+    )
 
 
 class Delivery(models.TextChoices):
@@ -406,6 +409,8 @@ class Message(TenantModel):
     body = models.TextField()
     client_message_id = models.UUIDField(null=True, blank=True)
     external_message_id = models.CharField(max_length=200, null=True, blank=True)  # noqa: DJ001
+    # Lo que informa el canal (acotado a «ahora»): ancla de la ventana de 24 h (ADR-029 §5).
+    provider_timestamp = models.DateTimeField(null=True, blank=True)
     delivery_status = models.CharField(  # noqa: DJ001
         max_length=10, choices=Delivery.choices, null=True, blank=True
     )
@@ -445,6 +450,10 @@ class Message(TenantModel):
             one_of("direction", Direction, "messages_direction_ck"),
             one_of("sender_type", SenderType, "messages_sender_ck"),
             one_of("message_type", MessageType, "messages_type_ck"),
+            models.CheckConstraint(  # «no soportado» solo lo escribe un cliente
+                condition=~models.Q(message_type="UNSUPPORTED") | models.Q(direction="INBOUND"),
+                name="messages_unsupported_ck",
+            ),
             models.CheckConstraint(  # sin id externo ni remitente cliente: no sale por ningún canal
                 condition=~models.Q(direction="INTERNAL")
                 | (models.Q(external_message_id__isnull=True, sender_type__in=SENDERS)),

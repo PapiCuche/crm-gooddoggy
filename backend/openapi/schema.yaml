@@ -9563,7 +9563,7 @@ components:
           nullable: true
         message_type:
           type: string
-          description: '`TEXT` o `NOTE`.'
+          description: '`TEXT`, `NOTE` o `UNSUPPORTED`.'
         body:
           type: string
           nullable: true

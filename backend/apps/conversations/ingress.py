@@ -202,6 +202,9 @@ def handle(item: Claimed) -> str:
     try:
         status, organization_id, account_id, reason = route(item)
         return mark(item, status, organization_id, account_id, reason) or "LOST"
+    except inbound.Throttled:  # el tope de contactos nuevos: no se pierde, se reintenta con espera
+        logger.warning("meta.webhook.contact_cap", phone_number_id=item.phone_number_id)
+        return mark(item, "FAILED", reason="RATE_LIMITED") or "LOST"
     except Exception as error:  # el motivo es un código: nada del error ni del payload
         logger.error("meta.webhook.process_failed", error=type(error).__name__)
         try:

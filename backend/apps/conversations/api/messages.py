@@ -41,7 +41,7 @@ class MessageSerializer(serializers.Serializer[Any]):
     direction = serializers.ChoiceField(choices=Direction.choices)
     sender_type = serializers.CharField()
     sender_user_id = serializers.UUIDField(allow_null=True)
-    message_type = serializers.CharField(help_text="`TEXT` o `NOTE`.")
+    message_type = serializers.CharField(help_text="`TEXT`, `NOTE` o `UNSUPPORTED`.")
     body = serializers.CharField(
         allow_null=True, help_text="`null` si no se puede ver el contacto (`contacts.view`)."
     )
