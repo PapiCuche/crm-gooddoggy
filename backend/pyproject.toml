@@ -114,7 +114,7 @@ layers = [
     # misma fila que inventory, sin importarse entre sí. deals, los pipelines (F5-01): sobre
     # contacts (las oportunidades, F5-03, referenciarán contactos), nunca al revés. conversations,
     # el Inbox (F6-01): sobre contacts, en la fila de deals, sin importarse entre sí.
-    "apps.inventory | apps.pricing | apps.deals | apps.conversations | apps.tasks",
+    "apps.inventory | apps.pricing | apps.deals | apps.conversations | apps.tasks | apps.quotes",
     "apps.catalog | apps.contacts",
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",
