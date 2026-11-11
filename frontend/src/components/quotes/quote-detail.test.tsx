@@ -87,6 +87,7 @@ describe("Cotizaciones: detalle (F5-09f)", () => {
     expect(await screen.findByText("Sin permiso para ver su nombre")).toBeVisible();
     expect(within(value("Cliente") as HTMLElement).queryByRole("link")).toBeNull();
     expect(value("Válida hasta")).toHaveTextContent("1 nov. 2026 · Vencida");
+    expect(screen.getByText("Vencida")).toBeVisible(); // el estado también lo dice
     expect(screen.getByRole("heading", { level: 1 })).not.toHaveTextContent("Revisión"); // la 1.ª no se dice
     cleanup();
     serve(() => ({
@@ -96,6 +97,13 @@ describe("Cotizaciones: detalle (F5-09f)", () => {
     show();
     expect(await screen.findByText("Aceptada")).toBeVisible();
     expect(value("Válida hasta")).not.toHaveTextContent("Vencida"); // solo enviadas o vistas
+    cleanup();
+    serve(() => ({ status: 200, body: detail({ valid_until: "2026-11-12T05:00:00Z" }) }));
+    show();
+    expect(await screen.findByText("Enviada")).toBeVisible();
+    vi.setSystemTime(Date.parse("2026-11-13T15:00:00Z")); // la pestaña seguía abierta y pasó la validez
+    fireEvent.focus(window);
+    expect(await screen.findByText("Vencida")).toBeVisible();
   });
 
   it("las notas, el motivo y los nombres son texto aislado; solo salen los que hay", async () => {
@@ -120,6 +128,7 @@ describe("Cotizaciones: detalle (F5-09f)", () => {
     const mine = await screen.findByRole("region", { name: "Notas para el cliente" });
     expect(within(mine).getByText(/<b>Gracias<\/b>/).tagName).toBe("BDI");
     expect(screen.queryByRole("region", { name: /Notas internas/ })).toBeNull();
+    expect(mine).not.toHaveTextContent("Cancelada el"); // la fecha es solo del motivo
     const cancel = screen.getByRole("region", { name: "Motivo de la cancelación" });
     expect(within(cancel).getByText(/<i>no<\/i>/).tagName).toBe("BDI");
     expect(cancel).toHaveTextContent("Cancelada el 8 nov. 2026");
@@ -145,7 +154,7 @@ describe("Cotizaciones: detalle (F5-09f)", () => {
     expect(await screen.findByText("Esta cotización no tiene líneas.")).toBeVisible();
     expect(screen.getByText("Estado desconocido")).toBeVisible();
     expect(screen.queryByText("constructor")).toBeNull();
-    expect(value("IGV")).toHaveTextContent("18,5 % incluido");
+    expect(value("IGV")).toHaveTextContent("18.5 % incluido");
     expect(screen.getByRole("region", { name: /Notas internas/ })).toHaveTextContent(
       "Solo para el equipo",
     );
@@ -210,6 +219,6 @@ describe("Cotizaciones: detalle (F5-09f)", () => {
       ratePercent("0.0500"),
       ratePercent("0.1825"),
       ratePercent("0"),
-    ]).toEqual(["18", "18", "5", "18,25", "0"]);
+    ]).toEqual(["18", "18", "5", "18.25", "0"]);
   });
 });

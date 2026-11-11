@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Plain } from "@/components/inbox/plain";
@@ -30,7 +30,18 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
   const { failed, retry } = useReads();
   const money = useMoney();
   const day = useDay();
-  const [now] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    // Una pestaña que se deja abierta pasa de día: al volver a ella, «vencida» se calcula con la
+    // hora de ahora.
+    const refresh = () => document.visibilityState !== "hidden" && setNow(Date.now());
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, []);
   const read = useQuery<Detail, ApiError>({
     queryKey: getQuotesRetrieveQueryKey(slug, quoteId),
     queryFn: ({ signal }) => quotesRetrieve(slug, quoteId, { signal }),
@@ -128,11 +139,11 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
     [t("totals.discount"), quote.discount_total, false],
     [t("totals.total"), quote.total, true],
   ];
-  const notes: [string, string | null | undefined][] = [
-    [t("notes.customer"), quote.notes_to_customer],
-    [t("notes.internal"), quote.internal_notes],
-    [t("notes.cancel"), quote.cancel_reason],
-  ];
+  const notes = [
+    ["customer", quote.notes_to_customer],
+    ["internal", quote.internal_notes],
+    ["cancel", quote.cancel_reason],
+  ] as const;
   return (
     <section className="flex max-w-5xl flex-col gap-6">
       {back}
@@ -145,7 +156,7 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
             </span>
           ) : null}
         </h1>
-        <QuoteStatus status={quote.status} />
+        <QuoteStatus status={quote.status} late={late} />
       </div>
       <dl
         aria-label={t("facts")}
@@ -225,14 +236,14 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
           ))}
         </dl>
       </section>
-      {notes.map(([label, text]) =>
+      {notes.map(([key, text]) =>
         text ? (
-          <section key={label} className={BOX} aria-label={label}>
-            <h2 className="font-medium">{label}</h2>
+          <section key={key} className={BOX} aria-label={t(`notes.${key}`)}>
+            <h2 className="font-medium">{t(`notes.${key}`)}</h2>
             <p>
               <Plain>{text}</Plain>
             </p>
-            {label === t("notes.cancel") && quote.cancelled_at ? (
+            {key === "cancel" && quote.cancelled_at ? (
               <p className="text-muted text-sm">
                 {t("notes.cancelledAt", { date: day(quote.cancelled_at) })}
               </p>

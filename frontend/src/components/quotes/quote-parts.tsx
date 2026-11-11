@@ -20,14 +20,16 @@ const STATUS = {
   CANCELLED: { Icon: X, tone: "text-muted" },
 } as const;
 
-export function QuoteStatus({ status }: { status: QuoteStatusEnum }) {
+export function QuoteStatus({ status, late }: { status: QuoteStatusEnum; late?: boolean }) {
   const t = useTranslations("quotes.statuses");
-  const known = Object.hasOwn(STATUS, status);
-  const { Icon, tone } = known ? STATUS[status] : { Icon: Clock, tone: "text-muted" };
+  // Una enviada o vista con la validez pasada se dice «Vencida», como la cuenta el filtro del servidor.
+  const shown = late && (status === "SENT" || status === "VIEWED") ? "EXPIRED" : status;
+  const known = Object.hasOwn(STATUS, shown);
+  const { Icon, tone } = known ? STATUS[shown] : { Icon: Clock, tone: "text-muted" };
   return (
     <span className="flex items-center gap-1.5 text-sm font-medium">
       <Icon aria-hidden className={cn("size-4 shrink-0", tone)} />
-      {t(known ? status : "UNKNOWN")}
+      {t(known ? shown : "UNKNOWN")}
     </span>
   );
 }
@@ -49,11 +51,12 @@ export function useMoney() {
 }
 
 // La tasa de la API es una fracción en texto («0.1800»): se dice en por ciento moviendo la coma
-// sobre el texto, sin pasar por números de coma flotante.
+// sobre el texto, sin pasar por números de coma flotante, y con el separador decimal de es-PE (el
+// punto, como los importes).
 export function ratePercent(rate: string): string {
   const digits = (rate.split(".")[1] ?? "").padEnd(4, "0").slice(0, 4);
   const tail = digits.slice(2).replace(/0+$/, "");
-  return `${Number(digits.slice(0, 2))}${tail ? `,${tail}` : ""}`;
+  return `${Number(digits.slice(0, 2))}${tail ? `.${tail}` : ""}`;
 }
 
 // Fecha corta de un instante de la API, en la zona de la pantalla.
