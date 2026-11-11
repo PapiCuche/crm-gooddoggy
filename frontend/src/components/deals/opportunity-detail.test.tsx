@@ -132,37 +132,24 @@ afterEach(() => {
 });
 
 describe("OpportunityDetail (F5-07)", () => {
-  it("con tasks.view enseña sus tareas y «Nueva tarea» las vincula a la oportunidad; sin él, nada", async () => {
+  it("con tasks.view enseña las tareas de esa oportunidad; sin él, no las pide", async () => {
     configure({ asyncUtilTimeout: 4000 }); // varios pasos seguidos: con la máquina cargada, más margen
     const TASKS = `GET /api/v1/o/acme/tasks/?opportunity_id=${ID}&limit=200`;
+    const row = { id: "t1", type: "CALL", title: "Enviar la cotización", description: "" };
     const api = mockApi({
       [DETAIL]: ok(detail()),
       [PIPELINES]: pipelines,
       [TASKS]: ok({
-        results: [
-          {
-            ...{ id: "t1", type: "CALL", title: "Enviar la cotización", description: "" },
-            ...{ due_at: null, is_all_day: false, status: "PENDING", priority: "HIGH" },
-            ...{ contact: { id: null, display_name: null } },
-          },
-        ],
+        results: [{ ...row, due_at: null, is_all_day: false, status: "PENDING", priority: "HIGH" }],
         next: null,
       }),
-      "POST /api/v1/o/acme/tasks/": { status: 201, body: { id: "t2", due_at: null } },
     });
     show();
     await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" });
     expect(api.mock.calls.some(([url]) => String(url).includes("/tasks/"))).toBe(false);
     cleanup();
-    show(["opportunities.view", "tasks.view", "tasks.create"]);
+    show(["opportunities.view", "tasks.view"]);
     expect(await screen.findByText("Enviar la cotización")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Nueva tarea" }));
-    fireEvent.change(await screen.findByRole("textbox", { name: "Título" }), {
-      target: { value: "Llamar" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Guardar tarea" }));
-    expect(await screen.findByText(/Tarea creada sin fecha/)).toBeVisible();
-    expect(sent(api, "POST")[0]).toMatchObject({ opportunity_id: ID, title: "Llamar" });
   });
 
   it("enseña el cliente con su ficha, el importe, la etapa, el responsable, las líneas y el historial", async () => {

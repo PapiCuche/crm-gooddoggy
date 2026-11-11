@@ -15,8 +15,7 @@ const TABS = ["today", "overdue", "upcoming"] as const;
 
 // «Mis tareas» (F5-08c, E10-01): las tareas de quien mira, en Hoy, Vencidas y Próximas. Los
 // límites del día salen de la zona de la pantalla y los pide el cliente (el servidor no los
-// calcula, F5-08b); la lista de vencidas descarta las de todo el día de hoy. Sin fecha, una tarea
-// no sale en ninguna: se avisa al crearla. «Nueva tarea» trae la fecha de hoy.
+// calcula, F5-08b); la lista de vencidas descarta las de todo el día de hoy. Una tarea sin fecha no sale en ninguna.
 export function MyTasks() {
   const t = useTranslations("tasks");
   const zone = useTimeZone() ?? "America/Lima";

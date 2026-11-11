@@ -23,8 +23,7 @@ const byDue = (a: Task, b: Task) =>
   (a.id < b.id ? -1 : 1);
 
 // Una lista de tareas (F5-08c) con los filtros de `params`: carga, vacío, error con reintento,
-// sin permiso, «Cargar más» (que si falla no borra lo ya cargado) y «Editar» en cada fila abierta
-// si hay `tasks.update`. `keep` descarta en el navegador lo que la API no sabe distinguir (las de
+// sin permiso y «Cargar más» (que si falla no borra lo ya cargado). `keep` descarta en el navegador lo que la API no sabe distinguir (las de
 // todo el día de hoy no están vencidas todavía). Quién ve qué lo decide la API.
 export function TasksList({
   params,
@@ -43,8 +42,8 @@ export function TasksList({
 }) {
   const t = useTranslations("tasks");
   const zone = useTimeZone() ?? "America/Lima";
-  const { organization, permissions } = useTenant();
-  const slug = organization.slug;
+  const slug = useTenant().organization.slug;
+  const { permissions } = useTenant();
   const { failed, retry } = useReads();
   const [editing, setEditing] = useState<string | null>(null);
   const [saved, setSaved] = useState("");
