@@ -46,6 +46,7 @@ _ITEM = frozenset({"variant_id", "quantity", "estimated_unit_price", "notes"})
 _REFERENCES = {  # FK compuesta violada → el campo que la causó
     "opportunities_contact_fk": "contact_id",
     "opportunities_assigned_fk": "assigned_user_id",
+    "opportunities_conversation_fk": "conversation_id",
     "opportunity_items_variant_fk": "variant_id",
     "opportunities_created_by_fk": "created_by_user_id",  # quien actúa no es miembro
     "opportunities_updated_by_fk": "updated_by_user_id",
@@ -252,6 +253,20 @@ def _pipeline(alias: str, organization_id: UUID, pipeline_id: UUID | None) -> Pi
     return found
 
 
+def _origin(alias: str, organization_id: UUID, contact_id: UUID, conversation_id: UUID) -> None:
+    """La conversación es de la organización y del contacto de la oportunidad (`FOR KEY SHARE`:
+    no se borra mientras se crea). Una de otro contacto u otra organización o que no existe es el
+    mismo `BadReference("conversation_id")`: nada que sondear."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM public.conversations WHERE organization_id = %s AND id = %s "
+            "AND contact_id = %s FOR KEY SHARE",
+            [organization_id, conversation_id, contact_id],
+        )
+        if cursor.fetchone() is None:
+            raise BadReference("conversation_id")
+
+
 def create_opportunity(
     ctx: TenantContext,
     *,
@@ -259,6 +274,7 @@ def create_opportunity(
     title: str,
     pipeline_id: UUID | None = None,
     assigned_user_id: UUID | None = None,
+    conversation_id: UUID | None = None,
     items: Sequence[dict[str, Any]] = (),
     **fields: Any,
 ) -> Opportunity:
@@ -266,7 +282,9 @@ def create_opportunity(
     activa del pipeline (el predeterminado, sin `pipeline_id`) y su probabilidad, la moneda del
     pipeline y su primera fila de historial; responsable, quien actúa si no se dice otro (miembro
     activo). `items`: `{variant_id, quantity, estimated_unit_price?, notes?}` de variantes vivas
-    y activas. Audita `opportunity.created`. `BadReference` con el campo; `ValueError`."""
+    y activas. `conversation_id`: la conversación de origen, de ese mismo contacto y de la
+    organización (`FOR KEY SHARE`); el alcance de quien crea lo decide la API. Audita
+    `opportunity.created`. `BadReference` con el campo; `ValueError`."""
     alias = require_scope(ctx)
     if unknown := set(fields) - _CREATE:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
@@ -274,6 +292,7 @@ def create_opportunity(
     contact_id = _uuid(contact_id, "contacto")
     pipeline_id = None if pipeline_id is None else _uuid(pipeline_id, "pipeline")
     owner = ctx.user_id if assigned_user_id is None else _uuid(assigned_user_id, "responsable")
+    conversation_id = None if conversation_id is None else _uuid(conversation_id, "conversación")
     rows = _items(items)
     try:
         with transaction.atomic(using=alias):
@@ -289,9 +308,12 @@ def create_opportunity(
                 raise BadReference("pipeline_id")
             if owner is not None and not lock_active_member(owner):
                 raise BadReference("assigned_user_id")
+            if conversation_id is not None:
+                _origin(alias, ctx.organization_id, contact_id, conversation_id)
             now = timezone.now()
             opp: Opportunity = Opportunity.objects.using(alias).create(
                 number=next_opportunity_number(ctx), contact_id=contact_id, pipeline=pipeline,
+                conversation_id=conversation_id,
                 stage=stage, status="OPEN", assigned_user_id=owner, currency=pipeline.currency,
                 probability=stage.default_probability, last_activity_at=now, stage_entered_at=now,
                 created_by_user_id=ctx.user_id, updated_by_user_id=ctx.user_id, **values,
@@ -305,6 +327,8 @@ def create_opportunity(
                 "stage_id": stage.pk, "status": "OPEN", "assigned_user_id": owner,
                 "currency": pipeline.currency, "probability": stage.default_probability,
             }  # fmt: skip
+            if conversation_id is not None:
+                shown["conversation_id"] = conversation_id
             changes = {k: [None, _audited(k, v)] for k, v in shown.items()}
             changes["items"] = [None, _shown(rows)]
             record(ctx, "opportunity.created", _entity(opp), changes)

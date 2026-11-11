@@ -26,6 +26,7 @@ real_stack, pick = scopes.real_stack, scopes.pick
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DETAIL_FIELDS = LIST_FIELDS | {
     "source", "next_action_at", "lost_reason_note", "created_at", "updated_at", "items", "history",
+    "conversation_id",
 }  # fmt: skip
 
 
