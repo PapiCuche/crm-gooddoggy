@@ -383,7 +383,7 @@ def test_the_import_contracts_keep_costs_away_from_the_engine() -> None:
         c for c in contracts.values() if "apps.pricing.costs" in c.get("protected_modules", [])
     ]
     assert [(c["type"], c["allowed_importers"]) for c in protected] == [
-        ("protected", ["apps.pricing.api"])
+        ("protected", ["apps.pricing.api", "apps.pricing.floor"])  # F5-09b2: un sí o un no
     ]
     engine = [
         c for c in contracts.values() if "apps.pricing.costs" in c.get("forbidden_modules", [])
