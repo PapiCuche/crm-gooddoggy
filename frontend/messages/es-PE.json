@@ -2471,8 +2471,7 @@
       "contact": "Cliente:",
       "contactHidden": "Cliente (sin permiso para ver su nombre)",
       "opportunity": "Ver la oportunidad",
-      "edit": "Editar",
-      "editLabel": "Editar la tarea {title}"
+      "edit": "Editar"
     },
     "form": {
       "new": "Nueva tarea",
@@ -2505,6 +2504,35 @@
     },
     "linked": {
       "title": "Tareas"
+    },
+    "actions": {
+      "complete": "Completar",
+      "cancel": "Cancelar tarea",
+      "assign": "Reasignar",
+      "reopen": "Reabrir",
+      "editLabel": "Editar la tarea {title}",
+      "completeLabel": "Completar la tarea {title}",
+      "cancelLabel": "Cancelar la tarea {title}",
+      "assignLabel": "Reasignar la tarea {title}",
+      "reopenLabel": "Reabrir la tarea {title}",
+      "cancelForm": "Cancelar la tarea",
+      "assignForm": "Reasignar la tarea",
+      "reason": "Motivo (opcional)",
+      "assignee": "Responsable",
+      "cancelConfirm": "Sí, cancelar la tarea",
+      "assignConfirm": "Reasignar la tarea",
+      "back": "Volver",
+      "busy": "Guardando…",
+      "completed": "Tarea completada.",
+      "cancelled": "Tarea cancelada.",
+      "assigned": "Tarea reasignada.",
+      "reopened": "Tarea reabierta.",
+      "stale": "Otra persona cambió esta tarea. Revisa la lista y vuelve a intentarlo.",
+      "closed": "Esta tarea ya está cerrada. Revisa la lista.",
+      "isOpen": "Esta tarea ya está abierta. Revisa la lista.",
+      "assigneeInvalid": "Esa persona ya no es miembro activo de la organización.",
+      "reasonInvalid": "El motivo no es válido (hasta 500 caracteres, sin tabuladores).",
+      "denied": "No tienes permiso para hacer esto con la tarea."
     }
   }
 }

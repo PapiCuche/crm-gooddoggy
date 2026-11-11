@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
+import type { ReactNode } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Plain } from "@/components/inbox/plain";
-import { Button } from "@/components/ui/button";
 import type { Task } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
@@ -18,13 +18,13 @@ export function TaskRow({
   late,
   zone,
   links,
-  onEdit,
+  actions,
 }: {
   task: Task;
   late: boolean; // vencida según la pantalla (la de todo el día cuenta al acabar su día)
   zone: string;
   links: boolean; // mostrar el cliente y la oportunidad (no donde ya son el contexto)
-  onEdit?: () => void;
+  actions?: ReactNode; // lo que se puede hacer con ella (F5-08c)
 }) {
   const t = useTranslations("tasks");
   const format = useFormatter();
@@ -87,18 +87,7 @@ export function TaskRow({
           </Link>
         </p>
       ) : null}
-      {onEdit && isOpen(task) ? (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            className="border-border min-h-11 border sm:min-h-9"
-            aria-label={t("row.editLabel", { title: task.title })}
-            onClick={onEdit}
-          >
-            {t("row.edit")}
-          </Button>
-        </div>
-      ) : null}
+      {actions}
     </li>
   );
 }
