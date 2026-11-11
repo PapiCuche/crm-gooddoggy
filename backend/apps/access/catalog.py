@@ -72,6 +72,12 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("opportunities.mark_won", "opportunities", supports_scope=True),
     PermissionDef("opportunities.mark_lost", "opportunities", supports_scope=True),
     PermissionDef("pipelines.manage", "opportunities"),
+    # F5-08b: las tareas (03 §H). `tasks.update` cambia, completa, cancela, reabre y borra; el
+    # alcance de `tasks.view` decide a cuáles llega `tasks.assign`.
+    PermissionDef("tasks.view", "tasks", supports_scope=True),
+    PermissionDef("tasks.create", "tasks"),
+    PermissionDef("tasks.update", "tasks", supports_scope=True),
+    PermissionDef("tasks.assign", "tasks"),
     # F6-01: el Inbox. `conversations.view`, `messages.send` y `messages.note` admiten alcance
     # (propias, de su equipo y sin asignar); `assign` no: qué conversaciones alcanza lo decide
     # `view`, como `contacts.assign`. `channels.manage` configura las cuentas de canal.
@@ -99,6 +105,10 @@ class RoleTemplate:
 INBOX_SCOPED = ("conversations.view", "messages.send", "messages.note")  # F6-01
 OPPORTUNITY_OPERATE = ("view", "update", "mark_won", "mark_lost")
 OPPORTUNITY_SCOPED = (*OPPORTUNITY_OPERATE, "delete")
+TASK_SCOPED = (
+    "tasks.view",
+    "tasks.update",
+)  # F5-08b: cada rol opera las suyas, las del equipo o todas
 
 
 def _unscoped(*codes: str) -> dict[str, Scope | None]:
@@ -146,6 +156,8 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "contacts.assign",
             "opportunities.create",  # F5-04: «leads / opportunities» ORG en 03 §H
             "opportunities.assign",
+            "tasks.create",  # F5-08b
+            "tasks.assign",
             "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
             "conversations.assign",  # F6-01: «conversations.* ✅» para el Administrador en 03 §H
             "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar
@@ -157,6 +169,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
                 "contacts.delete",
                 *(f"opportunities.{action}" for action in OPPORTUNITY_SCOPED),
                 *INBOX_SCOPED,
+                *TASK_SCOPED,
             ),
             Scope.ORGANIZATION,
         ),
@@ -174,11 +187,13 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "inventory.view",
             "opportunities.create",  # F5-04: crea y reparte las de su equipo, no borra
             "opportunities.assign",
+            "tasks.create",  # F5-08b: crea y reparte las de su equipo
+            "tasks.assign",
             "conversations.assign",  # F6-01: reparte las de su equipo
         )
         | {"contacts.view": Scope.TEAM}
         | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE}  # F5-04, 03 §H
-        | dict.fromkeys(INBOX_SCOPED, Scope.TEAM),
+        | dict.fromkeys((*INBOX_SCOPED, *TASK_SCOPED), Scope.TEAM),
     ),
     RoleTemplate(
         "seller",
@@ -190,12 +205,14 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "inventory.view",
             "contacts.create",
             "opportunities.create",
+            "tasks.create",  # F5-08b: las suyas; no reparte
         )
         | {
             "contacts.view": Scope.OWN,
             "contacts.update": Scope.OWN,
         }
         | {f"opportunities.{a}": Scope.OWN for a in OPPORTUNITY_OPERATE}
-        | dict.fromkeys(INBOX_SCOPED, Scope.OWN),  # F6-01: «OWN + sin asignar» en 03 §H
+        | dict.fromkeys(INBOX_SCOPED, Scope.OWN)  # F6-01: «OWN + sin asignar» en 03 §H
+        | dict.fromkeys(TASK_SCOPED, Scope.OWN),
     ),
 )

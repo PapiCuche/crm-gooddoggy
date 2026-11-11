@@ -38,6 +38,8 @@ class Task(TenantModel):
     autor (CHECK); el motivo solo lo cancelado. Las personas (`*_user_id`) son miembros de la
     organización y el contacto y la oportunidad, de la misma: FKs compuestas en la migración."""
 
+    Type, Status, Source, Priority = TaskType, TaskStatus, TaskSource, Priority
+
     id = uuid7_primary_key()
     type = models.CharField(max_length=12, choices=TaskType.choices, default=TaskType.FOLLOW_UP)
     title = models.CharField(max_length=200)
