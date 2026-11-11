@@ -1223,6 +1223,7 @@
       "summary": "Resumen",
       "notes": "Notas",
       "opportunities": "Oportunidades",
+      "tasks": "Tareas",
       "profile": "Datos del cliente",
       "record": "En la organización",
       "document": "Documento",
@@ -2449,7 +2450,8 @@
     "empty": {
       "today": "No tienes tareas para hoy.",
       "overdue": "No tienes tareas vencidas.",
-      "upcoming": "No tienes tareas próximas."
+      "upcoming": "No tienes tareas próximas.",
+      "linked": "Todavía no hay tareas."
     },
     "more": "Cargar más",
     "loadingMore": "Cargando más…",
@@ -2484,7 +2486,41 @@
       "overdue": "Vencida",
       "contact": "Cliente:",
       "contactHidden": "Cliente (sin permiso para ver su nombre)",
-      "opportunity": "Ver la oportunidad"
+      "opportunity": "Ver la oportunidad",
+      "edit": "Editar",
+      "editLabel": "Editar la tarea {title}"
+    },
+    "form": {
+      "new": "Nueva tarea",
+      "edit": "Editar la tarea",
+      "type": "Tipo",
+      "title": "Título",
+      "titleRequired": "Escribe un título.",
+      "titleInvalid": "El título no es válido.",
+      "description": "Descripción",
+      "descriptionHint": "Opcional. Sin tabuladores.",
+      "descriptionInvalid": "La descripción tiene caracteres que no se aceptan (como tabuladores).",
+      "priority": "Prioridad",
+      "date": "Fecha",
+      "dateHint": "Opcional. Hora de {zone}.",
+      "allDay": "Todo el día",
+      "time": "Hora",
+      "timeRequired": "Elige la hora o marca «Todo el día».",
+      "dueInvalid": "La fecha no es válida.",
+      "submit": "Guardar tarea",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "created": "Tarea creada.",
+      "createdUndated": "Tarea creada sin fecha: no sale en Hoy, Vencidas ni Próximas.",
+      "saved": "Tarea guardada.",
+      "stale": "Otra persona cambió esta tarea. Cierra el formulario y vuelve a abrirla para ver los cambios.",
+      "closed": "Esta tarea ya está cerrada y no se puede cambiar.",
+      "gone": "Esta tarea ya no existe.",
+      "linkGone": "El cliente o la oportunidad ya no están disponibles.",
+      "denied": "No tienes permiso para guardar tareas."
+    },
+    "linked": {
+      "title": "Tareas"
     }
   }
 }
