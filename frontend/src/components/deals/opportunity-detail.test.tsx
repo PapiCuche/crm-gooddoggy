@@ -16,8 +16,11 @@ import { OpportunityDetail } from "./opportunity-detail";
 const ID = "6f1c2a4e-0b7d-4c8e-9a51-3d2f7e8b9c10";
 const BASE = `/api/v1/o/acme/opportunities/${ID}/`;
 const DETAIL = `GET ${BASE}`;
+const PATCH = `PATCH ${BASE}`;
+const ASSIGN = `POST ${BASE}assign/`;
 const MOVE = `POST ${BASE}move/`;
 const PIPELINES = "GET /api/v1/o/acme/pipelines/?limit=200";
+const MEMBERS = "GET /api/v1/o/acme/members/?limit=200";
 const grants = (...codes: string[]) => codes.map((code) => ({ code, scopes: [] }));
 const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
@@ -75,6 +78,19 @@ const pipelines = {
         version: 1,
         kind: "RETAIL",
         stages,
+      },
+    ],
+    next: null,
+  },
+};
+const people = {
+  status: 200,
+  body: {
+    results: [
+      {
+        id: "m2",
+        status: "ACTIVE",
+        user: { id: "u2", email: "l@acme.pe", first_name: "Luis", last_name: "Ramos" },
       },
     ],
     next: null,
@@ -210,6 +226,20 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(screen.getByRole("button", { name: /^Perder «/ })).toBeVisible();
   });
 
+  it("una oportunidad cerrada no se edita ni se asigna aunque haya permiso: se reabre", async () => {
+    mockApi({
+      [DETAIL]: ok(detail({ status: "WON", stage: stage("s3", "Ganado", "WON") })),
+      [PIPELINES]: pipelines,
+      [MEMBERS]: people,
+    });
+    show(["opportunities.view", "opportunities.update", "opportunities.assign", "users.view"]);
+    expect(
+      await screen.findByRole("button", { name: /^Reabrir «Collar para Rocky»/ }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Asignar a" })).toBeNull();
+  });
+
   it("un 404 es la página de «no encontrada», sin decir si existe", async () => {
     mockApi({ [DETAIL]: { status: 404, body: { code: "NOT_FOUND" } }, [PIPELINES]: pipelines });
     const failure = notFoundThrown();
@@ -241,6 +271,156 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" }),
     ).toBeVisible();
+  });
+
+  it("editar envía solo lo que cambió con la versión leída, enseña lo que devuelve la API y no pide nada si no cambió", async () => {
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [PATCH]: ok(
+        detail({ title: "Collar nuevo", amount: "1600.00", version: 4, next_action: null }),
+      ),
+    });
+    show(["opportunities.view", "opportunities.update"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    // sin cambios: se cierra sin pedir nada
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(sent(api, "PATCH")).toEqual([]);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const again = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    fireEvent.change(within(again).getByLabelText("Título"), { target: { value: "Collar nuevo" } });
+    fireEvent.change(within(again).getByLabelText("Importe"), { target: { value: "1600.00" } });
+    fireEvent.change(within(again).getByLabelText(/^Próxima acción/), { target: { value: "" } });
+    fireEvent.click(within(again).getByRole("button", { name: "Guardar cambios" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Collar nuevo" })).toBeVisible();
+    expect(sent(api, "PATCH")).toEqual([
+      { title: "Collar nuevo", amount: "1600.00", next_action: null, version: 3 },
+    ]);
+    expect(await screen.findByText("Cambios guardados.")).toBeVisible();
+    expect(value("Importe")).toHaveTextContent("S/ 1,600.00");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Editar" })).toHaveFocus());
+    // otra edición empieza: el aviso de la anterior ya no aplica
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    await screen.findByRole("form", { name: "Editar la oportunidad" });
+    expect(screen.queryByText("Cambios guardados.")).toBeNull();
+  });
+
+  it("un 409 al editar dice que otra persona la cambió y vuelve a leer; el importe inválido no se envía", async () => {
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [PATCH]: { status: 409, body: { code: "STALE_VERSION" } },
+    });
+    show(["opportunities.view", "opportunities.update"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    fireEvent.change(within(form).getByLabelText("Importe"), { target: { value: "abc" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    expect(await within(form).findByText(/El importe no es válido/)).toBeVisible();
+    expect(sent(api, "PATCH")).toEqual([]);
+    fireEvent.change(within(form).getByLabelText("Importe"), { target: { value: "1700" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    expect(
+      await within(form).findByText(/Otra persona cambió esta oportunidad antes que tú/),
+    ).toBeVisible();
+    await waitFor(() => expect(reads(api)).toBe(2)); // se volvió a leer
+  });
+
+  it("sin `opportunities.update` ni `opportunities.assign` no hay controles de edición", async () => {
+    mockApi({ [DETAIL]: ok(detail()), [PIPELINES]: pipelines, [MEMBERS]: people });
+    show(["opportunities.view", "users.view"]);
+    await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" });
+    expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Asignar a" })).toBeNull();
+  });
+
+  it("asignar envía el responsable con la versión leída, explica el 400 y el 409", async () => {
+    let reply: { status: number; body: unknown } = {
+      status: 400,
+      body: { code: "VALIDATION_ERROR" },
+    };
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [MEMBERS]: people,
+      [ASSIGN]: () => reply,
+    });
+    show(["opportunities.view", "opportunities.assign", "users.view"]);
+    const pick = await screen.findByRole("combobox", { name: "Asignar a" });
+    await within(pick).findByRole("option", { name: "Luis Ramos" });
+    fireEvent.click(screen.getByRole("button", { name: "Asignar" }));
+    expect(await screen.findByText("Elige primero a quién asignarla.")).toBeVisible();
+    fireEvent.change(pick, { target: { value: "u2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Asignar" }));
+    expect(await screen.findByText("Esa persona no puede recibir la oportunidad.")).toBeVisible();
+    expect(sent(api, "POST")).toEqual([{ assigned_user_id: "u2", version: 3 }]);
+    reply = { status: 409, body: { code: "STALE_VERSION" } };
+    fireEvent.click(screen.getByRole("button", { name: "Asignar" }));
+    expect(
+      await screen.findByText(/Otra persona cambió esta oportunidad antes que tú/),
+    ).toBeVisible();
+    await waitFor(() => expect(reads(api)).toBe(2));
+    reply = ok(detail({ assigned_user_id: "u2", version: 5 }));
+    fireEvent.click(screen.getByRole("button", { name: "Asignar" }));
+    expect(await screen.findByText("Responsable cambiado.")).toBeVisible();
+    expect(value("Responsable")).toHaveTextContent("Luis Ramos");
+  });
+
+  it("dos pulsaciones seguidas de «Asignar» envían una sola petición", async () => {
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [MEMBERS]: people,
+      [ASSIGN]: ok(detail({ assigned_user_id: "u2", version: 4 })),
+    });
+    show(["opportunities.view", "opportunities.assign", "users.view"]);
+    const pick = await screen.findByRole("combobox", { name: "Asignar a" });
+    await within(pick).findByRole("option", { name: "Luis Ramos" });
+    fireEvent.change(pick, { target: { value: "u2" } });
+    const button = screen.getByRole("button", { name: "Asignar" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await screen.findByText("Responsable cambiado.");
+    expect(sent(api, "POST")).toHaveLength(1);
+  });
+
+  it("un 409 OPPORTUNITY_CLOSED al editar se dice aunque el formulario desaparezca", async () => {
+    let closed = false;
+    mockApi({
+      [DETAIL]: () =>
+        ok(detail(closed ? { status: "WON", stage: stage("s3", "Ganado", "WON") } : {})),
+      [PIPELINES]: pipelines,
+      [PATCH]: () => {
+        closed = true;
+        return { status: 409, body: { code: "OPPORTUNITY_CLOSED" } };
+      },
+    });
+    show(["opportunities.view", "opportunities.update"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    fireEvent.change(within(form).getByLabelText("Título"), { target: { value: "Otro" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Esta oportunidad ya está cerrada");
+  });
+
+  it("sin directorio solo se puede asignar a uno mismo, y un importe igual escrito de otra forma no se envía", async () => {
+    const api = mockApi({ [DETAIL]: ok(detail()), [PIPELINES]: pipelines });
+    show(["opportunities.view", "opportunities.assign", "opportunities.update"]);
+    const pick = await screen.findByRole("combobox", { name: "Asignar a" });
+    expect(
+      within(pick)
+        .getAllByRole("option")
+        .map((one) => one.textContent),
+    ).toEqual(["Asignar a…", "Yo"]);
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    const form = await screen.findByRole("form", { name: "Editar la oportunidad" });
+    fireEvent.change(within(form).getByLabelText("Importe"), { target: { value: "1500.5" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(screen.queryByRole("form")).toBeNull());
+    expect(sent(api, "PATCH")).toEqual([]);
   });
 
   it("mover la etapa usa la acción del tablero con la versión leída y vuelve a leer el detalle", async () => {

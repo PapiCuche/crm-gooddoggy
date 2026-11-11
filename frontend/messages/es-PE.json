@@ -2120,6 +2120,39 @@
         "title": "Historial de etapas",
         "created": "Creada en «<n>{to}</n>»",
         "moved": "De «<n>{from}</n>» a «<n>{to}</n>»"
+      },
+      "edit": {
+        "open": "Editar",
+        "title": "Editar la oportunidad",
+        "submit": "Guardar cambios",
+        "busy": "Guardando…",
+        "cancel": "Cancelar",
+        "fields": {
+          "title": "Título",
+          "amount": "Importe",
+          "next": "Próxima acción (opcional)"
+        },
+        "required": {
+          "title": "Escribe un título.",
+          "amount": "Escribe el importe."
+        },
+        "invalid": {
+          "title": "Ese título no sirve. Usa texto de una línea, de hasta 200 caracteres.",
+          "amount": "El importe no es válido: hasta 12 cifras enteras y 2 decimales.",
+          "next": "Esa próxima acción no sirve. Usa texto de una línea, de hasta 200 caracteres."
+        },
+        "done": "Cambios guardados.",
+        "assigned": "Responsable cambiado.",
+        "stale": "Otra persona cambió esta oportunidad antes que tú. Ya la actualizamos: revisa los datos.",
+        "closed": "Esta oportunidad ya está cerrada: reábrela para editarla.",
+        "gone": "Esta oportunidad ya no existe o salió de tu alcance.",
+        "denied": "No tienes permiso para esta acción.",
+        "assignLabel": "Asignar a",
+        "assignPlaceholder": "Asignar a…",
+        "assign": "Asignar",
+        "assigning": "Asignando…",
+        "assignChoose": "Elige primero a quién asignarla.",
+        "assignInvalid": "Esa persona no puede recibir la oportunidad."
       }
     }
   },
