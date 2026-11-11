@@ -17,6 +17,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.conversations import accounts, commands, inbound
@@ -62,14 +63,16 @@ def _uuid(raw: Any) -> UUID | None:
 
 def _find(alias: str, account: ChannelAccount, wamid: str, opaque: UUID | None) -> Message | None:
     """El saliente de esta cuenta, bloqueado: por su `wamid`, o por el id opaco si sigue `SENDING`
-    y aún no tiene `wamid`."""
+    (o lo cerró el plazo con `PROVIDER_UNKNOWN`) y aún no tiene `wamid`."""
     mine = Message.objects.using(alias).select_for_update(no_key=True)
     mine = mine.filter(channel_account_id=account.pk, direction="OUTBOUND")
     if (found := mine.filter(external_message_id=wamid).first()) is not None or opaque is None:
         return found
-    return mine.filter(
-        pk=opaque, delivery_status="SENDING", external_message_id__isnull=True
-    ).first()
+    unsure = Q(delivery_status="SENDING") | Q(
+        delivery_status="FAILED",
+        provider_error_code="PROVIDER_UNKNOWN",  # cerrado por el plazo
+    )
+    return mine.filter(unsure, pk=opaque, external_message_id__isnull=True).first()
 
 
 def apply(ctx: TenantContext, account: ChannelAccount, payload: dict[str, Any]) -> str | None:

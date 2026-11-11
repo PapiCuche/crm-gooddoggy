@@ -495,9 +495,12 @@ def add_note(
         return note, created
 
 
-def _advances(old: str | None, new: str) -> bool:
+def _advances(old: str | None, new: str, unknown: bool = False) -> bool:
     """¿Es `new` un paso adelante de `old`? Saltar pasos vale; `FAILED` solo desde antes de
-    entregar y no se abandona. Lo mismo que el disparador de la base."""
+    entregar y no se abandona, salvo un `FAILED` con `PROVIDER_UNKNOWN` (`unknown`), que un estado
+    tardío de entrega reconcilia. Lo mismo que el disparador de la base."""
+    if old == Delivery.FAILED and unknown:
+        return new in (Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
     if old is None or old == Delivery.FAILED or new == old:
         return False
     if new == Delivery.FAILED:
@@ -531,23 +534,26 @@ def advance_delivery(
         message: Message = found.get(pk=message_id)
         if message.direction != "OUTBOUND":
             raise ValueError("solo lo saliente tiene estado de entrega")
-        if not _advances(message.delivery_status, status):
+        late = message.provider_error_code == "PROVIDER_UNKNOWN"
+        if not _advances(message.delivery_status, status, late):
             return message
         old, stamp = message.delivery_status, STAMPS[status]
         # Condicional: el disparador de la base lanza `check_violation` ante un estado atrasado, y
         # eso abortaría la transacción de quien llama. Con el bloqueo no debería pasar nunca; el
         # `WHERE` lo hace imposible aunque alguien quite el bloqueo.
+        fields = {stamp: at or timezone.now(), "provider_error_code": reason}
+        if late:
+            fields["failed_at"] = None  # no falló: salió (lo reconcilia un estado tardío)
         moved = (
             Message.objects.using(alias)
             .filter(pk=message.pk, delivery_status=old)
-            .update(
-                delivery_status=status, provider_error_code=reason, **{stamp: at or timezone.now()}
-            )
+            .update(delivery_status=status, **fields)
         )
         message.refresh_from_db(using=alias)
         if moved:
             changes = {"delivery_status": [old, status]}
             why = None if reason is None else {"reason": reason}
+            why = {"reconciled": "PROVIDER_UNKNOWN"} if late else why
             record(ctx, "message.delivery_changed", Entity("message", message.pk), changes, why)
         return message
 

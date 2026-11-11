@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
-from apps.conversations import ingress
+from apps.conversations import ingress, tasks
 from apps.conversations.models import ChannelAccount, Message
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
@@ -257,3 +257,40 @@ def test_the_error_code_only_exists_on_a_failed_message_and_from_the_closed_set(
             migrator.execute("UPDATE messages SET provider_error_code = %s WHERE id = %s",
                              [bad, message.pk])  # fmt: skip
         migrator.rollback()
+
+
+def test_a_late_status_reconciles_a_message_the_deadline_closed_as_unknown_and_nothing_else(
+    world: SimpleNamespace, graph: Any, migrator: Any
+) -> None:
+    graph.then("cut_after")
+    convo = talk(world)
+    unknown, _ = send(world, convo)  # Meta lo aceptó y la respuesta se perdió
+    migrator.execute("UPDATE messages SET sending_at = now() - interval '1 hour'")
+    assert tasks.sweep_sending() == 1
+    closed = stamp(world, unknown)
+    assert (closed.delivery_status, closed.provider_error_code) == ("FAILED", "PROVIDER_UNKNOWN")
+    run(webhooks.status(WAMID, "delivered", opaque=str(unknown.pk), at=AT))  # sí había salido
+    saved = stamp(world, unknown)
+    assert (saved.delivery_status, saved.provider_error_code) == ("DELIVERED", None)
+    assert saved.failed_at is None and saved.external_message_id == WAMID
+    moved = [m for _, m in deliveries(migrator) if m]
+    assert moved[-1] == {"reconciled": "PROVIDER_UNKNOWN"}
+    other, _ = send(world, convo)  # un `FAILED` con otro motivo sigue terminal
+    run(webhooks.status("wamid.SIMOUT000002", "failed", error=(131047, "x")))
+    assert run(webhooks.status("wamid.SIMOUT000002", "delivered")) == {"PROCESSED": 1}
+    assert stamp(world, other).delivery_status == "FAILED"
+
+
+def test_the_trigger_lets_only_an_unknown_failure_become_delivered_and_never_go_back(
+    world: SimpleNamespace, graph: Any, migrator: Any
+) -> None:
+    message = sent(world, graph)
+    update = "UPDATE messages SET delivery_status = %s, provider_error_code = %s WHERE id = %s"
+    migrator.execute(update, ["FAILED", "PROVIDER_UNKNOWN", message.pk])
+    with pytest.raises(Exception, match="solo avanza"):  # ni a la cola ni a `FAILED` otra vez
+        migrator.execute(update, ["QUEUED", None, message.pk])
+    migrator.rollback()
+    migrator.execute(update, ["READ", None, message.pk])  # sí a un estado de entrega
+    with pytest.raises(Exception, match="solo avanza"):  # y desde ahí, `FAILED` ya no
+        migrator.execute(update, ["FAILED", "WINDOW_CLOSED", message.pk])
+    migrator.rollback()
