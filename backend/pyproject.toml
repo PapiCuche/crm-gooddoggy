@@ -123,11 +123,14 @@ layers = [
     "apps.audit | apps.files | apps.imports",
     "core",
 ]
-# F5-08: las únicas aristas de tasks a deals (la tarea apunta a una oportunidad y la valida contra
-# ella); cualquier otra, y la inversa, siguen prohibidas.
+# Las únicas aristas permitidas entre módulos de la misma fila; cualquier otra, y la inversa, siguen
+# prohibidas. F5-08: de tasks a deals (la tarea apunta a una oportunidad y la valida contra ella).
+# F6-06b: de deals a conversations (el alcance de `conversations.view` al crear una oportunidad
+# desde una conversación).
 ignore_imports = [
     "apps.tasks.models -> apps.deals.models",
     "apps.tasks.commands -> apps.deals.models",
+    "apps.deals.api.opportunities -> apps.conversations.selectors",
 ]
 
 [[tool.importlinter.contracts]]

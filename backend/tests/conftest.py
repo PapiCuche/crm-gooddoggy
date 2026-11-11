@@ -56,13 +56,7 @@ TENANT_TABLES = ("variant_costs", *TENANT_TABLES)  # F3-46: delante de las varia
 TENANT_TABLES = ("promotion_items", "promotion_price_lists", "promotions", *TENANT_TABLES)  # F3-48
 # F5-01: delante, porque referencian a las membresías (y las etapas, a los pipelines)
 TENANT_TABLES = ("pipeline_stages", "pipelines", "lost_reasons", *TENANT_TABLES)
-# F5-03: delante de todo lo que referencian (etapas, motivos, contactos, variantes y membresías)
-TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
-TENANT_TABLES = (
-    "tasks",
-    *TENANT_TABLES,
-)  # F5-08a: delante de contactos, oportunidades y membresías
-# F6-01: delante de las oportunidades y de todo lo que referencian (contactos, equipos, personas)
+# F6-01: delante de todo lo que referencian (contactos, equipos, personas)
 TENANT_TABLES = (
     "messages",
     "conversation_assignments",
@@ -71,6 +65,13 @@ TENANT_TABLES = (
     "credentials",  # F7-02b: después de las cuentas, que la referencian
     *TENANT_TABLES,
 )
+# F5-03 y F6-06b: delante de todo lo que referencian (etapas, motivos, contactos, variantes,
+# membresías y, desde F6-06b, las conversaciones: por eso van delante de ellas)
+TENANT_TABLES = ("opportunity_stage_history", "opportunity_items", "opportunities", *TENANT_TABLES)
+TENANT_TABLES = (
+    "tasks",
+    *TENANT_TABLES,
+)  # F5-08a: delante de contactos, oportunidades y membresías
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

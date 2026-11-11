@@ -4249,7 +4249,10 @@ paths:
         quien la crea es su responsable. Con `opportunities.create` y `contacts.view`.
         400 en `contact_id` si no es un contacto vivo que quien crea pueda ver (el
         mismo error que para uno que no existe), en `pipeline_id` o en `items` (una
-        variante) si no son activos, y por cada dato inválido.
+        variante) si no son activos, en `conversation_id` si no es una conversación
+        de ese contacto dentro del alcance de `conversations.view` de quien crea (el
+        mismo error que para una que no existe o de otra organización), y por cada
+        dato inválido.
       parameters:
       - in: path
         name: org_slug
@@ -9514,7 +9517,7 @@ components:
           nullable: true
         message_type:
           type: string
-          description: '`TEXT` o `NOTE`.'
+          description: '`TEXT`, `NOTE` o `UNSUPPORTED`.'
         body:
           type: string
           nullable: true
@@ -10111,6 +10114,11 @@ components:
           type: string
           format: uuid
           description: Un pipeline vivo y activo; sin él, el predeterminado.
+        conversation_id:
+          type: string
+          format: uuid
+          description: 'La conversación de origen: de ese contacto y dentro del alcance
+            de `conversations.view` de quien crea.'
       required:
       - contact_id
       - title
@@ -10203,6 +10211,11 @@ components:
         updated_at:
           type: string
           format: date-time
+        conversation_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: La conversación de origen, solo su id; `null` si no la tiene.
         items:
           type: array
           items:
@@ -10217,6 +10230,7 @@ components:
       - amount
       - assigned_user_id
       - contact
+      - conversation_id
       - created_at
       - currency
       - expected_close_date
