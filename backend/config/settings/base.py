@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.deals",
     "apps.conversations",
     "apps.tasks",
+    "apps.quotes",
 ]
 
 MIDDLEWARE = [
