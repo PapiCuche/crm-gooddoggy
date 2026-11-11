@@ -178,6 +178,31 @@ describe("Cotizaciones: detalle (F5-09f)", () => {
     expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("COT-000001");
   });
 
+  it("el IGV se dice según el modo de la cotización: incluido, no incluido o solo la tasa", async () => {
+    for (const [mode, fact, label] of [
+      ["INCLUDED", "18 % incluido en los precios", "IGV incluido"],
+      ["EXCLUDED", "18 % no incluido en los precios", "IGV"],
+      ["NUEVO", "18 %", "IGV"],
+    ] as const) {
+      serve(() => ({ status: 200, body: detail({ tax_mode: mode }) }));
+      show();
+      await screen.findByRole("heading", { level: 1 });
+      expect(value("IGV")).toHaveTextContent(fact);
+      expect(
+        within(screen.getByRole("region", { name: "Totales" })).getByText(label),
+      ).toBeVisible();
+      cleanup();
+    }
+  });
+
+  it("la tabla de líneas es una región con nombre que recibe el foco (se desplaza en pantallas estrechas)", async () => {
+    serve(() => ({ status: 200, body: detail() }));
+    show();
+    const region = await screen.findByRole("region", { name: "Líneas de la cotización" });
+    expect(region).toHaveAttribute("tabindex", "0");
+    expect(region).toHaveClass("overflow-x-auto");
+  });
+
   it("la tasa se dice moviendo la coma sobre el texto", () => {
     expect([
       ratePercent("0.1800"),

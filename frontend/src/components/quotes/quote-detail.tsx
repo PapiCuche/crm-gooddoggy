@@ -108,11 +108,23 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
     ],
     [t("created"), day(quote.created_at)],
     [t("currency"), cur],
-    [t("tax"), t("taxIncluded", { rate: ratePercent(quote.tax_rate) })],
+    // Según `tax_mode`: con IGV incluido los precios ya lo llevan; si no, se suma aparte. Un modo que
+    // esta versión no conoce dice solo la tasa.
+    [
+      t("tax"),
+      t(
+        quote.tax_mode === "INCLUDED"
+          ? "taxIncluded"
+          : quote.tax_mode === "EXCLUDED"
+            ? "taxExcluded"
+            : "taxRate",
+        { rate: ratePercent(quote.tax_rate) },
+      ),
+    ],
   ];
   const totals: [string, string | undefined, boolean][] = [
     [t("totals.subtotal"), quote.subtotal, false],
-    [t("totals.tax"), quote.tax_total, false],
+    [t(quote.tax_mode === "INCLUDED" ? "totals.tax" : "totals.taxPlain"), quote.tax_total, false],
     [t("totals.discount"), quote.discount_total, false],
     [t("totals.total"), quote.total, true],
   ];

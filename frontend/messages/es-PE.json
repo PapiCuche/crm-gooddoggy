@@ -2578,6 +2578,8 @@
       "currency": "Moneda",
       "tax": "IGV",
       "taxIncluded": "{rate} % incluido en los precios",
+      "taxExcluded": "{rate} % no incluido en los precios",
+      "taxRate": "{rate} %",
       "none": "—",
       "items": {
         "title": "Líneas",
@@ -2595,6 +2597,7 @@
         "title": "Totales",
         "subtotal": "Subtotal",
         "tax": "IGV incluido",
+        "taxPlain": "IGV",
         "discount": "Ahorro frente a la lista",
         "total": "Total"
       },
