@@ -10,6 +10,7 @@ from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
 ALLOWED_HOSTS = ["testserver"]
+CSRF_TRUSTED_ORIGINS = ["http://testserver"]  # también el origen del WebSocket (F6-07a)
 INSTALLED_APPS = [*INSTALLED_APPS, "tests.tenancy_app"]  # noqa: F405 — solo tests (RLS)
 # Migraciones de la BD de test: como crm_migrator (tests/conftest.py). Los tests corren como
 # el rol de DATABASE_URL, que debe ser crm_app (ni superusuario ni BYPASSRLS).

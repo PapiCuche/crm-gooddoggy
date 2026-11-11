@@ -3,6 +3,7 @@
 la caducidad. Una sesión que no vale es un usuario anónimo, sin distinguir por qué. Ni la cookie ni
 la clave de sesión se registran."""
 
+import re
 import time
 from importlib import import_module
 from typing import Any
@@ -16,10 +17,12 @@ from django.http.cookie import parse_cookie
 
 from apps.accounts.middleware import is_current
 
+SESSION_KEY_FORMAT = re.compile(r"[a-z0-9]{32}")  # el formato de Django
+
 
 def user_for(session_key: str | None) -> Any:
     """El usuario de esa sesión, o `AnonymousUser` si no existe, venció o fue revocada."""
-    if not session_key:
+    if not session_key or not SESSION_KEY_FORMAT.fullmatch(session_key):  # sin tocar la BD
         return AnonymousUser()
     session = import_module(settings.SESSION_ENGINE).SessionStore(session_key)
     request = HttpRequest()

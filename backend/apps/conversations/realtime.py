@@ -6,15 +6,15 @@ ids, nunca texto, nombre ni teléfono: es una pista, el cliente vuelve a pedir p
 slug, nunca de un mensaje del cliente (solo `ping`), y evalúa cada evento al entregarlo con el
 permiso y el alcance de `conversations.view` de ese momento (`scoped`, con RLS).
 
-Cierres: 4401 sin sesión, 4404 sin organización o sin membresía (indistinguibles), 4403 suspendida o
-sin permiso, 4429 demasiadas conexiones, 1013 capa caída, 1009 trama grande, 4408 inactividad.
-Antes de aceptar, el navegador ve un 403 sin código. Ningún registro lleva ids.
+Cierres: 4401 sin sesión, 4404 sin organización o membresía (indistinguibles), 4403 sin permiso,
+4429 tope, 1013 capa caída, 1009 trama grande, 4408 inactividad. Ningún registro lleva ids.
 """
 
 import asyncio
 import json
 import time
 from collections import Counter
+from contextlib import suppress
 from typing import Any
 from uuid import UUID
 
@@ -52,8 +52,7 @@ def group_name(organization_id: UUID) -> str:
 def outgoing(
     event_type: str, aggregate_id: UUID, payload: dict[str, Any], at: str
 ) -> dict[str, Any] | None:
-    """El evento tal como viaja: solo tipo, ids y hora; `None` si no es del Inbox o sin
-    conversación."""
+    """El evento tal como viaja (tipo, ids y hora); `None` si no es del Inbox."""
     if event_type not in EVENTS:
         return None
     raw = aggregate_id if event_type.startswith("conversation.") else payload.get("conversation_id")
@@ -76,7 +75,6 @@ def publish(organization_id: UUID, message: dict[str, Any]) -> bool:
 
 
 class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignore[misc]
-    session_key: str | None = None
     user_id: UUID | None = None
     watcher: asyncio.Task[None] | None = None
     counted = False
@@ -89,10 +87,8 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
             await super().__call__(scope, receive, send)
         except Exception as error:  # noqa: BLE001 — Redis o BD caídas: se cierra, nunca se sigue
             logger.warning("inbox.ws_failed", error=type(error).__name__)
-            try:
+            with suppress(Exception):  # ya cerrada: nada más que hacer
                 await self.close(code=CLOSE_RETRY)
-            except Exception:  # noqa: BLE001, S110 — ya cerrada: nada más que hacer
-                pass
         finally:
             self._release()
 
@@ -102,7 +98,6 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
         if layer is None or not getattr(user, "is_authenticated", False):
             await self.close(code=CLOSE_RETRY if layer is None else CLOSE_UNAUTHENTICATED)
             return
-        self.session_key = self.scope.get("session_key")
         if not await self.connect_tenant():  # 4404 (sin organización o sin membresía) o 4403
             return
         tenant = self.tenant
@@ -172,9 +167,8 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
 
     async def _watch(self) -> None:
         """Cierra por inactividad y, cada `INBOX_WS_RECHECK_SECONDS`, comprueba sesión y permiso y
-        renueva la pertenencia al grupo (la capa de Redis olvida a quien lleva más de 24 h en él).
-        Un fallo aquí cierra la conexión (1013): si la tarea muriera en silencio, la conexión
-        seguiría abierta sin comprobar nunca más la sesión ni la inactividad."""
+        renueva el grupo (Redis olvida a quien lleva más de 24 h). Un fallo cierra con 1013: si la
+        tarea muriera, la conexión seguiría abierta sin comprobarse."""
         checked = time.monotonic()
         try:
             while True:
@@ -199,7 +193,7 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
 
     async def _still_allowed(self) -> bool:
         tenant = self.tenant
-        user = await database_sync_to_async(user_for)(self.session_key)
+        user = await database_sync_to_async(user_for)(self.scope.get("session_key"))
         if tenant is None or not user.is_authenticated or user.pk != tenant.user_id:
             await self._close(CLOSE_UNAUTHENTICATED)
             return False

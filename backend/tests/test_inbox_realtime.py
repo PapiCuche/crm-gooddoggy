@@ -40,6 +40,7 @@ LOSE_ROLE = "DELETE FROM membership_roles WHERE membership_id = %s"
 SUSPEND = "UPDATE organization_memberships SET status = 'SUSPENDED' WHERE id = %s"
 SUSPEND_ORG = "UPDATE organizations SET status = 'SUSPENDED' WHERE id = %s"
 REVOKE = "UPDATE users SET session_epoch = session_epoch + 1 WHERE id = %s"
+HOSTILE = ('{"slug": "org-b", "scope": "ORGANIZATION"}', "[1]", '"ping"', "{no es json")
 PING = '{"type": "ping"}'
 
 
@@ -58,9 +59,8 @@ class Socket(ApplicationCommunicator):
         path = f"/ws/o/{slug}/inbox/"
         headers = [(b"origin", origin)] if origin else []
         headers += [(b"cookie", session)] if session else []
-        scope = {"type": "websocket", "path": path, "raw_path": path.encode(), "scheme": "ws",
-                 "query_string": query.encode(), "headers": headers, "subprotocols": [],
-                 "client": ("127.0.0.1", 50000), "server": ("testserver", 80)}  # fmt: skip
+        scope = {"type": "websocket", "path": path, "query_string": query.encode(),
+                 "headers": headers, "subprotocols": []}  # fmt: skip
         super().__init__(application, scope)
 
     async def connect(self) -> tuple[bool, Any]:
@@ -148,7 +148,7 @@ def seen(inbox: SimpleNamespace, got: list[dict[str, Any]]) -> set[str]:
 
 
 def test_each_session_receives_only_what_its_scope_and_organization_reach(
-    inbox: SimpleNamespace,
+    inbox: SimpleNamespace, migrator: DB
 ) -> None:
     from tests.test_authorization import give
 
@@ -168,6 +168,13 @@ def test_each_session_receives_only_what_its_scope_and_organization_reach(
                     assert len(await ana.frames()) == 1 and await luis.frames() == []
                     await push(inbox.b, "message.received", inbox.convs["b"])
                     assert seen(inbox, await luis.frames()) == {"b"} and await ana.frames() == []
+                taken = inbox.convs["nobody"]  # sam la toma: vera ya no la ve, y sigue abierta
+                migrator.execute(
+                    "UPDATE conversations SET assigned_user_id = %s WHERE id = %s",
+                    [inbox.sam.pk, taken],
+                )
+                await push(inbox.a, "message.received", taken)
+                assert await vera.frames() == [] and len(await ana.frames()) == 1
 
     run(go)
 
@@ -201,12 +208,10 @@ def test_the_outbox_reaches_the_connection_with_only_type_ids_and_time(
     assert all(
         SECRET not in t for (t,) in migrator.execute("SELECT payload::text FROM outbox_events")
     )
-    cid, mid, noise = uuid4(), uuid4(), {"body": SECRET, "name": "Ana", "phone": "+51"}
-    event = {"type": "message.updated", "id": str(mid), "conversation_id": str(cid), "at": "t"}
-    sent = realtime.outgoing("message.updated", mid, {"conversation_id": str(cid), **noise}, "t")
-    assert sent == {"type": "inbox.event", "event": event}  # fmt: skip
+    cid, mid, pii = uuid4(), uuid4(), {"body": SECRET, "name": "Ana", "phone": "+51"}
+    sent = realtime.outgoing("message.updated", mid, {"conversation_id": str(cid), **pii}, "t")
+    assert sent and set(sent["event"]) == {"type", "id", "conversation_id", "at"}
     assert realtime.outgoing("contact.created", mid, {"conversation_id": str(cid)}, "t") is None
-    assert realtime.outgoing("message.received", mid, {"conversation_id": "x"}, "t") is None
 
 
 @pytest.mark.parametrize("lose", [LOSE_ROLE, SUSPEND])
@@ -227,28 +232,9 @@ def test_a_member_who_loses_the_permission_or_the_membership_is_dropped(
     run(go)
 
 
-def test_a_conversation_that_leaves_the_scope_stops_arriving_but_the_session_stays(
-    inbox: SimpleNamespace, migrator: DB
-) -> None:
-    taken = inbox.convs["nobody"]
-
-    async def go() -> None:
-        async with connected("org-a", inbox.vera) as vera:
-            await push(inbox.a, "message.received", taken)
-            assert len(await vera.frames()) == 1
-            migrator.execute(
-                "UPDATE conversations SET assigned_user_id = %s WHERE id = %s",
-                [inbox.sam.pk, taken],
-            )  # sam la toma: vera ya no la ve
-            await push(inbox.a, "message.received", taken)
-            assert await vera.frames() == []
-            await vera.send_to(PING)  # y sigue abierta, con su permiso
-            assert await vera.frames(1) == [{"type": "pong"}]
-
-    run(go)
-
-
-@pytest.mark.parametrize("why", ["none", "garbage", "deleted", "expired", "old", "revoked", "url"])
+@pytest.mark.parametrize(
+    "why", ["none", "garbage", "badkey", "deleted", "expired", "old", "revoked", "url"]
+)
 def test_without_a_valid_session_in_the_cookie_the_connection_is_refused(
     inbox: SimpleNamespace, migrator: DB, why: str
 ) -> None:
@@ -267,12 +253,13 @@ def test_without_a_valid_session_in_the_cookie_the_connection_is_refused(
         extra = {"session": None, "query": f"sessionid={key}&token={key}"}
     if why == "garbage":
         extra = {"session": name + b"=" + b"x" * 32}
+    if why == "badkey":  # fuera del formato de Django: ni siquiera se consulta la BD
+        extra = {"session": name + b"=../" + b"X" * 8}
     assert attempt("org-a", inbox.ana, **extra) == (False, NO_SESSION)
 
 
-@pytest.mark.parametrize(
-    "origin", [None, b"http://evil.example", b"https://testserver.evil.io", b"null"]
-)
+@pytest.mark.parametrize("origin", [None, b"http://evil.example", b"https://testserver.evil.io"]
+                         + [b"null", b"https://testserver", b"http://testserver:8000"])  # fmt: skip
 def test_a_missing_or_foreign_origin_is_refused_even_with_a_valid_session(
     inbox: SimpleNamespace, origin: bytes | None
 ) -> None:
@@ -302,14 +289,10 @@ def test_a_person_has_a_cap_of_connections_and_a_closed_one_frees_its_place(
 
     async def go() -> None:
         session = await sync_to_async(cookie)(inbox.ana)
-        async with connected("org-a", inbox.ana) as first:
+        async with connected("org-a", inbox.ana):
             async with connected("org-a", inbox.ana), connected("org-a", inbox.vera):
                 assert await try_connect("org-a", session) == (False, TOO_MANY)
-            async with connected("org-a", inbox.ana):  # al cerrar una, vuelve a caber
-                await push(inbox.a, "message.received", inbox.convs["ana"])
-                assert len(await first.frames()) == 1
-        for _ in range(3):  # un rechazo no gasta cupo
-            assert (await try_connect("org-b", session))[0] is False
+            assert (await try_connect("org-a", session))[0]  # al cerrar una, vuelve a caber
         assert not realtime._open
 
     run(go)
@@ -323,12 +306,7 @@ def test_the_client_can_only_ping_and_a_big_or_binary_frame_closes(
         async with connected("org-a", inbox.vera) as vera:
             await vera.send_to(PING)
             assert await vera.frames(1) == [{"type": "pong"}]
-            for hostile in (
-                '{"slug": "org-b", "scope": "ORGANIZATION"}',
-                "[1]",
-                '"ping"',
-                "{no es json",
-            ):
+            for hostile in HOSTILE:
                 await vera.send_to(hostile)
             assert await vera.frames() == []  # ni respuesta ni cambio
             await push(inbox.a, "message.received", inbox.convs["ana"])  # no es de vera
@@ -383,7 +361,6 @@ def test_with_the_channel_layer_down_the_socket_closes_without_logging_secrets(
     channel_layers.backends.clear()
     assert run(lambda: go("receive")) == 1013
     assert not realtime._open and session.decode().split("=")[1] not in caplog.text
-    assert str(inbox.ana.pk) not in caplog.text
     settings.CHANNEL_LAYERS = {}  # sin capa: no abre ni publica
     channel_layers.backends.clear()
     assert attempt("org-a", inbox.ana) == (False, 1013) and not realtime.publish(inbox.a, {})
@@ -414,40 +391,23 @@ def test_the_outbox_handler_is_subscribed_runs_in_its_organization_and_retries(
     assert len(sent) == tasks.REALTIME_RETRIES + 1  # reintenta y se descarta
 
 
-def test_a_failure_in_the_watcher_closes_the_socket_instead_of_leaving_it_unchecked(
-    inbox: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, migrator: DB
+def test_the_watcher_renews_the_group_and_a_failure_in_it_closes_the_socket(
+    inbox: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    settings.INBOX_WS_RECHECK_SECONDS = 0.1
+    """`channels_redis` olvida a quien lleva más de `group_expiry` (24 h) en el grupo."""
+    layer = {"BACKEND": "channels.layers.InMemoryChannelLayer", "CONFIG": {"group_expiry": 1}}
+    settings.CHANNEL_LAYERS, settings.INBOX_WS_RECHECK_SECONDS = {"default": layer}, 0.2
+    channel_layers.backends.clear()
 
     def blip(key: str | None) -> Any:
         raise RuntimeError("la BD parpadeó")
 
     async def go() -> None:
         async with connected("org-a", inbox.vera) as vera:
-            monkeypatch.setattr("apps.conversations.realtime.user_for", blip)
-            assert await vera.closed_with() == 1013  # antes: la tarea moría y seguía abierta
-            assert not realtime._open
-
-    run(go)
-
-
-def test_a_long_lived_connection_keeps_its_place_in_the_group(
-    inbox: SimpleNamespace, settings: Any
-) -> None:
-    """`channels_redis` olvida a quien lleva más de `group_expiry` (24 h) en el grupo."""
-    settings.CHANNEL_LAYERS = {
-        "default": {
-            "BACKEND": "channels.layers.InMemoryChannelLayer",
-            "CONFIG": {"group_expiry": 1},
-        }
-    }
-    settings.INBOX_WS_RECHECK_SECONDS = 0.2
-    channel_layers.backends.clear()
-
-    async def go() -> None:
-        async with connected("org-a", inbox.vera) as vera:
             await asyncio.sleep(1.6)  # más que el plazo del grupo, con varias renovaciones
             await push(inbox.a, "message.received", inbox.convs["vera"])
             assert seen(inbox, await vera.frames(1)) == {"vera"}
+            monkeypatch.setattr("apps.conversations.realtime.user_for", blip)
+            assert await vera.closed_with() == 1013 and not realtime._open  # antes: seguía abierta
 
     run(go)

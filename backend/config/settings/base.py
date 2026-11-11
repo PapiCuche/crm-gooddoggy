@@ -113,17 +113,16 @@ TENANCY_ORGANIZATION_SELECTOR = "apps.organizations.selectors.organization_by_sl
 TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  # F2-02
 # Celery (F1-10): broker Redis por entorno (compose: redis://redis:6379/0).
 CELERY_BROKER_URL = env.optional("CELERY_BROKER_URL", "")
-# Capa de canales (F6-07a): Redis (otra base que el broker en compose). Sin URL no hay capa: el
-# WebSocket del Inbox se niega a abrir (1013). Solo test.py usa la capa en memoria.
+# Capa de canales (F6-07a): Redis; sin URL, el WebSocket del Inbox no abre (1013). Test: memoria.
 CHANNEL_LAYER_REDIS_URL = env.optional("CHANNEL_LAYER_REDIS_URL", CELERY_BROKER_URL)
-_REDIS = {"hosts": [CHANNEL_LAYER_REDIS_URL], "expiry": 30, "capacity": 200}
+_HOST = {"address": CHANNEL_LAYER_REDIS_URL, "socket_connect_timeout": 5, "socket_timeout": 15}
+_REDIS = {"hosts": [_HOST], "expiry": 30, "capacity": 200}
 CHANNEL_LAYERS = (
     {"default": {"BACKEND": "channels_redis.core.RedisChannelLayer", "CONFIG": _REDIS}}
     if CHANNEL_LAYER_REDIS_URL
     else {}
 )
-# WebSocket del Inbox: conexiones por persona y proceso, trama máxima del cliente (solo `ping`),
-# inactividad, cada cuánto se comprueban sesión y permiso, y la cadencia del latido (segundos).
+# WebSocket del Inbox: tope por persona y proceso, trama máxima, inactividad y revisión (segundos).
 INBOX_WS_MAX_PER_USER = 8
 INBOX_WS_MAX_FRAME = 1024
 INBOX_WS_IDLE_SECONDS = 90.0

@@ -59,14 +59,13 @@ def dispatch_event(task: Any, event_id: str) -> None:
 @subscribe(*realtime.EVENTS)
 @tenant_task(name="conversations.publish_realtime", bind=True, ignore_result=True, acks_late=True)
 def publish_realtime(task: Any, event_id: str) -> None:
-    """Handler del outbox para el WebSocket del Inbox (F6-07a): reenvía el evento (de esta
-    organización) con solo su tipo y sus ids. Sin Redis reintenta y, agotados los intentos, lo
-    descarta (el cliente se pone al día al reconectar)."""
+    """Handler del outbox para el WebSocket del Inbox (F6-07a): reenvía solo tipo e ids. Sin Redis
+    reintenta y luego descarta (el cliente se pone al día al reconectar)."""
     event = OutboxEvent.objects.filter(id=event_id).first()
     if event is None:
         return
-    at = event.occurred_at.isoformat()
-    message = realtime.outgoing(event.event_type, event.aggregate_id, event.payload, at)
+    stamp = event.occurred_at.isoformat()
+    message = realtime.outgoing(event.event_type, event.aggregate_id, event.payload, stamp)
     if message is None:
         return
     try:

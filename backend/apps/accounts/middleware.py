@@ -14,8 +14,7 @@
   la época 0: vale hasta la primera revocación. El usuario ya está cargado: sin otra consulta.
 
 La caducidad absoluta, el usuario activo y la revocación las comparte `is_current` con el
-WebSocket del Inbox (`apps.accounts.websocket`, OBS-F2-03C-1), que las comprueba al abrir y
-cada minuto.
+WebSocket del Inbox (`apps.accounts.websocket`, OBS-F2-03C-1).
 """
 
 import time

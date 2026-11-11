@@ -10,10 +10,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 django_application = get_asgi_application()
 
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
-from channels.security.websocket import (  # noqa: E402
-    AllowedHostsOriginValidator,
-    WebsocketDenier,
-)
+from channels.security.websocket import OriginValidator, WebsocketDenier  # noqa: E402
 from django.conf import settings  # noqa: E402
 from django.db import OperationalError, connection  # noqa: E402
 from django.urls import path, re_path  # noqa: E402
@@ -22,8 +19,8 @@ from apps.accounts.websocket import SessionAuthMiddleware  # noqa: E402
 from apps.conversations.realtime import InboxConsumer  # noqa: E402
 
 # Rutas WS de tenant (`/ws/o/<org_slug>/…`, consumers con TenantConsumerMixin): llegan con sus
-# módulos. Origen (host permitido; sin `Origin`, rechazo) y después la sesión por la cookie
-# (ADR-003 §6): una ruta WS sin sesión válida la rechaza su consumer.
+# módulos. Origen (esquema, host y puerto exactos de APP_ORIGIN o CSRF_TRUSTED_ORIGINS; sin
+# `Origin`, rechazo) y después la sesión por la cookie (ADR-003 §6).
 websocket_urlpatterns: list[object] = [
     path("ws/o/<slug:org_slug>/inbox/", InboxConsumer.as_asgi()),  # F6-07a
 ]
@@ -31,10 +28,11 @@ application = ProtocolTypeRouter(
     {
         "http": django_application,
         # Ruta WS desconocida: rechazo limpio (403), no un 500 por "No route found".
-        "websocket": AllowedHostsOriginValidator(
+        "websocket": OriginValidator(
             SessionAuthMiddleware(
                 URLRouter([*websocket_urlpatterns, re_path(r"", WebsocketDenier.as_asgi())])
-            )
+            ),
+            [origin for origin in (settings.APP_ORIGIN, *settings.CSRF_TRUSTED_ORIGINS) if origin],
         ),
     }
 )
