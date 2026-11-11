@@ -339,7 +339,7 @@ def test_the_migration_goes_back_and_forward_keeping_the_contacts(
     assert migrator.execute(column).fetchone() == (0,)
     assert migrator.execute("SELECT count(*) FROM contacts").fetchone() == (2,)  # los de A y B
     with as_migrator():
-        call_command("migrate", "contacts", verbosity=0)
+        call_command("migrate", verbosity=0)  # todo: `quotes` y `tasks` dependen de `contacts`
     assert migrator.execute(exists).fetchone() == (True,)
     assert migrator.execute("SELECT count(*) FROM contact_consents").fetchone() == (0,)
     assert migrator.execute("SELECT is_blocked FROM contacts").fetchall() == [(False,), (False,)]
