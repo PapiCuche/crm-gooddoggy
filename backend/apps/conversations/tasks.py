@@ -30,7 +30,7 @@ from apps.conversations.channels import (
     UnknownPlatform,
     adapter_for,
 )
-from apps.conversations.models import Message
+from apps.conversations.models import Credential, Message
 from core import sealed
 from core.observability.logging import get_logger
 from core.outbox import subscribe
@@ -202,6 +202,12 @@ def health_due(before: dt.datetime, limit: int) -> list[tuple[UUID, UUID]]:
         return [(UUID(str(org)), UUID(str(account))) for org, account in cursor.fetchall()]
 
 
+def _reject(ctx: TenantContext, account_id: UUID, credential: Credential) -> str:
+    with tenant_scope(ctx):  # solo si la credencial comprobada sigue siendo la de la cuenta
+        accounts.mark_token_invalid(ctx, channel_account_id=account_id, credential_id=credential.pk)
+    return "REJECTED"
+
+
 def check_account(organization_id: UUID, account_id: UUID) -> str:
     """Comprueba una cuenta con la Graph API (ADR-029 §12): lee en su scope, llama **sin
     transacción** con el token abierto solo durante la llamada y guarda en otro scope. Meta que
@@ -219,12 +225,16 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
             seen = graph.phone_number(token, waba, number)
         finally:
             del token
-    except graph.GraphRejected, sealed.SealError:  # el token ya no abre ese número
-        with tenant_scope(ctx):  # solo si la credencial comprobada sigue siendo la de la cuenta
-            accounts.mark_token_invalid(
-                ctx, channel_account_id=account_id, credential_id=credential.pk
-            )
-        return "REJECTED"
+    except sealed.SealError:
+        if credential.key_version not in settings.SECRETS_KEKS:
+            # La clave de esa versión no está en este despliegue: es de la configuración, no del
+            # token. No pone la cuenta en `ERROR` (un despliegue sin la clave vieja las pondría
+            # todas); se reintenta cuando la clave vuelva.
+            logger.error("channel.healthcheck_key_missing", key_version=credential.key_version)
+            return "UNAVAILABLE"
+        return _reject(ctx, account_id, credential)
+    except graph.GraphRejected:  # el token ya no abre ese número
+        return _reject(ctx, account_id, credential)
     except graph.GraphUnavailable, graph.ChannelNotEnabled:
         return "UNAVAILABLE"  # Meta caída: no cambia nada y se reintenta en la siguiente pasada
     with tenant_scope(ctx):

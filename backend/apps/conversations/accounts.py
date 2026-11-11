@@ -116,7 +116,10 @@ def rotate_token(
 ) -> tuple[ChannelAccount, Credential]:
     """Cambia el token de una cuenta: el nuevo se comprueba con Meta contra el mismo número y el
     mismo WABA, sustituye al anterior (que se invalida y pierde su cifrado) y limpia
-    `TOKEN_INVALID`. No cambia el estado: volver a `CONNECTED` es de la comprobación de salud.
+    `TOKEN_INVALID`. Una cuenta `ERROR` por `TOKEN_INVALID` no se comprueba nunca, así que sería un
+    callejón sin salida: como Meta acaba de verificar el token nuevo contra su mismo número y WABA
+    (lo mismo que la comprobación de salud), vuelve a `CONNECTED`, o a `DEGRADED` si la calidad es
+    baja (la base prohíbe volver a `PENDING`). Otro estado no cambia.
     `DoesNotExist` si no es una cuenta viva de WhatsApp de esta organización."""
     alias = require_scope(ctx)
     token = _token(access_token)
@@ -131,13 +134,17 @@ def rotate_token(
         account.credential_id, account.last_healthcheck_at = credential.pk, timezone.now()
         account.quality_rating = seen["quality_rating"]
         account.messaging_limit_tier = seen["messaging_limit_tier"]
+        changed: dict[str, Any] = {"credential_id": [str(old) if old else None, str(credential.pk)]}
         if account.status_detail == "TOKEN_INVALID":
             account.status_detail = None
+            if account.status == "ERROR":  # un callejón sin salida: nadie la comprueba en `ERROR`
+                low = seen["quality_rating"] in ("YELLOW", "RED")
+                account.status = "DEGRADED" if low else "CONNECTED"
+                account.status_detail = "QUALITY_LOW" if low else None
+                changed["status"] = ["ERROR", account.status]
         account.version += 1
-        account.save(
-            using=alias, update_fields=[*ACCOUNT_FIELDS, "status_detail", "version", "updated_at"]
-        )
-        changed = {"credential_id": [str(old) if old else None, str(credential.pk)]}
+        fields = [*ACCOUNT_FIELDS, "status", "status_detail", "version", "updated_at"]
+        account.save(using=alias, update_fields=fields)
         _announce(ctx, "channel_account.credentials_rotated", account, changed, str(credential.pk))
     return account, credential
 

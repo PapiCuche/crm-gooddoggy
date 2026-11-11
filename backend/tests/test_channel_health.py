@@ -192,6 +192,24 @@ def test_a_credential_that_does_not_open_is_a_rejected_token_without_calling_met
     assert read(world.a, mine).status == "ERROR"
 
 
+def test_a_key_missing_from_this_deployment_is_not_a_rejected_token_and_changes_nothing(
+    world: SimpleNamespace,
+    graph: FakeGraph,
+    settings: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mine = account(world.a)
+    settings.SECRETS_KEKS = {2: bytes(32)}  # el despliegue ya no tiene la clave de versión 1
+    assert tasks.healthcheck_accounts() == {"UNAVAILABLE": 1} and graph.requests == []
+    saved = read(world.a, mine)
+    assert (saved.status, saved.status_detail, saved.last_healthcheck_at) == (
+        "CONNECTED",
+        None,
+        OLD,
+    )
+    assert "channel.healthcheck_key_missing" in caplog.text and TEST_TOKEN not in caplog.text
+
+
 def test_meta_down_changes_nothing_logs_no_secret_and_off_means_no_calls(
     world: SimpleNamespace, graph: FakeGraph, monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
