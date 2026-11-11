@@ -2249,6 +2249,19 @@
       "badTarget": "No se puede transferir a esa persona. Elige a otra.",
       "closed": "La conversación está cerrada: no se puede asignar.",
       "actions": "Acciones"
+    },
+    "customer": {
+      "open": "Cliente y oportunidades",
+      "back": "Volver a la conversación",
+      "title": "Cliente de la conversación",
+      "loading": "Cargando al cliente…",
+      "unavailable": "No tienes permiso para ver los datos de este cliente, o ya no están disponibles.",
+      "missing": "Sin datos",
+      "phone": "Teléfono",
+      "email": "Correo",
+      "tags": "Etiquetas",
+      "card": "Ver ficha del cliente",
+      "noDeals": "No tienes permiso para ver las oportunidades."
     }
   },
   "channels": {
