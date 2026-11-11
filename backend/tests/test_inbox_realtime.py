@@ -72,7 +72,7 @@ class Socket(ApplicationCommunicator):
         await self.send_input({"type": "websocket.receive", "text": text, "bytes": data})
 
     async def frames(self, count: int) -> list[dict[str, Any]]:
-        """Las próximas `count` tramas: se espera un número, no un silencio (la carga no importa)."""
+        """Las próximas `count` tramas: se espera un número, no un silencio."""
         got = [await self.receive_output(timeout=10) for _ in range(count)]
         assert all(out["type"] == "websocket.send" for out in got), got
         return [json.loads(out["text"]) for out in got]
