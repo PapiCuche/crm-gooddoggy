@@ -181,6 +181,44 @@ describe("Inbox, lista (F6-03)", () => {
   });
 });
 
+describe("Inbox, motivo de un fallo (F7-06c)", () => {
+  it("dice por qué un mensaje no salió con el texto de su código y nunca el valor crudo", async () => {
+    const failed = (id: string, code: string | null, status = "FAILED") =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: status,
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+      });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([
+        failed("e", "PROVIDER_UNKNOWN"),
+        failed("d", "WINDOW_CLOSED"),
+        failed("c", "CODIGO-NUEVO-<b>"),
+        failed("b", null),
+        failed("a", "WINDOW_CLOSED", "SENT"),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("e")).toHaveTextContent("Puede que sí se haya enviado");
+    expect(row("e")).toHaveTextContent("Reenviarlo podría duplicar el mensaje");
+    expect(row("d")).toHaveTextContent("Pasaron más de 24 horas");
+    expect(row("c")).toHaveTextContent("No se pudo enviar"); // un código nuevo no rompe la pantalla
+    expect(row("c")).not.toHaveTextContent("CODIGO-NUEVO");
+    expect(row("b")).toHaveTextContent("No se pudo enviar"); // sin motivo guardado: el texto de antes
+    expect(row("b").querySelectorAll("p.text-danger")).toHaveLength(0);
+    expect(row("a")).not.toHaveTextContent("Pasaron más de 24 horas"); // solo con `FAILED`
+  });
+});
+
 describe("Inbox, chat (F6-03)", () => {
   it("pinta los mensajes del más antiguo al más reciente con marcas de entrega, notas rotuladas y la ficha", async () => {
     const sent = message("m3", {

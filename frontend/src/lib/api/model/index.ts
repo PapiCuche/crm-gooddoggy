@@ -224,6 +224,7 @@ export * from "./promotionItem";
 export * from "./promotionItemRequest";
 export * from "./promotionsListParams";
 export * from "./promotionStatusEnum";
+export * from "./providerErrorCodeEnum";
 export * from "./qualityRatingEnum";
 export * from "./revokedEnum";
 export * from "./role";

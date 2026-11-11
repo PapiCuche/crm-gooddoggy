@@ -2218,6 +2218,22 @@
       "READ": "Leído",
       "FAILED": "No se pudo enviar"
     },
+    "failure": {
+      "CONVERSATION_CLOSED": "La conversación estaba cerrada.",
+      "CHANNEL_UNAVAILABLE": "El canal no estaba conectado.",
+      "CONTACT_BLOCKED": "El contacto está bloqueado.",
+      "WINDOW_CLOSED": "Pasaron más de 24 horas desde el último mensaje del cliente.",
+      "ADAPTER_REJECTED": "El canal no aceptó el mensaje.",
+      "RETRIES_EXHAUSTED": "No se pudo enviar tras varios intentos.",
+      "TOKEN_INVALID": "El acceso de WhatsApp ya no es válido. Reconecta el canal.",
+      "RECIPIENT_UNREACHABLE": "Ese número no puede recibir mensajes de WhatsApp.",
+      "PROVIDER_REJECTED": "WhatsApp rechazó el mensaje.",
+      "PROVIDER_UNKNOWN": "Puede que sí se haya enviado: WhatsApp no lo confirmó. Reenviarlo podría duplicar el mensaje.",
+      "RATE_LIMITED": "WhatsApp limitó el envío por exceso de mensajes. Inténtalo más tarde.",
+      "QUALITY_BLOCKED": "WhatsApp bloqueó el envío por la calidad del número.",
+      "TEMPLATE_UNAVAILABLE": "La plantilla no está disponible.",
+      "PROVIDER_ERROR": "WhatsApp tuvo un problema al procesar el envío."
+    },
     "list": {
       "landmark": "Conversaciones",
       "label": "Lista de conversaciones"

@@ -278,6 +278,10 @@ function Bubble({ message }: { message: Message }) {
   const note = message.message_type === "NOTE" || message.direction === "INTERNAL";
   const outbound = message.direction === "OUTBOUND";
   const state = outbound && message.delivery_status ? message.delivery_status : null;
+  // El motivo de un fallo sale de una tabla de textos por código cerrado; un código que la tabla
+  // no conoce (o ninguno) no muestra nada más que «No se pudo enviar»: nunca el valor crudo.
+  const code = message.provider_error_code;
+  const reason = state === "FAILED" && code && t.has(`failure.${code}`) ? code : null;
   return (
     <li
       className={cn(
@@ -318,6 +322,7 @@ function Bubble({ message }: { message: Message }) {
           </span>
         ) : null}
       </p>
+      {reason ? <p className="text-danger text-xs">{t(`failure.${reason}`)}</p> : null}
     </li>
   );
 }

@@ -10163,6 +10163,28 @@ components:
           type: string
           nullable: true
           description: Solo en lo saliente.
+        provider_error_code:
+          nullable: true
+          description: |-
+            Por qué un mensaje saliente quedó `FAILED`: un código cerrado propio, nunca el texto del proveedor; `null` si no falló (o falló antes de que se guardara el motivo).
+
+            * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
+            * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
+            * `CONTACT_BLOCKED` - CONTACT_BLOCKED
+            * `WINDOW_CLOSED` - WINDOW_CLOSED
+            * `ADAPTER_REJECTED` - ADAPTER_REJECTED
+            * `RETRIES_EXHAUSTED` - RETRIES_EXHAUSTED
+            * `TOKEN_INVALID` - TOKEN_INVALID
+            * `RECIPIENT_UNREACHABLE` - RECIPIENT_UNREACHABLE
+            * `PROVIDER_REJECTED` - PROVIDER_REJECTED
+            * `PROVIDER_UNKNOWN` - PROVIDER_UNKNOWN
+            * `RATE_LIMITED` - RATE_LIMITED
+            * `QUALITY_BLOCKED` - QUALITY_BLOCKED
+            * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
+            * `PROVIDER_ERROR` - PROVIDER_ERROR
+          oneOf:
+          - $ref: '#/components/schemas/ProviderErrorCodeEnum'
+          - $ref: '#/components/schemas/NullEnum'
         created_at:
           type: string
           format: date-time
@@ -10192,6 +10214,7 @@ components:
       - failed_at
       - id
       - message_type
+      - provider_error_code
       - read_at
       - sender_type
       - sender_user_id
@@ -12616,6 +12639,38 @@ components:
         * `DRAFT` - Draft
         * `PUBLISHED` - Published
         * `CANCELLED` - Cancelled
+    ProviderErrorCodeEnum:
+      enum:
+      - CONVERSATION_CLOSED
+      - CHANNEL_UNAVAILABLE
+      - CONTACT_BLOCKED
+      - WINDOW_CLOSED
+      - ADAPTER_REJECTED
+      - RETRIES_EXHAUSTED
+      - TOKEN_INVALID
+      - RECIPIENT_UNREACHABLE
+      - PROVIDER_REJECTED
+      - PROVIDER_UNKNOWN
+      - RATE_LIMITED
+      - QUALITY_BLOCKED
+      - TEMPLATE_UNAVAILABLE
+      - PROVIDER_ERROR
+      type: string
+      description: |-
+        * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
+        * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
+        * `CONTACT_BLOCKED` - CONTACT_BLOCKED
+        * `WINDOW_CLOSED` - WINDOW_CLOSED
+        * `ADAPTER_REJECTED` - ADAPTER_REJECTED
+        * `RETRIES_EXHAUSTED` - RETRIES_EXHAUSTED
+        * `TOKEN_INVALID` - TOKEN_INVALID
+        * `RECIPIENT_UNREACHABLE` - RECIPIENT_UNREACHABLE
+        * `PROVIDER_REJECTED` - PROVIDER_REJECTED
+        * `PROVIDER_UNKNOWN` - PROVIDER_UNKNOWN
+        * `RATE_LIMITED` - RATE_LIMITED
+        * `QUALITY_BLOCKED` - QUALITY_BLOCKED
+        * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
+        * `PROVIDER_ERROR` - PROVIDER_ERROR
     QualityRatingEnum:
       enum:
       - GREEN

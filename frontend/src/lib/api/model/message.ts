@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { DirectionEnum } from "./directionEnum";
+import type { NullEnum } from "./nullEnum";
+import type { ProviderErrorCodeEnum } from "./providerErrorCodeEnum";
 
 export interface Message {
   id: string;
@@ -30,6 +32,25 @@ export interface Message {
    * @nullable
    */
   delivery_status: string | null;
+  /**
+   * Por qué un mensaje saliente quedó `FAILED`: un código cerrado propio, nunca el texto del proveedor; `null` si no falló (o falló antes de que se guardara el motivo).
+   *
+   * * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
+   * * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
+   * * `CONTACT_BLOCKED` - CONTACT_BLOCKED
+   * * `WINDOW_CLOSED` - WINDOW_CLOSED
+   * * `ADAPTER_REJECTED` - ADAPTER_REJECTED
+   * * `RETRIES_EXHAUSTED` - RETRIES_EXHAUSTED
+   * * `TOKEN_INVALID` - TOKEN_INVALID
+   * * `RECIPIENT_UNREACHABLE` - RECIPIENT_UNREACHABLE
+   * * `PROVIDER_REJECTED` - PROVIDER_REJECTED
+   * * `PROVIDER_UNKNOWN` - PROVIDER_UNKNOWN
+   * * `RATE_LIMITED` - RATE_LIMITED
+   * * `QUALITY_BLOCKED` - QUALITY_BLOCKED
+   * * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
+   * * `PROVIDER_ERROR` - PROVIDER_ERROR
+   */
+  provider_error_code: ProviderErrorCodeEnum | NullEnum | null;
   created_at: string;
   /** @nullable */
   sent_at: string | null;
