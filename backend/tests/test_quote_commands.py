@@ -286,6 +286,8 @@ def test_a_stale_version_a_closed_quote_and_a_missing_one_are_refused(
     made = new(shop)
     with pytest.raises(StaleVersion):
         move(shop, commands.update_quote, made, version=7, internal_notes="x")
+    with pytest.raises(ValueError):  # noqa: PT011 — una versión que no es de 1 en adelante
+        move(shop, commands.update_quote, made, version=0, internal_notes="x")
     move(shop, commands.update_quote, made, internal_notes="x")  # ahora va por la 2
     with pytest.raises(StaleVersion):  # una versión anterior también es vieja
         move(shop, commands.update_quote, made, internal_notes="y")
