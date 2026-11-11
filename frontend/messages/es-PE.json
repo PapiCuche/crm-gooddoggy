@@ -2226,7 +2226,7 @@
       "WINDOW_CLOSED": "Pasaron más de 24 horas desde el último mensaje del cliente.",
       "ADAPTER_REJECTED": "El canal no aceptó el mensaje.",
       "RETRIES_EXHAUSTED": "No se pudo enviar tras varios intentos.",
-      "TOKEN_INVALID": "El acceso de WhatsApp ya no es válido. Reconecta el canal.",
+      "TOKEN_INVALID": "El acceso de WhatsApp ya no es válido. Pide a quien administra los canales que reconecte la cuenta.",
       "RECIPIENT_UNREACHABLE": "Ese número no puede recibir mensajes de WhatsApp.",
       "PROVIDER_REJECTED": "WhatsApp rechazó el mensaje.",
       "PROVIDER_UNKNOWN": "Puede que sí se haya enviado: WhatsApp no lo confirmó. Reenviarlo podría duplicar el mensaje.",

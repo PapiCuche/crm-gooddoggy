@@ -216,6 +216,9 @@ describe("Inbox, motivo de un fallo (F7-06c)", () => {
         .find((li) => li.querySelector("bdi")?.textContent === body)!;
     expect(row("e")).toHaveTextContent("Puede que sí se haya enviado");
     expect(row("e")).toHaveTextContent("Reenviarlo podría duplicar el mensaje");
+    // Duda, no error seguro: ni el motivo ni la marca van en rojo; un fallo cierto sí.
+    expect(row("e").querySelectorAll(".text-danger")).toHaveLength(0);
+    expect(row("d").querySelectorAll("p.text-danger")).toHaveLength(1);
     expect(row("d")).toHaveTextContent("Pasaron más de 24 horas");
     expect(row("c")).toHaveTextContent("No se pudo enviar"); // un código nuevo no rompe la pantalla
     expect(row("c")).not.toHaveTextContent("CODIGO-NUEVO");
@@ -255,6 +258,30 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     expect(row("a")).toHaveTextContent("No se pudo enviar");
     expect(row("a").querySelectorAll("p.text-danger")).toHaveLength(0);
     expect(row("b").querySelectorAll("p.text-danger")).toHaveLength(0);
+  });
+
+  it("un estado de entrega con nombre de clave del prototipo no rompe la burbuja ni se pinta", async () => {
+    const odd = (id: string, status: string) =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: status,
+        body: id,
+      });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([odd("c", "__proto__"), odd("b", "toString"), odd("a", "constructor")]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    expect(within(log).getAllByRole("listitem")).toHaveLength(3);
+    expect(log).not.toHaveTextContent("constructor");
+    expect(log.querySelectorAll("svg")).toHaveLength(0);
+  });
+
+  it("el texto de TOKEN_INVALID manda a quien administra los canales, no a quien escribe", () => {
+    expect(messages.inbox.failure.TOKEN_INVALID).toContain("quien administra los canales");
   });
 });
 

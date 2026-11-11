@@ -273,6 +273,9 @@ export function ChatPanel({
 }
 
 const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
+// `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
+// `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
+const STATES: readonly string[] = Object.keys(MARKS);
 
 function Bubble({ message }: { message: Message }) {
   const t = useTranslations("inbox");
@@ -288,6 +291,8 @@ function Bubble({ message }: { message: Message }) {
   // además que el código sea uno del conjunto cerrado del contrato.
   const reason =
     state === "FAILED" && code && CODES.includes(code) && t.has(`failure.${code}`) ? code : null;
+  // «Puede que sí se haya enviado» no es un fallo seguro: tono neutro, no el rojo de un error.
+  const unsure = reason === "PROVIDER_UNKNOWN";
   return (
     <li
       className={cn(
@@ -316,11 +321,11 @@ function Bubble({ message }: { message: Message }) {
         <time dateTime={message.created_at}>
           {format.dateTime(new Date(message.created_at), WHEN)}
         </time>
-        {state && t.has(`delivery.${state}`) ? (
+        {state && STATES.includes(state) && t.has(`delivery.${state}`) ? (
           <span
             className={cn(
               "inline-flex items-center gap-1 [&_svg]:size-3.5",
-              state === "FAILED" && "text-danger font-semibold",
+              state === "FAILED" && !unsure && "text-danger font-semibold",
             )}
           >
             {MARKS[state]}
@@ -328,7 +333,11 @@ function Bubble({ message }: { message: Message }) {
           </span>
         ) : null}
       </p>
-      {reason ? <p className="text-danger text-xs">{t(`failure.${reason}`)}</p> : null}
+      {reason ? (
+        <p className={cn("text-xs", unsure ? "text-foreground" : "text-danger")}>
+          {t(`failure.${reason}`)}
+        </p>
+      ) : null}
     </li>
   );
 }
