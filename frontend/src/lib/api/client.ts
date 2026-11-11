@@ -119,6 +119,7 @@ import type {
   PaginatedRoleList,
   PaginatedStockImportRowList,
   PaginatedTagList,
+  PaginatedTaskList,
   PaginatedTeamList,
   PaginatedTeamMemberList,
   PaginatedVariantList,
@@ -174,6 +175,8 @@ import type {
   Tag,
   TagWriteRequest,
   TagsListParams,
+  Task,
+  TasksListParams,
   Team,
   TeamCreateRequest,
   TeamMember,
@@ -14320,6 +14323,272 @@ export const useTagsUpdate = <TError = ErrorType<Error>, TContext = unknown>(
 > => {
   return useMutation(getTagsUpdateMutationOptions(options), queryClient);
 };
+
+export const getTasksListUrl = (orgSlug: string, params?: TasksListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/tasks/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/tasks/`;
+};
+
+/**
+ * Las tareas vivas dentro del alcance de `tasks.view`, paginadas por creación (ADR-016). Los filtros se combinan y la página siguiente se pide con los mismos: `mine` (las mías), `status`, `overdue`, `due_from` y `due_to` (instantes) y los vínculos. 400: un filtro repetido o inválido.
+ */
+export const tasksList = async (
+  orgSlug: string,
+  params?: TasksListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedTaskList> => {
+  return apiFetch<PaginatedTaskList>(getTasksListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getTasksListQueryKey = (orgSlug: string, params?: TasksListParams) => {
+  return [`/api/v1/o/${orgSlug}/tasks/`, ...(params ? [params] : [])] as const;
+};
+
+export const getTasksListQueryOptions = <
+  TData = Awaited<ReturnType<typeof tasksList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TasksListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getTasksListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof tasksList>>> = ({ signal }) =>
+    tasksList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof tasksList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type TasksListQueryResult = NonNullable<Awaited<ReturnType<typeof tasksList>>>;
+export type TasksListQueryError = ErrorType<Error>;
+
+export function useTasksList<
+  TData = Awaited<ReturnType<typeof tasksList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | TasksListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof tasksList>>,
+          TError,
+          Awaited<ReturnType<typeof tasksList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTasksList<
+  TData = Awaited<ReturnType<typeof tasksList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TasksListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof tasksList>>,
+          TError,
+          Awaited<ReturnType<typeof tasksList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTasksList<
+  TData = Awaited<ReturnType<typeof tasksList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TasksListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useTasksList<
+  TData = Awaited<ReturnType<typeof tasksList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: TasksListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getTasksListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getTasksRetrieveUrl = (orgSlug: string, taskId: string) => {
+  return `/api/v1/o/${orgSlug}/tasks/${taskId}/`;
+};
+
+/**
+ * Una tarea. 404: no es de la organización, está borrada o queda fuera del alcance de `tasks.view`.
+ */
+export const tasksRetrieve = async (
+  orgSlug: string,
+  taskId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Task> => {
+  return apiFetch<Task>(getTasksRetrieveUrl(orgSlug, taskId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getTasksRetrieveQueryKey = (orgSlug: string, taskId: string) => {
+  return [`/api/v1/o/${orgSlug}/tasks/${taskId}/`] as const;
+};
+
+export const getTasksRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof tasksRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  taskId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getTasksRetrieveQueryKey(orgSlug, taskId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof tasksRetrieve>>> = ({ signal }) =>
+    tasksRetrieve(orgSlug, taskId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined && taskId !== null && taskId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof tasksRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type TasksRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof tasksRetrieve>>>;
+export type TasksRetrieveQueryError = ErrorType<Error>;
+
+export function useTasksRetrieve<
+  TData = Awaited<ReturnType<typeof tasksRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  taskId: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof tasksRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof tasksRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTasksRetrieve<
+  TData = Awaited<ReturnType<typeof tasksRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  taskId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof tasksRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof tasksRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useTasksRetrieve<
+  TData = Awaited<ReturnType<typeof tasksRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  taskId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useTasksRetrieve<
+  TData = Awaited<ReturnType<typeof tasksRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  taskId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof tasksRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getTasksRetrieveQueryOptions(orgSlug, taskId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getTeamsListUrl = (orgSlug: string, params?: TeamsListParams) => {
   const normalizedParams = new URLSearchParams();

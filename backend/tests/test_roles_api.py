@@ -205,6 +205,8 @@ def test_the_permission_catalog_lists_every_permission_by_code(rbac: Any) -> Non
         "conversations.view",  # F6-01
         "messages.send",
         "messages.note",
+        "tasks.view",  # F5-08b
+        "tasks.update",
     }
     sensitive = {row["code"] for row in body["results"] if row["is_sensitive"]}
     assert sensitive == {p.code for p in PERMISSIONS if p.is_sensitive} and sensitive

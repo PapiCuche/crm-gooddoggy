@@ -78,6 +78,7 @@ class MessageType(models.TextChoices):
 
 class Delivery(models.TextChoices):
     QUEUED = "QUEUED"
+    SENDING = "SENDING"  # reclamado: la llamada al canal está en curso
     SENT = "SENT"
     DELIVERED = "DELIVERED"
     READ = "READ"
@@ -414,6 +415,7 @@ class Message(TenantModel):
     delivery_status = models.CharField(  # noqa: DJ001
         max_length=10, choices=Delivery.choices, null=True, blank=True
     )
+    sending_at = models.DateTimeField(null=True, blank=True)  # cuándo se reclamó (el barredor)
     sent_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
     read_at = models.DateTimeField(null=True, blank=True)

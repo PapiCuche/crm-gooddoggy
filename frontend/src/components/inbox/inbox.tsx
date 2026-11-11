@@ -4,11 +4,12 @@ import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import type { Conversation } from "@/lib/api/model";
+import type { Conversation, ConversationContact } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { ChatPanel } from "./chat-panel";
 import { ConversationList, type Filters } from "./conversation-list";
+import { CustomerPanel } from "./customer-panel";
 import { useInboxRealtime } from "./use-inbox-realtime";
 
 // En pantalla ancha lista y chat conviven; en 390 px se ve uno u otro (lista y, al abrirla, el chat).
@@ -23,7 +24,14 @@ export function Inbox() {
   useInboxRealtime(); // los cambios llegan sin recargar (si el servicio de tiempo real está encendido)
   const [filters, setFilters] = useState<Filters>({ box: "all", status: "" });
   const [selected, setSelected] = useState<Conversation | null>(null);
+  // El cliente que se ve en el panel (el del detalle de la conversación, no el de la fila de la lista);
+  // `null`: se ve el chat.
+  const [customer, setCustomer] = useState<ConversationContact | null>(null);
+  const view = customer ? "customer" : "chat";
+  const customerHeading = useRef<HTMLHeadingElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const wasCustomer = useRef(false);
+  const toChat = useRef(false); // se cambió de conversación con el panel abierto: el foco va al chat nuevo
   const last = useRef<string | null>(null);
   const selectedId = selected?.id ?? null;
   useEffect(() => {
@@ -34,6 +42,15 @@ export function Inbox() {
       document.getElementById(`conversation-${last.current}`)?.focus();
     }
   }, [selectedId]);
+  useEffect(() => {
+    // Abrir el panel lleva el foco a su nombre; volver, al botón que lo abrió (el chat sigue montado).
+    if (view === "customer") customerHeading.current?.focus();
+    else if (wasCustomer.current && toChat.current)
+      heading.current?.focus(); // otra conversación
+    else if (wasCustomer.current) document.getElementById("customer-toggle")?.focus();
+    if (view === "chat") toChat.current = false;
+    wasCustomer.current = view === "customer";
+  }, [view]);
 
   return (
     <section className="flex min-w-0 flex-col gap-6">
@@ -64,17 +81,39 @@ export function Inbox() {
             filters={filters}
             onFilters={setFilters}
             selectedId={selectedId}
-            onSelect={setSelected}
+            onSelect={(next) => {
+              toChat.current = view === "customer";
+              setCustomer(null);
+              setSelected(next);
+            }}
           />
         </section>
         <section aria-label={t("chat.landmark")} className="min-w-0">
           {selected ? (
-            <ChatPanel
-              key={selected.id}
-              conversation={selected}
-              headingRef={heading}
-              onBack={() => setSelected(null)}
-            />
+            <>
+              {/* El chat no se desmonta al ver al cliente: conserva su borrador y su posición. */}
+              <div hidden={view === "customer"}>
+                <ChatPanel
+                  key={selected.id}
+                  conversation={selected}
+                  headingRef={heading}
+                  visible={view === "chat"}
+                  onBack={() => {
+                    setCustomer(null);
+                    setSelected(null);
+                  }}
+                  onCustomer={setCustomer}
+                />
+              </div>
+              {customer ? (
+                <CustomerPanel
+                  key={selected.id}
+                  contact={customer}
+                  headingRef={customerHeading}
+                  onBack={() => setCustomer(null)}
+                />
+              ) : null}
+            </>
           ) : (
             <p className="text-muted max-lg:hidden">{t("chat.choose")}</p>
           )}

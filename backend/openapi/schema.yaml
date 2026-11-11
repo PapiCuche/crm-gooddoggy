@@ -7210,6 +7210,167 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/tasks/:
+    get:
+      operationId: tasks_list
+      description: 'Las tareas vivas dentro del alcance de `tasks.view`, paginadas
+        por creación (ADR-016). Los filtros se combinan y la página siguiente se pide
+        con los mismos: `mine` (las mías), `status`, `overdue`, `due_from` y `due_to`
+        (instantes) y los vínculos. 400: un filtro repetido o inválido.'
+      parameters:
+      - in: query
+        name: assigned_user_id
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: contact_id
+        schema:
+          type: string
+          format: uuid
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - in: query
+        name: due_from
+        schema:
+          type: string
+          format: date-time
+        description: '`due_at` desde este instante, con zona horaria.'
+      - in: query
+        name: due_to
+        schema:
+          type: string
+          format: date-time
+        description: '`due_at` antes de este instante, con zona horaria.'
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: query
+        name: mine
+        schema:
+          type: boolean
+        description: Las que tengo como responsable.
+      - in: query
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: overdue
+        schema:
+          type: boolean
+        description: Abiertas con `due_at` ya pasado (`true`).
+      - in: query
+        name: status
+        schema:
+          enum:
+          - PENDING
+          - IN_PROGRESS
+          - DONE
+          - CANCELLED
+          type: string
+          minLength: 1
+        description: |-
+          * `PENDING` - Pending
+          * `IN_PROGRESS` - In Progress
+          * `DONE` - Done
+          * `CANCELLED` - Cancelled
+      tags:
+      - tasks
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTaskList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/tasks/{task_id}/:
+    get:
+      operationId: tasks_retrieve
+      description: 'Una tarea. 404: no es de la organización, está borrada o queda
+        fuera del alcance de `tasks.view`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: task_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - tasks
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/teams/:
     get:
       operationId: teams_list
@@ -10790,6 +10951,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedTaskList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedTeamList:
       type: object
       required:
@@ -12484,6 +12659,146 @@ components:
       required:
       - color
       - name
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/TaskTypeEnum'
+        title:
+          type: string
+          description: Texto libre.
+        description:
+          type: string
+          description: Texto libre, con saltos de línea.
+        assigned_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: El responsable.
+        contact:
+          $ref: '#/components/schemas/TaskContactRef'
+        opportunity_id:
+          type: string
+          format: uuid
+          nullable: true
+        due_at:
+          type: string
+          format: date-time
+          nullable: true
+        is_all_day:
+          type: boolean
+          description: '`due_at` es un día: se muestra sin hora.'
+        reminder_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          $ref: '#/components/schemas/TaskStatusEnum'
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        cancel_reason:
+          type: string
+          nullable: true
+          description: Texto libre.
+        source:
+          $ref: '#/components/schemas/TaskSourceEnum'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          description: Sube con cada cambio.
+      required:
+      - assigned_user_id
+      - cancel_reason
+      - completed_at
+      - completed_by_user_id
+      - contact
+      - created_at
+      - description
+      - due_at
+      - id
+      - is_all_day
+      - opportunity_id
+      - priority
+      - reminder_at
+      - source
+      - status
+      - title
+      - type
+      - updated_at
+      - version
+    TaskContactRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
+          description: '`null` si no hay contacto o quien consulta no puede verlo
+            (`contacts.view`).'
+      required:
+      - display_name
+      - id
+    TaskSourceEnum:
+      enum:
+      - MANUAL
+      - AUTOMATION
+      - AI
+      type: string
+      description: |-
+        * `MANUAL` - Manual
+        * `AUTOMATION` - Automation
+        * `AI` - Ai
+    TaskStatusEnum:
+      enum:
+      - PENDING
+      - IN_PROGRESS
+      - DONE
+      - CANCELLED
+      type: string
+      description: |-
+        * `PENDING` - Pending
+        * `IN_PROGRESS` - In Progress
+        * `DONE` - Done
+        * `CANCELLED` - Cancelled
+    TaskTypeEnum:
+      enum:
+      - CALL
+      - MESSAGE
+      - MEETING
+      - FOLLOW_UP
+      - QUOTE
+      - COLLECTION
+      - DELIVERY
+      - OTHER
+      type: string
+      description: |-
+        * `CALL` - Call
+        * `MESSAGE` - Message
+        * `MEETING` - Meeting
+        * `FOLLOW_UP` - Follow Up
+        * `QUOTE` - Quote
+        * `COLLECTION` - Collection
+        * `DELIVERY` - Delivery
+        * `OTHER` - Other
     Team:
       type: object
       properties:
