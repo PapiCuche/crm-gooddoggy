@@ -114,7 +114,7 @@ layers = [
     # misma fila que inventory, sin importarse entre sí. deals, los pipelines (F5-01): sobre
     # contacts (las oportunidades, F5-03, referenciarán contactos), nunca al revés. conversations,
     # el Inbox (F6-01): sobre contacts, en la fila de deals, sin importarse entre sí.
-    "apps.inventory | apps.pricing | apps.deals | apps.conversations",
+    "apps.inventory | apps.pricing | apps.deals | apps.conversations | apps.tasks",
     "apps.catalog | apps.contacts",
     # L2+: unen módulos de L2. provisioning, el alta (F2-06); members, sus miembros (ADR-017)
     "apps.provisioning | apps.members",
@@ -124,9 +124,13 @@ layers = [
     "apps.audit | apps.files | apps.imports",
     "core",
 ]
-# F6-06b: la única arista de deals a conversations (el alcance de `conversations.view` al crear una
-# oportunidad desde una conversación); cualquier otra, y la inversa, siguen prohibidas.
-ignore_imports = ["apps.deals.api.opportunities -> apps.conversations.selectors"]
+# Las únicas aristas permitidas entre módulos de la misma fila (el resto, y la inversa, prohibidas):
+# F5-08, tasks a deals (la oportunidad de la tarea); F6-06b, deals a conversations (el alcance).
+ignore_imports = [
+    "apps.tasks.models -> apps.deals.models",
+    "apps.tasks.commands -> apps.deals.models",
+    "apps.deals.api.opportunities -> apps.conversations.selectors",
+]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
@@ -209,6 +213,12 @@ name = "Entrantes de WhatsApp: solo el procesador importa inbound (F7-04a; no pi
 type = "protected"
 protected_modules = ["apps.conversations.inbound"]
 allowed_importers = ["apps.conversations.ingress"]
+
+[[tool.importlinter.contracts]]
+name = "Comandos de tareas: solo su API los importa (F5-08a)"
+type = "protected"
+protected_modules = ["apps.tasks.commands"]
+allowed_importers = ["apps.tasks.api"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F7-02b, F7-02c, F7-04)"

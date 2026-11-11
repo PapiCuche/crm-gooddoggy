@@ -346,12 +346,16 @@ def test_the_data_migration_seeds_the_organizations_that_already_exist(
     make_pipeline(world.b, "propio", is_default=True)
     with as_migrator():
         call_command("migrate", "deals", "0001", verbosity=0)
-        call_command("migrate", "deals", verbosity=0)
+        call_command(
+            "migrate", verbosity=0
+        )  # todo: `tasks` depende de `deals` y se deshace con ella
     assert summary(migrator, world.a) == EXPECTED
     assert [p[0] for p in summary(migrator, world.b)["pipelines"]] == ["propio"]  # no se toca
     assert summary(migrator, world.b)["stages"] == []
     assert len(summary(migrator, world.b)["reasons"]) == len(LOST_REASONS)  # sin motivos antes
     with as_migrator():  # otra vez: sin duplicar
         call_command("migrate", "deals", "0001", verbosity=0)
-        call_command("migrate", "deals", verbosity=0)
+        call_command(
+            "migrate", verbosity=0
+        )  # todo: `tasks` depende de `deals` y se deshace con ella
     assert summary(migrator, world.a) == EXPECTED
