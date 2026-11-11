@@ -63,6 +63,12 @@ def current() -> int:
     return max(_keys())
 
 
+def has_key(version: int) -> bool:
+    """¿Tiene este proceso la clave de esa versión? Distingue una clave que falta (configuración)
+    de un valor alterado: ambos son `SealError` al abrir, pero solo el segundo es del dato."""
+    return version in _keys()
+
+
 def seal(purpose: str, owner: str, plaintext: bytes) -> bytes:
     """Cifra `plaintext` para ese propósito y ese dueño, con la clave vigente (la de versión más
     alta). Devuelve formato, versión de la clave, nonce y cifrado con su etiqueta: lo que se
