@@ -1,7 +1,8 @@
-"""Rutas de tenant de las cotizaciones: `…/quotes/` (F5-09d, E13), solo lectura: la lista con
-`quotes.view`, que admite alcance por quien creó la cotización (`TEAM` incluye a sus compañeros de
-equipo): `ScopeFilter` deja en el listado solo las que la política permite. El detalle llega con
-F5-09d2 (fuera del alcance, o de otra organización, será un 404) y la escritura, con F5-09e.
+"""Rutas de tenant de las cotizaciones: `…/quotes/` (F5-09d y F5-09d2, E13), solo lectura: la
+lista y el detalle con `quotes.view`, que admite alcance por quien creó la cotización (`TEAM`
+incluye a sus compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las
+que la política permite. Fuera del alcance la cotización no existe, igual que la de otra
+organización o una inexistente: 404. La escritura llega con F5-09e.
 
 El contacto sale con `id` y `display_name`, y el nombre solo si quien consulta puede ver ese
 contacto (`contacts.view` y su alcance); si no, `display_name` es `null`: tener las cotizaciones de
@@ -10,7 +11,7 @@ congelaron al cotizar. Nunca salen costos ni márgenes: la cotización no los gu
 
 from typing import Any
 
-from django.db.models import OuterRef, QuerySet, Subquery
+from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
@@ -20,7 +21,7 @@ from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
 from apps.quotes import selectors
-from apps.quotes.models import Quote
+from apps.quotes.models import Quote, QuoteItem
 from core.api.schema import errors
 from core.tenancy import context
 
@@ -34,6 +35,24 @@ class QuoteContactRefSerializer(serializers.Serializer[Any]):
         allow_null=True,
         help_text="`null` si quien consulta no puede ver el contacto (`contacts.view`).",
     )
+
+
+class QuoteItemSerializer(serializers.ModelSerializer[QuoteItem]):
+    """Una línea con lo que se congeló al cotizar."""
+
+    product_name = serializers.CharField(source="product_name_snapshot")
+    variant_name = serializers.CharField(source="variant_name_snapshot")
+    sku = serializers.CharField(source="sku_snapshot")
+    promotion_id = serializers.UUIDField(source="promotion_id_snapshot", allow_null=True)
+    promotion_name = serializers.CharField(source="promotion_name_snapshot", allow_null=True)
+
+    class Meta:
+        model = QuoteItem
+        fields = (
+            "id", "sort_order", "variant_id", "product_name", "variant_name", "sku", "quantity",
+            "list_unit_price", "promotion_id", "promotion_name", "unit_price", "discount_type",
+            "discount_value", "discount_amount", "final_unit_price", "line_total", "currency",
+        )  # fmt: skip
 
 
 LIST_FIELDS: tuple[str, ...] = (
@@ -53,6 +72,16 @@ class QuoteSerializer(serializers.ModelSerializer[Quote]):
     class Meta:
         model = Quote
         fields = LIST_FIELDS
+
+
+class QuoteDetailSerializer(QuoteSerializer):
+    """Más las notas (texto libre), el motivo de cancelación y las líneas en orden."""
+
+    items = QuoteItemSerializer(many=True)
+
+    class Meta:
+        model = Quote
+        fields = (*LIST_FIELDS, "notes_to_customer", "internal_notes", "cancel_reason", "items")
 
 
 class QuoteSearchSerializer(serializers.Serializer[Any]):
@@ -127,3 +156,22 @@ class QuotesView(QuotesQuery, generics.ListAPIView):
     required_permissions = {"GET": "quotes.view"}
     serializer_class = QuoteSerializer
     filter_backends = [ScopeFilter, QuoteSearch]  # en este orden
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="quotes_retrieve",
+        tags=["quotes"],
+        responses={200: QuoteDetailSerializer, **errors(401, 403, 404)},
+        description="Una cotización con sus líneas en orden, tal como se congelaron. 404: no es de "
+        "la organización, no existe o queda fuera del alcance de `quotes.view`.",
+    )
+)
+class QuoteView(QuotesQuery, generics.RetrieveAPIView):
+    required_permissions = {"GET": "quotes.view"}
+    serializer_class = QuoteDetailSerializer
+    lookup_url_kwarg = "quote_id"
+
+    def get_queryset(self) -> QuerySet[Quote]:
+        lines = QuoteItem.objects.order_by("sort_order")  # las líneas, en una consulta más
+        return super().get_queryset().prefetch_related(Prefetch("items", queryset=lines))

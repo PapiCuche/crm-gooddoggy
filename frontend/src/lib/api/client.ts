@@ -162,6 +162,7 @@ import type {
   Promotion,
   PromotionCreateRequest,
   PromotionsListParams,
+  QuoteDetail,
   QuotesListParams,
   Role,
   RoleCreateRequest,
@@ -13485,6 +13486,133 @@ export function useQuotesList<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
   const queryOptions = getQuotesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getQuotesRetrieveUrl = (orgSlug: string, quoteId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/`;
+};
+
+/**
+ * Una cotización con sus líneas en orden, tal como se congelaron. 404: no es de la organización, no existe o queda fuera del alcance de `quotes.view`.
+ */
+export const quotesRetrieve = async (
+  orgSlug: string,
+  quoteId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  return apiFetch<QuoteDetail>(getQuotesRetrieveUrl(orgSlug, quoteId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getQuotesRetrieveQueryKey = (orgSlug: string, quoteId: string) => {
+  return [`/api/v1/o/${orgSlug}/quotes/${quoteId}/`] as const;
+};
+
+export const getQuotesRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof quotesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  quoteId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getQuotesRetrieveQueryKey(orgSlug, quoteId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof quotesRetrieve>>> = ({ signal }) =>
+    quotesRetrieve(orgSlug, quoteId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined && quoteId !== null && quoteId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof quotesRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type QuotesRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof quotesRetrieve>>>;
+export type QuotesRetrieveQueryError = ErrorType<Error>;
+
+export function useQuotesRetrieve<
+  TData = Awaited<ReturnType<typeof quotesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  quoteId: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quotesRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof quotesRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuotesRetrieve<
+  TData = Awaited<ReturnType<typeof quotesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  quoteId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quotesRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof quotesRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuotesRetrieve<
+  TData = Awaited<ReturnType<typeof quotesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  quoteId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useQuotesRetrieve<
+  TData = Awaited<ReturnType<typeof quotesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  quoteId: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quotesRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getQuotesRetrieveQueryOptions(orgSlug, quoteId, options);
 
   const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
     queryKey: DataTag<QueryKey, TData, TError>;

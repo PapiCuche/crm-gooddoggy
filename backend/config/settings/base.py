@@ -264,6 +264,8 @@ SPECTACULAR_SETTINGS = {
         "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
         "TaskTypeEnum": "apps.tasks.models.TaskType",  # F5-08b: `type` de una tarea
         "QuoteStatusEnum": "apps.quotes.models.QuoteStatus",  # F5-09d: `status` de una cotización
+        "QuoteDiscountTypeEnum": "apps.quotes.models.DiscountType",  # F5-09d2: el de la línea
+        "DiscountTypeEnum": "apps.pricing.models.DiscountType",  # el de las promociones, como antes
         "ProductStatusEnum": "apps.catalog.models.Product.Status",
         "VariantStatusEnum": "apps.catalog.models.ProductVariant.Status",
         "WarehouseTypeEnum": "apps.inventory.models.Warehouse.Type",  # F3-08
