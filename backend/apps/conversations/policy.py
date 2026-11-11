@@ -13,7 +13,9 @@ from dataclasses import dataclass
 
 from apps.conversations.models import Direction, Status
 
-UNAVAILABLE = ("DISCONNECTED", "ERROR", "PENDING")  # estados de `ChannelAccount` sin envío
+# Una lista de permitidos: un estado nuevo o desconocido niega hasta que alguien lo permita aquí.
+SENDING_ACCOUNTS = ("CONNECTED", "DEGRADED")  # estados de `ChannelAccount` que envían
+REPLYABLE = tuple(s for s in Status.values if s != Status.CLOSED)  # `RESOLVED` admite respuestas
 FREE_FORM, BLOCKED = "FREE_FORM", "BLOCKED"  # `mode`; TEMPLATE_REQUIRED llega con F7-10
 REASONS = (  # el conjunto cerrado de motivos de una decisión que niega
     "INTERNAL_NOTE_NOT_SENDABLE", "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED",
@@ -110,9 +112,9 @@ def evaluate(
     reason: str | None = None
     if direction == Direction.INTERNAL:
         reason = "INTERNAL_NOTE_NOT_SENDABLE"
-    elif conversation_status == Status.CLOSED:
+    elif conversation_status not in REPLYABLE:  # cerrada, o un estado que no conocemos
         reason = "CONVERSATION_CLOSED"
-    elif caps is None or account_deleted or account_status in UNAVAILABLE:
+    elif caps is None or account_deleted or account_status not in SENDING_ACCOUNTS:
         reason = "CHANNEL_UNAVAILABLE"  # una cuenta borrada o sin adaptador no recibe envíos
     elif contact_blocked:
         reason = "CONTACT_BLOCKED"

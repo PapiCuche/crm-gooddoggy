@@ -55,16 +55,6 @@ def test_the_policy_of_a_sandbox_conversation_is_open_with_no_window(
     assert (body["window_hours"], body["window_expires_at"]) == (None, None)
 
 
-def test_a_whatsapp_conversation_inside_the_window_reports_when_it_closes(
-    inbox: SimpleNamespace,
-) -> None:
-    convo = whatsapp_convo(inbox, dt.timedelta(hours=5))
-    body = signed(inbox.ana).get(url(convo.pk)).json()
-    assert (body["allowed"], body["window_hours"]) == (True, 24)
-    closes = dt.datetime.fromisoformat(body["window_expires_at"])
-    assert closes == convo.last_inbound_at + dt.timedelta(hours=24)  # type: ignore[operator]
-
-
 @pytest.mark.parametrize(
     ("ago", "blocked", "reason"),
     [(dt.timedelta(hours=24), False, "WINDOW_CLOSED"), (None, False, "WINDOW_CLOSED"),

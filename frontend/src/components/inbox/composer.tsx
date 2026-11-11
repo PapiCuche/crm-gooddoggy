@@ -27,6 +27,13 @@ import { cn } from "@/lib/utils";
 
 // El tope de la API (`BODY_MAX`, 4096 caracteres; se cuentan puntos de código, como ella).
 export const BODY_MAX = 4096;
+// Un 409 de la política de envío: lo que cambió puede estar también en la conversación.
+const REFRESH_ON = [
+  "CONVERSATION_CLOSED",
+  "CHANNEL_UNAVAILABLE",
+  "CONTACT_BLOCKED",
+  "WINDOW_CLOSED",
+];
 type Pages = InfiniteData<PaginatedMessageList, string>;
 
 export const messagesKey = (slug: string, id: string) =>
@@ -199,7 +206,7 @@ function ComposeBox({
       );
       // Ese id ya es de otro envío: reintentar con él chocaría siempre.
       if (error.code === "CLIENT_MESSAGE_ID_TAKEN") attempt.current = null;
-      if (error.code === "CONVERSATION_CLOSED" || error.code === "CHANNEL_UNAVAILABLE") {
+      if (REFRESH_ON.includes(error.code)) {
         void client.invalidateQueries({
           queryKey: getConversationsRetrieveQueryKey(slug, conversation.id),
         });

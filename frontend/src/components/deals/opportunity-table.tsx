@@ -1,5 +1,8 @@
+import Link from "next/link";
 import { useFormatter, useTranslations } from "next-intl";
 
+import { useTenant } from "@/components/app-shell/tenant-context";
+import { Plain } from "@/components/inbox/plain";
 import { moneyText } from "@/components/pricing/margins";
 import type { Opportunity } from "@/lib/api/model";
 
@@ -29,6 +32,7 @@ export function OpportunityTable({
 }) {
   const t = useTranslations("deals");
   const format = useFormatter();
+  const slug = useTenant().organization.slug;
   return (
     <div role="region" aria-label={t("table.label")} tabIndex={0} className="overflow-x-auto">
       <table className="bg-surface border-border w-full min-w-[56rem] border text-left text-sm">
@@ -45,7 +49,15 @@ export function OpportunityTable({
           {rows.map((row) => (
             <tr key={row.id} className="border-border border-b align-top last:border-b-0">
               <td className="px-3 py-2 font-mono text-[13px]">{row.number}</td>
-              <td className="px-3 py-2 font-medium wrap-anywhere">{row.title}</td>
+              <td className="px-3 py-2 font-medium wrap-anywhere">
+                <Link
+                  href={`/o/${slug}/oportunidades/${row.id}`}
+                  prefetch={false}
+                  className="underline-offset-4 hover:underline"
+                >
+                  <Plain>{row.title}</Plain>
+                </Link>
+              </td>
               <td className="px-3 py-2 wrap-anywhere">
                 {row.contact.display_name ?? t("card.noContact")}
               </td>

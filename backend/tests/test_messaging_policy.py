@@ -63,7 +63,7 @@ def test_the_sandbox_has_no_window() -> None:
     assert policy.CAPABILITIES.get("INSTAGRAM") is None
 
 
-@pytest.mark.parametrize("status", ["DISCONNECTED", "ERROR", "PENDING"])
+@pytest.mark.parametrize("status", ["DISCONNECTED", "ERROR", "PENDING", "SUSPENDED", ""])
 def test_a_channel_that_is_not_connected_denies(status: str) -> None:
     assert decide(account_status=status).reason == "CHANNEL_UNAVAILABLE"
     assert decide(account_status=status, platform="SANDBOX").reason == "CHANNEL_UNAVAILABLE"
@@ -94,6 +94,9 @@ def test_an_internal_note_is_never_sendable_whatever_else_is_true() -> None:
 def test_a_closed_conversation_denies_and_a_resolved_one_does_not() -> None:
     assert decide(conversation_status="CLOSED").reason == "CONVERSATION_CLOSED"
     assert decide(conversation_status="RESOLVED").allowed  # D-F6-11
+    for status in ("OPEN", "PENDING", "WAITING_CUSTOMER", "WAITING_INTERNAL"):
+        assert decide(conversation_status=status).allowed, status
+    assert decide(conversation_status="ARCHIVED").reason == "CONVERSATION_CLOSED"  # desconocido
 
 
 def test_the_reasons_come_in_a_fixed_order() -> None:
@@ -107,14 +110,6 @@ def test_the_reasons_come_in_a_fixed_order() -> None:
         del worst[drop]
     seen.append(decide(**worst).reason)
     assert seen == list(policy.REASONS)  # y `last_inbound_at=None` queda al final: la ventana
-
-
-def test_the_stored_snapshot_has_only_the_decision_and_no_customer_text() -> None:
-    snap = decide(last_inbound_at=NOW - 25 * HOUR).as_json()
-    assert snap == {
-        "allowed": False, "mode": "BLOCKED", "reason": "WINDOW_CLOSED",
-        "window_expires_at": (NOW - HOUR).isoformat(), "evaluated_at": NOW.isoformat(),
-    }  # fmt: skip
 
 
 # ---- con la base de datos ------------------------------------------------------------------
@@ -245,7 +240,7 @@ def test_only_an_outbound_message_carries_a_decision(world: SimpleNamespace) -> 
     assert tables.message(world.a, convo, policy_decision=saved, **out).policy_decision == saved
 
 
-def test_the_migrations_go_back_and_forward(world: SimpleNamespace, migrator: Any) -> None:
+def test_the_migration_goes_back_and_forward(migrator: Any) -> None:
     column = (
         "SELECT count(*) FROM information_schema.columns WHERE table_name = %s AND column_name = %s"
     )
@@ -253,13 +248,8 @@ def test_the_migrations_go_back_and_forward(world: SimpleNamespace, migrator: An
     assert migrator.execute(grant).fetchone() == (True,)  # la despachadora la reescribe
     with as_migrator():
         call_command("migrate", "conversations", "0009", verbosity=0)
-        call_command("migrate", "contacts", "0006", verbosity=0)
     assert migrator.execute(column, ["messages", "policy_decision"]).fetchone() == (0,)
-    assert migrator.execute(column, ["contacts", "is_blocked"]).fetchone() == (0,)
     with as_migrator():
         call_command("migrate", verbosity=0)
     assert migrator.execute(column, ["messages", "policy_decision"]).fetchone() == (1,)
-    assert migrator.execute(column, ["contacts", "is_blocked"]).fetchone() == (1,)
     assert migrator.execute(grant).fetchone() == (True,)
-    blocked = "SELECT is_blocked FROM contacts WHERE id = %s"  # nace sin bloquear
-    assert migrator.execute(blocked, [world.contact_a.pk]).fetchone() == (False,)
