@@ -120,6 +120,10 @@ def request(
     reply.release_conn()
     if len(data) > MAX_RESPONSE:
         raise ResponseTooLarge
+    # `data` ya viene decodificado: sin estas cabeceras urllib3 lo decodificaría (o lo mediría) otra
+    # vez y una respuesta con `Content-Encoding: gzip` fallaría con `DecodeError`.
+    skip = {"content-encoding", "content-length", "transfer-encoding"}
+    headers = {k: v for k, v in reply.headers.items() if k.lower() not in skip}
     return urllib3.HTTPResponse(
-        body=io.BytesIO(data), headers=reply.headers, status=reply.status, preload_content=True
+        body=io.BytesIO(data), headers=headers, status=reply.status, preload_content=True
     )

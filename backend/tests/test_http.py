@@ -135,3 +135,28 @@ def test_outbound_http_only_through_core_http() -> None:
         if path != root / "core" / "http.py" and pattern.search(path.read_text())
     ]  # fmt: skip
     assert offenders == []
+
+
+@ALLOWED
+def test_a_compressed_answer_is_decoded_once_and_a_bomb_stays_under_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gzip
+
+    def answer(payload: bytes) -> None:
+        reply = urllib3.HTTPResponse(
+            body=io.BytesIO(gzip.compress(payload)),
+            headers={"Content-Encoding": "gzip"},
+            status=200,
+            preload_content=False,
+        )
+        manager = type("M", (), {"request": lambda *a, **k: reply})()
+        monkeypatch.setattr(http, "_manager", manager)
+
+    answer(b'{"messages":[{"id":"wamid.X"}]}')
+    assert (
+        http.request("GET", "https://api.example.com/x").data == b'{"messages":[{"id":"wamid.X"}]}'
+    )
+    answer(b"\0" * (http.MAX_RESPONSE * 4))  # pequeña comprimida, enorme descomprimida
+    with pytest.raises(http.ResponseTooLarge):
+        http.request("GET", "https://api.example.com/x")
