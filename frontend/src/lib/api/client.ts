@@ -7241,7 +7241,7 @@ export const getInventoryReservationsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Aparta unidades disponibles de una variante en un almacén hasta `expires_at` (con zona horaria, a 30 días como mucho). 200: esa `idempotency_key` ya registró esta misma reserva, de esta misma persona. 400 por campo (referencias que no existen en la organización, `expires_at`). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).
+ * Aparta unidades disponibles hasta `expires_at` (con zona horaria, a 30 días como mucho). 200: la misma petición, con el mismo `expires_at` exacto, de la misma persona y con esa `idempotency_key`. 400 por campo. 409: `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).
  */
 export const inventoryReservationsCreate = async (
   orgSlug: string,

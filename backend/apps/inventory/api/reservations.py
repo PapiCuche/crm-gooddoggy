@@ -23,7 +23,6 @@ from core.api.errors import ApiError
 from core.api.schema import errors
 from core.api.strict import Closed, Id, Text, Whole
 
-Status = InventoryReservation.Status
 NOT_ACTIVE = "La reserva venció o se consumió: ya no se libera."
 VARIANT_OFF = "La variante no está activa."
 TOO_MANY = "La celda ya tiene el máximo de reservas activas: libera alguna."
@@ -34,7 +33,10 @@ class Instant(serializers.DateTimeField):
     """Texto ISO 8601 con zona horaria: sin ella el instante es ambiguo, y no se adivina."""
 
     def to_internal_value(self, value: Any) -> Any:
-        parsed = parse_datetime(value) if isinstance(value, str) else None
+        try:
+            parsed = parse_datetime(value) if isinstance(value, str) else None
+        except ValueError:  # bien formado pero imposible: `2030-02-30T10:00:00Z`
+            parsed = None
         if parsed is None or parsed.utcoffset() is None:
             raise serializers.ValidationError("Una fecha y hora ISO 8601 con zona horaria.")
         return super().to_internal_value(value)
@@ -46,7 +48,7 @@ class ReservationSerializer(serializers.Serializer[Any]):
     variant = VariantLabelSerializer(read_only=True)
     warehouse_id = serializers.UUIDField()
     quantity = serializers.IntegerField()
-    status = serializers.ChoiceField(choices=Status.choices)
+    status = serializers.ChoiceField(choices=InventoryReservation.Status.choices)
     expires_at = serializers.DateTimeField()
     reason = serializers.CharField()
     created_by_user_id = serializers.UUIDField(allow_null=True)
@@ -68,7 +70,10 @@ class ReservationCreateSerializer(ReservationReleaseSerializer):
     warehouse_id = Id()
     quantity = Whole(min_value=1, max_value=stock.QUANTITY_MAX)
     expires_at = Instant()
-    idempotency_key = Text(max_length=100)
+    idempotency_key = Text(
+        max_length=100,
+        help_text="De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`.",
+    )
 
     def validate_idempotency_key(self, value: str) -> str:
         return str(_checked(stock.idempotency_key, value))
@@ -86,12 +91,11 @@ class ReservationsView(APIView):
             200: ReservationSerializer,
             **errors(400, 401, 403, 404, 409),
         },
-        description="Aparta unidades disponibles de una variante en un almacén hasta `expires_at` "
-        "(con zona horaria, a 30 días como mucho). 200: esa `idempotency_key` ya registró esta "
-        "misma reserva, de esta misma persona. 400 por campo (referencias que no existen en la "
-        "organización, `expires_at`). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, "
-        "`VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED` (otra petición, "
-        "o de otra persona, con esa clave).",
+        description="Aparta unidades disponibles hasta `expires_at` (con zona horaria, a 30 días "
+        "como mucho). 200: la misma petición, con el mismo `expires_at` exacto, de la misma "
+        "persona y con esa `idempotency_key`. 400 por campo. 409: `INSUFFICIENT_STOCK`, "
+        "`WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o "
+        "`IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).",
     )
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = ReservationCreateSerializer(data=request.data)

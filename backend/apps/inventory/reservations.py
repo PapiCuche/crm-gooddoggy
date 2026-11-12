@@ -277,6 +277,8 @@ def release(ctx: TenantContext, pk: UUID, why: str) -> tuple[InventoryReservatio
         seen = rows.select_for_update().get(pk=pk)  # releída, ya bloqueada
         if seen.status != Status.ACTIVE:
             return _ended(seen)
+        if _due(seen):  # venció: la cierra el job (o la próxima reserva de la celda), no se libera
+            raise ReservationNotActive(Status.EXPIRED)
         _close(alias, seen, level, Status.RELEASED, text, _actor(ctx))
         _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", level)
     return seen, True

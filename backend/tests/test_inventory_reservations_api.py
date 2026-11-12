@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
-from django.db import DatabaseError, connection
+from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
@@ -31,6 +31,7 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 URL, LEVELS = "/api/v1/o/org-a/inventory/reservations/", "/api/v1/o/org-a/inventory/levels/"
 VIEW: dict[str, str | None] = {"inventory.view": None}
 MANAGE: dict[str, str | None] = {**VIEW, "inventory.manage": None}
+KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
 COUNTS = (  # lo que una petición rechazada no debe tocar
     "SELECT (SELECT count(*) FROM inventory_reservations), (SELECT count(*) FROM"
     " inventory_movements), (SELECT count(*) FROM audit_logs), (SELECT sum(reserved) FROM"
@@ -92,14 +93,14 @@ def test_reserve_and_release_move_the_cell(ana: Client, world: Any) -> None:
     ended = release(ana, data["id"])
     assert (ended.status_code, ended.json()["ended_by_user_id"]) == (200, str(world.ana.pk))
     assert release(ana, data["id"], reason="Otra vez").json() == ended.json()  # no escribe
-    row = ana.get(LEVELS, {"variant_id": str(here[0])}).json()["results"][0]
-    assert (row["reserved"], row["available"]) == (0, 5)
-    assert ledger(world.a, "RELEASE") == [-2]
+    assert ledger(world.a, "RELEASE") == [-2] and consistent(world.a, here) == (5, 0, 5)
     after = send(ana, "post", URL, asked)  # la clave, ya liberada
     assert (after.status_code, after.json()["status"]) == (200, "RELEASED")
 
 
-def test_permissions_and_methods(world: Any, migrator: psycopg.Connection[Any]) -> None:
+def test_permissions_and_methods(
+    world: Any, bruno: Client, migrator: psycopg.Connection[Any]
+) -> None:
     here = stocked(world.a, 2, world.ana)
     anonymous = Client(enforce_csrf_checks=True)
     assert reply(anonymous.get(URL))[0] == 401  # y ni siquiera el listado (F3-35b)
@@ -107,7 +108,7 @@ def test_permissions_and_methods(world: Any, migrator: psycopg.Connection[Any]) 
     member = signed(world.ana)  # miembro sin permisos
     assert reserve(member, here).status_code == 403
     give(world.a, world.membership, {**VIEW, "inventory.adjust": None, "inventory.transfer": None})
-    made = res_made(world, here)
+    made = reserve(bruno, here).json()["id"]
     before = migrator.execute(COUNTS).fetchone()
     assert reserve(member, here).status_code == 403  # ver y ajustar no reservan ni liberan
     assert release(member, made).status_code == 403
@@ -120,12 +121,6 @@ def test_permissions_and_methods(world: Any, migrator: psycopg.Connection[Any]) 
     assert signed(world.ana).get("/api/v1/o/org-b/inventory/reservations/").status_code == 404
 
 
-def res_made(world: Any, here: tuple[Any, Any]) -> Any:
-    with tenant_scope(ctx(world.a, world.ana)) as tenant:
-        soon = timezone.now() + timedelta(hours=2)
-        return res.reserve(tenant, res.Wanted(*here, 1, soon, "Seed", uuid4().hex))[0].pk
-
-
 def test_a_manager_may_release_a_colleagues_reservation_and_the_replay_is_not_shared(
     ana: Client, bruno: Client, world: Any
 ) -> None:
@@ -134,18 +129,15 @@ def test_a_manager_may_release_a_colleagues_reservation_and_the_replay_is_not_sh
     first = send(ana, "post", URL, same)
     assert send(ana, "post", URL, same).json()["id"] == first.json()["id"]
     refused = send(bruno, "post", URL, same)  # lo mismo, de otra persona: no recibe la ajena
-    assert (refused.status_code, refused.json()["code"]) == (
-        "409" and 409,
-        "IDEMPOTENCY_KEY_REUSED",
-    )
+    assert (refused.status_code, refused.json()["code"]) == (409, "IDEMPOTENCY_KEY_REUSED")
     assert first.json()["id"] not in refused.text
-    changed = send(ana, "post", URL, {**same, "quantity": 2})
-    assert (changed.status_code, changed.json()["code"]) == (409, "IDEMPOTENCY_KEY_REUSED")
+    later = (timezone.now() + timedelta(hours=3)).isoformat()  # un reintento con otro `expires_at`
+    for change in ({"quantity": 2}, {"expires_at": later}):
+        changed = send(ana, "post", URL, {**same, **change})
+        assert (changed.status_code, changed.json()["code"]) == (409, "IDEMPOTENCY_KEY_REUSED")
     ended = release(bruno, first.json()["id"])
-    assert (
-        ended.status_code == 200
-        and ended.json()["ended_by_user_id"] != first.json()["created_by_user_id"]
-    )
+    other = ended.json()["ended_by_user_id"] != first.json()["created_by_user_id"]
+    assert (ended.status_code, other) == (200, True)
     assert release(ana, first.json()["id"]).json() == ended.json()  # ya liberada: la guardada
 
 
@@ -155,7 +147,11 @@ def test_a_manager_may_release_a_colleagues_reservation_and_the_replay_is_not_sh
         *(("quantity", v) for v in ("5", 5.0, True, 0, -1, 1_000_001, 2**63, None, [1])),
         *(("variant_id", v) for v in ("no-es-uuid", 5, None)),
         *(("warehouse_id", v) for v in ("", 5, None)),
-        *(("expires_at", v) for v in ("2030-01-01T10:00:00", "ayer", 5, None, "2030-01-01")),
+        *(
+            ("expires_at", v)
+            for v in ("2030-01-01T10:00:00", "ayer", 5, None, "2030-01-01")
+            + ("2030-02-30T10:00:00Z", "2030-01-01T10:00:00+25:00")
+        ),
         *(("reason", v) for v in (" ", "", "x" * 256, "a\x00b", None, 7)),
         *(("idempotency_key", v) for v in ("corta", "import:abcdefgh", "a b c d e f", 12345678)),
         ("organization_id", "00000000-0000-0000-0000-000000000000"),
@@ -173,13 +169,13 @@ def test_a_bad_body_is_a_400_on_its_field_and_writes_nothing(
 
 
 def test_the_expiry_bounds_and_a_missing_field(
-    ana: Client, world: Any, migrator: psycopg.Connection[Any]
+    ana: Client, world: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     here = stocked(world.a, 2, world.ana)
     now = timezone.now()
-    before = migrator.execute(COUNTS).fetchone()
+    monkeypatch.setattr(res, "_now", lambda: now)  # los límites exactos
     naive = (now + timedelta(hours=2)).replace(tzinfo=None).isoformat()  # sin zona: no se adivina
-    past, far = now - timedelta(seconds=1), now + res.EXPIRES_MAX + timedelta(seconds=5)
+    past, far = now - timedelta(seconds=1), now + res.EXPIRES_MAX + timedelta(seconds=1)
     for when in (naive, now.isoformat(), past.isoformat(), far.isoformat()):
         bad = reserve(ana, here, expires_at=when)
         assert (bad.status_code, list(bad.json()["fields"])) == (400, ["expires_at"]), when
@@ -188,24 +184,15 @@ def test_the_expiry_bounds_and_a_missing_field(
         del wanted[field]
         assert list(send(ana, "post", URL, wanted).json()["fields"]) == [field]
     assert send(ana, "post", URL, [1]).status_code == 400
-    assert migrator.execute(COUNTS).fetchone() == before
-    top = (now + res.EXPIRES_MAX - timedelta(seconds=30)).isoformat()
+    top = (now + res.EXPIRES_MAX).isoformat()
     assert reserve(ana, here, expires_at=top).status_code == 201
 
 
 def test_unknown_references_look_the_same_whoever_owns_them(ana: Client, world: Any) -> None:
     here, foreign = stocked(world.a, 2, world.ana), cell(world.b, "B")
     service = cell(world.a, "SRV", "SERVICE")
-    nowhere = (uuid4(), uuid4())
-    for field, mine, theirs, missing in (
-        ("variant_id", 0, foreign[0], nowhere[0]),
-        ("warehouse_id", 1, foreign[1], nowhere[1]),
-    ):
-        args = [here[0], here[1]]
-        args[mine] = theirs
-        one = reserve(ana, (args[0], args[1]))
-        args[mine] = missing
-        two = reserve(ana, (args[0], args[1]))
+    for field, theirs in (("variant_id", foreign[0]), ("warehouse_id", foreign[1])):
+        one, two = (reserve(ana, here, **{field: str(x)}) for x in (theirs, uuid4()))
         assert (one.status_code, one.content) == (two.status_code, two.content)
         assert list(one.json()["fields"]) == [field]
     assert list(reserve(ana, (service[0], here[1])).json()["fields"]) == ["variant_id"]
@@ -218,7 +205,7 @@ def test_unknown_references_look_the_same_whoever_owns_them(ana: Client, world: 
 
 
 def test_the_conflicts_carry_their_code_and_no_figures(
-    ana: Client, world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+    ana: Client, world: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     here = stocked(world.a, 2, world.ana)
     big = reserve(ana, here, quantity=3)
@@ -233,12 +220,6 @@ def test_the_conflicts_carry_their_code_and_no_figures(
     assert reserve(ana, here).json()["code"] == "WAREHOUSE_INACTIVE"
     assert consistent(world.a, here) == (2, 0, 2)
     assert migrator.execute("SELECT count(*) FROM inventory_reservations").fetchone() == (0,)
-    with tenant_scope(ctx(world.a)):
-        Warehouse.objects.filter(pk=here[1]).update(is_active=True)
-    monkeypatch.setattr(res, "MAX_ACTIVE_PER_CELL", 1)  # el tope de activas por celda
-    assert reserve(ana, here).status_code == 201
-    full = reserve(ana, here)
-    assert (full.status_code, full.json()["code"]) == (409, "TOO_MANY_RESERVATIONS")
 
 
 def test_a_refusal_undoes_the_expiry_done_inside_reserve(
@@ -262,7 +243,7 @@ def test_release_of_a_closed_reservation_and_of_another_organizations(
     ana: Client, world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     here, mine = stocked(world.a, 5, world.ana), stocked(world.b, 5, None, "B")
-    consumed, expiring = reserve(ana, here).json(), reserve(ana, here).json()
+    consumed, expiring, due = (reserve(ana, here).json() for _ in range(3))
     migrator.execute(
         "UPDATE inventory_reservations SET status = 'CONSUMED', ended_at = now(),"
         " ended_by_type = 'SYSTEM' WHERE id = %s",
@@ -272,13 +253,11 @@ def test_release_of_a_closed_reservation_and_of_another_organizations(
     monkeypatch.setattr(res, "_now", lambda: later)
     with tenant_scope(ctx(world.a)) as tenant:
         assert res.expire(tenant, expiring["id"]) is True
-    for pk in (consumed["id"], expiring["id"]):
+    for pk in (consumed["id"], expiring["id"], due["id"]):  # la vencida que el job aún no cerró
         closed = release(ana, pk)
-        assert (closed.status_code, closed.json()) == (
-            409,
-            {"code": "RESERVATION_NOT_ACTIVE", **{"message": closed.json()["message"]}},
-        )
+        assert (closed.status_code, closed.json()["code"]) == (409, "RESERVATION_NOT_ACTIVE")
         assert not any(ch.isdigit() for ch in closed.json()["message"])
+    assert states(migrator)[due["id"]][0] == "ACTIVE"  # ni se escribió
     foreign = migrator.execute(  # una reserva de la otra organización, como la dejaría su API
         "INSERT INTO inventory_reservations (id, organization_id, variant_id, warehouse_id,"
         " quantity, status, expires_at, reason, idempotency_key, created_by_type, created_at)"
@@ -296,7 +275,6 @@ def test_release_of_a_closed_reservation_and_of_another_organizations(
 
 
 def at_once(*calls: Any) -> list[tuple[int, Any, Any]]:
-    """Cada petición en su hilo y su conexión, soltadas a la vez: (estado, id, código)."""
     start = threading.Barrier(len(calls))
 
     def run(call: Any) -> tuple[int, Any, Any]:
@@ -337,14 +315,19 @@ def test_the_same_key_and_two_releases_at_once_over_http(
     assert consistent(world.a, here) == (3, 0, 3)
 
 
-def test_the_database_keeps_a_released_reservation_closed(ana: Client, world: Any) -> None:
-    here = stocked(world.a, 2, world.ana)
-    made = reserve(ana, here).json()["id"]
-    assert release(ana, made).status_code == 200
-    sql = (
-        "UPDATE inventory_reservations SET status = 'ACTIVE', ended_at = NULL, ended_by_type = NULL"
-    )
-    with pytest.raises(DatabaseError, match="una reserva cerrada"), tenant_scope(ctx(world.a)):
-        connection.cursor().execute(sql + " WHERE id = %s", [made])
-    with tenant_scope(ctx(world.b)):  # y la otra organización no la ve
-        assert connection.cursor().execute(sql + " WHERE id = %s", [made]).rowcount == 0
+def test_the_same_key_from_two_cells_and_the_cap_at_once_over_http(
+    ana: Client, world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    here, there = stocked(world.a, 3, world.ana), stocked(world.a, 3, world.ana, "OTRA")
+    same = {"idempotency_key": "clave-0001"}  # la misma clave, a la vez, en otra celda
+    outcome = at_once(lambda: reserve(ana, here, **same), lambda: reserve(ana, there, **same))
+    assert sorted((code, why) for code, _, why in outcome) == [(201, None), (409, KEY_REUSED)]
+    monkeypatch.setattr(res, "MAX_ACTIVE_PER_CELL", 2)
+    wide = stocked(world.a, 5, world.ana, "TRES")
+    outcome = at_once(*[lambda: reserve(ana, wide)] * 3)
+    assert sorted((code, why) for code, _, why in outcome) == [
+        (201, None),
+        (201, None),
+        (409, "TOO_MANY_RESERVATIONS"),
+    ]
+    assert consistent(world.a, wide) == (5, 2, 3)

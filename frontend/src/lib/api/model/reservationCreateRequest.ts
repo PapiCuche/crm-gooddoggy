@@ -25,6 +25,7 @@ export interface ReservationCreateRequest {
   quantity: number;
   expires_at: string;
   /**
+   * De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`.
    * @minLength 1
    * @maxLength 100
    */
