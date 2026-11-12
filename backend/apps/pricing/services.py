@@ -144,6 +144,13 @@ def _price_list(
     return found
 
 
+def price_list_currency(ctx: ExecutionContext, price_list_id: UUID) -> str | None:
+    """La moneda de una lista no borrada que el actor ve (como `visible_price_lists`), o `None`: lo
+    que no ve no se distingue de lo que no existe. Para quien configura algo por lista (F5-09b4)."""
+    found = visible_price_lists(ctx).using(require_scope(ctx.tenant)).filter(pk=price_list_id)
+    return found.values_list("currency", flat=True).first()
+
+
 def _sellable(variant: Any, audience: Audience) -> bool:
     product = variant.product
     if variant.status != ACTIVE or product.status != ACTIVE:

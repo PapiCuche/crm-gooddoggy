@@ -14196,7 +14196,7 @@ export const getRolesDeleteUrl = (orgSlug: string, roleId: string) => {
 };
 
 /**
- * Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IS_SYSTEM`: es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier estado. 409 `LAST_OWNER`: la organización no tiene rol Owner.
+ * Borra el rol y sus concesiones. 403: sin `roles.manage`, un rol que el actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IS_SYSTEM`: es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier estado. 409 `ROLE_HAS_DEPENDENTS`: otro módulo lo protege (su política de descuento). 409 `LAST_OWNER`: la organización no tiene rol Owner.
  */
 export const rolesDelete = async (
   orgSlug: string,
