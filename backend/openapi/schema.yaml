@@ -3455,6 +3455,138 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/inventory/reservations/:
+    post:
+      operationId: inventory_reservations_create
+      description: 'Aparta unidades disponibles hasta `expires_at` (con zona horaria,
+        a 30 días como mucho). 200: la misma petición, con el mismo `expires_at` exacto,
+        de la misma persona y con esa `idempotency_key`. 400 por campo. 409: `INSUFFICIENT_STOCK`,
+        `WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED`
+        (otra petición, o de otra persona, con esa clave).'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/reservations/{reservation_id}/release/:
+    post:
+      operationId: inventory_reservations_release
+      description: 'Libera una reserva activa y devuelve sus unidades al disponible.
+        200 también si ya estaba liberada (no escribe nada). 409 `RESERVATION_NOT_ACTIVE`:
+        venció o se consumió. 404: no es de la organización.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: reservation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationReleaseRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/invitations/:
     get:
       operationId: invitations_list
@@ -13185,6 +13317,123 @@ components:
         * `REJECTED` - Rejected
         * `EXPIRED` - Expired
         * `CANCELLED` - Cancelled
+    Reservation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        variant_id:
+          type: string
+          format: uuid
+        variant:
+          allOf:
+          - $ref: '#/components/schemas/VariantLabel'
+          readOnly: true
+        warehouse_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ReservationStatusEnum'
+        expires_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        end_reason:
+          type: string
+          nullable: true
+      required:
+      - created_at
+      - created_by_user_id
+      - end_reason
+      - ended_at
+      - ended_by_user_id
+      - expires_at
+      - id
+      - quantity
+      - reason
+      - status
+      - variant
+      - variant_id
+      - warehouse_id
+    ReservationCreateRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 255
+        variant_id:
+          type: string
+          format: uuid
+        warehouse_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          maximum: 1000000
+          minimum: 1
+        expires_at:
+          type: string
+          format: date-time
+        idempotency_key:
+          type: string
+          minLength: 1
+          description: 'De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por
+            `import:`.'
+          maxLength: 100
+      required:
+      - expires_at
+      - idempotency_key
+      - quantity
+      - reason
+      - variant_id
+      - warehouse_id
+    ReservationReleaseRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 255
+      required:
+      - reason
+    ReservationStatusEnum:
+      enum:
+      - ACTIVE
+      - RELEASED
+      - CONSUMED
+      - EXPIRED
+      type: string
+      description: |-
+        * `ACTIVE` - Active
+        * `RELEASED` - Released
+        * `CONSUMED` - Consumed
+        * `EXPIRED` - Expired
     RevokedEnum:
       enum:
       - REVOKED
