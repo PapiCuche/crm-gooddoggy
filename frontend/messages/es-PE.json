@@ -32,7 +32,8 @@
       "opportunities": "Oportunidades",
       "inbox": "Inbox",
       "channels": "Canales",
-      "tasks": "Mis tareas"
+      "tasks": "Mis tareas",
+      "quotes": "Cotizaciones"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -2562,6 +2563,26 @@
     }
   },
   "quotes": {
+    "eyebrow": "Good Doggy / Cotizaciones",
+    "title": "Cotizaciones",
+    "intro": "Las cotizaciones de {organization} que puedes ver. Solo se leen aquí: los importes son los que se congelaron al cotizar.",
+    "loading": "Cargando cotizaciones…",
+    "denied": "No tienes permiso para ver las cotizaciones de esta organización.",
+    "count": "{count, plural, =0 {Sin cotizaciones en la lista} one {# cotización en la lista} other {# cotizaciones en la lista}}",
+    "more": "Cargar más",
+    "loadingMore": "Cargando más…",
+    "empty": "Ninguna cotización coincide con los filtros.",
+    "filters": {
+      "label": "Filtros de cotizaciones",
+      "status": "Estado",
+      "anyStatus": "Todos los estados",
+      "mine": "Solo las que creé",
+      "expired": "Vencidas (enviadas con la validez pasada)",
+      "number": "Número",
+      "numberHint": "Exacto, como COT-000123.",
+      "contact": "Filtrando por un cliente",
+      "clearContact": "Quitar el filtro"
+    },
     "statuses": {
       "DRAFT": "Borrador",
       "PENDING_APPROVAL": "Por aprobar",
@@ -2573,6 +2594,14 @@
       "EXPIRED": "Vencida",
       "CANCELLED": "Cancelada",
       "UNKNOWN": "Estado desconocido"
+    },
+    "row": {
+      "revision": "Revisión {number}",
+      "noContact": "Cliente (sin permiso para ver su nombre)",
+      "validUntil": "Válida hasta {date}",
+      "noValidity": "Sin fecha de validez",
+      "created": "Creada el {date}",
+      "late": "Vencida"
     },
     "detail": {
       "loading": "Cargando la cotización…",
@@ -2619,6 +2648,7 @@
       },
       "revision": "Revisión {number}",
       "late": "Vencida"
-    }
+    },
+    "emptyAll": "Todavía no hay cotizaciones."
   }
 }
