@@ -260,8 +260,8 @@ class DiscountPolicy(TenantModel):
     rol sin política tiene 0 %. Es configuración: se cambia por sus comandos, con auditoría."""
 
     id = uuid7_primary_key()
-    role = models.ForeignKey(
-        "access.Role", models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    role = models.ForeignKey(  # F5-09b4: se borra con su rol (`delete_role` solo borra los vacíos)
+        "access.Role", models.CASCADE, related_name="+", db_constraint=False, db_index=False
     )
     max_discount_percent = models.DecimalField(max_digits=5, decimal_places=2)
     max_discount_amount = models.DecimalField(
