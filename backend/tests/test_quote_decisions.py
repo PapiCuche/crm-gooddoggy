@@ -114,12 +114,7 @@ def test_approving_opens_the_quote_for_the_next_step_and_audits_who_decided(
         discount(shop, seller, made, stored(shop.a, made)[0], "NONE", version=3)
     with pytest.raises(QuoteNotDraft):
         act(shop, seller, commands.update_quote, quote_id=made.pk, version=3, internal_notes="x")
-    with pytest.raises(IntegrityError, match="frozen"):  # ...ni la base lo deja cambiar
-        raw_total(shop, made, seller)
-
-
-def raw_total(shop: SimpleNamespace, made: Quote, who: User) -> None:
-    with tenant_scope(ctx(shop.a, who)):
+    with tenant_scope(ctx(shop.a, seller)), pytest.raises(IntegrityError, match="frozen"):
         Quote.objects.filter(pk=made.pk).update(total=D(1), subtotal=D(1), tax_total=D(0))
 
 
@@ -421,7 +416,6 @@ def test_the_refusals_of_the_decision_carry_no_figures(shop: SimpleNamespace) ->
     both = boss(shop, "3")
     made, _ = asked(shop, both)
     other, _ = asked(shop)
-    caught = []
     with pytest.raises(SelfApproval) as own:
         approve(shop, both, made)
     with pytest.raises(BeyondLimit) as beyond:
@@ -429,8 +423,7 @@ def test_the_refusals_of_the_decision_carry_no_figures(shop: SimpleNamespace) ->
     approve(shop, boss(shop), other)
     with pytest.raises(NotPending) as closed:
         approve(shop, boss(shop), other, version=3)
-    caught = [own, beyond, closed]
-    assert all(str(e.value) == "" and e.value.args == () for e in caught)
+    assert all(str(e.value) == "" and e.value.args == () for e in (own, beyond, closed))
 
 
 def request_with_manual_price(shop: SimpleNamespace) -> Quote:
@@ -575,7 +568,7 @@ def test_a_failure_after_the_request_is_saved_rolls_everything_back(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(decisions, failing, boom)
-    runs = {"approve": approve, "reject": reject, "withdraw": withdraw}
+    runs: dict[str, Any] = {"approve": approve, "reject": reject, "withdraw": withdraw}
     with pytest.raises(RuntimeError, match="boom"):
         runs[name](shop, approver, made)
     monkeypatch.undo()

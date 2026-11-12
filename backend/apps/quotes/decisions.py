@@ -1,22 +1,20 @@
 """Aprobar, rechazar y retirar la solicitud de aprobación de una cotización (F5-09b3; 04 §L.3). Solo
-`apps.quotes.api` los importará. Cada uno, en una transacción, **bloquea la cotización y su
-solicitud abierta** (`FOR NO KEY UPDATE`), pasa la solicitud a su estado y la cotización a
-`APPROVED` (aprobar) o a `DRAFT` (rechazar, retirar), con su versión y la auditoría del antes y el
-después (`quote.approved`, `quote.rejected`, `quote.approval_withdrawn`; el texto libre, como
-`[texto]`).
+`apps.quotes.api` los importará. Cada uno, en una transacción, bloquea la cotización y su solicitud
+abierta (`FOR NO KEY UPDATE`), pasa la solicitud a su estado y la cotización a `APPROVED` (aprobar)
+o a `DRAFT` (rechazar, retirar), con versión y auditoría del antes y el después
+(`quote.approved`, `quote.rejected`, `quote.approval_withdrawn`; el texto libre, como `[texto]`).
 
-**Quién y en qué orden.** El permiso (`quotes.approve`; para retirar, ese o `quotes.update`) se
-comprueba antes de leer. Con la cotización ya bloqueada se comprueba su **alcance** (aprobar y
-rechazar exigen poder verla, `quotes.view`; retirar, el de `quotes.update`): una cotización que no
-existe, de otra organización o fuera del alcance es el mismo `DoesNotExist` (sin oráculo de
-existencia). Solo entonces la versión (`StaleVersion`) y el estado (`NotPending`).
+**Orden.** El permiso (`quotes.approve`; para retirar, ese o `quotes.update`) va antes de leer.
+Con la cotización bloqueada, su **alcance** (aprobar y rechazar exigen verla, `quotes.view`;
+retirar, el de `quotes.update`): una que no existe, de otra organización o fuera del alcance es la
+misma `DoesNotExist`, sin oráculo de existencia. Luego la versión (`StaleVersion`) y el estado
+(`NotPending`).
 
 **Aprobar** exige que quien aprueba no sea quien pidió (`SelfApproval`), que no supere **su propio**
-límite de descuento (`BeyondLimit`: el mismo cálculo que `submit_quote`, con sus políticas) y que
-cada precio manual **vuelva a cubrir el costo de hoy** (`PriceRefused`, sin cifras: el costo pudo
-subir desde la solicitud). Una solicitud de la IA nunca se aprueba sola: decide una persona.
-**Retirar** lo hace quien pidió (con el alcance de `quotes.update`) o quien puede aprobar, y la
-solicitud de la IA solo quien puede aprobar. **Rechazar** lleva su motivo."""
+límite (`BeyondLimit`, el cálculo de `submit_quote`) y que cada precio manual **vuelva a cubrir el
+costo de hoy** (`PriceRefused`, sin cifras). La solicitud de la IA nunca se aprueba sola: decide una
+persona. **Retirar** lo hace quien pidió (con el alcance de `quotes.update`) o quien puede aprobar;
+la de la IA, solo quien puede aprobar. **Rechazar** lleva su motivo."""
 
 from collections.abc import Callable
 from typing import Any
