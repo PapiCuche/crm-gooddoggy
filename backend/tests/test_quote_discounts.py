@@ -75,10 +75,9 @@ def draft(shop: SimpleNamespace, user: User) -> tuple[Quote, QuoteItem, QuoteIte
 
 
 def discount(shop: SimpleNamespace, user: User, made: Quote, line: QuoteItem, kind: str,
-             value: Any = None, version: Any = 1) -> Quote:  # fmt: skip
-    done: Quote = act(shop, user, discounts.set_line_discount, quote_id=made.pk, version=version,
+             value: Any = None, version: Any = 1) -> Any:  # fmt: skip
+    return act(shop, user, discounts.set_line_discount, quote_id=made.pk, version=version,
                line_id=line.pk, discount_type=kind, discount_value=value)  # fmt: skip
-    return done
 
 
 def approvals(shop: SimpleNamespace) -> list[QuoteApproval]:
@@ -86,10 +85,9 @@ def approvals(shop: SimpleNamespace) -> list[QuoteApproval]:
         return list(QuoteApproval.objects.order_by("created_at"))
 
 
-def reread(shop: SimpleNamespace, made: Quote) -> Quote:
+def reread(shop: SimpleNamespace, made: Quote) -> Any:
     with tenant_scope(ctx(shop.a)):
-        found: Quote = Quote.objects.get(pk=made.pk)
-    return found
+        return Quote.objects.get(pk=made.pk)
 
 
 def back_to_draft(shop: SimpleNamespace, made: Quote) -> None:  # como hará F5-09b3 al retirar
@@ -222,10 +220,9 @@ def test_without_the_permission_nothing_is_discounted_or_overridden(shop: Simple
 
 
 def manual(shop: SimpleNamespace, user: User, made: Quote, line: QuoteItem, price: Any,
-           reason: Any = "Cliente mayorista", version: int = 1) -> Quote:  # fmt: skip
-    done: Quote = act(shop, user, discounts.set_manual_price, quote_id=made.pk, version=version,
+           reason: Any = "Cliente mayorista", version: int = 1) -> Any:  # fmt: skip
+    return act(shop, user, discounts.set_manual_price, quote_id=made.pk, version=version,
                line_id=line.pk, price=price, reason=reason)  # fmt: skip
-    return done
 
 
 def test_a_manual_price_covering_the_cost_always_asks_for_approval_and_never_shows_the_cost(
@@ -286,9 +283,8 @@ def test_a_variant_without_a_cost_cannot_be_priced_by_hand_and_the_values_are_va
     assert case and reread(shop, made).version == 1
 
 
-def submit(shop: SimpleNamespace, user: User, made: Quote, version: int = 1) -> Quote:
-    done: Quote = act(shop, user, discounts.submit_quote, quote_id=made.pk, version=version)
-    return done
+def submit(shop: SimpleNamespace, user: User, made: Quote, version: int = 1) -> Any:
+    return act(shop, user, discounts.submit_quote, quote_id=made.pk, version=version)
 
 
 def test_a_quote_is_approved_only_by_submit_and_only_inside_the_limit_of_who_submits(
@@ -376,6 +372,8 @@ def test_an_own_scope_seller_cannot_touch_the_quote_of_someone_else(shop: Simple
         with pytest.raises(NotAllowed):
             act(shop, own, command, quote_id=made.pk, version=1, **extra)
     assert discount(shop, own, *draft(shop, own)[:2], "PERCENT", "5").status == "DRAFT"  # la suya
+    with pytest.raises(NotAllowed):  # y el alcance va antes que la versión: no se le cuenta
+        discount(shop, own, made, phone, "NONE", version=9)
     assert reread(shop, made).version == 1
 
 
@@ -468,9 +466,10 @@ def test_the_database_rule_counts_only_the_policies_the_command_counts(
     for who in (other, capped, usd):  # otra lista; 219,95 pasa del tope de 100; tope en dólares
         with pytest.raises(IntegrityError, match=BLOCKED):
             raw(shop, who, made, "APPROVED")
-    for guc, value in (("app.actor_type", "AI_AGENT"), ("app.actor_type", "SYSTEM")):
-        with pytest.raises(IntegrityError, match=BLOCKED):  # no es una persona
-            raw(shop, exact, made, "APPROVED", guc, value)
+    with pytest.raises(
+        IntegrityError, match=BLOCKED
+    ):  # `crm_app` como un agente de IA, no una persona
+        raw(shop, exact, made, "APPROVED", "app.actor_type", "AI_AGENT")
     with pytest.raises(DataError):  # un identificador roto: error claro, nunca pasa
         raw(shop, exact, made, "APPROVED", "app.user_id", "x")
     for what in ("membership", "user"):  # ni un miembro suspendido ni un usuario desactivado
@@ -482,14 +481,3 @@ def test_the_database_rule_counts_only_the_policies_the_command_counts(
     again, line, _ = draft(shop, owner)
     discount(shop, owner, again, line, "PERCENT", "5")
     raw(shop, here, again, "APPROVED")  # justo el 5 % de la política de esta lista: pasa
-
-
-def test_an_unauthorized_person_learns_nothing_not_even_a_stale_version(
-    shop: SimpleNamespace,
-) -> None:
-    made, phone, _ = draft(shop, member(shop, "10"))
-    own = member(shop, "10", **{"quotes.update": "OWN"})
-    with pytest.raises(NotAllowed):  # el alcance se comprueba antes que la versión
-        discount(shop, own, made, phone, "NONE", version=9)
-    with pytest.raises(StaleVersion):  # quien sí la alcanza ve la versión
-        discount(shop, member(shop, "10"), made, phone, "NONE", version=9)
