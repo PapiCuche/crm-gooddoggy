@@ -15,7 +15,7 @@ from django.db import connections
 from core.ids import new_id
 from core.outbox import NAME, TYPE
 from core.redaction import redact, redact_text
-from core.tenancy.context import TenantContext
+from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
 
 LABEL_MAX = 200
@@ -53,7 +53,7 @@ def record(
     *,
     result: Result = Result.SUCCESS,
     actor_label: str | None = None,
-    actor: tuple[str, UUID | None] | None = None,
+    actor: tuple[str, UUID | None] | None = None,  # solo (SYSTEM, None): el sistema que actúa
 ) -> UUID:
     """`changes = {"campo": [antes, después]}`; `action = "modulo.accion"` (p. ej., quote.sent)."""
     alias = require_scope(ctx)
@@ -64,6 +64,8 @@ def record(
     changes = dict(changes or {})
     if any(not isinstance(v, list | tuple) or len(v) != 2 for v in changes.values()):
         raise ValueError("changes: cada campo debe ser [antes, después]")
+    if actor is not None and actor != (ActorType.SYSTEM, None):
+        raise ValueError("actor: solo (SYSTEM, None); una persona la pone el contexto")
     audit_id = new_id()
     actor_type, actor_id = actor if actor is not None else (ctx.actor_type, ctx.actor_id)
     with connections[alias].cursor() as cursor:

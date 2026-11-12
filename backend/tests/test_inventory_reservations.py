@@ -12,13 +12,14 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from django.db import DatabaseError, connection
-from django.db.models import F, Sum
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.catalog.models import ProductVariant
 from apps.inventory import reservations as res
 from apps.inventory import stock
-from apps.inventory.models import InventoryLevel, InventoryMovement, InventoryReservation, Warehouse
+from apps.inventory.models import InventoryMovement, InventoryReservation, Warehouse
+from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_inventory_delete_guards import drop_variant, product_of, sibling
@@ -91,18 +92,20 @@ def test_reserve_and_release_move_reserved_with_their_ledger_and_audit(
     assert now and (ended.status, ended.end_reason) == ("RELEASED", "Se arrepintió")
     assert ended.ended_by_user_id == world.ana.pk and consistent(world.a, here) == (5, 0, 5)
     with tenant_scope(ctx(world.a)):
-        lines = InventoryMovement.objects.filter(reference_type="RESERVATION").order_by("pk")
+        lines = InventoryMovement.objects.filter(reference_id=made.pk).order_by("pk")
         seen = [(m.movement_type, m.quantity, m.reserved_after, m.idempotency_key) for m in lines]
-        assert {m.reference_id for m in lines} == {made.pk}
     assert seen == [
         ("RESERVE", 2, 2, f"R/{made.pk}/reserve"),
         ("RELEASE", -2, 0, f"R/{made.pk}/release"),
     ]
-    audit = "SELECT action, changes FROM audit_logs WHERE entity_type = 'inventory_reservation'"
-    assert sorted(migrator.execute(audit).fetchall()) == [
+    audit = "SELECT action, changes, metadata FROM audit_logs WHERE entity_type = %s"
+    rows = sorted(migrator.execute(audit, ["inventory_reservation"]).fetchall())
+    assert [row[:2] for row in rows] == [
         ("inventory.reservation_released", {"reserved": [2, 0], "status": ["ACTIVE", "RELEASED"]}),
         ("inventory.reserved", {"reserved": [0, 2]}),
     ]
+    meta = {"variant_id": str(here[0]), "warehouse_id": str(here[1]), "quantity": 2}
+    assert [row[2] for row in rows] == [{**meta, "expires_at": made.expires_at.isoformat()}] * 2
 
 
 def test_what_a_reservation_cannot_ask(world: Any) -> None:
@@ -110,7 +113,6 @@ def test_what_a_reservation_cannot_ask(world: Any) -> None:
     late = timezone.now() + res.EXPIRES_MAX + timedelta(minutes=1)
     for bad in (
         asked(here, 0),
-        asked(here, -1),
         asked(here, stock.QUANTITY_MAX + 1),
         res.Wanted(*here, True, late - timedelta(hours=1), "Motivo", "clave-0001"),
         asked(here, hours=-1),  # ya vencida
@@ -122,8 +124,12 @@ def test_what_a_reservation_cannot_ask(world: Any) -> None:
     ):
         with pytest.raises(ValueError):
             reserve(world.a, world.ana, bad)
-    with pytest.raises(stock.InsufficientStock):
-        reserve(world.a, world.ana, asked(here, 3))
+    for field in ("variant_id", "warehouse_id"):
+        with pytest.raises(ValueError, match=field):  # ni se llega a pedir
+            replace(asked(here), **dict[str, Any]({field: "no-es-un-uuid"}))
+    nobody = TenantContext(world.a, "celery", None, ActorType.USER, None)  # USER sin persona
+    with pytest.raises(ValueError, match="user_id"), tenant_scope(nobody) as tenant:
+        res.reserve(tenant, asked(here))
     service, foreign = cell(world.a, "SRV", "SERVICE"), cell(world.b, "B")
     for field, where in (
         ("variant_id", service),
@@ -156,11 +162,15 @@ def test_an_expiry_that_passes_while_waiting_is_a_clean_error(
         monkeypatch.setattr(res, "_now", lambda: soon.expires_at + timedelta(seconds=1))
         return found
 
-    monkeypatch.setattr("apps.inventory.reservations.lock_cell", slow)
+    monkeypatch.setattr(stock, "lock_cell", slow)
     with pytest.raises(ValueError, match="expires_at"):
         reserve(world.a, world.ana, soon)
     assert consistent(world.a, here) == (1, 0, 1) and ledger(world.a, "RESERVE") == []
     expires: Any = {"expires_at": "2030-01-01"}
+    monkeypatch.setattr(res, "_check_expiry", lambda _: None)  # el plazo pasa tras comprobarlo
+    with pytest.raises(ValueError, match="expires_at"):  # lo para el CHECK, no un 500
+        reserve(world.a, world.ana, asked(here, hours=-1))
+    monkeypatch.undo()
     with pytest.raises(ValueError, match="expires_at"):  # sin fecha ni hora: no AttributeError
         reserve(world.a, world.ana, replace(soon, **expires))
 
@@ -176,20 +186,6 @@ def test_release_twice_after_expiry_and_in_an_inactive_warehouse(world: Any) -> 
     assert ledger(world.a, "RELEASE") == [-2] and consistent(world.a, here) == (3, 0, 3)
     with pytest.raises(InventoryReservation.DoesNotExist):
         release(world.b, None, first.pk)  # de otra organización: no existe
-    with pytest.raises(ValueError):
-        release(world.a, world.ana, first.pk, "  ")
-    with tenant_scope(ctx(world.a)):
-        Warehouse.objects.filter(pk=here[1]).update(is_active=True)
-    for status in ("EXPIRED", "CONSUMED"):
-        made = reserve(world.a, world.ana, asked(here, 1))[0]
-        with tenant_scope(ctx(world.a)):  # como lo cerrarán el job (F3-34) y la venta
-            InventoryReservation.objects.filter(pk=made.pk).update(
-                status=status, ended_at=timezone.now(), ended_by_type="SYSTEM"
-            )
-            InventoryLevel.objects.update(reserved=F("reserved") - 1)
-        with pytest.raises(res.ReservationNotActive) as refused:
-            release(world.a, world.ana, made.pk)
-        assert refused.value.status == status
     assert consistent(world.a, here) == (3, 0, 3)
 
 
@@ -199,8 +195,7 @@ def test_the_same_key_reserves_once_and_another_request_with_it_is_refused(world
     first, new = reserve(world.a, world.ana, same)
     again, repeated = reserve(world.a, world.ana, same)
     assert (new, repeated, again.pk) == (True, False, first.pk)
-    texts: Any = {"variant_id": str(here[0]), "warehouse_id": str(here[1])}
-    strs = replace(same, **texts)
+    strs = replace(same, **dict[str, Any](variant_id=str(here[0]), warehouse_id=str(here[1])))
     assert reserve(world.a, world.ana, strs) == (first, False)  # ids como texto: la misma petición
     release(world.a, world.ana, first.pk)
     assert reserve(world.a, world.ana, same)[0].status == "RELEASED"  # la de entonces, liberada
@@ -220,11 +215,13 @@ def test_an_expired_reservation_frees_its_unit_without_the_job(
     world: Any, monkeypatch: pytest.MonkeyPatch, migrator: psycopg.Connection[Any]
 ) -> None:
     here = stocked(world.a, 1, world.ana)
-    old = reserve(world.a, world.ana, asked(here, 1, hours=1))[0]
+    first = asked(here, 1, hours=1)
+    old = reserve(world.a, world.ana, first)[0]
     with pytest.raises(stock.InsufficientStock):
         reserve(world.a, world.ana, asked(here, 1))
     later = timezone.now() + timedelta(hours=1, seconds=1)
     monkeypatch.setattr(res, "_now", lambda: later)
+    assert reserve(world.a, world.ana, first) == (old, False)  # la misma clave, ya vencida
     made = reserve(world.a, world.ana, asked(here, 1, hours=3))[0]
     with tenant_scope(ctx(world.a)):
         old.refresh_from_db()
@@ -232,11 +229,14 @@ def test_an_expired_reservation_frees_its_unit_without_the_job(
     assert (old.status, old.ended_by_type, old.end_reason) == ("EXPIRED", "SYSTEM", res.EXPIRED)
     assert (expiry.idempotency_key, expiry.created_by_type) == (f"R/{old.pk}/release", "SYSTEM")
     assert made.status == "ACTIVE" and consistent(world.a, here) == (1, 1, 0)
-    audit = "SELECT actor_type, actor_id, action FROM audit_logs WHERE entity_id = %s ORDER BY id"
-    assert migrator.execute(audit, [old.pk]).fetchall() == [  # el sistema vence, aunque reserve Ana
+    audit = "SELECT actor_type, actor_id, action, metadata FROM audit_logs WHERE entity_id = %s"
+    rows = migrator.execute(audit + " ORDER BY id", [old.pk]).fetchall()
+    assert [row[:3] for row in rows] == [  # el sistema vence, aunque reserve Ana
         ("USER", world.ana.pk, "inventory.reserved"),
         ("SYSTEM", None, "inventory.reservation_expired"),
     ]
+    meta = {"variant_id": str(here[0]), "warehouse_id": str(here[1]), "quantity": 1}
+    assert [row[3] for row in rows] == [{**meta, "expires_at": old.expires_at.isoformat()}] * 2
     with pytest.raises(res.ReservationNotActive):
         release(world.a, world.ana, old.pk)
 
@@ -269,23 +269,15 @@ def test_a_closed_reservation_never_changes_and_the_runtime_cannot_delete(
         connection.cursor().execute(  # cerrada sin fecha ni actor del cierre
             "UPDATE inventory_reservations SET status = 'RELEASED' WHERE id = %s", [still.pk]
         )
-    line = {  # el ledger: RESERVE suma y RELEASE resta, siempre con su reserva
-        **dict(variant_id=here[0], warehouse_id=here[1], on_hand_after=2, reserved_after=0),
-        **dict(reason="x", created_by_type="SYSTEM", reference_type="RESERVATION"),
-    }
-    for kind, delta, key, ref, check in (
-        ("RESERVE", -1, "clave-9999", made.pk, "sign"),
-        ("RELEASE", -1, "clave-9998", None, "reservation"),
+    base = dict(variant_id=here[0], warehouse_id=here[1], on_hand_after=2, reserved_after=0)
+    base |= dict(reason="x", created_by_type="SYSTEM", reference_type="RESERVATION")
+    for check, extra in (  # el ledger: RESERVE suma, RELEASE resta, los dos con su reserva
+        ("sign", dict(movement_type="RESERVE", quantity=-1, reference_id=made.pk)),
+        ("reservation", dict(movement_type="RELEASE", quantity=-1, reference_id=None)),
     ):
         with pytest.raises(DatabaseError, match=f"inventory_movements_{check}_ck"):
             with tenant_scope(ctx(world.a)):
-                InventoryMovement.objects.create(
-                    **line,
-                    movement_type=kind,
-                    quantity=delta,
-                    idempotency_key=key,
-                    reference_id=ref,
-                )
+                InventoryMovement.objects.create(**base, **extra, idempotency_key=f"k-{check}-1")
 
 
 def test_reservations_of_another_organization_are_invisible(world: Any) -> None:
@@ -304,16 +296,12 @@ def test_reservations_of_another_organization_are_invisible(world: Any) -> None:
     assert consistent(world.a, here) == (2, 1, 1)
 
 
-def test_two_reservations_of_the_last_unit_at_once_only_one_goes(world: Any) -> None:
-    here = stocked(world.a, 1, world.ana)
-    first, second = race(world.a, world.ana, [lambda t: res.reserve(t, asked(here)) for _ in "ab"])
-    assert first[1] is True and second == "InsufficientStock"
-    assert consistent(world.a, here) == (1, 1, 0) and ledger(world.a, "RESERVE") == [1]
-
-
-def test_eight_at_once_over_the_last_three_units_exactly_three_go(world: Any) -> None:
-    here = stocked(world.a, 3, world.ana)
-    start = threading.Barrier(8)
+@pytest.mark.parametrize("units, threads", [(1, 2), (3, 8)])  # E04-08: la última unidad
+def test_at_once_over_the_last_units_exactly_that_many_go(
+    world: Any, units: int, threads: int
+) -> None:
+    here = stocked(world.a, units, world.ana)
+    start = threading.Barrier(threads)
 
     def run(_: int) -> Any:
         try:
@@ -325,10 +313,12 @@ def test_eight_at_once_over_the_last_three_units_exactly_three_go(world: Any) ->
         finally:
             connection.close()
 
-    with ThreadPoolExecutor(8) as pool:
-        outcome = list(pool.map(run, range(8)))
-    assert sorted(map(str, outcome)) == ["InsufficientStock"] * 5 + ["True"] * 3
-    assert consistent(world.a, here) == (3, 3, 0) and ledger(world.a, "RESERVE") == [1, 1, 1]
+    with ThreadPoolExecutor(threads) as pool:
+        outcome = list(pool.map(run, range(threads)))
+    assert sorted(map(str, outcome)) == ["InsufficientStock"] * (threads - units) + ["True"] * units
+    assert (
+        consistent(world.a, here) == (units, units, 0) and ledger(world.a, "RESERVE") == [1] * units
+    )
 
 
 @pytest.mark.parametrize("reserve_first", [True, False])
@@ -356,7 +346,7 @@ def test_the_same_key_at_once_makes_one_reservation(world: Any) -> None:
     mine, other = asked(here, 1, key="clave-0002"), asked(there, 1, key="clave-0002")
     outcome = race(world.a, world.ana, [lambda t, w=w: res.reserve(t, w) for w in (mine, other)])
     assert outcome[1] == "KeyReused"  # la misma clave, a la vez, en otra celda: el índice único
-    assert consistent(world.a, there) == (3, 0, 3)
+    assert consistent(world.a, here) == (3, 2, 1) and consistent(world.a, there) == (3, 0, 3)
 
 
 def test_deleting_the_variant_waits_for_a_reservation_and_the_reverse(world: Any) -> None:

@@ -1,10 +1,8 @@
-"""Reservas de stock (F3-33, E04-05 y E04-08): apartar unidades de una celda variante × almacén.
-`RESERVE` sube `reserved`; liberar o vencer lo baja con un `RELEASE`. No comprueba permisos: los
-declarará su API (F3-35), la única que podrá importarlo (import-linter). Mismo orden de bloqueo que
-`stock.move` (`stock.lock_cell`: variante, almacén, saldo) y después la reserva `FOR UPDATE`,
-releída: dos reservas de la última unidad van de una en una. Varias variantes (Fase 4): por `id`.
-La clave del cliente va en la reserva; los movimientos llevan `R/<reserva>/reserve` y
-`R/<reserva>/release` (la `/` no cabe en una clave de cliente): una reserva no se libera dos veces.
+"""Reservas de stock (F3-33, E04-05 y E04-08): `RESERVE` sube `reserved` de la celda variante ×
+almacén y liberar o vencer lo baja con un `RELEASE`. Sin permisos: los exigirá su API (F3-35), la
+única que podrá importarlo. Bloqueo como `stock.move` (`stock.lock_cell`) y después la reserva
+`FOR UPDATE`, releída. La clave del cliente va en la reserva; los movimientos llevan
+`R/<reserva>/reserve|release` (la `/` no cabe en una clave de cliente): no se libera dos veces.
 """
 
 from dataclasses import dataclass
@@ -16,23 +14,15 @@ from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.catalog.models import ProductVariant
+from apps.inventory import stock
 from apps.inventory.models import InventoryLevel, InventoryMovement, InventoryReservation
-from apps.inventory.stock import (
-    QUANTITY_MAX,
-    InsufficientStock,
-    KeyReused,
-    WarehouseInactive,
-    idempotency_key,
-    lock_cell,
-    reason,
-)
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
 
 Status, Type = InventoryReservation.Status, InventoryMovement.Type
 EXPIRES_MAX = timedelta(days=30)  # a confirmar por el mantenedor (issue #342)
 EXPIRED = "Reserva vencida"
-KEY_TAKEN = "inventory_res_key_uq"
+KEY_TAKEN, EXPIRES_CK = "inventory_res_key_uq", "inventory_res_expires_ck"
 _SYSTEM: tuple[str, UUID | None] = (ActorType.SYSTEM, None)
 
 
@@ -61,7 +51,10 @@ class Wanted:
 
     def __post_init__(self) -> None:  # ids como UUID: la misma petición con `str` no es otra
         for name in ("variant_id", "warehouse_id"):
-            object.__setattr__(self, name, UUID(str(getattr(self, name))))
+            try:
+                object.__setattr__(self, name, UUID(str(getattr(self, name))))
+            except ValueError:
+                raise ValueError(f"{name}: un UUID") from None
 
 
 def _now() -> datetime:
@@ -69,21 +62,14 @@ def _now() -> datetime:
 
 
 def _check(wanted: Wanted) -> None:
-    quantity = wanted.quantity
-    if (
-        isinstance(quantity, bool)
-        or not isinstance(quantity, int)
-        or not 1 <= quantity <= QUANTITY_MAX
-    ):
-        raise ValueError(f"quantity: un entero entre 1 y {QUANTITY_MAX}")
-    reason(wanted.reason)
-    idempotency_key(wanted.idempotency_key)
-    _check_expiry(wanted.expires_at)
+    if type(wanted.quantity) is not int or not 1 <= wanted.quantity <= stock.QUANTITY_MAX:
+        raise ValueError(f"quantity: un entero entre 1 y {stock.QUANTITY_MAX}")
+    stock.reason(wanted.reason)
+    stock.idempotency_key(wanted.idempotency_key)  # `expires_at`, con la celda bloqueada
 
 
 def _check_expiry(expires: datetime) -> None:
-    """Con zona horaria, futuro y dentro del máximo; se repite con la celda bloqueada (el plazo
-    puede pasar mientras se espera y la base daría un error sin dominio)."""
+    # se repite con la celda bloqueada: el plazo puede pasar mientras se espera
     if not isinstance(expires, datetime) or expires.tzinfo is None:
         raise ValueError("expires_at: fecha y hora con zona horaria")
     now = _now()
@@ -92,7 +78,11 @@ def _check_expiry(expires: datetime) -> None:
 
 
 def _actor(ctx: TenantContext) -> tuple[str, UUID | None]:
-    return ctx.actor_type, ctx.user_id if ctx.actor_type == ActorType.USER else None
+    if ctx.actor_type != ActorType.USER:
+        return ctx.actor_type, None
+    if ctx.user_id is None or ctx.actor_id != ctx.user_id:  # la auditoría lee `actor_id`
+        raise ValueError("un contexto de persona necesita user_id igual a actor_id")
+    return ctx.actor_type, ctx.user_id
 
 
 def _same(found: InventoryReservation, wanted: Wanted) -> bool:
@@ -102,7 +92,7 @@ def _same(found: InventoryReservation, wanted: Wanted) -> bool:
         and found.warehouse_id == wanted.warehouse_id
         and found.quantity == wanted.quantity
         and found.expires_at == wanted.expires_at
-        and found.reason == reason(wanted.reason)
+        and found.reason == stock.reason(wanted.reason)
     )
 
 
@@ -110,7 +100,7 @@ def _replay(alias: str, wanted: Wanted) -> InventoryReservation | None:
     rows = InventoryReservation.objects.using(alias).filter(idempotency_key=wanted.idempotency_key)
     found: InventoryReservation | None = rows.first()
     if found is not None and not _same(found, wanted):
-        raise KeyReused(wanted.idempotency_key)
+        raise stock.KeyReused(wanted.idempotency_key)
     return found
 
 
@@ -194,7 +184,12 @@ def _audit(
     changes: dict[str, list[object]] = {"reserved": [before, level.reserved]}
     if reservation.status != Status.ACTIVE:
         changes["status"] = [Status.ACTIVE, reservation.status]
-    about = {"variant_id": str(reservation.variant_id), "quantity": reservation.quantity}
+    about = {
+        "variant_id": str(reservation.variant_id),
+        "warehouse_id": str(reservation.warehouse_id),
+        "quantity": reservation.quantity,
+        "expires_at": reservation.expires_at.isoformat(),
+    }
     entity = Entity("inventory_reservation", reservation.pk, label)
     record(ctx, f"inventory.{action}", entity, changes, about, actor=actor)
 
@@ -202,12 +197,12 @@ def _audit(
 def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, bool]:
     """Aparta unidades disponibles con su `RESERVE` y su auditoría. Devuelve la reserva y si es
     nueva (la misma clave con lo mismo devuelve la de entonces). `BadReference`, `VariantInactive`,
-    `WarehouseInactive`, `InsufficientStock`, `KeyReused` o `ValueError`, sin escribir nada."""
+    `ValueError` o, de `stock`, `WarehouseInactive`, `InsufficientStock`, `KeyReused`."""
     alias = require_scope(ctx)
     _check(wanted)
     try:
         with transaction.atomic(using=alias):
-            variant, warehouse, level = lock_cell(
+            variant, warehouse, level = stock.lock_cell(
                 alias, ctx, wanted.variant_id, wanted.warehouse_id
             )
             if (done := _replay(alias, wanted)) is not None:
@@ -216,18 +211,18 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
             if variant.status != ProductVariant.Status.ACTIVE:
                 raise VariantInactive(wanted.variant_id)
             if not warehouse[0]:
-                raise WarehouseInactive(wanted.warehouse_id)
+                raise stock.WarehouseInactive(wanted.warehouse_id)
             label = f"{variant.sku} @ {warehouse[1]}"
             _expire_due(alias, ctx, level, label)
             if wanted.quantity > level.on_hand - level.reserved:
-                raise InsufficientStock(wanted.variant_id)
+                raise stock.InsufficientStock(wanted.variant_id)
             actor = _actor(ctx)
             reservation = InventoryReservation.objects.using(alias).create(
                 variant_id=wanted.variant_id,
                 warehouse_id=wanted.warehouse_id,
                 quantity=wanted.quantity,
                 expires_at=wanted.expires_at,
-                reason=reason(wanted.reason),
+                reason=stock.reason(wanted.reason),
                 idempotency_key=wanted.idempotency_key,
                 created_by_type=actor[0],
                 created_by_user_id=actor[1],
@@ -236,6 +231,8 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
             _movement(alias, reservation, level, wanted.quantity, reservation.reason, actor)
             _audit(ctx, "reserved", reservation, label, before, level)
     except IntegrityError as error:
+        if EXPIRES_CK in str(error):  # el plazo pasó entre la comprobación y el INSERT
+            raise ValueError("expires_at: en el futuro") from None
         if KEY_TAKEN not in str(error):
             raise
         done = _replay(alias, wanted)  # la misma clave, a la vez, para otra celda
@@ -252,13 +249,13 @@ def release(
     liberada se devuelve sin escribir. `ReservationNotActive` si venció o se consumió;
     `InventoryReservation.DoesNotExist` si no es de la organización."""
     alias = require_scope(ctx)
-    text = reason(why)
+    text = stock.reason(why)
     with transaction.atomic(using=alias):
         rows = InventoryReservation.objects.using(alias)
         seen: InventoryReservation = rows.get(pk=reservation_id)
         if seen.status != Status.ACTIVE:  # un estado terminal ya no cambia (trigger)
             return _ended(seen)
-        variant, warehouse, level = lock_cell(alias, ctx, seen.variant_id, seen.warehouse_id)
+        variant, warehouse, level = stock.lock_cell(alias, ctx, seen.variant_id, seen.warehouse_id)
         seen = rows.select_for_update().get(pk=reservation_id)  # releída, ya bloqueada
         if seen.status != Status.ACTIVE:
             return _ended(seen)
