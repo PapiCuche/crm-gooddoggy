@@ -75,9 +75,10 @@ def test_what_a_creates_never_exists_for_b_not_even_by_sql(world: SimpleNamespac
         assert sql(world.b, f"SELECT count(*) FROM {table}") == [(0,)]  # noqa: S608
     assert sql(world.b, "UPDATE quotes SET internal_notes = 'otra'") == [(0,)]  # ni las cambia
     assert sql(world.b, "UPDATE quote_items SET quantity = 9") == [(0,)]
-    with pytest.raises(DatabaseError, match="row-level security"):  # ni las mueve de organización
+    moved = "row-level security|never change|change quote"  # ni las mueve de organización
+    with pytest.raises(DatabaseError, match=moved):
         sql(world.a, "UPDATE quotes SET organization_id = %s", [world.b])
-    with pytest.raises(DatabaseError, match="row-level security"):
+    with pytest.raises(DatabaseError, match=moved):
         sql(world.a, "UPDATE quote_items SET organization_id = %s", [world.b])
 
 
@@ -126,8 +127,12 @@ def test_a_complete_quote_with_a_promotion_and_a_cancelled_one_are_valid(
     assert (manual.unit_price, manual.final_unit_price) == (MONEY, Decimal("90"))
     big = line(world, made, sort_order=3, discount_type="AMOUNT", discount_value=150)
     assert big.discount_value == 150  # solo el porcentaje se limita a 100
-    gone = quote(world, number="COT-000002", status="CANCELLED", cancelled_at=NOW,
-                 cancel_reason="El cliente ya no quiere")  # fmt: skip
+    gone = quote(world, number="COT-000002")  # nace en borrador y se cancela después
+    with tenant_scope(ctx(world.a)):
+        Quote.objects.filter(pk=gone.pk).update(
+            status="CANCELLED", cancelled_at=NOW, cancel_reason="El cliente ya no quiere"
+        )
+        gone = Quote.objects.get(pk=gone.pk)
     assert (gone.status, gone.revision) == ("CANCELLED", 1)
 
 
@@ -142,14 +147,15 @@ def test_composite_foreign_keys_keep_every_reference_in_the_organization(
         "created_by_user_id": world.luis.pk,  # no es miembro de A
         "updated_by_user_id": world.luis.pk,
     }
-    for field, other in foreign.items():
+    for n, (field, other) in enumerate(foreign.items()):
         constraint = {"created_by_user_id": "quotes_created_by_fk"}.get(
             field, f"quotes_{field.removesuffix('_id').removesuffix('_user')}_fk"
         )
         constraint = constraint.replace("updated_by_user", "updated_by")
-        with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match=constraint):
-            with transaction.atomic():
-                Quote.objects.filter(pk=mine.pk).update(**{field: other})
+        with pytest.raises(
+            IntegrityError, match=constraint
+        ):  # la identidad solo se escribe al crear
+            quote(world, number=f"COT-9{n:05d}", **{field: other})
     with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="quotes_price_list_fk"):
         with transaction.atomic():  # la moneda de la cotización es la de su lista
             Quote.objects.filter(pk=mine.pk).update(currency="USD")
@@ -162,8 +168,10 @@ def test_composite_foreign_keys_keep_every_reference_in_the_organization(
         with transaction.atomic():  # una línea no cambia de moneda respecto a su cotización
             QuoteItem.objects.filter(pk=row.pk).update(currency="USD")
     foreign_quote = quote(world, "b").pk
-    with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="quote_items_quote_fk"):
-        with transaction.atomic():
+    with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="changes quote"):
+        with (
+            transaction.atomic()
+        ):  # una línea no cambia de cotización (ni a la de otra organización)
             QuoteItem.objects.filter(pk=row.pk).update(quote_id=foreign_quote)
 
 
@@ -190,6 +198,10 @@ def test_composite_foreign_keys_keep_every_reference_in_the_organization(
 def test_the_database_refuses_a_bad_quote(
     world: SimpleNamespace, fields: dict[str, Any], constraint: str
 ) -> None:
+    if fields.keys() & {"number", "revision"}:  # la identidad solo se escribe al crear
+        with pytest.raises(IntegrityError, match=constraint):
+            quote(world, **fields)
+        return
     mine = quote(world)
     with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match=constraint):
         with transaction.atomic():
