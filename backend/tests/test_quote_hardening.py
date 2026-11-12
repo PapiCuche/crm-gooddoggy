@@ -4,6 +4,7 @@ escribe y el suelo de costo con los costos programados, con PostgreSQL real (RLS
 disparadores) y transacciones a la vez."""
 
 import json
+import logging
 import threading
 import time
 from datetime import timedelta
@@ -32,6 +33,7 @@ from tests.test_quote_discounts import (
     act,
     approvals,
     cost,
+    discount,
     draft,
     manual,
     member,
@@ -100,7 +102,7 @@ def test_only_who_asked_or_who_can_approve_cancels_what_waits_for_approval(
 ) -> None:
     made, seller = asked(shop, worker(shop, "3"))
     with pytest.raises(NotAllowed):  # puede cancelar y verlo todo, pero no pidió ni aprueba
-        cancelling(shop, worker(shop), made)
+        cancelling(shop, worker(shop), made, version=99)  # y eso va antes que la versión
     assert (reread(shop, made).status, [a.status for a in approvals(shop)]) == (
         "PENDING_APPROVAL", ["PENDING"],
     )  # fmt: skip
@@ -263,7 +265,12 @@ def test_the_floor_takes_the_largest_cost_the_current_one_and_the_ones_scheduled
     ("command", "extra"),
     [(commands.create_quote, {"items": "no es una lista", "contact_id": "x"}),
      (commands.update_quote, {"quote_id": "x", "version": "y", "items": 3}),
-     (commands.cancel_quote, {"quote_id": "x", "version": "y", "reason": 7})],
+     (commands.cancel_quote, {"quote_id": "x", "version": "y", "reason": 7}),
+     (discounts.set_line_discount, {"quote_id": "x", "version": "y", "line_id": "z",
+                                    "discount_type": "NOPE", "discount_value": 1.5}),
+     (discounts.set_manual_price, {"quote_id": "x", "version": "y", "line_id": "z", "price": 1.5,
+                                   "reason": 7}),
+     (discounts.submit_quote, {"quote_id": "x", "version": "y"})],
 )  # fmt: skip
 def test_without_permission_even_malformed_input_is_a_permission_error(
     command: Any, extra: dict[str, Any], shop: SimpleNamespace
@@ -293,6 +300,51 @@ def test_the_one_who_submitted_what_the_ai_wrote_cannot_approve_it_either(
     assert act(shop, other, decisions.approve_quote, quote_id=made.pk, version=2).status == (
         "APPROVED"
     )
+
+
+def constraint(raised: pytest.ExceptionInfo[IntegrityError]) -> str:
+    return str(raised.value.__cause__.diag.constraint_name)  # type: ignore[union-attr]
+
+
+def test_the_database_binds_who_submits_to_who_acts_and_never_approves_without_it(
+    shop: SimpleNamespace, migrator: DB
+) -> None:
+    seller, other = worker(shop, "3"), worker(shop, "3")
+    made, _, _ = draft(shop, seller)
+    for actor, submitter in ((seller, None), (seller, other.pk), (None, None)):  # ni sin persona
+        with tenant_scope(ctx(shop.a, actor)), pytest.raises(IntegrityError) as raised:
+            QuoteApproval.objects.create(
+                quote_id=made.pk, reason="DISCOUNT_OVER_LIMIT", requested_by_user_id=seller.pk,
+                submitted_by_user_id=submitter, requested_discount_percent=5,
+                limit_percent_at_request=3,
+            )  # fmt: skip
+        assert constraint(raised) == "quote_approvals_submitter"
+    old, _ = asked(shop, seller)
+    migrator.execute("UPDATE quote_approvals SET submitted_by_user_id = NULL")  # anterior a 0004
+    approver = boss(shop, "10", **{"quotes.cancel": "ORGANIZATION"})
+    with pytest.raises(decisions.SelfApproval):
+        act(shop, approver, decisions.approve_quote, quote_id=old.pk, version=2)
+    [req] = approvals(shop)
+    with tenant_scope(ctx(shop.a, approver)), pytest.raises(IntegrityError) as raised:
+        QuoteApproval.objects.filter(pk=req.pk).update(
+            status="APPROVED", decided_by_user_id=approver.pk, decided_at=timezone.now()
+        )
+    assert constraint(raised) == "quote_approvals_submitter"
+    assert cancelling(shop, approver, old).status == "CANCELLED"  # se cancela y se vuelve a pedir
+
+
+def test_a_database_rule_without_a_name_in_the_commands_is_refused_bare_and_logged(
+    shop: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    senior = worker(shop, "10")
+    made, phone, _ = draft(shop, senior)
+    discount(shop, senior, made, phone, "PERCENT", "5")  # cabe en su 10 %, no en el 3 %
+    with pytest.raises(IntegrityError) as raised:
+        raw(shop, worker(shop, "3"), made, "APPROVED")
+    with caplog.at_level(logging.WARNING, logger="apps.quotes.commands"):
+        refused = commands._reference(raised.value)
+    assert type(refused) is commands.QuoteRefused and refused.args == ()
+    assert "quotes_needs_request_path" in caplog.text  # el nombre, solo en el servidor
 
 
 def test_a_pending_quote_without_an_open_request_is_not_cancelled_by_anyone(

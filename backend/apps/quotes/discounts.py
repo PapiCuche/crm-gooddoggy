@@ -202,13 +202,13 @@ def set_line_discount(
     """Descuento `PERCENT`, `AMOUNT` (por unidad) o `NONE` (lo quita, también un precio manual) de
     una línea de un borrador, con `quotes.discount`; nunca deja el precio en cero o menos."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.discount")  # lo primero: sin permiso, ni se mira lo que se envía
     kind, quote_id = DiscountType(discount_type), _uuid(quote_id, "cotización")
     if kind is DiscountType.NONE and discount_value is not None:
         raise ValueError("descuento: NONE no lleva valor")
     value = Decimal("0.00") if kind is DiscountType.NONE else _money(discount_value, "descuento")
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
-        ectx = _require(ctx, "quotes.discount")
         quote = _open(alias, quote_id, version, ectx)
         line = _line(alias, quote, line_id)
         given = {
@@ -231,13 +231,13 @@ def set_manual_price(
     """Precio final escrito a mano (con IGV, menor que el vigente y con su motivo), con
     `quotes.override_price`; solo si cubre el costo (si no, `PriceRefused`). Pide aprobación."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.override_price")
     amount, quote_id = _money(price, "precio"), _uuid(quote_id, "cotización")
     why = _text(reason, "motivo", REASON_MAX)
     if not why:
         raise ValueError("motivo: obligatorio")
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
-        ectx = _require(ctx, "quotes.override_price")
         quote = _open(alias, quote_id, version, ectx)
         line = _line(alias, quote, line_id)
         if not 0 < amount < line.unit_price:
@@ -257,10 +257,10 @@ def submit_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
     """La única vía de `DRAFT` a `APPROVED`: mide con el límite de quien envía y, si no cabe o hay
     precio manual (que vuelve a pasar por el suelo de costo), deja `PENDING_APPROVAL`."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.update")
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
-        ectx = _require(ctx, "quotes.update")
         quote = _open(alias, quote_id, version, ectx)
         lines = _lines(alias, quote)
         _floor(ctx, quote, lines)

@@ -15,6 +15,7 @@ cotización; la membresía de quien actúa no, porque la FK de la autoría la re
 """
 
 import datetime as dt
+import logging
 from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -48,6 +49,7 @@ from core.text import line
 ITEMS_MAX, NOTE_MAX, REASON_MAX = 50, 2000, 500
 TAX_RATE = Decimal("0.1800")  # IGV (D-PRC-1: los precios lo llevan incluido)
 CENT = Decimal("0.01")
+logger = logging.getLogger(__name__)
 MONEY_MAX = Decimal(10) ** 12  # `numeric(14,2)`: un importe de la tabla es menor que esto
 _ITEM = frozenset({"variant_id", "quantity"})
 _FIELDS = frozenset({"valid_until", "notes_to_customer", "internal_notes"})
@@ -230,7 +232,10 @@ def _reference(error: IntegrityError) -> Exception:
     """La restricción que la base violó, por su nombre (no por el texto): una referencia que no
     sirve es `BadReference`; cualquier otra, `QuoteRefused`, sin detalle (nunca un error crudo)."""
     name = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
-    return BadReference(_REFERENCES[name]) if name in _REFERENCES else QuoteRefused()
+    if name in _REFERENCES:
+        return BadReference(_REFERENCES[name])
+    logger.warning("quotes: refused by constraint %s", name)  # solo en el servidor, no al cliente
+    return QuoteRefused()
 
 
 def _locked(alias: str, quote_id: UUID) -> Quote:
@@ -416,16 +421,8 @@ def cancel_quote(
     try:
         with transaction.atomic(using=alias):
             quote = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.cancel"))
-            if quote.version != version:
-                raise StaleVersion(quote_id)
-            if quote.status in TERMINAL:
-                raise QuoteTerminal(quote_id)
-            before = quote.status
-            shown: dict[str, Any] = {
-                "status": [before, QuoteStatus.CANCELLED],
-                "cancel_reason": [None, "[texto]" if why else None],
-            }
-            if before == QuoteStatus.PENDING_APPROVAL:
+            before, asked = quote.status, None
+            if before == QuoteStatus.PENDING_APPROVAL:  # quién puede, antes de versión y estado
                 open_ = QuoteApproval.objects.using(alias).select_for_update(no_key=True)
                 asked = open_.filter(quote_id=quote.pk, status=ApprovalStatus.PENDING).first()
                 mine = asked is not None and asked.requested_by_user_id == ctx.user_id
@@ -434,6 +431,15 @@ def cancel_quote(
                     or (mine and can(ectx, "quotes.update", quote))
                 ):  # como al retirar: quien pidió o quien puede aprobar (la de la IA, solo este)
                     raise NotAllowed("quotes.cancel")
+            if quote.version != version:
+                raise StaleVersion(quote_id)
+            if quote.status in TERMINAL:
+                raise QuoteTerminal(quote_id)
+            shown: dict[str, Any] = {
+                "status": [before, QuoteStatus.CANCELLED],
+                "cancel_reason": [None, "[texto]" if why else None],
+            }
+            if asked is not None:
                 asked.status, asked.decided_at = ApprovalStatus.CANCELLED, timezone.now()
                 asked.decided_by_user_id, asked.version = ctx.user_id, asked.version + 1
                 asked.save(using=alias, update_fields=[

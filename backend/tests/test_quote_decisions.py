@@ -79,7 +79,7 @@ def waiting(shop: SimpleNamespace, reason: str) -> Quote:
     pricer = member(shop, "100", **{"quotes.override_price": None})
     made, phone, _ = draft(shop, pricer)
     manual_price = reason == "MANUAL_PRICE"
-    with tenant_scope(ctx(shop.a)):
+    with tenant_scope(ctx(shop.a, pricer)):
         if manual_price:
             QuoteItem.objects.filter(pk=phone.pk).update(
                 manual_price_override=True, override_reason="Mayorista", discount_amount=D("899"),
@@ -88,6 +88,7 @@ def waiting(shop: SimpleNamespace, reason: str) -> Quote:
         QuoteApproval.objects.create(
             quote_id=made.pk, reason=reason, limit_percent_at_request=D(100),
             requested_by_user_id=pricer.pk if manual_price else None,
+            submitted_by_user_id=pricer.pk,
         )  # fmt: skip
         Quote.objects.filter(pk=made.pk).update(status="PENDING_APPROVAL", version=2)
     return made
