@@ -6,7 +6,8 @@
 y por línea; se compara con la política más alta de los roles de quien actúa (sin política, 0 %; el
 Owner sin límite) y su tope en importe. Pasar del límite, o un precio manual (que cubre el costo,
 `apps.pricing.floor`), deja `PENDING_APPROVAL` con su solicitud y las líneas congeladas.
-`submit_quote` es la única vía de `DRAFT` a `APPROVED` y mide con quien envía (F5-09b3: el resto)"""
+`submit_quote` es la única vía de `DRAFT` a `APPROVED` y mide con quien envía; aprobar, rechazar y
+retirar la solicitud son de `apps.quotes.decisions` (F5-09b3)"""
 
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
@@ -80,7 +81,10 @@ def _percent(amount: Decimal, base: Decimal) -> Decimal:
     return (amount / base * HUNDRED).quantize(CENT, ROUND_UP) if base else Decimal("0.00")
 
 
-def _verdict(alias: str, ectx: Any, quote: Quote, lines: list[QuoteItem]) -> Verdict:
+def _authority(
+    alias: str, ectx: Any, quote: Quote, lines: list[QuoteItem]
+) -> tuple[Decimal, Decimal, Decimal, bool]:
+    """Lo quitado a mano (% por línea e importe), el límite de quien actúa y si lo cubre."""
     amount = sum((_given(line) for line in lines), Decimal(0))
     # por línea, sobre lo que paga el cliente (con la promoción); el total es una media de ellas
     percent = max(
@@ -101,12 +105,17 @@ def _verdict(alias: str, ectx: Any, quote: Quote, lines: list[QuoteItem]) -> Ver
              or (p.currency == quote.currency and amount <= p.max_discount_amount))
         for p in policies
     )  # fmt: skip
+    return percent, amount, Decimal(limit), within
+
+
+def _verdict(alias: str, ectx: Any, quote: Quote, lines: list[QuoteItem]) -> Verdict:
+    percent, amount, limit, within = _authority(alias, ectx, quote, lines)
     reason: str | None = None
     if any(line.manual_price_override for line in lines):
         reason = ApprovalReason.MANUAL_PRICE
     elif not within:
         reason = ApprovalReason.DISCOUNT_OVER_LIMIT
-    return percent, amount, Decimal(limit), reason
+    return percent, amount, limit, reason
 
 
 def _lines(alias: str, quote: Quote) -> list[QuoteItem]:

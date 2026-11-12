@@ -137,6 +137,7 @@ ignore_imports = [
     "apps.quotes.commands -> apps.deals.models",  # F5-09a: la oportunidad de la cotización
     "apps.quotes.commands -> apps.pricing.services",  # y los precios, solo del `PricingService`
     "apps.quotes.discounts -> apps.pricing.floor",  # F5-09b2: un precio manual cubre el costo
+    "apps.quotes.decisions -> apps.pricing.floor",  # F5-09b3: y al aprobar vuelve a cubrirlo
 ]
 
 [[tool.importlinter.contracts]]
@@ -226,8 +227,8 @@ allowed_importers = ["apps.conversations.ingress", "apps.conversations.delivery"
 [[tool.importlinter.contracts]]
 name = "Comandos de cotizaciones: solo su API los importa (F5-09a)"
 type = "protected"
-protected_modules = ["apps.quotes.commands", "apps.quotes.discounts"]
-allowed_importers = ["apps.quotes.api", "apps.quotes.discounts"]
+protected_modules = ["apps.quotes.commands", "apps.quotes.discounts", "apps.quotes.decisions"]
+allowed_importers = ["apps.quotes.api", "apps.quotes.discounts", "apps.quotes.decisions"]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de tareas: solo su API los importa (F5-08a)"
