@@ -20,7 +20,7 @@ from tests.tenancy_app import tasks
 from tests.test_conversations_dispatch import backdate, queue, state, world, writer
 
 __all__ = ["world", "writer"]  # los fixtures, para pytest
-pytestmark = pytest.mark.usefixtures("tenant_db")
+pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 TENANT_ORDER = ["organization_id", "actor_type", "actor_id", "correlation_id"]
 TENANT = set(TENANT_ORDER)
 
@@ -137,7 +137,8 @@ def test_the_outbox_publisher_queues_the_dispatcher_and_the_message_is_delivered
 ) -> None:
     message = queue(world)
     published = real_apply_async(monkeypatch, inbox_tasks.dispatch_event)
-    assert publish_outbox() == 1 and len(published) == 1  # sin el arreglo: TypeError, 0 publicados
+    # `message.queued` y `conversation.updated`; sin el arreglo: TypeError, 0 publicados
+    assert publish_outbox() == 2 and len(published) == 1
     names = [name for name, _ in broker]  # el evento encola el despacho, que corre en su worker
     assert names == ["conversations.dispatch_event", "conversations.dispatch_message"]
     assert state(world, message).delivery_status == "QUEUED"

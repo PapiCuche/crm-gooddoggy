@@ -111,6 +111,7 @@ def test_the_highest_version_seals_every_key_opens_and_a_removed_key_fails_close
     settings.SECRETS_KEKS = {7: OLD}  # la versión dice qué clave, no la sustituye
     with pytest.raises(SealError):
         unseal(PURPOSE, OWNER, after)
+    assert (sealed.has_key(7), sealed.has_key(1), sealed.has_key(0)) == (True, False, False)
 
 
 def test_without_keys_nothing_is_sealed_or_opened(settings: Any) -> None:
@@ -120,6 +121,7 @@ def test_without_keys_nothing_is_sealed_or_opened(settings: Any) -> None:
         lambda: seal(PURPOSE, OWNER, PLAIN),
         lambda: unseal(PURPOSE, OWNER, box),
         lambda: stale(box),
+        lambda: sealed.has_key(1),
         sealed.current,
     ):
         with pytest.raises(ImproperlyConfigured, match=VAR):

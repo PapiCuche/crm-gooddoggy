@@ -34,7 +34,7 @@ from tests.test_conversation_commands import (
 from tests.test_memberships import ctx
 
 __all__ = ["world", "writer"]  # los fixtures, para pytest
-pytestmark = pytest.mark.usefixtures("tenant_db")
+pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 DB = psycopg.Connection[Any]
 
 
@@ -270,11 +270,12 @@ def test_the_outbox_event_reaches_the_dispatcher_end_to_end(
     )
     queued: list[dict[str, Any]] = []  # el evento encola el despacho: corre después, en su worker
     monkeypatch.setattr(tasks.dispatch_message, "apply_async", lambda kwargs: queued.append(kwargs))
-    assert publish_outbox() == 1
+    assert publish_outbox() == 2  # `message.queued` y `conversation.updated` (se abrió)
     assert queued == [{"message_id": str(message.pk), "organization_id": str(world.a)}]
     assert state(world, message).delivery_status == "QUEUED"
     assert tasks.dispatch_message.apply(kwargs=queued[0]).successful()
     assert state(world, message).delivery_status == "DELIVERED"
+    assert publish_outbox() == 3  # los `message.updated` de SENDING, SENT y DELIVERED
     assert migrator.execute(
         "SELECT count(*) FROM outbox_events WHERE published_at IS NULL"
     ).fetchone() == (0,)

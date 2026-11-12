@@ -118,7 +118,12 @@ describe("Canales (F7-07b)", () => {
       ...{ last_healthcheck_at: "2026-11-05T15:30:00Z", token_last_four: "WXYZ" },
     });
     const broken = account("a3", { name: "Rota", status: "ERROR", status_detail: "TOKEN_INVALID" });
-    mockApi({ [LIST]: page([sandbox, wa, live, broken]) });
+    const low = account("a4", {
+      ...{ name: "Con calidad baja", status: "DEGRADED", status_detail: "QUALITY_LOW" },
+      ...{ quality_rating: "RED", messaging_limit_tier: "TIER_250" },
+      ...{ last_healthcheck_at: "2026-11-05T16:00:00Z" },
+    });
+    mockApi({ [LIST]: page([sandbox, wa, live, broken, low]) });
     show();
     expect(screen.getByRole("status")).toHaveTextContent("Cargando canales");
     // una por cuenta (los pasos del checklist son otras listas)
@@ -141,6 +146,37 @@ describe("Canales (F7-07b)", () => {
     expect(items[3]).toHaveTextContent("Con error");
     expect(within(items[3]!).getByText("Falta un token válido")).toBeVisible();
     expect(items[3]).toHaveTextContent("El token ya no es válido: rótalo");
+    expect(items[4]).toHaveTextContent("Con problemas");
+    expect(items[4]).toHaveTextContent("Meta bajó la calidad del número.");
+    expect(items[4]).toHaveTextContent("CalidadBaja");
+    expect(items[4]).toHaveTextContent("Nivel de mensajería250");
+    expect(within(items[4]!).getByText("La calidad del número bajó")).toBeVisible();
+  });
+
+  it("un código que la pantalla no conoce se dice como desconocido, nunca con su clave ni la del mensaje", async () => {
+    const odd = account("a5", {
+      ...{ status: "SUSPENDED", status_detail: "constructor" },
+      ...{ quality_rating: "toString", messaging_limit_tier: "__proto__" },
+    } as unknown as Partial<ChannelAccount>);
+    const other = account("a6", { platform: "TELEGRAM" } as unknown as Partial<ChannelAccount>);
+    mockApi({ [LIST]: page([odd, other]) });
+    show();
+    const items = [
+      ...(await screen.findByRole("list", { name: "Canales" })).querySelectorAll(":scope > li"),
+    ] as HTMLElement[];
+    expect(items[0]).toHaveTextContent("Estado desconocido");
+    expect(items[0]).toHaveTextContent(
+      "La cuenta informa de un motivo que esta versión no conoce.",
+    );
+    expect(items[0]).toHaveTextContent("CalidadSin datos");
+    expect(items[0]).toHaveTextContent("Nivel de mensajeríaSin definir");
+    expect(items[1]).toHaveTextContent("Otro canal");
+    expect(items[1]).not.toHaveTextContent("Canal de pruebas"); // no es la Sandbox
+    for (const item of items) {
+      expect(item.textContent).not.toMatch(
+        /channels\.|constructor|toString|__proto__|TELEGRAM|SUSPENDED/,
+      );
+    }
   });
 
   it("los nombres de cuenta van como texto aislado, nunca como HTML", async () => {

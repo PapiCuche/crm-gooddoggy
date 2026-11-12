@@ -8,6 +8,7 @@ import {
   MAX_FRAME,
   parseInboxEvent,
   type SocketLike,
+  PING_EVERY,
   STABLE,
 } from "./inbox-socket";
 
@@ -19,9 +20,13 @@ class Fake implements SocketLike {
   onclose: SocketLike["onclose"] = null;
   onerror: SocketLike["onerror"] = null;
   closed = false;
+  sent: string[] = [];
   constructor(readonly url: string) {
     Fake.all.push(this);
   }
+  send = (data: string) => {
+    this.sent.push(data);
+  };
   close = () => {
     this.closed = true;
   };
@@ -264,5 +269,30 @@ describe("robustez del cliente", () => {
     old.drop();
     vi.advanceTimersByTime(120_000);
     expect(Fake.all).toHaveLength(2);
+  });
+});
+
+describe("latido", () => {
+  it("manda un ping cada 25 s mientras está abierta y deja de mandarlo al cerrarse o al parar", () => {
+    const { stop } = start();
+    const socket = last();
+    vi.advanceTimersByTime(PING_EVERY * 2); // sin abrir todavía: nada
+    expect(socket.sent).toEqual([]);
+    socket.open();
+    vi.advanceTimersByTime(PING_EVERY * 3);
+    expect(socket.sent).toEqual(Array(3).fill('{"type":"ping"}'));
+    socket.drop();
+    vi.advanceTimersByTime(PING_EVERY * 2 - 1); // cerrada: no manda; la siguiente aún no abre
+    expect(socket.sent).toHaveLength(3);
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("para el latido al parar con la conexión abierta y manda varios por debajo del plazo del servidor", () => {
+    expect(PING_EVERY * 3).toBeLessThan(90_000); // el servidor cierra a los 90 s sin tramas
+    const { stop } = start();
+    last().open();
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

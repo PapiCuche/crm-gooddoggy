@@ -78,6 +78,18 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("tasks.create", "tasks"),
     PermissionDef("tasks.update", "tasks", supports_scope=True),
     PermissionDef("tasks.assign", "tasks"),
+    # F5-09d: las cotizaciones (03 §H). El alcance es por quien la creó; `quotes.update` cambia el
+    # borrador, `send` y `cancel` actúan sobre las que alcanza `view`; `approve`,
+    # `override_price` (precio manual) y `discount` (limitado por `discount_policies`, F5-09b) no
+    # tienen alcance.
+    PermissionDef("quotes.view", "quotes", supports_scope=True),
+    PermissionDef("quotes.create", "quotes"),
+    PermissionDef("quotes.update", "quotes", supports_scope=True),
+    PermissionDef("quotes.send", "quotes", supports_scope=True),
+    PermissionDef("quotes.approve", "quotes"),
+    PermissionDef("quotes.cancel", "quotes", supports_scope=True),
+    PermissionDef("quotes.override_price", "quotes"),
+    PermissionDef("quotes.discount", "quotes"),
     # F6-01: el Inbox. `conversations.view`, `messages.send` y `messages.note` admiten alcance
     # (propias, de su equipo y sin asignar); `assign` no: qué conversaciones alcanza lo decide
     # `view`, como `contacts.assign`. `channels.manage` configura las cuentas de canal.
@@ -109,6 +121,9 @@ TASK_SCOPED = (
     "tasks.view",
     "tasks.update",
 )  # F5-08b: cada rol opera las suyas, las del equipo o todas
+
+
+QUOTE_SCOPED = ("quotes.view", "quotes.update", "quotes.send", "quotes.cancel")  # F5-09d
 
 
 def _unscoped(*codes: str) -> dict[str, Scope | None]:
@@ -158,6 +173,10 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "opportunities.assign",
             "tasks.create",  # F5-08b
             "tasks.assign",
+            "quotes.create",  # F5-09d: 03 §H da crear y enviar a los cuatro y aprobar a los tres
+            "quotes.approve",
+            "quotes.override_price",  # 03 §H no lo lista; a confirmar
+            "quotes.discount",
             "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
             "conversations.assign",  # F6-01: «conversations.* ✅» para el Administrador en 03 §H
             "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar
@@ -170,6 +189,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
                 *(f"opportunities.{action}" for action in OPPORTUNITY_SCOPED),
                 *INBOX_SCOPED,
                 *TASK_SCOPED,
+                *QUOTE_SCOPED,
             ),
             Scope.ORGANIZATION,
         ),
@@ -189,11 +209,14 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "opportunities.assign",
             "tasks.create",  # F5-08b: crea y reparte las de su equipo
             "tasks.assign",
+            "quotes.create",  # F5-09d: crea y aprueba las de su equipo
+            "quotes.approve",  # sin `quotes.override_price`: 03 §H no lo lista y el precio manual
+            "quotes.discount",  # puede ir bajo el costo sin que la cotización lo vea (a decidir)
             "conversations.assign",  # F6-01: reparte las de su equipo
         )
         | {"contacts.view": Scope.TEAM}
         | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE}  # F5-04, 03 §H
-        | dict.fromkeys((*INBOX_SCOPED, *TASK_SCOPED), Scope.TEAM),
+        | dict.fromkeys((*INBOX_SCOPED, *TASK_SCOPED, *QUOTE_SCOPED), Scope.TEAM),
     ),
     RoleTemplate(
         "seller",
@@ -206,6 +229,8 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "contacts.create",
             "opportunities.create",
             "tasks.create",  # F5-08b: las suyas; no reparte
+            "quotes.create",  # F5-09d: las suyas; no aprueba ni escribe un precio manual
+            "quotes.discount",  # dentro de su `discount_policies` (F5-09b)
         )
         | {
             "contacts.view": Scope.OWN,
@@ -213,6 +238,6 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
         }
         | {f"opportunities.{a}": Scope.OWN for a in OPPORTUNITY_OPERATE}
         | dict.fromkeys(INBOX_SCOPED, Scope.OWN)  # F6-01: «OWN + sin asignar» en 03 §H
-        | dict.fromkeys(TASK_SCOPED, Scope.OWN),
+        | dict.fromkeys((*TASK_SCOPED, *QUOTE_SCOPED), Scope.OWN),
     ),
 )

@@ -2219,6 +2219,22 @@
       "READ": "Leído",
       "FAILED": "No se pudo enviar"
     },
+    "failure": {
+      "CONVERSATION_CLOSED": "La conversación estaba cerrada.",
+      "CHANNEL_UNAVAILABLE": "El canal no estaba conectado.",
+      "CONTACT_BLOCKED": "El contacto está bloqueado.",
+      "WINDOW_CLOSED": "Pasaron más de 24 horas desde el último mensaje del cliente.",
+      "ADAPTER_REJECTED": "El canal no aceptó el mensaje.",
+      "RETRIES_EXHAUSTED": "No se pudo enviar tras varios intentos.",
+      "TOKEN_INVALID": "El acceso de WhatsApp ya no es válido. Pide a quien administra los canales que reconecte la cuenta.",
+      "RECIPIENT_UNREACHABLE": "Ese número no puede recibir mensajes de WhatsApp.",
+      "PROVIDER_REJECTED": "WhatsApp rechazó el mensaje.",
+      "PROVIDER_UNKNOWN": "Puede que sí se haya enviado: WhatsApp no lo confirmó. Reenviarlo podría duplicar el mensaje.",
+      "RATE_LIMITED": "WhatsApp limitó el envío por exceso de mensajes. Inténtalo más tarde.",
+      "QUALITY_BLOCKED": "WhatsApp bloqueó el envío por la calidad del número.",
+      "TEMPLATE_UNAVAILABLE": "La plantilla no está disponible.",
+      "PROVIDER_ERROR": "WhatsApp tuvo un problema al procesar el envío."
+    },
     "list": {
       "landmark": "Conversaciones",
       "label": "Lista de conversaciones"
@@ -2311,14 +2327,16 @@
     "sandbox": "Canal de pruebas: no sale a ningún proveedor. Sirve para probar el Inbox con mensajes simulados.",
     "platform": {
       "SANDBOX": "Sandbox",
-      "WHATSAPP": "WhatsApp"
+      "WHATSAPP": "WhatsApp",
+      "UNKNOWN": "Otro canal"
     },
     "status": {
       "PENDING": "Pendiente",
       "CONNECTED": "Conectada",
       "DEGRADED": "Con problemas",
       "DISCONNECTED": "Desconectada",
-      "ERROR": "Con error"
+      "ERROR": "Con error",
+      "UNKNOWN": "Estado desconocido"
     },
     "detail": {
       "TOKEN_INVALID": "El token ya no es válido: rótalo para volver a enviar y recibir.",
@@ -2326,17 +2344,23 @@
       "QUALITY_LOW": "Meta bajó la calidad del número.",
       "LIMIT_REACHED": "Se alcanzó el límite de mensajería.",
       "DISCONNECTED_BY_ADMIN": "La desconectó un administrador.",
-      "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación."
+      "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación.",
+      "UNKNOWN": "La cuenta informa de un motivo que esta versión no conoce."
     },
     "checklist": {
       "label": "Lo que falta para usar la cuenta",
       "token": {
         "ok": "Token válido",
-        "missing": "Falta un token válido"
+        "bad": "Falta un token válido"
       },
       "webhook": {
         "ok": "Mensajes de Meta recibidos",
-        "missing": "Falta recibir el primer mensaje de Meta"
+        "wait": "Falta recibir el primer mensaje de Meta"
+      },
+      "quality": {
+        "ok": "Calidad del número buena",
+        "warn": "La calidad del número bajó",
+        "wait": "Falta la primera comprobación de calidad"
       }
     },
     "fields": {
@@ -2533,6 +2557,66 @@
       "assigneeInvalid": "Esa persona ya no es miembro activo de la organización.",
       "reasonInvalid": "El motivo no es válido (hasta 500 caracteres, sin tabuladores).",
       "denied": "No tienes permiso para hacer esto con la tarea."
+    }
+  },
+  "quotes": {
+    "statuses": {
+      "DRAFT": "Borrador",
+      "PENDING_APPROVAL": "Por aprobar",
+      "APPROVED": "Aprobada",
+      "SENT": "Enviada",
+      "VIEWED": "Vista",
+      "ACCEPTED": "Aceptada",
+      "REJECTED": "Rechazada",
+      "EXPIRED": "Vencida",
+      "CANCELLED": "Cancelada",
+      "UNKNOWN": "Estado desconocido"
+    },
+    "detail": {
+      "loading": "Cargando la cotización…",
+      "denied": "No tienes permiso para ver esta cotización.",
+      "back": "Cotizaciones",
+      "facts": "Datos de la cotización",
+      "contact": "Cliente",
+      "opportunity": "Oportunidad",
+      "viewOpportunity": "Ver la oportunidad",
+      "noContact": "Sin permiso para ver su nombre",
+      "validUntil": "Válida hasta",
+      "created": "Creada",
+      "currency": "Moneda",
+      "tax": "IGV",
+      "taxIncluded": "{rate} % incluido en los precios",
+      "taxExcluded": "{rate} % no incluido en los precios",
+      "taxRate": "{rate} %",
+      "none": "—",
+      "items": {
+        "title": "Líneas",
+        "label": "Líneas de la cotización",
+        "product": "Producto",
+        "quantity": "Cantidad",
+        "list": "Precio de lista",
+        "promotion": "Promoción",
+        "discount": "Descuento",
+        "final": "Precio final",
+        "total": "Total de la línea",
+        "empty": "Esta cotización no tiene líneas."
+      },
+      "totals": {
+        "title": "Totales",
+        "subtotal": "Subtotal",
+        "tax": "IGV incluido",
+        "taxPlain": "IGV",
+        "discount": "Ahorro frente a la lista",
+        "total": "Total"
+      },
+      "notes": {
+        "customer": "Notas para el cliente",
+        "internal": "Notas internas (no las ve el cliente)",
+        "cancel": "Motivo de la cancelación",
+        "cancelledAt": "Cancelada el {date}"
+      },
+      "revision": "Revisión {number}",
+      "late": "Vencida"
     }
   }
 }

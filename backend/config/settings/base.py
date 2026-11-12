@@ -130,6 +130,7 @@ CHANNEL_LAYERS = (
 # WebSocket del Inbox: tope por persona y proceso, trama máxima, inactividad y revisión (segundos).
 INBOX_WS_MAX_PER_USER = 8
 INBOX_WS_MAX_FRAME = 1024
+INBOX_WS_MAX_FRAMES = 30  # tramas del cliente por minuto y conexión
 INBOX_WS_IDLE_SECONDS = 90.0
 INBOX_WS_RECHECK_SECONDS = 60.0
 INBOX_WS_TICK_SECONDS = 5.0
@@ -140,12 +141,18 @@ INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
 # F7-05c: minutos que un mensaje puede seguir `SENDING` (resultado ambiguo o proceso caído) antes
 # de quedar `FAILED` con `PROVIDER_UNKNOWN`; Meta no deduplica, así que no se reenvía.
 INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 15)
+# F7-06b: cada cuánto se comprueba la salud de cada cuenta de WhatsApp (calidad, nivel, token).
+CHANNEL_HEALTH_INTERVAL_MINUTES = env.integer("CHANNEL_HEALTH_INTERVAL_MINUTES", 15)
 # Outbox (F1-06): el publisher corre cada segundo en beat.
 CELERY_BEAT_SCHEDULE = {
     "core.publish_outbox": {"task": "core.publish_outbox", "schedule": 1.0},
     # F6-04b: cada minuto vuelve a encolar los mensajes del Inbox que llevan demasiado en cola.
     "conversations.sweep_queued": {"task": "conversations.sweep_queued", "schedule": 60.0},
     "conversations.sweep_sending": {"task": "conversations.sweep_sending", "schedule": 60.0},
+    "conversations.healthcheck_accounts": {
+        "task": "conversations.healthcheck_accounts",
+        "schedule": 300.0,  # F7-06b: cada 5 minutos revisa las cuentas a las que les toca
+    },
     # D-F2-2: una vez al día, a hora fija (UTC). Un intervalo de 24 horas se cuenta desde que
     # beat arranca: si el contenedor se recrea a diario, la purga no se ejecutaría nunca.
     "accounts.purge_expired_sessions": {
@@ -263,6 +270,9 @@ SPECTACULAR_SETTINGS = {
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
         "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
         "TaskTypeEnum": "apps.tasks.models.TaskType",  # F5-08b: `type` de una tarea
+        "QuoteStatusEnum": "apps.quotes.models.QuoteStatus",  # F5-09d: `status` de una cotización
+        "QuoteDiscountTypeEnum": "apps.quotes.models.DiscountType",  # F5-09d2: el de la línea
+        "DiscountTypeEnum": "apps.pricing.models.DiscountType",  # el de las promociones, como antes
         "ProductStatusEnum": "apps.catalog.models.Product.Status",
         "VariantStatusEnum": "apps.catalog.models.ProductVariant.Status",
         "WarehouseTypeEnum": "apps.inventory.models.Warehouse.Type",  # F3-08

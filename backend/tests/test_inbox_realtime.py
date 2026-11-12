@@ -33,7 +33,7 @@ from tests.test_conversation_scopes import crm, inbox, real_stack
 from tests.test_memberships import ctx
 
 __all__ = ["crm", "inbox", "real_stack"]  # los fixtures, para pytest
-pytestmark = pytest.mark.usefixtures("tenant_db")
+pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 DB = psycopg.Connection[Any]
 SECRET = "texto-que-no-debe-salir-9f3a"  # noqa: S105 — dato ficticio de test
 ORIGIN, FORBIDDEN, NOT_FOUND, NO_SESSION, TOO_MANY = b"http://testserver", 4403, 4404, 4401, 4429
@@ -125,10 +125,11 @@ def run(coro: Callable[[], Awaitable[Any]]) -> Any:
     return async_to_sync(main)()
 
 
-async def push(org: UUID, kind: str, convo: UUID) -> None:
+async def push(org: UUID, kind: str, convo: UUID, previous: UUID | None = None) -> None:
     """Un evento publicado al grupo de la organización, como lo hace la tarea del outbox."""
     aggregate = convo if kind.startswith("conversation.") else uuid4()
-    message = realtime.outgoing(kind, aggregate, {"conversation_id": str(convo)}, "t")
+    payload = {"conversation_id": str(convo), "previous_user_id": previous and str(previous)}
+    message = realtime.outgoing(kind, aggregate, payload, "t")
     assert message is not None
     await sync_to_async(realtime.publish)(org, message)
 
@@ -188,7 +189,7 @@ def test_the_outbox_reaches_the_connection_with_only_type_ids_and_time(
             message = await sync_to_async(receive)()
             assert await sync_to_async(publish_outbox)() == 1
             (event,) = await vera.frames(1)
-            assert event == {"type": "message.received", "id": str(message.pk),
+            assert event == {"type": "message.received", "message_id": str(message.pk),
                              "conversation_id": str(convo.pk), "at": event["at"]}  # fmt: skip
             assert SECRET not in json.dumps(event) and "vera" not in json.dumps(event)
 
@@ -198,7 +199,7 @@ def test_the_outbox_reaches_the_connection_with_only_type_ids_and_time(
     )
     cid, mid, pii = uuid4(), uuid4(), {"body": SECRET, "name": "Ana", "phone": "+51"}
     sent = realtime.outgoing("message.updated", mid, {"conversation_id": str(cid), **pii}, "t")
-    assert sent and set(sent["event"]) == {"type", "id", "conversation_id", "at"}
+    assert sent and set(sent["event"]) == {"type", "message_id", "conversation_id", "at"}
     assert realtime.outgoing("contact.created", mid, {"conversation_id": str(cid)}, "t") is None
     assert realtime.outgoing("message.received", mid, {"conversation_id": "x"}, "t") is None
 
@@ -288,6 +289,7 @@ def test_idle_session_membership_and_permission_are_checked_while_connected(
     inbox: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
     settings.INBOX_WS_RECHECK_SECONDS, settings.INBOX_WS_IDLE_SECONDS = 0.1, 2.5
+    settings.INBOX_WS_MAX_FRAMES = 1000
 
     async def go() -> None:
         async with connected("org-a", inbox.vera) as vera, connected("org-a", inbox.sam) as sam:
@@ -410,3 +412,70 @@ def test_without_a_channel_layer_the_socket_does_not_open_and_nothing_is_publish
     settings.CHANNEL_LAYERS = {}
     channel_layers.backends.clear()
     assert attempt("org-a", inbox.ana) == (False, 1013) and not realtime.publish(inbox.a, {})
+
+
+def test_the_events_use_the_types_and_fields_the_client_knows() -> None:
+    cid, mid = uuid4(), uuid4()
+    sent = realtime.outgoing("message.queued", mid, {"conversation_id": str(cid)}, "t")
+    assert sent and sent["event"] == {"type": "message.updated", "message_id": str(mid),
+                                      "conversation_id": str(cid), "at": "t"}  # fmt: skip
+    mine = realtime.outgoing("conversation.assigned", cid, {"previous_user_id": str(mid)}, "t")
+    assert mine and mine["event"] == {"type": "conversation.updated",
+                                      "conversation_id": str(cid), "at": "t"}  # fmt: skip
+    assert mine["previous_user_id"] == str(mid)  # solo para el consumer: no sale en el evento
+    other = {"previous_user_id": "u", "conversation_id": str(cid)}  # solo lo lleva la reasignación
+    queued = realtime.outgoing("message.queued", mid, other, "t")
+    assert queued and "previous_user_id" not in queued
+
+
+def test_a_delivery_change_and_a_status_change_leave_hints_with_only_ids(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
+        message, _ = commands.record_outbound(
+            tenant, conversation_id=inbox.convs["ana"], client_message_id=uuid4(), body=SECRET
+        )  # abre la conversación: `conversation.updated`
+        for _ in range(2):  # el segundo, repetido: nada
+            commands.advance_delivery(tenant, message_id=message.pk, status="SENT")
+    rows = migrator.execute(
+        "SELECT event_type, aggregate_id, payload FROM outbox_events "
+        "WHERE event_type IN ('message.updated', 'conversation.updated') ORDER BY occurred_at, id"
+    ).fetchall()
+    convo = inbox.convs["ana"]
+    assert rows == [("conversation.updated", convo, {}),
+                    ("message.updated", message.pk, {"conversation_id": str(convo)})]  # fmt: skip
+
+
+def test_who_lost_the_conversation_by_a_reassignment_is_told_once(inbox: SimpleNamespace) -> None:
+    convo = inbox.convs["sam"]  # sam la tiene; vera no la ve
+
+    async def go() -> None:
+        async with connected("org-a", inbox.vera) as vera:
+            await push(inbox.a, "conversation.assigned", convo, previous=inbox.vera.pk)
+            await push(inbox.a, "conversation.assigned", convo, previous=inbox.ana.pk)
+            await push(inbox.a, "message.received", inbox.convs["vera"])  # centinela
+            got = await vera.frames(2)  # el aviso de vera y el centinela, no el de otra persona
+            assert [f["type"] for f in got] == ["conversation.updated", "message.received"]
+
+    run(go)
+
+
+def test_a_connection_that_sends_too_many_frames_is_closed_and_the_window_resets(
+    inbox: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.INBOX_WS_MAX_FRAMES = 3
+    monkeypatch.setattr(realtime, "RATE_WINDOW", 0.5)
+
+    async def go() -> None:
+        async with connected("org-a", inbox.vera) as vera:
+            for _ in range(3):
+                await vera.send_to(PING)
+                assert await vera.frames(1) == [{"type": "pong"}]
+            await asyncio.sleep(0.6)  # otra ventana: el contador vuelve a cero
+            for _ in range(3):
+                await vera.send_to(PING)
+                assert await vera.frames(1) == [{"type": "pong"}]
+            await vera.send_to(PING)  # la cuarta de la ventana
+            assert await vera.closed_with() == 1008 and not realtime._open
+
+    run(go)

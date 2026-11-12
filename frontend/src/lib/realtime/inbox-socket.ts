@@ -55,6 +55,7 @@ export type SocketLike = {
   onmessage: ((event: { data: unknown }) => void) | null;
   onclose: ((event: { code: number }) => void) | null;
   onerror: ((event: unknown) => void) | null;
+  send: (data: string) => void;
   close: () => void;
 };
 
@@ -62,6 +63,10 @@ const WAIT = { first: 1000, max: 30_000 };
 // Una conexión que dura menos que esto no cuenta como recuperada: si el servidor acepta y cierra
 // enseguida, la espera sigue creciendo (y no se relee todo el Inbox cada segundo).
 export const STABLE = 10_000;
+// El servidor cierra (4408) una conexión que no manda nada durante 90 s: un `ping` cada 25 s la
+// mantiene y no cuenta casi nada (su límite son 30 tramas por minuto).
+export const PING_EVERY = 25_000;
+const PING = JSON.stringify({ type: "ping" });
 
 // La espera antes del intento `attempt` (0 el primero): 1 s, 2 s, 4 s… con tope de 30 s.
 export const backoff = (attempt: number) => Math.min(WAIT.max, WAIT.first * 2 ** attempt);
@@ -85,6 +90,7 @@ export function connectInbox({
 }): () => void {
   let socket: SocketLike | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let heart: ReturnType<typeof setInterval> | undefined;
   let attempt = 0;
   let lost = false; // ¿se perdió una conexión o un intento? lo ocurrido mientras tanto se relee
   let since = 0; // cuándo abrió la conexión actual (0: no está abierta)
@@ -107,6 +113,7 @@ export function connectInbox({
     }
     socket = current;
     current.onopen = () => {
+      heart = setInterval(() => current.send(PING), PING_EVERY);
       since = Date.now();
       if (lost) onResync(); // la primera conexión sin fallos previos no relee: la pantalla acaba de leer
       lost = false;
@@ -117,6 +124,7 @@ export function connectInbox({
     };
     current.onclose = (close) => {
       if (stopped || socket !== current) return;
+      clearInterval(heart);
       socket = null;
       if (since && Date.now() - since >= STABLE) attempt = 0; // estable: se cuenta desde cero
       if (FINAL_CLOSES.includes(close.code)) {
@@ -133,6 +141,7 @@ export function connectInbox({
   return () => {
     stopped = true;
     clearTimeout(timer);
+    clearInterval(heart);
     const current = socket;
     socket = null;
     if (current) {

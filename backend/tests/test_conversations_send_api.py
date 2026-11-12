@@ -81,7 +81,8 @@ def test_the_owner_queues_a_message_once_and_a_replay_is_the_same_message(
     assert again.status_code == 200 and again.json() == sent  # el mismo, no otro
     assert counts(migrator) == (1, 1, 1)  # un mensaje, un evento, una auditoría
     event = migrator.execute(
-        "SELECT aggregate_type, aggregate_id, payload::text FROM outbox_events"
+        "SELECT aggregate_type, aggregate_id, payload::text FROM outbox_events "
+        "WHERE event_type = 'message.queued'"
     ).fetchone()
     assert event is not None and event[:2] == ("message", UUID(sent["id"]))
     assert set(json.loads(event[2])) == {"conversation_id", "channel_account_id"}
