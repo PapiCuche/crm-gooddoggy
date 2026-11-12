@@ -324,10 +324,8 @@ META_GRAPH_HOST = "graph.facebook.com"
 # F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)
-# F7-09a1: los únicos hosts de los que se bajan medios (la URL que devuelve la Graph API se valida
-# contra esta lista estática, nunca una del payload). A confirmar con Meta. **No** entran en
-# `HTTP_ALLOWED_HOSTS`: `core.http.request` (con el token de la cuenta en la cabecera) no debe poder
-# llegar a ellos; solo `core.http.download` los acepta, pasándolos como su lista de hosts.
+# F7-09a1: hosts de los que se bajan medios (a confirmar con Meta). **No** entran en
+# `HTTP_ALLOWED_HOSTS`: `request` (con el token de la cuenta) no llega a ellos; solo `download`.
 META_MEDIA_HOSTS = ("lookaside.fbsbx.com",)
 if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
     HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)

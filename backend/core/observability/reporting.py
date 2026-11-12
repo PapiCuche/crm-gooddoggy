@@ -68,6 +68,18 @@ def scrub_sentry_event(event: dict[str, Any], hint: Any = None) -> dict[str, Any
     return redact(event)  # type: ignore[no-any-return]
 
 
+def scrub_breadcrumb(crumb: dict[str, Any], hint: Any = None) -> dict[str, Any]:
+    """Las migas de pan de Sentry (`http.client`, `urllib3`) llevan la URL con su query: la de una
+    URL firmada de un medio (`oh=`, `oe=`) es una credencial. Se quita la query y el fragmento."""
+    data = crumb.get("data")
+    if isinstance(data, dict):
+        for key in ("http.query", "http.fragment"):
+            data.pop(key, None)
+        if isinstance(data.get("url"), str):
+            data["url"] = data["url"].split("#", 1)[0].split("?", 1)[0]
+    return redact(crumb)  # type: ignore[no-any-return]
+
+
 class SentryReporter:
     def __init__(self, dsn: str, environment: str | None = None) -> None:
         import sentry_sdk
@@ -90,6 +102,7 @@ class SentryReporter:
                 LoggingIntegration(level=None, event_level=None),
             ],
             before_send=scrub_sentry_event,  # type: ignore[arg-type]
+            before_breadcrumb=scrub_breadcrumb,
         )
 
     def capture_exception(

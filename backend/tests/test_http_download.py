@@ -71,9 +71,6 @@ def graph(monkeypatch: pytest.MonkeyPatch) -> FakeGraph:
     return fake
 
 
-# ---- La consulta y la descarga contra el simulador ----
-
-
 def test_the_simulator_serves_the_lookup_and_the_blob_and_both_need_the_token(
     graph: FakeGraph,
 ) -> None:
@@ -93,14 +90,10 @@ def test_a_download_goes_through_the_shared_manager_without_retries_or_redirects
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = serve(monkeypatch, b"hola")
-    assert get() == 200
+    sent = {**AUTH, "ACCEPT-encoding": "gzip"}  # el nombre en cualquier combinación: nunca gzip
+    assert http.download(URL, io.BytesIO(), max_bytes=100, hosts=HOSTS, headers=sent) == 200
     (((method, url), kwargs),) = manager.calls
-    assert (method, url, kwargs["redirect"], kwargs["preload_content"]) == (
-        "GET",
-        URL,
-        False,
-        False,
-    )
+    assert (method, url) == ("GET", URL) and not kwargs["redirect"] | kwargs["preload_content"]
     assert kwargs["retries"].total == 0 and kwargs["timeout"].read_timeout <= 15
     want = {"authorization": AUTH["Authorization"], "accept-encoding": "identity"}
     assert kwargs["headers"] == want
@@ -157,6 +150,16 @@ def test_a_url_outside_the_media_policy_never_reaches_the_connection_manager(
     assert manager.calls == [] and sink.getvalue() == b""
 
 
+def test_the_hosts_of_a_download_must_be_media_hosts_because_the_token_goes_to_all_of_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = serve(monkeypatch)
+    for hosts in ((transport.GRAPH_HOST,), (MEDIA_HOST, "evil.example"), ["api.example.com"]):
+        with pytest.raises(ValueError, match="META_MEDIA_HOSTS"):
+            http.download(URL, io.BytesIO(), max_bytes=9, hosts=hosts, headers=AUTH)
+    assert manager.calls == []
+
+
 def test_the_media_host_is_not_reachable_by_request_and_the_parsers_must_agree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,19 +184,11 @@ def test_the_caller_cannot_set_the_headers_that_frame_the_request(
         http.download(URL, io.BytesIO(), max_bytes=9, hosts=HOSTS, headers={name: "x"})
     with pytest.raises(http.BlockedDestination):
         http.request("GET", graph_url, headers={name: "x"})
+    for value in ("Bearer abc\r\nHost: evil", "Bearer abc\x00", "Bearer abc\x7f"):  # y sin eco
+        with pytest.raises(http.BlockedDestination) as caught:
+            http.download(URL, io.BytesIO(), max_bytes=9, hosts=HOSTS, headers={"X": value})
+        assert "abc" not in chain(caught.value)
     assert manager.calls == []
-
-
-def test_the_encoding_header_is_normalized_so_the_caller_cannot_ask_for_gzip(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = serve(monkeypatch, b"x")
-    sent = {"ACCEPT-encoding": "gzip"}  # el nombre, en cualquier combinación
-    http.download(URL, io.BytesIO(), max_bytes=9, hosts=HOSTS, headers=sent)
-    assert manager.calls[0][1]["headers"] == {"accept-encoding": "identity"}
-
-
-# ---- La respuesta: redirección, estado, codificación ----
 
 
 def test_a_redirect_or_an_error_status_is_returned_and_nothing_is_written_or_followed(
@@ -213,10 +208,6 @@ class Unread(io.BytesIO):
         self.reads += 1
         return super().read1(-1 if size is None else size)
 
-    def read(self, size: int | None = -1) -> bytes:
-        self.reads += 1
-        return super().read(size)
-
 
 def test_a_content_encoding_is_refused_before_a_single_byte_is_read(
     monkeypatch: pytest.MonkeyPatch,
@@ -229,9 +220,6 @@ def test_a_content_encoding_is_refused_before_a_single_byte_is_read(
     assert sink.getvalue() == b"" and not body.reads
     serve(monkeypatch, b"hola", headers={"Content-Encoding": "identity"})
     assert get() == 200  # `identity` sí
-
-
-# ---- El tope ----
 
 
 @pytest.mark.parametrize("size", [100, 101, 5000])
@@ -248,61 +236,61 @@ def test_the_cap_is_exact_and_the_sink_never_gets_more_than_it(
         assert sink.tell() <= 100
 
 
-def test_a_content_length_that_lies_either_way_changes_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    serve(monkeypatch, b"x" * 10, headers={"Content-Length": "5000"})  # dice más: sin leer
-    with pytest.raises(http.ResponseTooLarge):
-        get()
-    serve(
-        monkeypatch, b"x" * 5000, headers={"Content-Length": "10"}
-    )  # dice menos: manda lo recibido
-    sink = io.BytesIO()
-    try:
-        get(sink)
-    except http.ResponseTooLarge, http.DownloadFailed:
-        pass
-    assert len(sink.getvalue()) <= 100
+# Lo que `download` hace con cada `Content-Length` sobre un cuerpo de 4 bytes (el tope es 100): más
+# que el tope se rechaza sin leer; lo que no es un número (`²`, `-1`, 5000 dígitos) se ignora.
+LENGTHS = {
+    "²": 200, "9" * 5000: 200, "-1": 200, "1e3": 200, "": 200, "٣": http.DownloadFailed,
+    " 5": http.DownloadFailed, "+5": http.DownloadFailed, "5 ": http.DownloadFailed,
+    "10": http.DownloadFailed, "5000": http.ResponseTooLarge, "4": 200,
+}  # fmt: skip
 
 
-@pytest.mark.parametrize("declared", ["²", "٣", "9" * 5000, "-1", "1e3", " 5", "+5", "", "5 "])
-def test_a_hostile_content_length_is_ignored_and_the_byte_cap_still_applies(
+@pytest.mark.parametrize("declared", list(LENGTHS))
+def test_a_content_length_that_is_hostile_or_lies_gives_the_exact_outcome_and_never_a_valueerror(
     declared: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     serve(monkeypatch, b"hola", headers={"Content-Length": declared})
-    sink = io.BytesIO()
-    try:  # nunca un `ValueError` que se escape de `download`
+    sink, want = io.BytesIO(), LENGTHS[declared]
+    if want == 200:
         assert get(sink) == 200 and sink.getvalue() == b"hola"
-    except http.DownloadFailed:  # urllib3 sí lee ` 5` o `+5` como 5 y la respuesta queda corta
-        assert len(sink.getvalue()) <= 100
+    else:
+        with pytest.raises(want):  # type: ignore[call-overload]
+            get(sink)
+        assert len(sink.getvalue()) == (0 if want is http.ResponseTooLarge else 4)
     serve(monkeypatch, b"x" * 500, headers={"Content-Length": declared})
-    with pytest.raises((http.ResponseTooLarge, http.DownloadFailed)):
-        get()
+    sink = io.BytesIO()  # y con más bytes que el tope, mande lo que mande la cabecera
+    with pytest.raises(http.ResponseTooLarge):
+        get(sink)
+    assert len(sink.getvalue()) <= 100
 
 
 class Sink(io.BytesIO):
-    """Un sink que escribe de a 3 bytes (un `write` parcial) o falla con disco lleno."""
+    """Un sink que escribe de a 3 bytes (un `write` parcial), falla con disco lleno o no avanza."""
 
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, mode: str = "partial") -> None:
         super().__init__()
-        self.fail = fail
+        self.how = mode
 
     def write(self, data: Any) -> int:
-        if self.fail:
+        if self.how == "full":
             raise OSError(errno.ENOSPC, "disco lleno")
+        if self.how in ("none", "zero"):
+            return {"none": None, "zero": 0}[self.how]  # type: ignore[return-value]
         return super().write(bytes(data[:3]))
 
 
-def test_a_partial_write_loses_no_bytes_and_a_sink_error_is_not_a_network_failure(
+def test_a_partial_write_loses_no_bytes_and_a_sink_that_fails_or_stalls_is_an_oserror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     serve(monkeypatch, b"0123456789")
     sink = Sink()
     assert get(sink) == 200 and sink.getvalue() == b"0123456789"
-    serve(monkeypatch, b"0123456789")
-    with pytest.raises(OSError, match="disco lleno") as caught:
-        get(Sink(fail=True))
-    assert type(caught.value) is OSError and caught.value.errno == errno.ENOSPC
+    for mode in ("full", "none", "zero"):  # sin giro infinito y sin confundirlo con la red
+        serve(monkeypatch, b"0123456789")
+        with pytest.raises(OSError) as caught:
+            get(Sink(mode))
+        assert type(caught.value) is OSError
+        assert (caught.value.errno == errno.ENOSPC) == (mode == "full")
 
 
 # ---- El plazo total ----
@@ -332,71 +320,121 @@ def test_a_body_that_drips_hits_the_total_deadline_without_waiting_for_a_whole_c
     assert time.monotonic() - started < 1.0 and 0 < len(sink.getvalue()) < 40
 
 
+class Cut(io.BytesIO):
+    """Un cuerpo sin `Content-Length` cortado por el vigilante: la lectura da fin de datos."""
+
+    def read1(self, size: int | None = -1) -> bytes:
+        if not self.tell():
+            return super().read1(2)
+        time.sleep(0.4)  # el plazo (0.2 s) vence aquí, y el socket cortado da `b""`
+        return b""
+
+
+def test_a_body_cut_short_by_the_watchdog_is_not_a_complete_200(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve(monkeypatch, Cut(b"abcdef"))
+    sink = io.BytesIO()
+    with pytest.raises(http.DownloadTooSlow):
+        get(sink, seconds=0.2)
+    assert sink.getvalue() == b"ab"  # (y el llamador lo descarta)
+
+
 def test_the_watchdog_cuts_a_stalled_read_at_the_deadline_and_a_late_socket_at_once() -> None:
     mine, theirs = socket.socketpair()
+    late, other = socket.socketpair()
+    for sock in (mine, theirs, late, other):
+        sock.settimeout(5)  # un fallo no cuelga la suite
     dog = http._Watchdog(0.1)
     dog.watch(mine)
     dog.start()
     started = time.monotonic()
     assert mine.recv(1) == b"" and dog.fired  # bloqueada hasta que el vigilante la cortó
     assert time.monotonic() - started < 2
-    late, other = socket.socketpair()
     dog.watch(late)  # un socket que llega tras el plazo se corta en cuanto se registra
     assert late.recv(1) == b""
+    dog.stop()
     for sock in (mine, theirs, late, other):
         sock.close()
 
 
-def test_a_server_that_drips_the_headers_is_cut_by_the_watchdog_not_by_the_read_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_after_stop_the_timer_is_inert_and_the_duplicates_are_closed() -> None:
+    """Una conexión ya soltada (su descriptor puede ser de otro hilo) no se corta."""
     mine, theirs = socket.socketpair()
-    mine.settimeout(3)  # sin vigilante, esto fallaría como un fallo de red, no como plazo
-
-    class Stalled:
-        def request(self, *args: Any, **kwargs: Any) -> Any:
-            http._watch(mine)  # lo que hace la conexión protegida al abrir su socket
-            if not mine.recv(1):
-                raise ProtocolError("cortada")
-            raise AssertionError("no debía llegar nada")
-
-    monkeypatch.setattr(http, "_manager", Stalled())
-    started = time.monotonic()
-    with pytest.raises(http.DownloadTooSlow):
-        get(seconds=0.2)
-    assert time.monotonic() - started < 2
+    mine.settimeout(5)
+    dog = http._Watchdog(60)
+    dog.watch(mine)
+    (copy,) = dog._sockets
+    assert copy is not mine and copy.fileno() != mine.fileno()  # un duplicado, no el original
+    dog.stop()
+    assert copy.fileno() == -1  # cerrado bajo el cerrojo
+    dog._fire()  # el temporizador, justo en ese instante
+    theirs.sendall(b"x")
+    assert mine.recv(1) == b"x" and not dog.fired  # la conexión sigue viva
+    dog.watch(mine)  # y no registra nada nuevo
+    assert dog._sockets == []
     mine.close()
     theirs.close()
 
 
-def test_the_protected_connection_registers_its_sockets_with_the_active_watchdog(
+def test_the_watchdog_is_stopped_before_the_socket_is_released(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: list[Any] = []
+    order: list[bool] = []
+    dogs: list[Any] = []
 
-    class Dog:
-        def watch(self, sock: Any) -> None:
-            seen.append(sock)
+    class Closing(urllib3.HTTPResponse):
+        def close(self) -> None:  # lo que `_fetch` suelta al terminar
+            order.append(dogs[0]._stopped)
+            super().close()
+
+    class Spy(Manager):
+        def request(self, *args: Any, **kwargs: Any) -> Any:
+            dogs.append(http._watchdog.get())
+            return super().request(*args, **kwargs)
+
+    reply = Closing(body=io.BytesIO(b"hola"), status=200, preload_content=False)
+    monkeypatch.setattr(http, "_manager", Spy(reply))
+    assert get() == 200 and order == [True]
+
+
+def test_a_tls_handshake_that_drips_is_cut_by_the_watchdog_with_the_real_ssl_wrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ssl` suelta el descriptor original al empezar el apretón: el vigilante corta el duplicado.
+    El servidor manda la cabecera de un registro TLS de 16384 bytes y lo gotea (un byte cada 50 ms:
+    el tiempo de lectura de 3 s nunca vence)."""
+    client, server = socket.socketpair()
+    client.settimeout(3)
+    done = threading.Event()
+
+    def drip() -> None:
+        server.sendall(b"\x16\x03\x03\x40\x00")
+        while not done.is_set():
+            try:
+                server.sendall(b"x")
+            except OSError:
+                return
+            time.sleep(0.05)
 
     answer = [(socket.AF_INET, 1, 6, "", ("93.184.216.34", 443))]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: answer)
-    plain = socket.socket()
-    monkeypatch.setattr("urllib3.connection.connection.create_connection", lambda *a, **k: plain)
-    monkeypatch.setattr(
-        urllib3.connection.HTTPSConnection, "connect", lambda self: setattr(self, "sock", "tls")
-    )
-    token = http._watchdog.set(Dog())  # type: ignore[arg-type]
+    monkeypatch.setattr("urllib3.connection.connection.create_connection", lambda *a, **k: client)
+    threading.Thread(target=drip, daemon=True).start()
+    dog = http._Watchdog(0.3)
+    token = http._watchdog.set(dog)
+    dog.start()
+    started = time.monotonic()
     try:
-        conn = http._GuardedHTTPSConnection(MEDIA_HOST, 443)
-        conn._new_conn()
-        conn.connect()
+        with pytest.raises((OSError, urllib3.exceptions.HTTPError)):
+            http._GuardedHTTPSConnection(MEDIA_HOST, 443).connect()
+        assert dog.fired and time.monotonic() - started < 1.5
     finally:
+        done.set()
+        dog.stop()
         http._watchdog.reset(token)
-        plain.close()
-    assert seen == [plain, "tls"]  # el socket en claro (conexión) y el TLS (cabeceras y cuerpo)
-
-
-# ---- Fallos de red: sin reintento y sin la URL, ni como causa ni como contexto ----
+        client.close()
+        server.close()
 
 
 class Reset(io.BytesIO):
@@ -415,7 +453,7 @@ def chain(error: BaseException | None) -> str:
     return seen
 
 
-def test_a_network_failure_is_one_request_and_carries_no_url_as_cause_or_context(
+def test_a_failure_carries_no_url_as_cause_or_context_and_the_download_is_one_request(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
@@ -431,21 +469,24 @@ def test_a_network_failure_is_one_request_and_carries_no_url_as_cause_or_context
         with pytest.raises(http.DownloadFailed) as hidden:
             get()
         raised.append(hidden.value)
+    # una URL que urlsplit acepta y urllib3 rechaza (`LocationParseError` lleva la URL entera)
+    with pytest.raises(http.BlockedDestination) as refused:
+        http.download(f"https://{MEDIA_HOST}%/x?{SECRET}", io.BytesIO(), max_bytes=9, hosts=HOSTS)
+    raised.append(refused.value)
     for error in raised:  # ni como causa ni como contexto: lo que lee un rastreador de errores
         assert error.__cause__ is None and error.__context__ is None
         assert SECRET not in chain(error) and MEDIA_HOST not in chain(error)
     assert SECRET not in caplog.text and MEDIA_HOST not in caplog.text
 
 
-# ---- El registro real de urllib3 ----
-
-
 def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
-    monkeypatch: pytest.MonkeyPatch, settings: Any
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, settings: Any
 ) -> None:
     """Con el gestor real, urllib3 registra `GET <ruta>?<query>` en DEBUG: la configuración de
     `LOGGING` lo calla. Sin red: la conexión protegida usa un socket local en claro."""
     client, server = socket.socketpair()
+    client.settimeout(5)
+    server.settimeout(5)
 
     def answer() -> None:
         server.recv(65536)
@@ -461,25 +502,14 @@ def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
     manager = urllib3.PoolManager()
     manager.pool_classes_by_scheme = {"https": http._GuardedPool}
     monkeypatch.setattr(http, "_manager", manager)
-    seen: list[str] = []
-
-    class Capture(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            seen.append(record.getMessage())
-
-    handler, logger = Capture(), logging.getLogger("urllib3")
-    old = logger.level
-    logger.setLevel(logging.DEBUG)  # sin la entrada de `LOGGING`, urllib3 registraría la query
+    caplog.set_level(logging.DEBUG, logger="urllib3")  # sin la entrada de `LOGGING`, se vería
     only = {"urllib3": settings.LOGGING["loggers"]["urllib3"]}  # solo su entrada: no toca la raíz
     logging.config.dictConfig({"version": 1, "disable_existing_loggers": False, "loggers": only})
-    logger.addHandler(handler)
     threading.Thread(target=answer, daemon=True).start()
     sink = io.BytesIO()
     try:
         assert http.download(f"{URL}?{SECRET}", sink, max_bytes=100, hosts=HOSTS) == 200
     finally:
-        logger.removeHandler(handler)
-        logger.setLevel(old)
         client.close()
         server.close()
-    assert sink.getvalue() == b"hola" and "SECRETO" not in " ".join(seen)
+    assert sink.getvalue() == b"hola" and "SECRETO" not in caplog.text

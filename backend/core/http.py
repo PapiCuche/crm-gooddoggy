@@ -22,8 +22,7 @@ HTTPError = urllib3.exceptions.HTTPError  # lo que lanza una petición que no ll
 MAX_RESPONSE = 1 << 20  # una respuesta mayor no es de un servicio de la allowlist: se corta
 DOWNLOAD_SECONDS = 90.0  # plazo total de una descarga (ver `download`: qué cubre y qué no)
 CHUNK = 64 * 1024
-# Cabeceras que el llamador no puede poner: las del destino (TLS y `Host` salen de la URL) y las que
-# enmarcan el cuerpo o la conexión.
+# Cabeceras que el llamador no puede poner: las del destino (sale de la URL) y las de enmarcado.
 FORBIDDEN_HEADERS = frozenset({"host", "transfer-encoding", "content-length", "connection"})
 
 
@@ -76,13 +75,15 @@ def resolve_public(host: str, port: int) -> str:
 
 
 class _Watchdog:
-    """Cierra los sockets de una descarga al vencer su plazo total (F7-09a1a): los tiempos de
-    urllib3 son por lectura y un servidor que gotea (cabeceras, apretón TLS o cuerpo) los
-    reiniciaría sin fin. `watch` registra el socket de la conexión; al vencer, un `shutdown` hace
-    fallar la lectura bloqueada. No cubre `getaddrinfo`, que no tiene tiempo propio."""
+    """Corta los sockets de una descarga al vencer su plazo total: los tiempos de urllib3 son por
+    lectura y un servidor que gotea (apretón TLS, cabeceras o cuerpo) los reiniciaría sin fin.
+    `watch` guarda un **duplicado** del socket (`ssl` suelta el descriptor original al empezar el
+    apretón; el duplicado sigue siendo el socket del núcleo y su número no se reutiliza). `stop`,
+    antes de soltar ningún socket, cierra los duplicados y deja inerte al temporizador bajo el
+    mismo cerrojo: nunca corta una conexión ajena. No cubre `getaddrinfo`."""
 
     def __init__(self, seconds: float) -> None:
-        self.fired, self._sockets = False, []  # type: ignore[var-annotated]
+        self.fired, self._stopped, self._sockets = False, False, []  # type: ignore[var-annotated]
         self._lock = threading.Lock()
         self._timer = threading.Timer(max(seconds, 0.0), self._fire)
         self._timer.daemon = True
@@ -91,24 +92,32 @@ class _Watchdog:
         self._timer.start()
 
     def stop(self) -> None:
-        self._timer.cancel()
-
-    def watch(self, sock: socket.socket | None) -> None:
         with self._lock:
-            if sock is not None:
-                self._sockets.append(sock)
+            self._stopped = True
+            self._timer.cancel()
+            sockets, self._sockets = self._sockets, []
+        for sock in sockets:
+            sock.close()
+
+    def watch(self, sock: socket.socket) -> None:
+        with self._lock:
+            if self._stopped:
+                return
+            self._sockets.append(socket.socket.dup(sock))
             if self.fired:
                 self._shutdown()
 
     def _fire(self) -> None:
         with self._lock:
+            if self._stopped:
+                return
             self.fired = True
             self._shutdown()
 
     def _shutdown(self) -> None:
         for sock in self._sockets:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
+            try:  # el de la clase base: `SSLSocket.shutdown` cambia estado desde otro hilo
+                socket.socket.shutdown(sock, socket.SHUT_RDWR)
             except OSError:
                 pass  # ya cerrado
 
@@ -118,7 +127,7 @@ _watchdog: contextvars.ContextVar[_Watchdog | None] = contextvars.ContextVar(
 )
 
 
-def _watch(sock: socket.socket | None) -> None:
+def _watch(sock: socket.socket) -> None:
     if (dog := _watchdog.get()) is not None:
         dog.watch(sock)
 
@@ -131,12 +140,8 @@ class _GuardedHTTPSConnection(HTTPSConnection):
             sock = super()._new_conn()  # conecta a la IP validada
         finally:
             self._dns_host = name  # TLS y la cabecera Host siguen usando el nombre
-        _watch(sock)
+        _watch(sock)  # antes del apretón TLS: es el socket del núcleo de toda la conexión
         return sock
-
-    def connect(self) -> None:
-        super().connect()
-        _watch(self.sock)  # el socket ya con TLS: es el que lee las cabeceras y el cuerpo
 
 
 class _GuardedPool(HTTPSConnectionPool):
@@ -180,7 +185,10 @@ def check_url(url: str, hosts: Iterable[str] | None = None) -> None:
         parts = urlsplit(url)
         port = parts.port
         seen = urllib3.util.parse_url(url)
+        bad = False
     except ValueError:  # un puerto fuera de rango o no numérico, un corchete suelto
+        bad = True  # se lanza fuera del `except`: el error de urllib3 lleva la URL entera
+    if bad:
         raise BlockedDestination("URL no válida") from None
     host = (parts.hostname or "").lower()
     if parts.scheme != "https" or parts.username or parts.password:
@@ -198,6 +206,8 @@ def _check_headers(headers: dict[str, str] | None) -> dict[str, str]:
     named = {name.lower(): value for name, value in (headers or {}).items()}
     if FORBIDDEN_HEADERS & named.keys():
         raise BlockedDestination("Cabecera que el llamador no puede poner")  # TLS/Host = URL
+    if any(c < " " and c != "\t" or c == "\x7f" for value in named.values() for c in value):
+        raise BlockedDestination("Valor de cabecera con controles")  # sin el valor: es el token
     return named
 
 
@@ -228,26 +238,27 @@ def download(
     url: str, sink: IO[bytes], *, max_bytes: int, hosts: Iterable[str],
     headers: dict[str, str] | None = None, seconds: float = DOWNLOAD_SECONDS,
 ) -> int:  # fmt: skip
-    """GET en flujo hacia `sink` (F7-09a1a). Pasa por el mismo `_manager` que `request` (https, 443,
-    IP pública fijada al conectar, sin redirecciones ni proxies) pero con `hosts` en lugar de la
-    allowlist (una lista aparte, más estrecha: `request` no llega a ella), sin reintentos y sin
-    decodificar (`Accept-Encoding: identity`; un `Content-Encoding` es `UnsupportedEncoding`).
-    Tope: nunca llega más de `max_bytes` al `sink` (`ResponseTooLarge`, por `Content-Length` válido
-    y por lo recibido). Plazo (`DownloadTooSlow`): se comprueba antes de cada lectura (que devuelve
-    lo disponible, sin esperar un trozo entero) y un vigilante cierra los sockets al vencer, también
-    durante la conexión TLS y las cabeceras. **No** cubre `getaddrinfo`, que no tiene tiempo propio
-    (lo acota el resolvedor del sistema). Un fallo de red es `DownloadFailed` y un fallo del `sink`
-    (disco lleno) se propaga tal cual; ninguno lleva el texto original de la red (la URL firmada),
-    ni como causa ni como contexto. Devuelve el estado; solo con 200 se escribe en `sink`."""
+    """GET en flujo hacia `sink` (F7-09a1a): el mismo `_manager` que `request` (https, 443, IP
+    pública fijada, sin redirecciones), con `hosts` en lugar de la allowlist. `hosts` tiene que ser
+    un subconjunto de `META_MEDIA_HOSTS` (se envía `headers`, el token, a todos: `ValueError`).
+    Sin reintentos ni decodificación (un `Content-Encoding` es `UnsupportedEncoding`). Al `sink`
+    nunca llega más de `max_bytes` (`ResponseTooLarge`). Plazo (`DownloadTooSlow`): antes de cada
+    lectura (`read1`) y con un vigilante que corta el socket, también en el apretón TLS y las
+    cabeceras; no cubre `getaddrinfo`. Un fallo de red es `DownloadFailed`, sin el texto original
+    (la URL firmada) ni como causa ni como contexto; un fallo del `sink` es un `OSError` tal cual.
+    Solo con 200 se escribe en `sink`; ante **cualquier** excepción, el llamador lo descarta."""
+    allowed = {h.lower() for h in settings.META_MEDIA_HOSTS}
+    if not {h.lower() for h in hosts} <= allowed:
+        raise ValueError("Los hosts de una descarga tienen que ser de META_MEDIA_HOSTS")
     check_url(url, hosts)
     sent = _check_headers(headers) | {"accept-encoding": "identity"}
     dog = _Watchdog(seconds)
     token = _watchdog.set(dog)
-    dog.start()
     try:
+        dog.start()
         return _fetch(url, sink, max_bytes, sent, seconds, dog)
     finally:
-        dog.stop()
+        dog.stop()  # idempotente; `_fetch` ya lo llamó antes de soltar el socket
         _watchdog.reset(token)
 
 
@@ -293,9 +304,13 @@ def _fetch(
             view = memoryview(chunk)
             while view:  # un `write` parcial no pierde bytes; un error del sink sale tal cual
                 written = sink.write(view)
-                view = view[len(view) if written is None else written :]
-        if failed:
+                if not written:  # `None` o 0: sin avance no hay fin (nunca un giro infinito)
+                    raise OSError("el destino no acepta más bytes")
+                view = view[written:]
+        # un corte del vigilante llega como fin de cuerpo (en uno sin `Content-Length`): no es 200
+        if failed or dog.fired:
             raise (DownloadTooSlow if dog.fired else DownloadFailed) from None
         return 200
     finally:
+        dog.stop()  # antes de soltar el socket: el temporizador no corta una conexión ajena
         reply.close()  # sin devolver la conexión a la reserva: puede quedar a medias

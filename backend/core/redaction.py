@@ -31,6 +31,7 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<![A-Za-z0-9])sk-(?:ant-|proj-|svcacct-|admin-)?[A-Za-z0-9_-]{16,}"), REDACTED),
     (re.compile(r"(?<![A-Za-z0-9])EAA[A-Za-z0-9]{20,}"), REDACTED),  # tokens de Meta
     (re.compile(r"(?i)\bsha256=[0-9a-f]{64}\b"), REDACTED),  # firma X-Hub-Signature-256 de Meta
+    (re.compile(r"(?i)(?<=[?&])(?:oh|oe)=[^&\s\"']+"), REDACTED),  # URL firmada de un medio de Meta
     (
         re.compile(
             r"(?i)(\bbearer|authorization[\"']?\s*[:=]\s*[\"']?basic)\s+[A-Za-z0-9._~+/=-]{8,}"

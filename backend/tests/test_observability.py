@@ -285,8 +285,20 @@ def test_reporter_is_noop_without_dsn_and_sentry_is_hardened(
     options = calls[0]
     assert (options["send_default_pii"], options["traces_sample_rate"]) == (False, 0.0)
     assert options["before_send"] is reporting.scrub_sentry_event
+    assert options["before_breadcrumb"] is reporting.scrub_breadcrumb  # F7-09a1a
     assert (options["include_local_variables"], options["max_request_body_size"]) == (
         False,
         "never",
     )
     assert not options["auto_enabling_integrations"] and "profiles_sample_rate" not in options
+
+
+def test_a_breadcrumb_of_a_signed_media_url_loses_its_query() -> None:
+    """`http.client` deja una miga con la URL y su query: la de una URL firmada es secreta."""
+    url = "https://lookaside.fbsbx.com/blob/1"
+    crumb = {
+        "data": {"url": f"{url}?oh=SECRETO#f", "http.query": "oh=SECRETO", "http.method": "GET"},
+        "message": f"GET {url}?oh=SECRETO&oe=1",
+    }  # fmt: skip
+    clean = reporting.scrub_breadcrumb(crumb)
+    assert clean["data"] == {"url": url, "http.method": "GET"} and "SECRETO" not in str(clean)
