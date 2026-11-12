@@ -342,7 +342,6 @@ def test_the_whatsapp_channel_is_off_by_default_and_then_requires_nothing(
     settings = loader(monkeypatch)
     assert settings.META_ENABLED is False and settings.META_APP_SECRETS == []
     assert "graph.facebook.com" not in settings.HTTP_ALLOWED_HOSTS
-    assert not set(settings.META_MEDIA_HOSTS) & set(settings.HTTP_ALLOWED_HOSTS)  # F7-09a1a
     stray = loader(monkeypatch, META_APP_SECRETS="x", META_ENABLED="false")
     assert stray.META_ENABLED is False  # un valor suelto con el canal apagado no se valida
 
@@ -358,9 +357,7 @@ def test_the_whatsapp_channel_on_loads_with_valid_settings_and_allows_the_graph_
     assert settings.META_GRAPH_VERSION == "v23.0"
     assert settings.HTTP_ALLOWED_HOSTS.count("graph.facebook.com") == 1
     added = loader(monkeypatch, **META_ENV, HTTP_ALLOWED_HOSTS="api.example.com")
-    media = list(added.META_MEDIA_HOSTS)  # los hosts de medios (F7-09a1a) se añaden con el canal
-    assert media == ["lookaside.fbsbx.com"]
-    assert added.HTTP_ALLOWED_HOSTS == ["api.example.com", "graph.facebook.com", *media]
+    assert added.HTTP_ALLOWED_HOSTS == ["api.example.com", "graph.facebook.com"]
 
 
 BAD_META: dict[str, dict[str, str | None]] = {

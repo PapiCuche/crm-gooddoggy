@@ -1,10 +1,13 @@
 """HTTP saliente anti-SSRF (B9): allowlist https, IP pública validada al conectar y fijada, sin
 redirects ni proxies. Único módulo con urllib3. Diseño: docs/architecture/storage-http.md."""
 
+import contextvars
 import io
 import ipaddress
+import re
 import socket
 import ssl
+import threading
 import time
 from collections.abc import Iterable
 from typing import IO, Any
@@ -17,8 +20,11 @@ from urllib3.connectionpool import HTTPSConnectionPool
 
 HTTPError = urllib3.exceptions.HTTPError  # lo que lanza una petición que no llegó a respuesta
 MAX_RESPONSE = 1 << 20  # una respuesta mayor no es de un servicio de la allowlist: se corta
-DOWNLOAD_SECONDS = 90.0  # plazo total de una descarga, además del tiempo de lectura de cada trozo
+DOWNLOAD_SECONDS = 90.0  # plazo total de una descarga (ver `download`: qué cubre y qué no)
 CHUNK = 64 * 1024
+# Cabeceras que el llamador no puede poner: las del destino (TLS y `Host` salen de la URL) y las que
+# enmarcan el cuerpo o la conexión.
+FORBIDDEN_HEADERS = frozenset({"host", "transfer-encoding", "content-length", "connection"})
 
 
 class ResponseTooLarge(HTTPError):
@@ -64,9 +70,57 @@ def resolve_public(host: str, port: int) -> str:
     except OSError as exc:
         raise BlockedDestination(f"No se pudo resolver {host}") from exc
     ips = {str(info[4][0]) for info in infos}
-    if not ips or not all(is_public(ip) for ip in ips):
+    if not ips or any("%" in ip for ip in ips) or not all(is_public(ip) for ip in ips):  # `%`: zona
         raise BlockedDestination(f"{host} resuelve a una IP no pública")
     return sorted(ips)[0]
+
+
+class _Watchdog:
+    """Cierra los sockets de una descarga al vencer su plazo total (F7-09a1a): los tiempos de
+    urllib3 son por lectura y un servidor que gotea (cabeceras, apretón TLS o cuerpo) los
+    reiniciaría sin fin. `watch` registra el socket de la conexión; al vencer, un `shutdown` hace
+    fallar la lectura bloqueada. No cubre `getaddrinfo`, que no tiene tiempo propio."""
+
+    def __init__(self, seconds: float) -> None:
+        self.fired, self._sockets = False, []  # type: ignore[var-annotated]
+        self._lock = threading.Lock()
+        self._timer = threading.Timer(max(seconds, 0.0), self._fire)
+        self._timer.daemon = True
+
+    def start(self) -> None:
+        self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.cancel()
+
+    def watch(self, sock: socket.socket | None) -> None:
+        with self._lock:
+            if sock is not None:
+                self._sockets.append(sock)
+            if self.fired:
+                self._shutdown()
+
+    def _fire(self) -> None:
+        with self._lock:
+            self.fired = True
+            self._shutdown()
+
+    def _shutdown(self) -> None:
+        for sock in self._sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # ya cerrado
+
+
+_watchdog: contextvars.ContextVar[_Watchdog | None] = contextvars.ContextVar(
+    "http_watchdog", default=None
+)
+
+
+def _watch(sock: socket.socket | None) -> None:
+    if (dog := _watchdog.get()) is not None:
+        dog.watch(sock)
 
 
 class _GuardedHTTPSConnection(HTTPSConnection):
@@ -74,9 +128,15 @@ class _GuardedHTTPSConnection(HTTPSConnection):
         name = self._dns_host  # en urllib3, `host` (SNI, certificado, Host:) deriva de _dns_host
         self._dns_host = resolve_public(name, self.port)
         try:
-            return super()._new_conn()  # conecta a la IP validada
+            sock = super()._new_conn()  # conecta a la IP validada
         finally:
             self._dns_host = name  # TLS y la cabecera Host siguen usando el nombre
+        _watch(sock)
+        return sock
+
+    def connect(self) -> None:
+        super().connect()
+        _watch(self.sock)  # el socket ya con TLS: es el que lee las cabeceras y el cuerpo
 
 
 class _GuardedPool(HTTPSConnectionPool):
@@ -110,10 +170,10 @@ def never_connected(error: BaseException) -> bool:
     return isinstance(error, connect)
 
 
-def check_url(url: str) -> None:
-    """https, puerto 443, sin credenciales y un host de la allowlist. La URL se lee con dos
-    analizadores (el de Python y el de urllib3, que es el que conecta): si discrepan en el esquema,
-    el host o el puerto, o trae controles, espacios o `\\`, se rechaza."""
+def check_url(url: str, hosts: Iterable[str] | None = None) -> None:
+    """https, puerto 443, sin credenciales y un host de `hosts` (por omisión, la allowlist). La URL
+    se lee con dos analizadores (el de Python y el de urllib3, que es el que conecta): si discrepan
+    en el esquema, el host o el puerto, o trae controles, espacios o `\\`, se rechaza."""
     if not url.isascii() or any(c <= " " or c in "\\\x7f" for c in url):
         raise BlockedDestination("URL con caracteres no válidos")
     try:
@@ -125,12 +185,20 @@ def check_url(url: str) -> None:
     host = (parts.hostname or "").lower()
     if parts.scheme != "https" or parts.username or parts.password:
         raise BlockedDestination("Solo https y sin credenciales en la URL")
-    if host not in {h.lower() for h in settings.HTTP_ALLOWED_HOSTS}:
+    if host not in {h.lower() for h in (settings.HTTP_ALLOWED_HOSTS if hosts is None else hosts)}:
         raise BlockedDestination(f"Host fuera de la allowlist: {host or '(vacío)'}")
     if port not in (None, 443):
         raise BlockedDestination("Solo el puerto 443")
     if (seen.scheme, (seen.host or "").lower(), seen.port) != ("https", host, port):
         raise BlockedDestination("La URL se lee distinto según el analizador")
+
+
+def _check_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    """Las cabeceras del llamador con el nombre en minúsculas; sin `FORBIDDEN_HEADERS`."""
+    named = {name.lower(): value for name, value in (headers or {}).items()}
+    if FORBIDDEN_HEADERS & named.keys():
+        raise BlockedDestination("Cabecera que el llamador no puede poner")  # TLS/Host = URL
+    return named
 
 
 def request(
@@ -139,8 +207,7 @@ def request(
 ) -> urllib3.BaseHTTPResponse:  # fmt: skip
     """Sin `**kwargs`: no se pueden quitar timeouts, reintentos ni el bloqueo de redirects."""
     check_url(url)
-    if any(name.lower() == "host" for name in headers or {}):
-        raise BlockedDestination("La cabecera Host no se puede sustituir")  # TLS/Host = URL
+    _check_headers(headers)  # los nombres originales se envían tal cual: ya no hay prohibidos
     reply = _manager.request(
         method, url, headers=headers, body=body, json=json, redirect=False, preload_content=False
     )
@@ -161,49 +228,74 @@ def download(
     url: str, sink: IO[bytes], *, max_bytes: int, hosts: Iterable[str],
     headers: dict[str, str] | None = None, seconds: float = DOWNLOAD_SECONDS,
 ) -> int:  # fmt: skip
-    """GET en flujo hacia `sink` (F7-09a1). Pasa por el mismo `_manager` que `request` (allowlist,
-    https, 443, IP pública fijada al conectar, sin redirecciones ni `Host`), y además: el host tiene
-    que estar en `hosts` (una lista más estrecha que la allowlist); sin reintentos (un reintento
-    volvería a bajar el cuerpo entero); tope de bytes (`ResponseTooLarge`, por `Content-Length` y,
-    sin fiarse de él, por lo recibido: nunca se escribe más que el tope); plazo total
-    (`DownloadTooSlow`, comprobado antes de cada trozo: los tiempos de urllib3 son por lectura); y
-    sin decodificar (`UnsupportedEncoding` si trae `Content-Encoding`). Un fallo de red es
-    `DownloadFailed`, sin el texto original (lleva la URL). Devuelve el estado; solo con 200 se
-    escribe en `sink`."""
-    check_url(url)
-    if (urlsplit(url).hostname or "").lower() not in {h.lower() for h in hosts}:
-        raise BlockedDestination("Host de descarga fuera de lo permitido")
-    if any(name.lower() == "host" for name in headers or {}):
-        raise BlockedDestination("La cabecera Host no se puede sustituir")
+    """GET en flujo hacia `sink` (F7-09a1a). Pasa por el mismo `_manager` que `request` (https, 443,
+    IP pública fijada al conectar, sin redirecciones ni proxies) pero con `hosts` en lugar de la
+    allowlist (una lista aparte, más estrecha: `request` no llega a ella), sin reintentos y sin
+    decodificar (`Accept-Encoding: identity`; un `Content-Encoding` es `UnsupportedEncoding`).
+    Tope: nunca llega más de `max_bytes` al `sink` (`ResponseTooLarge`, por `Content-Length` válido
+    y por lo recibido). Plazo (`DownloadTooSlow`): se comprueba antes de cada lectura (que devuelve
+    lo disponible, sin esperar un trozo entero) y un vigilante cierra los sockets al vencer, también
+    durante la conexión TLS y las cabeceras. **No** cubre `getaddrinfo`, que no tiene tiempo propio
+    (lo acota el resolvedor del sistema). Un fallo de red es `DownloadFailed` y un fallo del `sink`
+    (disco lleno) se propaga tal cual; ninguno lleva el texto original de la red (la URL firmada),
+    ni como causa ni como contexto. Devuelve el estado; solo con 200 se escribe en `sink`."""
+    check_url(url, hosts)
+    sent = _check_headers(headers) | {"accept-encoding": "identity"}
+    dog = _Watchdog(seconds)
+    token = _watchdog.set(dog)
+    dog.start()
+    try:
+        return _fetch(url, sink, max_bytes, sent, seconds, dog)
+    finally:
+        dog.stop()
+        _watchdog.reset(token)
+
+
+def _fetch(
+    url: str, sink: IO[bytes], max_bytes: int, headers: dict[str, str], seconds: float,
+    dog: _Watchdog,
+) -> int:  # fmt: skip
     deadline = time.monotonic() + seconds
+    lapse = urllib3.Timeout(connect=min(5.0, seconds), read=min(15.0, seconds))
     never = urllib3.Retry(total=0, redirect=False, raise_on_redirect=False)
+    reply, failed = None, False
     try:
         reply = _manager.request(
-            "GET", url, headers={**(headers or {}), "Accept-Encoding": "identity"},
-            redirect=False, preload_content=False, retries=never,
+            "GET", url, headers=headers, redirect=False, preload_content=False, retries=never,
+            timeout=lapse,
         )  # fmt: skip
     except HTTPError, OSError:
-        raise DownloadFailed from None
+        failed = True
+    if reply is None:  # fuera del `except`: sin la excepción de urllib3 (lleva la URL) de contexto
+        raise (DownloadTooSlow if dog.fired else DownloadFailed) from None
     try:
         if reply.status != 200:
             return int(reply.status)
         if reply.headers.get("Content-Encoding", "identity").strip().lower() != "identity":
             raise UnsupportedEncoding
         declared = reply.headers.get("Content-Length", "")
-        if declared.isdigit() and int(declared) > max_bytes:
+        if re.fullmatch(r"[0-9]{1,18}", declared) and int(declared) > max_bytes:
             raise ResponseTooLarge
         total = 0
-        for chunk in reply.stream(CHUNK, decode_content=False):
+        while True:
+            if time.monotonic() > deadline or dog.fired:
+                raise DownloadTooSlow
+            try:
+                chunk = reply.read1(CHUNK, decode_content=False)
+            except HTTPError, OSError:
+                failed = True
+                break
+            if not chunk:
+                break
             total += len(chunk)
             if total > max_bytes:
                 raise ResponseTooLarge
-            sink.write(chunk)
-            if time.monotonic() > deadline:
-                raise DownloadTooSlow
+            view = memoryview(chunk)
+            while view:  # un `write` parcial no pierde bytes; un error del sink sale tal cual
+                written = sink.write(view)
+                view = view[len(view) if written is None else written :]
+        if failed:
+            raise (DownloadTooSlow if dog.fired else DownloadFailed) from None
         return 200
-    except ResponseTooLarge, DownloadTooSlow, UnsupportedEncoding:
-        raise
-    except HTTPError, OSError:
-        raise DownloadFailed from None
     finally:
         reply.close()  # sin devolver la conexión a la reserva: puede quedar a medias

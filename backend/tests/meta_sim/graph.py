@@ -90,7 +90,9 @@ class FakeGraph:
         self.calls.append(
             {"method": method, "path": parts.path, "query": query, "headers": dict(headers)}
         )
-        if headers.get("Authorization") != f"Bearer {self.token}":
+        if {k.lower(): v for k, v in headers.items()}.get(
+            "authorization"
+        ) != f"Bearer {self.token}":
             return self._error("token")  # también la descarga de medios lleva el token
         if path[0] == "blob" and len(path) == 2 and path[1] in self.media:
             blob = self.media[path[1]]  # la descarga: `Location` de una redirección va en headers

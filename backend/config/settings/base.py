@@ -226,6 +226,8 @@ LOGGING = {
         "celery.app.trace": {"level": "WARNING"},  # "succeeded: <repr(resultado)>"
         # Su línea DEBUG («TaskPool: Apply») vuelca los argumentos de cada tarea: nunca se emite.
         "celery.pool": {"level": "INFO"},
+        # Su línea DEBUG («GET <ruta>?<query>») lleva la query de la URL firmada de un medio.
+        "urllib3": {"level": "WARNING"},
     },
 }
 # API (F1-08A): DRF solo JSON. Contrato OpenAPI con drf-spectacular, versionado en
@@ -323,12 +325,12 @@ META_GRAPH_HOST = "graph.facebook.com"
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)
 # F7-09a1: los únicos hosts de los que se bajan medios (la URL que devuelve la Graph API se valida
-# contra esta lista estática, nunca una del payload). A confirmar con Meta.
+# contra esta lista estática, nunca una del payload). A confirmar con Meta. **No** entran en
+# `HTTP_ALLOWED_HOSTS`: `core.http.request` (con el token de la cuenta en la cabecera) no debe poder
+# llegar a ellos; solo `core.http.download` los acepta, pasándolos como su lista de hosts.
 META_MEDIA_HOSTS = ("lookaside.fbsbx.com",)
-if META_ENABLED:
-    for _host in (META_GRAPH_HOST, *META_MEDIA_HOSTS):
-        if _host not in HTTP_ALLOWED_HOSTS:
-            HTTP_ALLOWED_HOSTS.append(_host)
+if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
+    HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.
