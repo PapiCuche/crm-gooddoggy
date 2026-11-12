@@ -164,6 +164,9 @@ import type {
   PromotionsListParams,
   QuoteDetail,
   QuotesListParams,
+  Reservation,
+  ReservationCreateRequest,
+  ReservationReleaseRequest,
   Role,
   RoleCreateRequest,
   RolesListParams,
@@ -7231,6 +7234,224 @@ export const useInventoryMovementsCreate = <TError = ErrorType<Error>, TContext 
   TContext
 > => {
   return useMutation(getInventoryMovementsCreateMutationOptions(options), queryClient);
+};
+
+export const getInventoryReservationsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/reservations/`;
+};
+
+/**
+ * Aparta unidades disponibles de una variante en un almacén hasta `expires_at` (con zona horaria, a 30 días como mucho). 200: esa `idempotency_key` ya registró esta misma reserva, de esta misma persona. 400 por campo (referencias que no existen en la organización, `expires_at`). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).
+ */
+export const inventoryReservationsCreate = async (
+  orgSlug: string,
+  reservationCreateRequest: ReservationCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Reservation> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Reservation>(getInventoryReservationsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(reservationCreateRequest),
+  });
+};
+
+export const getInventoryReservationsCreateMutationKey = () =>
+  ["inventoryReservationsCreate"] as const;
+
+export const getInventoryReservationsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inventoryReservationsCreate>>,
+    TError,
+    InventoryReservationsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inventoryReservationsCreate>>,
+  TError,
+  InventoryReservationsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInventoryReservationsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inventoryReservationsCreate>>,
+    InventoryReservationsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return inventoryReservationsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InventoryReservationsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryReservationsCreate>>
+>;
+export type InventoryReservationsCreateMutationBody = ReservationCreateRequest;
+export type InventoryReservationsCreateMutationError = ErrorType<Error>;
+export type InventoryReservationsCreateMutationVariables = {
+  orgSlug: string;
+  data: ReservationCreateRequest;
+};
+
+export const useInventoryReservationsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof inventoryReservationsCreate>>,
+      TError,
+      InventoryReservationsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof inventoryReservationsCreate>>,
+  TError,
+  InventoryReservationsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getInventoryReservationsCreateMutationOptions(options), queryClient);
+};
+
+export const getInventoryReservationsReleaseUrl = (orgSlug: string, reservationId: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/reservations/${reservationId}/release/`;
+};
+
+/**
+ * Libera una reserva activa y devuelve sus unidades al disponible. 200 también si ya estaba liberada (no escribe nada). 409 `RESERVATION_NOT_ACTIVE`: venció o se consumió. 404: no es de la organización.
+ */
+export const inventoryReservationsRelease = async (
+  orgSlug: string,
+  reservationId: string,
+  reservationReleaseRequest: ReservationReleaseRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Reservation> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Reservation>(getInventoryReservationsReleaseUrl(orgSlug, reservationId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(reservationReleaseRequest),
+  });
+};
+
+export const getInventoryReservationsReleaseMutationKey = () =>
+  ["inventoryReservationsRelease"] as const;
+
+export const getInventoryReservationsReleaseMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inventoryReservationsRelease>>,
+    TError,
+    InventoryReservationsReleaseMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inventoryReservationsRelease>>,
+  TError,
+  InventoryReservationsReleaseMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInventoryReservationsReleaseMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inventoryReservationsRelease>>,
+    InventoryReservationsReleaseMutationVariables
+  > = (props) => {
+    const { orgSlug, reservationId, data } = props ?? {};
+
+    return inventoryReservationsRelease(orgSlug, reservationId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InventoryReservationsReleaseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryReservationsRelease>>
+>;
+export type InventoryReservationsReleaseMutationBody = ReservationReleaseRequest;
+export type InventoryReservationsReleaseMutationError = ErrorType<Error>;
+export type InventoryReservationsReleaseMutationVariables = {
+  orgSlug: string;
+  reservationId: string;
+  data: ReservationReleaseRequest;
+};
+
+export const useInventoryReservationsRelease = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof inventoryReservationsRelease>>,
+      TError,
+      InventoryReservationsReleaseMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof inventoryReservationsRelease>>,
+  TError,
+  InventoryReservationsReleaseMutationVariables,
+  TContext
+> => {
+  return useMutation(getInventoryReservationsReleaseMutationOptions(options), queryClient);
 };
 
 export const getInvitationsListUrl = (orgSlug: string, params?: InvitationsListParams) => {
