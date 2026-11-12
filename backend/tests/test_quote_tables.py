@@ -2,6 +2,7 @@
 aislamiento (también por SQL), FKs compuestas, `CHECK` de importes y estados, unicidad, permisos
 de la aplicación y la migración. Los comandos llegan con F5-09a2 y la API, después."""
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -27,6 +28,16 @@ type DB = psycopg.Connection[Any]
 NOW = timezone.now()
 MONEY = Decimal("100.00")
 _codes = iter(range(10_000))
+ISSUED: dict[str, Any] = {  # lo que la base exige a una cotización emitida (F5-09c), siempre igual
+    "company_snapshot": {"name": "Tienda"}, "customer_snapshot": {"display_name": "Ana"},
+    "valid_until": datetime(2090, 1, 1, tzinfo=UTC), "sent_at": datetime(2026, 1, 1, tzinfo=UTC),
+}  # fmt: skip
+
+
+def facts(state: str) -> dict[str, Any]:
+    """Lo que la base exige a una cotización en ese estado (las emitidas, sus fotografías)."""
+    sent = ("SENT", "VIEWED", "ACCEPTED", "REJECTED", "EXPIRED")
+    return ISSUED if state in sent else {}
 
 
 def quote(world: SimpleNamespace, org: str = "a", **over: Any) -> Quote:

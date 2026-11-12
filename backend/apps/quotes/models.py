@@ -75,6 +75,11 @@ class Quote(TenantModel):
     valid_until = models.DateTimeField(null=True, blank=True)
     notes_to_customer = models.CharField(max_length=2000, default="", blank=True)
     internal_notes = models.CharField(max_length=2000, default="", blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)  # emitida (F5-09c): congela lo de abajo
+    company_snapshot = models.JSONField(null=True, blank=True)
+    customer_snapshot = models.JSONField(null=True, blank=True)
+    terms_snapshot = models.CharField(max_length=2000, null=True, blank=True)  # noqa: DJ001
+    warranty_snapshot = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     cancelled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     created_by_user_id = models.UUIDField(null=True, blank=True)
@@ -140,6 +145,18 @@ class Quote(TenantModel):
                     & models.Q(cancelled_at__isnull=True, cancel_reason__isnull=True)
                 ),
                 name="quotes_cancelled_ck",
+            ),
+            models.CheckConstraint(  # emitida: con sus fotografías, su validez y su fecha
+                condition=~models.Q(
+                    status__in=["SENT", "VIEWED", "ACCEPTED", "REJECTED", "EXPIRED"]
+                )
+                | models.Q(
+                    company_snapshot__isnull=False,
+                    customer_snapshot__isnull=False,
+                    valid_until__isnull=False,
+                    sent_at__isnull=False,
+                ),  # fmt: skip
+                name="quotes_issued_ck",
             ),
             models.CheckConstraint(condition=models.Q(version__gte=1), name="quotes_version_ck"),
         ]
