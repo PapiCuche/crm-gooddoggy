@@ -163,8 +163,16 @@ def _expire_due(alias: str, ctx: TenantContext, level: InventoryLevel, label: st
         )
     )
     for reservation in due.order_by("pk"):
-        _close(alias, reservation, level, Status.EXPIRED, EXPIRED, _SYSTEM)
-        _audit(ctx, "reservation_expired", reservation, label, level, _SYSTEM)
+        _expire(alias, ctx, reservation, level, label)
+
+
+def _expire(
+    alias: str, ctx: TenantContext, reservation: InventoryReservation, level: InventoryLevel,
+    label: str,
+) -> None:  # fmt: skip
+    """Vence una reserva ACTIVE bloqueada, como el sistema: el camino de reservar y el del job."""
+    _close(alias, reservation, level, Status.EXPIRED, EXPIRED, _SYSTEM)
+    _audit(ctx, "reservation_expired", reservation, label, level, _SYSTEM)
 
 
 def _audit(
@@ -256,6 +264,29 @@ def release(ctx: TenantContext, pk: UUID, why: str) -> tuple[InventoryReservatio
         _close(alias, seen, level, Status.RELEASED, text, _actor(ctx))
         _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", level)
     return seen, True
+
+
+def expire(ctx: TenantContext, pk: UUID) -> bool:
+    """Vence una reserva ACTIVE cuyo plazo ya pasó (el job de F3-34), en su transacción y por el
+    mismo camino que liberar: celda bloqueada y reserva `FOR UPDATE` releída, con su estado y su
+    plazo. Devuelve si la venció ahora; una ya cerrada, aún vigente o de otra organización no
+    escribe nada (dos ejecuciones a la vez, o contra una liberación, dejan un solo `RELEASE`)."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        rows = InventoryReservation.objects.using(alias)
+        seen = rows.filter(pk=pk).first()
+        if seen is None or not _due(seen):
+            return False
+        variant, warehouse, level = stock.lock_cell(alias, ctx, seen.variant_id, seen.warehouse_id)
+        seen = rows.select_for_update().filter(pk=pk).first()  # releída, ya bloqueada
+        if seen is None or not _due(seen):
+            return False
+        _expire(alias, ctx, seen, level, f"{variant.sku} @ {warehouse[1]}")
+    return True
+
+
+def _due(reservation: InventoryReservation) -> bool:
+    return reservation.status == Status.ACTIVE and reservation.expires_at <= _now()
 
 
 def _ended(reservation: InventoryReservation) -> tuple[InventoryReservation, bool]:
