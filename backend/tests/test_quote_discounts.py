@@ -369,10 +369,15 @@ def test_an_own_scope_seller_cannot_touch_the_quote_of_someone_else(shop: Simple
         (discounts.set_manual_price, {"line_id": phone.pk, "price": "4000", "reason": "x"}),
         (discounts.submit_quote, {}),
     ):
-        with pytest.raises(NotAllowed):
+        with pytest.raises(Quote.DoesNotExist) as outside:  # fuera de su alcance: como si no
             act(shop, own, command, quote_id=made.pk, version=1, **extra)
+        with pytest.raises(Quote.DoesNotExist) as missing:  # existiera: el mismo error y texto
+            act(shop, own, command, quote_id=uuid4(), version=1, **extra)
+        assert (
+            str(outside.value) == str(missing.value) and type(outside.value) is Quote.DoesNotExist
+        )
     assert discount(shop, own, *draft(shop, own)[:2], "PERCENT", "5").status == "DRAFT"  # la suya
-    with pytest.raises(NotAllowed):  # y el alcance va antes que la versión: no se le cuenta
+    with pytest.raises(Quote.DoesNotExist):  # y el alcance va antes que la versión: no se le cuenta
         discount(shop, own, made, phone, "NONE", version=9)
     assert reread(shop, made).version == 1
 

@@ -19,7 +19,7 @@ from apps.quotes import commands, decisions, discounts
 from apps.quotes.commands import QuoteNotDraft, StaleVersion
 from apps.quotes.decisions import BeyondLimit, NotPending, SelfApproval
 from apps.quotes.discounts import NotAllowed, PriceRefused
-from apps.quotes.models import Quote, QuoteApproval
+from apps.quotes.models import DiscountPolicy, Quote, QuoteApproval, QuoteItem
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
@@ -161,12 +161,20 @@ def test_whoever_asked_cannot_approve_it_but_can_reject_with_a_reason_if_allowed
     assert approve(shop, boss(shop), made).status == "APPROVED"  # otra persona
     other, _ = asked(shop, both)
     assert reject(shop, both, other).status == "DRAFT"  # rechazar lo propio equivale a retirarlo
+    plain = member(shop, "3")  # sin `quotes.approve`: no rechaza ni lo suyo, lo retira
+    mine, _ = asked(shop, plain)
+    with pytest.raises(NotAllowed):
+        reject(shop, plain, mine)
+    assert withdraw(shop, plain, mine).status == "DRAFT"
 
 
 def test_the_approver_cannot_exceed_their_own_limit(shop: SimpleNamespace, migrator: DB) -> None:
     made, _ = asked(shop)  # 5 % pedido
     low, bare, capped = boss(shop, "3"), boss(shop, None), boss(shop, "10", cap="100")
-    for who in (low, bare, capped):  # 3 %, sin política (0 %), tope de 100 contra 219,95
+    usd = boss(shop, "10", cap="1000")
+    with tenant_scope(ctx(shop.a)):
+        DiscountPolicy.objects.filter(max_discount_amount=D("1000")).update(currency="USD")
+    for who in (low, bare, capped, usd):  # 3 %, 0 %, tope de 100 contra 219,95, tope en dólares
         with pytest.raises(BeyondLimit):
             approve(shop, who, made)
     assert (reread(shop, made).status, approvals(shop)[0].status) == ("PENDING_APPROVAL", "PENDING")
@@ -383,3 +391,196 @@ def test_the_database_guards_the_decision_even_against_a_command_that_forgets(
     with pytest.raises(IntegrityError, match="not allowed"):
         raw(shop, seller, made, "DRAFT")  # una aprobada no vuelve atrás
     assert discounts and reread(shop, made).status == "APPROVED"
+
+
+def test_a_missing_foreign_and_out_of_scope_quote_give_one_identical_error(
+    shop: SimpleNamespace,
+) -> None:
+    made, _ = asked(shop)
+    own = boss(shop, "10", **{"quotes.view": "OWN", "quotes.update": "OWN"})
+    with tenant_scope(ctx(shop.b)):
+        give(
+            shop.b,
+            Membership.objects.get(user=shop.luis).pk,
+            {**APPROVER, "quotes.update": "ORGANIZATION"},
+        )
+    seen = set()
+    for command, extra in (
+        (decisions.approve_quote, {}), (decisions.reject_quote, {"reason": "x"}),
+        (decisions.withdraw_approval_request, {}), (discounts.submit_quote, {}),
+    ):  # fmt: skip
+        for org, who, target in ((shop.a, own, made.pk), (shop.a, own, uuid4()),
+                                 (shop.b, shop.luis, made.pk)):  # fmt: skip
+            with tenant_scope(ctx(org, who)) as tenant, pytest.raises(Quote.DoesNotExist) as caught:
+                command(tenant, quote_id=target, version=9, **extra)
+            seen.add((type(caught.value), str(caught.value), caught.value.args))
+    assert len(seen) == 1  # fuera de alcance, ajena e inexistente: ni el tipo ni el texto difieren
+
+
+def test_the_refusals_of_the_decision_carry_no_figures(shop: SimpleNamespace) -> None:
+    both = boss(shop, "3")
+    made, _ = asked(shop, both)
+    other, _ = asked(shop)
+    caught = []
+    with pytest.raises(SelfApproval) as own:
+        approve(shop, both, made)
+    with pytest.raises(BeyondLimit) as beyond:
+        approve(shop, both, other)
+    approve(shop, boss(shop), other)
+    with pytest.raises(NotPending) as closed:
+        approve(shop, boss(shop), other, version=3)
+    caught = [own, beyond, closed]
+    assert all(str(e.value) == "" and e.value.args == () for e in caught)
+
+
+def request_with_manual_price(shop: SimpleNamespace) -> Quote:
+    """Una solicitud por un precio manual del iPhone (3500 de 4399), escrita sin pasar por el
+    comando: para probar el costo del que no hay (el costo no se borra: solo se agrega)."""
+    pricer = member(shop, "100", **{"quotes.override_price": None})
+    made, phone, _ = draft(shop, pricer)
+    with tenant_scope(ctx(shop.a)):
+        QuoteItem.objects.filter(pk=phone.pk).update(
+            manual_price_override=True, override_reason="Mayorista", discount_amount=D("899.00"),
+            final_unit_price=D("3500.00"), line_total=D("3500.00"),
+        )  # fmt: skip
+        QuoteApproval.objects.create(
+            quote_id=made.pk, reason="MANUAL_PRICE", requested_by_user_id=pricer.pk,
+            requested_discount_percent=D("20.44"), limit_percent_at_request=D(100),
+        )  # fmt: skip
+        Quote.objects.filter(pk=made.pk).update(status="PENDING_APPROVAL", version=2)
+    return made
+
+
+def test_a_manual_price_without_a_usable_cost_is_refused_and_a_covering_one_is_approved(
+    shop: SimpleNamespace,
+) -> None:
+    owner = boss(shop, None, owner=True)
+    made = request_with_manual_price(shop)
+    with pytest.raises(PriceRefused):  # sin ningún costo: falla cerrado
+        approve(shop, owner, made)
+    cost(shop, shop.iphone, "1000", currency="USD")
+    with pytest.raises(PriceRefused):  # un costo en otra moneda no se compara
+        approve(shop, owner, made)
+    assert (reread(shop, made).status, approvals(shop)[0].status) == ("PENDING_APPROVAL", "PENDING")
+    act(shop, owner, costs.set_cost, variant_id=shop.iphone, amount="3000", reason="En soles")
+    assert approve(shop, owner, made).status == "APPROVED"
+
+
+def test_the_markdown_of_a_manual_price_counts_against_the_limit_of_the_approver(
+    shop: SimpleNamespace,
+) -> None:
+    pricer = member(shop, "100", **{"quotes.override_price": None})
+    cost(shop, shop.iphone, "3000")
+    made, phone, _ = draft(shop, pricer)
+    manual(shop, pricer, made, phone, "3500")  # 899 de 4399: 20,44 %
+    for limit in ("10", "20"):
+        with pytest.raises(BeyondLimit):
+            approve(shop, boss(shop, limit), made)
+    assert approve(shop, boss(shop, "21"), made).status == "APPROVED"
+
+
+def test_the_lines_of_an_approved_quote_cannot_be_written_by_the_database_either(
+    shop: SimpleNamespace,
+) -> None:
+    made, seller = asked(shop)
+    approve(shop, boss(shop), made)
+    [line, _] = stored(shop.a, made)
+    for attempt in (
+        lambda: QuoteItem.objects.filter(pk=line.pk).update(final_unit_price=D("1.00")),
+        lambda: QuoteItem.objects.filter(quote_id=made.pk).delete(),
+    ):  # fmt: skip
+        with (
+            tenant_scope(ctx(shop.a, seller)),
+            pytest.raises(IntegrityError, match="only in DRAFT"),
+        ):
+            attempt()
+    line.pk, line.sort_order = uuid4(), 9
+    line._state.adding = True
+    with tenant_scope(ctx(shop.a, seller)), pytest.raises(IntegrityError, match="only in DRAFT"):
+        line.save(force_insert=True)  # ni una línea nueva
+    assert [x.final_unit_price for x in stored(shop.a, made)][0] != D("1.00")
+
+
+RIVALS: dict[str, Any] = {
+    "set_line_discount": lambda m, line: partial(
+        discounts.set_line_discount, quote_id=m.pk, version=2, line_id=line.pk,
+        discount_type="NONE",
+    ),
+    "set_manual_price": lambda m, line: partial(
+        discounts.set_manual_price, quote_id=m.pk, version=2, line_id=line.pk, price="4000",
+        reason="x",
+    ),
+    "submit_quote": lambda m, line: partial(discounts.submit_quote, quote_id=m.pk, version=2),
+    "cancel_quote": lambda m, line: partial(commands.cancel_quote, quote_id=m.pk, version=2),
+    "update_quote": lambda m, line: partial(
+        commands.update_quote, quote_id=m.pk, version=2, internal_notes="x"
+    ),
+    "reject_quote": lambda m, line: partial(
+        decisions.reject_quote, quote_id=m.pk, version=2, reason="x"
+    ),
+    "withdraw": lambda m, line: partial(
+        decisions.withdraw_approval_request, quote_id=m.pk, version=2
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("rival", list(RIVALS))
+def test_a_decision_and_any_other_write_at_once_leave_one_coherent_outcome(
+    shop: SimpleNamespace, rival: str
+) -> None:
+    everything = boss(shop, "100", **{"quotes.override_price": None})
+    made, _ = asked(shop)
+    line = stored(shop.a, made)[0]
+    decide = partial(decisions.approve_quote, quote_id=made.pk, version=2)
+    first, second = race(shop.a, everything, [decide, RIVALS[rival](made, line)])
+    assert (first.status, first.version, second) == ("APPROVED", 3, "StaleVersion")
+    assert (reread(shop, made).status, [a.status for a in approvals(shop)]) == (
+        "APPROVED",
+        ["APPROVED"],
+    )
+    assert stored(shop.a, made)[0].final_unit_price == line.final_unit_price
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "quote_end", "request_end"),
+    [("reject_quote", "approve_quote", "DRAFT", "REJECTED"),
+     ("withdraw", "withdraw", "DRAFT", "CANCELLED"),
+     ("withdraw", "reject_quote", "DRAFT", "CANCELLED")],
+)  # fmt: skip
+def test_two_decisions_of_different_kind_at_once_leave_the_first_and_a_stale_version(
+    shop: SimpleNamespace, first: str, second: str, quote_end: str, request_end: str
+) -> None:
+    everything = boss(shop, "100", **{"quotes.override_price": None})
+    made, _ = asked(shop)
+    line = stored(shop.a, made)[0]
+    both = {
+        **RIVALS,
+        "approve_quote": lambda m, _l: partial(decisions.approve_quote, quote_id=m.pk, version=2),
+    }
+    won, lost = race(shop.a, everything, [both[first](made, line), both[second](made, line)])
+    assert (won.status, won.version, lost) == (quote_end, 3, "StaleVersion")
+    assert [a.status for a in approvals(shop)] == [request_end]
+
+
+@pytest.mark.parametrize("failing", ["record", "_stamp"])
+@pytest.mark.parametrize("name", ["approve", "reject", "withdraw"])
+def test_a_failure_after_the_request_is_saved_rolls_everything_back(
+    shop: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, name: str, failing: str
+) -> None:
+    approver = boss(shop)
+    made, _ = asked(shop)
+    before = len(log(migrator))
+
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(decisions, failing, boom)
+    runs = {"approve": approve, "reject": reject, "withdraw": withdraw}
+    with pytest.raises(RuntimeError, match="boom"):
+        runs[name](shop, approver, made)
+    monkeypatch.undo()
+    [req] = approvals(shop)  # la solicitud sigue abierta, la cotización sin tocar, sin auditoría
+    assert (req.status, req.decided_by_user_id, req.version) == ("PENDING", None, 1)
+    assert (reread(shop, made).status, reread(shop, made).version) == ("PENDING_APPROVAL", 2)
+    assert len(log(migrator)) == before
+    assert runs[name](shop, approver, made).status in ("APPROVED", "DRAFT")  # y se puede decidir

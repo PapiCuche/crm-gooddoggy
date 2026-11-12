@@ -9,6 +9,7 @@ Owner sin límite) y su tope en importe. Pasar del límite, o un precio manual (
 `submit_quote` es la única vía de `DRAFT` a `APPROVED` y mide con quien envía; aprobar, rechazar y
 retirar la solicitud son de `apps.quotes.decisions` (F5-09b3)"""
 
+from collections.abc import Callable
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 from uuid import UUID
@@ -47,6 +48,7 @@ from core.tenancy.scope import require_scope
 
 HUNDRED = Decimal(100)
 REASON_MAX = 200
+NOT_FOUND = "Quote matching query does not exist."
 
 
 class NotAllowed(Exception):
@@ -67,10 +69,17 @@ def _require(ctx: TenantContext, code: str) -> Any:
     return ectx
 
 
-def _reach(ectx: Any, quote: Quote) -> None:
-    """El alcance de `quotes.update` de quien actúa sobre la cotización ya bloqueada."""
-    if not can(ectx, "quotes.update", quote):
-        raise NotAllowed("quotes.update")
+def _reachable(alias: str, quote_id: UUID, allowed: Callable[[Quote], bool]) -> Quote:
+    """La cotización bloqueada si `allowed` (el alcance de quien actúa sobre ella). Una que no
+    existe, de otra organización o fuera del alcance es **la misma** `DoesNotExist`, con el mismo
+    mensaje: no se le cuenta a nadie cuál de las tres es (la API responde 404)."""
+    try:
+        found = _locked(alias, quote_id)
+    except Quote.DoesNotExist:
+        raise Quote.DoesNotExist(NOT_FOUND) from None
+    if not allowed(found):
+        raise Quote.DoesNotExist(NOT_FOUND)
+    return found
 
 
 def _given(line: QuoteItem) -> Decimal:
@@ -125,8 +134,7 @@ def _lines(alias: str, quote: Quote) -> list[QuoteItem]:
 def _open(alias: str, quote_id: UUID, version: int, ectx: Any) -> Quote:
     """La cotización bloqueada, al alcance de quien actúa (antes que su versión o estado, que no
     se le cuentan a quien no la ve), con su versión y en borrador."""
-    found = _locked(alias, quote_id)
-    _reach(ectx, found)
+    found = _reachable(alias, quote_id, lambda q: can(ectx, "quotes.update", q))
     if found.version != version:
         raise StaleVersion(quote_id)
     if found.status != QuoteStatus.DRAFT:

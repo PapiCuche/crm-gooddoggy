@@ -28,8 +28,16 @@ from django.utils import timezone
 from apps.access.selectors import can, execution_context, has_permission
 from apps.audit.services import record
 from apps.pricing.floor import covers_cost
-from apps.quotes.commands import StaleVersion, _entity, _integer, _locked, _stamp, _text, _uuid
-from apps.quotes.discounts import REASON_MAX, NotAllowed, PriceRefused, _authority, _lines, _require
+from apps.quotes.commands import StaleVersion, _entity, _integer, _stamp, _text, _uuid
+from apps.quotes.discounts import (
+    REASON_MAX,
+    NotAllowed,
+    PriceRefused,
+    _authority,
+    _lines,
+    _reachable,
+    _require,
+)
 from apps.quotes.models import ApprovalStatus, Quote, QuoteApproval, QuoteStatus
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -58,16 +66,14 @@ def _pending(
 ) -> tuple[Quote, QuoteApproval]:
     """La cotización bloqueada, al alcance (`reach`; si no, `DoesNotExist`, como si no existiera),
     con su versión y esperando la decisión, y su solicitud abierta, también bloqueada."""
-    found = _locked(alias, quote_id)
-    if not reach(found):
-        raise Quote.DoesNotExist(quote_id)
+    found = _reachable(alias, quote_id, reach)
     if found.version != version:
         raise StaleVersion(quote_id)
     asked = QuoteApproval.objects.using(alias).select_for_update(no_key=True).filter(
         quote_id=found.pk, status=ApprovalStatus.PENDING
     ).first()  # fmt: skip
     if found.status != QuoteStatus.PENDING_APPROVAL or asked is None:
-        raise NotPending(quote_id)
+        raise NotPending
     return found, asked
 
 
@@ -107,13 +113,13 @@ def approve_quote(
         ectx = _require(ctx, "quotes.approve")
         quote, asked = _pending(alias, quote_id, version, lambda q: _can_decide(ectx, q))
         if asked.requested_by_user_id == ctx.user_id:
-            raise SelfApproval(quote_id)
+            raise SelfApproval
         lines = _lines(alias, quote)
         manual = {x.variant_id: x.final_unit_price for x in lines if x.manual_price_override}
         if manual and not covers_cost(ctx, manual, quote.currency, quote.tax_rate):
             raise PriceRefused  # el costo pudo subir desde que se pidió: no se revela
         if not _authority(alias, ectx, quote, lines)[3]:
-            raise BeyondLimit(quote_id)
+            raise BeyondLimit
         _close(ctx, alias, quote, asked, action="quote.approved", approval=ApprovalStatus.APPROVED,
                status=QuoteStatus.APPROVED, comment=note)  # fmt: skip
     return quote
