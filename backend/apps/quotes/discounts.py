@@ -14,6 +14,7 @@ from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 from uuid import UUID
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q
 
@@ -51,8 +52,8 @@ REASON_MAX = 200
 NOT_FOUND = "Quote matching query does not exist."
 
 
-class NotAllowed(Exception):
-    """Quien actúa no tiene el permiso que pide esta acción."""
+class NotAllowed(PermissionDenied):
+    """Quien actúa no tiene el permiso que pide esta acción (la API: 403 sin motivo)."""
 
 
 class PriceRefused(Exception):
