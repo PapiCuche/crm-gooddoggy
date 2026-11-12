@@ -32,6 +32,10 @@ EVIDENCE_KEYS = frozenset({"message_id", "ingress_id", "form", "note"})
 EVIDENCE_VALUE_MAX = 200
 
 
+class _NothingToLift(Exception):  # noqa: N818 — lo recoge `lift_keyword_stop`
+    pass
+
+
 def _evidence(value: dict[str, str] | None) -> dict[str, str]:
     """Solo claves conocidas, con texto corto: la evidencia no es un cajón de datos."""
     found = value or {}
@@ -44,7 +48,7 @@ def _evidence(value: dict[str, str] | None) -> dict[str, str]:
 
 def _write(
     ctx: TenantContext, contact_id: UUID, channel: str, purpose: str, status: str, source: str,
-    evidence: dict[str, str] | None,
+    evidence: dict[str, str] | None, *, only_after_stop: bool = False,
 ) -> tuple[ContactConsent, bool]:  # fmt: skip
     alias = require_scope(ctx)
     if channel not in Channel.values or purpose not in Purpose.values:
@@ -61,6 +65,11 @@ def _write(
         row = ContactConsent.objects.using(alias).filter(**where).first()
         if row is not None and row.status == status:
             return row, False
+        if only_after_stop and (
+            row is None or row.status != ConsentStatus.REVOKED
+            or row.source != ConsentSource.KEYWORD_STOP
+        ):  # fmt: skip
+            raise _NothingToLift  # nadie se dio de baja con una palabra: nada que restablecer
         now, before = timezone.now(), row.status if row else None
         stamp = {"granted_at" if status == ConsentStatus.GRANTED else "revoked_at": now}
         values = {
@@ -102,3 +111,19 @@ def revoke_consent(
     """Revoca el consentimiento (también el de quien nunca lo dio: queda la baja registrada).
     Mismos errores y mismo resultado que `grant_consent`."""
     return _write(ctx, contact_id, channel, purpose, ConsentStatus.REVOKED, source, evidence)
+
+
+def lift_keyword_stop(
+    ctx: TenantContext, *, contact_id: UUID, channel: str, purpose: str,
+    evidence: dict[str, str] | None = None,
+) -> bool:  # fmt: skip
+    """El alta por palabra (F7-08b): concede **solo** si la fila vigente está `REVOKED` por una
+    palabra de baja (`KEYWORD_STOP`); sin fila o revocada por otra vía no hace nada (`False`).
+    Mismos errores que `grant_consent`."""
+    try:
+        return _write(
+            ctx, contact_id, channel, purpose, ConsentStatus.GRANTED,
+            ConsentSource.CUSTOMER_MESSAGE, evidence, only_after_stop=True,
+        )[1]  # fmt: skip
+    except _NothingToLift:
+        return False

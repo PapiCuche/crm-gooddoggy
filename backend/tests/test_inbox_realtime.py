@@ -29,6 +29,7 @@ from core.tenancy.context import TenantContext
 from core.tenancy.scope import tenant_scope
 from tests.factories import sign_in
 from tests.test_authorization import give
+from tests.test_conversation_commands import send
 from tests.test_conversation_scopes import crm, inbox, real_stack
 from tests.test_memberships import ctx
 
@@ -432,7 +433,7 @@ def test_a_delivery_change_and_a_status_change_leave_hints_with_only_ids(
     inbox: SimpleNamespace, migrator: DB
 ) -> None:
     with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
-        message, _ = commands.record_outbound(
+        message, _ = send(
             tenant, conversation_id=inbox.convs["ana"], client_message_id=uuid4(), body=SECRET
         )  # abre la conversación: `conversation.updated`
         for _ in range(2):  # el segundo, repetido: nada

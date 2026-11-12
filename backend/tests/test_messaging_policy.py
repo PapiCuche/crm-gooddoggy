@@ -155,13 +155,8 @@ def test_queueing_saves_the_decision_in_the_message(world: SimpleNamespace) -> N
     assert saved["allowed"] is True and saved["mode"] == "FREE_FORM" and saved["reason"] is None
     expires = dt.datetime.fromisoformat(saved["window_expires_at"])
     assert expires == convo.last_inbound_at + 24 * HOUR  # type: ignore[operator]
-    assert set(saved) == {
-        "allowed",
-        "mode",
-        "reason",
-        "window_expires_at",
-        "evaluated_at",
-        "purpose",
+    assert set(saved) == {"allowed", "mode", "reason", "window_expires_at", "evaluated_at"} | {
+        "purpose"
     }
     assert saved["purpose"] == "CUSTOMER_REPLY"  # el despachador la revalúa con el mismo
     assert "Hola" not in str(saved)

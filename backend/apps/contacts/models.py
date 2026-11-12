@@ -396,6 +396,3 @@ class ConsentKeyword(TenantModel):
                 name="consent_keywords_keyword_ck",
             ),
         ]
-
-    def __str__(self) -> str:
-        return str(self.pk)

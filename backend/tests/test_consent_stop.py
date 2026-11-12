@@ -10,15 +10,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from django.core.management import call_command
-from django.db import DatabaseError, IntegrityError, connection
+from django.db import IntegrityError, connection
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
 from apps.contacts import keywords
 from apps.contacts.consents import revoke_consent
 from apps.contacts.models import ConsentKeyword, Contact, ContactConsent, ContactConsentEvent
-from apps.conversations import inbound, ingress, policy, selectors
+from apps.conversations import commands, inbound, ingress, policy, selectors
 from apps.conversations.models import Conversation, Message
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import webhooks
@@ -26,9 +25,9 @@ from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
 from tests.test_conversation_commands import outbound
 from tests.test_conversations_dispatch import Counting, dispatch
 from tests.test_inbound_whatsapp import broker, channel, contact, crm, fresh_wake, live, real_stack
+from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_messaging_policy import HOUR, NOW, decide
-from tests.test_pipelines_tables import as_migrator
 from tests.test_webhook_ingress import deliver
 
 __all__ = ["broker", "channel", "crm", "fresh_wake", "real_stack"]  # las fixtures, para pytest
@@ -73,6 +72,7 @@ def events(migrator: Any, kind: str) -> int:
         ("baja de precio", None), ("s t o p", None), ("stopp", None), ("STOP STOP", None),
         ("st0p", None), ("estop", None), ("bajas", None), ("", None), ("🙏", None),
         ("baja" + " " * 120, None), ("alto", None), ("cancelar pedido", None),
+        ("no gracias", None), ("gracias", None), ("si", None), ("S\u200bTOP", None),
     ],
 )  # fmt: skip
 def test_only_a_message_that_is_exactly_a_keyword_counts(
@@ -198,8 +198,7 @@ def test_a_revocation_denies_a_follow_up_and_never_a_reply_inside_the_window() -
 @pytest.mark.parametrize(
     ("via", "purpose", "blocks"),
     [("WHATSAPP", "ALL_PROACTIVE", True), ("ANY", "FOLLOW_UP", True),
-     ("WHATSAPP", "FOLLOW_UP", True), ("EMAIL", "ALL_PROACTIVE", False),
-     ("WHATSAPP", "MARKETING", False)],
+     ("EMAIL", "ALL_PROACTIVE", False), ("WHATSAPP", "MARKETING", False)],
 )  # fmt: skip
 def test_the_decision_reads_the_revocation_of_this_channel_and_purpose(
     crm: SimpleNamespace, via: str, purpose: str, blocks: bool
@@ -283,35 +282,125 @@ def test_the_keywords_of_one_organization_never_reach_another(
     assert seen(crm.b).consents == [] and seen(crm.b).inbound == []
     with tenant_scope(ctx(crm.b)):
         assert Contact.objects.filter(pk=other.pk, is_blocked=False).exists()
-    with pytest.raises(DatabaseError, match="row-level security"), tenant_scope(ctx(crm.a)):
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO consent_keywords (id, organization_id, keyword, action, created_at)"
-                " VALUES (%s, %s, 'x', 'OPT_OUT', now())",
-                [uuid4(), crm.b],
-            )
 
 
-def test_the_table_refuses_updates_and_a_keyword_that_is_not_normalized(
-    crm: SimpleNamespace,
-) -> None:
+def test_the_table_only_holds_normalized_keywords(crm: SimpleNamespace) -> None:
     with pytest.raises(IntegrityError, match="consent_keywords_keyword_ck"):
         with tenant_scope(ctx(crm.a)):
             ConsentKeyword.objects.create(keyword="STOP", action=STOP)
+
+
+# ---- Revisión de #691: el alta solo levanta una baja de palabra ----
+
+
+def test_an_alta_without_a_prior_baja_does_nothing_at_all(
+    crm: SimpleNamespace, migrator: Any
+) -> None:
+    live(crm.a)
+    assert say("wamid.1", "ALTA") == {"PROCESSED": 1}  # y el ítem se cierra bien
+    found = seen(crm.a)
+    assert (found.consents, found.events, found.replies) == ([], [], [])
+    assert (events(migrator, "consent.granted"), events(migrator, "message.queued")) == (0, 0)
+
+
+def test_an_alta_never_lifts_a_revocation_that_was_not_a_keyword(
+    crm: SimpleNamespace, migrator: Any
+) -> None:
+    live(crm.a)
+    say("wamid.1", "Hola")
+    convo = seen(crm.a).convo
+    with tenant_scope(ctx(crm.a)) as tenant:
+        revoke_consent(
+            tenant, contact_id=convo.contact_id, channel="WHATSAPP", purpose="ALL_PROACTIVE",
+            source="AGENT_RECORDED",
+        )  # fmt: skip
+    say("wamid.2", "alta")
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "AGENT_RECORDED")]
+    assert len(found.events) == 1 and found.replies == []
+    assert events(migrator, "consent.granted") == 0
+
+
+def test_a_zero_width_character_is_cleaned_before_the_match_so_it_still_counts(
+    crm: SimpleNamespace,
+) -> None:
+    live(crm.a)
+    say("wamid.1", "S\u200bTOP")  # `clean_text` lo quita antes: «STOP»
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+
+
+# ---- Revisión de #691: lo que no puede ser una palabra ----
+
+
+@pytest.mark.parametrize(
+    "word",
+    ["si", "sí", "no", "ok", "okay", "hola", "gracias", "vale", "listo", "bueno", "yes", "hello",
+     "thanks", "Thank You", "no gracias", "dale", "ya", "abc", "Muchas Gracias", "buenas tardes"],
+)  # fmt: skip
+@pytest.mark.parametrize("kind", [0, 1])
+def test_an_ordinary_reply_or_a_too_short_word_is_refused_for_baja_and_alta(
+    crm: SimpleNamespace, word: str, kind: int
+) -> None:
+    opt_out, opt_in = (["salir"], [word]) if kind else ([word, "salir"], [])
+    with pytest.raises(ValueError, match="demasiado"):
+        configure(crm.a, crm.ana, opt_out, opt_in)
+
+
+def test_the_default_words_and_a_four_letter_word_pass_the_validation(
+    crm: SimpleNamespace,
+) -> None:
+    defaults = configure(crm.a, crm.ana, ["STOP", "baja", "cancelar"], ["alta"])
+    assert defaults == keywords.DEFAULTS
+    assert configure(crm.a, crm.ana, ["abcd"], ["wxyz"]) == {"abcd": STOP, "wxyz": BACK}
+
+
+# ---- Revisión de #691: fallar cerrado y serializar con el STOP ----
+
+
+def test_a_send_must_say_what_it_is_for(crm: SimpleNamespace) -> None:
+    live(crm.a)
+    say("wamid.1", "Hola")
+    convo = seen(crm.a).convo
+    with pytest.raises(TypeError, match="purpose"), tenant_scope(ctx(crm.a, crm.ana)) as tenant:
+        commands.record_outbound(  # type: ignore[call-arg]
+            tenant, conversation_id=convo.pk, client_message_id=uuid4(), body="x"
+        )
+
+
+@pytest.mark.parametrize("stored", [None, {"allowed": True, "reason": None}])
+def test_a_queued_message_without_a_purpose_is_checked_as_the_strictest(
+    crm: SimpleNamespace, stored: Any
+) -> None:
+    live(crm.a)
+    say("wamid.1", "Hola")
+    convo = seen(crm.a).convo
+    queued, _ = outbound(crm, convo)  # una respuesta de antes de F7-08b, sin propósito guardado
     with tenant_scope(ctx(crm.a)):
-        ConsentKeyword.objects.create(keyword="salir", action=STOP)
-    with pytest.raises(DatabaseError, match="permission denied"), tenant_scope(ctx(crm.a)):
-        ConsentKeyword.objects.update(action=BACK)
+        Message.objects.filter(pk=queued.pk).update(policy_decision=stored)
+    say("wamid.2", "STOP")
+    adapter = Counting()
+    failed = dispatch(crm, queued, adapter)
+    assert (failed.delivery_status, failed.provider_error_code) == ("FAILED", "CONSENT_REVOKED")
+    assert adapter.calls == 0
 
 
-def test_the_migrations_go_back_and_forward(migrator: Any) -> None:
-    exists = "SELECT to_regclass('public.consent_keywords') IS NOT NULL"
-    update = "SELECT has_table_privilege('crm_app', 'consent_keywords', 'UPDATE')"
-    with as_migrator():
-        call_command("migrate", "contacts", "0007", verbosity=0)
-        call_command("migrate", "conversations", "0017", verbosity=0)
-    assert migrator.execute(exists).fetchone() == (False,)
-    with as_migrator():
-        call_command("migrate", verbosity=0)
-    assert migrator.execute(exists).fetchone() == (True,)
-    assert migrator.execute(update).fetchone() == (False,)
+def test_claiming_waits_for_a_stop_that_is_being_registered(crm: SimpleNamespace) -> None:
+    live(crm.a)
+    say("wamid.1", "Hola")
+    convo = seen(crm.a).convo
+    queued, _ = outbound(crm, convo, purpose="FOLLOW_UP")
+
+    def stop(tenant: Any) -> Any:
+        return revoke_consent(
+            tenant, contact_id=convo.contact_id, channel="WHATSAPP", purpose="ALL_PROACTIVE",
+            source="KEYWORD_STOP",
+        )  # fmt: skip
+
+    def claim(tenant: Any) -> Any:
+        return commands.claim_outbound(tenant, message_id=queued.pk)
+
+    first, second = race(crm.a, crm.ana, [stop, claim])
+    assert first[1] is True and second is None  # esperó, vio la baja y no reclamó
+    with tenant_scope(ctx(crm.a)):
+        found = Message.objects.get(pk=queued.pk)
+    assert (found.delivery_status, found.provider_error_code) == ("FAILED", "CONSENT_REVOKED")

@@ -52,7 +52,7 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
-from apps.conversations.policy import CUSTOMER_REPLY, PURPOSES, ConversationClosed, require_allowed
+from apps.conversations.policy import PURPOSES, ConversationClosed, require_allowed
 from apps.conversations.selectors import messaging_decision
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
@@ -418,7 +418,7 @@ def _in_scope(ectx: ExecutionContext, code: str, convo: Conversation) -> None:
 
 def record_outbound(
     ctx: TenantContext, *, conversation_id: UUID, client_message_id: UUID, body: str,
-    purpose: str = CUSTOMER_REPLY,
+    purpose: str,
 ) -> tuple[Message, bool]:  # fmt: skip
     """Pone en cola (`QUEUED`) un mensaje del actor al cliente, idempotente por
     `client_message_id` (el mismo id con otro texto es `ClientMessageConflict`, nunca una
@@ -429,8 +429,9 @@ def record_outbound(
     `ContactBlocked` si el contacto está bloqueado y `WindowClosed` si pasó la ventana del canal
     (`policy.evaluate`, que se guarda en el mensaje; un reenvío de lo ya guardado sí se devuelve);
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
-    `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`): un seguimiento (`FOLLOW_UP`) a
-    quien se dio de baja es `ConsentRevoked`; la respuesta (por omisión) no. Plantillas: F7-10."""
+    `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`; sin valor por omisión: quien llama
+    dice para qué escribe): un seguimiento (`FOLLOW_UP`) a quien se dio de baja es `ConsentRevoked`,
+    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10."""
     alias = require_scope(ctx)
     if purpose not in PURPOSES:
         raise ValueError("propósito no admitido")
@@ -480,11 +481,10 @@ def record_outbound(
 
 
 def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) -> Message | None:
-    """Pone en cola (`QUEUED`) un texto fijo del sistema al cliente (F7-08b: la confirmación de una
-    baja o un alta), sin persona (`SYSTEM`) ni permiso: lo llama el canal, con su contexto, en la
-    transacción del mensaje entrante que la provoca (quien llama la hace idempotente). Es una
-    respuesta (`CUSTOMER_REPLY`): si la política la niega (contacto bloqueado, canal caído, ventana
-    cerrada) no escribe nada y devuelve `None`. No cambia el estado de la conversación."""
+    """Pone en cola un texto fijo del sistema al cliente (F7-08b: la confirmación de una baja o un
+    alta), sin persona (`SYSTEM`) ni permiso: lo llama el canal en la transacción del mensaje
+    entrante. Es una respuesta (`CUSTOMER_REPLY`): si la política la niega, no escribe nada y
+    devuelve `None`."""
     alias = require_scope(ctx)
     text = _body(body)
     with transaction.atomic(using=alias):
@@ -753,9 +753,13 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         queued = Message.objects.using(alias).filter(
             waiting, pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
         )
-        row = queued.values("conversation_id").first()
+        row = queued.values("conversation_id", "conversation__contact_id").first()
         if row is None:
             return None
+        with connections[alias].cursor() as cursor:  # primero el contacto, como `_open` y `_write`:
+            cursor.execute(  # un STOP que se está registrando espera a este reclamo, o al revés
+                "SELECT 1 FROM contacts WHERE id = %s FOR SHARE", [row["conversation__contact_id"]]
+            )
         convo = _locked(alias, row["conversation_id"])  # el mismo orden que `record_outbound`
         message = queued.select_for_update(no_key=True, skip_locked=True).first()
         if message is None:  # otro despachador lo reclama, o ya salió
@@ -765,7 +769,8 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
                 "SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE", [convo.channel_account_id]
             )
         account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
-        purpose = (message.policy_decision or {}).get("purpose") or CUSTOMER_REPLY  # el de encolar
+        # el de encolar; sin él (un mensaje anterior a F7-08b), el más estricto
+        purpose = (message.policy_decision or {}).get("purpose") or "FOLLOW_UP"
         decision = messaging_decision(convo, account=account, alias=alias, purpose=purpose)
         queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
         if decision.reason is not None:

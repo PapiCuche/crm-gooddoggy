@@ -160,6 +160,7 @@ class MessagesView(generics.ListAPIView):
                 message, created = commands.record_outbound(
                     tenant, conversation_id=found.pk, body=wanted.validated_data["body"],
                     client_message_id=wanted.validated_data["client_message_id"],
+                    purpose=policy.CUSTOMER_REPLY,  # la pantalla solo responde al cliente
                 )  # fmt: skip
         except tuple(policy.DENIALS.values()) as blocked:  # la política dijo que no
             code = policy.CODES[type(blocked)]

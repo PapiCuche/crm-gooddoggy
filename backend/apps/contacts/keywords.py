@@ -1,10 +1,9 @@
 """Palabras de baja y de alta de la organización (F7-08b; ADR-010 §2.7, D-F7-05).
 
-Un mensaje del cliente cuenta solo si **todo** su texto es una palabra configurada, después de
-normalizarlo (`normalize`): sin tildes ni mayúsculas, con un espacio entre palabras y sin signos ni
-emojis en los extremos. «STOP», « baja! » o «Cancelár» cuentan; «quiero darme de baja», «stop
-please» o «no me des de baja» no. Sin filas en `consent_keywords` valen `DEFAULTS` (recomendación
-de D-F7-05, pendiente del propietario). Ningún texto del cliente se registra ni se audita.
+Un mensaje del cliente cuenta solo si **todo** su texto, normalizado (`normalize`: sin tildes ni
+mayúsculas, un espacio entre palabras, sin signos ni emojis en los extremos), es una palabra
+configurada: «STOP» o « baja! » cuentan; «quiero darme de baja» o «stop please», no. Sin filas
+valen `DEFAULTS` (D-F7-05, pendiente del propietario). Nada del cliente se registra ni se audita.
 """
 
 import re
@@ -22,6 +21,15 @@ OPT_OUT, OPT_IN = KeywordAction.OPT_OUT.value, KeywordAction.OPT_IN.value
 DEFAULTS = {"stop": OPT_OUT, "baja": OPT_OUT, "cancelar": OPT_OUT, "alta": OPT_IN}
 KEYWORD = re.compile(r"[a-z0-9]+(?: [a-z0-9]+){0,2}")  # la forma normalizada (y el CHECK)
 KEYWORD_MAX = 30
+KEYWORD_MIN = 4  # «si», «no», «ok» o «ya» son respuestas, no una baja
+COMMON = frozenset(  # respuestas corrientes (normalizadas) que nunca pueden ser una palabra
+    {
+        "si", "no", "ok", "okay", "vale", "dale", "ya", "yes", "yep", "hola", "hello", "hi", "hey",
+        "buenas", "bueno", "buena", "bien", "claro", "listo", "perfecto", "genial", "entiendo",
+        "gracias", "muchas gracias", "no gracias", "thanks", "thank you", "no thanks",
+        "de acuerdo", "por favor", "please", "buenos dias", "buenas tardes", "buenas noches",
+    }
+)  # fmt: skip
 PER_ACTION = 10  # cuántas palabras de cada acción
 TEXT_MAX = 120  # un mensaje más largo nunca es una palabra de baja o de alta
 EDGES = re.compile(r"^[\W_]+|[\W_]+$")  # signos, símbolos y emojis de los extremos
@@ -63,6 +71,8 @@ def _wanted(opt_out: object, opt_in: object) -> dict[str, str]:
             word = normalize(raw) if isinstance(raw, str) else ""
             if not KEYWORD.fullmatch(word) or len(word) > KEYWORD_MAX or word in wanted:
                 raise ValueError("palabra no admitida o repetida")
+            if len(word) < KEYWORD_MIN or word in COMMON:  # una respuesta normal daría de baja
+                raise ValueError("palabra demasiado corta o demasiado común para una baja o alta")
             wanted[word] = action
     if OPT_OUT not in wanted.values():  # dejar al cliente sin forma de darse de baja, nunca
         raise ValueError("hace falta al menos una palabra de baja")
@@ -73,7 +83,8 @@ def set_keywords(ctx: TenantContext, *, opt_out: list[str], opt_in: list[str]) -
     """Reemplaza las palabras de la organización (se guardan normalizadas). Pide `channels.manage`
     antes de leer nada (`AccessDenied`). `ValueError` (sin escribir nada) si una lista no es una
     lista de hasta 10, si una palabra no es de una a tres palabras de letras o cifras de hasta 30
-    caracteres, si se repite (también entre baja y alta) o si no queda ninguna de baja. Audita el
+    caracteres (y al menos 4: «si» o «ok» no), si es una respuesta corriente («gracias», «hola», «no
+    gracias»…), si se repite (también entre baja y alta) o si no queda ninguna de baja. Audita el
     antes y el después (`consent_keywords.updated`); las mismas palabras no escriben nada."""
     alias = require_scope(ctx)
     if not has_permission(execution_context(ctx), PERMISSION):

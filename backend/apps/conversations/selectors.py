@@ -44,8 +44,7 @@ def messaging_decision(
     contacto o una cuenta que no se ven niegan (cerrado ante la duda). Con `alias`, en la
     transacción de quien llama (el comando que ya bloqueó la conversación); con `account`, la que
     ya leyó (y bloqueó) quien llama. `purpose`: para qué se escribe (`policy.PURPOSES`); una
-    respuesta al cliente no consulta el consentimiento (dentro de la ventana no lo necesita); uno
-    desconocido es un `ValueError` de `evaluate`."""
+    respuesta al cliente no consulta el consentimiento."""
     accounts, contacts = ChannelAccount.objects, Contact.objects
     if alias is not None:
         accounts, contacts = accounts.using(alias), contacts.using(alias)  # type: ignore[assignment]

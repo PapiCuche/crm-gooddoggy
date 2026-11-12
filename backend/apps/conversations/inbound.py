@@ -9,9 +9,10 @@ homónimos, ADR-028): el segundo proceso espera, encuentra el del primero y lo r
 fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un teléfono ni un texto.
 
 Un texto que es exactamente una palabra de baja o de alta de la organización (`contacts.keywords`,
-F7-08b) revoca o restablece lo proactivo de WhatsApp (`ALL_PROACTIVE`) con el mensaje como
-evidencia y, si cambió algo, encola una confirmación fija; todo en la transacción del mensaje y
-solo la primera vez que llega (un webhook repetido no vuelve a hacerlo).
+F7-08b) revoca lo proactivo de WhatsApp (`ALL_PROACTIVE`) o, si la baja fue de una palabra, lo
+restablece, con el mensaje como evidencia y, si cambió algo, encola una confirmación fija; todo en
+la transacción del mensaje y solo la primera vez que llega (un webhook repetido no vuelve a
+hacerlo). El texto llega ya saneado (`clean_text` quita los caracteres de formato invisibles).
 """
 
 import datetime as dt
@@ -24,7 +25,7 @@ from django.utils import timezone
 
 from apps.contacts import keywords
 from apps.contacts.commands import create_contact
-from apps.contacts.consents import grant_consent, revoke_consent
+from apps.contacts.consents import lift_keyword_stop, revoke_consent
 from apps.contacts.models import ConsentSource, Contact
 from apps.conversations import commands
 from apps.conversations.models import (
@@ -218,15 +219,12 @@ def _keyword(ctx: TenantContext, contact_id: Any, saved: Message) -> None:
     action = keywords.action_for(ctx, saved.body)
     if action is None:
         return
-    change, source = (
-        (revoke_consent, ConsentSource.KEYWORD_STOP)
-        if action == keywords.OPT_OUT
-        else (grant_consent, ConsentSource.CUSTOMER_MESSAGE)
-    )
-    _, changed = change(
-        ctx, contact_id=contact_id, channel="WHATSAPP", purpose="ALL_PROACTIVE", source=source,
-        evidence={"message_id": str(saved.pk)},
-    )  # fmt: skip
+    where = {"contact_id": contact_id, "channel": "WHATSAPP", "purpose": "ALL_PROACTIVE"}
+    proof = {"message_id": str(saved.pk)}
+    if action == keywords.OPT_OUT:
+        _, changed = revoke_consent(ctx, **where, source=ConsentSource.KEYWORD_STOP, evidence=proof)
+    else:  # solo levanta una baja hecha con una palabra; si no, ni evento ni confirmación
+        changed = lift_keyword_stop(ctx, **where, evidence=proof)
     logger.info("meta.webhook.consent_keyword", action=action, changed=changed)  # sin quién
     if changed:
         commands.queue_confirmation(
