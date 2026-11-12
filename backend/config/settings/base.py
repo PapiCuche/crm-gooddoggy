@@ -153,6 +153,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "conversations.healthcheck_accounts",
         "schedule": 300.0,  # F7-06b: cada 5 minutos revisa las cuentas a las que les toca
     },
+    # F3-34: cada 5 minutos encola, por organización activa, el vencimiento de sus reservas.
+    "inventory.expire_reservations_sweep": {
+        "task": "inventory.expire_reservations_sweep",
+        "schedule": 300.0,
+        "options": {"expires": 300},  # sin workers no se acumulan barridos viejos
+    },
     # D-F2-2: una vez al día, a hora fija (UTC). Un intervalo de 24 horas se cuenta desde que
     # beat arranca: si el contenedor se recrea a diario, la purga no se ejecutaría nunca.
     "accounts.purge_expired_sessions": {
