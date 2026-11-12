@@ -90,8 +90,7 @@ def state(migrator: DB, pk: UUID) -> tuple[Any, ...]:
     return migrator.execute(STATE, [pk]).fetchone()  # type: ignore[return-value]
 
 
-def due(migrator: DB, pk: UUID) -> None:
-    """El plazo del reclamo o la espera del reintento, vencidos (el reloj pasa)."""
+def due(migrator: DB, pk: UUID) -> None:  # el plazo o la espera, vencidos: el reloj pasa
     migrator.execute(
         "UPDATE message_attachments SET lease_until = now() - interval '1 second', "
         "not_before = NULL WHERE id = %s",
@@ -159,7 +158,13 @@ def test_a_media_message_gets_a_pending_attachment_and_a_stored_attempt_leaves_i
     got = claimed(world.a, pk)
     assert (got.kind, got.media_id, got.number) == ("IMAGE", MEDIA, PHONE_NUMBER_ID)
     assert state(migrator, pk) == ("DOWNLOADING", None, 1)
-    assert store(world, got) == ("DONE", None) and state(migrator, pk) == ("DONE", None, 1)
+    with pytest.raises(ValueError, match="tipo"):  # un tipo fuera de la lista: ni se sube
+        media.store(TenantContext(world.a, "celery"), got, bytes_of(), "text/html")
+    assert (
+        world.blobs.objects == {}
+        and store(world, got) == ("DONE", None)
+        and state(migrator, pk) == ("DONE", None, 1)
+    )
     ((file_id, key, *rest),) = files(migrator)
     sha = hashlib.sha256(JPEG).hexdigest()  # el calculado; nada de lo que declara Meta
     assert rest == ["image.jpg", "image/jpeg", len(JPEG), sha, "PENDING", "message-media"]
@@ -247,6 +252,7 @@ def test_retries_wait_longer_each_time_until_the_last_attempt_fails_unavailable(
         ("UPDATE channel_accounts SET status = 'ERROR'", "CHANNEL_UNAVAILABLE"),
         ("UPDATE channel_accounts SET deleted_at = now()", "CHANNEL_UNAVAILABLE"),
         ("UPDATE credentials SET revoked_at = now(), ciphertext = NULL", "TOKEN_INVALID"),
+        ("UPDATE credentials SET owner_id = gen_random_uuid()", "TOKEN_INVALID"),  # de otra cuenta
     ],
 )  # fmt: skip
 def test_an_account_not_connected_or_a_revoked_credential_closes_the_claim(
@@ -255,12 +261,6 @@ def test_an_account_not_connected_or_a_revoked_credential_closes_the_claim(
     pk = one(world, migrator)
     migrator.execute(change)
     assert claimed(world.a, pk) is None and state(migrator, pk) == ("FAILED", code, 0)
-
-
-def test_a_credential_of_another_account_is_not_a_live_one(world: Any, migrator: DB) -> None:
-    pk = one(world, migrator)
-    migrator.execute("UPDATE credentials SET owner_id = %s", [uuid4()])  # copiada de otra cuenta
-    assert claimed(world.a, pk) is None and state(migrator, pk) == ("FAILED", "TOKEN_INVALID", 0)
 
 
 # ---- Reclamos: el perdido, el vencido, el tope por organización, otra organización ----
@@ -274,14 +274,16 @@ def test_a_lost_claim_never_settles_and_only_its_own_blob_is_deleted(
     wait = claimed(world.a, pk)  # un mensaje repetido de la tarea: vuelve al vencer el plazo
     assert isinstance(wait, int) and 290 < wait <= 301
     due(migrator, pk)
-    second = claimed(world.a, pk)  # B reclama el plazo vencido y termina
+    second = claimed(world.a, pk)  # B reclama el plazo vencido mientras A sigue bajando
+    assert finish(world, first, "EXPIRED") == ("LOST", None)  # A no cierra el reclamo de B
+    assert store(world, first, b"\xff\xd8\xff de A") == ("LOST", None)  # ni guarda: su blob, fuera
+    assert state(migrator, pk) == ("DOWNLOADING", None, 2) and world.blobs.objects == {}
     assert store(world, second) == ("DONE", None) and state(migrator, pk) == ("DONE", None, 2)
     ((theirs, key, *_),) = files(migrator)
-    world.blobs.fail_delete = True  # y borrar el blob de A también falla: se registra
+    world.blobs.fail_delete = True  # A llega tarde otra vez y borrar su blob falla: se registra
     with caplog.at_level(logging.ERROR):
         assert store(world, first, b"\xff\xd8\xff otro") == ("LOST", None)
     assert "media.blob_delete_failed" in caplog.text
-    assert finish(world, first, "EXPIRED") == ("LOST", None)
     assert finish(world, first, "RETRY") == ("LOST", None)
     assert state(migrator, pk) == ("DONE", None, 2) and files(migrator)[0][0] == theirs
     assert world.blobs.objects[key][0] == JPEG and theirs == second.attempt_id  # el de B, intacto
@@ -291,7 +293,7 @@ def test_a_db_failure_after_the_put_deletes_only_that_attempts_blob(
     world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     other = storage.tenant_key(world.a, "message-media", uuid4())
-    world.blobs.objects[other] = (b"de otro", None)  # type: ignore[assignment]
+    world.blobs.objects[other] = (b"de otro", None)
     pk = one(world, migrator)
     real = media._close
 
@@ -318,14 +320,7 @@ def test_a_storage_that_fails_leaves_no_file_row_and_retries(
     logged = [r.msg for r in caplog.records if "media" in str(r.msg)]
     allowed = {"event", "attachment_id", "error", "level", "timestamp", "logger", "request_id",
                "correlation_id"}  # fmt: skip
-    assert logged and all(set(m) <= allowed and m["error"] == "OSError" for m in logged), logged  # type: ignore[arg-type,index]
-
-
-def test_a_type_outside_the_closed_list_is_refused_before_the_put(world: Any, migrator: DB) -> None:
-    got = claimed(world.a, one(world, migrator))
-    with pytest.raises(ValueError, match="tipo"):
-        media.store(TenantContext(world.a, "celery"), got, bytes_of(), "text/html")
-    assert world.blobs.objects == {}
+    assert logged and all(set(m) <= allowed and m["error"] == "OSError" for m in logged), logged  # type: ignore[index]
 
 
 def test_an_expired_lease_at_the_last_attempt_fails_unavailable(world: Any, migrator: DB) -> None:

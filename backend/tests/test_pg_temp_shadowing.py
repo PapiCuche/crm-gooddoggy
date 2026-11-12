@@ -38,6 +38,7 @@ FUNCTIONS = (
     "public.quote_items_guard()",
     "public.quote_approvals_guard()",
     "public.inventory_reservations_guard()",  # F3-33, INVOKER
+    "public.message_attachments_advance()",  # F7-09a1b, INVOKER
 )
 
 

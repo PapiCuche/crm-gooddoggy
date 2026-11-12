@@ -1,15 +1,11 @@
 """Medios entrantes de WhatsApp (F7-09a1b; ADR-029 §7): el adjunto de un mensaje y su máquina de
-estados del lado de la aplicación. La base la hace cumplir además (disparador de la migración
-`0021`). La descarga (Graph API, `core.http.download`, magic bytes), la tarea `fetch_media` y el
-alta del adjunto desde `inbound.receive` llegan con F7-09a1c y usan estas piezas.
-
-Un intento: **reclamar** en una transacción (tope de descargas por organización, cuenta `CONNECTED`
-con credencial viva, un `attempt_id` nuevo y un plazo de 300 s); la descarga ocurre fuera de toda
-transacción; **guardar** el blob con la clave del intento (nunca se sobrescribe) y cerrar en otra
-transacción solo si el reclamo sigue siendo de este intento; si no, o si la base falla, se borra
-solo el blob de este intento. Lo que declara Meta (tipo, tamaño, nombre, `sha256`) no se guarda.
-Los registros llevan ids y códigos cerrados: nunca la URL, el token ni el texto de un error.
-"""
+estados en la aplicación (la base la hace cumplir además: disparador de `0021`). La descarga, la
+tarea `fetch_media` y el alta desde `inbound.receive` llegan con F7-09a1c. Un intento: **reclamar**
+en una transacción (tope por organización, cuenta `CONNECTED` con credencial viva, `attempt_id`
+nuevo, plazo de 300 s); bajar fuera de toda transacción; **guardar** el blob con la clave del
+intento (nunca se sobrescribe) y cerrar en otra transacción solo si el reclamo sigue siendo suyo;
+si no, o si la base falla, se borra solo ese blob. Lo que declara Meta no se guarda. Los registros
+llevan ids y códigos cerrados: nunca la URL, el token ni el texto de un error."""
 
 import datetime as dt
 import hashlib
