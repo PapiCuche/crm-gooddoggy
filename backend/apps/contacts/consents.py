@@ -5,7 +5,8 @@ Sin permisos (los decide la API, o el canal que actúa como sistema). Bloquean e
 cambios a la vez del mismo contacto se serializan. Cada cambio real actualiza el estado vigente
 (`ContactConsent`), añade su evento al historial inmutable (`ContactConsentEvent`) y se audita;
 repetir lo que ya vale no escribe nada. La evidencia lleva solo ids y etiquetas cortas, nunca el
-texto de un mensaje ni datos del cliente, y la auditoría no la copia.
+texto de un mensaje ni datos del cliente, y la auditoría no la copia. Cada cambio deja también su
+evento en el outbox (`consent.granted` o `consent.revoked`, F7-08b) con ids, canal y propósito.
 """
 
 from uuid import UUID
@@ -23,6 +24,7 @@ from apps.contacts.models import (
     ContactConsentEvent,
     Purpose,
 )
+from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
@@ -78,6 +80,7 @@ def _write(
         action = "consent.granted" if status == ConsentStatus.GRANTED else "consent.revoked"
         about = {**{k: str(v) for k, v in where.items()}, "source": source}
         record(ctx, action, Entity("contact_consent", row.pk), {"status": [before, status]}, about)
+        emit(ctx, action, aggregate_type="contact_consent", aggregate_id=row.pk, payload=about)
         return row, True
 
 

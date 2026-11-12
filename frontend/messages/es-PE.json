@@ -216,6 +216,7 @@
       "CHANNEL_UNAVAILABLE": "El canal de esta conversación no está conectado. Reconéctalo para enviar mensajes.",
       "CONTACT_BLOCKED": "Este contacto está bloqueado: no se le pueden enviar mensajes.",
       "WINDOW_CLOSED": "Ya pasó la ventana de atención del canal desde el último mensaje del cliente. Podrás responder cuando el cliente vuelva a escribir.",
+      "CONSENT_REVOKED": "El cliente se dio de baja de los mensajes por iniciativa nuestra en este canal. Podrás responderle cuando vuelva a escribir.",
       "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el texto."
     }
   },
@@ -2224,6 +2225,7 @@
       "CHANNEL_UNAVAILABLE": "El canal no estaba conectado.",
       "CONTACT_BLOCKED": "El contacto está bloqueado.",
       "WINDOW_CLOSED": "Pasaron más de 24 horas desde el último mensaje del cliente.",
+      "CONSENT_REVOKED": "El cliente se dio de baja de los mensajes por iniciativa nuestra.",
       "ADAPTER_REJECTED": "El canal no aceptó el mensaje.",
       "RETRIES_EXHAUSTED": "No se pudo enviar tras varios intentos.",
       "TOKEN_INVALID": "El acceso de WhatsApp ya no es válido. Pide a quien administra los canales que reconecte la cuenta.",

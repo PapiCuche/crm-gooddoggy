@@ -5,7 +5,9 @@ no lee la base de datos ni el texto del cliente. La usan `record_outbound` (al e
 despachador (la **re-evalúa justo antes de enviar**) y la ruta de consulta de la pantalla. La
 ventana se recalcula siempre desde `last_inbound_at` con las `ChannelCapabilities` vigentes.
 Orden: nota interna, conversación cerrada (`RESOLVED` admite respuestas, D-F6-11), canal no
-conectado, contacto bloqueado y ventana. Plantillas y consentimientos: F7-08 y F7-10.
+conectado, contacto bloqueado, ventana y consentimiento (F7-08b, ADR-010 §2.7: una baja que alcanza
+al canal y al propósito niega todo lo proactivo; la respuesta al cliente, `CUSTOMER_REPLY`, solo
+llega con la ventana abierta y por eso nunca la niega una baja). Plantillas: F7-10.
 """
 
 import datetime as dt
@@ -19,8 +21,14 @@ REPLYABLE = tuple(s for s in Status.values if s != Status.CLOSED)  # `RESOLVED` 
 FREE_FORM, BLOCKED = "FREE_FORM", "BLOCKED"  # `mode`; TEMPLATE_REQUIRED llega con F7-10
 REASONS = (  # el conjunto cerrado de motivos de una decisión que niega
     "INTERNAL_NOTE_NOT_SENDABLE", "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED",
-    "WINDOW_CLOSED",
+    "WINDOW_CLOSED", "CONSENT_REVOKED",
 )  # fmt: skip
+CUSTOMER_REPLY = "CUSTOMER_REPLY"
+# Para qué se escribe (ADR-010 §2 `OutboundIntent.purpose`) → el propósito de consentimiento que
+# lo cubre (`contact_consents.purpose`). Los demás (cotización, recordatorio, marketing…) llegan con
+# quien los envíe (F7-10 y las automatizaciones): uno desconocido es un `ValueError`.
+PURPOSES = {CUSTOMER_REPLY: "ALL_PROACTIVE", "FOLLOW_UP": "FOLLOW_UP"}
+CONSENT_CHANNELS = {"WHATSAPP": "WHATSAPP"}  # plataforma → canal del consentimiento; otra: `ANY`
 
 
 class ConversationClosed(Exception):
@@ -39,11 +47,16 @@ class WindowClosed(Exception):
     """Pasó la ventana de atención del canal desde el último mensaje del cliente."""
 
 
+class ConsentRevoked(Exception):
+    """El cliente se dio de baja de lo proactivo por ese canal (y propósito)."""
+
+
 DENIALS: dict[str, type[Exception]] = {
     "CONVERSATION_CLOSED": ConversationClosed,
     "CHANNEL_UNAVAILABLE": ChannelUnavailable,
     "CONTACT_BLOCKED": ContactBlocked,
     "WINDOW_CLOSED": WindowClosed,
+    "CONSENT_REVOKED": ConsentRevoked,
 }
 CODES = {cls: code for code, cls in DENIALS.items()}
 
@@ -72,6 +85,7 @@ class PolicyDecision:
     window_expires_at: dt.datetime | None
     window_hours: int | None
     evaluated_at: dt.datetime
+    purpose: str = CUSTOMER_REPLY
 
     @property
     def mode(self) -> str:
@@ -86,6 +100,7 @@ class PolicyDecision:
             "reason": self.reason,
             "window_expires_at": None if expires is None else expires.isoformat(),
             "evaluated_at": self.evaluated_at.isoformat(),
+            "purpose": self.purpose,  # el despachador la vuelve a evaluar con el mismo
         }
 
 
@@ -99,9 +114,14 @@ def evaluate(
     last_inbound_at: dt.datetime | None,
     now: dt.datetime,
     direction: str = Direction.OUTBOUND,
+    purpose: str = CUSTOMER_REPLY,
+    revoked: bool = False,
 ) -> PolicyDecision:
     """La decisión para escribir ahora en la conversación. La ventana está abierta mientras
-    `now < last_inbound_at + window_hours`: a la hora exacta ya está cerrada."""
+    `now < last_inbound_at + window_hours`: a la hora exacta ya está cerrada. `revoked`: hay una
+    baja que alcanza al canal y al propósito (`contacts.selectors.is_revoked`)."""
+    if purpose not in PURPOSES:
+        raise ValueError("propósito no admitido")
     caps = CAPABILITIES.get(platform)  # `None`: la plataforma no tiene adaptador
     hours = None if caps is None else caps.window_hours
     expires = (
@@ -120,7 +140,9 @@ def evaluate(
         reason = "CONTACT_BLOCKED"
     elif hours is not None and (expires is None or now >= expires):
         reason = "WINDOW_CLOSED"  # sin mensaje del cliente, la ventana nunca se abrió
-    return PolicyDecision(reason is None, reason, expires, hours, now)
+    elif revoked and purpose != CUSTOMER_REPLY:  # responder dentro de la ventana no es proactivo
+        reason = "CONSENT_REVOKED"
+    return PolicyDecision(reason is None, reason, expires, hours, now, purpose)
 
 
 def require_allowed(decision: PolicyDecision) -> None:

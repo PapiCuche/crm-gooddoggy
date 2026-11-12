@@ -10337,6 +10337,7 @@ components:
             * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
             * `CONTACT_BLOCKED` - CONTACT_BLOCKED
             * `WINDOW_CLOSED` - WINDOW_CLOSED
+            * `CONSENT_REVOKED` - CONSENT_REVOKED
             * `ADAPTER_REJECTED` - ADAPTER_REJECTED
             * `RETRIES_EXHAUSTED` - RETRIES_EXHAUSTED
             * `TOKEN_INVALID` - TOKEN_INVALID
@@ -10419,6 +10420,7 @@ components:
             * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
             * `CONTACT_BLOCKED` - CONTACT_BLOCKED
             * `WINDOW_CLOSED` - WINDOW_CLOSED
+            * `CONSENT_REVOKED` - CONSENT_REVOKED
           oneOf:
           - $ref: '#/components/schemas/MessagingPolicyReasonEnum'
           - $ref: '#/components/schemas/NullEnum'
@@ -10456,6 +10458,7 @@ components:
       - CHANNEL_UNAVAILABLE
       - CONTACT_BLOCKED
       - WINDOW_CLOSED
+      - CONSENT_REVOKED
       type: string
       description: |-
         * `INTERNAL_NOTE_NOT_SENDABLE` - INTERNAL_NOTE_NOT_SENDABLE
@@ -10463,6 +10466,7 @@ components:
         * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
         * `CONTACT_BLOCKED` - CONTACT_BLOCKED
         * `WINDOW_CLOSED` - WINDOW_CLOSED
+        * `CONSENT_REVOKED` - CONSENT_REVOKED
     MfaBackupCodes:
       type: object
       properties:
@@ -12824,6 +12828,7 @@ components:
       - CHANNEL_UNAVAILABLE
       - CONTACT_BLOCKED
       - WINDOW_CLOSED
+      - CONSENT_REVOKED
       - ADAPTER_REJECTED
       - RETRIES_EXHAUSTED
       - TOKEN_INVALID
@@ -12840,6 +12845,7 @@ components:
         * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
         * `CONTACT_BLOCKED` - CONTACT_BLOCKED
         * `WINDOW_CLOSED` - WINDOW_CLOSED
+        * `CONSENT_REVOKED` - CONSENT_REVOKED
         * `ADAPTER_REJECTED` - ADAPTER_REJECTED
         * `RETRIES_EXHAUSTED` - RETRIES_EXHAUSTED
         * `TOKEN_INVALID` - TOKEN_INVALID

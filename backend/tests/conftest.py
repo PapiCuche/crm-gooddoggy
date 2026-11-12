@@ -48,6 +48,7 @@ TENANT_TABLES = ("data_import_rows", "data_imports", *TENANT_TABLES)  # F3-20: a
 TENANT_TABLES = ("contacts", *TENANT_TABLES)
 TENANT_TABLES = ("notes", *TENANT_TABLES)  # F4-09: delante, referencia a los contactos
 TENANT_TABLES = ("contact_consent_events", "contact_consents", *TENANT_TABLES)  # F7-08
+TENANT_TABLES = ("consent_keywords", *TENANT_TABLES)  # F7-08b: referencia a las membresías
 TENANT_TABLES = ("price_lists", *TENANT_TABLES)  # F3-40: delante, referencia a las membresías
 TENANT_TABLES = ("tags", *TENANT_TABLES)  # F4-11
 TENANT_TABLES = ("contact_tags", *TENANT_TABLES)  # F4-11b: a contactos, etiquetas y membresías

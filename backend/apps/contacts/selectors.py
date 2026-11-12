@@ -96,10 +96,12 @@ def consent_history(contact_id: UUID) -> QuerySet[ContactConsentEvent]:
     return ContactConsentEvent.objects.filter(contact_id=contact_id).order_by("-occurred_at", "-id")
 
 
-def is_revoked(contact_id: UUID, channel: str, purpose: str) -> bool:
+def is_revoked(contact_id: UUID, channel: str, purpose: str, *, alias: str | None = None) -> bool:
     """Si hay una revocación que alcance a ese canal y propósito (ADR-010 §2.7): la del mismo canal
-    o `ANY`, la del mismo propósito o `ALL_PROACTIVE`."""
-    return ContactConsent.objects.filter(
+    o `ANY`, la del mismo propósito o `ALL_PROACTIVE`. Con `alias`, en la transacción de quien
+    llama."""
+    rows = ContactConsent.objects if alias is None else ContactConsent.objects.using(alias)
+    return rows.filter(
         contact_id=contact_id, status="REVOKED", channel__in=[channel, "ANY"],
         purpose__in=[purpose, "ALL_PROACTIVE"],
     ).exists()  # fmt: skip

@@ -52,7 +52,7 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
-from apps.conversations.policy import ConversationClosed, require_allowed
+from apps.conversations.policy import CUSTOMER_REPLY, PURPOSES, ConversationClosed, require_allowed
 from apps.conversations.selectors import messaging_decision
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
@@ -417,8 +417,9 @@ def _in_scope(ectx: ExecutionContext, code: str, convo: Conversation) -> None:
 
 
 def record_outbound(
-    ctx: TenantContext, *, conversation_id: UUID, client_message_id: UUID, body: str
-) -> tuple[Message, bool]:
+    ctx: TenantContext, *, conversation_id: UUID, client_message_id: UUID, body: str,
+    purpose: str = CUSTOMER_REPLY,
+) -> tuple[Message, bool]:  # fmt: skip
     """Pone en cola (`QUEUED`) un mensaje del actor al cliente, idempotente por
     `client_message_id` (el mismo id con otro texto es `ClientMessageConflict`, nunca una
     sobrescritura). Siempre nace `QUEUED`: ningún argumento elige otro estado. Cuenta como
@@ -428,8 +429,11 @@ def record_outbound(
     `ContactBlocked` si el contacto está bloqueado y `WindowClosed` si pasó la ventana del canal
     (`policy.evaluate`, que se guarda en el mensaje; un reenvío de lo ya guardado sí se devuelve);
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
-    `AccessDenied` sin el permiso. Las plantillas y el consentimiento son de F7-08 y F7-10."""
+    `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`): un seguimiento (`FOLLOW_UP`) a
+    quien se dio de baja es `ConsentRevoked`; la respuesta (por omisión) no. Plantillas: F7-10."""
     alias = require_scope(ctx)
+    if purpose not in PURPOSES:
+        raise ValueError("propósito no admitido")
     conversation_id, client_id = (
         _uuid(conversation_id, "conversación"),
         _uuid(client_message_id, "id"),
@@ -442,8 +446,8 @@ def record_outbound(
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
         snapshot = None
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
-            decision = messaging_decision(convo, alias=alias)
-            require_allowed(decision)  # cerrada, sin canal, contacto bloqueado o ventana cerrada
+            decision = messaging_decision(convo, alias=alias, purpose=purpose)
+            require_allowed(decision)  # cerrada, sin canal, bloqueado, ventana cerrada o baja
             snapshot = decision.as_json()
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",
@@ -473,6 +477,36 @@ def record_outbound(
                 payload={key: str(value) for key, value in ids.items()},
             )
         return message, created
+
+
+def queue_confirmation(ctx: TenantContext, *, conversation_id: UUID, body: str) -> Message | None:
+    """Pone en cola (`QUEUED`) un texto fijo del sistema al cliente (F7-08b: la confirmación de una
+    baja o un alta), sin persona (`SYSTEM`) ni permiso: lo llama el canal, con su contexto, en la
+    transacción del mensaje entrante que la provoca (quien llama la hace idempotente). Es una
+    respuesta (`CUSTOMER_REPLY`): si la política la niega (contacto bloqueado, canal caído, ventana
+    cerrada) no escribe nada y devuelve `None`. No cambia el estado de la conversación."""
+    alias = require_scope(ctx)
+    text = _body(body)
+    with transaction.atomic(using=alias):
+        convo = _locked(alias, _uuid(conversation_id, "conversación"))
+        decision = messaging_decision(convo, alias=alias)
+        if not decision.allowed:
+            return None
+        message: Message = Message.objects.using(alias).create(
+            conversation_id=convo.pk, channel_account_id=convo.channel_account_id, body=text,
+            direction="OUTBOUND", sender_type="SYSTEM", delivery_status="QUEUED",
+            policy_decision=decision.as_json(),
+        )  # fmt: skip
+        convo.last_message_at = timezone.now()
+        convo.last_message_preview, convo.last_message_direction = _preview(text), "OUTBOUND"
+        convo.save(using=alias, update_fields=[*LAST, "updated_at"])
+        record(ctx, "message.queued", Entity("message", message.pk), None, _sent(message))
+        ids = {"conversation_id": convo.pk, "channel_account_id": convo.channel_account_id}
+        emit(  # para el despachador, como `record_outbound`; solo ids
+            ctx, "message.queued", aggregate_type="message", aggregate_id=message.pk,
+            payload={key: str(value) for key, value in ids.items()},
+        )  # fmt: skip
+        return message
 
 
 def add_note(
@@ -731,7 +765,8 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
                 "SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE", [convo.channel_account_id]
             )
         account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
-        decision = messaging_decision(convo, account=account, alias=alias)  # justo antes de enviar
+        purpose = (message.policy_decision or {}).get("purpose") or CUSTOMER_REPLY  # el de encolar
+        decision = messaging_decision(convo, account=account, alias=alias, purpose=purpose)
         queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
         if decision.reason is not None:
             advance_delivery(

@@ -102,14 +102,16 @@ def test_a_closed_conversation_denies_and_a_resolved_one_does_not() -> None:
 def test_the_reasons_come_in_a_fixed_order() -> None:
     worst: dict[str, Any] = {
         "direction": "INTERNAL", "conversation_status": "CLOSED", "account_status": "ERROR",
-        "contact_blocked": True, "last_inbound_at": None,
+        "contact_blocked": True, "last_inbound_at": None, "revoked": True, "purpose": "FOLLOW_UP",
     }  # fmt: skip
     seen = []
-    for drop in ("direction", "conversation_status", "account_status", "contact_blocked"):
+    for drop in (
+        "direction", "conversation_status", "account_status", "contact_blocked", "last_inbound_at",
+    ):  # fmt: skip
         seen.append(decide(**worst).reason)
         del worst[drop]
     seen.append(decide(**worst).reason)
-    assert seen == list(policy.REASONS)  # y `last_inbound_at=None` queda al final: la ventana
+    assert seen == list(policy.REASONS)  # la baja queda al final, tras la ventana (ADR-010 §2)
 
 
 # ---- con la base de datos ------------------------------------------------------------------
@@ -153,7 +155,15 @@ def test_queueing_saves_the_decision_in_the_message(world: SimpleNamespace) -> N
     assert saved["allowed"] is True and saved["mode"] == "FREE_FORM" and saved["reason"] is None
     expires = dt.datetime.fromisoformat(saved["window_expires_at"])
     assert expires == convo.last_inbound_at + 24 * HOUR  # type: ignore[operator]
-    assert set(saved) == {"allowed", "mode", "reason", "window_expires_at", "evaluated_at"}
+    assert set(saved) == {
+        "allowed",
+        "mode",
+        "reason",
+        "window_expires_at",
+        "evaluated_at",
+        "purpose",
+    }
+    assert saved["purpose"] == "CUSTOMER_REPLY"  # el despachador la revalúa con el mismo
     assert "Hola" not in str(saved)
 
 
