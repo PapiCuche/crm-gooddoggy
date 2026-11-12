@@ -6,7 +6,12 @@ from uuid import UUID
 from django.db.models import QuerySet
 
 from apps.imports.models import DataImport, DataImportRow
-from apps.inventory.models import InventoryLevel, InventoryMovement, Warehouse
+from apps.inventory.models import (
+    InventoryLevel,
+    InventoryMovement,
+    InventoryReservation,
+    Warehouse,
+)
 
 
 def warehouses() -> QuerySet[Warehouse]:
@@ -24,6 +29,12 @@ def movements() -> QuerySet[InventoryMovement]:
     """El ledger de la organización: solo se añade. Con su variante en la misma consulta, también
     si está borrada: el ledger la conserva."""
     return InventoryMovement.objects.select_related("variant")
+
+
+def reservations() -> QuerySet[InventoryReservation]:
+    """Las reservas de la organización, en cualquier estado, con su variante en la misma consulta,
+    también si está borrada (F3-35b)."""
+    return InventoryReservation.objects.select_related("variant")
 
 
 def stock_imports() -> QuerySet[DataImport]:

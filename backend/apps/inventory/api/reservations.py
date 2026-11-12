@@ -1,14 +1,16 @@
 """Rutas de tenant de las reservas de stock: `…/inventory/reservations/` (F3-35, E04-05). El
 servicio es `apps.inventory.reservations` (F3-33); aquí van los permisos, el cuerpo cerrado y los
 errores. `inventory.manage` reserva y libera (en el catálogo no tiene alcance: quien lo tiene actúa
-sobre toda la organización). El listado queda para F3-35b (orden de ADR-016 por decidir)."""
+sobre toda la organización). `inventory.view` lista (F3-35b), del más reciente al más antiguo:
+«las activas primero por vencimiento» no cabe en ADR-016 (solo `id` o `-id`), decisión pendiente."""
 
 from typing import Any
 from uuid import UUID
 
+from django.db.models import QuerySet
 from django.utils.dateparse import parse_datetime
-from drf_spectacular.utils import extend_schema
-from rest_framework import serializers
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework import generics, serializers
 from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -19,9 +21,10 @@ from apps.inventory import stock
 from apps.inventory.api.stock import INACTIVE, NOT_ENOUGH, VariantLabelSerializer
 from apps.inventory.api.views import _checked, _tenant
 from apps.inventory.models import InventoryReservation
+from apps.inventory.selectors import reservations
 from core.api.errors import ApiError
 from core.api.schema import errors
-from core.api.strict import Closed, Id, Text, Whole
+from core.api.strict import Choice, Closed, Id, Text, Whole
 
 NOT_ACTIVE = "La reserva venció o se consumió: ya no se libera."
 VARIANT_OFF = "La variante no está activa."
@@ -79,8 +82,38 @@ class ReservationCreateSerializer(ReservationReleaseSerializer):
         return str(_checked(stock.idempotency_key, value))
 
 
-class ReservationsView(APIView):
-    required_permissions = {"POST": "inventory.manage"}
+class ReservationFilterSerializer(serializers.Serializer[Any]):
+    status = Choice(
+        choices=InventoryReservation.Status.choices,
+        required=False,
+        help_text="Solo las de ese estado.",
+    )
+    variant_id = Id(required=False, help_text="Solo las de esa variante.")
+    warehouse_id = Id(required=False, help_text="Solo las de ese almacén.")
+
+
+@extend_schema_view(
+    get=extend_schema(
+        operation_id="inventory_reservations_list",
+        tags=["inventory"],
+        parameters=[ReservationFilterSerializer],
+        responses={200: ReservationSerializer(many=True), **errors(400, 401, 403, 404)},
+        description="Las reservas, con el SKU y el nombre de su variante, de la más reciente a la "
+        "más antigua (ADR-016: no hay otro orden). Un filtro que no vale es 400 por campo. Una "
+        "reserva `ACTIVE` con `expires_at` ya pasado venció y aún no la cerró el job (cada 5 "
+        "minutos): sigue apartando unidades, pero liberarla es 409 `RESERVATION_NOT_ACTIVE`; "
+        "trátala como vencida.",
+    )
+)
+class ReservationsView(generics.ListAPIView):
+    required_permissions = {"GET": "inventory.view", "POST": "inventory.manage"}
+    serializer_class = ReservationSerializer
+    ordering = "-id"  # UUIDv7: el orden en que se crearon
+
+    def get_queryset(self) -> QuerySet[InventoryReservation]:
+        wanted = ReservationFilterSerializer(data=self.request.query_params.dict())
+        wanted.is_valid(raise_exception=True)
+        return reservations().filter(**wanted.validated_data)
 
     @extend_schema(
         operation_id="inventory_reservations_create",

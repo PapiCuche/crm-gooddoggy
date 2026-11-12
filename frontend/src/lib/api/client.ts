@@ -55,6 +55,7 @@ import type {
   InventoryImportsRowsListParams,
   InventoryLevelsListParams,
   InventoryMovementsListParams,
+  InventoryReservationsListParams,
   Invitation,
   InvitationStatusChangeRequest,
   InvitationsListParams,
@@ -117,6 +118,7 @@ import type {
   PaginatedProductList,
   PaginatedPromotionList,
   PaginatedQuoteList,
+  PaginatedReservationList,
   PaginatedRoleList,
   PaginatedStockImportRowList,
   PaginatedTagList,
@@ -7235,6 +7237,164 @@ export const useInventoryMovementsCreate = <TError = ErrorType<Error>, TContext 
 > => {
   return useMutation(getInventoryMovementsCreateMutationOptions(options), queryClient);
 };
+
+export const getInventoryReservationsListUrl = (
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/inventory/reservations/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/inventory/reservations/`;
+};
+
+/**
+ * Las reservas, con el SKU y el nombre de su variante, de la más reciente a la más antigua (ADR-016: no hay otro orden). Un filtro que no vale es 400 por campo. Una reserva `ACTIVE` con `expires_at` ya pasado venció y aún no la cerró el job (cada 5 minutos): sigue apartando unidades, pero liberarla es 409 `RESERVATION_NOT_ACTIVE`; trátala como vencida.
+ */
+export const inventoryReservationsList = async (
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedReservationList> => {
+  return apiFetch<PaginatedReservationList>(getInventoryReservationsListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getInventoryReservationsListQueryKey = (
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/inventory/reservations/`, ...(params ? [params] : [])] as const;
+};
+
+export const getInventoryReservationsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof inventoryReservationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryReservationsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getInventoryReservationsListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof inventoryReservationsList>>> = ({
+    signal,
+  }) => inventoryReservationsList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof inventoryReservationsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type InventoryReservationsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryReservationsList>>
+>;
+export type InventoryReservationsListQueryError = ErrorType<Error>;
+
+export function useInventoryReservationsList<
+  TData = Awaited<ReturnType<typeof inventoryReservationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | InventoryReservationsListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryReservationsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryReservationsList>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryReservationsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryReservationsList<
+  TData = Awaited<ReturnType<typeof inventoryReservationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryReservationsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof inventoryReservationsList>>,
+          TError,
+          Awaited<ReturnType<typeof inventoryReservationsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useInventoryReservationsList<
+  TData = Awaited<ReturnType<typeof inventoryReservationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryReservationsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useInventoryReservationsList<
+  TData = Awaited<ReturnType<typeof inventoryReservationsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: InventoryReservationsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof inventoryReservationsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getInventoryReservationsListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getInventoryReservationsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/inventory/reservations/`;
