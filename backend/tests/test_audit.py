@@ -138,3 +138,18 @@ def test_post_migrate_restores_the_partition_horizon(migrator: psycopg.Connectio
         connection.settings_dict.update(runtime)
     exists = migrator.execute("SELECT to_regclass(%s) IS NOT NULL", [partition(12)]).fetchone()
     assert exists == (True,)
+
+
+def test_record_only_lets_the_system_act_for_itself(
+    orgs: dict[str, UUID], migrator: psycopg.Connection[Any]
+) -> None:
+    user, entity = orgs["widget_A"], Entity("widget", orgs["widget_A"])
+    tenant = TenantContext(orgs["A"], "test", user, ActorType.USER, user)
+    with tenant_scope(tenant):
+        record(tenant, "widget.updated", entity)  # sin `actor`: el del contexto
+        record(tenant, "widget.synced", entity, actor=(ActorType.SYSTEM, None))
+        for forged in ((ActorType.USER, user), (ActorType.USER, None), (ActorType.SYSTEM, user)):
+            with pytest.raises(ValueError, match="actor"):
+                record(tenant, "widget.forged", entity, actor=forged)
+    rows = migrator.execute("SELECT actor_type, actor_id FROM audit_logs ORDER BY id").fetchall()
+    assert rows == [("USER", user), ("SYSTEM", None)]

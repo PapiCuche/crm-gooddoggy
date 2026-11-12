@@ -43,6 +43,7 @@ TENANT_TABLES = ("categories", *TENANT_TABLES)  # F3-04
 TENANT_TABLES = ("product_variants", "products", *TENANT_TABLES)  # F3-06: delante de marcas
 TENANT_TABLES = ("warehouses", *TENANT_TABLES)  # F3-08: delante de las sucursales
 TENANT_TABLES = ("inventory_movements", "inventory_levels", *TENANT_TABLES)  # F3-09
+TENANT_TABLES = ("inventory_reservations", *TENANT_TABLES)  # F3-33: a variantes y membresías
 TENANT_TABLES = ("data_import_rows", "data_imports", *TENANT_TABLES)  # F3-20: a las membresías
 # F4-01: delante, porque referencia a las membresías y a las sucursales.
 TENANT_TABLES = ("contacts", *TENANT_TABLES)

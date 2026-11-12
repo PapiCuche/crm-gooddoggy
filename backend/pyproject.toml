@@ -159,8 +159,8 @@ allowed_importers = ["apps.catalog.api"]
 [[tool.importlinter.contracts]]
 name = "Comandos del inventario: solo su API los importa (F3-08, F3-09, F3-20)"
 type = "protected"
-protected_modules = ["apps.inventory.warehouses", "apps.inventory.stock", "apps.inventory.imports"]
-allowed_importers = ["apps.inventory.api", "apps.inventory.imports"]  # la importación usa `stock`
+protected_modules = ["apps.inventory.warehouses", "apps.inventory.stock", "apps.inventory.imports", "apps.inventory.reservations"]
+allowed_importers = ["apps.inventory.api", "apps.inventory.imports", "apps.inventory.reservations"]  # usan `stock`
 
 [[tool.importlinter.contracts]]
 name = "Comandos de precios: solo su API los importa (F3-40, F3-40b, F3-42, F3-48c)"

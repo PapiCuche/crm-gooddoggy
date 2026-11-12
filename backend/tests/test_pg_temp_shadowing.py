@@ -37,6 +37,7 @@ FUNCTIONS = (
     "public.quotes_guard()",  # F5-09b: guardas de la cotización, INVOKER
     "public.quote_items_guard()",
     "public.quote_approvals_guard()",
+    "public.inventory_reservations_guard()",  # F3-33, INVOKER
 )
 
 
