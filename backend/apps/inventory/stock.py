@@ -56,7 +56,8 @@ class WarehouseInactive(Exception):
 
 
 class InsufficientStock(Exception):
-    """El movimiento dejaría el stock en negativo o por debajo de lo reservado."""
+    """El movimiento dejaría el stock en negativo o por debajo de lo reservado, o la reserva
+    pide más de lo disponible (F3-33)."""
 
 
 class StockLimit(Exception):
@@ -162,12 +163,24 @@ def _locked_variant(alias: str, variant_id: UUID) -> ProductVariant:
     return variant
 
 
-def _locked_level(alias: str, ctx: TenantContext, wanted: Wanted) -> InventoryLevel:
-    cell = {"variant_id": wanted.variant_id, "warehouse_id": wanted.warehouse_id}
+def lock_cell(
+    alias: str, ctx: TenantContext, variant_id: UUID, warehouse_id: UUID
+) -> tuple[ProductVariant, tuple[bool, str], InventoryLevel]:
+    """El orden de bloqueo de todo lo que escribe una celda (movimientos y reservas, F3-33): la
+    variante, el almacén vivo (`FOR KEY SHARE`; da su `is_active` y su `code`) y el saldo, creado
+    si falta (`ON CONFLICT DO NOTHING`) y bloqueado (`FOR UPDATE`) antes de leerlo.
+    `BadReference` si la variante o el almacén no están."""
+    variant = _locked_variant(alias, variant_id)
+    with connections[alias].cursor() as cursor:
+        cursor.execute(_WAREHOUSE, [warehouse_id])
+        warehouse = cursor.fetchone()
+    if warehouse is None:
+        raise BadReference("warehouse_id", "No existe en esta organización.")
+    cell = {"variant_id": variant_id, "warehouse_id": warehouse_id}
     new = InventoryLevel(organization_id=ctx.organization_id, **cell)
     InventoryLevel.objects.using(alias).bulk_create([new], ignore_conflicts=True)
     level: InventoryLevel = InventoryLevel.objects.using(alias).select_for_update().get(**cell)
-    return level
+    return variant, (warehouse[0], warehouse[1]), level
 
 
 def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
@@ -179,13 +192,9 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
     _check(wanted)
     try:
         with transaction.atomic(using=alias):
-            variant = _locked_variant(alias, wanted.variant_id)
-            with connections[alias].cursor() as cursor:
-                cursor.execute(_WAREHOUSE, [wanted.warehouse_id])
-                warehouse = cursor.fetchone()
-            if warehouse is None:
-                raise BadReference("warehouse_id", "No existe en esta organización.")
-            level = _locked_level(alias, ctx, wanted)
+            variant, warehouse, level = lock_cell(
+                alias, ctx, wanted.variant_id, wanted.warehouse_id
+            )
             if (done := _replay(alias, wanted)) is not None:
                 return done, False
             if not warehouse[0]:
