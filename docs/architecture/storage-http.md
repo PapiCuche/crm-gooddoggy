@@ -42,4 +42,6 @@
 - **Producción:** `config.settings.production` rechaza al arrancar un `STORAGE_ENDPOINT_URL` explícito que no sea `https` o que lleve credenciales. Vacío = AWS por defecto. Local y CI siguen con `http://` contra Garage.
 - **Redirecciones:** no se siguen. Para seguir una redirección hay que llamar de nuevo a `request()` con la nueva URL, que pasa otra vez por toda la política.
 - Tampoco usa proxies del entorno, y tiene timeouts (connect 5 s, read 15 s).
+- La URL se lee con dos analizadores (el de Python y el de urllib3, que es el que conecta) y se rechaza si discrepan en esquema, host o puerto, si trae controles, espacios o `\`, o si el puerto está fuera de rango o no es numérico.
+- **Descargas** (`core.http.download`, F7-09a1a): el mismo `_manager` y la misma política, y además un host de una lista `hosts` más estrecha que la allowlist, sin reintentos, sin decodificar (cualquier `Content-Encoding` se rechaza), tope de bytes (nunca se escribe más que el tope), plazo total comprobado antes de cada trozo y errores de red sin el texto original, que lleva la URL firmada.
 - `urllib3` solo se importa en `core.http` (contrato `protected`). Un test estático impide importar `requests`, `httpx`, `urllib.request` o `http.client` en `core`, `apps` o `config`; import-linter solo ve lo que ya se importa.

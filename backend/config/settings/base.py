@@ -322,8 +322,13 @@ META_GRAPH_HOST = "graph.facebook.com"
 # F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)
-if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
-    HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
+# F7-09a1: los únicos hosts de los que se bajan medios (la URL que devuelve la Graph API se valida
+# contra esta lista estática, nunca una del payload). A confirmar con Meta.
+META_MEDIA_HOSTS = ("lookaside.fbsbx.com",)
+if META_ENABLED:
+    for _host in (META_GRAPH_HOST, *META_MEDIA_HOSTS):
+        if _host not in HTTP_ALLOWED_HOSTS:
+            HTTP_ALLOWED_HOSTS.append(_host)
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

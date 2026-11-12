@@ -16,6 +16,7 @@ from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
 from core import http
 from tests.meta_sim.graph import Cut, FakeGraph, Timeout
+from tests.meta_sim.webhooks import MEDIA_HOST
 
 GRAPH_HOST = "graph.facebook.com"
 
@@ -62,6 +63,6 @@ class _Manager:
 
 
 def install(monkeypatch: pytest.MonkeyPatch, graph: FakeGraph, *hosts: str) -> _Manager:
-    manager = _Manager(graph, hosts or (GRAPH_HOST,))
+    manager = _Manager(graph, hosts or (GRAPH_HOST, MEDIA_HOST))
     monkeypatch.setattr(http, "_manager", manager)
     return manager
