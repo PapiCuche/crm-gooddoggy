@@ -163,6 +163,40 @@ describe("Inbox, lista (F6-03)", () => {
     expect(screen.queryByRole("button", { name: "Cargar más" })).toBeNull();
   });
 
+  it("un entrante que no se entiende tiene su propio marcador; no es un texto ni una nota", async () => {
+    const odd = (id: string, changes: Partial<Message>) =>
+      message(id, { message_type: "UNSUPPORTED", ...changes });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([
+        odd("m1", { body: "Imagen recibida" }),
+        odd("m2", { body: null }),
+        message("m3", { body: "Hola" }),
+        odd("m4", { body: "<b>Audio</b> recibido" }),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const phrase = (await screen.findByText("Imagen recibida")).closest("li")!;
+    const items = within(phrase.parentElement!).getAllByRole("listitem");
+    const marked = items.filter((li) =>
+      li.textContent?.includes("Mensaje de un tipo que todavía no se puede mostrar"),
+    );
+    expect(marked).toHaveLength(3); // m1, m2 y m4; el texto normal no lo lleva
+    expect(items.find((li) => li.textContent?.includes("Hola"))).not.toHaveTextContent(
+      "tipo que todavía",
+    );
+    expect(phrase).toHaveClass("bg-surface-raised");
+    expect(phrase).not.toHaveClass("border-dashed"); // lo de una nota
+    expect(phrase).not.toHaveTextContent("Nota interna");
+    expect(phrase.querySelector("svg")).toHaveAttribute("aria-hidden", "true"); // icono y texto
+    expect(phrase.querySelector("bdi")!.parentElement).toHaveClass("italic");
+    const empty = marked.find((li) => !li.querySelector("bdi"))!;
+    expect(empty).not.toHaveTextContent("Sin permiso para ver el contenido"); // sin cuerpo, solo el marcador
+    expect(screen.getByText("<b>Audio</b> recibido").tagName).toBe("BDI"); // el cuerpo, aislado
+    expect(document.querySelector("li b")).toBeNull();
+  });
+
   it("sin permiso sobre el contacto explica en vez de dejar un hueco", async () => {
     const hidden = conversation("5", {
       ...{ contact: { id: "c5", display_name: null }, last_message_preview: null },
