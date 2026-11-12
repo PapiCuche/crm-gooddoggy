@@ -19,6 +19,7 @@ from core.tenancy.scope import tenant_scope
 from tests import test_conversation_scopes as scopes
 from tests.factories import TEST_PASSWORD
 from tests.test_authorization import give
+from tests.test_conversation_commands import send
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx
 from tests.test_self_context import NOT_FOUND, reply, signed
@@ -208,9 +209,7 @@ def test_the_preview_is_the_text_of_the_last_message_and_never_a_note(
     assert len(item["last_message_preview"]) == 80 and "\n" not in item["last_message_preview"]
     assert "Nota privada" not in str(ana.get(BASE).json())
     with tenant_scope(ctx(inbox.a, inbox.ana)) as tenant:
-        commands.record_outbound(
-            tenant, conversation_id=convo, client_message_id=uuid4(), body="Con gusto"
-        )
+        send(tenant, conversation_id=convo, client_message_id=uuid4(), body="Con gusto")
     again = ana.get(f"{BASE}{convo}/").json()
     assert (again["last_message_preview"], again["last_message_direction"]) == (
         "Con gusto", "OUTBOUND",

@@ -86,6 +86,8 @@ REASONS = {
     "CONTACT_BLOCKED": "Este contacto está bloqueado: no se le pueden enviar mensajes.",
     "WINDOW_CLOSED": "Ya pasó la ventana de atención del canal desde el último mensaje del "
     "cliente. Podrás responder cuando el cliente vuelva a escribir.",
+    "CONSENT_REVOKED": "El cliente se dio de baja de los mensajes por iniciativa nuestra en este "
+    "canal. Podrás responderle cuando vuelva a escribir.",
     "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío.",
 }
 
@@ -158,6 +160,7 @@ class MessagesView(generics.ListAPIView):
                 message, created = commands.record_outbound(
                     tenant, conversation_id=found.pk, body=wanted.validated_data["body"],
                     client_message_id=wanted.validated_data["client_message_id"],
+                    purpose=policy.CUSTOMER_REPLY,  # la pantalla solo responde al cliente
                 )  # fmt: skip
         except tuple(policy.DENIALS.values()) as blocked:  # la política dijo que no
             code = policy.CODES[type(blocked)]

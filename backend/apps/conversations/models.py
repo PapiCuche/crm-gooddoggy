@@ -42,12 +42,12 @@ META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
 
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
 # propios, nunca el título ni el texto del error del proveedor. Los de la política y el despachador
-# y los que salen de la tabla de errores de Meta (`delivery.CODES`).
+# y los que salen de la tabla de errores de Meta (`delivery.CODES`). `CONSENT_REVOKED`: F7-08b.
 FAILURE_CODES = (
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
-    "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID", "RECIPIENT_UNREACHABLE",
-    "PROVIDER_REJECTED", "PROVIDER_UNKNOWN", "RATE_LIMITED", "QUALITY_BLOCKED",
-    "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR",
+    "CONSENT_REVOKED", "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID",
+    "RECIPIENT_UNREACHABLE", "PROVIDER_REJECTED", "PROVIDER_UNKNOWN", "RATE_LIMITED",
+    "QUALITY_BLOCKED", "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR",
 )  # fmt: skip
 
 

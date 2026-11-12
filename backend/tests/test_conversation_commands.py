@@ -4,6 +4,7 @@ transacciones a la vez. Sin rutas: llegan con F6-02."""
 import datetime as dt
 import json
 from collections.abc import Callable
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -32,6 +33,7 @@ from tests.test_inventory_stock import race
 from tests.test_memberships import ctx, join
 
 world = tables.world
+send = partial(commands.record_outbound, purpose="CUSTOMER_REPLY")  # F7-08b: sin valor por omisión
 pytestmark = pytest.mark.usefixtures("tenant_db")
 type DB = psycopg.Connection[Any]
 SECRET = "Mi DNI es 12345678 y mi correo juan@example.com"  # noqa: S105 — texto de prueba
@@ -67,7 +69,7 @@ def inbound(world: SimpleNamespace, external: str = "wamid.1", **over: Any) -> t
 
 def outbound(world: SimpleNamespace, convo: Any, client: UUID | None = None, **over: Any) -> Any:
     wanted = {"conversation_id": convo.pk, "client_message_id": client or uuid4(), "body": "Hola"}
-    return run(world, commands.record_outbound, **(wanted | over))
+    return run(world, send, **(wanted | over))
 
 
 def reload(world: SimpleNamespace, model: Any, pk: UUID) -> Any:
@@ -331,9 +333,7 @@ def test_two_replies_with_the_same_client_id_at_once_store_one(world: SimpleName
     client = uuid4()
 
     def reply(tenant: Any) -> Any:
-        return commands.record_outbound(
-            tenant, conversation_id=convo.pk, client_message_id=client, body="Hola"
-        )
+        return send(tenant, conversation_id=convo.pk, client_message_id=client, body="Hola")
 
     first, second = race(world.a, world.ana, [reply, reply])
     assert first[0].pk == second[0].pk and (first[1], second[1]) == (True, False)
@@ -459,11 +459,11 @@ def test_hostile_arguments_are_a_value_error_never_a_type_or_integrity_error(
         (commands.record_inbound, ok | {"external_message_id": "a", "body": bad}),
         (commands.record_inbound, ok | {"external_message_id": bad, "body": "x"}),
         (
-            commands.record_outbound,
+            send,
             {"conversation_id": convo.pk, "client_message_id": bad, "body": "x"},
         ),
         (
-            commands.record_outbound,
+            send,
             {"conversation_id": bad, "client_message_id": uuid4(), "body": "x"},
         ),
         (commands.add_note, {"conversation_id": convo.pk, "body": bad}),
@@ -514,7 +514,7 @@ def test_writing_on_behalf_of_a_person_checks_the_permission_and_the_scope(
     mute = seller(world, "mute@example.com", {"organization.view": None})
     before = len(audit(migrator))
     for command, fields in (
-        (commands.record_outbound, {"client_message_id": uuid4(), "body": "Hola"}),
+        (send, {"client_message_id": uuid4(), "body": "Hola"}),
         (commands.add_note, {"body": "Nota"}),
     ):
         with pytest.raises(ObjectDoesNotExist) as hidden:  # de ana: fuera del alcance `OWN`
@@ -533,13 +533,13 @@ def test_writing_on_behalf_of_a_person_checks_the_permission_and_the_scope(
     only_note = seller(world, "nota@example.com", {"messages.note": "ORGANIZATION"})
     only_send = seller(world, "envia@example.com", {"messages.send": "ORGANIZATION"})
     with pytest.raises(AccessDenied):  # cada comando pide su permiso, no el del otro
-        run(world, commands.record_outbound, who=only_note, conversation_id=free.pk,
+        run(world, send, who=only_note, conversation_id=free.pk,
             client_message_id=uuid4(), body="Hola")  # fmt: skip
     with pytest.raises(AccessDenied):
         run(world, commands.add_note, who=only_send, conversation_id=free.pk, body="Nota")
     assert run(world, commands.add_note, who=only_note, conversation_id=free.pk, body="Nota")[1]
     sent = {"conversation_id": free.pk, "client_message_id": uuid4(), "body": "Hola"}
-    assert run(world, commands.record_outbound, who=vera, **sent)[1]  # sin asignar: a la vista
+    assert run(world, send, who=vera, **sent)[1]  # sin asignar: a la vista
     assert run(world, commands.add_note, who=vera, conversation_id=free.pk, body="Nota")[1]
 
 
@@ -679,7 +679,7 @@ def test_the_same_client_id_in_two_conversations_at_once_is_a_conflict_not_a_cra
     client = uuid4()
 
     def reply(convo: Conversation) -> Callable[[Any], Any]:
-        return lambda tenant: commands.record_outbound(
+        return lambda tenant: send(
             tenant, conversation_id=convo.pk, client_message_id=client, body="Hola"
         )
 
@@ -753,7 +753,7 @@ def test_texts_with_lone_surrogates_control_characters_or_nothing_visible_are_re
             },
         ),
         (
-            commands.record_outbound,
+            send,
             {"conversation_id": convo.pk, "client_message_id": uuid4(), "body": bad},
         ),
         (commands.add_note, {"conversation_id": convo.pk, "body": bad}),

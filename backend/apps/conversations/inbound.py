@@ -7,6 +7,11 @@ rechazan en vez de limpiar. El teléfono se normaliza a E.164 y el contacto se b
 `pg_advisory_xact_lock` de (organización, teléfono), sin índice único (los contactos admiten
 homónimos, ADR-028): el segundo proceso espera, encuentra el del primero y lo reutiliza. Nunca se
 fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un teléfono ni un texto.
+
+Un texto (ya saneado) que es exactamente una palabra de baja o de alta de la organización
+(`contacts.keywords`, F7-08b) revoca lo proactivo de WhatsApp o levanta una baja de palabra, con el
+mensaje como evidencia, y si cambió algo encola una confirmación fija: en la transacción del mensaje
+y solo la primera vez que llega.
 """
 
 import datetime as dt
@@ -17,13 +22,16 @@ from django.conf import settings
 from django.db import connections
 from django.utils import timezone
 
+from apps.contacts import keywords
 from apps.contacts.commands import create_contact
-from apps.contacts.models import Contact
+from apps.contacts.consents import lift_keyword_stop, revoke_consent
+from apps.contacts.models import ConsentSource, Contact
 from apps.conversations import commands
 from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
     Conversation,
+    Message,
     MessageType,
 )
 from core.observability.logging import get_logger
@@ -41,6 +49,11 @@ LABELS = {  # lo que ve el chat de lo que aún no se entiende: una frase fija, n
     "interactive": "Respuesta interactiva recibida", "button": "Respuesta interactiva recibida",
 }  # fmt: skip
 GENERIC = "Mensaje no soportado"
+CONFIRMATIONS = {  # D-F7-05: texto fijo en español (a confirmar por el propietario)
+    keywords.OPT_OUT: "Listo: ya no te enviaremos mensajes por iniciativa nuestra por WhatsApp. "
+    "Si nos escribes, te seguiremos respondiendo.",
+    keywords.OPT_IN: "Listo: volverás a recibir nuestros mensajes por WhatsApp.",
+}
 
 
 class Throttled(Exception):  # noqa: N818 — el tope de contactos nuevos por minuto
@@ -190,8 +203,28 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
                 ctx, display_name=phone, primary_phone_e164=phone,
                 source=Contact.Source.INBOUND_MESSAGE,
             )  # fmt: skip
-    commands.record_inbound(
+    saved, created = commands.record_inbound(
         ctx, contact_id=contact.pk, channel_account_id=account.pk, external_message_id=external,
         body=body, message_type=message_type, provider_at=instant(message.get("timestamp")),
     )  # fmt: skip
+    if created and message_type == MessageType.TEXT:
+        _keyword(ctx, contact.pk, saved)
     return None
+
+
+def _keyword(ctx: TenantContext, contact_id: Any, saved: Message) -> None:
+    """La baja o el alta, si el texto entero es una palabra; solo un cambio real confirma."""
+    action = keywords.action_for(ctx, saved.body)
+    if action is None:
+        return
+    where = {"contact_id": contact_id, "channel": "WHATSAPP", "purpose": "ALL_PROACTIVE"}
+    proof = {"message_id": str(saved.pk)}
+    if action == keywords.OPT_OUT:
+        _, changed = revoke_consent(ctx, **where, source=ConsentSource.KEYWORD_STOP, evidence=proof)
+    else:  # solo levanta una baja hecha con una palabra; si no, ni evento ni confirmación
+        changed = lift_keyword_stop(ctx, **where, evidence=proof)
+    logger.info("meta.webhook.consent_keyword", action=action, changed=changed)  # sin quién
+    if changed:
+        commands.queue_confirmation(
+            ctx, conversation_id=saved.conversation_id, body=CONFIRMATIONS[action]
+        )
