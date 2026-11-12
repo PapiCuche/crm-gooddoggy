@@ -40,8 +40,7 @@ def _fail(constraint: str, message: str) -> str:
 QUOTES_GUARD = f"""
 CREATE FUNCTION quotes_guard() RETURNS trigger LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp AS $f$
-DECLARE allowed text[]; pending boolean; approved boolean; manual boolean; taken numeric;
-        by_line numeric; who text; owner boolean; cap numeric;
+DECLARE allowed text[]; pending boolean; approved boolean;
 BEGIN
   IF current_user <> '__APP__' THEN RETURN NEW; END IF;
   IF TG_OP = 'INSERT' THEN  -- una cotización nace en borrador, no ya aprobada o enviada
@@ -80,32 +79,6 @@ BEGIN
   END IF;
   IF NEW.status <> 'PENDING_APPROVAL' AND pending THEN
     {_fail("quotes_pending_approval", "quotes: decide the open request first")}
-  END IF;
-  IF OLD.status = 'DRAFT' AND NEW.status IN ('APPROVED', 'SENT') THEN
-    -- sin pasar por la solicitud solo sale lo que quien actúa puede descontar: ni un precio manual
-    -- ni más que la política más alta de sus roles (sobre lo que paga el cliente)
-    SELECT coalesce(bool_or(i.manual_price_override), false),
-           coalesce(max((i.unit_price - i.final_unit_price) / i.unit_price), 0)
-      INTO manual, by_line
-      FROM quote_items i WHERE i.organization_id = NEW.organization_id AND i.quote_id = NEW.id;
-    taken := ceil(by_line * 10000) / 100;  -- la mayor línea, en porcentaje hacia arriba
-    who := nullif(current_setting('app.user_id', true), '');
-    IF manual OR (taken > 0 AND who IS NULL) THEN
-      {_fail("quotes_needs_request_path", "quotes: beyond the limit, go through the request")}
-    END IF;
-    IF taken > 0 THEN
-      SELECT coalesce(bool_or(r.is_owner_role), false), coalesce(max(p.max_discount_percent), 0)
-        INTO owner, cap
-        FROM organization_memberships m
-        JOIN membership_roles mr
-          ON mr.organization_id = m.organization_id AND mr.membership_id = m.id
-        JOIN roles r ON r.organization_id = m.organization_id AND r.id = mr.role_id
-        LEFT JOIN discount_policies p ON p.organization_id = m.organization_id AND p.role_id = r.id
-       WHERE m.organization_id = NEW.organization_id AND m.user_id = who::uuid;
-      IF NOT owner AND taken > cap THEN
-        {_fail("quotes_needs_request_path", "quotes: beyond the limit, go through the request")}
-      END IF;
-    END IF;
   END IF;
   IF OLD.status = 'PENDING_APPROVAL' AND NEW.status = 'APPROVED' THEN
     SELECT a.status = 'APPROVED' INTO approved FROM quote_approvals a  -- la última solicitud
