@@ -9,6 +9,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Plain } from "@/components/inbox/plain";
 import { useReads } from "@/components/inventory/cell-picker";
+import { LinkedQuotes } from "@/components/quotes/linked-quotes";
 import { LinkedTasks } from "@/components/tasks/linked-tasks";
 import { moneyText } from "@/components/pricing/margins";
 import { Button } from "@/components/ui/button";
@@ -174,6 +175,9 @@ export function OpportunityDetail({ opportunityId }: { opportunityId: string }) 
         />
         {permissions.some((grant) => grant.code === "tasks.view") ? (
           <LinkedTasks link={{ opportunity_id: detail.id }} />
+        ) : null}
+        {permissions.some((grant) => grant.code === "quotes.view") ? (
+          <LinkedQuotes link={{ opportunity_id: detail.id }} contactId={detail.contact.id} />
         ) : null}
         <section className={BOX} aria-label={t("items.title")}>
           <h2 className="font-medium">{t("items.title")}</h2>
