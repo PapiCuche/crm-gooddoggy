@@ -69,8 +69,7 @@ class NoOpenRequest(Exception):
 
 @dataclass(frozen=True)
 class Verdict:
-    """Lo que quitó a mano una cotización (% e importe), el límite de quien actúa y el motivo
-    de la solicitud, si hay que pedirla."""
+    """Lo quitado a mano (% e importe), el límite de quien actúa y el motivo de la solicitud."""
 
     percent: Decimal
     amount: Decimal
@@ -155,8 +154,7 @@ def _request(ctx: TenantContext, alias: str, quote: Quote, verdict: Verdict) -> 
 
 def _settle(ctx: TenantContext, alias: str, ectx: Any, quote: Quote, action: str,
             shown: dict[str, Any]) -> None:  # fmt: skip
-    """Recalcula los importes, mide lo quitado a mano y, si pasa del límite (o hay precio manual),
-    abre la solicitud y deja la cotización esperándola. Audita la acción y la solicitud."""
+    """Importes, medida y, si hace falta, la solicitud y `PENDING_APPROVAL`; audita ambas."""
     lines = _lines(alias, quote)
     rows = [
         {"quantity": x.quantity, "list_unit_price": x.list_unit_price,
@@ -209,11 +207,8 @@ def set_line_discount(
     ctx: TenantContext, *, quote_id: UUID, version: int, line_id: UUID,
     discount_type: str, discount_value: Any = None,
 ) -> Quote:  # fmt: skip
-    """Pone el descuento de una línea de un borrador: `PERCENT` (de 0 a 100, sin llegar a dejar el
-    precio en cero), `AMOUNT` (por unidad, menor que el precio vigente) o `NONE` (lo quita, también
-    un precio manual). Con `quotes.discount`. Si pasa del límite de quien actúa, la cotización queda
-    `PENDING_APPROVAL` con su solicitud. `DoesNotExist` si la línea no es de la cotización;
-    `StaleVersion`, `QuoteNotDraft`, `NotAllowed`, `ValueError`."""
+    """Descuento `PERCENT`, `AMOUNT` (por unidad) o `NONE` (lo quita, también un precio manual) de
+    una línea de un borrador, con `quotes.discount`; nunca deja el precio en cero o menos."""
     alias = require_scope(ctx)
     kind, quote_id = DiscountType(discount_type), _uuid(quote_id, "cotización")
     if kind is DiscountType.NONE and discount_value is not None:
@@ -241,10 +236,8 @@ def set_line_discount(
 def set_manual_price(
     ctx: TenantContext, *, quote_id: UUID, version: int, line_id: UUID, price: Any, reason: str
 ) -> Quote:
-    """Escribe a mano el precio final de una línea (con IGV incluido, menor que el precio vigente y
-    con su motivo), de un borrador. Con `quotes.override_price`, y solo si cubre el costo (si no,
-    `PriceRefused`, sin decir por qué). Siempre pide aprobación: la cotización queda
-    `PENDING_APPROVAL`."""
+    """Precio final escrito a mano (con IGV, menor que el vigente y con su motivo), con
+    `quotes.override_price`; solo si cubre el costo (si no, `PriceRefused`). Pide aprobación."""
     alias = require_scope(ctx)
     amount, quote_id = _money(price, "precio"), _uuid(quote_id, "cotización")
     why = _text(reason, "motivo", REASON_MAX)
@@ -269,9 +262,8 @@ def set_manual_price(
 
 
 def submit_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
-    """Cierra el borrador: la única vía de `DRAFT` a `APPROVED`. Mide lo quitado a mano con el
-    límite de quien envía (que puede no ser quien lo puso): sin pasar del límite ni precio manual
-    queda `APPROVED`; si no, `PENDING_APPROVAL` con su solicitud."""
+    """La única vía de `DRAFT` a `APPROVED`: mide con el límite de quien envía y, si no cabe o hay
+    precio manual, deja `PENDING_APPROVAL` con su solicitud."""
     alias = require_scope(ctx)
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
@@ -292,8 +284,7 @@ def submit_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
 
 
 def withdraw_approval_request(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
-    """Retira la solicitud abierta y devuelve la cotización al borrador, para cambiarla.
-    `NoOpenRequest` si no espera ninguna; `StaleVersion`."""
+    """Retira la solicitud abierta y devuelve la cotización al borrador (`NoOpenRequest`)."""
     alias = require_scope(ctx)
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")

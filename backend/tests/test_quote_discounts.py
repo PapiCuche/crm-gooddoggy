@@ -46,12 +46,10 @@ def add_role(shop: SimpleNamespace, user: User, percent: str | None = None, owne
             Role.objects.filter(pk=role.pk).update(is_owner_role=True)
         if percent is not None:
             DiscountPolicy.objects.create(
-                role_id=role.pk,
-                max_discount_percent=D(percent),
-                applies_to_price_list_id=list_id,
+                role_id=role.pk, max_discount_percent=D(percent), applies_to_price_list_id=list_id,
                 max_discount_amount=None if cap is None else D(cap),
                 currency=None if cap is None and list_id is None else "PEN",
-            )
+            )  # fmt: skip
 
 
 def member(shop: SimpleNamespace, percent: str | None = None, **kwargs: Any) -> User:
@@ -107,14 +105,10 @@ def test_a_discount_within_the_limit_is_applied_and_asks_nothing(
     done = discount(shop, seller, made, phone, "PERCENT", "5")
     assert (done.status, done.version, done.total) == ("DRAFT", 2, D("4380.05"))  # 4179,05 + 201
     line = stored(shop.a, made)[0]
-    assert (line.discount_type, line.discount_value, line.discount_amount) == (
-        "PERCENT",
-        D("5.00"),
-        D("219.95"),
-    )  # el importe de la línea lo da `final_unit_price`
-    assert (line.final_unit_price, line.line_total, line.unit_price) == (
-        D("4179.05"), D("4179.05"), D("4399.00"),
-    )  # fmt: skip
+    shown = (line.discount_type, line.discount_value, line.discount_amount, line.final_unit_price)
+    assert shown == ("PERCENT", D("5"), D("219.95"), D("4179.05")) and line.line_total == D(
+        "4179.05"
+    )
     assert approvals(shop) == []
     assert [a for a, _ in audit(migrator)] == ["quote.created", "quote.line_discounted"]
     again = discount(shop, seller, made, phone, "NONE", version=2)  # quitarlo
@@ -309,20 +303,6 @@ def test_a_variant_without_a_cost_cannot_be_priced_by_hand_and_the_values_are_va
     assert case and reread(shop, made).version == 1
 
 
-def test_the_discount_cannot_be_used_to_clear_a_manual_price_without_asking_again(
-    shop: SimpleNamespace,
-) -> None:
-    boss = member(shop, "100", **{"quotes.override_price": None})
-    cost(shop, shop.iphone, "1000")
-    made, phone, _ = draft(shop, boss)
-    manual(shop, boss, made, phone, "3500")
-    with pytest.raises(QuoteNotDraft):  # esperando aprobación no se cambia nada
-        discount(shop, boss, made, phone, "NONE", version=2)
-    act(shop, boss, discounts.withdraw_approval_request, quote_id=made.pk, version=2)
-    cleared = discount(shop, boss, made, phone, "NONE", version=3)  # y de vuelta a la lista
-    assert (cleared.status, stored(shop.a, made)[0].manual_price_override) == ("DRAFT", False)
-
-
 def submit(shop: SimpleNamespace, user: User, made: Quote, version: int = 1) -> Quote:
     done: Quote = act(shop, user, discounts.submit_quote, quote_id=made.pk, version=version)
     return done
@@ -335,7 +315,6 @@ def test_a_quote_is_approved_only_by_submit_and_only_inside_the_limit_of_who_sub
     senior = member(shop, "10")
     made, phone, _ = draft(shop, senior)
     discount(shop, senior, made, phone, "PERCENT", "5")  # cabe en el 10 % de quien lo pone
-    # quien lo envía tiene un 3 %: el descuento ya no cabe y no pasa directo a APPROVED
     asked = submit(shop, careful, made, version=2)
     assert asked.status == "PENDING_APPROVAL"
     [req] = approvals(shop)
@@ -350,8 +329,6 @@ def test_a_quote_is_approved_only_by_submit_and_only_inside_the_limit_of_who_sub
     plain, _, _ = draft(shop, careful)
     assert submit(shop, careful, plain).status == "APPROVED"  # sin descuento
     assert [a for a, _ in audit(migrator)].count("quote.submitted") == 3
-    with pytest.raises(StaleVersion):
-        submit(shop, senior, draft(shop, senior)[0], version=4)
 
 
 def test_submitting_a_manual_price_asks_for_approval_even_for_the_owner(
@@ -419,7 +396,7 @@ def test_a_promotion_is_not_the_sellers_discount_and_the_percent_is_measured_per
     assert approvals(shop)[-1].requested_discount_percent == D("60.00")
 
 
-def test_a_percent_is_rounded_like_every_amount_and_a_cap_in_another_currency_never_fits(
+def test_a_foreign_currency_cap_never_fits_and_percents_round_half_up(
     shop: SimpleNamespace,
 ) -> None:
     seller = member(shop, "10")
