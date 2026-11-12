@@ -230,12 +230,9 @@ def test_the_job_against_a_manual_release_at_once_writes_one_release(
     work = [job(world), user_release(world, made.pk)]
     outcome = overlap(monkeypatch, *(work if job_first else work[::-1]))
     by_job, by_user = outcome if job_first else outcome[::-1]
-    if job_first:  # la persona llega tras vencer: ya no se libera
-        assert (by_job["expired"], by_user) == (1, "ReservationNotActive")
-        assert states(world.a) == {made.pk: "EXPIRED"}
-    else:  # la persona liberó antes: el job lo salta
-        assert (by_job["skipped"], by_user[1]) == (1, True)
-        assert states(world.a) == {made.pk: "RELEASED"}
+    # vencida: en los dos órdenes la cierra el job y la persona ya no la libera (F3-35)
+    assert (by_job["expired"], by_user) == (1, "ReservationNotActive")
+    assert states(world.a) == {made.pk: "EXPIRED"}
     assert len(releases(world.a, [made.pk])) == 1 and consistent(world.a, here) == (2, 0, 2)
 
 

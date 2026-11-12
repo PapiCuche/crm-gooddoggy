@@ -1,8 +1,9 @@
 """Reservas de stock (F3-33, E04-05 y E04-08): `RESERVE` sube `reserved` de la celda variante ×
-almacén y liberar o vencer lo baja con un `RELEASE`. Sin permisos: los exigirá su API (F3-35), la
-única que podrá importarlo. Bloqueo como `stock.move` (`stock.lock_cell`) y después la reserva
-`FOR UPDATE`, releída. La clave del cliente va en la reserva; los movimientos llevan
-`R/<reserva>/reserve|release` (la `/` no cabe en una clave de cliente): no se libera dos veces.
+almacén y liberar o vencer lo baja con un `RELEASE`. Sin permisos: los exige quien lo llama, su
+API (F3-35, `inventory.manage`) y, en la Fase 4, el servicio de cotizaciones tras su propio
+permiso. Bloqueo como `stock.move` (`stock.lock_cell`) y después la reserva `FOR UPDATE`,
+releída. La clave del cliente va en la reserva; los movimientos llevan `R/<reserva>/reserve|release`
+(la `/` no cabe en una clave de cliente): no se libera dos veces.
 """
 
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from core.tenancy.scope import require_scope
 
 Status, Type = InventoryReservation.Status, InventoryMovement.Type
 EXPIRES_MAX = timedelta(days=30)  # a confirmar por el mantenedor (issue #342)
+MAX_ACTIVE_PER_CELL = 500  # ACTIVE por variante × almacén (F3-35); a confirmar por el mantenedor
 EXPIRED = "Reserva vencida"
 KEY_TAKEN, EXPIRES_CK = "inventory_res_key_uq", "inventory_res_expires_ck"
 _SYSTEM: tuple[str, UUID | None] = (ActorType.SYSTEM, None)
@@ -28,6 +30,10 @@ _SYSTEM: tuple[str, UUID | None] = (ActorType.SYSTEM, None)
 
 class VariantInactive(Exception):
     """La variante no está ACTIVE: no se reserva."""
+
+
+class TooManyReservations(Exception):
+    """La celda ya tiene `MAX_ACTIVE_PER_CELL` reservas ACTIVE: libera o espera a que venzan."""
 
 
 class ReservationNotActive(Exception):
@@ -85,10 +91,12 @@ def _actor(ctx: TenantContext) -> tuple[str, UUID | None]:
     return ctx.actor_type, ctx.user_id
 
 
-def _same(found: InventoryReservation, wanted: Wanted) -> bool:
-    """Si la reserva guardada con la clave es la que se pide ahora (la misma petición)."""
+def _same(found: InventoryReservation, wanted: Wanted, actor: tuple[str, UUID | None]) -> bool:
+    """Si la reserva guardada con la clave es la que se pide ahora: la misma petición de la misma
+    persona (otra no recibe la reserva ajena; F3-35)."""
     return (
-        found.variant_id == wanted.variant_id
+        (found.created_by_type, found.created_by_user_id) == actor
+        and found.variant_id == wanted.variant_id
         and found.warehouse_id == wanted.warehouse_id
         and found.quantity == wanted.quantity
         and found.expires_at == wanted.expires_at
@@ -96,10 +104,12 @@ def _same(found: InventoryReservation, wanted: Wanted) -> bool:
     )
 
 
-def _replay(alias: str, wanted: Wanted) -> InventoryReservation | None:
+def _replay(
+    alias: str, wanted: Wanted, actor: tuple[str, UUID | None]
+) -> InventoryReservation | None:
     rows = InventoryReservation.objects.using(alias).filter(idempotency_key=wanted.idempotency_key)
     found: InventoryReservation | None = rows.first()
-    if found is not None and not _same(found, wanted):
+    if found is not None and not _same(found, wanted, actor):
         raise stock.KeyReused(wanted.idempotency_key)
     return found
 
@@ -201,16 +211,18 @@ def _audit(
 
 def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, bool]:
     """Aparta unidades disponibles con su `RESERVE` y su auditoría. Devuelve la reserva y si es
-    nueva (la misma clave con lo mismo devuelve la de entonces). `BadReference`, `VariantInactive`,
-    `ValueError` o, de `stock`, `WarehouseInactive`, `InsufficientStock`, `KeyReused`."""
+    nueva (la misma clave con lo mismo y de la misma persona devuelve la de entonces).
+    `BadReference`, `VariantInactive`, `ValueError` o, de `stock`, `WarehouseInactive`,
+    `InsufficientStock`, `KeyReused`; `TooManyReservations`."""
     alias = require_scope(ctx)
     _check(wanted)
+    actor = _actor(ctx)
     try:
         with transaction.atomic(using=alias):
             variant, warehouse, level = stock.lock_cell(
                 alias, ctx, wanted.variant_id, wanted.warehouse_id
             )
-            if (done := _replay(alias, wanted)) is not None:
+            if (done := _replay(alias, wanted, actor)) is not None:
                 return done, False
             _check_expiry(wanted.expires_at)
             if variant.status != ProductVariant.Status.ACTIVE:
@@ -221,7 +233,11 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
             _expire_due(alias, ctx, level, label)
             if wanted.quantity > level.on_hand - level.reserved:
                 raise stock.InsufficientStock(wanted.variant_id)
-            actor = _actor(ctx)
+            open_ones = InventoryReservation.objects.using(alias).filter(
+                variant_id=wanted.variant_id, warehouse_id=wanted.warehouse_id, status=Status.ACTIVE
+            )
+            if open_ones.count() >= MAX_ACTIVE_PER_CELL:  # con la celda bloqueada
+                raise TooManyReservations(wanted.variant_id)
             reservation = InventoryReservation.objects.using(alias).create(
                 variant_id=wanted.variant_id,
                 warehouse_id=wanted.warehouse_id,
@@ -240,7 +256,7 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
             raise ValueError("expires_at: en el futuro") from None
         if violated != KEY_TAKEN:  # por su nombre, no por el texto: una clave puede decirlo
             raise
-        done = _replay(alias, wanted)  # la misma clave, a la vez, para otra celda
+        done = _replay(alias, wanted, actor)  # la misma clave, a la vez, para otra celda
         assert done is not None  # noqa: S101 — el índice único acaba de verla
         return done, False
     return reservation, True
@@ -261,6 +277,8 @@ def release(ctx: TenantContext, pk: UUID, why: str) -> tuple[InventoryReservatio
         seen = rows.select_for_update().get(pk=pk)  # releída, ya bloqueada
         if seen.status != Status.ACTIVE:
             return _ended(seen)
+        if _due(seen):  # venció: la cierra el job (o la próxima reserva de la celda), no se libera
+            raise ReservationNotActive(Status.EXPIRED)
         _close(alias, seen, level, Status.RELEASED, text, _actor(ctx))
         _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", level)
     return seen, True
