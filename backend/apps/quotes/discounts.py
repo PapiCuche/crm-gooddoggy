@@ -1,28 +1,23 @@
-"""Descuentos, precio manual y solicitud de aprobación de una cotización (F5-09b2; 04 §L.3). Como
-`commands` (solo `apps.quotes.api` los importará), pero aquí sí se comprueba la autoridad de quien
-actúa: `quotes.discount` para descontar y `quotes.override_price` para escribir un precio.
+"""Descuentos, precio manual y solicitud de aprobación de una cotización (F5-09b2; 04 §L.3). Solo
+`apps.quotes.api` los importará; comprueban la autoridad de quien actúa (`quotes.discount`,
+`quotes.override_price` y el alcance de `quotes.update` sobre la cotización, ya bloqueada).
 
-**Descuento** es lo que se quita a mano del precio vigente (el de lista o el de la promoción) al
-final, sobre el de lista y redondeado hacia arriba (el límite no se supera por redondeo), por línea
-y en toda la cotización. Se compara con la política más alta de los roles de quien actúa (sin
-política, 0 %; el Owner no tiene límite) y con su tope en importe. Pasar del límite, o un precio
-manual, no se aplica en silencio: la cotización queda `PENDING_APPROVAL` con su solicitud, en la
-misma transacción, y sus líneas congeladas hasta decidirla o retirarla. `submit_quote` es la única
-vía de `DRAFT` a `APPROVED` y mide con quien envía. Un precio manual solo se admite si cubre el
-costo (`apps.pricing.floor`), en el servidor y sin dar cifras. Todo, bajo el bloqueo de la
-cotización y con su versión; audita el antes y el después (el motivo, como `[texto]`)"""
+**Descuento** es lo quitado a mano del precio que paga el cliente (lista o promoción), hacia arriba,
+por línea y en toda la cotización; se compara con la política más alta de los roles de quien actúa
+(sin política, 0 %; el Owner sin límite) y su tope en importe. Pasar del límite, o un precio manual
+(que además cubre el costo, `apps.pricing.floor`, sin dar cifras), deja la cotización
+`PENDING_APPROVAL` con su solicitud y las líneas congeladas. `submit_quote` es la única vía de
+`DRAFT` a `APPROVED` y mide con quien envía. Retirar la solicitud, aprobar y rechazar: F5-09b3"""
 
-from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import F, Q
-from django.utils import timezone
+from django.db.models import Q
 
 from apps.access.models import MembershipRole, Role
-from apps.access.selectors import execution_context, has_permission
+from apps.access.selectors import can, execution_context, has_permission
 from apps.audit.services import record
 from apps.pricing.floor import covers_cost
 from apps.quotes.commands import (
@@ -39,7 +34,6 @@ from apps.quotes.commands import (
 )
 from apps.quotes.models import (
     ApprovalReason,
-    ApprovalStatus,
     DiscountPolicy,
     DiscountType,
     Quote,
@@ -63,18 +57,7 @@ class PriceRefused(Exception):
     """El precio no se admite, sin decir por qué (el costo no se revela)."""
 
 
-class NoOpenRequest(Exception):
-    """La cotización no espera ninguna aprobación."""
-
-
-@dataclass(frozen=True)
-class Verdict:
-    """Lo quitado a mano (% e importe), el límite de quien actúa y el motivo de la solicitud."""
-
-    percent: Decimal
-    amount: Decimal
-    limit: Decimal
-    reason: str | None
+Verdict = tuple[Decimal, Decimal, Decimal, str | None]  # % e importe quitados, límite, motivo
 
 
 def _require(ctx: TenantContext, code: str) -> Any:
@@ -82,6 +65,13 @@ def _require(ctx: TenantContext, code: str) -> Any:
     if not has_permission(ectx, code):
         raise NotAllowed(code)
     return ectx
+
+
+def _reach(ectx: Any, quote: Quote) -> None:
+    """Quien actúa edita esta cotización: `quotes.update` y su alcance sobre ella (ya bloqueada).
+    Sin eso, tener `quotes.discount` dejaría descontar cualquier cotización por su id."""
+    if not can(ectx, "quotes.update", quote):
+        raise NotAllowed("quotes.update")
 
 
 def _given(line: QuoteItem) -> Decimal:
@@ -94,9 +84,9 @@ def _percent(amount: Decimal, base: Decimal) -> Decimal:
 
 def _verdict(alias: str, ectx: Any, quote: Quote, lines: list[QuoteItem]) -> Verdict:
     amount = sum((_given(line) for line in lines), Decimal(0))
+    # por línea, sobre lo que paga el cliente (con la promoción); el total es una media de ellas
     percent = max(
-        [_percent(amount, sum((x.quantity * x.list_unit_price for x in lines), Decimal(0)))]
-        + [_percent(_given(x), x.quantity * x.list_unit_price) for x in lines]
+        (_percent(_given(x), x.quantity * x.unit_price) for x in lines), default=Decimal(0)
     )
     roles = MembershipRole.objects.using(alias).filter(membership_id=ectx.membership_id)
     role_ids = list(roles.values_list("role_id", flat=True))
@@ -118,7 +108,7 @@ def _verdict(alias: str, ectx: Any, quote: Quote, lines: list[QuoteItem]) -> Ver
         reason = ApprovalReason.MANUAL_PRICE
     elif not within:
         reason = ApprovalReason.DISCOUNT_OVER_LIMIT
-    return Verdict(percent, amount, Decimal(limit), reason)
+    return percent, amount, Decimal(limit), reason
 
 
 def _lines(alias: str, quote: Quote) -> list[QuoteItem]:
@@ -143,12 +133,20 @@ def _money(value: Any, what: str) -> Decimal:
         raise ValueError(f"{what}: un importe como texto o Decimal") from None
 
 
-def _request(ctx: TenantContext, alias: str, quote: Quote, verdict: Verdict) -> QuoteApproval:
+def _ask(ctx: TenantContext, alias: str, quote: Quote, verdict: Verdict) -> QuoteApproval | None:
+    """La solicitud de aprobación, si el veredicto la pide, con su auditoría."""
+    percent, _, limit, reason = verdict
+    if reason is None:
+        return None
     asked: QuoteApproval = QuoteApproval.objects.using(alias).create(
-        organization_id=ctx.organization_id, quote_id=quote.pk, reason=verdict.reason,
-        requested_by_user_id=ctx.user_id, requested_discount_percent=verdict.percent,
-        limit_percent_at_request=verdict.limit,
+        organization_id=ctx.organization_id, quote_id=quote.pk, reason=reason,
+        requested_by_user_id=ctx.user_id, requested_discount_percent=percent,
+        limit_percent_at_request=limit,
     )  # fmt: skip
+    record(ctx, "quote.approval_requested", _entity(quote), {
+        "approval_id": [None, str(asked.pk)], "reason": [None, reason],
+        "requested_percent": [None, str(percent)], "limit_percent": [None, str(limit)],
+    })  # fmt: skip
     return asked
 
 
@@ -162,19 +160,11 @@ def _settle(ctx: TenantContext, alias: str, ectx: Any, quote: Quote, action: str
         for x in lines
     ]  # fmt: skip
     changes: dict[str, Any] = _totals(rows, quote.tax_rate)
-    verdict = _verdict(alias, ectx, quote, lines)
     before = quote.total
-    asked = _request(ctx, alias, quote, verdict) if verdict.reason else None
-    if asked:
+    if _ask(ctx, alias, quote, _verdict(alias, ectx, quote, lines)):
         changes["status"] = QuoteStatus.PENDING_APPROVAL
     _stamp(ctx, alias, quote, changes)
     record(ctx, action, _entity(quote), {**shown, "total": [str(before), str(quote.total)]})
-    if asked:
-        record(ctx, "quote.approval_requested", _entity(quote), {
-            "approval_id": [None, str(asked.pk)], "reason": [None, verdict.reason],
-            "requested_percent": [None, str(verdict.percent)],
-            "limit_percent": [None, str(verdict.limit)],
-        })  # fmt: skip
 
 
 def _line(alias: str, quote: Quote, line_id: Any) -> QuoteItem:
@@ -185,10 +175,9 @@ def _line(alias: str, quote: Quote, line_id: Any) -> QuoteItem:
 
 
 def _shown(line: QuoteItem) -> dict[str, Any]:
-    price = str(line.final_unit_price)
-    return {"line": str(line.pk), "discount_type": line.discount_type,
-            "discount_value": str(line.discount_value), "final_unit_price": price,
-            "manual": line.manual_price_override}  # fmt: skip
+    price, manual = str(line.final_unit_price), line.manual_price_override
+    return {"discount_type": line.discount_type, "discount_value": str(line.discount_value),
+            "final_unit_price": price, "manual": manual}  # fmt: skip
 
 
 def _save(alias: str, line: QuoteItem, **fields: Any) -> dict[str, Any]:
@@ -197,10 +186,8 @@ def _save(alias: str, line: QuoteItem, **fields: Any) -> dict[str, Any]:
         setattr(line, name, value)
     line.line_total = line.quantity * line.final_unit_price
     line.save(using=alias)
-    after = _shown(line)
-    return {k: [before[k], v] for k, v in after.items() if before[k] != v} | {
-        "line": [after["line"], after["line"]]
-    }
+    changed = {k: [before[k], v] for k, v in _shown(line).items() if before[k] != v}
+    return {"line": [str(line.pk)] * 2, **changed}
 
 
 def set_line_discount(
@@ -218,6 +205,7 @@ def set_line_discount(
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.discount")
         quote = _open(alias, quote_id, version)
+        _reach(ectx, quote)
         line = _line(alias, quote, line_id)
         given = {
             DiscountType.NONE: Decimal(0),
@@ -247,6 +235,7 @@ def set_manual_price(
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.override_price")
         quote = _open(alias, quote_id, version)
+        _reach(ectx, quote)
         line = _line(alias, quote, line_id)
         if not 0 < amount < line.unit_price:
             raise ValueError("precio: mayor que cero y menor que el precio vigente")
@@ -263,48 +252,25 @@ def set_manual_price(
 
 def submit_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
     """La única vía de `DRAFT` a `APPROVED`: mide con el límite de quien envía y, si no cabe o hay
-    precio manual, deja `PENDING_APPROVAL` con su solicitud."""
+    precio manual (que vuelve a pasar por el suelo de costo), deja `PENDING_APPROVAL`."""
     alias = require_scope(ctx)
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
+        ectx = _require(ctx, "quotes.update")
         quote = _open(alias, quote_id, version)
-        ectx = execution_context(ctx)
-        verdict = _verdict(alias, ectx, quote, _lines(alias, quote))
-        status = QuoteStatus.PENDING_APPROVAL if verdict.reason else QuoteStatus.APPROVED
-        asked = _request(ctx, alias, quote, verdict) if verdict.reason else None
+        _reach(ectx, quote)
+        lines = _lines(alias, quote)
+        manual = {x.variant_id: x.final_unit_price for x in lines if x.manual_price_override}
+        if manual and not covers_cost(ctx, manual, quote.currency, quote.tax_rate):
+            raise PriceRefused  # el costo pudo subir desde que se escribió el precio
+        verdict = _verdict(alias, ectx, quote, lines)
+        asked = _ask(ctx, alias, quote, verdict)
+        status = QuoteStatus.PENDING_APPROVAL if asked else QuoteStatus.APPROVED
         _stamp(ctx, alias, quote, {"status": status})
         record(ctx, "quote.submitted", _entity(quote), {
-            "status": [QuoteStatus.DRAFT, status],
-            "requested_percent": [None, str(verdict.percent)],
-            "limit_percent": [None, str(verdict.limit)],
+            "status": [QuoteStatus.DRAFT, status], "requested_percent": [None, str(verdict[0])],
+            "limit_percent": [None, str(verdict[2])],
             "approval_id": [None, None if asked is None else str(asked.pk)],
-        })  # fmt: skip
-    return quote
-
-
-def withdraw_approval_request(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
-    """Retira la solicitud abierta y devuelve la cotización al borrador (`NoOpenRequest`)."""
-    alias = require_scope(ctx)
-    quote_id = _uuid(quote_id, "cotización")
-    _integer(version, 1, 2**31 - 1, "versión")
-    with transaction.atomic(using=alias):
-        quote = _locked(alias, quote_id)
-        if quote.version != version:
-            raise StaleVersion(quote_id)
-        waiting = (
-            QuoteApproval.objects.using(alias)
-            .select_for_update(no_key=True)
-            .filter(quote_id=quote_id, status=ApprovalStatus.PENDING)
-        )
-        if quote.status != QuoteStatus.PENDING_APPROVAL or not (asked := waiting.first()):
-            raise NoOpenRequest(quote_id)
-        QuoteApproval.objects.using(alias).filter(pk=asked.pk).update(
-            status=ApprovalStatus.CANCELLED, decided_at=timezone.now(), version=F("version") + 1
-        )
-        _stamp(ctx, alias, quote, {"status": QuoteStatus.DRAFT})
-        record(ctx, "quote.approval_withdrawn", _entity(quote), {
-            "approval_id": [str(asked.pk), str(asked.pk)],
-            "status": [QuoteStatus.PENDING_APPROVAL, QuoteStatus.DRAFT],
         })  # fmt: skip
     return quote
