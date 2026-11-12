@@ -111,7 +111,8 @@ class InventoryLevel(TenantModel):
 class InventoryMovement(TenantModel):
     """Una línea del ledger de stock (modelo de datos §E.9): solo se añade. `quantity` lleva el
     signo del cambio en `on_hand`; un ajuste guarda la diferencia con lo contado. El runtime no
-    tiene `UPDATE` ni `DELETE` sobre la tabla (migración)."""
+    tiene `UPDATE` ni `DELETE` sobre la tabla (migración). En `RESERVE` y `RELEASE` (F3-33),
+    `quantity` cambia `reserved`."""
 
     class Type(models.TextChoices):
         RECEIPT = "RECEIPT"
@@ -173,10 +174,17 @@ class InventoryMovement(TenantModel):
                 condition=models.Q(on_hand_after__gte=0, reserved_after__gte=0),
                 name="inventory_movements_after_ck",
             ),
-            models.CheckConstraint(  # un ingreso suma, una salida resta
+            models.CheckConstraint(  # ingreso y reserva suman; salida y liberación restan
                 condition=~models.Q(movement_type="RECEIPT", quantity__lte=0)
-                & ~models.Q(movement_type="ISSUE", quantity__gte=0),
+                & ~models.Q(movement_type="ISSUE", quantity__gte=0)
+                & ~models.Q(movement_type="RESERVE", quantity__lte=0)
+                & ~models.Q(movement_type="RELEASE", quantity__gte=0),
                 name="inventory_movements_sign_ck",
+            ),
+            models.CheckConstraint(  # F3-33: reservar y liberar nombran su reserva
+                condition=~models.Q(movement_type__in=["RESERVE", "RELEASE"])
+                | models.Q(reference_type="RESERVATION", reference_id__isnull=False),
+                name="inventory_movements_reservation_ck",
             ),
             models.CheckConstraint(
                 condition=models.Q(created_by_type="USER", created_by_user_id__isnull=False)
@@ -185,5 +193,101 @@ class InventoryMovement(TenantModel):
                     & models.Q(created_by_user_id__isnull=True)
                 ),
                 name="inventory_movements_actor_ck",
+            ),
+        ]
+
+
+class InventoryReservation(TenantModel):
+    """Unidades apartadas de una celda variante × almacén (§E.9, F3-33): ACTIVE cuenta en
+    `inventory_levels.reserved`. Solo `apps.inventory.reservations` la escribe, junto a su
+    movimiento; un estado terminal no vuelve a ACTIVE (trigger); el runtime solo cierra."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE"
+        RELEASED = "RELEASED"
+        CONSUMED = "CONSUMED"
+        EXPIRED = "EXPIRED"
+
+    id = uuid7_primary_key()
+    variant = models.ForeignKey(  # misma organización: FKs compuestas en la migración
+        "catalog.ProductVariant",
+        models.PROTECT,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    warehouse = models.ForeignKey(
+        Warehouse, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    quantity = models.IntegerField()
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    expires_at = models.DateTimeField()
+    reason = models.CharField(max_length=255)
+    idempotency_key = models.CharField(max_length=100)
+    created_by_type = models.CharField(max_length=16)  # ActorType (E.0)
+    created_by_user_id = models.UUIDField(null=True, blank=True)  # FK compuesta a membresías
+    created_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by_type = models.CharField(max_length=16, null=True, blank=True)  # noqa: DJ001
+    ended_by_user_id = models.UUIDField(null=True, blank=True)
+    end_reason = models.CharField(max_length=255, null=True, blank=True)  # noqa: DJ001
+
+    class Meta:
+        db_table = "inventory_reservations"
+        indexes = [
+            models.Index(
+                fields=["organization_id", "expires_at"],
+                condition=models.Q(status="ACTIVE"),
+                name="inventory_res_due_idx",
+            ),
+            models.Index(
+                fields=["organization_id", "variant", "warehouse"],
+                condition=models.Q(status="ACTIVE"),
+                name="inventory_res_cell_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "idempotency_key"], name="inventory_res_key_uq"
+            ),
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name="inventory_res_qty_ck"),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["ACTIVE", "RELEASED", "CONSUMED", "EXPIRED"]),
+                name="inventory_res_status_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("created_at")),
+                name="inventory_res_expires_ck",
+            ),
+            models.CheckConstraint(  # abierta sin cierre; cerrada con fecha y actor del cierre
+                condition=models.Q(
+                    status="ACTIVE",
+                    ended_at__isnull=True,
+                    ended_by_type__isnull=True,
+                    ended_by_user_id__isnull=True,
+                    end_reason__isnull=True,
+                )
+                | (
+                    ~models.Q(status="ACTIVE")
+                    & models.Q(ended_at__isnull=False, ended_by_type__isnull=False)
+                ),
+                name="inventory_res_ended_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(created_by_type="USER", created_by_user_id__isnull=False)
+                | (
+                    models.Q(created_by_type__in=["AI_AGENT", "SYSTEM", "INTEGRATION"])
+                    & models.Q(created_by_user_id__isnull=True)
+                ),
+                name="inventory_res_actor_ck",
+            ),
+            models.CheckConstraint(  # USER con su id, el resto sin id
+                condition=models.Q(ended_by_type__isnull=True)
+                | models.Q(ended_by_type="USER", ended_by_user_id__isnull=False)
+                | (
+                    models.Q(ended_by_type__in=["AI_AGENT", "SYSTEM", "INTEGRATION"])
+                    & models.Q(ended_by_user_id__isnull=True)
+                ),
+                name="inventory_res_ender_ck",
             ),
         ]
