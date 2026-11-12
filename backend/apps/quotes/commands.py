@@ -1,6 +1,9 @@
 """Comandos de cotizaciones (F5-09a2; E13-01): crear un borrador desde un contacto o una
-oportunidad, cambiarlo y cancelarlo. No comprueban permisos: los declarará la API (F5-09d y
-F5-09e), la única que los importa (contrato de import-linter). Validan los tipos exactos
+oportunidad, cambiarlo y cancelarlo. Solo la API (F5-09e) los importa (contrato de import-linter).
+Comprueban la autoridad de quien actúa (F5-09c), siempre en este orden: el permiso, la
+cotización bloqueada, su **alcance** (`quotes.view` y el de la acción), la versión y el estado;
+crear pide `quotes.create` y el alcance del contacto y de la oportunidad lo pone la API. Validan
+los tipos exactos
 (`ValueError`, nunca `TypeError` ni `IntegrityError`) y auditan con el antes y el después; el
 texto libre se audita como `[texto]`.
 
@@ -12,6 +15,8 @@ cotización; la membresía de quien actúa no, porque la FK de la autoría la re
 """
 
 import datetime as dt
+import logging
+from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
@@ -20,13 +25,22 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
 
-from apps.access.selectors import execution_context
+from apps.access.selectors import can, execution_context, has_permission
 from apps.audit.services import Entity, record
 from apps.catalog.selectors import live_variants
 from apps.contacts.models import Contact
 from apps.deals.models import Opportunity
 from apps.pricing.services import ListNotVisible, PriceResolution, resolve_many
-from apps.quotes.models import QUANTITY_MAX, TERMINAL, Quote, QuoteItem, QuoteStatus
+from apps.quotes.models import (
+    QUANTITY_MAX,
+    TERMINAL,
+    ApprovalStatus,
+    Quote,
+    QuoteApproval,
+    QuoteItem,
+    QuoteStatus,
+)
+from core.outbox import emit
 from core.sequences import allocate
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -35,6 +49,7 @@ from core.text import line
 ITEMS_MAX, NOTE_MAX, REASON_MAX = 50, 2000, 500
 TAX_RATE = Decimal("0.1800")  # IGV (D-PRC-1: los precios lo llevan incluido)
 CENT = Decimal("0.01")
+logger = logging.getLogger(__name__)
 MONEY_MAX = Decimal(10) ** 12  # `numeric(14,2)`: un importe de la tabla es menor que esto
 _ITEM = frozenset({"variant_id", "quantity"})
 _FIELDS = frozenset({"valid_until", "notes_to_customer", "internal_notes"})
@@ -68,6 +83,17 @@ class QuoteNotDraft(Exception):
 
 class QuoteTerminal(Exception):
     """La cotización ya terminó (aceptada, rechazada, vencida o cancelada)."""
+
+
+class QuoteRefused(Exception):
+    """La base rechazó el cambio por una regla que los comandos no previeron."""
+
+
+class NotAllowed(Exception):
+    """Quien actúa no tiene el permiso que pide esta acción."""
+
+
+NOT_FOUND = "Quote matching query does not exist."
 
 
 def _uuid(value: Any, what: str) -> UUID:
@@ -192,16 +218,59 @@ def _entity(quote: Quote) -> Entity:
     return Entity("quote", quote.pk, quote.number)
 
 
+def _event(ctx: TenantContext, quote: Quote, name: str, **ids: UUID) -> None:
+    """El evento del outbox en la misma transacción: solo identificadores y el estado."""
+    emit(ctx, name, aggregate_type="quote", aggregate_id=quote.pk, payload={
+        "quote_id": str(quote.pk), "contact_id": str(quote.contact_id),
+        "opportunity_id": None if quote.opportunity_id is None else str(quote.opportunity_id),
+        "status": quote.status, "revision": quote.revision,
+        **{k: str(v) for k, v in ids.items()},
+    })  # fmt: skip
+
+
 def _reference(error: IntegrityError) -> Exception:
-    for constraint, field in _REFERENCES.items():
-        if constraint in str(error):
-            return BadReference(field)
-    raise error
+    """La restricción que la base violó, por su nombre (no por el texto): una referencia que no
+    sirve es `BadReference`; cualquier otra, `QuoteRefused`, sin detalle (nunca un error crudo)."""
+    name = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
+    if name in _REFERENCES:
+        return BadReference(_REFERENCES[name])
+    logger.warning("quotes: refused by constraint %s", name)  # solo en el servidor, no al cliente
+    return QuoteRefused()
 
 
 def _locked(alias: str, quote_id: UUID) -> Quote:
     found: Quote = Quote.objects.using(alias).select_for_update(no_key=True).get(pk=quote_id)
     return found
+
+
+def _require(ctx: TenantContext, code: str) -> Any:
+    ectx = execution_context(ctx)
+    if not has_permission(ectx, code):
+        raise NotAllowed(code)
+    return ectx
+
+
+def _reachable(alias: str, quote_id: UUID, allowed: Callable[[Quote], bool]) -> Quote:
+    """La cotización bloqueada si `allowed` (el alcance de quien actúa sobre ella). Una que no
+    existe, de otra organización o fuera del alcance es **la misma** `DoesNotExist`, con el mismo
+    mensaje: no se le cuenta a nadie cuál de las tres es (la API responde 404). Se lee **sin
+    bloquear** y solo si es suya se bloquea (y se vuelve a comprobar con la fila bloqueada): quien
+    no la alcanza no espera a quien la tiene, así que el tiempo no cuenta si existe."""
+    try:
+        if not allowed(Quote.objects.using(alias).get(pk=quote_id)):
+            raise Quote.DoesNotExist
+        found = _locked(alias, quote_id)
+    except Quote.DoesNotExist:
+        raise Quote.DoesNotExist(NOT_FOUND) from None
+    if not allowed(found):
+        raise Quote.DoesNotExist(NOT_FOUND)
+    return found
+
+
+def _within(ectx: Any, *codes: str) -> Callable[[Quote], bool]:
+    """El alcance sobre la cotización: todos los permisos, cada uno con el suyo (`quotes.view` y el
+    de la acción: tener uno no da el otro)."""
+    return lambda quote: all(can(ectx, code, quote) for code in codes)
 
 
 def _links(alias: str, contact_id: UUID | None, opportunity_id: UUID | None) -> UUID:
@@ -233,8 +302,9 @@ def create_quote(
     """Crea un borrador (`DRAFT`, revisión 1, con su número `COT-…`) de un contacto vivo o de una
     oportunidad viva (que ha de ser de ese contacto), con las líneas `{variant_id, quantity}`
     valoradas por el `PricingService` en la lista pedida o la predeterminada. `BadReference` con el
-    campo; `ValueError`. Audita `quote.created`."""
+    campo; `ValueError`; `NotAllowed` sin `quotes.create`. Audita `quote.created`."""
     alias = require_scope(ctx)
+    _require(ctx, "quotes.create")  # lo primero: sin permiso, ni se mira lo que se envía
     if unknown := set(fields) - _FIELDS:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values, wanted = _values(fields), _items(items)
@@ -281,9 +351,11 @@ def _stamp(ctx: TenantContext, alias: str, quote: Quote, changes: dict[str, Any]
 def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: Any) -> Quote:
     """Cambia lo que se envía de un borrador (`valid_until`, las notas y `items`, que reemplazan
     todas las líneas y se vuelven a valorar, en su lista y a la hora de ahora) si nadie lo cambió
-    desde `version`, y audita `quote.updated`; sin cambios no escribe. `DoesNotExist`;
-    `StaleVersion`; `QuoteNotDraft`; `BadReference`; `ValueError`."""
+    desde `version`, y audita `quote.updated`; sin cambios no escribe. `NotAllowed` sin
+    `quotes.update`; `DoesNotExist` (también fuera del alcance); `StaleVersion`; `QuoteNotDraft`;
+    `BadReference`; `ValueError`."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.update")  # lo primero: sin permiso, ni se mira lo que se envía
     if unknown := set(fields) - _FIELDS - {"items"}:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values = _values({k: v for k, v in fields.items() if k != "items"})
@@ -292,7 +364,7 @@ def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: 
     _integer(version, 1, 2**31 - 1, "versión")
     try:
         with transaction.atomic(using=alias):
-            quote = _locked(alias, quote_id)
+            quote = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.update"))
             if quote.version != version:
                 raise StaleVersion(quote_id)
             if quote.status != QuoteStatus.DRAFT:
@@ -335,30 +407,51 @@ def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: 
 def cancel_quote(
     ctx: TenantContext, *, quote_id: UUID, version: int, reason: str | None = None
 ) -> Quote:
-    """Cancela una cotización que no ha terminado, con un motivo opcional (texto libre, que se
-    audita como `[texto]`) y la fecha, y audita `quote.cancelled`. `QuoteTerminal` si ya terminó."""
+    """Cancela una cotización que no ha terminado (`quotes.cancel` en su alcance), con un motivo
+    opcional (texto libre, que se audita como `[texto]`) y la fecha, y audita `quote.cancelled`.
+    Si espera aprobación, su solicitud abierta se cancela **antes**, en la misma transacción (la
+    base no deja salir de `PENDING_APPROVAL` con una abierta), y solo lo hace quien la pidió (con
+    `quotes.update` en su alcance) o quien puede aprobar. `NotAllowed`, `DoesNotExist`,
+    `StaleVersion`, `QuoteTerminal`."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.cancel")  # lo primero: sin permiso, ni se mira lo que se envía
     why = None if reason is None else _text(reason, "motivo", REASON_MAX) or None
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
-    with transaction.atomic(using=alias):
-        quote = _locked(alias, quote_id)
-        if quote.version != version:
-            raise StaleVersion(quote_id)
-        if quote.status in TERMINAL:
-            raise QuoteTerminal(quote_id)
-        before = quote.status
-        gone = {
-            "status": QuoteStatus.CANCELLED,
-            "cancelled_at": timezone.now(),
-            "cancel_reason": why,
-        }
-        _stamp(ctx, alias, quote, gone)
-        shown = "[texto]" if why else None
-        record(
-            ctx,
-            "quote.cancelled",
-            _entity(quote),
-            {"status": [before, QuoteStatus.CANCELLED], "cancel_reason": [None, shown]},
-        )
+    try:
+        with transaction.atomic(using=alias):
+            quote = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.cancel"))
+            before, asked = quote.status, None
+            if before == QuoteStatus.PENDING_APPROVAL:  # quién puede, antes de versión y estado
+                open_ = QuoteApproval.objects.using(alias).select_for_update(no_key=True)
+                asked = open_.filter(quote_id=quote.pk, status=ApprovalStatus.PENDING).first()
+                mine = asked is not None and asked.requested_by_user_id == ctx.user_id
+                if asked is None or not (  # sin solicitud abierta, tampoco: la base no lo permite
+                    (can(ectx, "quotes.approve") and can(ectx, "quotes.view", quote))
+                    or (mine and can(ectx, "quotes.update", quote))
+                ):  # como al retirar: quien pidió o quien puede aprobar (la de la IA, solo este)
+                    raise NotAllowed("quotes.cancel")
+            if quote.version != version:
+                raise StaleVersion(quote_id)
+            if quote.status in TERMINAL:
+                raise QuoteTerminal(quote_id)
+            shown: dict[str, Any] = {
+                "status": [before, QuoteStatus.CANCELLED],
+                "cancel_reason": [None, "[texto]" if why else None],
+            }
+            if asked is not None:
+                asked.status, asked.decided_at = ApprovalStatus.CANCELLED, timezone.now()
+                asked.decided_by_user_id, asked.version = ctx.user_id, asked.version + 1
+                asked.save(using=alias, update_fields=[
+                    "status", "decided_at", "decided_by_user_id", "version", "updated_at",
+                ])  # fmt: skip
+                shown["approval_id"] = [str(asked.pk), str(asked.pk)]
+                shown["approval_status"] = [ApprovalStatus.PENDING, ApprovalStatus.CANCELLED]
+            gone = {"status": QuoteStatus.CANCELLED, "cancelled_at": timezone.now(),
+                    "cancel_reason": why}  # fmt: skip
+            _stamp(ctx, alias, quote, gone)
+            record(ctx, "quote.cancelled", _entity(quote), shown)
+            _event(ctx, quote, "quote.cancelled")
+    except IntegrityError as error:
+        raise _reference(error) from None
     return quote

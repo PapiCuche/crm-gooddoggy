@@ -66,8 +66,10 @@ def approval(world: SimpleNamespace, made: Quote, **over: Any) -> QuoteApproval:
         "requested_by_user_id": world.ana.pk,
         "requested_discount_percent": D("12"),
         "limit_percent_at_request": D("10"),
+        "submitted_by_user_id": world.ana.pk,  # quien la envía es quien actúa (el disparador)
     }
-    with tenant_scope(ctx(world.a)):
+    with tenant_scope(ctx(world.a)), connection.cursor() as cursor:  # quien actúa: Ana
+        cursor.execute("SELECT set_config('app.user_id', %s, true)", [str(world.ana.pk)])
         created: QuoteApproval = QuoteApproval.objects.create(**{**fields, **over})
     return created
 
@@ -300,7 +302,7 @@ def test_a_decision_needs_its_author_and_date_and_the_approver_is_not_the_reques
     ai = approval(
         world, quote(world, number="COT-900102"), reason="AI_CREATED", requested_by_user_id=None
     )
-    decide(world, ai, status="APPROVED", decided_at=now, decided_by_user_id=world.ana.pk)
+    decide(world, ai, status="APPROVED", decided_at=now, decided_by_user_id=boss.pk)
 
 
 def test_a_decision_is_final_and_what_was_requested_never_changes(

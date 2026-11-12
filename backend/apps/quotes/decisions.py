@@ -25,17 +25,18 @@ from django.utils import timezone
 
 from apps.access.selectors import can, execution_context, has_permission
 from apps.audit.services import record
-from apps.pricing.floor import covers_cost
-from apps.quotes.commands import StaleVersion, _entity, _integer, _stamp, _text, _uuid
-from apps.quotes.discounts import (
-    REASON_MAX,
+from apps.quotes.commands import (
     NotAllowed,
-    PriceRefused,
-    _authority,
-    _lines,
+    StaleVersion,
+    _entity,
+    _integer,
     _reachable,
     _require,
+    _stamp,
+    _text,
+    _uuid,
 )
+from apps.quotes.discounts import REASON_MAX, _authority, _floor, _lines
 from apps.quotes.models import ApprovalStatus, Quote, QuoteApproval, QuoteStatus
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
@@ -112,12 +113,11 @@ def approve_quote(
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.approve")
         quote, asked = _pending(alias, quote_id, version, lambda q: _can_decide(ectx, q))
-        if asked.requested_by_user_id == ctx.user_id:
-            raise SelfApproval
+        who = (asked.requested_by_user_id, asked.submitted_by_user_id)
+        if asked.submitted_by_user_id is None or ctx.user_id in who:  # una anterior a 0004 (sin
+            raise SelfApproval  # quien envió) no lo prueba: se cancela y se vuelve a pedir
         lines = _lines(alias, quote)
-        manual = {x.variant_id: x.final_unit_price for x in lines if x.manual_price_override}
-        if manual and not covers_cost(ctx, manual, quote.currency, quote.tax_rate):
-            raise PriceRefused  # el costo pudo subir desde que se pidió: no se revela
+        _floor(ctx, quote, lines)
         if not _authority(alias, ectx, quote, lines)[3]:
             raise BeyondLimit
         _close(ctx, alias, quote, asked, action="quote.approved", approval=ApprovalStatus.APPROVED,
