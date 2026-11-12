@@ -7,6 +7,7 @@ import {
   CheckCheck,
   Clock,
   RefreshCw,
+  FileQuestionMark,
   StickyNote,
   TriangleAlert,
   UserRound,
@@ -282,6 +283,9 @@ function Bubble({ message }: { message: Message }) {
   const format = useFormatter();
   // Una nota interna es otra cosa que un mensaje al cliente: va aparte, rotulada y nunca como uno.
   const note = message.message_type === "NOTE" || message.direction === "INTERNAL";
+  // Un entrante que el canal aún no entiende (imagen, audio…): su propio marcador con el texto fijo.
+  // El cuerpo, si llega, es una frase fija del servidor («Imagen recibida»), nunca el contenido.
+  const unsupported = message.message_type === "UNSUPPORTED" && !note;
   const outbound = message.direction === "OUTBOUND";
   const state = outbound && message.delivery_status ? message.delivery_status : null;
   // El motivo de un fallo sale de una tabla de textos por código cerrado; un código que la tabla
@@ -299,6 +303,7 @@ function Bubble({ message }: { message: Message }) {
         "flex max-w-[85%] flex-col gap-1 rounded-[10px] border p-3 leading-snug",
         outbound && "bg-accent text-accent-foreground border-foreground/10 self-end",
         message.direction === "INBOUND" && "bg-background border-border self-start",
+        unsupported && "bg-surface-raised",
         note &&
           "bg-surface-raised border-foreground/40 w-full max-w-full self-stretch border-dashed",
       )}
@@ -309,10 +314,18 @@ function Bubble({ message }: { message: Message }) {
           {t("note")}
         </p>
       ) : null}
+      {unsupported ? (
+        <p className="text-muted flex items-center gap-1.5 text-xs font-semibold uppercase">
+          <FileQuestionMark aria-hidden className="size-3.5" />
+          {t("unsupported")}
+        </p>
+      ) : null}
       {message.body === null ? (
-        <p className="text-muted text-sm italic">{t("bodyHidden")}</p>
+        unsupported ? null : (
+          <p className="text-muted text-sm italic">{t("bodyHidden")}</p>
+        )
       ) : (
-        <p>
+        <p className={unsupported ? "text-muted text-sm italic" : undefined}>
           <Plain>{message.body}</Plain>
         </p>
       )}
