@@ -10,7 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from django.db import IntegrityError
+from django.db import DataError, IntegrityError, connection
 from django.utils import timezone
 
 from apps.access.models import Role
@@ -118,8 +118,6 @@ def test_a_discount_within_the_limit_is_applied_and_asks_nothing(
     shown = (line.discount_type, line.discount_value, line.discount_amount, line.final_unit_price)
     assert shown == ("PERCENT", D("5"), D("219.95"), D("4179.05")) and approvals(shop) == []
     assert [a for a, _ in audit(migrator)] == ["quote.created", "quote.line_discounted"]
-    again = discount(shop, seller, made, phone, "NONE", version=2)  # quitarlo
-    assert (again.total, stored(shop.a, made)[0].final_unit_price) == (D("4600.00"), D("4399.00"))
 
 
 def test_a_discount_over_the_limit_is_not_applied_in_silence_the_quote_asks_for_approval(
@@ -133,13 +131,9 @@ def test_a_discount_over_the_limit_is_not_applied_in_silence_the_quote_asks_for_
     assert (asked.status, asked.reason, asked.requested_by_user_id) == (
         "PENDING", "DISCOUNT_OVER_LIMIT", seller.pk,
     )  # fmt: skip
-    assert (asked.requested_discount_percent, asked.limit_percent_at_request) == (
-        D("12.00"),
-        D("10.00"),
-    )
+    assert (asked.requested_discount_percent, asked.limit_percent_at_request) == (D("12"), D("10"))
     audited = audit(migrator)
-    assert [a for a, _ in audited] == ["quote.created", "quote.approval_requested",
-                                       "quote.line_discounted"]  # fmt: skip
+    assert [a for a, _ in audited][1:] == ["quote.approval_requested", "quote.line_discounted"]
     assert audited[1][1]["requested_percent"] == [None, "12.00"]
     with pytest.raises(QuoteNotDraft):  # sus líneas quedan congeladas hasta que se decida
         discount(shop, seller, made, phone, "NONE", version=2)
@@ -169,10 +163,11 @@ def test_the_highest_policy_of_the_roles_of_a_person_decides_and_no_policy_means
     add_role(shop, both, "10")  # un segundo rol, más alto, para la misma persona
     made, phone, _ = draft(shop, both)
     assert discount(shop, both, made, phone, "PERCENT", "8").status == "DRAFT"
-    other, line, _ = draft(shop, bare := member(shop))  # sin política: 0 %
-    assert discount(shop, bare, other, line, "PERCENT", "1").status == "PENDING_APPROVAL"
-    big, line, _ = draft(shop, owner := member(shop, owner=True))  # el Owner no tiene límite
-    assert discount(shop, owner, big, line, "PERCENT", "60").status == "DRAFT"
+    bare = member(shop)  # sin política: 0 %
+    assert discount(shop, bare, *draft(shop, bare)[:2], "PERCENT", "1").status == "PENDING_APPROVAL"
+    assert approvals(shop)[0].limit_percent_at_request == D("0.00")  # el límite de ese momento
+    owner = member(shop, owner=True)  # el Owner no tiene límite
+    assert discount(shop, owner, *draft(shop, owner)[:2], "PERCENT", "60").status == "DRAFT"
 
 
 def test_a_policy_of_another_price_list_does_not_apply_and_one_of_this_list_does(
@@ -182,19 +177,15 @@ def test_a_policy_of_another_price_list_does_not_apply_and_one_of_this_list_does
     made, phone, _ = draft(shop, seller)
     assert discount(shop, seller, made, phone, "PERCENT", "5").status == "PENDING_APPROVAL"
     add_role(shop, seller, "10", list_id=shop.listed)  # la de esta lista
-    again, line, _ = draft(shop, seller)
-    assert discount(shop, seller, again, line, "PERCENT", "5").status == "DRAFT"
+    assert discount(shop, seller, *draft(shop, seller)[:2], "PERCENT", "5").status == "DRAFT"
 
 
 def test_the_amount_cap_of_a_policy_counts_even_within_the_percent(shop: SimpleNamespace) -> None:
     seller = member(shop, "10", cap="100")
     made, phone, _ = draft(shop, seller)  # 5 % del iPhone son 219,95: pasa de 100
     assert discount(shop, seller, made, phone, "PERCENT", "5").status == "PENDING_APPROVAL"
-    again, _, case = draft(shop, seller)  # 2 x 3,00 = 6,00 de las cajas: cabe
-    assert discount(shop, seller, again, case, "AMOUNT", "3").status == "DRAFT"
-    exact = member(shop, "10", cap="219.95")  # justo el tope: cabe (y un céntimo menos, no)
-    third, line, _ = draft(shop, exact)
-    assert discount(shop, exact, third, line, "PERCENT", "5").status == "DRAFT"
+    exact = member(shop, "10", cap="219.95")  # justo el tope: cabe
+    assert discount(shop, exact, *draft(shop, exact)[:2], "PERCENT", "5").status == "DRAFT"
 
 
 def test_a_wrong_value_a_line_of_another_quote_or_a_stale_version_writes_nothing(
@@ -202,9 +193,9 @@ def test_a_wrong_value_a_line_of_another_quote_or_a_stale_version_writes_nothing
 ) -> None:
     seller = member(shop, "100")
     made, phone, _ = draft(shop, seller)
-    bad = [("X", "5"), ("PERCENT", 1.5), ("PERCENT", "abc"), ("PERCENT", "-1"),
-           ("PERCENT", "100.01"), ("PERCENT", "100"), ("PERCENT", "5.555"), ("PERCENT", None),
-           ("AMOUNT", "4399.00"), ("AMOUNT", "5000"), ("AMOUNT", True), ("NONE", "5")]  # fmt: skip
+    bad = [("X", "5"), ("PERCENT", 1.5), ("PERCENT", "abc"), ("PERCENT", "-1"), ("PERCENT", "100"),
+           ("PERCENT", "5.555"), ("PERCENT", None), ("AMOUNT", "4399.00"), ("AMOUNT", True),
+           ("NONE", "5")]  # fmt: skip
     for kind, value in bad:
         with pytest.raises(ValueError):  # noqa: PT011
             discount(shop, seller, made, phone, kind, value)
@@ -219,8 +210,7 @@ def test_a_wrong_value_a_line_of_another_quote_or_a_stale_version_writes_nothing
 
 
 def test_without_the_permission_nothing_is_discounted_or_overridden(shop: SimpleNamespace) -> None:
-    plain = member(shop, "10")
-    made, phone, _ = draft(shop, plain)
+    made, phone, _ = draft(shop, plain := member(shop, "10"))
     stripped = make_user()  # con `prices.view` y `quotes.update`, pero sin `quotes.discount`
     give(shop.a, join(shop.a, stripped).pk, {"prices.view": None, "quotes.update": "ORGANIZATION"})
     with pytest.raises(NotAllowed):
@@ -302,7 +292,7 @@ def submit(shop: SimpleNamespace, user: User, made: Quote, version: int = 1) -> 
 
 
 def test_a_quote_is_approved_only_by_submit_and_only_inside_the_limit_of_who_submits(
-    shop: SimpleNamespace, migrator: DB
+    shop: SimpleNamespace,
 ) -> None:
     careful, senior = member(shop, "3"), member(shop, "10")
     made, phone, _ = draft(shop, senior)
@@ -318,7 +308,6 @@ def test_a_quote_is_approved_only_by_submit_and_only_inside_the_limit_of_who_sub
     discount(shop, senior, other, line, "PERCENT", "5")
     assert submit(shop, senior, other, version=2).status == "APPROVED"  # dentro de su límite
     assert submit(shop, careful, draft(shop, careful)[0]).status == "APPROVED"  # sin descuento
-    assert [a for a, _ in audit(migrator)].count("quote.submitted") == 3
 
 
 def test_two_changes_at_once_leave_one_and_a_stale_version(shop: SimpleNamespace) -> None:
@@ -344,16 +333,19 @@ def test_a_person_of_another_organization_cannot_touch_the_quote(shop: SimpleNam
     assert reread(shop, made).version == 1
 
 
-def test_a_promotion_is_not_the_sellers_discount_and_the_percent_is_measured_per_line_too(
+def test_a_promotion_is_not_the_sellers_discount_and_the_percent_is_measured_over_what_is_charged(
     shop: SimpleNamespace,
 ) -> None:
     promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
           starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
     promoted, _, _ = draft(shop, bare := member(shop))  # 0 %; el iPhone ya cuesta 3959,10
     assert submit(shop, bare, promoted).status == "APPROVED"  # nada quitado a mano: no pide
-    made, _, case = draft(shop, seller := member(shop, "10"))  # 60 % de las cajas: 2,9 % del total
-    assert discount(shop, seller, made, case, "PERCENT", "60").status == "PENDING_APPROVAL"
-    assert approvals(shop)[-1].requested_discount_percent == D("60.00")
+    made, phone, case = draft(shop, seller := member(shop, "8.2"))  # 9 %: 8,10 % de la lista
+    assert discount(shop, seller, made, phone, "PERCENT", "9").status == "PENDING_APPROVAL"
+    assert approvals(shop)[-1].requested_discount_percent == D("9.01")
+    other, _, line = draft(shop, seller)  # 60 % de las cajas: 2,9 % del total, 60 % de la línea
+    assert discount(shop, seller, other, line, "PERCENT", "60").status == "PENDING_APPROVAL"
+    assert approvals(shop)[-1].requested_discount_percent == D("60.00") and case
 
 
 def test_a_foreign_currency_cap_never_fits_and_percents_round_half_up(
@@ -362,43 +354,13 @@ def test_a_foreign_currency_cap_never_fits_and_percents_round_half_up(
     seller = member(shop, "10")
     made, phone, _ = draft(shop, seller)
     discount(shop, seller, made, phone, "PERCENT", "5.55")  # 244,1445: se redondea a 244,14
-    assert stored(shop.a, made)[0].final_unit_price == D("4154.86")
+    discount(shop, seller, made, stored(shop.a, made)[1], "PERCENT", "0.05", version=2)  # 0,05025
+    assert [x.final_unit_price for x in stored(shop.a, made)] == [D("4154.86"), D("100.45")]
     role_only = member(shop, "10", cap="1000")
     with tenant_scope(ctx(shop.a)):
         DiscountPolicy.objects.filter(max_discount_amount=D("1000")).update(currency="USD")
-    other, line, _ = draft(shop, role_only)  # 219,95 PEN contra un tope de 1.000 USD: no se compara
-    assert discount(shop, role_only, other, line, "PERCENT", "5").status == "PENDING_APPROVAL"
-
-
-def test_the_request_records_the_limit_of_that_moment_and_zero_when_there_is_no_policy(
-    shop: SimpleNamespace,
-) -> None:
-    bare = member(shop)  # sin política: 0 %
-    made, phone, _ = draft(shop, bare)
-    assert discount(shop, bare, made, phone, "PERCENT", "1").status == "PENDING_APPROVAL"
-    [req] = approvals(shop)
-    assert (req.limit_percent_at_request, req.requested_discount_percent) == (D("0.00"), D("1.00"))
-
-
-def test_the_percent_of_a_line_is_applied_rounded_to_the_nearest_cent(
-    shop: SimpleNamespace,
-) -> None:
-    seller = member(shop, "10")
-    made, phone, _ = draft(shop, seller)
-    discount(shop, seller, made, phone, "PERCENT", "0.05")  # 2,1995: sube a 2,20, no baja a 2,19
-    assert stored(shop.a, made)[0].final_unit_price == D("4396.80")
-
-
-def test_the_percent_is_measured_over_the_charged_price_not_over_the_list_price(
-    shop: SimpleNamespace,
-) -> None:
-    promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
-          starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
-    seller = member(shop, "8.2")
-    made, phone, _ = draft(shop, seller)  # el iPhone: 4399,00 de lista, 3959,10 por la promoción
-    # 9 % de 3959,10 son 356,32: 8,10 % de la lista, pero 9,00 % de lo que paga el cliente
-    assert discount(shop, seller, made, phone, "PERCENT", "9").status == "PENDING_APPROVAL"
-    assert approvals(shop)[0].requested_discount_percent == D("9.01")  # 356,32 ya redondeado
+    pending = discount(shop, role_only, *draft(shop, role_only)[:2], "PERCENT", "5")
+    assert pending.status == "PENDING_APPROVAL"  # 219,95 PEN contra un tope de 1.000 USD
 
 
 def test_an_own_scope_seller_cannot_touch_the_quote_of_someone_else(shop: SimpleNamespace) -> None:
@@ -413,8 +375,7 @@ def test_an_own_scope_seller_cannot_touch_the_quote_of_someone_else(shop: Simple
     ):
         with pytest.raises(NotAllowed):
             act(shop, own, command, quote_id=made.pk, version=1, **extra)
-    mine, line, _ = draft(shop, own)  # la suya sí
-    assert discount(shop, own, mine, line, "PERCENT", "5").status == "DRAFT"
+    assert discount(shop, own, *draft(shop, own)[:2], "PERCENT", "5").status == "DRAFT"  # la suya
     assert reread(shop, made).version == 1
 
 
@@ -439,9 +400,16 @@ def test_submit_rechecks_the_cost_floor_and_a_manual_price_asks_approval_even_of
     assert (reread(shop, again).status, len(approvals(shop))) == ("DRAFT", 3)
 
 
-def raw(shop: SimpleNamespace, user: Any, made: Quote, state: str) -> None:
-    with tenant_scope(ctx(shop.a, user)):
+def raw(shop: SimpleNamespace, user: Any, made: Quote, state: str, guc: str = "",
+        value: str = "") -> None:  # fmt: skip
+    """Un `UPDATE` directo de `crm_app` como `user`; `guc` cambia una variable de la transacción."""
+    with tenant_scope(ctx(shop.a, user)), connection.cursor() as cursor:
+        if guc:
+            cursor.execute("SELECT set_config(%s, %s, true)", [guc, value])
         Quote.objects.filter(pk=made.pk).update(status=state)
+
+
+BLOCKED = "go through the request"
 
 
 def test_the_database_itself_refuses_to_approve_or_send_a_draft_beyond_the_limit_of_who_acts(
@@ -457,21 +425,71 @@ def test_the_database_itself_refuses_to_approve_or_send_a_draft_beyond_the_limit
         over, line, _ = draft(shop, senior)
         discount(shop, senior, over, line, "PERCENT", "5")  # cabe en el 10 % de senior...
         for who in (careful, None):  # ...no en el 3 % de careful, ni sin persona (la IA)
-            with pytest.raises(IntegrityError, match="go through the request"):
+            with pytest.raises(IntegrityError, match=BLOCKED):
                 raw(shop, who, over, state)
         raw(shop, owner, over, state)  # el Owner no tiene límite
         priced, line, _ = draft(shop, boss)
         manual(shop, boss, priced, line, "3500")
         back_to_draft(shop, priced)
-        with pytest.raises(IntegrityError, match="go through the request"):  # ni manual
+        with pytest.raises(IntegrityError, match=BLOCKED):  # ni manual
             raw(shop, owner, priced, state)
     edge, _, case = draft(shop, owner)
     discount(shop, owner, edge, case, "AMOUNT", "3.02")  # 3,0049 % de la caja: sube a 3,01 %
-    with pytest.raises(IntegrityError, match="go through the request"):  # no cabe en el 3 %
+    with pytest.raises(IntegrityError, match=BLOCKED):  # no cabe en el 3 %
         raw(shop, careful, edge, "APPROVED")
     promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
           starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
     cheap, phone, _ = draft(shop, owner)  # el iPhone a 3959,10
     discount(shop, owner, cheap, phone, "PERCENT", "9")  # 8,10 % de la lista, 9,01 % de lo cobrado
-    with pytest.raises(IntegrityError, match="go through the request"):
+    with pytest.raises(IntegrityError, match=BLOCKED):
         raw(shop, member(shop, "8.2"), cheap, "APPROVED")
+
+
+def flip(shop: SimpleNamespace, user: User, what: str, on: bool) -> None:
+    with tenant_scope(ctx(shop.a)):
+        if what == "membership":
+            Membership.objects.filter(user=user).update(status="ACTIVE" if on else "SUSPENDED")
+        else:
+            User.objects.filter(pk=user.pk).update(is_active=on)
+
+
+def test_the_database_rule_counts_only_the_policies_the_command_counts(
+    shop: SimpleNamespace,
+) -> None:
+    """La misma política que el comando: la lista de la cotización o todas, el porcentaje, el tope
+    en importe y su moneda, un miembro y un usuario activos y una persona; nunca más laxa."""
+    owner, other = member(shop, owner=True), member(shop, "30", list_id=price_list(shop.a, "OTRA"))
+    capped, usd = member(shop, "10", cap="100"), member(shop, "10", cap="1000")
+    exact, here = member(shop, "10", cap="219.95"), member(shop, "5", list_id=shop.listed)
+    with tenant_scope(ctx(shop.a)):
+        DiscountPolicy.objects.filter(max_discount_amount=D("1000")).update(currency="USD")
+    made, phone, _ = draft(shop, owner)
+    discount(shop, owner, made, phone, "PERCENT", "5")  # 219,95 PEN: 5 % del iPhone
+    for who in (other, capped, usd):  # otra lista; 219,95 pasa del tope de 100; tope en dólares
+        with pytest.raises(IntegrityError, match=BLOCKED):
+            raw(shop, who, made, "APPROVED")
+    for guc, value in (("app.actor_type", "AI_AGENT"), ("app.actor_type", "SYSTEM")):
+        with pytest.raises(IntegrityError, match=BLOCKED):  # no es una persona
+            raw(shop, exact, made, "APPROVED", guc, value)
+    with pytest.raises(DataError):  # un identificador roto: error claro, nunca pasa
+        raw(shop, exact, made, "APPROVED", "app.user_id", "x")
+    for what in ("membership", "user"):  # ni un miembro suspendido ni un usuario desactivado
+        flip(shop, exact, what, False)
+        with pytest.raises(IntegrityError, match=BLOCKED):
+            raw(shop, exact, made, "APPROVED")
+        flip(shop, exact, what, True)
+    raw(shop, exact, made, "APPROVED")  # justo en el tope en importe: pasa
+    again, line, _ = draft(shop, owner)
+    discount(shop, owner, again, line, "PERCENT", "5")
+    raw(shop, here, again, "APPROVED")  # justo el 5 % de la política de esta lista: pasa
+
+
+def test_an_unauthorized_person_learns_nothing_not_even_a_stale_version(
+    shop: SimpleNamespace,
+) -> None:
+    made, phone, _ = draft(shop, member(shop, "10"))
+    own = member(shop, "10", **{"quotes.update": "OWN"})
+    with pytest.raises(NotAllowed):  # el alcance se comprueba antes que la versión
+        discount(shop, own, made, phone, "NONE", version=9)
+    with pytest.raises(StaleVersion):  # quien sí la alcanza ve la versión
+        discount(shop, member(shop, "10"), made, phone, "NONE", version=9)

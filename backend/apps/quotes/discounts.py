@@ -2,12 +2,11 @@
 `apps.quotes.api` los importará; comprueban la autoridad de quien actúa (`quotes.discount`,
 `quotes.override_price` y el alcance de `quotes.update` sobre la cotización, ya bloqueada).
 
-**Descuento** es lo quitado a mano del precio que paga el cliente (lista o promoción), hacia arriba,
-por línea y en toda la cotización; se compara con la política más alta de los roles de quien actúa
-(sin política, 0 %; el Owner sin límite) y su tope en importe. Pasar del límite, o un precio manual
-(que además cubre el costo, `apps.pricing.floor`, sin dar cifras), deja la cotización
-`PENDING_APPROVAL` con su solicitud y las líneas congeladas. `submit_quote` es la única vía de
-`DRAFT` a `APPROVED` y mide con quien envía. Retirar la solicitud, aprobar y rechazar: F5-09b3"""
+**Descuento** es lo quitado a mano del precio que paga el cliente (lista o promoción), hacia arriba
+y por línea; se compara con la política más alta de los roles de quien actúa (sin política, 0 %; el
+Owner sin límite) y su tope en importe. Pasar del límite, o un precio manual (que cubre el costo,
+`apps.pricing.floor`), deja `PENDING_APPROVAL` con su solicitud y las líneas congeladas.
+`submit_quote` es la única vía de `DRAFT` a `APPROVED` y mide con quien envía (F5-09b3: el resto)"""
 
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
@@ -68,8 +67,7 @@ def _require(ctx: TenantContext, code: str) -> Any:
 
 
 def _reach(ectx: Any, quote: Quote) -> None:
-    """Quien actúa edita esta cotización: `quotes.update` y su alcance sobre ella (ya bloqueada).
-    Sin eso, tener `quotes.discount` dejaría descontar cualquier cotización por su id."""
+    """El alcance de `quotes.update` de quien actúa sobre la cotización ya bloqueada."""
     if not can(ectx, "quotes.update", quote):
         raise NotAllowed("quotes.update")
 
@@ -115,9 +113,11 @@ def _lines(alias: str, quote: Quote) -> list[QuoteItem]:
     return list(QuoteItem.objects.using(alias).filter(quote_id=quote.pk).order_by("sort_order"))
 
 
-def _open(alias: str, quote_id: UUID, version: int) -> Quote:
-    """La cotización bloqueada, con su versión y en borrador."""
+def _open(alias: str, quote_id: UUID, version: int, ectx: Any) -> Quote:
+    """La cotización bloqueada, al alcance de quien actúa (antes que su versión o estado, que no
+    se le cuentan a quien no la ve), con su versión y en borrador."""
     found = _locked(alias, quote_id)
+    _reach(ectx, found)
     if found.version != version:
         raise StaleVersion(quote_id)
     if found.status != QuoteStatus.DRAFT:
@@ -134,7 +134,6 @@ def _money(value: Any, what: str) -> Decimal:
 
 
 def _ask(ctx: TenantContext, alias: str, quote: Quote, verdict: Verdict) -> QuoteApproval | None:
-    """La solicitud de aprobación, si el veredicto la pide, con su auditoría."""
     percent, _, limit, reason = verdict
     if reason is None:
         return None
@@ -152,13 +151,16 @@ def _ask(ctx: TenantContext, alias: str, quote: Quote, verdict: Verdict) -> Quot
 
 def _settle(ctx: TenantContext, alias: str, ectx: Any, quote: Quote, action: str,
             shown: dict[str, Any]) -> None:  # fmt: skip
-    """Importes, medida y, si hace falta, la solicitud y `PENDING_APPROVAL`; audita ambas."""
     lines = _lines(alias, quote)
     rows = [
-        {"quantity": x.quantity, "list_unit_price": x.list_unit_price,
-         "final_unit_price": x.final_unit_price, "line_total": x.line_total}
+        {
+            "quantity": x.quantity,
+            "list_unit_price": x.list_unit_price,
+            "final_unit_price": x.final_unit_price,
+            "line_total": x.line_total,
+        }
         for x in lines
-    ]  # fmt: skip
+    ]
     changes: dict[str, Any] = _totals(rows, quote.tax_rate)
     before = quote.total
     if _ask(ctx, alias, quote, _verdict(alias, ectx, quote, lines)):
@@ -168,26 +170,22 @@ def _settle(ctx: TenantContext, alias: str, ectx: Any, quote: Quote, action: str
 
 
 def _line(alias: str, quote: Quote, line_id: Any) -> QuoteItem:
-    found: QuoteItem = QuoteItem.objects.using(alias).get(
-        pk=_uuid(line_id, "línea"), quote_id=quote.pk
-    )
+    found: QuoteItem = QuoteItem.objects.using(alias).get(pk=_uuid(line_id, "línea"), quote=quote)
     return found
 
 
-def _shown(line: QuoteItem) -> dict[str, Any]:
-    price, manual = str(line.final_unit_price), line.manual_price_override
-    return {"discount_type": line.discount_type, "discount_value": str(line.discount_value),
-            "final_unit_price": price, "manual": manual}  # fmt: skip
-
-
 def _save(alias: str, line: QuoteItem, **fields: Any) -> dict[str, Any]:
-    before = _shown(line)
+    """Cambia la línea y devuelve el antes y el después de lo que la audita."""
+    names = ("discount_type", "discount_value", "final_unit_price", "manual_price_override")
+    before = {n: str(getattr(line, n)) for n in names}
     for name, value in fields.items():
         setattr(line, name, value)
     line.line_total = line.quantity * line.final_unit_price
     line.save(using=alias)
-    changed = {k: [before[k], v] for k, v in _shown(line).items() if before[k] != v}
-    return {"line": [str(line.pk)] * 2, **changed}
+    after = {n: str(getattr(line, n)) for n in names}
+    return {"line": [str(line.pk)] * 2} | {
+        n: [before[n], after[n]] for n in names if before[n] != after[n]
+    }
 
 
 def set_line_discount(
@@ -204,8 +202,7 @@ def set_line_discount(
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.discount")
-        quote = _open(alias, quote_id, version)
-        _reach(ectx, quote)
+        quote = _open(alias, quote_id, version, ectx)
         line = _line(alias, quote, line_id)
         given = {
             DiscountType.NONE: Decimal(0),
@@ -234,8 +231,7 @@ def set_manual_price(
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.override_price")
-        quote = _open(alias, quote_id, version)
-        _reach(ectx, quote)
+        quote = _open(alias, quote_id, version, ectx)
         line = _line(alias, quote, line_id)
         if not 0 < amount < line.unit_price:
             raise ValueError("precio: mayor que cero y menor que el precio vigente")
@@ -258,8 +254,7 @@ def submit_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.update")
-        quote = _open(alias, quote_id, version)
-        _reach(ectx, quote)
+        quote = _open(alias, quote_id, version, ectx)
         lines = _lines(alias, quote)
         manual = {x.variant_id: x.final_unit_price for x in lines if x.manual_price_override}
         if manual and not covers_cost(ctx, manual, quote.currency, quote.tax_rate):

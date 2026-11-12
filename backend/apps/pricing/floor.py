@@ -1,8 +1,7 @@
 """El suelo de costo de un precio escrito a mano (F5-09b2; ADR-006 §1): ¿el precio cubre el costo?
-Lo pregunta una cotización al fijar un precio manual, y lo único que sale de aquí es un sí o un no:
-ni el costo ni la diferencia llegan a quien pregunta, a un log ni a un mensaje de error. Falla
-cerrado: una variante sin costo vigente, o con costo en otra moneda, no se puede comprobar y el
-precio no se admite. Es, con `costs`, el único código que lee costos (contrato de import-linter)."""
+Lo único que sale de aquí es un sí o un no: ni el costo ni la diferencia llegan a quien pregunta, a
+un log ni a un error. Falla cerrado: sin costo vigente, o en otra moneda, el precio no se admite.
+Es, con `costs`, el único código que lee costos (contrato de import-linter)."""
 
 from collections.abc import Mapping
 from decimal import Decimal
