@@ -20,7 +20,7 @@ from apps.organizations.models import OrganizationMembership as Membership
 from apps.pricing import costs
 from apps.quotes import commands, decisions, discounts
 from apps.quotes.commands import NotAllowed, QuoteTerminal, StaleVersion
-from apps.quotes.models import Quote
+from apps.quotes.models import Quote, QuoteApproval
 from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
 from tests.test_authorization import give
@@ -162,17 +162,25 @@ def test_without_the_permission_of_the_action_nothing_is_read_and_a_random_id_an
 @pytest.mark.parametrize(
     ("command", "code", "extra"),
     [(commands.update_quote, "quotes.update", {"internal_notes": "x"}),
-     (commands.cancel_quote, "quotes.cancel", {})],
+     (commands.cancel_quote, "quotes.cancel", {}),
+     (discounts.submit_quote, "quotes.update", {}),
+     (discounts.set_line_discount, "quotes.update", {"line_id": uuid4(), "discount_type": "NONE"}),
+     (discounts.set_manual_price, "quotes.update",
+      {"line_id": uuid4(), "price": "1", "reason": "x"})],
 )  # fmt: skip
 def test_the_permission_does_not_give_the_scope_and_a_stale_version_is_not_told_outside_it(
     shop: SimpleNamespace, command: Any, code: str, extra: dict[str, Any], view: str, act_on: str
 ) -> None:
-    grants = {code: act_on, "quotes.view": view}  # ver todas sin poder cambiarlas, o al revés
+    extra_codes: dict[Any, str] = {discounts.set_line_discount: "quotes.discount",
+                                   discounts.set_manual_price: "quotes.override_price"}  # fmt: skip
+    extra_code = extra_codes.get(command)
+    plus = {extra_code: None} if extra_code else {}  # el permiso propio de la acción, sin alcance
+    grants = {code: act_on, "quotes.view": view, **plus}  # ver sin poder cambiar, o al revés
     made = draft(shop, worker(shop))[0]  # de otra persona
     mine = plain(shop, grants)
     with tenant_scope(ctx(shop.b)):
         give(shop.b, Membership.objects.get(user=shop.luis).pk,
-             {**CANCEL, "quotes.update": "ORGANIZATION"})  # fmt: skip
+             {**CANCEL, "quotes.update": "ORGANIZATION", **plus})  # fmt: skip
     seen = set()
     for org, who, target in ((shop.a, mine, made.pk), (shop.a, mine, uuid4()),
                              (shop.b, shop.luis, made.pk)):  # fmt: skip
@@ -181,7 +189,7 @@ def test_the_permission_does_not_give_the_scope_and_a_stale_version_is_not_told_
         seen.add((type(caught.value), str(caught.value), caught.value.args))
     assert len(seen) == 1 and reread(shop, made).version == 1
     with pytest.raises(StaleVersion):  # quien sí la alcanza, sí
-        act(shop, worker(shop, "10", **{"quotes.update": "ORGANIZATION"}), command,
+        act(shop, worker(shop, "10", **{"quotes.update": "ORGANIZATION", **plus}), command,
             quote_id=made.pk, version=9, **extra)  # fmt: skip
 
 
@@ -249,3 +257,87 @@ def test_the_floor_takes_the_largest_cost_the_current_one_and_the_ones_scheduled
     assert refused.value.args == () and (reread(shop, made).status, len(approvals(shop))) == (
         "PENDING_APPROVAL", 1,
     )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("command", "extra"),
+    [(commands.create_quote, {"items": "no es una lista", "contact_id": "x"}),
+     (commands.update_quote, {"quote_id": "x", "version": "y", "items": 3}),
+     (commands.cancel_quote, {"quote_id": "x", "version": "y", "reason": 7})],
+)  # fmt: skip
+def test_without_permission_even_malformed_input_is_a_permission_error(
+    command: Any, extra: dict[str, Any], shop: SimpleNamespace
+) -> None:
+    nobody = plain(shop, {"quotes.view": "ORGANIZATION"})
+    with pytest.raises(NotAllowed):  # no un `ValueError` que cuente cómo se valida
+        act(shop, nobody, command, **extra)
+
+
+def test_the_one_who_submitted_what_the_ai_wrote_cannot_approve_it_either(
+    shop: SimpleNamespace, migrator: DB
+) -> None:
+    who = boss(shop, "10", **{"quotes.update": "ORGANIZATION"})  # envía y también puede aprobar
+    made = ai_draft(shop, migrator, who)
+    assert submit(shop, who, made).status == "PENDING_APPROVAL"
+    [req] = approvals(shop)
+    assert (req.requested_by_user_id, req.submitted_by_user_id) == (None, who.pk)
+    with pytest.raises(decisions.SelfApproval):
+        act(shop, who, decisions.approve_quote, quote_id=made.pk, version=2)
+    with tenant_scope(ctx(shop.a, who)), pytest.raises(IntegrityError, match="separation"):
+        QuoteApproval.objects.filter(pk=req.pk).update(  # y por SQL directo, tampoco
+            status="APPROVED", decided_by_user_id=who.pk, decided_at=timezone.now()
+        )
+    other = boss(shop, "10")
+    with tenant_scope(ctx(shop.a, who)), pytest.raises(IntegrityError, match="never changes"):
+        QuoteApproval.objects.filter(pk=req.pk).update(submitted_by_user_id=other.pk)
+    assert act(shop, other, decisions.approve_quote, quote_id=made.pk, version=2).status == (
+        "APPROVED"
+    )
+
+
+def test_a_pending_quote_without_an_open_request_is_not_cancelled_by_anyone(
+    shop: SimpleNamespace, migrator: DB
+) -> None:
+    made, seller = asked(shop, worker(shop, "3"))
+    migrator.execute("UPDATE quote_approvals SET status = 'CANCELLED', decided_at = now()")
+    with pytest.raises(NotAllowed):  # no queda a quién pedir permiso: se cierra, no se salta
+        cancelling(shop, seller, made)
+    assert reread(shop, made).status == "PENDING_APPROVAL"
+
+
+@pytest.mark.parametrize("failing", ["_stamp"])
+@pytest.mark.parametrize("name", ["cancel", "update"])
+def test_a_rule_of_the_database_the_commands_did_not_foresee_is_a_domain_error(
+    shop: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, name: str, failing: str
+) -> None:
+    made, who = draft(shop, worker(shop))[0], worker(shop)
+
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise IntegrityError("una regla que nadie previó")
+
+    monkeypatch.setattr(commands, failing, boom)
+    with pytest.raises(commands.QuoteRefused):
+        if name == "cancel":
+            cancelling(shop, who, made, version=1)
+        else:
+            act(shop, who, commands.update_quote, quote_id=made.pk, version=1, internal_notes="x")
+
+
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_a_cost_in_another_currency_refuses_the_price_without_saying_why(
+    shop: SimpleNamespace, migrator: DB, scheduled: bool
+) -> None:
+    pricer = worker(shop, "100", **{"quotes.override_price": None})
+    cost(shop, shop.iphone, "1000")
+    made, phone, _ = draft(shop, pricer)
+    if scheduled:  # el vigente en soles, el programado en dólares
+        when = timezone.now() + timedelta(days=3)
+        migrator.execute("UPDATE variant_costs SET ends_at = %s WHERE variant_id = %s",
+                         [when, shop.iphone])  # fmt: skip
+        cost(shop, shop.iphone, "10", starts_at=when, source="IMPORT", currency="USD")
+    else:
+        migrator.execute("UPDATE variant_costs SET currency = 'USD' WHERE variant_id = %s",
+                         [shop.iphone])  # fmt: skip
+    with pytest.raises(discounts.PriceRefused) as refused:
+        manual(shop, pricer, made, phone, "3500")
+    assert refused.value.args == ()

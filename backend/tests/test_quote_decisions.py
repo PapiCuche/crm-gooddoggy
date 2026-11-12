@@ -315,7 +315,8 @@ def test_permission_and_scope_come_before_the_version_or_the_state(shop: SimpleN
             act(shop, plain, command, quote_id=uuid4(), **{**extra, "version": 1})
     assert reread(shop, made).version == 2
     own = boss(shop, "10", **{"quotes.view": "OWN"})  # aprueba, pero solo ve las suyas
-    blind = member(shop, "10", **{"quotes.approve": None})  # aprueba, no puede ver ninguna
+    blind = make_user()  # aprueba, no puede ver ninguna
+    give(shop.a, join(shop.a, blind).pk, {"quotes.approve": None})
     for who in (own, blind):
         for command, extra in (
             (decisions.approve_quote, {}), (decisions.reject_quote, {"reason": "x"}),

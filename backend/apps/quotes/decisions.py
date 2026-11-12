@@ -113,8 +113,8 @@ def approve_quote(
     with transaction.atomic(using=alias):
         ectx = _require(ctx, "quotes.approve")
         quote, asked = _pending(alias, quote_id, version, lambda q: _can_decide(ectx, q))
-        if asked.requested_by_user_id == ctx.user_id:
-            raise SelfApproval
+        if ctx.user_id in (asked.requested_by_user_id, asked.submitted_by_user_id):
+            raise SelfApproval  # ni quien pidió ni quien envió (la de la IA no tiene a quien pidió)
         lines = _lines(alias, quote)
         _floor(ctx, quote, lines)
         if not _authority(alias, ectx, quote, lines)[3]:

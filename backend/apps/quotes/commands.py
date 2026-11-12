@@ -83,6 +83,10 @@ class QuoteTerminal(Exception):
     """La cotización ya terminó (aceptada, rechazada, vencida o cancelada)."""
 
 
+class QuoteRefused(Exception):
+    """La base rechazó el cambio por una regla que los comandos no previeron."""
+
+
 class NotAllowed(Exception):
     """Quien actúa no tiene el permiso que pide esta acción."""
 
@@ -223,10 +227,10 @@ def _event(ctx: TenantContext, quote: Quote, name: str, **ids: UUID) -> None:
 
 
 def _reference(error: IntegrityError) -> Exception:
-    for constraint, field in _REFERENCES.items():
-        if constraint in str(error):
-            return BadReference(field)
-    raise error
+    """La restricción que la base violó, por su nombre (no por el texto): una referencia que no
+    sirve es `BadReference`; cualquier otra, `QuoteRefused`, sin detalle (nunca un error crudo)."""
+    name = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
+    return BadReference(_REFERENCES[name]) if name in _REFERENCES else QuoteRefused()
 
 
 def _locked(alias: str, quote_id: UUID) -> Quote:
@@ -295,6 +299,7 @@ def create_quote(
     valoradas por el `PricingService` en la lista pedida o la predeterminada. `BadReference` con el
     campo; `ValueError`; `NotAllowed` sin `quotes.create`. Audita `quote.created`."""
     alias = require_scope(ctx)
+    _require(ctx, "quotes.create")  # lo primero: sin permiso, ni se mira lo que se envía
     if unknown := set(fields) - _FIELDS:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values, wanted = _values(fields), _items(items)
@@ -303,7 +308,6 @@ def create_quote(
     listed = None if price_list_id is None else _uuid(price_list_id, "lista de precios")
     try:
         with transaction.atomic(using=alias):
-            _require(ctx, "quotes.create")
             contact = _links(alias, contact, opportunity)
             rows, price = _lines(alias, ctx, wanted, listed)
             quote: Quote = Quote.objects.using(alias).create(
@@ -346,6 +350,7 @@ def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: 
     `quotes.update`; `DoesNotExist` (también fuera del alcance); `StaleVersion`; `QuoteNotDraft`;
     `BadReference`; `ValueError`."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.update")  # lo primero: sin permiso, ni se mira lo que se envía
     if unknown := set(fields) - _FIELDS - {"items"}:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values = _values({k: v for k, v in fields.items() if k != "items"})
@@ -354,7 +359,6 @@ def update_quote(ctx: TenantContext, *, quote_id: UUID, version: int, **fields: 
     _integer(version, 1, 2**31 - 1, "versión")
     try:
         with transaction.atomic(using=alias):
-            ectx = _require(ctx, "quotes.update")
             quote = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.update"))
             if quote.version != version:
                 raise StaleVersion(quote_id)
@@ -405,31 +409,31 @@ def cancel_quote(
     `quotes.update` en su alcance) o quien puede aprobar. `NotAllowed`, `DoesNotExist`,
     `StaleVersion`, `QuoteTerminal`."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.cancel")  # lo primero: sin permiso, ni se mira lo que se envía
     why = None if reason is None else _text(reason, "motivo", REASON_MAX) or None
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
-    with transaction.atomic(using=alias):
-        ectx = _require(ctx, "quotes.cancel")
-        quote = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.cancel"))
-        if quote.version != version:
-            raise StaleVersion(quote_id)
-        if quote.status in TERMINAL:
-            raise QuoteTerminal(quote_id)
-        before = quote.status
-        shown: dict[str, Any] = {
-            "status": [before, QuoteStatus.CANCELLED],
-            "cancel_reason": [None, "[texto]" if why else None],
-        }
-        if before == QuoteStatus.PENDING_APPROVAL:
-            open_ = QuoteApproval.objects.using(alias).select_for_update(no_key=True)
-            asked = open_.filter(quote_id=quote.pk, status=ApprovalStatus.PENDING).first()
-            mine = asked is not None and asked.requested_by_user_id == ctx.user_id
-            if asked is not None and not (
-                (can(ectx, "quotes.approve") and can(ectx, "quotes.view", quote))
-                or (mine and can(ectx, "quotes.update", quote))
-            ):  # como al retirar: quien pidió o quien puede aprobar (la de la IA, solo este)
-                raise NotAllowed("quotes.cancel")
-            if asked is not None:
+    try:
+        with transaction.atomic(using=alias):
+            quote = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.cancel"))
+            if quote.version != version:
+                raise StaleVersion(quote_id)
+            if quote.status in TERMINAL:
+                raise QuoteTerminal(quote_id)
+            before = quote.status
+            shown: dict[str, Any] = {
+                "status": [before, QuoteStatus.CANCELLED],
+                "cancel_reason": [None, "[texto]" if why else None],
+            }
+            if before == QuoteStatus.PENDING_APPROVAL:
+                open_ = QuoteApproval.objects.using(alias).select_for_update(no_key=True)
+                asked = open_.filter(quote_id=quote.pk, status=ApprovalStatus.PENDING).first()
+                mine = asked is not None and asked.requested_by_user_id == ctx.user_id
+                if asked is None or not (  # sin solicitud abierta, tampoco: la base no lo permite
+                    (can(ectx, "quotes.approve") and can(ectx, "quotes.view", quote))
+                    or (mine and can(ectx, "quotes.update", quote))
+                ):  # como al retirar: quien pidió o quien puede aprobar (la de la IA, solo este)
+                    raise NotAllowed("quotes.cancel")
                 asked.status, asked.decided_at = ApprovalStatus.CANCELLED, timezone.now()
                 asked.decided_by_user_id, asked.version = ctx.user_id, asked.version + 1
                 asked.save(using=alias, update_fields=[
@@ -437,9 +441,11 @@ def cancel_quote(
                 ])  # fmt: skip
                 shown["approval_id"] = [str(asked.pk), str(asked.pk)]
                 shown["approval_status"] = [ApprovalStatus.PENDING, ApprovalStatus.CANCELLED]
-        gone = {"status": QuoteStatus.CANCELLED, "cancelled_at": timezone.now(),
-                "cancel_reason": why}  # fmt: skip
-        _stamp(ctx, alias, quote, gone)
-        record(ctx, "quote.cancelled", _entity(quote), shown)
-        _event(ctx, quote, "quote.cancelled")
+            gone = {"status": QuoteStatus.CANCELLED, "cancelled_at": timezone.now(),
+                    "cancel_reason": why}  # fmt: skip
+            _stamp(ctx, alias, quote, gone)
+            record(ctx, "quote.cancelled", _entity(quote), shown)
+            _event(ctx, quote, "quote.cancelled")
+    except IntegrityError as error:
+        raise _reference(error) from None
     return quote

@@ -36,7 +36,8 @@ from tests.test_quote_commands import world as world  # noqa: PLC0414
 _ = shop
 pytestmark = pytest.mark.usefixtures("tenant_db")
 ALLOW: dict[str, str | None] = {"prices.view": None, "quotes.discount": None,
-                                "quotes.create": None, "quotes.update": "ORGANIZATION"}  # fmt: skip
+                                "quotes.create": None, "quotes.update": "ORGANIZATION",
+                                "quotes.view": "ORGANIZATION"}  # fmt: skip
 
 
 def add_role(shop: SimpleNamespace, user: User, percent: str | None = None, owner: bool = False,

@@ -1,6 +1,7 @@
 """Descuentos, precio manual y solicitud de aprobación de una cotización (F5-09b2; 04 §L.3). Solo
 `apps.quotes.api` los importará; comprueban la autoridad de quien actúa (`quotes.discount`,
-`quotes.override_price` y el alcance de `quotes.update` sobre la cotización, ya bloqueada).
+`quotes.override_price` y el alcance de `quotes.view` y `quotes.update` sobre la cotización, ya
+bloqueada).
 
 **Descuento** es lo quitado a mano del precio que paga el cliente (lista o promoción), hacia arriba
 y por línea; se compara con la política más alta de los roles de quien actúa (sin política, 0 %; el
@@ -119,7 +120,9 @@ def _floor(ctx: TenantContext, quote: Quote, lines: list[QuoteItem]) -> None:
 def _open(alias: str, quote_id: UUID, version: int, ectx: Any) -> Quote:
     """La cotización bloqueada, al alcance de quien actúa (antes que su versión o estado, que no
     se le cuentan a quien no la ve), con su versión y en borrador."""
-    found = _reachable(alias, quote_id, lambda q: can(ectx, "quotes.update", q))
+    found = _reachable(
+        alias, quote_id, lambda q: can(ectx, "quotes.view", q) and can(ectx, "quotes.update", q)
+    )
     if found.version != version:
         raise StaleVersion(quote_id)
     if found.status != QuoteStatus.DRAFT:
@@ -142,6 +145,7 @@ def _ask(ctx: TenantContext, alias: str, quote: Quote, verdict: Verdict) -> Quot
     asked: QuoteApproval = QuoteApproval.objects.using(alias).create(
         organization_id=ctx.organization_id, quote_id=quote.pk, reason=reason,
         requested_by_user_id=None if reason == ApprovalReason.AI_CREATED else ctx.user_id,
+        submitted_by_user_id=ctx.user_id,  # también la de la IA: quien la envía no la aprueba
         requested_discount_percent=percent,
         limit_percent_at_request=limit,
     )  # fmt: skip

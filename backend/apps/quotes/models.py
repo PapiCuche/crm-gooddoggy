@@ -329,6 +329,8 @@ class QuoteApproval(TenantModel):
     )
     reason = models.CharField(max_length=20, choices=ApprovalReason.choices)
     requested_by_user_id = models.UUIDField(null=True, blank=True)  # nadie: la IA
+    submitted_by_user_id = models.UUIDField(null=True, blank=True)  # quien la envió, también si la
+    # pidió la IA: tampoco aprueba lo que envió (F5-09c)
     requested_discount_percent = models.DecimalField(
         max_digits=5, decimal_places=2, null=True, blank=True
     )
@@ -379,10 +381,11 @@ class QuoteApproval(TenantModel):
                 | models.Q(status="CANCELLED", decided_at__isnull=False),
                 name="quote_approvals_decided_ck",
             ),
-            models.CheckConstraint(  # quien aprueba no es quien pidió; rechazar lleva su motivo
+            models.CheckConstraint(  # quien aprueba no pidió ni envió; rechazar lleva su motivo
                 condition=~models.Q(
                     status="APPROVED", decided_by_user_id=models.F("requested_by_user_id")
                 )
+                & ~models.Q(status="APPROVED", decided_by_user_id=models.F("submitted_by_user_id"))
                 & (~models.Q(status="REJECTED") | models.Q(comment__regex=r"\S")),
                 name="quote_approvals_separation_ck",
             ),
