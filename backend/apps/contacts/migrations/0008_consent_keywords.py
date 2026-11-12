@@ -2,13 +2,16 @@
 
 Tenant-owned con FORCE RLS y una política; FK a la organización y FK compuesta a la membresía de
 quien la configuró (ADR-001 §3). `crm_app` la lee, la inserta y la borra (el comando reemplaza el
-conjunto entero), sin UPDATE ni TRUNCATE. Sin filas, el código aplica las palabras por defecto.
+conjunto entero), sin UPDATE ni TRUNCATE; un `CHECK` pide al menos 4 caracteres (una respuesta de
+dos letras no puede dar de baja a nadie). Sin filas, el código aplica las palabras por defecto.
 """
 
 from typing import Any
 
 from django.conf import settings
 from django.db import migrations, models
+from django.db.models.functions import Length
+from django.db.models.lookups import GreaterThanOrEqual
 
 import core.ids
 from core.db.operations import EnableRLS
@@ -73,6 +76,10 @@ class Migration(migrations.Migration):
                     models.CheckConstraint(
                         condition=models.Q(("action__in", ["OPT_OUT", "OPT_IN"])),
                         name="consent_keywords_action_ck",
+                    ),
+                    models.CheckConstraint(
+                        condition=models.Q(GreaterThanOrEqual(Length("keyword"), 4)),
+                        name="consent_keywords_length_ck",
                     ),
                     models.CheckConstraint(
                         condition=models.Q(("keyword__regex", "^[a-z0-9]+( [a-z0-9]+){0,2}$")),

@@ -51,7 +51,8 @@ def action_for(ctx: TenantContext, text: str) -> str | None:
     word = normalize(text)
     if not KEYWORD.fullmatch(word) or len(word) > KEYWORD_MAX:
         return None
-    configured = dict(ConsentKeyword.objects.using(alias).values_list("keyword", "action"))
+    stored = ConsentKeyword.objects.using(alias).values_list("keyword", "action")
+    configured = {k: v for k, v in stored if usable(k)}  # lo guardado antes de las reglas no vale
     return (configured or DEFAULTS).get(word)
 
 
@@ -60,6 +61,14 @@ def keywords(ctx: TenantContext) -> dict[str, str]:
     alias = require_scope(ctx)
     found = ConsentKeyword.objects.using(alias).order_by("keyword").values_list("keyword", "action")
     return dict(found) or dict(DEFAULTS)
+
+
+def usable(word: str) -> bool:
+    return (
+        bool(KEYWORD.fullmatch(word))
+        and KEYWORD_MIN <= len(word) <= KEYWORD_MAX
+        and (word not in COMMON)
+    )
 
 
 def _wanted(opt_out: object, opt_in: object) -> dict[str, str]:
@@ -71,7 +80,7 @@ def _wanted(opt_out: object, opt_in: object) -> dict[str, str]:
             word = normalize(raw) if isinstance(raw, str) else ""
             if not KEYWORD.fullmatch(word) or len(word) > KEYWORD_MAX or word in wanted:
                 raise ValueError("palabra no admitida o repetida")
-            if len(word) < KEYWORD_MIN or word in COMMON:  # una respuesta normal daría de baja
+            if not usable(word):  # una respuesta normal («si», «gracias») daría de baja
                 raise ValueError("palabra demasiado corta o demasiado común para una baja o alta")
             wanted[word] = action
     if OPT_OUT not in wanted.values():  # dejar al cliente sin forma de darse de baja, nunca

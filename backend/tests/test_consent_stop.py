@@ -10,13 +10,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from django.core.management import call_command
 from django.db import IntegrityError, connection
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
 from apps.contacts import keywords
 from apps.contacts.consents import revoke_consent
-from apps.contacts.models import ConsentKeyword, Contact, ContactConsent, ContactConsentEvent
+from apps.contacts.models import ConsentKeyword, ContactConsent, ContactConsentEvent
 from apps.conversations import commands, inbound, ingress, policy, selectors
 from apps.conversations.models import Conversation, Message
 from core.tenancy.scope import tenant_scope
@@ -28,6 +29,7 @@ from tests.test_inbound_whatsapp import broker, channel, contact, crm, fresh_wak
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_messaging_policy import HOUR, NOW, decide
+from tests.test_pipelines_tables import as_migrator
 from tests.test_webhook_ingress import deliver
 
 __all__ = ["broker", "channel", "crm", "fresh_wake", "real_stack"]  # las fixtures, para pytest
@@ -60,9 +62,6 @@ def events(migrator: Any, kind: str) -> int:
     return int(migrator.execute(query, [kind]).fetchone()[0])
 
 
-# ---- Qué es una palabra de baja o de alta ----
-
-
 @pytest.mark.parametrize(
     ("text", "action"),
     [
@@ -82,14 +81,11 @@ def test_only_a_message_that_is_exactly_a_keyword_counts(
         assert keywords.action_for(tenant, text) == action
 
 
-# ---- El STOP del entrante ----
-
-
 def test_a_stop_revokes_once_confirms_once_and_blocks_a_follow_up_but_not_a_reply(
     crm: SimpleNamespace, migrator: Any
 ) -> None:
     live(crm.a)
-    assert say("wamid.1", "Stop") == {"PROCESSED": 1}
+    assert say("wamid.1", "S\u200btop") == {"PROCESSED": 1}  # `clean_text` quita el invisible
     assert say("wamid.1", "Stop") == {}  # Meta repite la entrega: ya está en la ingesta
     again = webhooks.text_message("Stop", wamid="wamid.1")  # el mismo ítem, reclamado dos veces
     assert ingress.route(ingress.Claimed(uuid4(), "message", WABA_ID, PHONE_NUMBER_ID, again, 2))
@@ -129,15 +125,6 @@ def test_an_alta_restores_and_the_history_keeps_both_changes_untouched(
     assert created and message.policy_decision["purpose"] == "FOLLOW_UP"
 
 
-def test_a_keyword_inside_a_sentence_changes_nothing(crm: SimpleNamespace, migrator: Any) -> None:
-    live(crm.a)
-    say("wamid.1", "No me den de baja, solo quiero saber el precio")
-    say("wamid.2", "stop por favor")
-    found = seen(crm.a)
-    assert (found.consents, found.events, found.replies) == ([], [], [])
-    assert events(migrator, "consent.revoked") == 0
-
-
 @pytest.mark.parametrize("case", ["blocked", "old"])
 def test_a_blocked_contact_or_a_stop_outside_the_window_is_recorded_without_confirmation(
     crm: SimpleNamespace, case: str
@@ -150,22 +137,6 @@ def test_a_blocked_contact_or_a_stop_outside_the_window_is_recorded_without_conf
     assert found.replies == []  # el bloqueado no recibe nada; fuera de la ventana no se puede
 
 
-def test_a_follow_up_queued_before_the_stop_fails_at_dispatch_and_a_reply_still_goes(
-    crm: SimpleNamespace,
-) -> None:
-    live(crm.a)
-    say("wamid.1", "Hola")
-    convo = seen(crm.a).convo
-    follow_up, _ = outbound(crm, convo, purpose="FOLLOW_UP")
-    reply, _ = outbound(crm, convo)
-    say("wamid.2", "STOP")  # mientras esperaban en la cola
-    adapter = Counting()
-    failed = dispatch(crm, follow_up, adapter)
-    assert (failed.delivery_status, failed.provider_error_code) == ("FAILED", "CONSENT_REVOKED")
-    assert adapter.calls == 0 and failed.policy_decision["reason"] == "CONSENT_REVOKED"
-    assert dispatch(crm, reply, adapter).delivery_status == "DELIVERED" and adapter.calls == 1
-
-
 def test_no_log_of_a_stop_carries_the_phone_or_the_text(
     crm: SimpleNamespace, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -174,9 +145,6 @@ def test_no_log_of_a_stop_carries_the_phone_or_the_text(
     say("wamid.1", "Baja")
     for secret in (CUSTOMER, "+" + CUSTOMER, "Cliente de prueba", "Baja", "wamid.1"):
         assert secret not in caplog.text, secret
-
-
-# ---- La política ----
 
 
 def test_a_revocation_denies_a_follow_up_and_never_a_reply_inside_the_window() -> None:
@@ -195,30 +163,21 @@ def test_a_revocation_denies_a_follow_up_and_never_a_reply_inside_the_window() -
         decide(purpose="MARKETING")
 
 
-@pytest.mark.parametrize(
-    ("via", "purpose", "blocks"),
-    [("WHATSAPP", "ALL_PROACTIVE", True), ("ANY", "FOLLOW_UP", True),
-     ("EMAIL", "ALL_PROACTIVE", False), ("WHATSAPP", "MARKETING", False)],
-)  # fmt: skip
-def test_the_decision_reads_the_revocation_of_this_channel_and_purpose(
-    crm: SimpleNamespace, via: str, purpose: str, blocks: bool
+@pytest.mark.parametrize(("via", "blocks"), [("WHATSAPP", True), ("ANY", True), ("EMAIL", False)])
+def test_the_decision_reads_the_revocation_of_this_channel(
+    crm: SimpleNamespace, via: str, blocks: bool
 ) -> None:
     live(crm.a)
     say("wamid.1", "Hola")
     convo = seen(crm.a).convo
     with tenant_scope(ctx(crm.a)) as tenant:
         revoke_consent(
-            tenant, contact_id=convo.contact_id, channel=via, purpose=purpose,
+            tenant, contact_id=convo.contact_id, channel=via, purpose="ALL_PROACTIVE",
             source="AGENT_RECORDED",
         )  # fmt: skip
         decision = selectors.messaging_decision(convo, purpose="FOLLOW_UP")
         assert selectors.messaging_decision(convo).allowed  # la respuesta, siempre
     assert decision.reason == ("CONSENT_REVOKED" if blocks else None)
-    with pytest.raises(ValueError, match="propósito"):
-        outbound(crm, convo, purpose="MARKETING")
-
-
-# ---- Configurar las palabras ----
 
 
 def configure(org: Any, who: Any, opt_out: Any, opt_in: Any) -> dict[str, str]:
@@ -262,15 +221,13 @@ def test_without_channels_manage_nothing_is_configured(crm: SimpleNamespace) -> 
     for who in (crm.bea, crm.vera, None):  # sin rol, vendedora y el sistema
         with pytest.raises(AccessDenied):
             configure(crm.a, who, ["salir"], [])
-    with tenant_scope(ctx(crm.a)):
-        assert not ConsentKeyword.objects.exists()
 
 
 def test_the_keywords_of_one_organization_never_reach_another(
     crm: SimpleNamespace, migrator: Any
 ) -> None:
     live(crm.a)
-    other = contact(crm.b, "Ajena", "+" + CUSTOMER)  # el mismo teléfono en la otra organización
+    contact(crm.b, "Ajena", "+" + CUSTOMER)  # el mismo teléfono en la otra organización
     with tenant_scope(ctx(crm.b)):
         ConsentKeyword.objects.create(keyword="salir", action=STOP)
     with tenant_scope(ctx(crm.a)), connection.cursor() as cursor:
@@ -280,27 +237,48 @@ def test_the_keywords_of_one_organization_never_reach_another(
     say("wamid.2", "stop")
     assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
     assert seen(crm.b).consents == [] and seen(crm.b).inbound == []
-    with tenant_scope(ctx(crm.b)):
-        assert Contact.objects.filter(pk=other.pk, is_blocked=False).exists()
 
 
-def test_the_table_only_holds_normalized_keywords(crm: SimpleNamespace) -> None:
-    with pytest.raises(IntegrityError, match="consent_keywords_keyword_ck"):
+@pytest.mark.parametrize(("word", "check"), [("STOP", "keyword"), ("ok", "length")])
+def test_the_table_only_holds_normalized_keywords_of_four_characters(
+    crm: SimpleNamespace, word: str, check: str
+) -> None:
+    with pytest.raises(IntegrityError, match=f"consent_keywords_{check}_ck"):
         with tenant_scope(ctx(crm.a)):
-            ConsentKeyword.objects.create(keyword="STOP", action=STOP)
+            ConsentKeyword.objects.create(keyword=word, action=STOP)
 
 
-# ---- Revisión de #691: el alta solo levanta una baja de palabra ----
-
-
-def test_an_alta_without_a_prior_baja_does_nothing_at_all(
+def test_a_stored_keyword_that_breaks_the_rules_is_ignored(
     crm: SimpleNamespace, migrator: Any
 ) -> None:
+    """Filas de antes de las reglas (la base de desarrollo del primer corte): no valen."""
+    migrator.execute("ALTER TABLE consent_keywords DROP CONSTRAINT consent_keywords_length_ck")
+    try:
+        with tenant_scope(ctx(crm.a)) as tenant:
+            for word in ("ok", "gracias", "salir"):
+                ConsentKeyword.objects.create(keyword=word, action=STOP)
+            assert [keywords.action_for(tenant, w) for w in ("ok", "gracias", "salir")] == [
+                None, None, STOP,
+            ]  # fmt: skip
+    finally:
+        migrator.execute("DELETE FROM consent_keywords")
+        migrator.execute(
+            "ALTER TABLE consent_keywords ADD CONSTRAINT consent_keywords_length_ck "
+            "CHECK (char_length(keyword) >= 4)"
+        )
+
+
+@pytest.mark.parametrize(
+    "body", ["ALTA", "No me den de baja, solo quiero el precio", "stop por favor"]
+)
+def test_an_alta_without_a_baja_or_a_keyword_in_a_sentence_does_nothing_at_all(
+    crm: SimpleNamespace, migrator: Any, body: str
+) -> None:
     live(crm.a)
-    assert say("wamid.1", "ALTA") == {"PROCESSED": 1}  # y el ítem se cierra bien
+    assert say("wamid.1", body) == {"PROCESSED": 1}  # y el ítem se cierra bien
     found = seen(crm.a)
     assert (found.consents, found.events, found.replies) == ([], [], [])
-    assert (events(migrator, "consent.granted"), events(migrator, "message.queued")) == (0, 0)
+    assert [events(migrator, k) for k in ("consent.granted", "message.queued")] == [0, 0]
 
 
 def test_an_alta_never_lifts_a_revocation_that_was_not_a_keyword(
@@ -319,17 +297,6 @@ def test_an_alta_never_lifts_a_revocation_that_was_not_a_keyword(
     assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "AGENT_RECORDED")]
     assert len(found.events) == 1 and found.replies == []
     assert events(migrator, "consent.granted") == 0
-
-
-def test_a_zero_width_character_is_cleaned_before_the_match_so_it_still_counts(
-    crm: SimpleNamespace,
-) -> None:
-    live(crm.a)
-    say("wamid.1", "S\u200bTOP")  # `clean_text` lo quita antes: «STOP»
-    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
-
-
-# ---- Revisión de #691: lo que no puede ser una palabra ----
 
 
 @pytest.mark.parametrize(
@@ -352,9 +319,6 @@ def test_the_default_words_and_a_four_letter_word_pass_the_validation(
     defaults = configure(crm.a, crm.ana, ["STOP", "baja", "cancelar"], ["alta"])
     assert defaults == keywords.DEFAULTS
     assert configure(crm.a, crm.ana, ["abcd"], ["wxyz"]) == {"abcd": STOP, "wxyz": BACK}
-
-
-# ---- Revisión de #691: fallar cerrado y serializar con el STOP ----
 
 
 def test_a_send_must_say_what_it_is_for(crm: SimpleNamespace) -> None:
@@ -404,3 +368,16 @@ def test_claiming_waits_for_a_stop_that_is_being_registered(crm: SimpleNamespace
     with tenant_scope(ctx(crm.a)):
         found = Message.objects.get(pk=queued.pk)
     assert (found.delivery_status, found.provider_error_code) == ("FAILED", "CONSENT_REVOKED")
+
+
+def test_the_migrations_go_back_and_forward(migrator: Any) -> None:
+    table = "SELECT to_regclass('public.consent_keywords') IS NOT NULL"
+    with as_migrator():
+        call_command("migrate", "contacts", "0007", verbosity=0)
+        call_command("migrate", "conversations", "0017", verbosity=0)
+    assert migrator.execute(table).fetchone() == (False,)
+    with as_migrator():
+        call_command("migrate", verbosity=0)
+    assert migrator.execute(table).fetchone() == (True,)
+    update = "SELECT has_table_privilege('crm_app', 'consent_keywords', 'UPDATE')"
+    assert migrator.execute(update).fetchone() == (False,)

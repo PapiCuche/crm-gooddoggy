@@ -5,9 +5,8 @@ no lee la base de datos ni el texto del cliente. La usan `record_outbound` (al e
 despachador (la **re-evalúa justo antes de enviar**) y la ruta de consulta de la pantalla. La
 ventana se recalcula siempre desde `last_inbound_at` con las `ChannelCapabilities` vigentes.
 Orden: nota interna, conversación cerrada (`RESOLVED` admite respuestas, D-F6-11), canal no
-conectado, contacto bloqueado, ventana y consentimiento (F7-08b, ADR-010 §2.7: una baja que alcanza
-al canal y al propósito niega todo lo proactivo; la respuesta al cliente, `CUSTOMER_REPLY`, solo
-llega con la ventana abierta y por eso nunca la niega una baja). Plantillas: F7-10.
+conectado, contacto bloqueado, ventana y consentimiento (F7-08b, ADR-010 §2.7: una baja niega lo
+proactivo, nunca la respuesta `CUSTOMER_REPLY` dentro de la ventana). Plantillas: F7-10.
 """
 
 import datetime as dt
@@ -24,11 +23,10 @@ REASONS = (  # el conjunto cerrado de motivos de una decisión que niega
     "WINDOW_CLOSED", "CONSENT_REVOKED",
 )  # fmt: skip
 CUSTOMER_REPLY = "CUSTOMER_REPLY"
-# Para qué se escribe (ADR-010 §2 `OutboundIntent.purpose`) → el propósito de consentimiento que
-# lo cubre (`contact_consents.purpose`). Los demás (cotización, recordatorio, marketing…) llegan con
-# quien los envíe (F7-10 y las automatizaciones): uno desconocido es un `ValueError`.
+# Para qué se escribe (ADR-010 §2) → el propósito de consentimiento que lo cubre. Los demás llegan
+# con quien los envíe (F7-10, automatizaciones): uno desconocido es un `ValueError`.
 PURPOSES = {CUSTOMER_REPLY: "ALL_PROACTIVE", "FOLLOW_UP": "FOLLOW_UP"}
-CONSENT_CHANNELS = {"WHATSAPP": "WHATSAPP"}  # plataforma → canal del consentimiento; otra: `ANY`
+CONSENT_CHANNELS = {"WHATSAPP": "WHATSAPP"}  # plataforma → canal del consentimiento (otra: ANY)
 
 
 class ConversationClosed(Exception):

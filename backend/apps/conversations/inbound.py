@@ -8,11 +8,10 @@ rechazan en vez de limpiar. El teléfono se normaliza a E.164 y el contacto se b
 homónimos, ADR-028): el segundo proceso espera, encuentra el del primero y lo reutiliza. Nunca se
 fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un teléfono ni un texto.
 
-Un texto que es exactamente una palabra de baja o de alta de la organización (`contacts.keywords`,
-F7-08b) revoca lo proactivo de WhatsApp (`ALL_PROACTIVE`) o, si la baja fue de una palabra, lo
-restablece, con el mensaje como evidencia y, si cambió algo, encola una confirmación fija; todo en
-la transacción del mensaje y solo la primera vez que llega (un webhook repetido no vuelve a
-hacerlo). El texto llega ya saneado (`clean_text` quita los caracteres de formato invisibles).
+Un texto (ya saneado) que es exactamente una palabra de baja o de alta de la organización
+(`contacts.keywords`, F7-08b) revoca lo proactivo de WhatsApp o levanta una baja de palabra, con el
+mensaje como evidencia, y si cambió algo encola una confirmación fija: en la transacción del mensaje
+y solo la primera vez que llega.
 """
 
 import datetime as dt
@@ -214,8 +213,7 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
 
 
 def _keyword(ctx: TenantContext, contact_id: Any, saved: Message) -> None:
-    """La baja o el alta, si el texto entero es una palabra de la organización. Solo un cambio
-    real (`revoke_consent` y `grant_consent` son idempotentes) encola la confirmación."""
+    """La baja o el alta, si el texto entero es una palabra; solo un cambio real confirma."""
     action = keywords.action_for(ctx, saved.body)
     if action is None:
         return

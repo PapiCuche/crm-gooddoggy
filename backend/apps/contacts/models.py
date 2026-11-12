@@ -7,7 +7,8 @@ va a los logs, y la auditoría enmascara el documento (04 §N.1).
 import re
 
 from django.db import models
-from django.db.models.functions import Lower
+from django.db.models.functions import Length, Lower
+from django.db.models.lookups import GreaterThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -391,8 +392,15 @@ class ConsentKeyword(TenantModel):
                 condition=models.Q(action__in=KeywordAction.values),
                 name="consent_keywords_action_ck",
             ),
+            models.CheckConstraint(  # una respuesta de dos letras («si», «ok») no puede dar de baja
+                condition=models.Q(GreaterThanOrEqual(Length("keyword"), 4)),
+                name="consent_keywords_length_ck",
+            ),
             models.CheckConstraint(  # la forma normalizada: de una a tres palabras ASCII
                 condition=models.Q(keyword__regex=r"^[a-z0-9]+( [a-z0-9]+){0,2}$"),
                 name="consent_keywords_keyword_ck",
             ),
         ]
+
+    def __str__(self) -> str:
+        return str(self.pk)

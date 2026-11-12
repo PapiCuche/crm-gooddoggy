@@ -753,21 +753,25 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         queued = Message.objects.using(alias).filter(
             waiting, pk=message_id, direction="OUTBOUND", delivery_status="QUEUED"
         )
-        row = queued.values("conversation_id", "conversation__contact_id").first()
+        row = queued.values(
+            "conversation_id", "channel_account_id", "conversation__contact_id"
+        ).first()
         if row is None:
             return None
-        with connections[alias].cursor() as cursor:  # primero el contacto, como `_open` y `_write`:
-            cursor.execute(  # un STOP que se está registrando espera a este reclamo, o al revés
+        # Orden de bloqueos: cuenta → contacto → conversación (como `ingress.seen`, `receive` y
+        # `_open`): sin ciclos, y un STOP en registro y este reclamo se serializan.
+        with connections[alias].cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE",
+                [row["channel_account_id"]],
+            )
+            cursor.execute(
                 "SELECT 1 FROM contacts WHERE id = %s FOR SHARE", [row["conversation__contact_id"]]
             )
         convo = _locked(alias, row["conversation_id"])  # el mismo orden que `record_outbound`
         message = queued.select_for_update(no_key=True, skip_locked=True).first()
         if message is None:  # otro despachador lo reclama, o ya salió
             return None
-        with connections[alias].cursor() as cursor:
-            cursor.execute(
-                "SELECT 1 FROM channel_accounts WHERE id = %s FOR SHARE", [convo.channel_account_id]
-            )
         account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
         # el de encolar; sin él (un mensaje anterior a F7-08b), el más estricto
         purpose = (message.policy_decision or {}).get("purpose") or "FOLLOW_UP"
