@@ -381,9 +381,7 @@ def test_after_stop_the_timer_is_inert_and_the_duplicates_are_closed() -> None:
 def test_a_tls_handshake_that_drips_is_cut_by_the_watchdog_with_the_real_ssl_wrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`ssl` suelta el descriptor original al empezar el apretón: el vigilante corta el duplicado.
-    El servidor manda la cabecera de un registro TLS de 16384 bytes y lo gotea (un byte cada 50 ms:
-    el tiempo de lectura de 3 s nunca vence)."""
+    """Un registro TLS de 16384 bytes que gotea un byte cada 50 ms: la lectura no vence."""
     client, server = socket.socketpair()
     client.settimeout(3)
     server.settimeout(5)
@@ -428,7 +426,6 @@ class Reset(io.BytesIO):
 
 
 def chain(error: BaseException | None) -> str:
-    """El texto de toda la cadena de una excepción (causa y contexto)."""
     seen = ""
     while error is not None:
         seen += f"{error!r} {error}"
@@ -465,9 +462,8 @@ def test_a_failure_carries_no_url_as_cause_or_context_and_the_download_is_one_re
 def test_with_the_real_manager_a_media_connection_is_never_pooled_nor_logs_the_signed_query(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, settings: Any
 ) -> None:
-    """Gestor, reserva y `_new_conn` reales, sin TLS sobre sockets locales. Al leer el último byte
-    urllib3 devuelve la conexión a la reserva: la de una descarga se cierra, y la siguiente abre y
-    vigila otra. urllib3 registra `GET <ruta>?<query>` en DEBUG: `LOGGING` lo calla."""
+    """Gestor, reserva y `_new_conn` reales (sin TLS). urllib3 devuelve la conexión a la reserva al
+    leer el último byte: la de una descarga se cierra y la siguiente abre y vigila otra."""
     pairs = [socket.socketpair() for _ in range(2)]
     clients, watched, watch = iter(pairs), [], http._Watchdog.watch
     for sock in (sock for pair in pairs for sock in pair):
