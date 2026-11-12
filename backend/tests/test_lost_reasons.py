@@ -206,6 +206,7 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         "apps.quotes.commands -> apps.deals.models",  # la oportunidad de la cotización
         "apps.quotes.commands -> apps.pricing.services",  # y los precios, del servicio
         "apps.quotes.discounts -> apps.pricing.floor",  # F5-09b2: el precio manual cubre el costo
+        "apps.quotes.policies -> apps.pricing.services",  # F5-09b4: la lista de una política existe
     ]
     quotes = [c for c in contracts if "apps.quotes.commands" in c.get("protected_modules", [])]
     assert [(c["type"], c["protected_modules"], c["allowed_importers"]) for c in quotes] == [

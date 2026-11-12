@@ -85,6 +85,7 @@ ADMIN_REST = (
     "quotes.approve",
     "quotes.override_price",
     "quotes.discount",
+    "discount_policies.manage",  # F5-09b4
     "pipelines.manage",  # F5-02
     "conversations.assign",  # F6-01: el Inbox
     "channels.manage",

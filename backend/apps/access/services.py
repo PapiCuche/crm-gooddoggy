@@ -22,7 +22,7 @@ from uuid import UUID
 from django.apps import apps
 from django.contrib.postgres.expressions import ArraySubquery
 from django.db import transaction
-from django.db.models import OuterRef
+from django.db.models import OuterRef, ProtectedError
 from django.utils.text import slugify
 
 from apps.access import names
@@ -369,6 +369,11 @@ class RoleInUse(Exception):
     """El rol tiene miembros, en cualquier estado: primero se les quita."""
 
 
+class RoleHasDependents(Exception):
+    """Algo que no es del RBAC depende del rol (su política de descuento): se quita antes, con el
+    comando y el permiso de quien lo gestiona; borrar el rol no se lo lleva por delante."""
+
+
 class RoleIsSystem(Exception):
     """Un rol de plantilla no se borra (modelo de datos §E.3): se edita."""
 
@@ -428,7 +433,10 @@ def delete_role(ctx: TenantContext, *, role_id: UUID) -> None:
             raise RoleIsSystem(role.name)
         if MembershipRole.objects.using(actor.alias).filter(role=role).exists():
             raise RoleInUse(role.name)
-        Role.objects.using(actor.alias).filter(pk=role.pk).delete()  # y, con él, sus concesiones
+        try:
+            Role.objects.using(actor.alias).filter(pk=role.pk).delete()  # y sus concesiones
+        except ProtectedError:  # nada se borró: otro módulo protege al rol
+            raise RoleHasDependents(role.name) from None
         changes = {"name": [role.name, None], "description": [role.description, None]}
         metadata = {"role": role.code, "permissions": [list(grant) for grant in grants]}
         record(ctx, "role.deleted", Entity("role", role.pk, role.name), changes, metadata)

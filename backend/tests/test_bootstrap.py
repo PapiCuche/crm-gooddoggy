@@ -21,6 +21,7 @@ from apps.organizations.bootstrap import SlugTaken, create_organization
 from apps.organizations.models import Organization, OrganizationMembership
 from apps.provisioning import services as provisioning
 from apps.provisioning.services import Bootstrapped, bootstrap_organization
+from apps.quotes.models import DiscountPolicy
 from config.settings import base
 from core.tenancy.context import ActorType, TenantContext, TenantContextError
 from core.tenancy.resolution import resolve_tenant
@@ -81,6 +82,8 @@ def test_bootstrap_creates_a_usable_organization(
         owner = Role.objects.get(is_owner_role=True)
         assert list(MembershipRole.objects.values_list("role_id", flat=True)) == [owner.pk]
         assert OrganizationMembership.objects.get().status == "ACTIVE"
+        got = dict(DiscountPolicy.objects.values_list("role__code", "max_discount_percent"))
+        assert got == {"admin": 100, "supervisor": 10, "seller": 3}  # F5-09b4: sin el Owner
     assert Organization.objects.get().status == "ACTIVE"
 
 
