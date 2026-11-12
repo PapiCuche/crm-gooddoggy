@@ -12,6 +12,7 @@ import socket
 import threading
 import time
 from typing import Any
+from unittest import mock
 
 import pytest
 import urllib3
@@ -321,30 +322,22 @@ def test_a_body_that_drips_hits_the_total_deadline_without_waiting_for_a_whole_c
     assert time.monotonic() - started < 1.0 and 0 < len(sink.getvalue()) < 40
 
 
-def test_each_read_waits_at_most_what_is_left_of_the_deadline_and_never_more_than_15_s(
+def test_each_read_waits_at_most_the_rest_of_the_deadline_and_the_dog_stops_before_release(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class Sock:
-        def __init__(self) -> None:
-            self.timeouts: list[float] = []
+    stopped: list[bool] = []
 
-        def settimeout(self, value: float) -> None:
-            self.timeouts.append(value)
-
-    class Conn:
-        def __init__(self) -> None:
-            self.sock = Sock()
-
-        def close(self) -> None:
-            pass
+    def release() -> None:  # lo que `_fetch` suelta al terminar: con el vigilante ya parado
+        stopped.append(getattr(http._watchdog.get(), "_stopped"))  # noqa: B009
 
     for seconds, most in ((5.0, 5.0), (60.0, 15.0)):
-        conn: Any = Conn()  # solo su `sock`: el cuerpo sale de un `BytesIO`
+        conn = mock.Mock(close=release)  # solo su `sock`: el cuerpo sale de un `BytesIO`
         body = io.BytesIO(b"hola")
         reply = urllib3.HTTPResponse(body=body, status=200, preload_content=False, connection=conn)
         monkeypatch.setattr(http, "_manager", Manager(reply))
-        assert get(seconds=seconds) == 200 and conn.sock.timeouts
-        assert all(most - 1 < value <= most for value in conn.sock.timeouts)
+        assert get(seconds=seconds) == 200 and stopped.pop() and not stopped
+        timeouts = [call.args[0] for call in conn.sock.settimeout.call_args_list]
+        assert timeouts and all(most - 1 < value <= most for value in timeouts)
 
 
 class Cut(io.BytesIO):
@@ -402,27 +395,6 @@ def test_after_stop_the_timer_is_inert_and_the_duplicates_are_closed() -> None:
     assert dog._sockets == []
     mine.close()
     theirs.close()
-
-
-def test_the_watchdog_is_stopped_before_the_socket_is_released(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    order: list[bool] = []
-    dogs: list[Any] = []
-
-    class Closing(urllib3.HTTPResponse):
-        def close(self) -> None:  # lo que `_fetch` suelta al terminar
-            order.append(dogs[0]._stopped)
-            super().close()
-
-    class Spy(Manager):
-        def request(self, *args: Any, **kwargs: Any) -> Any:
-            dogs.append(http._watchdog.get())
-            return super().request(*args, **kwargs)
-
-    reply = Closing(body=io.BytesIO(b"hola"), status=200, preload_content=False)
-    monkeypatch.setattr(http, "_manager", Spy(reply))
-    assert get() == 200 and order == [True]
 
 
 def test_a_tls_handshake_that_drips_is_cut_by_the_watchdog_with_the_real_ssl_wrap(
@@ -532,8 +504,7 @@ def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
     manager = urllib3.PoolManager()
     manager.pool_classes_by_scheme = {"https": http._GuardedPool}
     monkeypatch.setattr(http, "_manager", manager)
-    logger = logging.getLogger("urllib3")
-    saved = (logger.level, logger.handlers[:], logger.propagate, logger.disabled)
+    handlers = logging.getLogger("urllib3").handlers[:]  # `dictConfig` los quita; el nivel, caplog
     caplog.set_level(logging.DEBUG, logger="urllib3")  # sin la entrada de `LOGGING`, se vería
     only = {"urllib3": settings.LOGGING["loggers"]["urllib3"]}  # solo su entrada: no toca la raíz
     logging.config.dictConfig({"version": 1, "disable_existing_loggers": False, "loggers": only})
@@ -544,6 +515,5 @@ def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
     finally:
         client.close()
         server.close()
-        logger.setLevel(saved[0])  # el resto de la suite ve el registro como estaba
-        logger.handlers[:], logger.propagate, logger.disabled = saved[1:]
+        logging.getLogger("urllib3").handlers[:] = handlers  # el resto de la suite, como estaba
     assert sink.getvalue() == b"hola" and "SECRETO" not in caplog.text
