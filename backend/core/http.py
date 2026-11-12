@@ -289,9 +289,12 @@ def _fetch(
             raise ResponseTooLarge
         total = 0
         while True:
-            if time.monotonic() > deadline or dog.fired:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or dog.fired:
                 raise DownloadTooSlow
             try:
+                if (sock := getattr(reply.connection, "sock", None)) is not None:
+                    sock.settimeout(min(15.0, remaining))  # cada `recv`, como mucho lo que queda
                 chunk = reply.read1(CHUNK, decode_content=False)
             except HTTPError, OSError:
                 failed = True

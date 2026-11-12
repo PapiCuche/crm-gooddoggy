@@ -3,6 +3,7 @@ simulador de Meta. Sin red: el simulador, un gestor falso o sockets locales sust
 de conexión de urllib3; la política real (hosts de la descarga aparte de la allowlist, https, 443,
 URL leída por dos analizadores, tope, plazo, sin decodificar, sin reintentos) es la real."""
 
+import contextlib
 import errno
 import io
 import logging
@@ -320,6 +321,32 @@ def test_a_body_that_drips_hits_the_total_deadline_without_waiting_for_a_whole_c
     assert time.monotonic() - started < 1.0 and 0 < len(sink.getvalue()) < 40
 
 
+def test_each_read_waits_at_most_what_is_left_of_the_deadline_and_never_more_than_15_s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Sock:
+        def __init__(self) -> None:
+            self.timeouts: list[float] = []
+
+        def settimeout(self, value: float) -> None:
+            self.timeouts.append(value)
+
+    class Conn:
+        def __init__(self) -> None:
+            self.sock = Sock()
+
+        def close(self) -> None:
+            pass
+
+    for seconds, most in ((5.0, 5.0), (60.0, 15.0)):
+        conn: Any = Conn()  # solo su `sock`: el cuerpo sale de un `BytesIO`
+        body = io.BytesIO(b"hola")
+        reply = urllib3.HTTPResponse(body=body, status=200, preload_content=False, connection=conn)
+        monkeypatch.setattr(http, "_manager", Manager(reply))
+        assert get(seconds=seconds) == 200 and conn.sock.timeouts
+        assert all(most - 1 < value <= most for value in conn.sock.timeouts)
+
+
 class Cut(io.BytesIO):
     """Un cuerpo sin `Content-Length` cortado por el vigilante: la lectura da fin de datos."""
 
@@ -406,16 +433,19 @@ def test_a_tls_handshake_that_drips_is_cut_by_the_watchdog_with_the_real_ssl_wra
     el tiempo de lectura de 3 s nunca vence)."""
     client, server = socket.socketpair()
     client.settimeout(3)
-    done = threading.Event()
+    server.settimeout(5)
+    done, until = threading.Event(), time.monotonic() + 3  # sin vigilante, falla en 3 s: no cuelga
 
     def drip() -> None:
         server.sendall(b"\x16\x03\x03\x40\x00")
-        while not done.is_set():
+        while not done.is_set() and time.monotonic() < until:
             try:
                 server.sendall(b"x")
             except OSError:
                 return
             time.sleep(0.05)
+        with contextlib.suppress(OSError):  # fin del goteo: el apretón termina con un error
+            server.shutdown(socket.SHUT_RDWR)
 
     answer = [(socket.AF_INET, 1, 6, "", ("93.184.216.34", 443))]
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: answer)
@@ -502,6 +532,8 @@ def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
     manager = urllib3.PoolManager()
     manager.pool_classes_by_scheme = {"https": http._GuardedPool}
     monkeypatch.setattr(http, "_manager", manager)
+    logger = logging.getLogger("urllib3")
+    saved = (logger.level, logger.handlers[:], logger.propagate, logger.disabled)
     caplog.set_level(logging.DEBUG, logger="urllib3")  # sin la entrada de `LOGGING`, se vería
     only = {"urllib3": settings.LOGGING["loggers"]["urllib3"]}  # solo su entrada: no toca la raíz
     logging.config.dictConfig({"version": 1, "disable_existing_loggers": False, "loggers": only})
@@ -512,4 +544,6 @@ def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
     finally:
         client.close()
         server.close()
+        logger.setLevel(saved[0])  # el resto de la suite ve el registro como estaba
+        logger.handlers[:], logger.propagate, logger.disabled = saved[1:]
     assert sink.getvalue() == b"hola" and "SECRETO" not in caplog.text
