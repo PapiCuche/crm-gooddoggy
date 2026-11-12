@@ -198,11 +198,12 @@ source_modules = ["apps.pricing.services", "apps.pricing.selectors"]
 forbidden_modules = ["apps.pricing.costs"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos de contactos: solo su API los importa (F4-01, F4-11, F7-04)"
+name = "Comandos de contactos: solo su API los importa (F4-01, F4-11, F7-04, F7-08b)"
 type = "protected"
 protected_modules = [
     "apps.contacts.commands",
     "apps.contacts.consents",
+    "apps.contacts.keywords",
     "apps.contacts.notes",
     "apps.contacts.tags",
 ]

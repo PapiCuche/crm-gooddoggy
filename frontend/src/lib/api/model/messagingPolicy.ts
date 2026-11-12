@@ -20,6 +20,7 @@ export interface MessagingPolicy {
    * * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
    * * `CONTACT_BLOCKED` - CONTACT_BLOCKED
    * * `WINDOW_CLOSED` - WINDOW_CLOSED
+   * * `CONSENT_REVOKED` - CONSENT_REVOKED
    */
   reason: MessagingPolicyReasonEnum | NullEnum | null;
   /**

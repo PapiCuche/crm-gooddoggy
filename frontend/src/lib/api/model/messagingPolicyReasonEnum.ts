@@ -12,6 +12,7 @@
  * * `CHANNEL_UNAVAILABLE` - CHANNEL_UNAVAILABLE
  * * `CONTACT_BLOCKED` - CONTACT_BLOCKED
  * * `WINDOW_CLOSED` - WINDOW_CLOSED
+ * * `CONSENT_REVOKED` - CONSENT_REVOKED
  */
 export type MessagingPolicyReasonEnum =
   (typeof MessagingPolicyReasonEnum)[keyof typeof MessagingPolicyReasonEnum];
@@ -22,4 +23,5 @@ export const MessagingPolicyReasonEnum = {
   CHANNEL_UNAVAILABLE: "CHANNEL_UNAVAILABLE",
   CONTACT_BLOCKED: "CONTACT_BLOCKED",
   WINDOW_CLOSED: "WINDOW_CLOSED",
+  CONSENT_REVOKED: "CONSENT_REVOKED",
 } as const;

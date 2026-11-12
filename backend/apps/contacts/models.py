@@ -7,7 +7,8 @@ va a los logs, y la auditoría enmascara el documento (04 §N.1).
 import re
 
 from django.db import models
-from django.db.models.functions import Lower
+from django.db.models.functions import Length, Lower
+from django.db.models.lookups import GreaterThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -356,6 +357,48 @@ class ContactConsentEvent(TenantModel):
             models.CheckConstraint(
                 condition=~models.Q(source="KEYWORD_STOP") | models.Q(status="REVOKED"),
                 name="consent_events_stop_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+class KeywordAction(models.TextChoices):
+    OPT_OUT = "OPT_OUT"  # baja: revoca lo proactivo del canal por el que llega
+    OPT_IN = "OPT_IN"  # alta: lo restablece
+
+
+class ConsentKeyword(TenantModel):
+    """Una palabra de baja o de alta de la organización (F7-08b, D-F7-05), guardada ya normalizada
+    (`keywords.normalize`). Sin ninguna fila valen las de `keywords.DEFAULTS`. `crm_app` la lee, la
+    inserta y la borra (el comando reemplaza el conjunto entero); nunca la reescribe."""
+
+    Action = KeywordAction
+
+    id = uuid7_primary_key()
+    keyword = models.CharField(max_length=30)
+    action = models.CharField(max_length=7, choices=KeywordAction.choices)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "consent_keywords"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "keyword"], name="consent_keywords_org_keyword_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(action__in=KeywordAction.values),
+                name="consent_keywords_action_ck",
+            ),
+            models.CheckConstraint(  # una respuesta de dos letras («si», «ok») no puede dar de baja
+                condition=models.Q(GreaterThanOrEqual(Length("keyword"), 4)),
+                name="consent_keywords_length_ck",
+            ),
+            models.CheckConstraint(  # la forma normalizada: de una a tres palabras ASCII
+                condition=models.Q(keyword__regex=r"^[a-z0-9]+( [a-z0-9]+){0,2}$"),
+                name="consent_keywords_keyword_ck",
             ),
         ]
 
