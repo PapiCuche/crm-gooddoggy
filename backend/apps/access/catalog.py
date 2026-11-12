@@ -90,6 +90,8 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("quotes.cancel", "quotes", supports_scope=True),
     PermissionDef("quotes.override_price", "quotes"),
     PermissionDef("quotes.discount", "quotes"),
+    # F5-09b4: configura el límite de descuento de cada rol; sensible, con step-up en la API.
+    PermissionDef("discount_policies.manage", "quotes", is_sensitive=True),
     # F6-01: el Inbox. `conversations.view`, `messages.send` y `messages.note` admiten alcance
     # (propias, de su equipo y sin asignar); `assign` no: qué conversaciones alcanza lo decide
     # `view`, como `contacts.assign`. `channels.manage` configura las cuentas de canal.
@@ -177,6 +179,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "quotes.approve",
             "quotes.override_price",  # 03 §H no lo lista; a confirmar
             "quotes.discount",
+            "discount_policies.manage",  # F5-09b4: Owner y Administrador, 03 §H; sensible
             "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
             "conversations.assign",  # F6-01: «conversations.* ✅» para el Administrador en 03 §H
             "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar

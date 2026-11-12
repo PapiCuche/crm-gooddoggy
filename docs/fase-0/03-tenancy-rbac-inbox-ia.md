@@ -111,6 +111,7 @@ Políticas adicionales (no binarias): discount_policies, price_lists.required_pe
 | quotes.create / send | ✅ | ✅ | ✅ | ✅ | — | — | — |
 | quotes.approve | ✅ | ✅ | ✅ | — | — | — | — |
 | discount_policies (máx.) | sin límite | sin límite | p. ej., 10 % | p. ej., 3 % | 0 % | — | — |
+| discount_policies.manage (F5-09b4: fija esos máximos; sensible, step-up) | ✅ | ✅ | — | — | — | — | — |
 | prices.view | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | prices.view_wholesale | ✅ | ✅ | ✅ | ⚙️ | — | — | — |
 | prices.manage / bulk_update | ✅ | ✅ | — | — | — | — | — |
