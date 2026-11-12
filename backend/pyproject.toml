@@ -137,7 +137,6 @@ ignore_imports = [
     "apps.quotes.commands -> apps.deals.models",  # F5-09a: la oportunidad de la cotización
     "apps.quotes.commands -> apps.pricing.services",  # y los precios, solo del `PricingService`
     "apps.quotes.discounts -> apps.pricing.floor",  # F5-09b2: un precio manual cubre el costo
-    "apps.quotes.decisions -> apps.pricing.floor",  # F5-09b3: y al aprobar vuelve a cubrirlo
 ]
 
 [[tool.importlinter.contracts]]

@@ -15,14 +15,17 @@ def covers_cost(
     ctx: TenantContext, wanted: Mapping[UUID, Decimal], currency: str, tax_rate: Decimal
 ) -> bool:
     """Todos los precios `wanted` ({variante: precio con IGV incluido}) llegan al costo que rige
-    hoy, puesto también con IGV (el costo sin IGV se sube por `tax_rate`). `False` si alguno queda
-    por debajo o no hay con qué compararlo."""
-    ruling = costs.current_costs(ctx, wanted)
+    hoy **y a todo costo programado a futuro** (el mayor manda), puesto también con IGV (el costo
+    sin IGV se sube por `tax_rate`). `False` si alguno queda por debajo o no hay con qué
+    compararlo."""
+    ruling, later = costs.current_costs(ctx, wanted), costs.scheduled_costs(ctx, wanted)
     for variant, price in wanted.items():
         found = ruling.get(variant)
-        if found is None or found.currency != currency:
+        if found is None:
             return False
-        floor = found.amount if found.tax_included else found.amount * (1 + tax_rate)
-        if price < floor:
-            return False
+        for cost in (found, *later.get(variant, [])):
+            if cost.currency != currency:
+                return False
+            if price < (cost.amount if cost.tax_included else cost.amount * (1 + tax_rate)):
+                return False
     return True

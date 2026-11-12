@@ -142,6 +142,20 @@ def current_costs(ctx: TenantContext, variant_ids: Iterable[UUID]) -> dict[UUID,
     return {UUID(str(cost.variant_id)): cost for cost in ruling}
 
 
+def scheduled_costs(
+    ctx: TenantContext, variant_ids: Iterable[UUID]
+) -> dict[UUID, list[VariantCost]]:
+    """Los costos que empiezan más adelante (IMPORT y PURCHASE los programan), por variante."""
+    alias = require_scope(ctx)
+    later = VariantCost.objects.using(alias).filter(
+        variant_id__in=list(variant_ids), starts_at__gt=CLOCK
+    )
+    found: dict[UUID, list[VariantCost]] = {}
+    for cost in later:
+        found.setdefault(UUID(str(cost.variant_id)), []).append(cost)
+    return found
+
+
 def cost_history(ctx: TenantContext, variant_id: UUID) -> QuerySet[VariantCost]:
     """Todos los costos de la variante, el más reciente primero."""
     alias = require_scope(ctx)

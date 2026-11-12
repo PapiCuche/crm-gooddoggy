@@ -16,9 +16,9 @@ from apps.accounts.models import User
 from apps.organizations.models import OrganizationMembership as Membership
 from apps.pricing import costs
 from apps.quotes import commands, decisions, discounts
-from apps.quotes.commands import QuoteNotDraft, StaleVersion
+from apps.quotes.commands import NotAllowed, QuoteNotDraft, StaleVersion
 from apps.quotes.decisions import BeyondLimit, NotPending, SelfApproval
-from apps.quotes.discounts import NotAllowed, PriceRefused
+from apps.quotes.discounts import PriceRefused
 from apps.quotes.models import DiscountPolicy, Quote, QuoteApproval, QuoteItem
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
@@ -120,8 +120,9 @@ def test_approving_opens_the_quote_for_the_next_step_and_audits_who_decided(
     assert "12345678" not in json.dumps(log(migrator)) and metadata == {}
     with pytest.raises(QuoteNotDraft):  # lo aprobado no se edita, ni por los comandos...
         discount(shop, seller, made, stored(shop.a, made)[0], "NONE", version=3)
+    editor = member(shop, "3", **{"quotes.view": "ORGANIZATION"})
     with pytest.raises(QuoteNotDraft):
-        act(shop, seller, commands.update_quote, quote_id=made.pk, version=3, internal_notes="x")
+        act(shop, editor, commands.update_quote, quote_id=made.pk, version=3, internal_notes="x")
     with tenant_scope(ctx(shop.a, seller)), pytest.raises(IntegrityError, match="frozen"):
         Quote.objects.filter(pk=made.pk).update(total=D(1), subtotal=D(1), tax_total=D(0))
 
@@ -511,7 +512,9 @@ def rival(name: str, made: Quote, line: QuoteItem) -> Any:
 def test_a_decision_and_any_other_write_at_once_leave_one_coherent_outcome(
     shop: SimpleNamespace, other: str
 ) -> None:
-    everything = boss(shop, "100", **{"quotes.override_price": None})
+    everything = boss(
+        shop, "100", **{"quotes.override_price": None, "quotes.cancel": "ORGANIZATION"}
+    )
     made, _ = asked(shop)
     line = stored(shop.a, made)[0]
     first, second = race(
@@ -534,7 +537,9 @@ def test_a_decision_and_any_other_write_at_once_leave_one_coherent_outcome(
 def test_two_decisions_of_different_kind_at_once_leave_the_first_and_a_stale_version(
     shop: SimpleNamespace, first: str, second: str, quote_end: str, request_end: str
 ) -> None:
-    everything = boss(shop, "100", **{"quotes.override_price": None})
+    everything = boss(
+        shop, "100", **{"quotes.override_price": None, "quotes.cancel": "ORGANIZATION"}
+    )
     made, _ = asked(shop)
     line = stored(shop.a, made)[0]
     won, lost = race(shop.a, everything, [rival(first, made, line), rival(second, made, line)])

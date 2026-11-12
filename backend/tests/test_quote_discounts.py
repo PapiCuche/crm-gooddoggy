@@ -19,8 +19,8 @@ from apps.organizations.models import OrganizationMembership as Membership
 from apps.pricing import costs
 from apps.pricing.models import VariantCost
 from apps.quotes import commands, discounts
-from apps.quotes.commands import QuoteNotDraft, StaleVersion
-from apps.quotes.discounts import NotAllowed, PriceRefused
+from apps.quotes.commands import NotAllowed, QuoteNotDraft, StaleVersion
+from apps.quotes.discounts import PriceRefused
 from apps.quotes.models import DiscountPolicy, Quote, QuoteApproval, QuoteItem
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunities_tables as tables
@@ -36,7 +36,7 @@ from tests.test_quote_commands import world as world  # noqa: PLC0414
 _ = shop
 pytestmark = pytest.mark.usefixtures("tenant_db")
 ALLOW: dict[str, str | None] = {"prices.view": None, "quotes.discount": None,
-                                "quotes.update": "ORGANIZATION"}  # fmt: skip
+                                "quotes.create": None, "quotes.update": "ORGANIZATION"}  # fmt: skip
 
 
 def add_role(shop: SimpleNamespace, user: User, percent: str | None = None, owner: bool = False,
@@ -99,10 +99,10 @@ def back_to_draft(shop: SimpleNamespace, made: Quote) -> None:  # como hará F5-
 
 
 def cost(shop: SimpleNamespace, variant: Any, amount: str, **fields: Any) -> None:
-    base = {"currency": "PEN", "source": "MANUAL", "change_reason": "Semilla", "tax_included": True}
+    base = {"currency": "PEN", "source": "MANUAL", "change_reason": "Semilla", "tax_included": True,
+            "starts_at": LONG_AGO}  # fmt: skip
     with tenant_scope(ctx(shop.a)):
-        VariantCost.objects.create(variant_id=variant, amount=D(amount), starts_at=LONG_AGO,
-                                   **{**base, **fields})  # fmt: skip
+        VariantCost.objects.create(variant_id=variant, amount=D(amount), **{**base, **fields})
 
 
 def test_a_discount_within_the_limit_is_applied_and_asks_nothing(
