@@ -41,13 +41,17 @@ type DB = psycopg.Connection[Any]
 NOW = timezone.now()
 LONG_AGO = NOW - timedelta(days=90)
 INTERNAL = "prices.view_internal"  # una lista que quien cotiza no ve
+MINE: dict[str, str | None] = {  # quien cotiza: crea, ve, cambia y cancela todas las de la org.
+    "quotes.create": None, "quotes.view": "ORGANIZATION", "quotes.update": "ORGANIZATION",
+    "quotes.cancel": "ORGANIZATION",
+}  # fmt: skip
 SECRET = "Cliente Juan Perez, DNI 12345678"  # noqa: S105 — texto de prueba
 
 
 @pytest.fixture
 def shop(world: SimpleNamespace) -> SimpleNamespace:
     """Quien cotiza (con `prices.view`), la lista predeterminada y dos variantes con precio."""
-    quoter = person(world, {"prices.view": None})
+    quoter = person(world, {"prices.view": None, **MINE})
     listed = price_list(world.a, is_default=True)
     iphone, case = item(world.a, "IP16"), item(world.a, "CASE")
     row(world.a, (iphone, listed), "4399", LONG_AGO)
@@ -197,7 +201,7 @@ def test_a_reference_that_does_not_fit_writes_nothing(
 
 
 def test_without_prices_view_the_price_list_does_not_exist(shop: SimpleNamespace) -> None:
-    shop.quoter = person(shop, {"products.view": None})
+    shop.quoter = person(shop, {"products.view": None, **MINE})
     with pytest.raises(BadReference) as refused:
         new(shop)
     assert refused.value.field == "price_list_id"

@@ -16,9 +16,9 @@ from apps.accounts.models import User
 from apps.organizations.models import OrganizationMembership as Membership
 from apps.pricing import costs
 from apps.quotes import commands, decisions, discounts
-from apps.quotes.commands import QuoteNotDraft, StaleVersion
+from apps.quotes.commands import NotAllowed, QuoteNotDraft, StaleVersion
 from apps.quotes.decisions import BeyondLimit, NotPending, SelfApproval
-from apps.quotes.discounts import NotAllowed, PriceRefused
+from apps.quotes.discounts import PriceRefused
 from apps.quotes.models import DiscountPolicy, Quote, QuoteApproval, QuoteItem
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
@@ -79,7 +79,7 @@ def waiting(shop: SimpleNamespace, reason: str) -> Quote:
     pricer = member(shop, "100", **{"quotes.override_price": None})
     made, phone, _ = draft(shop, pricer)
     manual_price = reason == "MANUAL_PRICE"
-    with tenant_scope(ctx(shop.a)):
+    with tenant_scope(ctx(shop.a, pricer)):
         if manual_price:
             QuoteItem.objects.filter(pk=phone.pk).update(
                 manual_price_override=True, override_reason="Mayorista", discount_amount=D("899"),
@@ -88,6 +88,7 @@ def waiting(shop: SimpleNamespace, reason: str) -> Quote:
         QuoteApproval.objects.create(
             quote_id=made.pk, reason=reason, limit_percent_at_request=D(100),
             requested_by_user_id=pricer.pk if manual_price else None,
+            submitted_by_user_id=pricer.pk,
         )  # fmt: skip
         Quote.objects.filter(pk=made.pk).update(status="PENDING_APPROVAL", version=2)
     return made
@@ -120,8 +121,9 @@ def test_approving_opens_the_quote_for_the_next_step_and_audits_who_decided(
     assert "12345678" not in json.dumps(log(migrator)) and metadata == {}
     with pytest.raises(QuoteNotDraft):  # lo aprobado no se edita, ni por los comandos...
         discount(shop, seller, made, stored(shop.a, made)[0], "NONE", version=3)
+    editor = member(shop, "3", **{"quotes.view": "ORGANIZATION"})
     with pytest.raises(QuoteNotDraft):
-        act(shop, seller, commands.update_quote, quote_id=made.pk, version=3, internal_notes="x")
+        act(shop, editor, commands.update_quote, quote_id=made.pk, version=3, internal_notes="x")
     with tenant_scope(ctx(shop.a, seller)), pytest.raises(IntegrityError, match="frozen"):
         Quote.objects.filter(pk=made.pk).update(total=D(1), subtotal=D(1), tax_total=D(0))
 
@@ -314,7 +316,8 @@ def test_permission_and_scope_come_before_the_version_or_the_state(shop: SimpleN
             act(shop, plain, command, quote_id=uuid4(), **{**extra, "version": 1})
     assert reread(shop, made).version == 2
     own = boss(shop, "10", **{"quotes.view": "OWN"})  # aprueba, pero solo ve las suyas
-    blind = member(shop, "10", **{"quotes.approve": None})  # aprueba, no puede ver ninguna
+    blind = make_user()  # aprueba, no puede ver ninguna
+    give(shop.a, join(shop.a, blind).pk, {"quotes.approve": None})
     for who in (own, blind):
         for command, extra in (
             (decisions.approve_quote, {}), (decisions.reject_quote, {"reason": "x"}),
@@ -511,7 +514,9 @@ def rival(name: str, made: Quote, line: QuoteItem) -> Any:
 def test_a_decision_and_any_other_write_at_once_leave_one_coherent_outcome(
     shop: SimpleNamespace, other: str
 ) -> None:
-    everything = boss(shop, "100", **{"quotes.override_price": None})
+    everything = boss(
+        shop, "100", **{"quotes.override_price": None, "quotes.cancel": "ORGANIZATION"}
+    )
     made, _ = asked(shop)
     line = stored(shop.a, made)[0]
     first, second = race(
@@ -534,7 +539,9 @@ def test_a_decision_and_any_other_write_at_once_leave_one_coherent_outcome(
 def test_two_decisions_of_different_kind_at_once_leave_the_first_and_a_stale_version(
     shop: SimpleNamespace, first: str, second: str, quote_end: str, request_end: str
 ) -> None:
-    everything = boss(shop, "100", **{"quotes.override_price": None})
+    everything = boss(
+        shop, "100", **{"quotes.override_price": None, "quotes.cancel": "ORGANIZATION"}
+    )
     made, _ = asked(shop)
     line = stored(shop.a, made)[0]
     won, lost = race(shop.a, everything, [rival(first, made, line), rival(second, made, line)])

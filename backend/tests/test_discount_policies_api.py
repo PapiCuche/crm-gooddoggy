@@ -13,7 +13,7 @@ import pytest
 from django.test import Client
 
 from apps.access.models import Role
-from apps.quotes.discounts import NotAllowed
+from apps.quotes.commands import NotAllowed
 from apps.quotes.models import DiscountPolicy, Quote
 from apps.quotes.seed import ensure_template_policies
 from core.api.errors import exception_handler
