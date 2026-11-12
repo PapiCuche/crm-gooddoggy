@@ -14,6 +14,7 @@ import { mockApi, renderApp } from "@/test-utils";
 import { OpportunityDetail } from "./opportunity-detail";
 
 const ID = "6f1c2a4e-0b7d-4c8e-9a51-3d2f7e8b9c10";
+const CONTACT = "0b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"; // el id real de un cliente es un UUID
 const BASE = `/api/v1/o/acme/opportunities/${ID}/`;
 const DETAIL = `GET ${BASE}`;
 const PATCH = `PATCH ${BASE}`;
@@ -35,7 +36,7 @@ const stage = (id: string, name: string, type: "OPEN" | "WON" | "LOST" = "OPEN")
 const detail = (changes: Partial<Detail> = {}) =>
   ({
     ...{ id: ID, number: "OPP-000007", title: "Collar para Rocky", pipeline_id: "p1" },
-    ...{ contact: { id: "c1", display_name: "Rosa Díaz" }, stage: stage("s1", "Nuevo") },
+    ...{ contact: { id: CONTACT, display_name: "Rosa Díaz" }, stage: stage("s1", "Nuevo") },
     ...{ status: "OPEN", amount: "1500.50", currency: "PEN", probability: 10, priority: "MEDIUM" },
     ...{
       assigned_user_id: "u1",
@@ -155,7 +156,7 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(await screen.findByText("COT-000042")).toBeVisible();
     expect(screen.getByRole("link", { name: "Ver todas las de este cliente" })).toHaveAttribute(
       "href",
-      "/o/acme/cotizaciones?cliente=c1",
+      `/o/acme/cotizaciones?cliente=${CONTACT}`,
     );
   });
 
@@ -191,7 +192,7 @@ describe("OpportunityDetail (F5-07)", () => {
     expect(screen.getByText("OPP-000007")).toBeVisible();
     expect(
       within(value("Cliente") as HTMLElement).getByRole("link", { name: "Rosa Díaz" }),
-    ).toHaveAttribute("href", "/o/acme/clientes/c1");
+    ).toHaveAttribute("href", `/o/acme/clientes/${CONTACT}`);
     expect(value("Importe")).toHaveTextContent("S/ 1,500.50");
     expect(value("Etapa")).toHaveTextContent("Nuevo · Abierta");
     expect(value("Probabilidad")).toHaveTextContent("10 %");
@@ -218,7 +219,7 @@ describe("OpportunityDetail (F5-07)", () => {
       [DETAIL]: ok(
         detail({
           ...{
-            contact: { id: "c1", display_name: null },
+            contact: { id: CONTACT, display_name: null },
             status: "LOST",
             stage: stage("s9", "Perdido", "LOST"),
           },
@@ -244,7 +245,7 @@ describe("OpportunityDetail (F5-07)", () => {
       [DETAIL]: ok(
         detail({
           ...{ title: hostile, next_action: hostile, stage: stage("s1", hostile) },
-          ...{ contact: { id: "c1", display_name: hostile } },
+          ...{ contact: { id: CONTACT, display_name: hostile } },
           items: [{ variant_id: "v1", quantity: 1, estimated_unit_price: "1", notes: hostile }],
           history: [
             {

@@ -25,7 +25,7 @@ type Tab = "summary" | "notes" | "opportunities" | "tasks" | "quotes";
 const BOX = "border-border bg-surface flex flex-col gap-4 rounded-lg border p-4";
 
 // La ficha del cliente (F4-06), de solo lectura, con `GET /api/v1/o/{slug}/contacts/{id}/`.
-// «Resumen» lleva sus etiquetas, que se ponen y quitan con `contacts.update` (F4-12). Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10) y, con `opportunities.view`, «Oportunidades» (F5-06).
+// «Resumen» lleva sus etiquetas, que se ponen y quitan con `contacts.update` (F4-12). Pestañas «Resumen» y, con `contacts.view`, «Notas» (F4-10), con `opportunities.view`, «Oportunidades» (F5-06), con `tasks.view`, «Tareas» (F5-08c) y, con `quotes.view`, «Cotizaciones» (F5-09f3).
 // Fuera del alcance, borrado, de otra organización o inexistente, la API responde el mismo
 // 404, y la ficha es la página de «no encontrada» de cualquier dirección: no dice cuál fue.
 // Carga, error con «Reintentar», 403 y 401 se tratan como en `CursorList`.

@@ -15,6 +15,8 @@ import type { ApiError } from "@/lib/http";
 import { isLate, QuoteStatus, useDay, useMoney } from "./quote-parts";
 
 const SHOWN = 50;
+// Como la ruta de la lista: solo un UUID es un cliente que se puede pasar a `?cliente=`.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // Las cotizaciones de un cliente o de una oportunidad (F5-09f3): la pestaña «Cotizaciones» de la
 // ficha y la sección del detalle de la oportunidad, con `GET …/quotes/?contact_id=` u
@@ -41,15 +43,16 @@ export function LinkedQuotes({
     gcTime: 0, // al salir no queda en memoria: cada visita pregunta a la API
   });
   const problem = failed(read, t("denied"));
+  const rows = read.data?.results.length ?? 0;
   let body;
   if (read.data) {
-    const rows = read.data.results;
+    const results = read.data.results;
     body =
-      rows.length === 0 ? (
+      results.length === 0 ? (
         <p className="text-muted">{t("empty")}</p>
       ) : (
         <ul aria-label={t("title")} className="flex flex-col gap-2">
-          {rows.map((quote) => (
+          {results.map((quote) => (
             <li
               key={quote.id}
               className="border-border bg-surface flex flex-col gap-1 rounded-lg border p-4"
@@ -94,16 +97,18 @@ export function LinkedQuotes({
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-semibold">{t("title")}</h2>
       {body}
-      {read.data && (read.data.next !== null || read.data.results.length > 0) ? (
+      {read.data && (read.data.next !== null || (rows > 0 && UUID.test(contactId))) ? (
         <p className="text-sm">
           {read.data.next !== null ? `${t("partial", { count: SHOWN })} ` : ""}
-          <Link
-            href={`/o/${slug}/cotizaciones?cliente=${contactId}`}
-            prefetch={false}
-            className="underline-offset-4 hover:underline"
-          >
-            {t("viewAll")}
-          </Link>
+          {UUID.test(contactId) ? (
+            <Link
+              href={`/o/${slug}/cotizaciones?cliente=${encodeURIComponent(contactId)}`}
+              prefetch={false}
+              className="underline-offset-4 hover:underline"
+            >
+              {t("viewAll")}
+            </Link>
+          ) : null}
         </p>
       ) : null}
     </section>

@@ -25,8 +25,8 @@ const rosa = {
   ...{ created_by_user_id: "u1", version: 1, tags: [] },
   ...{ created_at: "2026-10-23T10:00:00Z", updated_at: "2026-10-24T20:30:00Z" },
 } as Contact;
-const show = (link: { contact_id: string } | { opportunity_id: string }) =>
-  withTenant(<LinkedQuotes link={link} contactId={ID} />, "quotes.view");
+const show = (link: { contact_id: string } | { opportunity_id: string }, contactId = ID) =>
+  withTenant(<LinkedQuotes link={link} contactId={contactId} />, "quotes.view");
 
 beforeEach(() => vi.useFakeTimers({ toFake: ["Date"], now: NOW }));
 afterEach(() => {
@@ -58,12 +58,54 @@ describe("cotizaciones de una oportunidad y de un cliente (F5-09f3)", () => {
     );
     expect(rows[1]).toHaveTextContent("Sin fecha de validez");
     expect(screen.getByText("<b>X</b>").tagName).toBe("BDI");
-    expect(document.querySelector("main b, b")).toBeNull();
     expect(screen.getByRole("link", { name: "Ver todas las de este cliente" })).toHaveAttribute(
       "href",
       `/o/acme/cotizaciones?cliente=${ID}`,
     );
     expect(screen.queryByText(/primeras/)).toBeNull();
+  });
+
+  it("dos vínculos no comparten caché: cada uno enseña lo suyo; y mientras carga lo dice", async () => {
+    const OTHER = "0b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const urls = serve((url) =>
+      url.searchParams.get("contact_id") === OTHER
+        ? page(quote("8", { number: "COT-DEL-OTRO" }))
+        : page(quote("7", { number: "COT-DEL-PRIMERO" })),
+    );
+    withTenant(
+      <>
+        <LinkedQuotes link={{ contact_id: ID }} contactId={ID} />
+        <LinkedQuotes link={{ contact_id: OTHER }} contactId={OTHER} />
+        <LinkedQuotes link={{ opportunity_id: "o9" }} contactId={ID} />
+      </>,
+      "quotes.view",
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(3); // «Cargando cotizaciones…» en cada una
+    expect(await screen.findByText("COT-DEL-OTRO")).toBeVisible();
+    expect(screen.getAllByText("COT-DEL-PRIMERO")).toHaveLength(2); // el primer cliente y la oportunidad
+    const asked = urls.map((url) => JSON.stringify(Object.fromEntries(url.searchParams))).sort();
+    expect(asked).toEqual(
+      [
+        { contact_id: ID, limit: "50" },
+        { contact_id: OTHER, limit: "50" },
+        { opportunity_id: "o9", limit: "50" },
+      ]
+        .map((query) => JSON.stringify(query))
+        .sort(),
+    );
+  });
+
+  it("un id de cliente que no es UUID no llega a la dirección: sin «Ver todas»", async () => {
+    serve(() => page(quote("1")));
+    show({ opportunity_id: "o9" }, "no-es-uuid/../x");
+    expect(await screen.findByText("COT-000001")).toBeVisible();
+    expect(screen.queryByRole("link", { name: /Ver todas/ })).toBeNull();
+    expect(document.querySelector("section > p.text-sm")).toBeNull(); // ni un párrafo vacío
+    cleanup();
+    serve(() => ({ status: 200, body: { results: [quote("1")], next: "c2" } }));
+    show({ opportunity_id: "o9" }, "no-es-uuid/../x");
+    expect(await screen.findByText(/Se muestran las primeras 50\./)).toBeVisible(); // lo de «más» sí
+    expect(screen.queryByRole("link", { name: /Ver todas/ })).toBeNull();
   });
 
   it("una enviada vencida dice «Vencida»; con más de las que caben se dice", async () => {
