@@ -432,3 +432,35 @@ def test_a_percent_is_rounded_like_every_amount_and_a_cap_in_another_currency_ne
         DiscountPolicy.objects.filter(max_discount_amount=D("1000")).update(currency="USD")
     other, line, _ = draft(shop, role_only)  # 219,95 PEN contra un tope de 1.000 USD: no se compara
     assert discount(shop, role_only, other, line, "PERCENT", "5").status == "PENDING_APPROVAL"
+
+
+def test_the_request_records_the_limit_of_that_moment_and_zero_when_there_is_no_policy(
+    shop: SimpleNamespace,
+) -> None:
+    bare = member(shop)  # sin política: 0 %
+    made, phone, _ = draft(shop, bare)
+    assert discount(shop, bare, made, phone, "PERCENT", "1").status == "PENDING_APPROVAL"
+    [req] = approvals(shop)
+    assert (req.limit_percent_at_request, req.requested_discount_percent) == (D("0.00"), D("1.00"))
+
+
+def test_the_percent_of_a_line_is_applied_rounded_to_the_nearest_cent(
+    shop: SimpleNamespace,
+) -> None:
+    seller = member(shop, "10")
+    made, phone, _ = draft(shop, seller)
+    discount(shop, seller, made, phone, "PERCENT", "0.05")  # 2,1995: sube a 2,20, no baja a 2,19
+    assert stored(shop.a, made)[0].final_unit_price == D("4396.80")
+
+
+def test_the_whole_quote_is_measured_over_the_list_price_not_over_the_promotion_price(
+    shop: SimpleNamespace,
+) -> None:
+    promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
+          starts=NOW - timedelta(days=1), ends=NOW + timedelta(days=1))  # fmt: skip
+    seller = member(shop, "8.2")
+    made, phone, _ = draft(shop, seller)  # el iPhone: 4399,00 de lista, 3959,10 por la promoción
+    # 9 % de 3959,10 son 356,32: 8,10 % del precio de lista de la línea y 7,75 % de la cotización
+    # (sobre 4.160,10 serían 8,57 %: el límite se mide sobre lo de lista)
+    assert discount(shop, seller, made, phone, "PERCENT", "9").status == "DRAFT"
+    assert approvals(shop) == []
