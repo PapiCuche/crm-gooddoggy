@@ -3,7 +3,8 @@
 Los módulos de negocio (L3) están sobre `provisioning` y no pueden importarse desde él: cada uno
 registra aquí, desde su `AppConfig.ready`, lo que su organización necesita para ser usable, y el
 alta lo ejecuta en su transacción. Las organizaciones que ya existían lo reciben con una
-migración de datos del propio módulo.
+migración de datos del propio módulo (salvo `quotes`, F5-09b4: abrir descuentos en las ya
+creadas lo decide el dueño).
 """
 
 from collections.abc import Callable
