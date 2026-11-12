@@ -78,9 +78,8 @@ class _Watchdog:
     """Corta los sockets de una descarga al vencer su plazo total: los tiempos de urllib3 son por
     lectura y un servidor que gotea (apretón TLS, cabeceras o cuerpo) los reiniciaría sin fin.
     `watch` guarda un **duplicado** del socket (`ssl` suelta el descriptor original al empezar el
-    apretón; el duplicado sigue siendo el socket del núcleo y su número no se reutiliza). `stop`,
-    antes de soltar ningún socket, cierra los duplicados y deja inerte al temporizador bajo el
-    mismo cerrojo: nunca corta una conexión ajena. No cubre `getaddrinfo`."""
+    apretón). El duplicado mantiene vivo ese socket, aunque la descarga ya cerrara el suyo, hasta
+    que `stop` lo cierra y deja inerte al temporizador bajo el cerrojo: nunca corta uno ajeno."""
 
     def __init__(self, seconds: float) -> None:
         self.fired, self._stopped, self._sockets = False, False, []  # type: ignore[var-annotated]
@@ -140,12 +139,22 @@ class _GuardedHTTPSConnection(HTTPSConnection):
             sock = super()._new_conn()  # conecta a la IP validada
         finally:
             self._dns_host = name  # TLS y la cabecera Host siguen usando el nombre
-        _watch(sock)  # antes del apretón TLS: es el socket del núcleo de toda la conexión
+        try:
+            _watch(sock)  # antes del apretón TLS: es el socket del núcleo de toda la conexión
+        except BaseException:
+            sock.close()
+            raise
         return sock
 
 
 class _GuardedPool(HTTPSConnectionPool):
     ConnectionCls = _GuardedHTTPSConnection
+
+    def _put_conn(self, conn: Any) -> None:
+        if conn is not None and _watchdog.get() is not None:  # la de una descarga nunca se reusa:
+            conn.close()  # la siguiente abriría sin `_new_conn` (sin vigilante) y sin su plazo
+            conn = None
+        super()._put_conn(conn)
 
 
 _manager = urllib3.PoolManager(
@@ -247,7 +256,7 @@ def download(
     cabeceras; no cubre `getaddrinfo`. Un fallo de red es `DownloadFailed`, sin el texto original
     (la URL firmada) ni como causa ni como contexto; un fallo del `sink` es un `OSError` tal cual.
     Solo con 200 se escribe en `sink`; ante **cualquier** excepción, el llamador lo descarta."""
-    allowed = {h.lower() for h in settings.META_MEDIA_HOSTS}
+    hosts, allowed = tuple(hosts), {h.lower() for h in settings.META_MEDIA_HOSTS}
     if not {h.lower() for h in hosts} <= allowed:
         raise ValueError("Los hosts de una descarga tienen que ser de META_MEDIA_HOSTS")
     check_url(url, hosts)
@@ -258,7 +267,7 @@ def download(
         dog.start()
         return _fetch(url, sink, max_bytes, sent, seconds, dog)
     finally:
-        dog.stop()  # idempotente; `_fetch` ya lo llamó antes de soltar el socket
+        dog.stop()
         _watchdog.reset(token)
 
 
@@ -315,5 +324,4 @@ def _fetch(
             raise (DownloadTooSlow if dog.fired else DownloadFailed) from None
         return 200
     finally:
-        dog.stop()  # antes de soltar el socket: el temporizador no corta una conexión ajena
-        reply.close()  # sin devolver la conexión a la reserva: puede quedar a medias
+        reply.close()  # la conexión nunca vuelve a la reserva (`_GuardedPool._put_conn`)

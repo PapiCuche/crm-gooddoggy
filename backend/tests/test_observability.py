@@ -298,7 +298,7 @@ def test_a_breadcrumb_of_a_signed_media_url_loses_its_query() -> None:
     url = "https://lookaside.fbsbx.com/blob/1"
     crumb = {
         "data": {"url": f"{url}?oh=SECRETO#f", "http.query": "oh=SECRETO", "http.method": "GET"},
-        "message": f"GET {url}?oh=SECRETO&oe=1",
+        "message": f"GET {url}?mid=SECRETO&oh=SECRETO&oe=1&hash=SECRETO",
     }  # fmt: skip
     clean = reporting.scrub_breadcrumb(crumb)
     assert clean["data"] == {"url": url, "http.method": "GET"} and "SECRETO" not in str(clean)

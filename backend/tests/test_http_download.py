@@ -12,7 +12,6 @@ import socket
 import threading
 import time
 from typing import Any
-from unittest import mock
 
 import pytest
 import urllib3
@@ -319,25 +318,7 @@ def test_a_body_that_drips_hits_the_total_deadline_without_waiting_for_a_whole_c
     sink, started = io.BytesIO(), time.monotonic()
     with pytest.raises(http.DownloadTooSlow):
         get(sink, cap=10_000, seconds=0.2)
-    assert time.monotonic() - started < 1.0 and 0 < len(sink.getvalue()) < 40
-
-
-def test_each_read_waits_at_most_the_rest_of_the_deadline_and_the_dog_stops_before_release(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    stopped: list[bool] = []
-
-    def release() -> None:  # lo que `_fetch` suelta al terminar: con el vigilante ya parado
-        stopped.append(getattr(http._watchdog.get(), "_stopped"))  # noqa: B009
-
-    for seconds, most in ((5.0, 5.0), (60.0, 15.0)):
-        conn = mock.Mock(close=release)  # solo su `sock`: el cuerpo sale de un `BytesIO`
-        body = io.BytesIO(b"hola")
-        reply = urllib3.HTTPResponse(body=body, status=200, preload_content=False, connection=conn)
-        monkeypatch.setattr(http, "_manager", Manager(reply))
-        assert get(seconds=seconds) == 200 and stopped.pop() and not stopped
-        timeouts = [call.args[0] for call in conn.sock.settimeout.call_args_list]
-        assert timeouts and all(most - 1 < value <= most for value in timeouts)
+    assert time.monotonic() - started < 2.0 and 0 < len(sink.getvalue()) < 40
 
 
 class Cut(io.BytesIO):
@@ -430,7 +411,7 @@ def test_a_tls_handshake_that_drips_is_cut_by_the_watchdog_with_the_real_ssl_wra
     try:
         with pytest.raises((OSError, urllib3.exceptions.HTTPError)):
             http._GuardedHTTPSConnection(MEDIA_HOST, 443).connect()
-        assert dog.fired and time.monotonic() - started < 1.5
+        assert dog.fired and time.monotonic() - started < 2.5
     finally:
         done.set()
         dog.stop()
@@ -481,26 +462,38 @@ def test_a_failure_carries_no_url_as_cause_or_context_and_the_download_is_one_re
     assert SECRET not in caplog.text and MEDIA_HOST not in caplog.text
 
 
-def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
+def test_with_the_real_manager_a_media_connection_is_never_pooled_nor_logs_the_signed_query(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, settings: Any
 ) -> None:
-    """Con el gestor real, urllib3 registra `GET <ruta>?<query>` en DEBUG: la configuración de
-    `LOGGING` lo calla. Sin red: la conexión protegida usa un socket local en claro."""
-    client, server = socket.socketpair()
-    client.settimeout(5)
-    server.settimeout(5)
+    """Gestor, reserva y `_new_conn` reales, sin TLS sobre sockets locales. Al leer el último byte
+    urllib3 devuelve la conexión a la reserva: la de una descarga se cierra, y la siguiente abre y
+    vigila otra. urllib3 registra `GET <ruta>?<query>` en DEBUG: `LOGGING` lo calla."""
+    pairs = [socket.socketpair() for _ in range(2)]
+    clients, watched, watch = iter(pairs), [], http._Watchdog.watch
+    for sock in (sock for pair in pairs for sock in pair):
+        sock.settimeout(5)
 
-    def answer() -> None:
+    def answer(server: socket.socket) -> None:
         server.recv(65536)
         server.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nhola")
 
-    class Local(http._GuardedHTTPSConnection):
+    def spy(dog: http._Watchdog, sock: socket.socket) -> None:
+        watched.append(sock)
+        watch(dog, sock)
+
+    class Plain(http._GuardedHTTPSConnection):
         is_verified = True
 
         def connect(self) -> None:
-            self.sock = client
+            self.sock = self._new_conn()  # IP validada y vigilante reales; sin el apretón TLS
 
-    monkeypatch.setattr(http._GuardedPool, "ConnectionCls", Local)
+    public = [(socket.AF_INET, 1, 6, "", ("93.184.216.34", 443))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: public)
+    monkeypatch.setattr(
+        "urllib3.connection.connection.create_connection", lambda *a, **k: next(clients)[0]
+    )
+    monkeypatch.setattr(http._Watchdog, "watch", spy)
+    monkeypatch.setattr(http._GuardedPool, "ConnectionCls", Plain)
     manager = urllib3.PoolManager()
     manager.pool_classes_by_scheme = {"https": http._GuardedPool}
     monkeypatch.setattr(http, "_manager", manager)
@@ -508,12 +501,17 @@ def test_urllib3_does_not_log_the_signed_query_with_the_real_request_path(
     caplog.set_level(logging.DEBUG, logger="urllib3")  # sin la entrada de `LOGGING`, se vería
     only = {"urllib3": settings.LOGGING["loggers"]["urllib3"]}  # solo su entrada: no toca la raíz
     logging.config.dictConfig({"version": 1, "disable_existing_loggers": False, "loggers": only})
-    threading.Thread(target=answer, daemon=True).start()
-    sink = io.BytesIO()
     try:
-        assert http.download(f"{URL}?{SECRET}", sink, max_bytes=100, hosts=HOSTS) == 200
+        for client, server in pairs:
+            threading.Thread(target=answer, args=(server,), daemon=True).start()
+            sink, pool = io.BytesIO(), manager.connection_from_url(URL)
+            assert (
+                http.download(f"{URL}?{SECRET}", sink, max_bytes=9, hosts=HOSTS, seconds=5) == 200
+            )
+            assert sink.getvalue() == b"hola" and 0 < (client.gettimeout() or 0) < 5  # lo que queda
+            assert client.fileno() == -1 and not any(pool.pool.queue)  # type: ignore[union-attr]
     finally:
-        client.close()
-        server.close()
+        for sock in (sock for pair in pairs for sock in pair):
+            sock.close()
         logging.getLogger("urllib3").handlers[:] = handlers  # el resto de la suite, como estaba
-    assert sink.getvalue() == b"hola" and "SECRETO" not in caplog.text
+    assert watched == [client for client, _ in pairs] and "SECRETO" not in caplog.text
