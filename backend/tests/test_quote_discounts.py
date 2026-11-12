@@ -364,18 +364,25 @@ def test_an_own_scope_seller_cannot_touch_the_quote_of_someone_else(shop: Simple
     senior = member(shop, "10", **{"quotes.override_price": None})
     made, phone, _ = draft(shop, senior)
     own = member(shop, "10", **{"quotes.override_price": None, "quotes.update": "OWN"})
-    for command, extra in (
+    with tenant_scope(ctx(shop.b)):  # y alguien de otra organización con todos los permisos
+        give(
+            shop.b,
+            Membership.objects.get(user=shop.luis).pk,
+            {**ALLOW, "quotes.override_price": None},
+        )
+    seen = set()
+    cases: list[tuple[Any, dict[str, Any]]] = [
         (discounts.set_line_discount, {"line_id": phone.pk, "discount_type": "NONE"}),
         (discounts.set_manual_price, {"line_id": phone.pk, "price": "4000", "reason": "x"}),
         (discounts.submit_quote, {}),
-    ):
-        with pytest.raises(Quote.DoesNotExist) as outside:  # fuera de su alcance: como si no
-            act(shop, own, command, quote_id=made.pk, version=1, **extra)
-        with pytest.raises(Quote.DoesNotExist) as missing:  # existiera: el mismo error y texto
-            act(shop, own, command, quote_id=uuid4(), version=1, **extra)
-        assert (
-            str(outside.value) == str(missing.value) and type(outside.value) is Quote.DoesNotExist
-        )
+    ]
+    for command, extra in cases:
+        for org, who, target in ((shop.a, own, made.pk), (shop.a, own, uuid4()),
+                                 (shop.b, shop.luis, made.pk)):  # fmt: skip
+            with tenant_scope(ctx(org, who)) as tenant, pytest.raises(Quote.DoesNotExist) as gone:
+                command(tenant, quote_id=target, version=1, **extra)
+            seen.add((type(gone.value), str(gone.value), gone.value.args))
+    assert len(seen) == 1  # fuera de alcance, inexistente y ajena: el mismo error y texto
     assert discount(shop, own, *draft(shop, own)[:2], "PERCENT", "5").status == "DRAFT"  # la suya
     with pytest.raises(Quote.DoesNotExist):  # y el alcance va antes que la versión: no se le cuenta
         discount(shop, own, made, phone, "NONE", version=9)

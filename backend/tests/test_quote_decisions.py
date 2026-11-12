@@ -52,7 +52,7 @@ def boss(shop: SimpleNamespace, percent: str | None = "10", **grants: Any) -> Us
 
 
 def asked(shop: SimpleNamespace, seller: User | None = None, percent: str = "5") -> tuple[Any, Any]:
-    """Una cotización con un descuento que pasa del 3 % de quien la pide: queda esperando (v. 2)."""
+    """Una cotización con un descuento sobre el 3 % de quien la pide: espera aprobación (v. 2)."""
     seller = seller or member(shop, "3")
     made, phone, _ = draft(shop, seller)
     assert discount(shop, seller, made, phone, "PERCENT", percent).status == "PENDING_APPROVAL"
@@ -73,13 +73,21 @@ def withdraw(shop: SimpleNamespace, who: User, made: Quote, version: int = 2) ->
     return act(shop, who, decisions.withdraw_approval_request, quote_id=made.pk, version=version)
 
 
-def ai_request(shop: SimpleNamespace) -> Quote:
-    """Una cotización de la IA esperando aprobación: la solicitud no tiene quien la pida."""
-    made, _, _ = draft(shop, member(shop, "10"))
+def waiting(shop: SimpleNamespace, reason: str) -> Quote:
+    """Una solicitud abierta escrita sin pasar por los comandos: la de la IA (sin quien la pida) o
+    la de un precio manual del iPhone (3500 de 4399) sin costo, que el comando no deja crear."""
+    pricer = member(shop, "100", **{"quotes.override_price": None})
+    made, phone, _ = draft(shop, pricer)
+    manual_price = reason == "MANUAL_PRICE"
     with tenant_scope(ctx(shop.a)):
+        if manual_price:
+            QuoteItem.objects.filter(pk=phone.pk).update(
+                manual_price_override=True, override_reason="Mayorista", discount_amount=D("899"),
+                final_unit_price=D("3500"), line_total=D("3500"),
+            )  # fmt: skip
         QuoteApproval.objects.create(
-            quote_id=made.pk, reason="AI_CREATED", requested_by_user_id=None,
-            limit_percent_at_request=D(0),
+            quote_id=made.pk, reason=reason, limit_percent_at_request=D(100),
+            requested_by_user_id=pricer.pk if manual_price else None,
         )  # fmt: skip
         Quote.objects.filter(pk=made.pk).update(status="PENDING_APPROVAL", version=2)
     return made
@@ -249,6 +257,8 @@ def test_withdrawing_is_for_who_asked_or_who_can_approve_never_the_request_of_th
     for person in (stranger, viewer):
         with pytest.raises(NotAllowed):  # otra persona con `quotes.update` en alcance: no
             withdraw(shop, person, made)
+        with pytest.raises(NotAllowed):  # y antes que la versión: no se le cuenta
+            withdraw(shop, person, made, version=9)
     bare = make_user()  # ni `quotes.approve` ni `quotes.update`: el permiso va antes que todo
     give(shop.a, join(shop.a, bare).pk, {"prices.view": None})
     with pytest.raises(NotAllowed):
@@ -264,7 +274,7 @@ def test_withdrawing_is_for_who_asked_or_who_can_approve_never_the_request_of_th
     discount(shop, seller, made, stored(shop.a, made)[0], "NONE", version=3)  # vuelve a editarse
     again, _ = asked(shop, seller)
     assert withdraw(shop, approver, again).status == "DRAFT"  # quien aprueba, aunque no la pidió
-    ai = ai_request(shop)  # la solicitud de la IA no la retira quien no puede aprobar
+    ai = waiting(shop, "AI_CREATED")  # la solicitud de la IA no la retira quien no puede aprobar
     for person in (stranger, seller):
         with pytest.raises(NotAllowed):
             withdraw(shop, person, ai)
@@ -275,7 +285,7 @@ def test_withdrawing_is_for_who_asked_or_who_can_approve_never_the_request_of_th
 def test_the_request_of_the_ai_is_never_approved_alone_a_person_decides(
     shop: SimpleNamespace,
 ) -> None:
-    ai = ai_request(shop)
+    ai = waiting(shop, "AI_CREATED")
     approver = boss(shop, None)  # no pidió nadie: puede aprobar cualquier persona con el permiso
     for actor in (ActorType.SYSTEM, ActorType.AI_AGENT):
         for command, fields in (
@@ -423,32 +433,16 @@ def test_the_refusals_of_the_decision_carry_no_figures(shop: SimpleNamespace) ->
     approve(shop, boss(shop), other)
     with pytest.raises(NotPending) as closed:
         approve(shop, boss(shop), other, version=3)
-    assert all(str(e.value) == "" and e.value.args == () for e in (own, beyond, closed))
-
-
-def request_with_manual_price(shop: SimpleNamespace) -> Quote:
-    """Una solicitud por un precio manual del iPhone (3500 de 4399), escrita sin pasar por el
-    comando: para probar el costo del que no hay (el costo no se borra: solo se agrega)."""
-    pricer = member(shop, "100", **{"quotes.override_price": None})
-    made, phone, _ = draft(shop, pricer)
-    with tenant_scope(ctx(shop.a)):
-        QuoteItem.objects.filter(pk=phone.pk).update(
-            manual_price_override=True, override_reason="Mayorista", discount_amount=D("899.00"),
-            final_unit_price=D("3500.00"), line_total=D("3500.00"),
-        )  # fmt: skip
-        QuoteApproval.objects.create(
-            quote_id=made.pk, reason="MANUAL_PRICE", requested_by_user_id=pricer.pk,
-            requested_discount_percent=D("20.44"), limit_percent_at_request=D(100),
-        )  # fmt: skip
-        Quote.objects.filter(pk=made.pk).update(status="PENDING_APPROVAL", version=2)
-    return made
+    with pytest.raises(PriceRefused) as price:  # un precio manual sin costo vigente
+        approve(shop, boss(shop, None, owner=True), waiting(shop, "MANUAL_PRICE"))
+    assert all(str(e.value) == "" and e.value.args == () for e in (own, beyond, closed, price))
 
 
 def test_a_manual_price_without_a_usable_cost_is_refused_and_a_covering_one_is_approved(
     shop: SimpleNamespace,
 ) -> None:
     owner = boss(shop, None, owner=True)
-    made = request_with_manual_price(shop)
+    made = waiting(shop, "MANUAL_PRICE")
     with pytest.raises(PriceRefused):  # sin ningún costo: falla cerrado
         approve(shop, owner, made)
     cost(shop, shop.iphone, "1000", currency="USD")
@@ -495,37 +489,34 @@ def test_the_lines_of_an_approved_quote_cannot_be_written_by_the_database_either
 
 
 RIVALS: dict[str, Any] = {
-    "set_line_discount": lambda m, line: partial(
-        discounts.set_line_discount, quote_id=m.pk, version=2, line_id=line.pk,
-        discount_type="NONE",
-    ),
-    "set_manual_price": lambda m, line: partial(
-        discounts.set_manual_price, quote_id=m.pk, version=2, line_id=line.pk, price="4000",
-        reason="x",
-    ),
-    "submit_quote": lambda m, line: partial(discounts.submit_quote, quote_id=m.pk, version=2),
-    "cancel_quote": lambda m, line: partial(commands.cancel_quote, quote_id=m.pk, version=2),
-    "update_quote": lambda m, line: partial(
-        commands.update_quote, quote_id=m.pk, version=2, internal_notes="x"
-    ),
-    "reject_quote": lambda m, line: partial(
-        decisions.reject_quote, quote_id=m.pk, version=2, reason="x"
-    ),
-    "withdraw": lambda m, line: partial(
-        decisions.withdraw_approval_request, quote_id=m.pk, version=2
-    ),
+    "set_line_discount": discounts.set_line_discount,
+    "set_manual_price": discounts.set_manual_price,
+    "submit_quote": discounts.submit_quote, "cancel_quote": commands.cancel_quote,
+    "update_quote": commands.update_quote, "reject_quote": decisions.reject_quote,
+    "withdraw": decisions.withdraw_approval_request, "approve_quote": decisions.approve_quote,
+}  # fmt: skip
+EXTRA: dict[str, dict[str, Any]] = {
+    "set_line_discount": {"discount_type": "NONE"},
+    "set_manual_price": {"price": "4000", "reason": "x"},
+    "update_quote": {"internal_notes": "x"}, "reject_quote": {"reason": "x"},
 }  # fmt: skip
 
 
-@pytest.mark.parametrize("rival", list(RIVALS))
+def rival(name: str, made: Quote, line: QuoteItem) -> Any:
+    lined = {"line_id": line.pk} if name.startswith("set_") else {}
+    return partial(RIVALS[name], quote_id=made.pk, version=2, **lined, **EXTRA.get(name, {}))
+
+
+@pytest.mark.parametrize("other", [n for n in RIVALS if n != "approve_quote"])
 def test_a_decision_and_any_other_write_at_once_leave_one_coherent_outcome(
-    shop: SimpleNamespace, rival: str
+    shop: SimpleNamespace, other: str
 ) -> None:
     everything = boss(shop, "100", **{"quotes.override_price": None})
     made, _ = asked(shop)
     line = stored(shop.a, made)[0]
-    decide = partial(decisions.approve_quote, quote_id=made.pk, version=2)
-    first, second = race(shop.a, everything, [decide, RIVALS[rival](made, line)])
+    first, second = race(
+        shop.a, everything, [rival("approve_quote", made, line), rival(other, made, line)]
+    )
     assert (first.status, first.version, second) == ("APPROVED", 3, "StaleVersion")
     assert (reread(shop, made).status, [a.status for a in approvals(shop)]) == (
         "APPROVED",
@@ -546,11 +537,7 @@ def test_two_decisions_of_different_kind_at_once_leave_the_first_and_a_stale_ver
     everything = boss(shop, "100", **{"quotes.override_price": None})
     made, _ = asked(shop)
     line = stored(shop.a, made)[0]
-    both = {
-        **RIVALS,
-        "approve_quote": lambda m, _l: partial(decisions.approve_quote, quote_id=m.pk, version=2),
-    }
-    won, lost = race(shop.a, everything, [both[first](made, line), both[second](made, line)])
+    won, lost = race(shop.a, everything, [rival(first, made, line), rival(second, made, line)])
     assert (won.status, won.version, lost) == (quote_end, 3, "StaleVersion")
     assert [a.status for a in approvals(shop)] == [request_end]
 
@@ -576,4 +563,5 @@ def test_a_failure_after_the_request_is_saved_rolls_everything_back(
     assert (req.status, req.decided_by_user_id, req.version) == ("PENDING", None, 1)
     assert (reread(shop, made).status, reread(shop, made).version) == ("PENDING_APPROVAL", 2)
     assert len(log(migrator)) == before
-    assert runs[name](shop, approver, made).status in ("APPROVED", "DRAFT")  # y se puede decidir
+    ends = {"approve": "APPROVED", "reject": "DRAFT", "withdraw": "DRAFT"}
+    assert runs[name](shop, approver, made).status == ends[name]  # y se puede decidir

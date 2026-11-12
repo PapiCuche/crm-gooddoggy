@@ -8,7 +8,7 @@ o a `DRAFT` (rechazar, retirar), con versión y auditoría del antes y el despu�
 Con la cotización bloqueada, su **alcance** (aprobar y rechazar exigen verla, `quotes.view`;
 retirar, el de `quotes.update`): una que no existe, de otra organización o fuera del alcance es la
 misma `DoesNotExist`, sin oráculo de existencia. Luego la versión (`StaleVersion`) y el estado
-(`NotPending`).
+(`NotPending`); al retirar, quién puede con esa solicitud va antes de ambos.
 
 **Aprobar** exige que quien aprueba no sea quien pidió (`SelfApproval`), que no supere **su propio**
 límite (`BeyondLimit`, el cálculo de `submit_quote`) y que cada precio manual **vuelva a cubrir el
@@ -60,16 +60,19 @@ def _can_decide(ectx: Any, quote: Quote) -> bool:
 
 
 def _pending(
-    alias: str, quote_id: UUID, version: int, reach: Callable[[Quote], bool]
-) -> tuple[Quote, QuoteApproval]:
-    """La cotización bloqueada, al alcance (`reach`; si no, `DoesNotExist`, como si no existiera),
-    con su versión y esperando la decisión, y su solicitud abierta, también bloqueada."""
+    alias: str, quote_id: UUID, version: int, reach: Callable[[Quote], bool],
+    only: Callable[[Quote, QuoteApproval], bool] | None = None,
+) -> tuple[Quote, QuoteApproval]:  # fmt: skip
+    """La cotización bloqueada y al alcance (`reach`, o `DoesNotExist`), su solicitud abierta
+    (bloqueada) con `only` (`NotAllowed`) **antes** de la versión y el estado, y luego estos."""
     found = _reachable(alias, quote_id, reach)
-    if found.version != version:
-        raise StaleVersion(quote_id)
     asked = QuoteApproval.objects.using(alias).select_for_update(no_key=True).filter(
         quote_id=found.pk, status=ApprovalStatus.PENDING
     ).first()  # fmt: skip
+    if asked is not None and only is not None and not only(found, asked):
+        raise NotAllowed("quotes.approve")  # ni de otra persona ni la de la IA (sin nadie)
+    if found.version != version:
+        raise StaleVersion(quote_id)
     if found.status != QuoteStatus.PENDING_APPROVAL or asked is None:
         raise NotPending
     return found, asked
@@ -77,8 +80,7 @@ def _pending(
 
 def _close(ctx: TenantContext, alias: str, quote: Quote, asked: QuoteApproval, *, action: str,
            approval: str, status: str, comment: str) -> None:  # fmt: skip
-    """La solicitud decidida primero (la base exige que no quede ninguna abierta al salir de
-    `PENDING_APPROVAL`, y la última aprobada al aprobar) y luego la cotización."""
+    """La solicitud decidida primero (así lo exige la base al salir de `PENDING_APPROVAL`)."""
     before = quote.status
     asked.status, asked.decided_by_user_id, asked.decided_at = approval, ctx.user_id, timezone.now()
     asked.comment, asked.version = comment, asked.version + 1
@@ -154,9 +156,8 @@ def withdraw_approval_request(ctx: TenantContext, *, quote_id: UUID, version: in
         quote, asked = _pending(
             alias, quote_id, version,
             lambda q: _can_decide(ectx, q) or can(ectx, "quotes.update", q),
+            lambda q, a: _can_decide(ectx, q) or a.requested_by_user_id == ctx.user_id,
         )  # fmt: skip
-        if not _can_decide(ectx, quote) and asked.requested_by_user_id != ctx.user_id:
-            raise NotAllowed("quotes.approve")  # ni de otra persona ni la de la IA (sin nadie)
         _close(ctx, alias, quote, asked, action="quote.approval_withdrawn",
                approval=ApprovalStatus.CANCELLED, status=QuoteStatus.DRAFT, comment="")  # fmt: skip
     return quote
