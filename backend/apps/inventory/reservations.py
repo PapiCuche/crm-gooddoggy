@@ -112,8 +112,7 @@ def _movement(
     text: str,
     actor: tuple[str, UUID | None],
 ) -> None:
-    """Cambia `reserved` de la celda bloqueada y deja su línea en el ledger (`RESERVE` o
-    `RELEASE`, con la clave derivada de la reserva)."""
+    """Cambia `reserved` de la celda bloqueada y deja su `RESERVE` o `RELEASE` en el ledger."""
     level.reserved += delta
     level.version += 1
     level.save(using=alias, update_fields=["reserved", "version", "updated_at"])
@@ -142,8 +141,7 @@ def _close(
     text: str,
     actor: tuple[str, UUID | None],
 ) -> None:
-    """Cierra una reserva ACTIVE ya bloqueada: solo escribe las columnas del cierre (las únicas
-    que el runtime puede cambiar) y devuelve sus unidades a la celda."""
+    """Cierra una reserva ACTIVE bloqueada (solo las columnas del cierre) y libera sus unidades."""
     reservation.status, reservation.ended_at, reservation.end_reason = status, _now(), text
     reservation.ended_by_type, reservation.ended_by_user_id = actor
     closing = ["status", "ended_at", "ended_by_type", "ended_by_user_id", "end_reason"]
@@ -152,9 +150,8 @@ def _close(
 
 
 def _expire_due(alias: str, ctx: TenantContext, level: InventoryLevel, label: str) -> None:
-    """Vence, en esta transacción, las reservas ACTIVE de la celda (ya bloqueada) cuyo plazo pasó:
-    una reserva vencida libera su unidad aunque el job (F3-34) no haya pasado. Las vence el
-    sistema, como lo hará el job."""
+    """Vence las reservas ACTIVE de la celda (bloqueada) cuyo plazo pasó, como el sistema: libera su
+    unidad aunque el job (F3-34) no haya pasado."""
     due = (
         InventoryReservation.objects.using(alias)
         .select_for_update()
@@ -166,9 +163,8 @@ def _expire_due(alias: str, ctx: TenantContext, level: InventoryLevel, label: st
         )
     )
     for reservation in due.order_by("pk"):
-        before = level.reserved
         _close(alias, reservation, level, Status.EXPIRED, EXPIRED, _SYSTEM)
-        _audit(ctx, "reservation_expired", reservation, label, before, level, _SYSTEM)
+        _audit(ctx, "reservation_expired", reservation, label, level, _SYSTEM)
 
 
 def _audit(
@@ -176,13 +172,14 @@ def _audit(
     action: str,
     reservation: InventoryReservation,
     label: str,
-    before: int,
     level: InventoryLevel,
     actor: tuple[str, UUID | None] | None = None,
 ) -> None:
     """`inventory.<action>` de la reserva: `reserved` antes y después, y su estado si se cerró."""
+    closed = reservation.status != Status.ACTIVE
+    before = level.reserved + (reservation.quantity if closed else -reservation.quantity)
     changes: dict[str, list[object]] = {"reserved": [before, level.reserved]}
-    if reservation.status != Status.ACTIVE:
+    if closed:
         changes["status"] = [Status.ACTIVE, reservation.status]
     about = {
         "variant_id": str(reservation.variant_id),
@@ -227,13 +224,13 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
                 created_by_type=actor[0],
                 created_by_user_id=actor[1],
             )
-            before = level.reserved
             _movement(alias, reservation, level, wanted.quantity, reservation.reason, actor)
-            _audit(ctx, "reserved", reservation, label, before, level)
+            _audit(ctx, "reserved", reservation, label, level)
     except IntegrityError as error:
-        if EXPIRES_CK in str(error):  # el plazo pasó entre la comprobación y el INSERT
+        violated = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
+        if violated == EXPIRES_CK:  # el plazo pasó entre la comprobación y el INSERT
             raise ValueError("expires_at: en el futuro") from None
-        if KEY_TAKEN not in str(error):
+        if violated != KEY_TAKEN:  # por su nombre, no por el texto: una clave puede decirlo
             raise
         done = _replay(alias, wanted)  # la misma clave, a la vez, para otra celda
         assert done is not None  # noqa: S101 — el índice único acaba de verla
@@ -241,27 +238,23 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
     return reservation, True
 
 
-def release(
-    ctx: TenantContext, reservation_id: UUID, why: str
-) -> tuple[InventoryReservation, bool]:
-    """Libera una reserva ACTIVE: devuelve sus unidades a la celda con un movimiento `RELEASE` y
-    la audita, también en un almacén desactivado. Devuelve la reserva y si se liberó ahora: una ya
-    liberada se devuelve sin escribir. `ReservationNotActive` si venció o se consumió;
-    `InventoryReservation.DoesNotExist` si no es de la organización."""
+def release(ctx: TenantContext, pk: UUID, why: str) -> tuple[InventoryReservation, bool]:
+    """Libera una reserva ACTIVE con su `RELEASE` y su auditoría, también en un almacén desactivado.
+    Devuelve la reserva y si se liberó ahora (una ya liberada, sin escribir). `ReservationNotActive`
+    si venció o se consumió; `InventoryReservation.DoesNotExist` si no es de la organización."""
     alias = require_scope(ctx)
     text = stock.reason(why)
     with transaction.atomic(using=alias):
         rows = InventoryReservation.objects.using(alias)
-        seen: InventoryReservation = rows.get(pk=reservation_id)
+        seen: InventoryReservation = rows.get(pk=pk)
         if seen.status != Status.ACTIVE:  # un estado terminal ya no cambia (trigger)
             return _ended(seen)
         variant, warehouse, level = stock.lock_cell(alias, ctx, seen.variant_id, seen.warehouse_id)
-        seen = rows.select_for_update().get(pk=reservation_id)  # releída, ya bloqueada
+        seen = rows.select_for_update().get(pk=pk)  # releída, ya bloqueada
         if seen.status != Status.ACTIVE:
             return _ended(seen)
-        before = level.reserved
         _close(alias, seen, level, Status.RELEASED, text, _actor(ctx))
-        _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", before, level)
+        _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", level)
     return seen, True
 
 

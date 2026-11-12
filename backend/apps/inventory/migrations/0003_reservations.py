@@ -238,7 +238,23 @@ class Migration(migrations.Migration):
                 ),
                 name="inventory_res_actor_ck",
             ),
-        ),  # FK de tenant y ADR-001 §3: variante, almacén y personas de esta organización
+        ),
+        migrations.AddConstraint(
+            model_name="inventoryreservation",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    ("ended_by_type__isnull", True),
+                    models.Q(("ended_by_type", "USER"), ("ended_by_user_id__isnull", False)),
+                    models.Q(
+                        ("ended_by_type__in", ["AI_AGENT", "SYSTEM", "INTEGRATION"]),
+                        ("ended_by_user_id__isnull", True),
+                    ),
+                    _connector="OR",
+                ),
+                name="inventory_res_ender_ck",
+            ),
+        ),
+        # FK de tenant y ADR-001 §3: variante, almacén y personas de esta organización
         fk("inventory_res_organization_fk", "organization_id", "organizations (id)"),
         fk(
             "inventory_res_variant_fk",

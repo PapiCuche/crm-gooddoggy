@@ -58,18 +58,6 @@ def ledger(org: UUID, kind: str) -> list[int]:
         return list(rows.values_list("quantity", flat=True))
 
 
-def insert(scope: UUID, org: UUID, variant: UUID, warehouse: UUID, key: str) -> None:
-    """Un INSERT a mano como `crm_app`, sin pasar por el servicio."""
-    with tenant_scope(ctx(scope)):
-        connection.cursor().execute(
-            "INSERT INTO inventory_reservations (id, organization_id, variant_id, warehouse_id,"
-            " quantity, status, expires_at, reason, idempotency_key, created_by_type, created_at)"
-            " VALUES (uuidv7(), %s, %s, %s, 1, 'ACTIVE', now() + interval '1 hour', 'x', %s,"
-            " 'SYSTEM', now())",
-            [org, variant, warehouse, key],
-        )
-
-
 def consistent(org: UUID, where: Cell) -> tuple[int, int, int]:
     """El saldo de la celda, con la invariante `reserved` = Σ ACTIVE."""
     with tenant_scope(ctx(org)):
@@ -113,6 +101,7 @@ def test_what_a_reservation_cannot_ask(world: Any) -> None:
     late = timezone.now() + res.EXPIRES_MAX + timedelta(minutes=1)
     for bad in (
         asked(here, 0),
+        asked(here, -1),
         asked(here, stock.QUANTITY_MAX + 1),
         res.Wanted(*here, True, late - timedelta(hours=1), "Motivo", "clave-0001"),
         asked(here, hours=-1),  # ya vencida
@@ -221,7 +210,8 @@ def test_an_expired_reservation_frees_its_unit_without_the_job(
         reserve(world.a, world.ana, asked(here, 1))
     later = timezone.now() + timedelta(hours=1, seconds=1)
     monkeypatch.setattr(res, "_now", lambda: later)
-    assert reserve(world.a, world.ana, first) == (old, False)  # la misma clave, ya vencida
+    again, new = reserve(world.a, world.ana, first)  # la misma clave, ya vencida: la guardada
+    assert (again.pk, again.status, new) == (old.pk, "ACTIVE", False)  # aún no la vence esta
     made = reserve(world.a, world.ana, asked(here, 1, hours=3))[0]
     with tenant_scope(ctx(world.a)):
         old.refresh_from_db()
@@ -241,34 +231,36 @@ def test_an_expired_reservation_frees_its_unit_without_the_job(
         release(world.a, world.ana, old.pk)
 
 
+def refused(org: UUID, match: str, sql: str, params: list[Any] | None = None) -> None:
+    """Un SQL a mano como `crm_app` que la base rechaza."""
+    with pytest.raises(DatabaseError, match=match), tenant_scope(ctx(org)):
+        connection.cursor().execute(sql, params)
+
+
 def test_a_closed_reservation_never_changes_and_the_runtime_cannot_delete(
     world: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     here = stocked(world.a, 2, world.ana)
     made = reserve(world.a, world.ana, asked(here, 1))[0]
-    for change in (
-        "DELETE FROM inventory_reservations",
-        "TRUNCATE inventory_reservations",
-        "UPDATE inventory_reservations SET quantity = 2",
-    ):
-        with pytest.raises(DatabaseError, match="permission denied"), tenant_scope(ctx(world.a)):
-            connection.cursor().execute(change)
+    table = "inventory_reservations"
+    for change in (f"DELETE FROM {table}", f"TRUNCATE {table}", f"UPDATE {table} SET quantity = 2"):  # noqa: S608
+        refused(world.a, "permission denied", change)
     for column in ("quantity = 2", "reason = 'otro'", "id = uuidv7()"):  # ni el migrador
         with pytest.raises(psycopg.errors.CheckViolation, match="una reserva cerrada"):
             migrator.execute(f"UPDATE inventory_reservations SET {column}")  # noqa: S608
     release(world.a, world.ana, made.pk)
+    update = f"UPDATE {table} SET "  # noqa: S608
     for change in (
-        "UPDATE inventory_reservations SET status = 'ACTIVE', ended_at = NULL,"
-        " ended_by_type = NULL, ended_by_user_id = NULL, end_reason = NULL",
-        "UPDATE inventory_reservations SET status = 'EXPIRED'",
+        "status = 'ACTIVE', ended_at = NULL, ended_by_type = NULL",
+        "status = 'EXPIRED'",
     ):
-        with pytest.raises(DatabaseError, match="una reserva cerrada"), tenant_scope(ctx(world.a)):
-            connection.cursor().execute(change)
+        refused(world.a, "una reserva cerrada", update + change)
     still = reserve(world.a, world.ana, asked(here, 1))[0]
-    with pytest.raises(DatabaseError, match="inventory_res_ended_ck"), tenant_scope(ctx(world.a)):
-        connection.cursor().execute(  # cerrada sin fecha ni actor del cierre
-            "UPDATE inventory_reservations SET status = 'RELEASED' WHERE id = %s", [still.pk]
-        )
+    close = update + "status = 'RELEASED', %s WHERE id = %s"  # cerrar bien: fecha y quién
+    refused(world.a, "inventory_res_ended_ck", close % ("end_reason = 'x'", f"'{still.pk}'"))
+    for who in ("'USER', NULL", f"'SYSTEM', '{world.ana.pk}'", "'OTRO', NULL"):
+        closing = f"ended_at = now(), (ended_by_type, ended_by_user_id) = ({who})"
+        refused(world.a, "inventory_res_ender_ck", close % (closing, f"'{still.pk}'"))
     base = dict(variant_id=here[0], warehouse_id=here[1], on_hand_after=2, reserved_after=0)
     base |= dict(reason="x", created_by_type="SYSTEM", reference_type="RESERVATION")
     for check, extra in (  # el ledger: RESERVE suma, RELEASE resta, los dos con su reserva
@@ -287,19 +279,28 @@ def test_reservations_of_another_organization_are_invisible(world: Any) -> None:
         assert not InventoryReservation.objects.exists()
         closing = {"status": "RELEASED", "ended_at": timezone.now(), "ended_by_type": "SYSTEM"}
         assert InventoryReservation.objects.filter(pk=made.pk).update(**closing) == 0
-    with pytest.raises(DatabaseError, match="row-level security"):
-        insert(world.b, world.a, *here, "clave-0002")  # otra organización: la política lo para
-    foreign = cell(world.b, "B")  # la propia, con variante o almacén ajenos: la FK compuesta
+    insert = (  # a mano, sin el servicio: la política y las FK compuestas
+        "INSERT INTO inventory_reservations (id, organization_id, variant_id, warehouse_id,"
+        " quantity, status, expires_at, reason, idempotency_key, created_by_type, created_at)"
+        " VALUES (uuidv7(), %s, %s, %s, 1, 'ACTIVE', now() + interval '1 hour', 'x', %s,"
+        " 'SYSTEM', now())"
+    )
+    refused(world.b, "row-level security", insert, [world.a, *here, "k-0002"])  # de otra org
+    foreign = cell(world.b, "B")  # la propia, con variante o almacén ajenos
     for index, where in enumerate(((foreign[0], here[1]), (here[0], foreign[1]))):
-        with pytest.raises(DatabaseError, match="inventory_res_(variant|wh)_fk"):
-            insert(world.a, world.a, *where, f"clave-ajena-{index}")
+        refused(world.a, "inventory_res_(variant|wh)_fk", insert, [world.a, *where, f"k-{index}"])
     assert consistent(world.a, here) == (2, 1, 1)
 
 
-@pytest.mark.parametrize("units, threads", [(1, 2), (3, 8)])  # E04-08: la última unidad
-def test_at_once_over_the_last_units_exactly_that_many_go(
-    world: Any, units: int, threads: int
-) -> None:
+def test_two_reservations_of_the_last_unit_at_once_only_one_goes(world: Any) -> None:
+    here = stocked(world.a, 1, world.ana)  # la segunda espera el bloqueo de la primera
+    first, second = race(world.a, world.ana, [lambda t: res.reserve(t, asked(here)) for _ in "ab"])
+    assert first[1] is True and second == "InsufficientStock"
+    assert consistent(world.a, here) == (1, 1, 0) and ledger(world.a, "RESERVE") == [1]
+
+
+def test_eight_at_once_over_the_last_three_units_exactly_three_go(world: Any) -> None:
+    units, threads = 3, 8
     here = stocked(world.a, units, world.ana)
     start = threading.Barrier(threads)
 
@@ -343,7 +344,8 @@ def test_the_same_key_at_once_makes_one_reservation(world: Any) -> None:
     same = asked(here, 1, key="clave-0001")
     first, second = race(world.a, world.ana, [lambda t: res.reserve(t, same)] * 2)
     assert first[0].pk == second[0].pk and (first[1], second[1]) == (True, False)
-    mine, other = asked(here, 1, key="clave-0002"), asked(there, 1, key="clave-0002")
+    key = "inventory_res_expires_ck"  # una clave que nombra una restricción: no es esa violación
+    mine, other = asked(here, 1, key=key), asked(there, 1, key=key)
     outcome = race(world.a, world.ana, [lambda t, w=w: res.reserve(t, w) for w in (mine, other)])
     assert outcome[1] == "KeyReused"  # la misma clave, a la vez, en otra celda: el índice único
     assert consistent(world.a, here) == (3, 2, 1) and consistent(world.a, there) == (3, 0, 3)

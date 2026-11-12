@@ -111,8 +111,8 @@ class InventoryLevel(TenantModel):
 class InventoryMovement(TenantModel):
     """Una línea del ledger de stock (modelo de datos §E.9): solo se añade. `quantity` lleva el
     signo del cambio en `on_hand`; un ajuste guarda la diferencia con lo contado. El runtime no
-    tiene `UPDATE` ni `DELETE` sobre la tabla (migración). `RESERVE` y `RELEASE` (F3-33) llevan en
-    `quantity` el cambio en `reserved`, la magnitud que mueven."""
+    tiene `UPDATE` ni `DELETE` sobre la tabla (migración). En `RESERVE` y `RELEASE` (F3-33),
+    `quantity` cambia `reserved`."""
 
     class Type(models.TextChoices):
         RECEIPT = "RECEIPT"
@@ -174,8 +174,8 @@ class InventoryMovement(TenantModel):
                 condition=models.Q(on_hand_after__gte=0, reserved_after__gte=0),
                 name="inventory_movements_after_ck",
             ),
-            models.CheckConstraint(  # un ingreso suma, una salida resta; reservar suma a
-                condition=~models.Q(movement_type="RECEIPT", quantity__lte=0)  # `reserved`
+            models.CheckConstraint(  # ingreso y reserva suman; salida y liberación restan
+                condition=~models.Q(movement_type="RECEIPT", quantity__lte=0)
                 & ~models.Q(movement_type="ISSUE", quantity__gte=0)
                 & ~models.Q(movement_type="RESERVE", quantity__lte=0)
                 & ~models.Q(movement_type="RELEASE", quantity__gte=0),
@@ -280,5 +280,14 @@ class InventoryReservation(TenantModel):
                     & models.Q(created_by_user_id__isnull=True)
                 ),
                 name="inventory_res_actor_ck",
+            ),
+            models.CheckConstraint(  # USER con su id, el resto sin id
+                condition=models.Q(ended_by_type__isnull=True)
+                | models.Q(ended_by_type="USER", ended_by_user_id__isnull=False)
+                | (
+                    models.Q(ended_by_type__in=["AI_AGENT", "SYSTEM", "INTEGRATION"])
+                    & models.Q(ended_by_user_id__isnull=True)
+                ),
+                name="inventory_res_ender_ck",
             ),
         ]
