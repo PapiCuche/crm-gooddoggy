@@ -358,9 +358,12 @@ def test_a_failure_in_the_middle_of_one_expiry_leaves_nothing_behind(
         raise RuntimeError("tras cerrar y liberar")
 
     later(2)
-    with monkeypatch.context() as patch:
-        patch.setattr(res, "_audit", boom)  # después del cierre y del RELEASE
-        assert run(world.a, max_per_run=1) == {**ZERO, "failed": 1, "capped": 1}
+    for step in ("_movement", "_audit"):  # entre el cierre y el RELEASE, y después de los dos
+        with monkeypatch.context() as patch:
+            patch.setattr(res, step, boom)
+            assert run(world.a, max_per_run=1) == {**ZERO, "failed": 1, "capped": 1}
+        assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
+        assert consistent(world.a, here) == (3, 2, 1)
     assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
     assert consistent(world.a, here) == (3, 2, 1) and chained == []  # sin avance no se encadena
     assert run(world.a) == {**ZERO, "expired": 2} and consistent(world.a, here) == (3, 0, 3)
@@ -383,6 +386,76 @@ def test_a_busy_cell_makes_the_job_give_up_that_reservation_and_retry_later(
     assert run(world.a) == {**ZERO, "expired": 1} and consistent(world.a, here) == (2, 0, 2)
     with tenant_scope(ctx(world.a)):  # el tiempo de espera es solo de esa transacción
         assert connection.cursor().execute("SHOW lock_timeout").fetchone() != ("200ms",)
+
+
+def test_a_message_cannot_activate_an_organization_or_lift_the_limits(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    later: Callable[[float], None],
+) -> None:  # fmt: skip
+    here = stocked(world.a, 5, world.ana)
+    made = [reserve(world.a, world.ana, asked(here, 1, hours=1))[0].pk for _ in range(4)]
+    later(2)
+    migrator.execute("UPDATE organizations SET status = 'SUSPENDED' WHERE id = %s", [world.a])
+    try:  # suspendida o inexistente: no se toca nada
+        assert run(world.a) == ZERO and run(UUID(int=5)) == ZERO
+    finally:
+        migrator.execute("UPDATE organizations SET status = 'ACTIVE' WHERE id = %s", [world.a])
+    assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
+    chained: list[Any] = []
+    monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **kw: chained.append(kw))
+    assert run(world.a, batch_size=0, max_per_run=-5)["expired"] == 1  # acotados a 1
+    assert chained[0]["kwargs"]["batch_size"] == chained[0]["kwargs"]["max_per_run"] == 1
+    monkeypatch.setattr(tasks, "BATCH", 2)
+    monkeypatch.setattr(tasks, "MAX_PER_RUN", 2)  # 10**9 pedido, tope 2
+    assert run(world.a, batch_size=10**9, max_per_run=10**9)["expired"] == 2
+    assert consistent(world.a, here) == (5, 1, 4)
+
+
+def test_a_slow_run_stops_at_its_time_budget_inside_the_batch(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None]
+) -> None:
+    here = stocked(world.a, 4, world.ana)
+    made = [reserve(world.a, world.ana, asked(here, 1, hours=1))[0].pk for _ in range(3)]
+    later(2)
+    monkeypatch.setattr(tasks, "RUN_SECONDS", -1.0)  # ya pasado tras la primera fila
+    chained: list[Any] = []
+    monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **kw: chained.append(kw))
+    assert run(world.a) == {**ZERO, "expired": 1, "capped": 1} and len(chained) == 1
+    assert (
+        list(states(world.a).values()).count("EXPIRED") == 1
+        and len(ledger(world.a, "RELEASE")) == 1
+    )
+    assert consistent(world.a, here)[1] == 2 and len(made) == 3
+
+
+def test_a_failing_chain_is_logged_and_the_run_still_reports(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    here = stocked(world.a, 4, world.ana)
+    for _ in range(2):
+        reserve(world.a, world.ana, asked(here, 1, hours=1))
+    later(2)
+
+    def down(**kw: Any) -> None:
+        raise ConnectionError("broker con ana@example.com")
+
+    monkeypatch.setattr(tasks.expire_reservations, "apply_async", down)
+    with caplog.at_level(logging.INFO):
+        assert run(world.a, max_per_run=1) == {**ZERO, "expired": 1, "capped": 1}
+    assert "inventory.expire_chain_failed" in caplog.text and "ana@example.com" not in caplog.text
+    assert run(world.a) == {**ZERO, "expired": 1}  # el siguiente barrido la recoge
+
+
+def test_a_reservation_expires_exactly_at_its_deadline_and_not_a_moment_before(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    here = stocked(world.a, 1, world.ana)
+    made = reserve(world.a, world.ana, asked(here, 1, hours=1))[0]
+    for moment, outcome in ((made.expires_at - timedelta(microseconds=1), 0), (made.expires_at, 1)):
+        monkeypatch.setattr(timezone, "now", lambda moment=moment: moment)
+        assert run(world.a)["expired"] == outcome
+    assert states(world.a) == {made.pk: "EXPIRED"} and consistent(world.a, here) == (1, 0, 1)
 
 
 def test_the_sweep_enqueues_each_active_organization_and_one_failing_does_not_stop_the_rest(

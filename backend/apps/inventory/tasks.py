@@ -8,10 +8,12 @@ reserva**, que la vence con `reservations.expire` (el camino de liberar: variant
 saldo → reserva `FOR UPDATE`, releída). Así nunca hay más de una variante bloqueada y cada una
 confirma sola. Si el `tenant_scope` de un `@tenant_task` envolviera todo el recorrido, sería una
 sola transacción con todas las celdas bloqueadas hasta el final: por eso esta tarea es de
-plataforma, como `conversations.dispatch_message`, y el id de la organización lo pone el barredor
-(sale de la tabla, no de un payload). Una reserva espera una celda ocupada `LOCK_TIMEOUT_MS`;
-si no, falla y se reintenta en el siguiente barrido. Un fallo en una reserva o en una organización
-no para el resto. Los registros llevan ids y contadores, nunca datos de personas.
+plataforma, como `conversations.dispatch_message`: el barredor saca el id de la organización de la
+tabla y la tarea comprueba que sea una activa (el mensaje no basta). Una reserva espera hasta
+`LOCK_TIMEOUT_MS` por cada uno de sus bloqueos (hasta cuatro); pasado `RUN_SECONDS` la pasada
+termina aunque queden filas. Una reserva que no consigue su celda falla y se reintenta en el
+siguiente barrido. Un fallo en una reserva o en una organización no para el resto. Los registros
+llevan ids y contadores, nunca datos de personas.
 """
 
 import time
@@ -77,10 +79,16 @@ def expire_due(ctx: TenantContext, batch_size: int, max_per_run: int) -> Counter
                     error=type(error).__name__,
                 )
                 done["failed"] += 1
+            if time.monotonic() - started > RUN_SECONDS:  # dentro del lote: una fila espera
+                break  # hasta 4 bloqueos de LOCK_TIMEOUT_MS; la pasada siempre hace una
         if time.monotonic() - started > RUN_SECONDS:
             break
     done["capped"] = int(bool(_due(ctx, cutoff, after, 1)))
     return done
+
+
+def _clamp(value: int, top: int) -> int:
+    return max(1, min(int(value), top))
 
 
 @platform_task(name="inventory.expire_reservations", ignore_result=True)
@@ -89,8 +97,14 @@ def expire_reservations(
 ) -> dict[str, int]:
     """Vence las reservas vencidas de una organización (la pone el barredor). Si quedan más y esta
     pasada venció alguna, encola la siguiente: cada ejecución es corta y un atraso grande no espera
-    a los 5 minutos. Sin progreso (todo falló) no se encadena."""
-    ctx = TenantContext(UUID(str(organization_id)), "celery")
+    a los 5 minutos. Sin progreso (todo falló) no se encadena. El id llega en el mensaje: se
+    comprueba que la organización esté activa y los topes se acotan (un mensaje no los levanta)."""
+    org = UUID(str(organization_id))
+    if not Organization.objects.filter(pk=org, status__in=ACCESSIBLE_STATUSES).exists():
+        logger.warning("inventory.expire_org_inactive", organization_id=str(org))
+        return dict(Counter(expired=0, skipped=0, failed=0, capped=0))  # un mensaje no la activa
+    batch_size, max_per_run = _clamp(batch_size, BATCH), _clamp(max_per_run, MAX_PER_RUN)
+    ctx = TenantContext(org, "celery")
     done = expire_due(ctx, batch_size, max_per_run)
     if done["capped"] and done["expired"]:
         try:
