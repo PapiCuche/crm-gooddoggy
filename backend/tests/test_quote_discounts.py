@@ -398,12 +398,12 @@ def test_submit_rechecks_the_cost_floor_and_a_manual_price_asks_approval_even_of
     assert (reread(shop, again).status, len(approvals(shop))) == ("DRAFT", 3)
 
 
-def raw(shop: SimpleNamespace, user: Any, made: Quote, state: str, guc: str = "",
-        value: str = "") -> None:  # fmt: skip
-    """Un `UPDATE` directo de `crm_app` como `user`; `guc` cambia una variable de la transacción."""
+def raw(shop: SimpleNamespace, user: Any, made: Quote, state: str,
+        gucs: dict[str, str] | None = None) -> None:  # fmt: skip
+    """Un `UPDATE` directo de `crm_app` como `user`; `gucs` cambia variables de la transacción."""
     with tenant_scope(ctx(shop.a, user)), connection.cursor() as cursor:
-        if guc:
-            cursor.execute("SELECT set_config(%s, %s, true)", [guc, value])
+        for name, value in (gucs or {}).items():
+            cursor.execute("SELECT set_config(%s, %s, true)", [name, value])
         Quote.objects.filter(pk=made.pk).update(status=state)
 
 
@@ -454,8 +454,8 @@ def flip(shop: SimpleNamespace, user: User, what: str, on: bool) -> None:
 def test_the_database_rule_counts_only_the_policies_the_command_counts(
     shop: SimpleNamespace,
 ) -> None:
-    """La misma política que el comando: la lista de la cotización o todas, el porcentaje, el tope
-    en importe y su moneda, un miembro y un usuario activos y una persona; nunca más laxa."""
+    """El disparador cuenta las políticas que el comando: la lista de la cotización o todas, el
+    porcentaje por línea, el tope en importe y su moneda, y una persona activa (no el permiso)."""
     owner, other = member(shop, owner=True), member(shop, "30", list_id=price_list(shop.a, "OTRA"))
     capped, usd = member(shop, "10", cap="100"), member(shop, "10", cap="1000")
     exact, here = member(shop, "10", cap="219.95"), member(shop, "5", list_id=shop.listed)
@@ -466,12 +466,11 @@ def test_the_database_rule_counts_only_the_policies_the_command_counts(
     for who in (other, capped, usd):  # otra lista; 219,95 pasa del tope de 100; tope en dólares
         with pytest.raises(IntegrityError, match=BLOCKED):
             raw(shop, who, made, "APPROVED")
-    with pytest.raises(
-        IntegrityError, match=BLOCKED
-    ):  # `crm_app` como un agente de IA, no una persona
-        raw(shop, exact, made, "APPROVED", "app.actor_type", "AI_AGENT")
-    with pytest.raises(DataError):  # un identificador roto: error claro, nunca pasa
-        raw(shop, exact, made, "APPROVED", "app.user_id", "x")
+    with pytest.raises(IntegrityError, match=BLOCKED):  # un agente de IA no es una persona
+        raw(shop, exact, made, "APPROVED", {"app.actor_type": "AI_AGENT"})
+    for actor in (exact, None):  # un identificador roto: el mismo error, con o sin miembro
+        with pytest.raises(DataError):
+            raw(shop, actor, made, "APPROVED", {"app.actor_type": "USER", "app.user_id": "x"})
     for what in ("membership", "user"):  # ni un miembro suspendido ni un usuario desactivado
         flip(shop, exact, what, False)
         with pytest.raises(IntegrityError, match=BLOCKED):
