@@ -8,6 +8,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CustomerOpportunities } from "@/components/deals/customer-opportunities";
+import { LinkedQuotes } from "@/components/quotes/linked-quotes";
 import { LinkedTasks } from "@/components/tasks/linked-tasks";
 import { Button } from "@/components/ui/button";
 import { contactsRetrieve, getContactsRetrieveQueryKey } from "@/lib/api/client";
@@ -20,7 +21,7 @@ import { useContactNames } from "./contact-names";
 import { ContactNotes } from "./contact-notes";
 import { ContactTags } from "./contact-tagging";
 
-type Tab = "summary" | "notes" | "opportunities" | "tasks";
+type Tab = "summary" | "notes" | "opportunities" | "tasks" | "quotes";
 const BOX = "border-border bg-surface flex flex-col gap-4 rounded-lg border p-4";
 
 // La ficha del cliente (F4-06), de solo lectura, con `GET /api/v1/o/{slug}/contacts/{id}/`.
@@ -38,11 +39,13 @@ export function ContactCard({ contactId }: { contactId: string }) {
   const notes = held("contacts.view");
   const deals = held("opportunities.view");
   const tasks = held("tasks.view");
+  const quotes = held("quotes.view");
   const order: readonly Tab[] = [
     "summary",
     ...(notes ? ["notes" as const] : []),
     ...(deals ? ["opportunities" as const] : []),
     ...(tasks ? ["tasks" as const] : []),
+    ...(quotes ? ["quotes" as const] : []),
   ];
   const { owner, branch } = useContactNames("contacts.card");
   const card = useQuery<Contact, ApiError>({
@@ -238,6 +241,20 @@ export function ContactCard({ contactId }: { contactId: string }) {
             className="flex flex-col gap-4"
           >
             {seen.includes("tasks") ? <LinkedTasks link={{ contact_id: contactId }} /> : null}
+          </div>
+        ) : null}
+        {quotes ? (
+          <div
+            role="tabpanel"
+            tabIndex={0}
+            id={`${id}-quotes-panel`}
+            aria-labelledby={`${id}-quotes-tab`}
+            hidden={tab !== "quotes"}
+            className="flex flex-col gap-4"
+          >
+            {seen.includes("quotes") ? (
+              <LinkedQuotes link={{ contact_id: contactId }} contactId={contactId} />
+            ) : null}
           </div>
         ) : null}
       </>

@@ -132,6 +132,33 @@ afterEach(() => {
 });
 
 describe("OpportunityDetail (F5-07)", () => {
+  it("con quotes.view enseña las cotizaciones de esa oportunidad; sin él, no las pide", async () => {
+    configure({ asyncUtilTimeout: 4000 });
+    const QUOTES = `GET /api/v1/o/acme/quotes/?opportunity_id=${ID}&limit=50`;
+    const row = {
+      id: "q1",
+      number: "COT-000042",
+      status: "SENT",
+      currency: "PEN",
+      total: "500.00",
+    };
+    const api = mockApi({
+      [DETAIL]: ok(detail()),
+      [PIPELINES]: pipelines,
+      [QUOTES]: ok({ results: [{ ...row, valid_until: null }], next: null }),
+    });
+    show();
+    await screen.findByRole("heading", { level: 1, name: "Collar para Rocky" });
+    expect(api.mock.calls.some(([url]) => String(url).includes("/quotes/"))).toBe(false);
+    cleanup();
+    show(["opportunities.view", "quotes.view"]);
+    expect(await screen.findByText("COT-000042")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Ver todas las de este cliente" })).toHaveAttribute(
+      "href",
+      "/o/acme/cotizaciones?cliente=c1",
+    );
+  });
+
   it("con tasks.view enseña las tareas de esa oportunidad; sin él, no las pide", async () => {
     configure({ asyncUtilTimeout: 4000 }); // varios pasos seguidos: con la máquina cargada, más margen
     const TASKS = `GET /api/v1/o/acme/tasks/?opportunity_id=${ID}&limit=200`;
