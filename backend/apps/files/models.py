@@ -35,5 +35,8 @@ class File(TenantModel):
     class Meta:
         db_table = "files"
         constraints = [
-            models.UniqueConstraint(fields=["organization_id", "storage_key"], name="files_key_uq")
+            models.UniqueConstraint(fields=["organization_id", "storage_key"], name="files_key_uq"),
+            models.UniqueConstraint(  # destino de las FK compuestas (F7-09a1b, migración 0002)
+                fields=["organization_id", "id"], name="files_org_id_uq"
+            ),
         ]

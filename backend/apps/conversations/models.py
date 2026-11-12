@@ -460,6 +460,9 @@ class Message(TenantModel):
             ),
         ]
         constraints = [
+            models.UniqueConstraint(  # destino de la FK compuesta de los adjuntos (0020)
+                fields=["organization_id", "id"], name="messages_org_id_uq"
+            ),
             models.UniqueConstraint(
                 fields=["organization_id", "channel_account", "external_message_id"],
                 condition=models.Q(external_message_id__isnull=False),
@@ -523,6 +526,84 @@ class Message(TenantModel):
             models.CheckConstraint(  # la decisión de la política es solo de lo saliente
                 condition=models.Q(policy_decision__isnull=True) | models.Q(direction="OUTBOUND"),
                 name="messages_policy_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
+MEDIA_KINDS = ("IMAGE", "AUDIO", "VIDEO", "STICKER")  # documentos: cuando haya antivirus
+MEDIA_STATUSES = ("PENDING", "DOWNLOADING", "DONE", "FAILED", "EXPIRED")
+MEDIA_FAILURES = (
+    "TOKEN_INVALID", "CHANNEL_UNAVAILABLE", "UNAVAILABLE", "TOO_LARGE", "TYPE_NOT_ALLOWED",
+    "TYPE_MISMATCH",
+)  # fmt: skip
+
+
+class MessageAttachment(TenantModel):
+    """El medio de un mensaje entrante (F7-09a1b; ADR-029 §7): uno por mensaje. La tarea
+    `fetch_media` lo baja al almacén privado (`files`, `message-media`). Lo de Meta (tipo, tamaño,
+    nombre, URL) no se guarda: el id del medio, solo dígitos. El disparador de la migración hace
+    cumplir la máquina de estados; `crm_app` no borra ni reescribe la identidad (UPDATE por
+    columna). `attempt_id` es el intento que tiene el reclamo y la clave de su blob."""
+
+    id = uuid7_primary_key()
+    message = models.ForeignKey(
+        Message, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    kind = models.CharField(max_length=8)
+    external_media_id = models.CharField(max_length=30)
+    download_status = models.CharField(max_length=12, default="PENDING")
+    failure_code = models.CharField(max_length=24, null=True, blank=True)  # noqa: DJ001
+    attempts = models.PositiveSmallIntegerField(default=0)
+    attempt_id = models.UUIDField(null=True, blank=True)
+    lease_until = models.DateTimeField(null=True, blank=True)
+    not_before = models.DateTimeField(null=True, blank=True)
+    file_id = models.UUIDField(null=True, blank=True)  # FK compuesta a `files` (0021)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "message_attachments"
+        indexes = [
+            models.Index(  # el tope por organización: solo las descargas en curso
+                fields=["organization_id", "lease_until"],
+                condition=models.Q(download_status="DOWNLOADING"),
+                name="message_attachments_busy_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "message"], name="message_attachments_message_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    kind__in=MEDIA_KINDS,
+                    download_status__in=MEDIA_STATUSES,
+                    external_media_id__regex=META_ID,
+                    attempts__lte=5,
+                ),  # fmt: skip
+                name="message_attachments_values_ck",
+            ),
+            models.CheckConstraint(  # un código cerrado, siempre y solo con `FAILED` (un NULL
+                condition=models.Q(  # pasaría el `IN`: por eso el `IS NOT NULL`)
+                    download_status="FAILED",
+                    failure_code__isnull=False,
+                    failure_code__in=MEDIA_FAILURES,
+                )
+                | (~models.Q(download_status="FAILED") & models.Q(failure_code__isnull=True)),
+                name="message_attachments_failure_ck",
+            ),
+            models.CheckConstraint(  # el archivo, siempre y solo con `DONE`
+                condition=models.Q(download_status="DONE", file_id__isnull=False)
+                | (~models.Q(download_status="DONE") & models.Q(file_id__isnull=True)),
+                name="message_attachments_file_ck",
+            ),
+            models.CheckConstraint(  # una descarga en curso tiene su intento y su plazo
+                condition=~models.Q(download_status="DOWNLOADING")
+                | models.Q(attempt_id__isnull=False, lease_until__isnull=False),
+                name="message_attachments_lease_ck",
             ),
         ]
 
