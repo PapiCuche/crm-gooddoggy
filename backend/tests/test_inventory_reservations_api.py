@@ -103,7 +103,7 @@ def test_permissions_and_methods(
 ) -> None:
     here = stocked(world.a, 2, world.ana)
     anonymous = Client(enforce_csrf_checks=True)
-    assert reply(anonymous.get(URL))[0] == 401  # y ni siquiera el listado (F3-35b)
+    assert reply(anonymous.get(URL))[0] == 401  # ni el listado (F3-35b)
     assert send(anonymous, "post", URL, body(here)).status_code == 401
     member = signed(world.ana)  # miembro sin permisos
     assert reserve(member, here).status_code == 403
@@ -114,7 +114,7 @@ def test_permissions_and_methods(
     assert release(member, made).status_code == 403
     give(world.a, world.membership, MANAGE)  # y con permiso, el resto de métodos no existe
     for method in ("get", "patch", "put", "delete"):
-        for path in (URL, f"{URL}{made}/release/"):
+        for path in (URL, f"{URL}{made}/release/")[method == "get" :]:  # listar: F3-35b
             assert send(member, method, path, {}).status_code in (403, 405), (method, path)
         assert send(member, method, f"{URL}{made}/", {}).status_code == 404  # sin ruta
     assert migrator.execute(COUNTS).fetchone() == before
