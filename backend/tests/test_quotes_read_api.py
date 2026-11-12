@@ -147,13 +147,12 @@ def test_a_row_has_its_documented_shape_and_the_contact_name_follows_the_contact
     assert row["contact"] == {"id": str(board.ids["owned"]), "display_name": "De vera"}
     mine = signed(board.vera).get(QUOTES).json()["results"][0]
     assert mine["contact"]["display_name"] == "De vera"  # el contacto es suyo (`OWN`)
-    with tenant_scope(ctx(board.a)):  # una cotización suya sobre un contacto que no puede ver
-        Quote.objects.filter(pk=board.quotes["vera"]).update(contact_id=board.ids["plain"])
-    hidden = signed(board.vera).get(QUOTES).json()["results"][0]
-    assert hidden["contact"] == {"id": str(board.ids["plain"]), "display_name": None}
+    other = make_quote(board.a, board.vera, board.ids["plain"])  # suya, sobre un contacto ajeno
+    rows = {r["id"]: r for r in signed(board.vera).get(QUOTES).json()["results"]}
+    assert rows[str(other)]["contact"] == {"id": str(board.ids["plain"]), "display_name": None}
     give(board.a, board.m["vera"], {"contacts.view": "ORGANIZATION"})
-    shown = signed(board.vera).get(QUOTES).json()["results"][0]
-    assert shown["contact"]["display_name"] == "Sin nadie"
+    rows = {r["id"]: r for r in signed(board.vera).get(QUOTES).json()["results"]}
+    assert rows[str(other)]["contact"]["display_name"] == "Sin nadie"
 
 
 def test_the_list_never_carries_a_cost_a_margin_or_the_free_text(board: SimpleNamespace) -> None:
