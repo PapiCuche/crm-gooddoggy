@@ -53,6 +53,7 @@ def record(
     *,
     result: Result = Result.SUCCESS,
     actor_label: str | None = None,
+    actor: tuple[str, UUID | None] | None = None,
 ) -> UUID:
     """`changes = {"campo": [antes, después]}`; `action = "modulo.accion"` (p. ej., quote.sent)."""
     alias = require_scope(ctx)
@@ -64,13 +65,14 @@ def record(
     if any(not isinstance(v, list | tuple) or len(v) != 2 for v in changes.values()):
         raise ValueError("changes: cada campo debe ser [antes, después]")
     audit_id = new_id()
+    actor_type, actor_id = actor if actor is not None else (ctx.actor_type, ctx.actor_id)
     with connections[alias].cursor() as cursor:
         cursor.execute(
             _INSERT,
             [
                 audit_id,
-                ctx.actor_type,
-                ctx.actor_id,
+                actor_type,
+                actor_id,
                 redact_text(actor_label)[:LABEL_MAX] if actor_label else None,
                 action,
                 entity.type,

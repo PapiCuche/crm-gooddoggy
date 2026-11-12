@@ -56,8 +56,7 @@ class WarehouseInactive(Exception):
 
 
 class InsufficientStock(Exception):
-    """El movimiento dejaría el stock en negativo o por debajo de lo reservado, o la reserva
-    pide más de lo disponible (F3-33)."""
+    """El movimiento dejaría el stock en negativo o por debajo de lo reservado."""
 
 
 class StockLimit(Exception):
@@ -166,10 +165,9 @@ def _locked_variant(alias: str, variant_id: UUID) -> ProductVariant:
 def lock_cell(
     alias: str, ctx: TenantContext, variant_id: UUID, warehouse_id: UUID
 ) -> tuple[ProductVariant, tuple[bool, str], InventoryLevel]:
-    """El orden de bloqueo de todo lo que escribe una celda (movimientos y reservas, F3-33): la
-    variante, el almacén vivo (`FOR KEY SHARE`; da su `is_active` y su `code`) y el saldo, creado
-    si falta (`ON CONFLICT DO NOTHING`) y bloqueado (`FOR UPDATE`) antes de leerlo.
-    `BadReference` si la variante o el almacén no están."""
+    """El orden de bloqueo de lo que escribe una celda (movimientos y reservas): la variante, el
+    almacén vivo (`FOR KEY SHARE`; su `is_active` y `code`) y el saldo, creado si falta y bloqueado
+    antes de leerlo. `BadReference` si la variante o el almacén no están."""
     variant = _locked_variant(alias, variant_id)
     with connections[alias].cursor() as cursor:
         cursor.execute(_WAREHOUSE, [warehouse_id])

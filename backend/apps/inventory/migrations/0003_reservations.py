@@ -37,11 +37,11 @@ CREATE FUNCTION public.inventory_reservations_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
     IF OLD.status <> 'ACTIVE' OR (
-        NEW.organization_id, NEW.variant_id, NEW.warehouse_id, NEW.quantity, NEW.expires_at,
+        NEW.id, NEW.organization_id, NEW.variant_id, NEW.warehouse_id, NEW.quantity, NEW.expires_at,
         NEW.reason, NEW.idempotency_key, NEW.created_by_type, NEW.created_by_user_id,
         NEW.created_at
     ) IS DISTINCT FROM (
-        OLD.organization_id, OLD.variant_id, OLD.warehouse_id, OLD.quantity, OLD.expires_at,
+        OLD.id, OLD.organization_id, OLD.variant_id, OLD.warehouse_id, OLD.quantity, OLD.expires_at,
         OLD.reason, OLD.idempotency_key, OLD.created_by_type, OLD.created_by_user_id,
         OLD.created_at
     ) THEN

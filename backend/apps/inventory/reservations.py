@@ -1,18 +1,10 @@
-"""Reservas de stock (F3-33, E04-05 y E04-08): apartar unidades de una celda variante × almacén
-sin venderlas dos veces. Reservar sube `reserved` con un movimiento `RESERVE`; liberar (o vencer)
-lo baja con un `RELEASE`. `reserved` es siempre la suma de las reservas ACTIVE de la celda y nunca
-pasa de `on_hand` (CHECK `inventory_levels_stock_ck`).
-
-No comprueba permisos: los declarará su API (F3-35), la única que podrá importarlo (contrato de
-import-linter). Concurrencia: el mismo orden de bloqueo que `stock.move` (`stock.lock_cell`): la
-variante `FOR NO KEY UPDATE`, el almacén `FOR KEY SHARE`, el saldo `FOR UPDATE` y, después, las
-reservas de la celda `FOR UPDATE`, releyendo su estado. Dos reservas de la última unidad van de una
-en una y la segunda ve lo que dejó la primera. Una operación con varias variantes (Fase 4) las
-bloqueará por `id` ascendente, como la importación y el catálogo.
-
-Claves: la del cliente va en la reserva (única por organización); sus movimientos llevan las
-derivadas `R/<reserva>/reserve` y `R/<reserva>/release`, con una `/` que las claves de cliente no
-admiten: el índice único del ledger impide que una reserva se libere (o venza) dos veces.
+"""Reservas de stock (F3-33, E04-05 y E04-08): apartar unidades de una celda variante × almacén.
+`RESERVE` sube `reserved`; liberar o vencer lo baja con un `RELEASE`. No comprueba permisos: los
+declarará su API (F3-35), la única que podrá importarlo (import-linter). Mismo orden de bloqueo que
+`stock.move` (`stock.lock_cell`: variante, almacén, saldo) y después la reserva `FOR UPDATE`,
+releída: dos reservas de la última unidad van de una en una. Varias variantes (Fase 4): por `id`.
+La clave del cliente va en la reserva; los movimientos llevan `R/<reserva>/reserve` y
+`R/<reserva>/release` (la `/` no cabe en una clave de cliente): una reserva no se libera dos veces.
 """
 
 from dataclasses import dataclass
@@ -67,6 +59,10 @@ class Wanted:
     reason: str
     idempotency_key: str
 
+    def __post_init__(self) -> None:  # ids como UUID: la misma petición con `str` no es otra
+        for name in ("variant_id", "warehouse_id"):
+            object.__setattr__(self, name, UUID(str(getattr(self, name))))
+
 
 def _now() -> datetime:
     return timezone.now()
@@ -74,15 +70,22 @@ def _now() -> datetime:
 
 def _check(wanted: Wanted) -> None:
     quantity = wanted.quantity
-    if isinstance(quantity, bool) or not isinstance(quantity, int):
-        raise ValueError("quantity: un entero")
-    if not 1 <= quantity <= QUANTITY_MAX:
+    if (
+        isinstance(quantity, bool)
+        or not isinstance(quantity, int)
+        or not 1 <= quantity <= QUANTITY_MAX
+    ):
         raise ValueError(f"quantity: un entero entre 1 y {QUANTITY_MAX}")
     reason(wanted.reason)
     idempotency_key(wanted.idempotency_key)
-    expires = wanted.expires_at
-    if expires.tzinfo is None:
-        raise ValueError("expires_at: con zona horaria")
+    _check_expiry(wanted.expires_at)
+
+
+def _check_expiry(expires: datetime) -> None:
+    """Con zona horaria, futuro y dentro del máximo; se repite con la celda bloqueada (el plazo
+    puede pasar mientras se espera y la base daría un error sin dominio)."""
+    if not isinstance(expires, datetime) or expires.tzinfo is None:
+        raise ValueError("expires_at: fecha y hora con zona horaria")
     now = _now()
     if not now < expires <= now + EXPIRES_MAX:
         raise ValueError(f"expires_at: en el futuro y dentro de {EXPIRES_MAX.days} días")
@@ -175,25 +178,31 @@ def _expire_due(alias: str, ctx: TenantContext, level: InventoryLevel, label: st
     for reservation in due.order_by("pk"):
         before = level.reserved
         _close(alias, reservation, level, Status.EXPIRED, EXPIRED, _SYSTEM)
-        entity = Entity("inventory_reservation", reservation.pk, label)
-        changes = {"reserved": [before, level.reserved], "status": [Status.ACTIVE, Status.EXPIRED]}
-        record(ctx, "inventory.reservation_expired", entity, changes, _about(reservation))
+        _audit(ctx, "reservation_expired", reservation, label, before, level, _SYSTEM)
 
 
-def _about(reservation: InventoryReservation) -> dict[str, object]:
-    return {
-        "variant_id": str(reservation.variant_id),
-        "warehouse_id": str(reservation.warehouse_id),
-        "quantity": reservation.quantity,
-    }
+def _audit(
+    ctx: TenantContext,
+    action: str,
+    reservation: InventoryReservation,
+    label: str,
+    before: int,
+    level: InventoryLevel,
+    actor: tuple[str, UUID | None] | None = None,
+) -> None:
+    """`inventory.<action>` de la reserva: `reserved` antes y después, y su estado si se cerró."""
+    changes: dict[str, list[object]] = {"reserved": [before, level.reserved]}
+    if reservation.status != Status.ACTIVE:
+        changes["status"] = [Status.ACTIVE, reservation.status]
+    about = {"variant_id": str(reservation.variant_id), "quantity": reservation.quantity}
+    entity = Entity("inventory_reservation", reservation.pk, label)
+    record(ctx, f"inventory.{action}", entity, changes, about, actor=actor)
 
 
 def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, bool]:
-    """Aparta `quantity` unidades disponibles de la celda, con su movimiento `RESERVE` y su
-    auditoría, en la misma transacción. Devuelve la reserva y si es nueva: la misma clave con lo
-    mismo devuelve la de entonces sin escribir. `BadReference`, `VariantInactive`,
-    `WarehouseInactive`, `InsufficientStock` o `KeyReused` sin escribir nada; `ValueError` si lo
-    pedido no es válido."""
+    """Aparta unidades disponibles con su `RESERVE` y su auditoría. Devuelve la reserva y si es
+    nueva (la misma clave con lo mismo devuelve la de entonces). `BadReference`, `VariantInactive`,
+    `WarehouseInactive`, `InsufficientStock`, `KeyReused` o `ValueError`, sin escribir nada."""
     alias = require_scope(ctx)
     _check(wanted)
     try:
@@ -203,6 +212,7 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
             )
             if (done := _replay(alias, wanted)) is not None:
                 return done, False
+            _check_expiry(wanted.expires_at)
             if variant.status != ProductVariant.Status.ACTIVE:
                 raise VariantInactive(wanted.variant_id)
             if not warehouse[0]:
@@ -224,10 +234,7 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
             )
             before = level.reserved
             _movement(alias, reservation, level, wanted.quantity, reservation.reason, actor)
-            entity = Entity("inventory_reservation", reservation.pk, label)
-            metadata = {**_about(reservation), "expires_at": wanted.expires_at.isoformat()}
-            changes = {"reserved": [before, level.reserved]}
-            record(ctx, "inventory.reserved", entity, changes, metadata)
+            _audit(ctx, "reserved", reservation, label, before, level)
     except IntegrityError as error:
         if KEY_TAKEN not in str(error):
             raise
@@ -257,9 +264,7 @@ def release(
             return _ended(seen)
         before = level.reserved
         _close(alias, seen, level, Status.RELEASED, text, _actor(ctx))
-        entity = Entity("inventory_reservation", seen.pk, f"{variant.sku} @ {warehouse[1]}")
-        changes = {"reserved": [before, level.reserved], "status": [Status.ACTIVE, Status.RELEASED]}
-        record(ctx, "inventory.reservation_released", entity, changes, _about(seen))
+        _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", before, level)
     return seen, True
 
 

@@ -197,11 +197,19 @@ class InventoryMovement(TenantModel):
         ]
 
 
+def _actor(prefix: str) -> models.Q:
+    # el actor (E.0) de `<prefix>_by_*`: una persona con su id, o uno sin persona
+    kind, user = f"{prefix}_by_type", f"{prefix}_by_user_id"
+    system = models.Q(**{f"{kind}__in": ["AI_AGENT", "SYSTEM", "INTEGRATION"]})
+    return models.Q(**{kind: "USER", f"{user}__isnull": False}) | (
+        system & models.Q(**{f"{user}__isnull": True})
+    )
+
+
 class InventoryReservation(TenantModel):
-    """Unidades apartadas de una celda variante × almacén (modelo de datos §E.9, F3-33). Mientras
-    está ACTIVE cuenta en `inventory_levels.reserved`; la crea y la cierra solo el servicio
-    (`apps.inventory.reservations`), siempre junto a su movimiento `RESERVE` o `RELEASE`. Un estado
-    terminal no vuelve a ACTIVE (trigger) y el runtime solo cambia las columnas del cierre."""
+    """Unidades apartadas de una celda variante × almacén (§E.9, F3-33): ACTIVE cuenta en
+    `inventory_levels.reserved`. Solo `apps.inventory.reservations` la escribe, junto a su
+    movimiento; un estado terminal no vuelve a ACTIVE (trigger); el runtime solo cierra."""
 
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE"
@@ -274,21 +282,9 @@ class InventoryReservation(TenantModel):
                 ),
                 name="inventory_res_ended_ck",
             ),
-            models.CheckConstraint(
-                condition=models.Q(created_by_type="USER", created_by_user_id__isnull=False)
-                | (
-                    models.Q(created_by_type__in=["AI_AGENT", "SYSTEM", "INTEGRATION"])
-                    & models.Q(created_by_user_id__isnull=True)
-                ),
-                name="inventory_res_actor_ck",
-            ),
-            models.CheckConstraint(
-                condition=models.Q(ended_by_type__isnull=True)
-                | models.Q(ended_by_type="USER", ended_by_user_id__isnull=False)
-                | (
-                    models.Q(ended_by_type__in=["AI_AGENT", "SYSTEM", "INTEGRATION"])
-                    & models.Q(ended_by_user_id__isnull=True)
-                ),
+            models.CheckConstraint(condition=_actor("created"), name="inventory_res_actor_ck"),
+            models.CheckConstraint(  # sin cierre no hay quien cerró
+                condition=models.Q(ended_by_type__isnull=True) | _actor("ended"),
                 name="inventory_res_ender_ck",
             ),
         ]
