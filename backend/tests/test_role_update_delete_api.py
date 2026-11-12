@@ -14,6 +14,7 @@ from apps.access.catalog import BY_CODE
 from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.selectors import AccessDenied, Denied
 from apps.access.services import delete_role, update_role
+from apps.quotes.models import DiscountPolicy
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_authorization, test_self_context
 from tests.factories import make_user
@@ -294,3 +295,16 @@ def test_the_services_check_the_name_and_the_description_themselves(
         assert update_role(tenant, role_id=target).name == "Desde el servicio"  # nada que cambiar
         delete_role(tenant, role_id=target)
     assert count(migrator) == (before[0], before[1], before[2] + 2, before[3] - 1)
+
+
+def test_a_role_with_a_discount_policy_is_a_409_and_nothing_is_deleted(
+    rbac: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """F5-09b4: la política protege al rol (un límite no se pierde sin su permiso ni auditoría)."""
+    give(rbac.a, rbac.membership, {VIEW: "ORGANIZATION", EDIT: "ORGANIZATION"})
+    with tenant_scope(ctx(rbac.a)):
+        DiscountPolicy.objects.create(role_id=rbac.target.pk, max_discount_percent=5)
+    before = count(migrator)
+    answer = delete(signed(rbac.ana), rbac.target.pk)
+    assert (answer.status_code, answer.json()["code"]) == (409, "ROLE_HAS_DEPENDENTS")
+    assert count(migrator) == before

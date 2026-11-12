@@ -16,7 +16,7 @@ from django.db import IntegrityError
 
 from apps.access.models import Role
 from apps.access.selectors import AccessDenied, Denied
-from apps.access.services import clone_role_templates, delete_role
+from apps.access.services import RoleHasDependents, clone_role_templates, delete_role
 from apps.quotes import policies
 from apps.quotes.models import DiscountPolicy, Quote
 from apps.quotes.policies import DuplicatePolicy, Invalid, StalePolicy
@@ -231,7 +231,10 @@ def test_the_audit_keeps_the_before_and_the_after_and_nothing_else(
                        "max_discount_amount": [None, "10.50"]}  # fmt: skip
     assert updated == {"max_discount_amount": ["10.50", "12.00"]}  # solo lo que cambió
     assert meta == {"operation": "created", "role": "gerencia", "price_list_id": None}
-    who = migrator.execute("SELECT actor_id, entity_id, entity_label FROM audit_logs LIMIT 1")
+    who = migrator.execute(
+        "SELECT actor_id, entity_id, entity_label FROM audit_logs"
+        " WHERE entity_type = 'discount_policy' ORDER BY occurred_at, id LIMIT 1"
+    )
     assert who.fetchone() == (staff.boss.pk, made.pk, "Rol")
     assert "cost" not in json.dumps(audits(migrator)).lower()  # la política no lleva costos
 
@@ -302,13 +305,32 @@ def test_a_policy_change_applies_at_once_to_the_database_rule_and_is_not_retroac
         assert Quote.objects.get(pk=made.pk).status == "SENT"
 
 
-def test_deleting_a_role_takes_its_policy_with_it(
-    shop: SimpleNamespace, staff: SimpleNamespace
+def test_a_role_with_a_policy_is_not_deleted_until_its_policy_is_removed_with_its_command(
+    shop: SimpleNamespace, staff: SimpleNamespace, migrator: DB
 ) -> None:
     owner = member(shop, owner=True, **{"roles.manage": None})
-    put(shop, staff.boss, staff.target, "5")
+    row = put(shop, staff.boss, staff.target, "5")
+    before = audits(migrator)
+    with pytest.raises(RoleHasDependents):  # roles.manage no borra, en silencio, un límite
+        act(shop, owner, delete_role, role_id=staff.target)
+    assert (staff.target in {p.role_id for p in stored(shop)}, audits(migrator)) == (True, before)
+    act(
+        shop, staff.boss, policies.delete_discount_policy, policy_id=row.pk, version=1
+    )  # con su permiso
     act(shop, owner, delete_role, role_id=staff.target)
-    assert staff.target not in {p.role_id for p in stored(shop)}
+    assert [a for a, _, _ in audits(migrator)] == ["discount_policy.changed"] * 2
+
+
+def test_who_cannot_reach_the_percent_learns_nothing_about_roles_or_lists(
+    shop: SimpleNamespace, staff: SimpleNamespace
+) -> None:
+    low, owner_role = member(shop, "10", **MANAGE), role_of(shop, member(shop, owner=True))
+    for target, extra in [(owner_role, {}), (uuid4(), {}), (role(shop.b), {}),
+                          (staff.target, {"price_list_id": uuid4()})]:  # fmt: skip
+        with pytest.raises(AccessDenied):  # no `Invalid`: ni el Owner ni lo que no existe se nota
+            put(shop, low, target, "11", **extra)
+    with pytest.raises(Invalid):  # dentro de lo que tiene, sí se le dice
+        put(shop, low, uuid4(), "10")
 
 
 def test_deleting_a_policy_needs_the_permission_and_the_version_and_the_limit_falls_at_once(
@@ -354,5 +376,5 @@ def test_only_the_known_constraints_are_a_client_error(
     monkeypatch.setattr(
         policies, "price_list_currency", lambda *a: "usd"
     )  # un dato que la base ve mal
-    with pytest.raises(IntegrityError):  # `discount_policies_amount_ck`: no es culpa del cliente
+    with pytest.raises(IntegrityError, match="discount_policies_amount_ck"):  # no es del cliente
         put(shop, staff.boss, staff.target, "5", price_list_id=lower, max_discount_amount="1")

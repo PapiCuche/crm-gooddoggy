@@ -7,8 +7,10 @@ Comprueban `discount_policies.manage` antes que nada y que nadie da más de lo q
 porcentaje o más y, si lleva tope en importe, uno igual o mayor en la misma moneda. Crear exige
 cubrir el límite nuevo; tocar una política que ya existe (cambiarla o quitarla), también el que
 tenía: quien tiene un 10 % no rebaja a un rol de 100 %. Sin política propia no se toca ninguna.
-El rol Owner no tiene política: no tiene límite. Con su versión y `Decimal` exacto, auditan el
-antes y el después (`discount_policy.changed`); sin cambios no escriben ni auditan.
+El rol Owner no tiene política: no tiene límite. Quien no cubre ni el porcentaje no aprende
+nada de roles ni listas: el 403 va antes de los 400 de referencias. Con su versión y `Decimal`
+exacto, auditan el antes y el después (`discount_policy.changed`); sin cambios no escriben ni
+auditan.
 
 **Efecto:** inmediato y sobre lo que viene: los comandos de descuento y el disparador de `quotes`
 leen la política al medir. Una cotización que ya salió de `DRAFT` no se vuelve a medir (bajar un
@@ -88,22 +90,27 @@ def _currency(
     return found
 
 
+def _held(alias: str, ectx: Any) -> tuple[bool, Any]:
+    """Si quien actúa es el Owner, y las políticas de sus roles."""
+    roles = MembershipRole.objects.using(alias).filter(membership_id=ectx.membership_id)
+    roles = roles.values("role_id")
+    owner = Role.objects.using(alias).filter(pk__in=roles, is_owner_role=True).exists()
+    return owner, DiscountPolicy.objects.using(alias).filter(role_id__in=roles)
+
+
 def _covers(alias: str, ectx: Any, list_id: UUID | None, percent: Decimal, cap: Decimal | None,
             money: str | None) -> bool:  # fmt: skip
     """Quien actúa es el Owner o tiene una política que admite este límite para esa lista (la de
     esa lista o la de todas; si la pedida es la de todas, solo la de todas)."""
-    roles = MembershipRole.objects.using(alias).filter(membership_id=ectx.membership_id)
-    roles = roles.values("role_id")
-    if Role.objects.using(alias).filter(pk__in=roles, is_owner_role=True).exists():
-        return True
+    owner, held = _held(alias, ectx)
     fits = Q(max_discount_amount=None)
     if cap is not None:
         fits |= Q(currency=money, max_discount_amount__gte=cap)
-    held = DiscountPolicy.objects.using(alias).filter(
+    held = held.filter(
         Q(applies_to_price_list_id=None) | Q(applies_to_price_list_id=list_id),
-        role_id__in=roles, max_discount_percent__gte=percent,
+        max_discount_percent__gte=percent,
     )  # fmt: skip
-    return held.filter(fits).exists()
+    return owner or held.filter(fits).exists()
 
 
 def _holds(alias: str, ectx: Any, row: DiscountPolicy) -> bool:
@@ -185,15 +192,18 @@ def set_discount_policy(
         )
         if version is not None and (type(version) is not int or version < 1):
             raise Invalid("version", "un entero desde 1")
+        owner, held = _held(alias, ectx)  # quien no llega ni al porcentaje no aprende nada más
+        if not (owner or held.filter(max_discount_percent__gte=percent).exists()):
+            raise AccessDenied(Denied.ESCALATION)
+        rows = DiscountPolicy.objects.using(alias).select_for_update(no_key=True)
+        row = rows.filter(role_id=role_id, applies_to_price_list_id=price_list_id).first()
+        if row is not None and not _holds(alias, ectx, row):  # antes de decir qué es válido
+            raise AccessDenied(Denied.ESCALATION)
         role = Role.objects.using(alias).filter(pk=role_id).first()
         if role is None or role.is_owner_role:  # el Owner no tiene límite: no hay nada que fijar
             raise Invalid("role_id", "no es un rol de la organización con un límite que fijar")
         money = _currency(ectx, price_list_id, cap, currency)
-        rows = DiscountPolicy.objects.using(alias).select_for_update(no_key=True)
-        row = rows.filter(role_id=role.pk, applies_to_price_list_id=price_list_id).first()
-        if not _covers(alias, ectx, price_list_id, percent, cap, money) or (
-            row is not None and not _holds(alias, ectx, row)
-        ):
+        if not _covers(alias, ectx, price_list_id, percent, cap, money):
             raise AccessDenied(Denied.ESCALATION)
         fresh = {"max_discount_percent": percent, "max_discount_amount": cap, "currency": money}
         if row is None:

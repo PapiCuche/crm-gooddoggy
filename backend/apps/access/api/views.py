@@ -31,6 +31,7 @@ from apps.access.selectors import (
 from apps.access.services import (
     DESCRIPTION_MAX,
     NAME_MAX,
+    RoleHasDependents,
     RoleInUse,
     RoleIsSystem,
     RoleNameTaken,
@@ -345,7 +346,8 @@ class RoleView(APIView):
         "actor tiene asignado, el rol Owner, o una concesión del rol que el actor no cubre (o "
         "sensible, si no es Owner). 404: el rol no es de la organización. 409 `ROLE_IS_SYSTEM`: "
         "es un rol de plantilla. 409 `ROLE_IN_USE`: el rol tiene miembros, en cualquier "
-        "estado. 409 `LAST_OWNER`: la organización no tiene rol Owner.",
+        "estado. 409 `ROLE_HAS_DEPENDENTS`: otro módulo lo protege (su política de descuento). "
+        "409 `LAST_OWNER`: la organización no tiene rol Owner.",
     )
     def delete(self, request: Request, role_id: UUID, **kwargs: Any) -> Response:
         tenant = context.current()
@@ -358,6 +360,9 @@ class RoleView(APIView):
         except RoleInUse:
             message = "El rol tiene miembros: quítaselo antes de borrarlo."
             raise ApiError("ROLE_IN_USE", 409, message) from None
+        except RoleHasDependents:
+            message = "Algo depende del rol (como su política de descuento): quítalo antes."
+            raise ApiError("ROLE_HAS_DEPENDENTS", 409, message) from None
         return Response(status=204)
 
 
