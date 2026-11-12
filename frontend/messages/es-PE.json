@@ -1240,7 +1240,8 @@
       "branch": "{name} ({code})",
       "branchNone": "Sin sucursal",
       "created": "Creado",
-      "updated": "Actualizado"
+      "updated": "Actualizado",
+      "quotes": "Cotizaciones"
     },
     "notes": {
       "title": "Notas del cliente",
@@ -2649,6 +2650,16 @@
       "revision": "Revisión {number}",
       "late": "Vencida"
     },
-    "emptyAll": "Todavía no hay cotizaciones."
+    "emptyAll": "Todavía no hay cotizaciones.",
+    "linked": {
+      "title": "Cotizaciones",
+      "loading": "Cargando cotizaciones…",
+      "denied": "No tienes permiso para ver las cotizaciones.",
+      "empty": "Todavía no hay cotizaciones.",
+      "validUntil": "Válida hasta {date}",
+      "noValidity": "Sin fecha de validez",
+      "partial": "Se muestran las primeras {count}.",
+      "viewAll": "Ver todas las de este cliente"
+    }
   }
 }
