@@ -2181,6 +2181,7 @@
     "customerCard": "Ver ficha del cliente",
     "bodyHidden": "Sin permiso para ver el contenido de este mensaje.",
     "note": "Nota interna · solo la ve tu equipo",
+    "unsupported": "Mensaje de un tipo que todavía no se puede mostrar",
     "filters": {
       "landmark": "Filtros de conversaciones",
       "box": "Bandeja",
