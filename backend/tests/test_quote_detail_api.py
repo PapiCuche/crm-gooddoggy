@@ -14,8 +14,10 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.quotes.models import Quote, QuoteItem
 from core.tenancy.scope import tenant_scope
+from tests.factories import make_user
+from tests.test_authorization import give
 from tests.test_member_branch import DENIED
-from tests.test_memberships import ctx
+from tests.test_memberships import ctx, join
 from tests.test_opportunities_tables import variant
 from tests.test_quotes_read_api import QUOTES, UNAUTHENTICATED, board, crm, pipelines, real_stack
 from tests.test_self_context import NOT_FOUND, reply, signed
@@ -109,6 +111,15 @@ def test_every_miss_is_the_same_404_and_the_permission_comes_first(board: Simple
     assert reply(detail(signed(board.bea), board.quotes["vera"])) == DENIED
     assert reply(detail(Client(), board.quotes["vera"])) == UNAUTHENTICATED
     assert reply(detail(signed(board.luis), board.quotes["vera"])) == NOT_FOUND  # no es de A
+
+
+def test_the_view_permission_alone_decides_reading_the_detail(board: SimpleNamespace) -> None:
+    pk, viewer, editor = board.quotes["vera"], make_user(), make_user()
+    give(board.a, join(board.a, viewer).pk, {"quotes.view": "ORGANIZATION"})
+    others = {"quotes.update": "ORGANIZATION", "quotes.send": "ORGANIZATION", "quotes.create": None}
+    give(board.a, join(board.a, editor).pk, others)
+    assert detail(signed(viewer), pk).status_code == 200  # ver basta
+    assert reply(detail(signed(editor), pk)) == DENIED  # cambiar, enviar o crear no es ver
 
 
 def test_the_detail_never_carries_a_cost_or_a_margin(board: SimpleNamespace) -> None:

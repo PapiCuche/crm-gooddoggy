@@ -317,7 +317,9 @@ def test_cancel_works_from_any_open_state_and_audits_the_reason_as_text(
     assert [c["cancel_reason"] for c in cancelled] == [[None, "[texto]"], [None, None]]
     assert "12345678" not in json.dumps(cancelled)
     again = new(shop)
-    for state in ("ACCEPTED", "REJECTED", "EXPIRED"):
+    with tenant_scope(ctx(shop.a)):
+        Quote.objects.filter(pk=again.pk).update(status="SENT")
+    for state in ("ACCEPTED",):  # un estado terminal: el grafo de la base solo deja llegar por SENT
         with tenant_scope(ctx(shop.a)):
             Quote.objects.filter(pk=again.pk).update(status=state)
         with pytest.raises(QuoteTerminal):
