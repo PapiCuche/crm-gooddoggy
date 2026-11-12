@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from tests.meta_sim import GRAPH_VERSION
-from tests.meta_sim.webhooks import DISPLAY_NUMBER, PHONE_NUMBER_ID, WABA_ID
+from tests.meta_sim.webhooks import DISPLAY_NUMBER, MEDIA_HOST, PHONE_NUMBER_ID, WABA_ID
 
 TEST_TOKEN = "meta-sim-test-access-token-not-real"  # noqa: S105 — dato ficticio de test
 # nombre -> (estado HTTP, código de Meta, subcódigo, título)
@@ -28,6 +28,18 @@ ERRORS: dict[str, tuple[int, int, int | None, str]] = {
     "template": (404, 132001, None, "Template name does not exist in the translation"),
     "server": (500, 1, None, "An unknown error occurred"),
 }
+
+
+@dataclass
+class FakeMedia:
+    """Un medio de Meta: la consulta del id (`lookup`) y la descarga (`blob`) con su estado, el host
+    de la URL que se devuelve y las cabeceras de la descarga."""
+
+    content: bytes
+    lookup: int = 200
+    blob: int = 200
+    host: str = MEDIA_HOST
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 class Cut(Exception):  # noqa: N818 — la conexión se cortó antes de la respuesta
@@ -60,6 +72,7 @@ class FakeGraph:
     calls: list[dict[str, Any]] = field(default_factory=list)  # método, ruta, query y cabeceras
     quality: str = "GREEN"
     tier: str = "TIER_1K"
+    media: dict[str, FakeMedia] = field(default_factory=dict)
 
     def then(self, *outcomes: str) -> FakeGraph:
         unknown = set(outcomes) - set(OUTCOMES)
@@ -77,13 +90,30 @@ class FakeGraph:
         self.calls.append(
             {"method": method, "path": parts.path, "query": query, "headers": dict(headers)}
         )
-        if headers.get("Authorization") != f"Bearer {self.token}":
+        if {k.lower(): v for k, v in headers.items()}.get(
+            "authorization"
+        ) != f"Bearer {self.token}":
             return self._error("token")  # también la descarga de medios lleva el token
+        if path[0] == "blob" and len(path) == 2 and path[1] in self.media:
+            blob = self.media[path[1]]  # la descarga: `Location` de una redirección va en headers
+            return blob.blob, {**blob.headers}, blob.content if blob.blob == 200 else b""
         if path[0] != GRAPH_VERSION:
             return self._error("no_number", f"Unsupported version {path[0]}")
         match (method, path[1:]):
             case ("POST", [number, "messages"]):
                 return self._send(number, body)
+            case ("GET", [media]) if media in self.media:  # la consulta: debe traer el número
+                if query.get("phone_number_id", [""])[0] not in self.numbers:
+                    return self._error("no_number")
+                item = self.media[media]
+                if item.lookup != 200:
+                    reply = {"error": {"message": "Media unavailable", "code": 100}}
+                    return item.lookup, {}, json.dumps(reply).encode()
+                return self._ok({
+                    "messaging_product": "whatsapp", "id": media, "mime_type": "image/jpeg",
+                    "file_size": len(item.content), "sha256": "0" * 64,
+                    "url": f"https://{item.host}/blob/{media}",
+                })  # fmt: skip
             case ("GET", [number]) if number in self.numbers:
                 return self._ok(self._number(number, query))
             case ("GET", [waba, "phone_numbers"]) if waba in self.numbers.values():

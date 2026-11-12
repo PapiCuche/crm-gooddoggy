@@ -226,6 +226,8 @@ LOGGING = {
         "celery.app.trace": {"level": "WARNING"},  # "succeeded: <repr(resultado)>"
         # Su línea DEBUG («TaskPool: Apply») vuelca los argumentos de cada tarea: nunca se emite.
         "celery.pool": {"level": "INFO"},
+        # Su línea DEBUG («GET <ruta>?<query>») lleva la query de la URL firmada de un medio.
+        "urllib3": {"level": "WARNING"},
     },
 }
 # API (F1-08A): DRF solo JSON. Contrato OpenAPI con drf-spectacular, versionado en
@@ -322,6 +324,9 @@ META_GRAPH_HOST = "graph.facebook.com"
 # F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)
+# F7-09a1: hosts de los que se bajan medios (a confirmar con Meta). **No** entran en
+# `HTTP_ALLOWED_HOSTS`: `request` (con el token de la cuenta) no llega a ellos; solo `download`.
+META_MEDIA_HOSTS = ("lookaside.fbsbx.com",)
 if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
     HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.

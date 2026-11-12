@@ -12,6 +12,7 @@ WABA_ID = "100000000000001"
 PHONE_NUMBER_ID = "100000000000002"
 DISPLAY_NUMBER = "51900000000"
 CUSTOMER = "51900000001"  # `wa_id`: teléfono sin el `+`
+MEDIA_HOST = "lookaside.fbsbx.com"  # donde Meta sirve los medios (a confirmar)
 SIGNATURE_HEADER = "X-Hub-Signature-256"
 UNSUPPORTED_KINDS = ("image", "audio", "video", "document", "sticker", "location", "contacts")
 
