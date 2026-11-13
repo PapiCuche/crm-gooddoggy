@@ -8,6 +8,7 @@ from core.db.models import TenantModel, uuid7_primary_key
 class File(TenantModel):
     class Purpose(models.TextChoices):
         MESSAGE_MEDIA = "message-media"
+        MESSAGE_MEDIA_OUT = "message-media-out"  # F7-09b2: la que sube una persona para enviar
         QUOTE_PDF = "quote-pdf"
         IMPORT = "import"
         AVATAR = "avatar"

@@ -538,3 +538,29 @@ def test_with_the_real_manager_a_media_connection_is_never_pooled_nor_logs_the_s
             sock.close()
         logging.getLogger("urllib3").handlers[:] = handlers  # el resto de la suite, como estaba
     assert watched == [client for client, _ in pairs] and "SECRETO" not in caplog.text
+
+
+def test_a_request_under_a_deadline_is_cut_with_its_retries_when_the_server_stalls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F7-09b2: la subida de un medio (`http.request` en `http.deadline`) a un servidor que no
+    contesta acaba al vencer el plazo, no con sus lecturas de 15 s ni con sus reintentos."""
+    pairs = [socket.socketpair() for _ in range(3)]  # una conexión por intento (3: con reintentos)
+    for client, _ in pairs:
+        client.settimeout(5)
+    left = iter(client for client, _ in pairs)
+    answer = [(socket.AF_INET, 1, 6, "", ("93.184.216.34", 443))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: answer)
+    monkeypatch.setattr(
+        "urllib3.connection.connection.create_connection", lambda *a, **k: next(left)
+    )
+    started = time.monotonic()
+    try:
+        with http.deadline(0.3) as dog, pytest.raises((OSError, urllib3.exceptions.HTTPError)):
+            http.request("POST", f"https://{transport.GRAPH_HOST}/v1/1/media", body=b"x" * 10)
+        assert dog.fired and time.monotonic() - started < 2.5
+    finally:
+        for client, server in pairs:
+            client.close()
+            server.close()
+    assert http._watchdog.get() is None  # fuera del bloque, nada vigila

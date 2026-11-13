@@ -13,7 +13,9 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
 
 MAX_PRESIGN_SECONDS = 300
-PURPOSES = frozenset({"message-media", "quote-pdf", "import", "avatar", "kb", "attachment"})
+PURPOSES = frozenset(
+    {"message-media", "message-media-out", "quote-pdf", "import", "avatar", "kb", "attachment"}
+)
 _UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 KEY = re.compile(rf"org/{_UUID}/(?:{'|'.join(PURPOSES)})/[0-9]{{4}}/(?:0[1-9]|1[0-2])/{_UUID}")
 INLINE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"})

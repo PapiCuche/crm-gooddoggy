@@ -20,6 +20,11 @@ urlpatterns = [
         name="conversation-attachment-url",
     ),
     path(
+        "conversations/<uuid:conversation_id>/media/",
+        media.SendMediaView.as_view(),
+        name="conversation-media",
+    ),
+    path(
         "conversations/<uuid:conversation_id>/messaging-policy/",
         messages.MessagingPolicyView.as_view(),
         name="conversation-messaging-policy",
