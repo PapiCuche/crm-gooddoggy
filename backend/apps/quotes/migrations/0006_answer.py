@@ -18,7 +18,8 @@ fijarla, y fechar una respuesta en cualquier punto de la validez.
 
 **Datos que ya existen.** Una aceptada o rechazada sin fecha (solo por SQL directo tras `0005`) no
 tiene una fecha que inventar: la migración se niega y dice cuántas son (hay que resolverlas antes).
-Lo comprueba `crm_migrator`, que ha de tener `BYPASSRLS` (si no, se niega: bajo RLS no las vería).
+Lo comprueba `crm_migrator`, que ha de tener `BYPASSRLS` (si no, se niega: bajo RLS no las vería),
+también al volver atrás.
 Volver atrás se niega si alguna lleva fecha de respuesta; si no, compara la función instalada con
 la de esta migración y restaura exactamente la de `0005`."""
 
@@ -66,9 +67,14 @@ def _scalar(schema_editor: Any, sql: str) -> Any:
         return cursor.fetchone()[0]
 
 
-def _refuse_legacy(apps: Any, schema_editor: Any) -> None:
+def _sees_all(schema_editor: Any) -> None:
+    """Con FORCE RLS, un rol sin `BYPASSRLS` no ve filas: una comprobación vacía mentiría."""
     if not _scalar(schema_editor, "SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user"):
         raise RuntimeError("quotes 0006: run as crm_migrator with BYPASSRLS (RLS hides rows)")
+
+
+def _refuse_legacy(apps: Any, schema_editor: Any) -> None:
+    _sees_all(schema_editor)
     count = _scalar(
         schema_editor, "SELECT count(*) FROM public.quotes WHERE status IN ('ACCEPTED', 'REJECTED')"
     )
@@ -95,6 +101,7 @@ def _restore(apps: Any, schema_editor: Any) -> None:
 
 def _refuse_answered(apps: Any, schema_editor: Any) -> None:
     """Volver atrás quitaría las fechas: no se pierde en silencio una respuesta del cliente."""
+    _sees_all(schema_editor)
     where = " OR ".join(f"{c} IS NOT NULL" for c in COLUMNS)
     if _scalar(schema_editor, f"SELECT EXISTS (SELECT 1 FROM public.quotes WHERE {where})"):  # noqa: S608
         raise RuntimeError("quotes 0006: some quotes were answered; refusing to go back")

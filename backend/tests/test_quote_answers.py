@@ -20,7 +20,7 @@ from django.utils import timezone
 from apps.access.selectors import AccessDenied
 from apps.accounts.models import User
 from apps.deals.models import Opportunity, Pipeline
-from apps.deals.opportunity_stages import move_opportunity
+from apps.deals.opportunity_stages import move_opportunity, win_opportunity
 from apps.organizations.models import OrganizationMembership as Membership
 from apps.quotes import answers, commands, tasks
 from apps.quotes.answers import NotAnswerable, QuoteExpired
@@ -192,7 +192,8 @@ def test_the_validity_ends_at_valid_until_by_both_clocks(
 
 
 @pytest.mark.parametrize("case", ["forbidden:view", "forbidden:update", "no_stage", "missing",
-                                  "missing_fields", "bad_reference", "same_stage"])  # fmt: skip
+                                  "missing_fields", "bad_reference", "same_stage", "closed",
+                                  "closing_stage"])  # fmt: skip
 def test_an_opportunity_that_cannot_move_leaves_the_quote_accepted_and_says_why(
     shop: SimpleNamespace, migrator: DB, paying: Any, case: str
 ) -> None:
@@ -207,7 +208,12 @@ def test_an_opportunity_that_cannot_move_leaves_the_quote_accepted_and_says_why(
         "bad_reference": ("UPDATE pipelines SET is_active = false, is_default = false"
                           " WHERE id = %s", opp.pipeline_id),
         "same_stage": ("UPDATE opportunities SET stage_id = %s WHERE id = %s", paying.pk, opp.pk),
+        "closing_stage": ("UPDATE pipeline_stages SET stage_type = 'LOST', default_probability = 0"
+                          " WHERE id = %s", paying.pk),
     }.get(case)  # fmt: skip
+    if case == "closed":  # ganada
+        with tenant_scope(ctx(shop.a, seller)) as tenant:
+            win_opportunity(tenant, opportunity_id=opp.pk, version=1, amount="100")
     if fix:
         migrator.execute(fix[0], list(fix[1:]))
     stage = where(shop, opp)
@@ -217,7 +223,7 @@ def test_an_opportunity_that_cannot_move_leaves_the_quote_accepted_and_says_why(
     assert where(shop, opp) == stage  # la oportunidad no cambió
 
 
-@pytest.mark.parametrize("failing", ["record", "_event", "move_opportunity"])
+@pytest.mark.parametrize("failing", ["record", "_event", "move_opportunity", "move_opportunity:db"])
 def test_any_other_failure_while_accepting_writes_nothing(
     shop: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, paying: Any,
     failing: str,
@@ -225,8 +231,9 @@ def test_any_other_failure_while_accepting_writes_nothing(
     seller, opp = sender(shop, **OPPS), tables.make(shop.a)
     made = sold(shop, seller, opp)
     before = len(audit(migrator))
-    monkeypatch.setattr(answers, failing, Mock(side_effect=DatabaseError("boom")))
-    with pytest.raises(DatabaseError, match="boom"):
+    error = IntegrityError if ":" in failing else DatabaseError  # de `deals`: tal cual, sin mapear
+    monkeypatch.setattr(answers, failing.split(":")[0], Mock(side_effect=error("boom")))
+    with pytest.raises(error, match="boom"):
         accept(shop, seller, made)
     after = reread(shop, made)
     assert (after.status, after.version, after.accepted_at) == ("SENT", 2, None)
@@ -321,22 +328,17 @@ def test_an_answer_and_the_expiry_at_once_leave_one(
     seller = sender(shop)
     made = sold(shop, seller)
     lapse(migrator, made)
-    first, second = race(shop.a, seller, [
+    first, second = race(shop.a, [None, seller], [  # el sistema vence; una persona acepta
         lambda t: answers.expire_quote(t, made.pk),
         lambda t: answers.accept_quote(t, quote_id=made.pk, version=2),
     ])  # fmt: skip
     assert (first, second, reread(shop, made).status) == (True, "StaleVersion", "EXPIRED")
-    assert last(migrator)[:2] == ("quote.expired", "SYSTEM")  # aunque lo pida una persona
-    made, late = sold(shop, seller), threading.local()
-    real = timezone.now
-    monkeypatch.setattr(
-        answers,
-        "timezone",
-        SimpleNamespace(
-            now=lambda: real() + timedelta(days=60) if getattr(late, "on", False) else real()
-        ),
-    )
-    first, second = race(shop.a, seller, [  # el que vence ve la validez pasada, y espera
+    with tenant_scope(ctx(shop.a, seller)) as tenant, pytest.raises(NotAllowed):
+        answers.expire_quote(tenant, made.pk)  # una persona no vence
+    made, late, real = sold(shop, seller), threading.local(), timezone.now
+    shifted = SimpleNamespace(now=lambda: real() + timedelta(days=60 * getattr(late, "on", 0)))
+    monkeypatch.setattr(answers, "timezone", shifted)
+    first, second = race(shop.a, [seller, None], [  # el que vence ve la validez pasada, y espera
         lambda t: answers.accept_quote(t, quote_id=made.pk, version=2),
         lambda t: expire_late(late, t, made.pk),
     ])  # fmt: skip
@@ -435,8 +437,9 @@ def test_the_migration_only_adds_rules_and_goes_back_only_without_answers(
     with connection.schema_editor() as editor:
         with pytest.raises(RuntimeError, match="not the expected one"):
             MIGRATION._replace(None, editor)  # instalada otra que la de 0005: no reemplaza nada
-        with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas: se niega
-            MIGRATION._refuse_legacy(None, editor)
+        for check in (MIGRATION._refuse_legacy, MIGRATION._refuse_answered):  # ida y vuelta
+            with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas
+                check(None, editor)
     monkeypatch.setattr(MIGRATION.PREVIOUS, "GUARD", "otra función")
     with pytest.raises(RuntimeError, match="anchor"):  # si 0005 cambiara, no añade nada
         MIGRATION._guard()

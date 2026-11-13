@@ -225,7 +225,6 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
                 "apps.quotes.discounts",
                 "apps.quotes.decisions",
                 "apps.quotes.lifecycle",
-                "apps.quotes.answers",
             ],
             [
                 "apps.quotes.api",
@@ -233,7 +232,6 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
                 "apps.quotes.decisions",
                 "apps.quotes.lifecycle",
                 "apps.quotes.answers",
-                "apps.quotes.tasks",
             ],
         )  # fmt: skip
     ]

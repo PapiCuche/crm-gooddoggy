@@ -138,7 +138,8 @@ def race(org: UUID, user: Any, wants: list[Any], then: str = "") -> list[Any]:
 
     def run(index: int) -> None:
         try:
-            with tenant_scope(ctx(org, user)) as tenant:
+            who = user[index] if isinstance(user, list) else user  # F5-09c3: uno por hilo
+            with tenant_scope(ctx(org, who)) as tenant:
                 if isinstance(wants[index], str):
                     outcome[index] = connection.cursor().execute(wants[index])
                 elif callable(wants[index]):  # F3-11: otro comando

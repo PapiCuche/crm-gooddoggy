@@ -1,17 +1,11 @@
-"""La respuesta a una cotización emitida (F5-09c3; 04 §L.2): aceptar, rechazar por el cliente y
-vencer. Solo `apps.quotes.api` y su tarea (`apps.quotes.tasks`) lo importan.
+"""La respuesta a una cotización emitida (F5-09c3; 04 §L.2). Solo la importan su API y su tarea.
 
-Responde una persona de la empresa (no hay portal) con `quotes.send`; la IA no (la autorización
-exige una persona, y la base tampoco lo deja). Orden: permiso, cotización bloqueada en su
-**alcance** (`quotes.view` y `quotes.send`; inexistente, de otra organización o fuera: la misma
-`DoesNotExist`), versión, estado (`SENT` o `VIEWED`) y validez (`valid_until <= ahora`:
-`QuoteExpired`, también si es la base, con el reloj de su transacción, la que la ve vencida).
-
-Aceptar mueve la oportunidad a `pago-pendiente` si su pipeline la tiene, en la misma transacción
-(bloqueos cotización → pipeline → oportunidad, como `deals`), con `opportunities.view` y
-`opportunities.update` en el alcance sobre la oportunidad **bloqueada**. Una regla del pipeline la
-deja aceptada con `opportunity_move: skipped:<código>` en la auditoría; un error de la base lo
-deshace todo. Vencer es del sistema, una sola vez, con la cotización bloqueada y releída."""
+Aceptar o rechazar lo registra una persona (no hay portal) con `quotes.send`, en este orden:
+permiso, cotización bloqueada en su alcance (una sola `DoesNotExist`), versión, `SENT`/`VIEWED`
+y validez (`valid_until <= ahora`, o la base con su reloj: `QuoteExpired`). Aceptar mueve la
+oportunidad a `pago-pendiente` (bloqueos cotización → pipeline → oportunidad, como `deals`) con
+`opportunities.view` y `.update` sobre la fila bloqueada; una regla del pipeline se audita como
+`skipped:<código>` y otro error lo deshace todo. Vencer es solo del sistema, una vez."""
 
 from typing import Any
 from uuid import UUID
@@ -27,6 +21,7 @@ from apps.deals.opportunities import OpportunityClosed, _locked, _pipeline
 from apps.deals.opportunity_stages import ClosingStage, MissingFields, move_opportunity
 from apps.quotes.commands import (
     REASON_MAX,
+    NotAllowed,
     StaleVersion,
     _entity,
     _event,
@@ -50,7 +45,6 @@ _SKIPPED: dict[type[Exception], str] = {  # solo las reglas del pipeline; otro e
     DealReference: "bad_reference", Opportunity.DoesNotExist: "missing",
 }  # fmt: skip
 _SKIPPABLE = tuple(_SKIPPED)
-_SYSTEM = (ActorType.SYSTEM, None)
 
 
 class NotAnswerable(Exception):
@@ -119,24 +113,25 @@ def _answer(
             record(ctx, action, _entity(quote), shown, about)
             _event(ctx, quote, action)
     except IntegrityError as error:
-        if _name(error) == "quotes_answer_expired":  # el reloj de la base ya la ve vencida
+        if (name := _name(error)) == "quotes_answer_expired":  # la base ya la ve vencida
             raise QuoteExpired(quote_id) from None
+        if not (name or "").startswith("quotes_"):  # no es de la cotización (p. ej., de `deals`)
+            raise
         raise _reference(error) from None
     return quote
 
 
 def accept_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
-    """Acepta (por el cliente) una cotización emitida y vigente, y mueve su oportunidad. Audita
-    `quote.accepted` y emite su evento (de él saldrá la reserva de stock, D-INV-2). `NotAllowed`,
-    `DoesNotExist`, `StaleVersion`, `NotAnswerable`, `QuoteExpired`; si falla, nada se escribe."""
+    """Acepta por el cliente y mueve la oportunidad; `quote.accepted` (de él saldrá la reserva de
+    stock, D-INV-2). `NotAllowed`, `DoesNotExist`, `StaleVersion`, `NotAnswerable`,
+    `QuoteExpired`."""
     return _answer(ctx, quote_id, version, QuoteStatus.ACCEPTED)
 
 
 def reject_quote_by_customer(
     ctx: TenantContext, *, quote_id: UUID, version: int, reason: str
 ) -> Quote:
-    """Rechaza (por el cliente) una cotización emitida y vigente, con su motivo (obligatorio).
-    Audita `quote.declined` y emite su evento. Mismos errores que `accept_quote` y `ValueError`."""
+    """Rechaza por el cliente con su motivo: `quote.declined`. Errores de aceptar y `ValueError`."""
     return _answer(ctx, quote_id, version, QuoteStatus.REJECTED, reason)
 
 
@@ -144,6 +139,8 @@ def expire_quote(ctx: TenantContext, quote_id: UUID) -> bool:
     """Vence una `SENT` o `VIEWED` con `valid_until <= ahora` (también para la base), como sistema.
     Devuelve si la venció ahora; si no (respondida, vigente, de otra organización), no escribe."""
     alias = require_scope(ctx)
+    if ctx.actor_type != ActorType.SYSTEM:  # solo la tarea vence: nadie lo pide en su nombre
+        raise NotAllowed("quotes.expire")
     try:
         with transaction.atomic(using=alias):
             rows = Quote.objects.using(alias).select_for_update(no_key=True).filter(pk=quote_id)
@@ -153,8 +150,7 @@ def expire_quote(ctx: TenantContext, quote_id: UUID) -> bool:
                 return False
             before = quote.status
             _stamp(ctx, alias, quote, {"status": QuoteStatus.EXPIRED})
-            record(ctx, "quote.expired", _entity(quote), {"status": [before, QuoteStatus.EXPIRED]},
-                   actor=_SYSTEM)  # fmt: skip
+            record(ctx, "quote.expired", _entity(quote), {"status": [before, QuoteStatus.EXPIRED]})
             _event(ctx, quote, "quote.expired")
     except IntegrityError as error:
         if _name(error) == "quotes_not_expired":  # el reloj de la base aún no: no es todavía
