@@ -337,8 +337,8 @@ def test_a_failing_reservation_is_logged_and_does_not_stop_the_batch(
     monkeypatch.setattr(res, "expire", flaky)
     monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **kw: chained.append(kw))
     later(2)
-    with caplog.at_level(logging.INFO):  # la de detrás, de la misma celda, espera al siguiente
-        assert run(world.a) == {**ZERO, "expired": 1, "failed": 1}
+    with caplog.at_level(logging.INFO):  # un error de esa fila: la de detrás, en su celda, vence
+        assert run(world.a) == {**ZERO, "expired": 2, "failed": 1}
     logged = "\n".join(json_formatter().format(record) for record in caplog.records)
     failed = next(json.loads(line) for line in logged.splitlines() if "expiry_failed" in line)
     assert failed["reservation_id"] == str(bad) and failed["error"] == "RuntimeError"
@@ -346,11 +346,13 @@ def test_a_failing_reservation_is_logged_and_does_not_stop_the_batch(
     summary = next(
         json.loads(line) for line in logged.splitlines() if "reservations_expired" in line
     )
-    assert (summary["expired"], summary["failed"], summary["skipped"]) == (1, 1, 0)
-    assert states(world.a)[bad] == "ACTIVE" and consistent(world.a, here) == (5, 2, 3)
+    assert (summary["expired"], summary["failed"], summary["skipped"]) == (2, 1, 0)
+    assert states(world.a) == {pk: "ACTIVE" if pk == bad else "EXPIRED" for pk in made}
+    assert consistent(world.a, here) == (5, 1, 4)
+    assert run(world.a) == {**ZERO, "failed": 1}  # cada barrido la reintenta, sola
     assert chained == []  # sin lote lleno no se encadena
     monkeypatch.setattr(res, "expire", real)
-    assert run(world.a) == {**ZERO, "expired": 2}  # la siguiente pasada las recoge
+    assert run(world.a) == {**ZERO, "expired": 1}  # la siguiente pasada la recoge
 
 
 def test_a_failure_in_the_middle_of_one_expiry_leaves_nothing_behind(
@@ -368,11 +370,13 @@ def test_a_failure_in_the_middle_of_one_expiry_leaves_nothing_behind(
     for step in ("_movement", "_audit"):  # entre el cierre y el RELEASE, y después de los dos
         with monkeypatch.context() as patch:
             patch.setattr(res, step, boom)
-            assert run(world.a, max_per_run=1) == {**ZERO, "failed": 1}  # su celda, fuera
+            assert run(world.a, max_per_run=1) == {**ZERO, "failed": 1, "capped": 1}
         assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
         assert consistent(world.a, here) == (3, 2, 1)
     assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
-    assert consistent(world.a, here) == (3, 2, 1) and chained == []  # sin avance no se encadena
+    assert consistent(world.a, here) == (3, 2, 1)
+    first = [str(here[0]), str(min(made))]  # una fila mala no corta la cadena: sigue tras ella
+    assert [c["kwargs"]["after"] for c in chained] == [first, first]
     assert run(world.a) == {**ZERO, "expired": 2} and consistent(world.a, here) == (3, 0, 3)
 
 
@@ -541,19 +545,54 @@ def failing(monkeypatch: pytest.MonkeyPatch, bad: set[UUID]) -> None:
     monkeypatch.setattr(res, "expire", flaky)
 
 
-def test_a_failing_cell_costs_one_attempt_and_the_rest_of_the_run_goes_on(
-    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None]
-) -> None:
+def test_a_busy_cell_costs_one_attempt_and_the_rest_of_the_run_goes_on(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    later: Callable[[float], None],
+) -> None:  # fmt: skip
     sick, fine = stocked(world.a, 9, world.ana, "MALA"), stocked(world.a, 9, world.ana, "BUENA")
     bad = [reserve(world.a, world.ana, asked(sick, 1, hours=1))[0].pk for _ in range(5)]
     good = [reserve(world.a, world.ana, asked(fine, 1, hours=1))[0].pk for _ in range(2)]
     later(2)
-    with monkeypatch.context() as patch:
-        failing(patch, set(bad))  # 5 que fallan delante, más que el tope de 3
-        assert following(patch, world.a, max_per_run=3) == [{**ZERO, "expired": 2, "failed": 1}]
+    monkeypatch.setattr(tasks, "LOCK_TIMEOUT_MS", 200)
+    lock = "SELECT 1 FROM inventory_levels WHERE variant_id = %s AND warehouse_id = %s FOR UPDATE"
+    with migrator.transaction():  # el saldo de la celda, ocupado: 5 detrás, más que el tope de 3
+        migrator.execute(lock, list(sick))
+        assert following(monkeypatch, world.a, max_per_run=3) == [
+            {**ZERO, "expired": 2, "failed": 1}
+        ]
     assert {states(world.a)[pk] for pk in good} == {"EXPIRED"} and consistent(world.a, fine)[1] == 0
     assert consistent(world.a, sick) == (9, 5, 4) and releases(world.a, bad) == []
     assert run(world.a) == {**ZERO, "expired": 5} and consistent(world.a, sick) == (9, 0, 9)
+
+
+def test_a_poison_row_does_not_hold_back_the_healthy_ones_of_its_cell(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None]
+) -> None:
+    here = stocked(world.a, 4, world.ana)
+    made = sorted(reserve(world.a, world.ana, asked(here, 1, hours=1))[0].pk for _ in range(2))
+    later(2)
+    with monkeypatch.context() as patch:  # la primera de la celda falla siempre, no por bloqueo
+        failing(patch, {made[0]})
+        assert run(world.a) == {**ZERO, "expired": 1, "failed": 1}  # la sana, en la misma pasada
+        assert run(world.a) == {**ZERO, "failed": 1}  # cada barrido reintenta solo la mala
+    assert states(world.a) == {made[0]: "ACTIVE", made[1]: "EXPIRED"}
+    assert consistent(world.a, here) == (4, 1, 3) and len(releases(world.a, made)) == 1
+
+
+def test_a_run_out_of_time_without_progress_does_not_chain(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    later: Callable[[float], None],
+) -> None:  # fmt: skip
+    one, two = stocked(world.a, 2, world.ana, "UNA"), stocked(world.a, 2, world.ana, "DOS")
+    for where in (one, two):
+        reserve(world.a, world.ana, asked(where, 1, hours=1))
+    later(2)
+    with monkeypatch.context() as patch, migrator.transaction():  # un bloqueo amplio: todo espera
+        patch.setattr(tasks, "RUN_SECONDS", 0.001)  # la primera espera lo agota
+        migrator.execute("SELECT 1 FROM inventory_levels FOR UPDATE")
+        assert following(patch, world.a) == [{**ZERO, "failed": 1, "capped": 1}]
+    assert consistent(world.a, one) == (2, 1, 1) and consistent(world.a, two) == (2, 1, 1)
+    assert run(world.a) == {**ZERO, "expired": 2}  # el siguiente barrido
 
 
 def test_persistent_failures_beyond_the_cap_do_not_stop_the_chain_and_the_chain_ends(
@@ -598,14 +637,17 @@ def test_a_lock_on_the_reservation_row_itself_fails_that_cell_and_not_the_others
     world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
     later: Callable[[float], None],
 ) -> None:  # fmt: skip
-    busy, free = stocked(world.a, 3, world.ana, "OCUPADA"), stocked(world.a, 3, world.ana, "LIBRE")
+    free, busy = stocked(world.a, 3, world.ana, "LIBRE"), stocked(world.a, 3, world.ana, "OCUPADA")
     held = sorted(reserve(world.a, world.ana, asked(busy, 1, hours=1))[0].pk for _ in range(2))
     loose = reserve(world.a, world.ana, asked(free, 1, hours=1))[0].pk
     later(2)
     monkeypatch.setattr(tasks, "LOCK_TIMEOUT_MS", 200)
     with migrator.transaction():  # solo la fila de la reserva: la celda está libre
         migrator.execute("SELECT 1 FROM inventory_reservations WHERE id = %s FOR UPDATE", [held[0]])
-        assert run(world.a) == {**ZERO, "expired": 1, "failed": 1}  # la otra de la celda, después
+        chained: list[Any] = []
+        monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **k: chained.append(k))
+        assert run(world.a) == {**ZERO, "expired": 1, "failed": 1}  # la otra de la celda: sin
+        assert chained == []  # cadena (tras el cursor, pero ocupada), al siguiente barrido
     assert states(world.a) == {held[0]: "ACTIVE", held[1]: "ACTIVE", loose: "EXPIRED"}
     assert consistent(world.a, busy) == (3, 2, 1) and consistent(world.a, free) == (3, 0, 3)
     assert run(world.a) == {**ZERO, "expired": 2} and consistent(world.a, busy) == (3, 0, 3)

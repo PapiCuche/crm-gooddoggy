@@ -12,12 +12,12 @@ plataforma, como `conversations.dispatch_message`: el barredor saca el id de la 
 tabla y la tarea comprueba que sea una activa (el mensaje no basta). Una reserva espera hasta
 `LOCK_TIMEOUT_MS` por cada uno de sus bloqueos (hasta cuatro), nunca más de la cuarta parte de lo
 que le queda a la pasada: pasado `RUN_SECONDS` la pasada termina aunque queden filas. Una reserva
-que falla (p. ej., no consigue su celda) deja fuera de la pasada el resto de su celda y se
-reintenta en el siguiente barrido. Una pasada encadenada sigue tras el cursor de la anterior, así
-que unas filas que fallan siempre al principio no tapan las de detrás (F3-34b). El barrido rota el
-orden de las organizaciones en cada tick: con más cola que `QUEUE_EXPIRES`, las últimas no se
-pierden siempre. Un fallo en una reserva o en una organización no para el resto. Los registros
-llevan ids y contadores, nunca datos de personas.
+que no consigue un bloqueo deja fuera de la pasada el resto de su celda; otro error salta solo esa
+fila. Las dos se reintentan en el siguiente barrido. Una pasada encadenada sigue tras el cursor de
+la anterior, así que unas filas que fallan siempre al principio no tapan las de detrás (F3-34b).
+El barrido rota el orden de las organizaciones en cada tick: con más cola que `QUEUE_EXPIRES`, las
+últimas no se pierden siempre. Un fallo en una reserva o en una organización no para el resto.
+Los registros llevan ids y contadores, nunca datos de personas.
 """
 
 import time
@@ -46,6 +46,7 @@ RUN_SECONDS = 120.0  # lo máximo que una ejecución ocupa un worker
 QUEUE_EXPIRES = 300  # segundos: sin workers no se acumulan barridos viejos
 LOCK_TIMEOUT_MS = 10_000  # lo que una reserva espera una celda ocupada: luego falla y se reintenta
 LOCKS_PER_ROW = 4  # variante, almacén, saldo y reserva: cada uno espera su `lock_timeout`
+LOCK_NOT_AVAILABLE = "55P03"  # `lock_timeout` agotado: la celda está ocupada
 SWEEP_SECONDS = 300  # el intervalo de beat: un tick del barrido
 Key = tuple[UUID, UUID]  # (variante, reserva): el orden y el cursor
 Cell = tuple[UUID, UUID]  # (variante, almacén)
@@ -75,10 +76,11 @@ def _lock_wait_ms(started: float) -> int:
 
 def expire_due(
     ctx: TenantContext, batch_size: int, max_per_run: int, after: Key | None = None
-) -> tuple[Counter[str], Key | None]:
+) -> tuple[Counter[str], Key | None, bool]:
     """Vence las reservas vencidas de la organización de `ctx` tras `after`, cada una en su
     `tenant_scope`. Cuenta `expired`, `skipped` (otro la cerró antes), `failed` y `capped`
-    (quedan más tras el cursor, fuera de las celdas que fallaron). Devuelve también el cursor."""
+    (quedan más tras el cursor, fuera de las celdas ocupadas). Devuelve también el cursor y si la
+    pasada terminó por tiempo."""
     done: Counter[str] = Counter(expired=0, skipped=0, failed=0, capped=0)
     started, cutoff, taken = time.monotonic(), timezone.now(), 0
     failed: set[Cell] = set()
@@ -104,13 +106,14 @@ def expire_due(
                     error=type(error).__name__,
                 )
                 done["failed"] += 1
-                failed.add((variant_id, warehouse_id))  # el resto de la celda, al siguiente barrido
+                if getattr(error.__cause__, "sqlstate", None) == LOCK_NOT_AVAILABLE:
+                    failed.add((variant_id, warehouse_id))  # ocupada: el resto, al siguiente
             if time.monotonic() - started > RUN_SECONDS:  # dentro del lote; la pasada siempre
                 break  # hace una fila
         if time.monotonic() - started > RUN_SECONDS:
             break
     done["capped"] = int(bool(_due(ctx, cutoff, after, 1, failed)))
-    return done, after
+    return done, after, time.monotonic() - started > RUN_SECONDS
 
 
 def _clamp(value: int, top: int) -> int:
@@ -128,8 +131,10 @@ def expire_reservations(
     cursor, encola la siguiente con ese cursor (`after`): cada ejecución es corta, un atraso grande
     no espera a los 5 minutos y unas filas que fallan siempre no tapan las de detrás. El cursor
     avanza en cada pasada, así que la cadena termina al llegar al final; el barredor empieza sin
-    cursor. El id llega en el mensaje: se comprueba que la organización esté activa y los topes se
-    acotan (un mensaje no los levanta); el cursor solo elige por dónde seguir, bajo RLS."""
+    cursor. Una pasada que se quedó sin tiempo sin vencer ninguna no se encadena (todo espera: un
+    bloqueo amplio); la recoge el siguiente barrido. El id llega en el mensaje: se comprueba que la
+    organización esté activa y los topes se acotan (un mensaje no los levanta); el cursor solo
+    elige por dónde seguir, bajo RLS."""
     org = UUID(str(organization_id))
     cursor = None if after is None else _key(after)
     if not Organization.objects.filter(pk=org, status__in=ACCESSIBLE_STATUSES).exists():
@@ -137,8 +142,8 @@ def expire_reservations(
         return dict(Counter(expired=0, skipped=0, failed=0, capped=0))  # un mensaje no la activa
     batch_size, max_per_run = _clamp(batch_size, BATCH), _clamp(max_per_run, MAX_PER_RUN)
     ctx = TenantContext(org, "celery")
-    done, cursor = expire_due(ctx, batch_size, max_per_run, cursor)
-    if done["capped"] and cursor is not None:
+    done, cursor, timed_out = expire_due(ctx, batch_size, max_per_run, cursor)
+    if done["capped"] and cursor is not None and (done["expired"] or not timed_out):
         try:
             kwargs = {"organization_id": str(ctx.organization_id), "batch_size": batch_size}
             expire_reservations.apply_async(
