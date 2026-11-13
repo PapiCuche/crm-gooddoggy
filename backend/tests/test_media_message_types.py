@@ -122,9 +122,10 @@ def test_the_database_keeps_media_types_inbound_for_the_app_role(
 ) -> None:
     receive(world)
     user = uuid4()  # los CHECK van antes que la FK del remitente
+    out = "messages_file_ck" if typed == "IMAGE" else "messages_unsupported_ck"  # sin su archivo
     for direction, sender, by, state, rule in (
-        ("OUTBOUND", "USER", user, "QUEUED", "messages_unsupported_ck"),
-        ("OUTBOUND", "SYSTEM", None, "QUEUED", "messages_unsupported_ck"),
+        ("OUTBOUND", "USER", user, "QUEUED", out),
+        ("OUTBOUND", "SYSTEM", None, "QUEUED", out),
         ("INTERNAL", "USER", user, None, "messages_note_ck"),  # lo interno es una nota, antes
     ):  # fmt: skip
         with pytest.raises(DatabaseError) as caught:
@@ -136,7 +137,7 @@ def test_the_database_keeps_media_types_inbound_for_the_app_role(
     assert type(caught.value.__cause__).__name__ == "InsufficientPrivilege"
 
 
-@pytest.mark.parametrize("typed", ["STICKER", "DOCUMENT", "image", ""])
+@pytest.mark.parametrize("typed", ["STICKER", "PDF", "image", ""])
 def test_the_database_refuses_any_other_type(world: Any, typed: str) -> None:
     receive(world)
     with pytest.raises(DatabaseError) as caught:
@@ -156,10 +157,10 @@ def test_the_migrations_validate_both_checks_and_going_back_keeps_every_message(
     assert migrator.execute(VALID).fetchall() == [
         ("messages_type_ck", True), ("messages_unsupported_ck", True)
     ]  # fmt: skip
-    with as_migrator():
+    receive(world, "location")  # sin medios aún: atrás y adelante sin perder nada (el ORM ya
+    with as_migrator():  # tiene `file_id`, de la `0027`: el mensaje se escribe antes de volver)
         call_command("migrate", "conversations", "0022", verbosity=0)
     assert {v for _, v in migrator.execute(VALID).fetchall()} == {True}  # los de `0010`
-    receive(world, "location")  # sin medios aún: atrás y adelante sin perder nada
     with as_migrator():
         call_command("migrate", "conversations", "0024", verbosity=0)
     assert {v for _, v in migrator.execute(VALID).fetchall()} == {False}  # rigen, sin recorrer

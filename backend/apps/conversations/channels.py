@@ -28,6 +28,19 @@ class AmbiguousChannelError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class Media:
+    """El archivo de un medio saliente (F7-09b): `kind` es `IMAGE` o `DOCUMENT`; `caption`, el pie
+    de foto, o `None` si el mensaje no lo tiene."""
+
+    kind: str
+    key: str = field(repr=False)
+    mime: str
+    sha256: str
+    name: str = field(repr=False)
+    caption: str | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class Claim:
     """Lo que el adaptador necesita de un mensaje reclamado. `credential` va cifrada: el token solo
     se abre durante la llamada."""
@@ -39,6 +52,7 @@ class Claim:
     recipient: str  # el teléfono del contacto en E.164; vacío si no tiene
     body: str = field(repr=False)
     credential: Credential | None = field(default=None, repr=False)
+    media: Media | None = None
 
 
 @dataclass(frozen=True, slots=True)

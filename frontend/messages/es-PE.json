@@ -2256,7 +2256,8 @@
       "RATE_LIMITED": "WhatsApp limitó el envío por exceso de mensajes. Inténtalo más tarde.",
       "QUALITY_BLOCKED": "WhatsApp bloqueó el envío por la calidad del número.",
       "TEMPLATE_UNAVAILABLE": "La plantilla no está disponible.",
-      "PROVIDER_ERROR": "WhatsApp tuvo un problema al procesar el envío."
+      "PROVIDER_ERROR": "WhatsApp tuvo un problema al procesar el envío.",
+      "MEDIA_NOT_SCANNED": "El archivo no se envió: aún no pasó el antivirus."
     },
     "list": {
       "landmark": "Conversaciones",

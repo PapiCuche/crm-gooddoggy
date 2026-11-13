@@ -11098,8 +11098,9 @@ components:
           type: string
           description: '`TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no
             admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`,
-            con `body` una frase fija y el medio en `attachment`. Un valor desconocido
-            se trata como no soportado.'
+            con `body` una frase fija y el medio en `attachment`; o saliente: `IMAGE`
+            o `DOCUMENT`, con `body` el pie de foto o «Imagen» o «Documento». Un valor
+            desconocido se trata como no soportado.'
         body:
           type: string
           nullable: true
@@ -11133,6 +11134,7 @@ components:
             * `QUALITY_BLOCKED` - QUALITY_BLOCKED
             * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
             * `PROVIDER_ERROR` - PROVIDER_ERROR
+            * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
           oneOf:
           - $ref: '#/components/schemas/ProviderErrorCodeEnum'
           - $ref: '#/components/schemas/NullEnum'
@@ -13766,6 +13768,7 @@ components:
       - QUALITY_BLOCKED
       - TEMPLATE_UNAVAILABLE
       - PROVIDER_ERROR
+      - MEDIA_NOT_SCANNED
       type: string
       description: |-
         * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
@@ -13783,6 +13786,7 @@ components:
         * `QUALITY_BLOCKED` - QUALITY_BLOCKED
         * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
         * `PROVIDER_ERROR` - PROVIDER_ERROR
+        * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
     QualityRatingEnum:
       enum:
       - GREEN
