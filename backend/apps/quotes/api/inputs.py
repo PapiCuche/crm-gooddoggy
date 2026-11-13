@@ -11,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
 from apps.deals.api.inputs import Checked, sentence, version_required
-from apps.quotes import commands, discounts
+from apps.quotes import commands, decisions, discounts
 from apps.quotes.models import QUANTITY_MAX
 from core.api.strict import Closed, Id, Whole
 from core.money import parse_amount
@@ -101,3 +101,21 @@ class QuotePriceSerializer(QuoteVersionSerializer):
 
     price = Checked(parse_amount, help_text=f"Final por unidad, con IGV. {AMOUNT}")
     reason = Checked(_reason, help_text=f"Obligatorio, hasta {discounts.REASON_MAX} caracteres.")
+
+
+class QuoteApproveSerializer(QuoteVersionSerializer):
+    comment = Checked(
+        lambda v: commands._text(v, "comentario", decisions.COMMENT_MAX), required=False,
+        allow_blank=True, help_text=f"Opcional, hasta {decisions.COMMENT_MAX} caracteres.",
+    )  # fmt: skip
+
+
+class QuoteRejectSerializer(QuoteVersionSerializer):
+    reason = Checked(_reason, help_text=f"Obligatorio, hasta {discounts.REASON_MAX} caracteres.")
+
+
+class QuoteCancelSerializer(QuoteVersionSerializer):
+    reason = Checked(
+        lambda v: commands._text(v, "motivo", commands.REASON_MAX), required=False,
+        allow_blank=True, help_text=f"Opcional, hasta {commands.REASON_MAX} caracteres.",
+    )  # fmt: skip
