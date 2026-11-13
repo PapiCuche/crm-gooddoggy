@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { MovementTypeEnum } from "./movementTypeEnum";
+import type { ReferenceTypeEnum } from "./referenceTypeEnum";
 import type { VariantLabel } from "./variantLabel";
 
 export interface Movement {
@@ -19,6 +20,17 @@ export interface Movement {
   on_hand_after: number;
   reserved_after: number;
   reason: string;
+  reference_type: ReferenceTypeEnum;
+  /**
+   * La importación o la transferencia que lo originó.
+   * @nullable
+   */
+  reference_id: string | null;
+  /**
+   * El mismo en las dos patas de una transferencia.
+   * @nullable
+   */
+  transfer_group_id: string | null;
   /** @nullable */
   created_by_user_id: string | null;
   created_at: string;

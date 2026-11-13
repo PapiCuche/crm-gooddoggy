@@ -211,6 +211,8 @@ import type {
   TeamsListParams,
   TestAccounts,
   TokenRequest,
+  Transfer,
+  TransferCreateRequest,
   Variant,
   VariantCreateRequest,
   VariantPriceHistoryListParams,
@@ -7894,6 +7896,113 @@ export const useInventoryReservationsRelease = <TError = ErrorType<Error>, TCont
   TContext
 > => {
   return useMutation(getInventoryReservationsReleaseMutationOptions(options), queryClient);
+};
+
+export const getInventoryTransfersCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/inventory/transfers/`;
+};
+
+/**
+ * Saca unidades disponibles (`on_hand - reserved`) de un almacén y las mete en otro, en una sola operación con dos movimientos del mismo `transfer_group_id`. 200: la misma petición, de la misma persona y con esa `idempotency_key`, ya registrada; se devuelve sin repetirla. 400 por campo (variante o almacén que no existen, un servicio, el mismo almacén). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` (el texto dice cuál), `STOCK_LIMIT` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona).
+ */
+export const inventoryTransfersCreate = async (
+  orgSlug: string,
+  transferCreateRequest: TransferCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Transfer> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Transfer>(getInventoryTransfersCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(transferCreateRequest),
+  });
+};
+
+export const getInventoryTransfersCreateMutationKey = () => ["inventoryTransfersCreate"] as const;
+
+export const getInventoryTransfersCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof inventoryTransfersCreate>>,
+    TError,
+    InventoryTransfersCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof inventoryTransfersCreate>>,
+  TError,
+  InventoryTransfersCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInventoryTransfersCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof inventoryTransfersCreate>>,
+    InventoryTransfersCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return inventoryTransfersCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InventoryTransfersCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof inventoryTransfersCreate>>
+>;
+export type InventoryTransfersCreateMutationBody = TransferCreateRequest;
+export type InventoryTransfersCreateMutationError = ErrorType<Error>;
+export type InventoryTransfersCreateMutationVariables = {
+  orgSlug: string;
+  data: TransferCreateRequest;
+};
+
+export const useInventoryTransfersCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof inventoryTransfersCreate>>,
+      TError,
+      InventoryTransfersCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof inventoryTransfersCreate>>,
+  TError,
+  InventoryTransfersCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getInventoryTransfersCreateMutationOptions(options), queryClient);
 };
 
 export const getInvitationsListUrl = (orgSlug: string, params?: InvitationsListParams) => {

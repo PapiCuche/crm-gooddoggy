@@ -68,9 +68,14 @@ def _in_key(group: UUID) -> str:
     return f"T/{group}/in"
 
 
-def _replay(alias: str, wanted: Wanted) -> Legs | None:
-    """Las dos patas ya registradas con esa clave, si son lo que se pide; `KeyReused` si la clave
-    es de otra transferencia o de otro movimiento."""
+def _actor(ctx: TenantContext) -> tuple[str, UUID | None]:
+    return ctx.actor_type, ctx.user_id if ctx.actor_type == ActorType.USER else None
+
+
+def _replay(alias: str, ctx: TenantContext, wanted: Wanted) -> Legs | None:
+    """Las dos patas ya registradas con esa clave, si son lo que se pide y de quien lo pide;
+    `KeyReused` si la clave es de otra transferencia, de otro movimiento o de otra persona (como
+    en las reservas, F3-35: nunca se devuelven las patas ajenas)."""
     rows = InventoryMovement.objects.using(alias)
     out: InventoryMovement | None = rows.filter(idempotency_key=wanted.idempotency_key).first()
     if out is None:
@@ -79,12 +84,15 @@ def _replay(alias: str, wanted: Wanted) -> Legs | None:
     if out.movement_type == Type.TRANSFER_OUT and out.transfer_group_id is not None:
         entry = rows.filter(idempotency_key=_in_key(out.transfer_group_id)).first()
     if entry is None or (
+        out.created_by_type,
+        out.created_by_user_id,
         out.variant_id,
         out.warehouse_id,
         entry.warehouse_id,
         -out.quantity,
         out.reason,
     ) != (
+        *_actor(ctx),
         wanted.variant_id,
         wanted.from_warehouse_id,
         wanted.to_warehouse_id,
@@ -98,9 +106,9 @@ def _replay(alias: str, wanted: Wanted) -> Legs | None:
 def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
     """Saca `quantity` del origen y la mete en el destino, deja los dos saldos y sus dos
     movimientos, y lo audita (`inventory.transferred`). Devuelve las patas y si son nuevas: la
-    misma clave con lo mismo devuelve las de entonces sin escribir nada. `ValueError`,
-    `BadReference`, `WarehouseInactive`, `InsufficientStock`, `StockLimit` o `KeyReused` sin
-    escribir nada."""
+    misma clave con lo mismo, de quien la usó, devuelve las de entonces sin escribir nada.
+    `ValueError`, `BadReference`, `WarehouseInactive`, `InsufficientStock`, `StockLimit` o
+    `KeyReused` sin escribir nada."""
     alias = require_scope(ctx)
     _check(wanted)
     try:
@@ -111,7 +119,7 @@ def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
             )
             warehouses = {w: stock.lock_warehouse(alias, w, sides[w]) for w in sorted(sides)}
             levels = stock.lock_levels(alias, ctx, wanted.variant_id, *sides)
-            if (done := _replay(alias, wanted)) is not None:
+            if (done := _replay(alias, ctx, wanted)) is not None:
                 return done, False
             for warehouse_id, field in sides.items():
                 if not warehouses[warehouse_id][0]:
@@ -144,7 +152,7 @@ def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
         violated = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
         if violated != stock.KEY_TAKEN:  # por su nombre, no por el texto
             raise
-        done = _replay(alias, wanted)  # la misma clave, a la vez, para otra variante
+        done = _replay(alias, ctx, wanted)  # la misma clave a la vez: otra variante o persona
         assert done is not None  # noqa: S101 — el índice único acaba de verla
         return done, False
     return legs, True
@@ -171,6 +179,6 @@ def _leg(
         transfer_group_id=group,
         idempotency_key=wanted.idempotency_key if out else _in_key(group),
         created_by_type=ctx.actor_type,
-        created_by_user_id=ctx.user_id if ctx.actor_type == ActorType.USER else None,
+        created_by_user_id=_actor(ctx)[1],
     )
     return movement

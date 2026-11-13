@@ -166,6 +166,11 @@ class InventoryMovement(TenantModel):
             models.Index(
                 fields=["organization_id", "warehouse"], name="inventory_movements_wh_idx"
             ),
+            models.Index(  # el ledger de una transferencia (F3-31): solo sus patas
+                fields=["organization_id", "transfer_group_id"],
+                condition=models.Q(transfer_group_id__isnull=False),
+                name="inventory_movements_group_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
