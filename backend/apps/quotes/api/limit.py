@@ -1,13 +1,9 @@
-"""Tope del oráculo del costo (F5-09e2; #655 §5, ADR-006): con `quotes.override_price` y sin ver
-costos, una búsqueda binaria sobre el sí o no del suelo daría el costo en unas 20 respuestas. Cada
-`POST` a una ruta de `FLOOR` cuenta **antes de buscar nada**, por persona y cotización y por persona
-en todas; pasado el tope, 429 `RATE_LIMITED` con `Retry-After` (al minuto; con el tope por persona,
-el mismo para toda cotización y ruta), exista o no la cotización, sea o no de su alcance u
-organización. Ventana fija en `login_throttles`: alrededor de un cambio de ventana caben dos topes.
-Va antes de `TenantResolutionMiddleware`, que deshace toda respuesta de error: el contador queda,
-y la negativa del suelo que marcó la vista (`refusal`) se audita luego en su propia transacción
-(`quote.price_refused`, `DENIED`, solo la ruta y los ids); si esa auditoría falla, responde igual.
-Aprobar y emitir (F5-09e3, F5-09e4) añadirán su ruta a `FLOOR`: la prueba estructural lo exige."""
+"""Tope del oráculo del costo (F5-09e2; #655 §5, ADR-006): cada `POST` a una ruta de `FLOOR` cuenta
+**antes de buscar nada**, por persona y cotización y por persona; pasado el tope, 429 con
+`Retry-After` (al minuto), igual exista o no la cotización. Ventana fija en `login_throttles` (en un
+cambio de ventana caben dos topes). Va antes de `TenantResolutionMiddleware`, que deshace los
+errores: el contador queda, y la negativa marcada (`refusal`) se audita luego en su transacción
+(`quote.price_refused`, `DENIED`, ruta e ids). Aprobar y emitir añadirán su ruta a `FLOOR`."""
 
 import logging
 import re
@@ -29,18 +25,14 @@ logger = logging.getLogger(__name__)
 ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 FLOOR = (rf"items/{ID}/price", "request-approval")  # las rutas que miden el suelo de costo
 PATH = re.compile(rf"^/api/v1/o/[^/]+/quotes/(?P<quote>{ID})/(?:{'|'.join(FLOOR)})/$", re.I)
-_COUNT = """
+_SPAN = "%(window)s::int * interval '1 second'"
+_COUNT = f"""
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
-VALUES (%(key)s, 1, NULL, now())
-ON CONFLICT (key) DO UPDATE SET
-  failures = CASE WHEN t.updated_at < now() - %(window)s::int * interval '1 second'
-                  THEN 1 ELSE t.failures + 1 END,
-  updated_at = CASE WHEN t.updated_at < now() - %(window)s::int * interval '1 second'
-                    THEN now() ELSE t.updated_at END
-RETURNING failures,
-  CEIL(EXTRACT(EPOCH FROM updated_at + %(window)s::int * interval '1 second'
-    - clock_timestamp()) / 60)::int * 60
-"""
+VALUES (%(key)s, 1, NULL, now()) ON CONFLICT (key) DO UPDATE SET
+  failures = CASE WHEN t.updated_at < now() - {_SPAN} THEN 1 ELSE t.failures + 1 END,
+  updated_at = CASE WHEN t.updated_at < now() - {_SPAN} THEN now() ELSE t.updated_at END
+RETURNING failures, CEIL(EXTRACT(EPOCH FROM updated_at + {_SPAN} - clock_timestamp())/60)::int*60
+"""  # noqa: S608 — texto fijo, sin datos
 
 
 def wait_for(user_id: object, quote: str) -> int:

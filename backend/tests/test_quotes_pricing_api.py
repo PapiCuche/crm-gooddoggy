@@ -15,12 +15,15 @@ from uuid import uuid4
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.test import Client
+from django.urls import path
 from django.utils import timezone
+from rest_framework import views
 
 from apps.accounts.tasks import purge_login_throttles
 from apps.pricing import floor
 from apps.quotes import discounts
 from apps.quotes.api import limit, urls
+from apps.quotes.discounts import submit_quote
 from apps.quotes.models import Quote, QuoteApproval
 from config import env
 from config.settings import base
@@ -59,11 +62,9 @@ def draft(desk: SimpleNamespace, who: str = "vera", *variants: Any) -> tuple[str
 
 
 def withdraw(desk: SimpleNamespace, quote: str, version: int) -> None:
-    """Como retirar la solicitud (F5-09b3): de vuelta a borrador, con otra versión."""
     with tenant_scope(ctx(desk.a)):
-        QuoteApproval.objects.filter(quote_id=quote, status="PENDING").update(
-            status="CANCELLED", decided_at=timezone.now()
-        )
+        asked = QuoteApproval.objects.filter(quote_id=quote, status="PENDING")
+        asked.update(status="CANCELLED", decided_at=timezone.now())
         Quote.objects.filter(pk=quote).update(status="DRAFT", version=version)
 
 
@@ -74,8 +75,7 @@ def refusals(migrator: DB) -> list[Any]:
 
 @pytest.fixture
 def lab(desk: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """vera (Vendedora `OWN`) con `quotes.override_price` y sin ver costos; el iPhone con su costo
-    y cada respuesta del suelo contada (`asked`)."""
+    """vera con `quotes.override_price` sin ver costos; el iPhone con costo; el suelo, contado."""
     give(desk.a, desk.m["vera"], {"quotes.override_price": None})
     cost(desk, desk.phone, SENTINEL)
     asked: list[int] = []
@@ -251,32 +251,43 @@ def test_the_purge_keeps_a_counter_inside_its_window_and_nobody_anonymous_counts
     assert migrator.execute(keys).fetchall() == []
 
 
-def test_every_quote_route_that_reaches_the_cost_floor_is_counted() -> None:
-    """Toda función de `apps.quotes` que llega a `covers_cost` o `_floor` (también por otra) y que
-    llama una vista de su API está en una ruta que `limit.PATH` cuenta."""
+def floor_paths(patterns: list[Any], *extra: pathlib.Path) -> tuple[list[str], list[str]]:
+    """Las rutas que llegan a `covers_cost` (por cualquier función o nombre) y las que no cuenta."""
     calls: dict[str, set[str]] = {}
-    for source in pathlib.Path(discounts.__file__).parent.glob("*.py"):
+    for source in [*pathlib.Path(discounts.__file__).parent.rglob("*.py"), *extra]:
         for node in ast.walk(ast.parse(source.read_text())):
             if isinstance(node, ast.FunctionDef):
                 names = {getattr(n, "attr", getattr(n, "id", "")) for n in ast.walk(node)}
                 calls.setdefault(node.name, set()).update(names)
+    assert "refusal" in calls  # también lo de `apps/quotes/api/`
     reach: set[str] = set()
     while (grown := {n for n, used in calls.items() if used & (reach | {"covers_cost"})}) != reach:
         reach = grown
     assert {"_floor", "set_manual_price", "submit_quote", "approve_quote", "issue_quote"} <= reach
-    checked = []
-    for pattern in urls.urlpatterns:
+    found = []
+    for pattern in patterns:
         for method in ("post", "put", "patch", "delete"):
             if handler := getattr(pattern.callback.view_class, method, None):
                 seen = inspect.getclosurevars(handler)
-                used = {
-                    *seen.unbound,
-                    *(getattr(v, "__name__", "") for v in seen.nonlocals.values()),
-                }
-                path = re.sub(r"<uuid:\w+>", str(uuid4()), f"/api/v1/o/org-a/{pattern.pattern}")
-                assert not used & reach or limit.PATH.match(path), path
-                checked += [path] if used & reach else []
-    assert len(checked) == 2  # el precio y pedir aprobación
+                named = [*seen.nonlocals.values(), *seen.globals.values()]
+                if {*seen.unbound, *(getattr(v, "__name__", "") for v in named)} & reach:
+                    found.append(re.sub(r"<uuid:\w+>", str(uuid4()), f"/o/x/{pattern.pattern}"))
+    return found, [p for p in found if not limit.PATH.match(f"/api/v1{p}")]
+
+
+def _go() -> Any:  # una función auxiliar que llega al suelo (mutante de la revisión de #732)
+    return discounts.submit_quote
+
+
+Direct: Any = type("Direct", (views.APIView,), {"post": lambda self, request: submit_quote})
+Helper: Any = type("Helper", (views.APIView,), {"post": lambda self, request: _go()})
+
+
+def test_every_quote_route_that_reaches_the_cost_floor_is_counted() -> None:
+    found, unlimited = floor_paths(urls.urlpatterns)
+    assert len(found) == 2 and unlimited == []  # el precio y pedir aprobación
+    fake = [path(f"quotes/<uuid:quote_id>/{v.__name__}/", v.as_view()) for v in (Direct, Helper)]
+    assert len(floor_paths(fake, pathlib.Path(__file__))[1]) == 2  # sin contar: la prueba falla
 
 
 def test_the_floor_limit_refuses_a_setting_it_cannot_enforce() -> None:
