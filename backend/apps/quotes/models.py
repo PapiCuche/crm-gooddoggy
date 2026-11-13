@@ -130,6 +130,11 @@ class Quote(TenantModel):
             models.UniqueConstraint(
                 fields=["organization_id", "number", "revision"], name="quotes_number_uq"
             ),
+            models.UniqueConstraint(  # F5-09c4: de cada número, una sola revisión sin cancelar
+                fields=["organization_id", "number"],
+                condition=~models.Q(status="CANCELLED"),
+                name="quotes_one_live_uq",
+            ),
             models.CheckConstraint(
                 condition=models.Q(number__regex=NUMBER), name="quotes_number_ck"
             ),
