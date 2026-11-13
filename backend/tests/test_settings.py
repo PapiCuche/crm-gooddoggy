@@ -29,6 +29,7 @@ BASE_ENV: dict[str, str | None] = {
     "MAIL_FROM": None,
     "APP_ORIGIN": None,
     "DJANGO_TEST_ACCOUNTS_ORGANIZATION": None,
+    "SANDBOX_INBOUND_ENABLED": None,
     "SECRETS_KEKS": "1:" + base64.urlsafe_b64encode(bytes(range(32))).decode(),  # ADR-022 §6
     "META_ENABLED": None,
     "META_APP_SECRETS": None,
@@ -145,6 +146,20 @@ def test_production_refuses_test_accounts(monkeypatch: pytest.MonkeyPatch) -> No
         load_production(monkeypatch, DJANGO_TEST_ACCOUNTS_ORGANIZATION="pruebas")
     disabled = load_production(monkeypatch, DJANGO_TEST_ACCOUNTS_ORGANIZATION=None)
     assert disabled.TEST_ACCOUNTS_ORGANIZATION == ""  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("value", ["true", "1", "maybe"])
+def test_production_refuses_the_sandbox_inbound_and_has_it_off(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """F1-14: la entrada Sandbox inyecta mensajes falsos; production no arranca con ella."""
+    with pytest.raises(ImproperlyConfigured):
+        load_production(monkeypatch, SANDBOX_INBOUND_ENABLED=value)
+    for off in (None, "false"):
+        settings = load_production(monkeypatch, SANDBOX_INBOUND_ENABLED=off)
+        assert settings.SANDBOX_INBOUND_ENABLED is False  # type: ignore[attr-defined]
+    assert load_local(monkeypatch).SANDBOX_INBOUND_ENABLED is True
+    assert load_local(monkeypatch, SANDBOX_INBOUND_ENABLED="false").SANDBOX_INBOUND_ENABLED is False
 
 
 @pytest.mark.parametrize(

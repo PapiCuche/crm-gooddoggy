@@ -25,6 +25,10 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 
 **Automatización (A-04, #20):** las dependencias de #5–#12 están normalizadas a `- #N`, y #5 tiene además el gate `required-check:backend gate`. El orquestador `work-item-dependencies` pasa a `status:ready` cada issue cuando se cumplen sus dependencias y gates. El Builder arranca con `continuar`.
 
+## Serie R0 — producción
+
+- **Hecho en F1-14 (#755):** `/health/ready` comprueba la base (`SELECT 1`), Redis (`PING` al broker y a la capa de canales; sin URL, `fail`) y el almacenamiento (`HEAD` del bucket, sin escribir), cada uno con 1 s y sin reintentos; responde `checks.database`, `checks.redis` y `checks.storage` sin hosts ni errores (el tipo de la excepción solo va al log) y guarda el resultado 5 s por proceso, así que una ráfaga de sondas cuesta una comprobación por proceso y ventana. `/health/live` sigue sin dependencias y es el `HEALTHCHECK` de las imágenes. **Requisito de despliegue:** el proxy de producción no publica `/health/*` (como `infra/docker/proxy/Caddyfile`; anotado en #754). `SANDBOX_INBOUND_ENABLED` (apagado por omisión, encendido en `local` y `test`; `production` no arranca con él): apagado, `POST …/channels/sandbox/inbound/` no resuelve (la misma respuesta que una ruta desconocida, sin vista, sesión ni cuerpo) y `ensure_sandbox_account` no crea la cuenta. La imagen del frontend se construye por omisión con `CRM_BUILD_PROFILE=production`: quita `src/app/demo` de la copia del build y `scripts/check-no-demo.mjs` hace fallar el build si la salida de `next build` tiene una ruta `/demo`; la prueba de humo exige 404 en `/demo`. El stack local (`compose`, perfil `development`) y `pnpm dev` conservan `/demo`. Las cuentas Sandbox que ya existan no se tocan.
+
 ## Definition of Done de la fase
 
 - ✅ `docker compose up` levanta todo en limpio siguiendo `docs/runbooks/local-stack.md` (F1-10).

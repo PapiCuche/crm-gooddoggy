@@ -12,7 +12,8 @@ const FIXED = {
   "cross-origin-opener-policy": "same-origin",
   "permissions-policy": "camera=(), geolocation=(), microphone=(), payment=()",
 };
-// Rutas reales, la demo y dos 404 de Next (su HTML también lleva scripts).
+// Rutas reales y 404 de Next (su HTML también lleva scripts). La imagen se construye con el perfil
+// `production` (F1-14): /demo no existe en ella.
 const PAGES = {
   "/login": 200,
   "/recuperar": 200,
@@ -20,8 +21,8 @@ const PAGES = {
   "/o": 200,
   "/o/ci": 200,
   "/cuenta/seguridad": 200,
-  "/demo": 200,
-  "/demo/workspace/inbox": 200,
+  "/demo": 404,
+  "/demo/workspace/inbox": 404,
   "/no-existe": 404,
   "/favicon.ico": 404,
 };

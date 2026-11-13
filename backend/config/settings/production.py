@@ -26,6 +26,7 @@ from config.settings.base import (
     META_GRAPH_VERSION,
     META_WEBHOOK_VERIFY_TOKEN,
     QUOTE_FLOOR_THROTTLE,
+    SANDBOX_INBOUND_ENABLED,
     SECRET_KEY,
     SECRETS_KEKS,
     TEST_ACCOUNTS_ORGANIZATION,
@@ -46,6 +47,8 @@ if env.boolean("DJANGO_DEBUG", False):
     raise ImproperlyConfigured("DEBUG no puede activarse en production")
 if TEST_ACCOUNTS_ORGANIZATION:  # ADR-026 §1: nunca hay accesos de prueba en production
     raise ImproperlyConfigured("DJANGO_TEST_ACCOUNTS_ORGANIZATION no puede activarse en production")
+if SANDBOX_INBOUND_ENABLED:  # F1-14: inyectaría mensajes de clientes falsos
+    raise ImproperlyConfigured("SANDBOX_INBOUND_ENABLED no puede activarse en production")
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured("DJANGO_ALLOWED_HOSTS es obligatorio en production")
 if SECRET_KEY.startswith("django-insecure") or len(SECRET_KEY) < 50:

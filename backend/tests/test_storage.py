@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from botocore.exceptions import ClientError
 from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
 from django.test import override_settings
@@ -101,6 +102,13 @@ def test_contract_create_bucket(s3: S3CompatibleStorage) -> None:
     s3.client.create_bucket(Bucket=bucket)
     s3.client.head_bucket(Bucket=bucket)
     s3.client.delete_bucket(Bucket=bucket)
+
+
+def test_contract_ping_is_a_head_of_the_bucket(s3: S3CompatibleStorage) -> None:
+    """F1-14: la sonda de readiness responde con el bucket y falla sin él."""
+    s3.ping()
+    with pytest.raises(ClientError):
+        S3CompatibleStorage(bucket=f"crm-missing-{new_id().hex[:12]}", client=s3.client).ping()
 
 
 def test_contract_put_get_head_delete_and_content_type(s3: S3CompatibleStorage) -> None:

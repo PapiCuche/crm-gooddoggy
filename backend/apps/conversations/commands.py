@@ -86,6 +86,10 @@ class AssignmentConflict(Exception):
     conversación ya tiene responsable (tomar) o ya no lo tiene (soltar)."""
 
 
+class SandboxDisabled(Exception):
+    """F1-14: el canal Sandbox está apagado en este entorno (`SANDBOX_INBOUND_ENABLED`)."""
+
+
 class BadReference(ValueError):
     """Una referencia que no sirve (el contacto o la cuenta no son de la organización o están
     borrados). `field` dice cuál."""
@@ -182,7 +186,9 @@ def _status(
 def ensure_sandbox_account(ctx: TenantContext) -> ChannelAccount:
     """La cuenta Sandbox de la organización: la crea la primera vez (`channel_account.created`) y
     después la devuelve. Su id externo lleva el de la organización, así que es único en la
-    plataforma."""
+    plataforma. Con el canal apagado (production) no se crea ni se devuelve."""
+    if not settings.SANDBOX_INBOUND_ENABLED:
+        raise SandboxDisabled
     alias = require_scope(ctx)
     external = f"sandbox-{ctx.organization_id}"
     live = ChannelAccount.objects.using(alias).filter(

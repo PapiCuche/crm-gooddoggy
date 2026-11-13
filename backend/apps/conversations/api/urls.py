@@ -1,6 +1,17 @@
-from django.urls import path
+from django.conf import settings
+from django.urls import ResolverMatch, URLPattern, path
+from django.urls.resolvers import RoutePattern
 
 from apps.conversations.api import assignment, channels, conversations, media, messages
+
+
+class SandboxOnly(URLPattern):
+    """F1-14: la ruta existe solo con `SANDBOX_INBOUND_ENABLED` (se lee en cada petición). Apagada,
+    no resuelve: la respuesta es la de una ruta desconocida, sin vista, sesión ni cuerpo."""
+
+    def resolve(self, path: str) -> ResolverMatch | None:
+        return super().resolve(path) if settings.SANDBOX_INBOUND_ENABLED else None
+
 
 urlpatterns = [
     path("conversations/", conversations.ConversationsView.as_view(), name="conversations"),
@@ -47,8 +58,8 @@ urlpatterns = [
         channels.RotateTokenView.as_view(),
         name="whatsapp-rotate-token",
     ),
-    path(
-        "channels/sandbox/inbound/",
+    SandboxOnly(
+        RoutePattern("channels/sandbox/inbound/", name="sandbox-inbound", is_endpoint=True),
         messages.SandboxInboundView.as_view(),
         name="sandbox-inbound",
     ),

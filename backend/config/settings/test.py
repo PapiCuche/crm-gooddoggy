@@ -10,6 +10,7 @@ from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
 ALLOWED_HOSTS = ["testserver"]
+SANDBOX_INBOUND_ENABLED = True  # F1-14: los tests de producción la apagan
 CSRF_TRUSTED_ORIGINS = ["http://testserver"]  # también el origen del WebSocket (F6-07a)
 INSTALLED_APPS = [*INSTALLED_APPS, "tests.tenancy_app"]  # noqa: F405 — solo tests (RLS)
 # Migraciones de la BD de test: como crm_migrator (tests/conftest.py). Los tests corren como

@@ -151,6 +151,7 @@ services:
       context: ../../frontend
       args:
         NEXT_PUBLIC_INBOX_WS: ${INBOX_WS:-off} # F6-07e: `on` abre el WebSocket del Inbox (se fija al construir)
+        CRM_BUILD_PROFILE: development # F1-14: el stack local conserva /demo; la imagen de producción, no
     image: crm-frontend:local
     restart: unless-stopped
     healthcheck: *probe
