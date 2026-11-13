@@ -49,9 +49,16 @@ CAPS = {"IMAGE": 5 << 20, "STICKER": 1 << 20, "AUDIO": 16 << 20, "VIDEO": 16 << 
 MAX_ATTEMPTS = 5
 BACKOFF = (30, 120, 600, 3600)  # segundos de espera tras el intento 1, 2, 3 y 4
 LEASE = dt.timedelta(seconds=300)
-# Lo que queda antes de cada consulta y de la descarga; una consulta a Graph tiene sus propios
-# tiempos (`core.http.request`), así que un intento real puede rozar ~180 s: menos que el plazo.
+# Lo que queda antes de cada consulta y de la descarga. No lo cubre: el DNS (`getaddrinfo` no tiene
+# plazo propio), los tiempos de cada consulta a Graph (`core.http.request`: conexión 5 s y lectura
+# 15 s, con reintentos) ni el almacén. Por eso, antes de guardar se mira lo que queda del plazo
+# con el reloj del worker contado desde antes del reclamo: con menos de `STORE_RESERVE`, reintento.
 BUDGET = 120.0
+STORE_RESERVE = 60.0
+# Ninguna tarea de medios vuelve más tarde que esto (una espera mayor vuelve y espera otra vez):
+# por debajo de `CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"]`, o Redis la repetiría.
+MAX_COUNTDOWN = 1800
+SWEEP_AFTER = dt.timedelta(minutes=5)  # vencido y sin cambios desde hace esto: varado
 BUSY_WAIT = 30  # con el tope de la organización lleno, la tarea vuelve en esto
 RETRY = "RETRY"
 OUTCOMES = frozenset({RETRY, "EXPIRED", *MEDIA_FAILURES})
@@ -243,6 +250,13 @@ class Sink:
         return written
 
 
+def _refused(got: Claim) -> Stop:
+    """El DNS del destino contestó una IP no pública: no se conectó (el token no salió) y no se
+    reintenta. Se registra sin la URL, el host ni la IP."""
+    logger.warning("media.blocked_ip", attachment_id=str(got.attachment_id))
+    return Stop("UNAVAILABLE")
+
+
 def _lookup(auth: dict[str, str], got: Claim) -> str:
     """La URL fresca del medio según la Graph API (en cada intento; nunca se guarda)."""
     url = (
@@ -252,6 +266,8 @@ def _lookup(auth: dict[str, str], got: Claim) -> str:
     try:
         reply = http.request("GET", url, headers=auth)
         status, raw = reply.status, reply.data
+    except http.NonPublicAddress:
+        raise _refused(got) from None
     except http.BlockedDestination, http.HTTPError, OSError:
         raise Stop(RETRY) from None
     try:
@@ -295,6 +311,8 @@ def _download(token: str, got: Claim, deadline: float) -> Sink:
             raise Stop("TOO_LARGE") from None
         except http.UnsupportedEncoding:
             raise Stop("UNAVAILABLE") from None
+        except http.NonPublicAddress:
+            raise _refused(got) from None
         except http.BlockedDestination, http.HTTPError, OSError:  # p. ej., `getaddrinfo` falló
             raise Stop(RETRY) from None
         finally:
@@ -380,6 +398,7 @@ def fetch(organization_id: UUID, attachment_id: UUID) -> tuple[str, int | None]:
     """Un intento de descarga. Devuelve el resultado (un código cerrado) y, si la tarea tiene que
     volver, en cuántos segundos. Uno de otra organización o que no existe: `SKIPPED`, sin más."""
     ctx = TenantContext(organization_id, "celery")
+    started = time.monotonic()  # antes del reclamo: su plazo acaba, como mucho, en `+ LEASE`
     with tenant_scope(ctx):
         got = claim(ctx, attachment_id)
     if got is None:
@@ -396,6 +415,8 @@ def fetch(organization_id: UUID, attachment_id: UUID) -> tuple[str, int | None]:
         found = sniff(sink.file)
         if found is None or found[0] != got.kind:
             raise Stop("TYPE_NOT_ALLOWED" if found is None else "TYPE_MISMATCH")
+        if time.monotonic() - started > LEASE.total_seconds() - STORE_RESERVE:
+            raise Stop(RETRY)  # sin tiempo para guardar antes de que otro pueda reclamarlo
         return store(ctx, got, sink, found[1])
     except Stop as stop:
         with tenant_scope(ctx):
@@ -403,3 +424,24 @@ def fetch(organization_id: UUID, attachment_id: UUID) -> tuple[str, int | None]:
     finally:
         if sink is not None:
             sink.file.close()
+
+
+def stranded(ctx: TenantContext, limit: int) -> list[UUID]:
+    """Hasta `limit` adjuntos de la organización de `ctx` que ninguna tarea atiende: `PENDING` sin
+    espera o con la espera vencida hace `SWEEP_AFTER`, o `DOWNLOADING` con el plazo vencido hace lo
+    mismo, y en ambos casos sin cambios (`updated_at`) desde entonces (reloj de la base). Los marca
+    (`updated_at`) en la misma transacción: uno no se vuelve a barrer antes de `SWEEP_AFTER` aunque
+    la cola vaya lenta."""
+    alias = require_scope(ctx)
+    old = Now() - SWEEP_AFTER
+    waiting = Q(not_before__isnull=True) | Q(not_before__lte=old)
+    late = (Q(download_status="PENDING") & waiting) | Q(
+        download_status="DOWNLOADING", lease_until__lte=old
+    )
+    rows = MessageAttachment.objects.using(alias).select_for_update(skip_locked=True)
+    found = list(
+        rows.filter(late, updated_at__lte=old).order_by("updated_at", "pk")
+        .values_list("pk", flat=True)[:limit]
+    )  # fmt: skip
+    MessageAttachment.objects.using(alias).filter(pk__in=found).update(updated_at=Now())
+    return found

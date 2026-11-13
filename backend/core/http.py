@@ -46,6 +46,11 @@ class BlockedDestination(Exception):  # noqa: N818 — resultado de política, n
     """Destino fuera de la allowlist o que resuelve a una IP no pública."""
 
 
+class NonPublicAddress(BlockedDestination):
+    """El DNS contestó con una IP no pública (p. ej., rebinding): no se conecta. Un DNS que no
+    contesta es `BlockedDestination` a secas (pasajero)."""
+
+
 # Prefijos que llevan una IPv4 incrustada (NAT64, compatibles, SIIT) o no enrutables en Internet.
 _BLOCKED = [ipaddress.ip_network(n) for n in (
     "64:ff9b::/96", "64:ff9b:1::/48", "::/96", "::ffff:0:0:0/96", "fec0::/10", "192.88.99.0/24",
@@ -69,8 +74,10 @@ def resolve_public(host: str, port: int) -> str:
     except OSError as exc:
         raise BlockedDestination(f"No se pudo resolver {host}") from exc
     ips = {str(info[4][0]) for info in infos}
-    if not ips or any("%" in ip for ip in ips) or not all(is_public(ip) for ip in ips):  # `%`: zona
-        raise BlockedDestination(f"{host} resuelve a una IP no pública")
+    if not ips:
+        raise BlockedDestination(f"{host} no tiene direcciones")
+    if any("%" in ip for ip in ips) or not all(is_public(ip) for ip in ips):  # `%`: zona
+        raise NonPublicAddress(f"{host} resuelve a una IP no pública")
     return sorted(ips)[0]
 
 

@@ -1,11 +1,15 @@
-"""F7-09a1b y F7-09a1c: el adjunto de un medio, su máquina de estados (`media`, `0020` a `0022`,
-`files.0002`) y su descarga (`media.fetch`, `tasks.fetch_media`), con PostgreSQL real como
-`crm_app`, hilos a la vez, la Graph API del simulador por `core.http` y un almacén en memoria."""
+"""F7-09a1b a F7-09a1d: el adjunto de un medio, su máquina de estados (`media`, `0020` a `0023`,
+`files.0002`), su descarga (`media.fetch`, `tasks.fetch_media`) y el barredor de los varados
+(`tasks.sweep_media`), con PostgreSQL real como `crm_app`, hilos a la vez, la Graph API del
+simulador por `core.http` y un almacén en memoria."""
 
+import datetime as dt
 import hashlib
 import importlib
 import io
 import logging
+import pathlib
+import re
 import socket
 import threading
 import time
@@ -29,7 +33,7 @@ from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import GRAPH_VERSION, transport
 from tests.meta_sim.graph import TEST_TOKEN, FakeGraph, FakeMedia
-from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
+from tests.meta_sim.webhooks import CUSTOMER, MEDIA_HOST, PHONE_NUMBER_ID, WABA_ID
 from tests.test_memberships import ctx
 from tests.test_pipelines_tables import as_migrator
 
@@ -41,6 +45,7 @@ FTYP = (24).to_bytes(4, "big") + b"ftyp"
 MP3 = bytes([0xFF, 0xFB, 0x90, 0x64]) + bytes(40)
 ID3 = b"ID3\x04\x00\x00\x00\x00\x00\x0a" + bytes(10)
 HTML = b"<html><script>alert(1)</script></html>"
+LOGGED = {"event", "level", "timestamp", "logger", "request_id", "correlation_id"}  # y los ids
 STATE = "SELECT download_status, failure_code, attempts FROM message_attachments WHERE id = %s"
 
 
@@ -105,9 +110,21 @@ def state(migrator: DB, pk: UUID) -> tuple[Any, ...]:
     return migrator.execute(STATE, [pk]).fetchone()  # type: ignore[return-value]
 
 
+TRIGGER = "ALTER TABLE message_attachments {} TRIGGER message_attachments_advance"
+
+
+def clock(migrator: DB, sql: str, params: Any) -> None:
+    """El reloj a mano (`0023` lo prohíbe a todos): solo el dueño de la tabla, con el disparador
+    apagado dentro de una transacción; si algo falla, el ROLLBACK lo deja encendido."""
+    with migrator.transaction():
+        migrator.execute(TRIGGER.format("DISABLE"))
+        migrator.execute(sql, params)
+        migrator.execute(TRIGGER.format("ENABLE"))
+
+
 def due(migrator: DB, pk: UUID) -> None:  # el plazo o la espera, vencidos: el reloj pasa
-    migrator.execute("UPDATE message_attachments SET lease_until = now() - interval '1 second', "
-                     "not_before = NULL WHERE id = %s", [pk])  # fmt: skip
+    clock(migrator, "UPDATE message_attachments SET lease_until = now() - interval '1 second', "
+          "not_before = NULL WHERE id = %s", [pk])  # fmt: skip
 
 
 def files(migrator: DB) -> list[tuple[Any, ...]]:
@@ -461,6 +478,7 @@ def test_the_trigger_binds_the_migrator_too(world: Any, migrator: DB) -> None:
         "UPDATE message_attachments SET attempts = 0 WHERE id = %s",
         "UPDATE message_attachments SET external_media_id = '300000000000001' WHERE id = %s",
         "UPDATE message_attachments SET created_at = now() WHERE id = %s",
+        "UPDATE message_attachments SET lease_until = now() - interval '1 second' WHERE id = %s",
     ):
         with pytest.raises(psycopg.errors.CheckViolation):
             migrator.execute(sql, [pk])
@@ -478,7 +496,16 @@ def test_the_migrations_go_back_and_forward(world: Any, migrator: DB) -> None:
         "'message_attachments_file_idx')"
     )
     clock = "SELECT count(*) FROM pg_proc WHERE prosrc LIKE '%%reclamo antes de tiempo%%'"
-    assert migrator.execute(clock).fetchone() == (1,)
+    ahead = "SELECT count(*) FROM pg_proc WHERE prosrc LIKE '%%el reloj no se adelanta%%'"
+    assert migrator.execute(clock).fetchone() == migrator.execute(ahead).fetchone() == (1,)
+    with as_migrator():
+        call_command("migrate", "conversations", "0022", verbosity=0)
+    assert migrator.execute(ahead).fetchone() == (0,)  # `0023` vuelve al cuerpo exacto de `0022`
+    forward = importlib.import_module(
+        "apps.conversations.migrations.0023_message_attachments_clock_forward"
+    )
+    live = "SELECT prosrc FROM pg_proc WHERE proname = 'message_attachments_advance'"
+    assert migrator.execute(live).fetchone() == (forward.CLOCK.NEW,)
     with as_migrator():
         call_command("migrate", "conversations", "0021", verbosity=0)
     assert migrator.execute(clock).fetchone() == (0,)  # `0022` vuelve al cuerpo exacto de `0021`
@@ -500,7 +527,7 @@ def test_the_migrations_go_back_and_forward(world: Any, migrator: DB) -> None:
             assert cursor.fetchone() == ("0",)
     assert migrator.execute(named, names).fetchone() == (3,)
     assert migrator.execute(index).fetchone() == (3,)
-    assert migrator.execute(clock).fetchone() == (1,)
+    assert migrator.execute(clock).fetchone() == migrator.execute(ahead).fetchone() == (1,)
 
 
 # ---- F7-09a1c: la descarga de punta a punta y el webhook repetido a la vez ----
@@ -795,18 +822,18 @@ def test_the_database_ties_a_claim_to_its_wait_and_to_the_lease_by_its_own_clock
     finish(world, claimed(world.a, pk), "RETRY")  # `PENDING` con una espera de 30 s
     take = f"{CLAIM}attempt_id = gen_random_uuid(), attempts = attempts + 1 WHERE id = %s"
     refused(world.a, [(take, [pk], "CheckViolation")])  # antes de la espera
-    migrator.execute("UPDATE message_attachments SET not_before = now() + interval '1 second' "
-                     "WHERE id = %s", [pk])  # fmt: skip
+    clock(migrator, "UPDATE message_attachments SET not_before = now() + interval '1 second' "
+          "WHERE id = %s", [pk])  # fmt: skip
     refused(world.a, [(take, [pk], "CheckViolation")])  # un segundo antes, tampoco
-    migrator.execute("UPDATE message_attachments SET not_before = now() WHERE id = %s", [pk])
+    clock(migrator, "UPDATE message_attachments SET not_before = now() WHERE id = %s", [pk])
     raw(
         world.a, take.replace("lease_until = now()", "lease_until = now() + interval '5 min'"), [pk]
     )  # fmt: skip — justo en la espera, sí
     refused(world.a, [(take, [pk], "CheckViolation")])  # sobre el plazo vivo de otro intento
-    migrator.execute("UPDATE message_attachments SET lease_until = now() + interval '1 second' "
-                     "WHERE id = %s", [pk])  # fmt: skip
+    clock(migrator, "UPDATE message_attachments SET lease_until = now() + interval '1 second' "
+          "WHERE id = %s", [pk])  # fmt: skip
     refused(world.a, [(take, [pk], "CheckViolation")])
-    migrator.execute("UPDATE message_attachments SET lease_until = now() WHERE id = %s", [pk])
+    clock(migrator, "UPDATE message_attachments SET lease_until = now() WHERE id = %s", [pk])
     raw(world.a, take, [pk])  # vencido justo ahora: otro intento lo reclama
     assert state(migrator, pk) == ("DOWNLOADING", None, 3)
 
@@ -885,8 +912,264 @@ def test_a_claim_sees_what_fell_due_while_its_transaction_waited(world: Any, mig
     pk = one(world, migrator)
     finish(world, claimed(world.a, pk), "RETRY")
     with tenant_scope(ctx(world.a)) as tenant:  # la transacción ya empezó (`now()` fijo)
-        migrator.execute("UPDATE message_attachments SET not_before = clock_timestamp() + "
-                         "interval '300 milliseconds' WHERE id = %s", [pk])  # fmt: skip
-        time.sleep(0.6)  # vence entre el inicio de la transacción y la sentencia del reclamo
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT now()")
+            (began,) = cursor.fetchone()
+        # vence después del inicio de la transacción y antes de la sentencia del reclamo, sin dormir
+        clock(migrator, "UPDATE message_attachments SET not_before = clock_timestamp() "
+              "WHERE id = %s", [pk])  # fmt: skip
+        (fell_due,) = migrator.execute(
+            "SELECT not_before FROM message_attachments WHERE id = %s", [pk]
+        ).fetchone()  # type: ignore[misc]
+        assert fell_due > began
         assert isinstance(media.claim(tenant, pk), media.Claim)
     assert state(migrator, pk) == ("DOWNLOADING", None, 2)
+
+
+# ---- F7-09a1d: el reloj no se adelanta (`0023`), la IP no pública, el barredor, los topes ----
+
+
+def test_outside_a_claim_the_database_never_moves_the_clock_forward(
+    world: Any, migrator: DB
+) -> None:
+    pk = one(world, migrator)
+    claimed(world.a, pk)  # `DOWNLOADING` con 300 s de plazo vivo
+    update = "UPDATE message_attachments SET {} WHERE id = %s"
+    refused(world.a, [  # adelantar el plazo y reclamar después burlaría `0022`
+        (update.format("lease_until = now()"), [pk], "CheckViolation"),
+        (update.format("lease_until = lease_until - interval '1 microsecond'"), [pk],
+         "CheckViolation"),
+        (update.format("lease_until = NULL"), [pk], "CheckViolation"),
+        (update.format("download_status = 'PENDING', not_before = NULL"), [pk],
+         "CheckViolation"),  # un reintento sin espera: el plazo libre al instante
+        (update.format("download_status = 'PENDING', not_before = statement_timestamp() - "
+                       "interval '1 second'"), [pk], "CheckViolation"),
+    ])  # fmt: skip
+    raw(world.a, update.format("lease_until = lease_until + interval '1 second'"), [pk])  # alargar
+    raw(
+        world.a,
+        update.format("download_status = 'PENDING', not_before = statement_timestamp()"),
+        [pk],
+    )  # fmt: skip — un reintento desde esta sentencia, sí
+    refused(world.a, [
+        (update.format("not_before = NULL"), [pk], "CheckViolation"),
+        (update.format("not_before = not_before - interval '1 microsecond'"), [pk],
+         "CheckViolation"),
+        (update.format("download_status = 'FAILED', failure_code = 'UNAVAILABLE', "
+                       "not_before = NULL"), [pk], "CheckViolation"),
+    ])  # fmt: skip
+    raw(world.a, update.format("not_before = not_before + interval '1 second'"), [pk])  # más tarde
+    assert state(migrator, pk) == ("PENDING", None, 1)
+
+
+def test_no_production_code_turns_the_trigger_off() -> None:
+    root = pathlib.Path(__file__).resolve().parents[1]
+    found = [
+        str(path.relative_to(root))
+        for folder in ("apps", "core", "config")
+        for path in (root / folder).rglob("*.py")
+        if re.search(r"DISABLE\s+TRIGGER", path.read_text(), re.IGNORECASE)
+    ]
+    assert found == []
+
+
+def test_resolve_public_tells_a_non_public_answer_from_a_dns_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def answers(*ips: str) -> Any:
+        return lambda *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443)) for ip in ips
+        ]
+
+    for ips in (("10.0.0.1",), ("157.240.1.1", "10.0.0.1"), ("127.0.0.1",)):
+        monkeypatch.setattr(socket, "getaddrinfo", answers(*ips))
+        with pytest.raises(http.NonPublicAddress):
+            http.resolve_public(MEDIA_HOST, 443)
+
+    def no_dns(*args: Any, **kwargs: Any) -> Any:
+        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_dns)
+    with pytest.raises(http.BlockedDestination) as caught:
+        http.resolve_public(MEDIA_HOST, 443)
+    assert not isinstance(caught.value, http.NonPublicAddress)
+
+
+@pytest.mark.parametrize("host", [MEDIA_HOST, transport.GRAPH_HOST])
+def test_a_non_public_dns_answer_fails_unavailable_without_connecting_or_sending_the_token(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    host: str,
+) -> None:  # fmt: skip
+    pk = one(world, migrator)
+    guarded = urllib3.PoolManager(retries=False)  # la red real de `core.http` para `host`
+    guarded.pool_classes_by_scheme = {"https": http._GuardedPool}
+    sim = http._manager
+
+    class Split:
+        def request(self, method: str, url: str, **kwargs: Any) -> Any:
+            real = urllib3.util.parse_url(url).host == host
+            return (guarded if real else sim).request(method, url, **kwargs)
+
+    opened: list[Any] = []
+
+    def connect(*args: Any, **kwargs: Any) -> Any:
+        opened.append(args)
+        raise AssertionError("conectó")
+
+    rebound = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))]
+    monkeypatch.setattr(http, "_manager", Split())
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: rebound)
+    monkeypatch.setattr(urllib3.util.connection, "create_connection", connect)
+    with caplog.at_level(logging.INFO):
+        assert media.fetch(world.a, pk) == ("UNAVAILABLE", None)  # sin reintento
+    assert state(migrator, pk) == ("FAILED", "UNAVAILABLE", 1) and opened == []
+    assert not any(c["path"].startswith("/blob/") for c in world.graph.calls)
+    if host == transport.GRAPH_HOST:
+        assert world.graph.calls == []  # ni la consulta salió
+    blocked = [r.msg for r in caplog.records if "media.blocked_ip" in str(r.msg)]
+    assert len(blocked) == 1 and set(blocked[0]) <= LOGGED | {"attachment_id"}
+    text = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    for secret in ("10.0.0.1", MEDIA_HOST, transport.GRAPH_HOST, TEST_TOKEN):
+        assert secret not in text, secret
+
+
+def test_no_task_waits_longer_than_the_broker_takes_to_redeliver_it() -> None:
+    visibility = app.conf.broker_transport_options["visibility_timeout"]
+    delays = (  # cada `countdown` del repositorio (con `acks_late`, espera sin confirmar)
+        media.MAX_COUNTDOWN, int(media.LEASE.total_seconds()) + 1, media.BUSY_WAIT,
+        tasks.BACKOFF_MAX, tasks.REQUEUE_WAIT + 1, 2**tasks.REALTIME_RETRIES,
+    )  # fmt: skip
+    assert max(delays) * 1.5 <= visibility == 3600
+
+
+def test_unexpected_failures_come_back_a_bounded_number_of_times_and_waits_are_capped(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    pk = one(world, migrator)
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.fetch_media, "apply_async", lambda **kw: queued.append(kw))
+    monkeypatch.setattr(media, "fetch", lambda *a: (_ for _ in ()).throw(KeyError("x")))
+    kwargs: dict[str, Any] = {"attachment_id": str(pk), "organization_id": str(world.a)}
+    runs = 0
+    with caplog.at_level(logging.INFO):
+        while True:
+            tasks.fetch_media(**kwargs)
+            runs += 1
+            if not queued:
+                break
+            again = queued.pop()
+            assert again["countdown"] == 301 and runs < 10
+            kwargs = again["kwargs"]
+    assert runs == tasks.MEDIA_GIVE_UP and "media.fetch_gave_up" in caplog.text
+    monkeypatch.setattr(media, "fetch", lambda *a: ("WAIT", 3601))  # una espera larga vuelve antes
+    tasks.fetch_media(**kwargs)  # y un intento que no falla pone la cuenta a cero
+    assert queued == [{"kwargs": {"attachment_id": str(pk), "organization_id": str(world.a)},
+                       "countdown": media.MAX_COUNTDOWN}]  # fmt: skip
+
+
+def test_a_download_without_time_left_on_its_lease_retries_instead_of_storing(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    late, ok = one(world, migrator), one(world, migrator, "wamid.M2")
+    real, sniffed = time.monotonic, media.sniff
+    spent = [0.0]
+    monkeypatch.setattr(media, "time", SimpleNamespace(monotonic=lambda: real() + spent[0]))
+
+    def slow(blob: Any) -> Any:  # la descarga se comió el plazo
+        spent[0] = media.LEASE.total_seconds() - media.STORE_RESERVE + 1
+        return sniffed(blob)
+
+    monkeypatch.setattr(media, "sniff", slow)
+    assert media.fetch(world.a, late) == ("RETRY", 30)
+    assert state(migrator, late) == ("PENDING", None, 1)
+    assert world.blobs.objects == {} and files(migrator) == []
+    spent[0] = 0.0
+    spent_200 = lambda blob: (spent.__setitem__(0, 200.0), sniffed(blob))[1]  # noqa: E731
+    monkeypatch.setattr(media, "sniff", spent_200)
+    assert media.fetch(world.a, ok) == ("DONE", None)  # con un minuto y algo, aún guarda
+
+
+AGED = (
+    "UPDATE message_attachments SET created_at = now() - %(ago)s, updated_at = now() - %(ago)s "
+    "WHERE id = ANY(%(ids)s)"
+)
+STRAND = AGED.replace(" WHERE", ", lease_until = CASE WHEN download_status = 'DOWNLOADING' "
+                      "THEN now() - %(ago)s END WHERE")  # fmt: skip
+
+
+def strand(migrator: DB, pk: UUID, minutes: int = 10) -> None:  # su tarea se perdió hace tanto
+    clock(migrator, STRAND, {"ago": dt.timedelta(minutes=minutes), "ids": [pk]})
+
+
+def test_the_sweeper_requeues_stranded_attachments_once_per_window_and_only_those(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.fetch_media, "apply_async", lambda **kw: queued.append(kw))
+    fresh = one(world, migrator)  # su tarea va en camino
+    lost = one(world, migrator, "wamid.M2")  # `PENDING` cuya tarea se perdió
+    waiting = one(world, migrator, "wamid.M5")  # `PENDING` que espera su reintento
+    finish(world, claimed(world.a, waiting), "RETRY")
+    dead = one(world, migrator, "wamid.M3")  # `DOWNLOADING` cuyo worker murió
+    claimed(world.a, dead)
+    live = one(world, migrator, "wamid.M4")  # `DOWNLOADING` vivo
+    claimed(world.a, live)
+    for pk in (lost, dead):
+        strand(migrator, pk)
+    clock(migrator, AGED, {"ago": dt.timedelta(minutes=10), "ids": [live, waiting]})
+    near = one(world, migrator, "wamid.M6")  # vencido, pero no hace `SWEEP_AFTER`
+    strand(migrator, near, 4)
+    with caplog.at_level(logging.INFO):
+        done = tasks.sweep_media()
+    assert (done["requeued"], done["failed"]) == (2, 0) and done["organizations"] >= 2
+    assert sorted(q["kwargs"]["attachment_id"] for q in queued) == sorted([str(lost), str(dead)])
+    assert {q["kwargs"]["organization_id"] for q in queued} == {str(world.a)}
+    assert all("countdown" not in q for q in queued)
+    logged = [r.msg for r in caplog.records if "media.swept" in str(r.msg)]
+    counters = {"organizations", "requeued", "failed"}
+    assert logged and set(logged[0]) <= LOGGED | counters
+    assert tasks.sweep_media()["requeued"] == 0  # marcados: no otra vez antes de `SWEEP_AFTER`
+    for pk in (lost, dead):
+        strand(migrator, pk)
+    assert tasks.sweep_media(batch_size=1)["requeued"] == 1  # el tope por pasada
+    queued.clear()
+    assert media.fetch(world.a, lost) == media.fetch(world.a, dead) == ("DONE", None)
+    assert state(migrator, fresh) == ("PENDING", None, 0)  # nada de lo que se atiende cambió
+    assert state(migrator, live) == ("DOWNLOADING", None, 1)
+
+
+def test_the_sweeper_skips_inactive_or_failing_organizations_and_locked_rows(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.fetch_media, "apply_async", lambda **kw: queued.append(kw))
+    pk = one(world, migrator)
+    strand(migrator, pk)
+    migrator.execute("UPDATE organizations SET status = 'SUSPENDED' WHERE id = %s", [world.a])
+    assert tasks.sweep_media()["requeued"] == 0 and queued == []
+    migrator.execute("UPDATE organizations SET status = 'ACTIVE' WHERE id = %s", [world.a])
+    real = media.stranded
+
+    def broken(tenant: TenantContext, limit: int) -> list[UUID]:
+        if tenant.organization_id == world.b:
+            raise DatabaseError("caída")
+        return real(tenant, limit)
+
+    monkeypatch.setattr(media, "stranded", broken)
+    done = tasks.sweep_media()  # B falla y A sigue
+    assert (done["requeued"], done["failed"]) == (1, 1) and len(queued) == 1
+    strand(migrator, pk)
+    swept: list[Any] = []
+    with migrator.transaction():  # un reclamo tiene la fila: el barredor no la espera
+        migrator.execute("SELECT 1 FROM message_attachments WHERE id = %s FOR UPDATE", [pk])
+
+        def sweep() -> None:
+            swept.append(tasks.sweep_media())
+            connection.close()
+
+        worker = threading.Thread(target=sweep)
+        worker.start()
+        worker.join(timeout=10)
+        stuck = worker.is_alive()
+    worker.join(timeout=30)
+    assert not stuck and swept[0]["requeued"] == 0

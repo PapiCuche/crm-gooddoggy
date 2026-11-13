@@ -31,12 +31,14 @@ from apps.conversations.channels import (
     adapter_for,
 )
 from apps.conversations.models import Credential, Message
+from apps.organizations.models import Organization
 from core import sealed
 from core.observability.logging import get_logger
 from core.outbox import subscribe
 from core.outbox.models import OutboxEvent
 from core.tenancy.celery import platform_task, tenant_task
 from core.tenancy.context import TenantContext, require
+from core.tenancy.resolution import ACCESSIBLE_STATUSES
 from core.tenancy.scope import tenant_scope
 
 logger = get_logger(__name__)
@@ -45,6 +47,9 @@ BACKOFF_SECONDS, BACKOFF_MAX = 30, 600
 REALTIME_RETRIES = 3
 HEALTH_PASS_SECONDS = 120  # lo máximo que una pasada de la comprobación de salud retiene un worker
 REQUEUE_WAIT = 120  # segundos: lo que el barredor de la cola deja pasar antes de repetir un mensaje
+MEDIA_GIVE_UP = 3  # fallos inesperados seguidos de `fetch_media` antes de dejarlo al barredor
+MEDIA_SWEEP_BATCH = 100  # adjuntos varados por organización y pasada
+MEDIA_SWEEP_SECONDS = 50.0  # lo máximo que una pasada del barredor de medios ocupa un worker
 
 
 def deliver(
@@ -135,17 +140,53 @@ def media_event(task: Any, event_id: str) -> None:
 
 
 @platform_task(name="conversations.fetch_media", bind=True, ignore_result=True, acks_late=True)
-def fetch_media(task: Any, attachment_id: str, organization_id: str) -> None:
-    """Un intento de descarga de un adjunto (`media.fetch`); vuelve cuando hay que esperar. Un fallo
-    inesperado deja el reclamo hasta que vence su plazo y la tarea vuelve después: sin su texto."""
-    kwargs = {"attachment_id": attachment_id, "organization_id": organization_id}
+def fetch_media(task: Any, attachment_id: str, organization_id: str, failures: int = 0) -> None:
+    """Un intento de descarga de un adjunto (`media.fetch`); vuelve cuando hay que esperar, nunca
+    más tarde que `media.MAX_COUNTDOWN`. Un fallo inesperado (sin su texto) deja el reclamo hasta
+    que vence su plazo y la tarea vuelve después, hasta `MEDIA_GIVE_UP` seguidos: luego lo recoge
+    el barredor (`sweep_media`)."""
+    kwargs: dict[str, Any] = {"attachment_id": attachment_id, "organization_id": organization_id}
     try:
         outcome, wait = media.fetch(UUID(organization_id), UUID(attachment_id))
+        failures = 0
     except Exception as error:  # noqa: BLE001 — solo la clase: el texto puede llevar la URL
-        outcome, wait = type(error).__name__, int(media.LEASE.total_seconds()) + 1
+        outcome, failures = type(error).__name__, int(failures) + 1
+        wait = int(media.LEASE.total_seconds()) + 1 if failures < MEDIA_GIVE_UP else None
+        if wait is None:
+            logger.error("media.fetch_gave_up", attachment_id=attachment_id, error=outcome)
     logger.info("media.fetch", attachment_id=attachment_id, outcome=outcome)
     if wait is not None:
-        fetch_media.apply_async(kwargs=kwargs, countdown=wait)
+        again = kwargs | ({"failures": failures} if failures else {})
+        fetch_media.apply_async(kwargs=again, countdown=min(wait, media.MAX_COUNTDOWN))
+
+
+@platform_task(name="conversations.sweep_media", ignore_result=True)
+def sweep_media(batch_size: int = MEDIA_SWEEP_BATCH) -> dict[str, int]:
+    """Vuelve a encolar los adjuntos varados (`media.stranded`: una tarea perdida, un encolado que
+    falló, un tope de fallos) de cada organización activa, leída de `organizations`; cada una en
+    su `tenant_scope`. Un fallo en una no detiene las demás. Registros: ids y contadores."""
+    done: Counter[str] = Counter(organizations=0, requeued=0, failed=0)
+    started = time.monotonic()
+    found = Organization.objects.filter(status__in=ACCESSIBLE_STATUSES).order_by("pk")
+    for organization_id in list(found.values_list("pk", flat=True)):
+        if time.monotonic() - started > MEDIA_SWEEP_SECONDS:
+            break  # el resto, en la siguiente pasada
+        done["organizations"] += 1
+        try:
+            ctx = TenantContext(organization_id, "celery")
+            with tenant_scope(ctx):
+                ids = media.stranded(ctx, max(1, min(int(batch_size), MEDIA_SWEEP_BATCH)))
+            for pk in ids:
+                fetch_media.apply_async(
+                    kwargs={"attachment_id": str(pk), "organization_id": str(organization_id)}
+                )
+                done["requeued"] += 1
+        except Exception as error:  # noqa: BLE001 — una organización no detiene a las demás
+            logger.error("media.sweep_failed", organization_id=str(organization_id),
+                         error=type(error).__name__)  # fmt: skip
+            done["failed"] += 1
+    logger.info("media.swept", **done)
+    return dict(done)
 
 
 @platform_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
