@@ -11,7 +11,8 @@ fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un t
 Un texto (ya saneado) que es exactamente una palabra de baja o de alta de la organización
 (`contacts.keywords`, F7-08b) revoca lo proactivo de WhatsApp o levanta una baja de palabra, con el
 mensaje como evidencia, y si cambió algo encola una confirmación fija: en la transacción del mensaje
-y solo la primera vez que llega.
+y solo la primera vez que llega. Lo mismo un medio (F7-09a1c): su adjunto nace con el mensaje
+nuevo (un webhook repetido no lo vuelve a crear).
 """
 
 import datetime as dt
@@ -26,7 +27,7 @@ from apps.contacts import keywords
 from apps.contacts.commands import create_contact
 from apps.contacts.consents import lift_keyword_stop, revoke_consent
 from apps.contacts.models import ConsentSource, Contact
-from apps.conversations import commands
+from apps.conversations import commands, media
 from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
@@ -209,6 +210,8 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
     )  # fmt: skip
     if created and message_type == MessageType.TEXT:
         _keyword(ctx, contact.pk, saved)
+    elif created:  # imagen, audio, video o sticker: su adjunto; documentos aún no (sin antivirus)
+        media.attach(ctx, saved, kind, message)
     return None
 
 
