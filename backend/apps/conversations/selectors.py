@@ -1,13 +1,28 @@
 """Lecturas del Inbox, por organización (RLS y `TenantManager`). El permiso y el alcance los aplica
 quien las sirve (`HasPermission` y `ScopeFilter`)."""
 
-from django.db.models import OuterRef, QuerySet, Subquery
+from typing import Any
+from uuid import UUID
+
+from django.db.models import OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
 from apps.contacts.models import Contact
 from apps.contacts.selectors import is_revoked
 from apps.conversations import policy
-from apps.conversations.models import ChannelAccount, Conversation, Credential, Message
+from apps.conversations.media import EXTENSIONS
+from apps.conversations.models import (
+    ChannelAccount,
+    Conversation,
+    Credential,
+    Message,
+    MessageAttachment,
+)
+from apps.files.models import File
+
+# El archivo de un adjunto `DONE` que se puede servir: el suyo (`message-media`), con el antivirus
+# en `CLEAN` (D-F7-04: sin antivirus, nada) y un tipo del mapa canónico (el de los magic bytes).
+SERVABLE = Q(purpose="message-media", scan_status="CLEAN", mime_type__in=EXTENSIONS)
 
 
 def conversations() -> QuerySet[Conversation]:
@@ -20,6 +35,38 @@ def messages(conversation_id: object, *, notes: bool) -> QuerySet[Message]:
     """Los mensajes de una conversación; las notas internas, solo con `notes=True`."""
     found = Message.objects.filter(conversation_id=conversation_id)
     return found if notes else found.exclude(direction="INTERNAL")
+
+
+def attachments(message_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
+    """Los adjuntos de esos mensajes, por mensaje, en dos consultas: clase, estado y, solo con
+    `DONE` y un archivo `message-media`, su tipo (el de los magic bytes) y tamaño. Nunca la clave,
+    el id de Meta ni el intento. `available`: si la ruta de la URL lo serviría (sin mirar al
+    contacto: eso lo añade quien lo muestra)."""
+    rows = list(MessageAttachment.objects.filter(message_id__in=message_ids))
+    done = [row.file_id for row in rows if row.download_status == "DONE"]
+    mine = File.objects.filter(pk__in=done, purpose="message-media")
+    shown = mine.annotate(ok=Q(SERVABLE)).values("id", "mime_type", "size_bytes", "ok")
+    files = {f["id"]: f for f in shown}
+    found = {}
+    for row in rows:
+        file = files.get(row.file_id) or {}
+        found[row.message_id] = {
+            "id": row.pk, "kind": row.kind, "status": row.download_status,
+            "mime_type": file.get("mime_type"), "size_bytes": file.get("size_bytes"),
+            "available": bool(file.get("ok")),
+        }  # fmt: skip
+    return found
+
+
+def servable(conversation_id: UUID, attachment_id: UUID) -> tuple[MessageAttachment, File] | None:
+    """El adjunto `DONE` de un mensaje entrante de esa conversación y su archivo servible
+    (`SERVABLE`), o `None` por cualquier otra razón (sin distinguir cuál)."""
+    inbound = Message.objects.filter(conversation_id=conversation_id, direction="INBOUND")
+    row = MessageAttachment.objects.filter(
+        pk=attachment_id, download_status="DONE", message_id__in=inbound.values("pk")
+    ).first()  # fmt: skip
+    file = None if row is None else File.objects.filter(SERVABLE, pk=row.file_id).first()
+    return None if row is None or file is None else (row, file)
 
 
 def channel_accounts() -> QuerySet[ChannelAccount]:

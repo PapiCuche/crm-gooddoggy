@@ -162,6 +162,7 @@ def test_contract_presigned_get_and_put(s3: S3CompatibleStorage) -> None:
     with fetch(url) as response:
         assert response.read() == b"\x89PNG" and response.headers["Content-Type"] == "image/png"
         assert response.headers["Content-Disposition"].startswith('attachment; filename="foto.png"')
+        assert response.headers["Cache-Control"] == "private, no-store"  # firmado en la URL
     with pytest.raises(ValueError):
         s3.presign_get(k, expires_in=3600, filename="foto.png", content_type="image/png")
     s3.delete(k)

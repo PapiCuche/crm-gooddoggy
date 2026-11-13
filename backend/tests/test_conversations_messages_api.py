@@ -29,7 +29,7 @@ INBOUND = "/api/v1/o/org-a/channels/sandbox/inbound/"
 MESSAGE = {
     "id", "direction", "sender_type", "sender_user_id", "message_type", "body",
     "client_message_id", "delivery_status", "created_at", "sent_at", "delivered_at", "read_at",
-    "failed_at", "provider_error_code",
+    "failed_at", "provider_error_code", "attachment",
 }  # fmt: skip
 
 
