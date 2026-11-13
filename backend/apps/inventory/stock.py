@@ -150,7 +150,7 @@ def _replay(alias: str, wanted: Wanted) -> InventoryMovement | None:
     return movement
 
 
-def _locked_variant(alias: str, variant_id: UUID) -> ProductVariant:
+def lock_variant(alias: str, variant_id: UUID) -> ProductVariant:
     """La variante viva, bloqueada como al borrarla en el catálogo (`FOR NO KEY UPDATE`): no se
     borra mientras entra o sale su stock, y el movimiento que la esperaba ya no la encuentra."""
     rows = live_variants().using(alias).select_for_update(no_key=True, of=("self",))
@@ -162,22 +162,41 @@ def _locked_variant(alias: str, variant_id: UUID) -> ProductVariant:
     return variant
 
 
+def lock_warehouse(alias: str, warehouse_id: UUID, field: str = "warehouse_id") -> tuple[bool, str]:
+    """El almacén vivo (`FOR KEY SHARE`): su `is_active` y su `code`. `BadReference(field)` si no
+    existe en la organización."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute(_WAREHOUSE, [warehouse_id])
+        warehouse = cursor.fetchone()
+    if warehouse is None:
+        raise BadReference(field, "No existe en esta organización.")
+    return warehouse[0], warehouse[1]
+
+
+def lock_levels(
+    alias: str, ctx: TenantContext, variant_id: UUID, *warehouse_ids: UUID
+) -> list[InventoryLevel]:
+    """Los saldos de la variante en esos almacenes, creados si faltan y bloqueados (`FOR UPDATE`)
+    por `warehouse_id` ascendente, en ese orden."""
+    ids = sorted(set(warehouse_ids))
+    new = [
+        InventoryLevel(organization_id=ctx.organization_id, variant_id=variant_id, warehouse_id=w)
+        for w in ids
+    ]
+    InventoryLevel.objects.using(alias).bulk_create(new, ignore_conflicts=True)
+    rows = InventoryLevel.objects.using(alias).select_for_update()
+    return list(rows.filter(variant_id=variant_id, warehouse_id__in=ids).order_by("warehouse_id"))
+
+
 def lock_cell(
     alias: str, ctx: TenantContext, variant_id: UUID, warehouse_id: UUID
 ) -> tuple[ProductVariant, tuple[bool, str], InventoryLevel]:
     """El orden de bloqueo de lo que escribe una celda (movimientos y reservas): variante, almacén
     vivo (`FOR KEY SHARE`; su `is_active` y `code`) y saldo, creado si falta y bloqueado."""
-    variant = _locked_variant(alias, variant_id)
-    with connections[alias].cursor() as cursor:
-        cursor.execute(_WAREHOUSE, [warehouse_id])
-        warehouse = cursor.fetchone()
-    if warehouse is None:
-        raise BadReference("warehouse_id", "No existe en esta organización.")
-    cell = {"variant_id": variant_id, "warehouse_id": warehouse_id}
-    new = InventoryLevel(organization_id=ctx.organization_id, **cell)
-    InventoryLevel.objects.using(alias).bulk_create([new], ignore_conflicts=True)
-    level: InventoryLevel = InventoryLevel.objects.using(alias).select_for_update().get(**cell)
-    return variant, (warehouse[0], warehouse[1]), level
+    variant = lock_variant(alias, variant_id)
+    warehouse = lock_warehouse(alias, warehouse_id)
+    (level,) = lock_levels(alias, ctx, variant_id, warehouse_id)
+    return variant, warehouse, level
 
 
 def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:

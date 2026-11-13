@@ -112,7 +112,8 @@ class InventoryMovement(TenantModel):
     """Una línea del ledger de stock (modelo de datos §E.9): solo se añade. `quantity` lleva el
     signo del cambio en `on_hand`; un ajuste guarda la diferencia con lo contado. El runtime no
     tiene `UPDATE` ni `DELETE` sobre la tabla (migración). En `RESERVE` y `RELEASE` (F3-33),
-    `quantity` cambia `reserved`."""
+    `quantity` cambia `reserved`. Una transferencia (F3-30) son dos: `TRANSFER_OUT` (< 0) y
+    `TRANSFER_IN` (> 0) con el mismo `transfer_group_id`, que es también su `reference_id`."""
 
     class Type(models.TextChoices):
         RECEIPT = "RECEIPT"
@@ -178,8 +179,25 @@ class InventoryMovement(TenantModel):
                 condition=~models.Q(movement_type="RECEIPT", quantity__lte=0)
                 & ~models.Q(movement_type="ISSUE", quantity__gte=0)
                 & ~models.Q(movement_type="RESERVE", quantity__lte=0)
-                & ~models.Q(movement_type="RELEASE", quantity__gte=0),
+                & ~models.Q(movement_type="RELEASE", quantity__gte=0)
+                & ~models.Q(movement_type="TRANSFER_OUT", quantity__gte=0)
+                & ~models.Q(movement_type="TRANSFER_IN", quantity__lte=0),
                 name="inventory_movements_sign_ck",
+            ),
+            models.CheckConstraint(  # F3-30: las dos patas de una transferencia, y solo ellas
+                condition=models.Q(
+                    movement_type__in=["TRANSFER_OUT", "TRANSFER_IN"],
+                    transfer_group_id__isnull=False,
+                    reference_type="TRANSFER",
+                    reference_id__isnull=False,
+                    reference_id=models.F("transfer_group_id"),
+                )
+                | (
+                    ~models.Q(movement_type__in=["TRANSFER_OUT", "TRANSFER_IN"])
+                    & models.Q(transfer_group_id__isnull=True)
+                    & ~models.Q(reference_type="TRANSFER")
+                ),
+                name="inventory_movements_transfer_ck",
             ),
             models.CheckConstraint(  # F3-33: reservar y liberar nombran su reserva
                 condition=~models.Q(movement_type__in=["RESERVE", "RELEASE"])
