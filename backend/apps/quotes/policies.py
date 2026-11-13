@@ -202,8 +202,12 @@ def set_discount_policy(
             Q(applies_to_price_list_id=None) | Q(applies_to_price_list_id=price_list_id),
             max_discount_percent__gte=percent,
         )  # fmt: skip
-        if cap is not None:  # la moneda aún no se sabe sin mirar la lista: solo la cifra
-            held = held.filter(Q(max_discount_amount=None) | Q(max_discount_amount__gte=cap))
+        if cap is None:  # sin tope pedido, el importe es ilimitado: solo lo cubre quien no lo tiene
+            held = held.filter(max_discount_amount=None)
+        else:  # con lista, su moneda aún no se mira: la cifra; sin lista, también la moneda
+            same = Q(max_discount_amount__gte=cap)
+            same &= Q(currency=currency) if price_list_id is None else Q()
+            held = held.filter(Q(max_discount_amount=None) | same)
         if not (owner or held.exists()):
             raise AccessDenied(Denied.ESCALATION)
         rows = DiscountPolicy.objects.using(alias).select_for_update(no_key=True)

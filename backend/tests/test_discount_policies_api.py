@@ -209,6 +209,7 @@ def test_who_does_not_cover_the_limit_gets_a_bare_403_and_learns_nothing(
     here, other = price_list(team.org, "AQUI"), price_list(team.org, "OTRA")
     narrow = manager(team, "20", applies_to_price_list_id=here, currency="PEN")
     low = manager(team, "10")  # un 10 % para todas no rebaja al Administrador (100 %)
+    capped = manager(team, "50", max_discount_amount=D(10), currency="PEN")  # tope en PEN
     before = (rows(migrator), audits(migrator))
     asks = [
         {"role_id": str(team.target), "price_list_id": str(other)},
@@ -220,6 +221,10 @@ def test_who_does_not_cover_the_limit_gets_a_bare_403_and_learns_nothing(
     ]
     for ask in asks:
         assert reply(put(narrow, **{"max_discount_percent": "5", **ask})) == DENIED, ask
+    for extra in ({}, {"max_discount_amount": "5", "currency": "USD"}):  # sin tope; otra moneda
+        for target in (uuid4(), code_of(team, "owner"), team.target):
+            ask = {"role_id": str(target), "max_discount_percent": "5", **extra}
+            assert reply(put(capped, **ask)) == DENIED, ask
     admin_role = str(code_of(team, "admin"))
     assert reply(put(low, role_id=admin_role, max_discount_percent="1", version=1)) == DENIED
     assert reply(put(low, role_id=admin_role, max_discount_percent="1", version=9)) == DENIED
@@ -287,7 +292,7 @@ def test_organizations_do_not_see_or_touch_each_others_policies(
 
 
 def test_a_missing_row_on_a_tenant_route_is_the_usual_404_and_a_quote_refusal_a_bare_403(
-    team: SimpleNamespace,
+    team: SimpleNamespace, caplog: pytest.LogCaptureFixture
 ) -> None:
     """`core.api.errors`: `DoesNotExist` de un comando es el 404 de siempre, solo dentro de una
     ruta de tenant (fuera sigue siendo un fallo); `NotAllowed` de las cotizaciones, un 403 sin
@@ -297,6 +302,8 @@ def test_a_missing_row_on_a_tenant_route_is_the_usual_404_and_a_quote_refusal_a_
         refused = exception_handler(NotAllowed("quotes.approve"), {})
     assert missing is not None and refused is not None
     assert (missing.status_code, missing.data) == (404, {"code": "NOT_FOUND"})
+    logged = [r for r in caplog.records if r.name == "core.api.errors"]  # en el servidor, con traza
+    assert len(logged) == 1 and logged[0].levelname == "WARNING" and logged[0].exc_info
     assert (refused.status_code, refused.data) == (403, {"code": "PERMISSION_DENIED"})
     assert exception_handler(Quote.DoesNotExist(), {}) is None  # sin tenant: 500, sin detalle
     assert reply(team.a.get(f"/api/v1/o/org-a/quotes/{uuid4()}/")) == NOT_FOUND

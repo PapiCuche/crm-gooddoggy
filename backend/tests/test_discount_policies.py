@@ -339,9 +339,14 @@ def test_who_cannot_reach_the_percent_learns_nothing_about_roles_or_lists(
     for target, listed in asks:
         with pytest.raises(AccessDenied):
             put(shop, narrow, target, "5", price_list_id=listed)
-    capped = member(shop, "50", cap="10", **MANAGE)  # y el tope, antes de las referencias
-    with pytest.raises(AccessDenied):
-        put(shop, capped, uuid4(), "5", max_discount_amount="11", currency="PEN")
+    capped = member(shop, "50", cap="10", **MANAGE)  # y el tope, antes de las referencias:
+    usd = {"max_discount_amount": "5", "currency": "USD"}  # su tope es en PEN
+    asked: list[dict[str, str]] = [{"max_discount_amount": "11", "currency": "PEN"}, {}, usd]
+    for cap in asked:  # `{}`: sin tope pedido es ilimitado
+        for target in (uuid4(), owner_role, staff.target):  # el mismo 403 exista o no el rol
+            with pytest.raises(AccessDenied) as denied:
+                put(shop, capped, target, "5", **cap)
+            assert denied.value.reason is Denied.ESCALATION
 
 
 def test_deleting_a_policy_id_tells_nothing_to_who_does_not_hold_everything(

@@ -4,6 +4,7 @@
 de una ruta de tenant es idéntico venga de donde venga (ADR-001 §5.6).
 """
 
+import logging
 from typing import Any
 
 from django.core.exceptions import ObjectDoesNotExist
@@ -43,6 +44,7 @@ _BY_EXCEPTION: tuple[tuple[type[exceptions.APIException], str], ...] = (
     (exceptions.UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE"),
     (exceptions.Throttled, "RATE_LIMITED"),
 )
+logger = logging.getLogger(__name__)
 _JSON = {"ensure_ascii": False, "separators": (",", ":")}  # como el JSONRenderer de DRF
 
 
@@ -103,9 +105,11 @@ def exception_handler(exc: Exception, context: dict[str, Any]) -> Response | Non
     quien deshace la transacción ante un error es `TenantResolutionMiddleware`. En una ruta de
     tenant, una fila que no existe (`DoesNotExist` de un comando: inexistente, ajena o fuera del
     alcance) es el mismo 404; fuera de ellas sigue siendo un fallo (500)."""
-    if isinstance(exc, Http404) or (
-        isinstance(exc, ObjectDoesNotExist) and current_tenant() is not None
-    ):
+    if isinstance(exc, ObjectDoesNotExist) and current_tenant() is not None:
+        # Solo en el servidor, con su traza: un `.get()` que se escapa también puede ser un fallo.
+        logger.warning("DoesNotExist en una ruta de tenant: se responde 404", exc_info=exc)
+        exc = exceptions.NotFound()
+    elif isinstance(exc, Http404):
         exc = exceptions.NotFound()
     elif isinstance(exc, DjangoPermissionDenied):
         exc = exceptions.PermissionDenied()
