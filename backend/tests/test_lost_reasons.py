@@ -212,7 +212,17 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
     assert [(c["type"], c["protected_modules"], c["allowed_importers"]) for c in quotes] == [
         (
             "protected",
-            ["apps.quotes.commands", "apps.quotes.discounts", "apps.quotes.decisions"],
-            ["apps.quotes.api", "apps.quotes.discounts", "apps.quotes.decisions"],
-        )
+            [
+                "apps.quotes.commands",
+                "apps.quotes.discounts",
+                "apps.quotes.decisions",
+                "apps.quotes.lifecycle",
+            ],
+            [
+                "apps.quotes.api",
+                "apps.quotes.discounts",
+                "apps.quotes.decisions",
+                "apps.quotes.lifecycle",
+            ],
+        )  # fmt: skip
     ]
