@@ -261,7 +261,7 @@ def test_the_refuse_function_is_idempotent_and_only_opens_through_itself(migrato
 def test_the_refuse_migration_goes_back_and_forward(migrator: DB) -> None:
     exists = "SELECT count(*) FROM pg_proc WHERE proname = 'webhook_ingress_refuse'"
     with as_migrator():
-        call_command("migrate", "conversations", "0028", verbosity=0)
+        call_command("migrate", "conversations", "0030", verbosity=0)
     assert count(migrator, exists) == 0
     with as_migrator():
         call_command("migrate", "conversations", verbosity=0)
