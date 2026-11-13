@@ -363,7 +363,8 @@ def test_message_checks(world: SimpleNamespace) -> None:
         "messages_sender_ck",
         make(direction="OUTBOUND", sender_type="ROBOT", delivery_status="QUEUED"),
     )
-    refused(world.a, "messages_type_ck", make(message_type="DOCUMENT"))  # aún no (F7-09a2b)
+    refused(world.a, "messages_type_ck", make(message_type="STICKER"))  # su adjunto lo dice
+    refused(world.a, "messages_file_ck", make(message_type="DOCUMENT"))  # entrante: nunca (F7-09b)
     size = "SELECT character_maximum_length FROM information_schema.columns "
     size += "WHERE table_name = 'messages' AND column_name = 'message_type'"
     assert sql(world.a, size) == [(16,)]  # caben INTERACTIVE y SYSTEM_EVENT de §E.6

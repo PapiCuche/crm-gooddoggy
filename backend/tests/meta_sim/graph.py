@@ -55,6 +55,7 @@ LOST = {
     "cut_after": Cut,
     "timeout_after": Timeout,
 }  # Meta ya lo aceptó, pero la respuesta se pierde
+KINDS = {"text": "body", "image": "id", "document": "id"}  # el campo que cada tipo exige
 OUTCOMES = ("ok", "slow", "cut", "timeout", *LOST, *ERRORS)
 
 
@@ -73,6 +74,7 @@ class FakeGraph:
     quality: str = "GREEN"
     tier: str = "TIER_1K"
     media: dict[str, FakeMedia] = field(default_factory=dict)
+    uploads: list[bytes] = field(default_factory=list)  # los cuerpos de las subidas de medios
 
     def then(self, *outcomes: str) -> FakeGraph:
         unknown = set(outcomes) - set(OUTCOMES)
@@ -102,6 +104,8 @@ class FakeGraph:
         match (method, path[1:]):
             case ("POST", [number, "messages"]):
                 return self._send(number, body)
+            case ("POST", [number, "media"]):  # la subida sigue el mismo `script` que el envío
+                return self._send(number, body, upload=True)
             case ("GET", [media]) if media in self.media:  # la consulta: debe traer el número
                 if query.get("phone_number_id", [""])[0] not in self.numbers:
                     return self._error("no_number")
@@ -128,7 +132,7 @@ class FakeGraph:
             "messaging_limit_tier": self.tier,
         }  # fmt: skip
 
-    def _send(self, number: str, body: bytes | None) -> Response:
+    def _send(self, number: str, body: bytes | None, upload: bool = False) -> Response:
         if number not in self.numbers:
             return self._error("no_number")
         outcome = self.script.popleft() if self.script else "ok"
@@ -140,12 +144,19 @@ class FakeGraph:
             time.sleep(self.slow_seconds)
         elif outcome in ERRORS:
             return self._error(outcome)
+        if upload:  # un formulario con el producto y el archivo; el id, de solo dígitos
+            form = body or b""
+            if not all(f'name="{n}"'.encode() in form for n in ("messaging_product", "file")):
+                return self._error("no_number", "Invalid parameter")
+            self.uploads.append(form)
+            if outcome in LOST:
+                raise LOST[outcome]
+            return self._ok({"id": f"{770000 + len(self.uploads)}"})
         try:
             sent = json.loads(body or b"")
-            valid = (
-                sent["messaging_product"] == "whatsapp" and sent["to"] and sent["type"] == "text"
-            )
-            valid = valid and isinstance(sent["text"]["body"], str)
+            kind = sent["type"]
+            valid = sent["messaging_product"] == "whatsapp" and sent["to"] and kind in KINDS
+            valid = valid and isinstance(sent[kind][KINDS[kind]], str)
         except ValueError, KeyError, TypeError:
             valid = False
         if not valid:

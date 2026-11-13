@@ -22,6 +22,7 @@
  * * `QUALITY_BLOCKED` - QUALITY_BLOCKED
  * * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
  * * `PROVIDER_ERROR` - PROVIDER_ERROR
+ * * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
  */
 export type ProviderErrorCodeEnum =
   (typeof ProviderErrorCodeEnum)[keyof typeof ProviderErrorCodeEnum];
@@ -42,4 +43,5 @@ export const ProviderErrorCodeEnum = {
   QUALITY_BLOCKED: "QUALITY_BLOCKED",
   TEMPLATE_UNAVAILABLE: "TEMPLATE_UNAVAILABLE",
   PROVIDER_ERROR: "PROVIDER_ERROR",
+  MEDIA_NOT_SCANNED: "MEDIA_NOT_SCANNED",
 } as const;

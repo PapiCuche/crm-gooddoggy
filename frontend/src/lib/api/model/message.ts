@@ -16,7 +16,7 @@ export interface Message {
   sender_type: string;
   /** @nullable */
   sender_user_id: string | null;
-  /** `TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y el medio en `attachment`. Un valor desconocido se trata como no soportado. */
+  /** `TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y el medio en `attachment`; o saliente: `IMAGE` o `DOCUMENT`, con `body` el pie de foto o «Imagen» o «Documento». Un valor desconocido se trata como no soportado. */
   message_type: string;
   /**
    * `null` si no se puede ver el contacto (`contacts.view`).
@@ -51,6 +51,7 @@ export interface Message {
    * * `QUALITY_BLOCKED` - QUALITY_BLOCKED
    * * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
    * * `PROVIDER_ERROR` - PROVIDER_ERROR
+   * * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
    */
   provider_error_code: ProviderErrorCodeEnum | NullEnum | null;
   created_at: string;

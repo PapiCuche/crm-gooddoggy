@@ -23,6 +23,7 @@ import unicodedata
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.db import IntegrityError, connections, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -38,8 +39,8 @@ from apps.access.selectors import (
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
-from apps.conversations import media
-from apps.conversations.channels import REASONS, Claim, SendResult
+from apps.conversations import media, outbound_media
+from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
     BODY_MAX,
     META_ID,
@@ -57,6 +58,7 @@ from apps.conversations.models import (
 )
 from apps.conversations.policy import PURPOSES, ConversationClosed, require_allowed
 from apps.conversations.selectors import messaging_decision
+from apps.files.models import File
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
 from core.sequences import allocate
@@ -388,8 +390,8 @@ def _insert(
     if client_id is not None:
         same = Message.objects.using(alias).filter(client_message_id=client_id)
         if (found := same.first()) is not None:
-            if (found.conversation_id, found.direction, found.body) != (
-                convo.pk, fields["direction"], text,
+            if (found.conversation_id, found.direction, found.body, found.message_type) != (
+                convo.pk, fields["direction"], text, fields.get("message_type", MessageType.TEXT),
             ):  # fmt: skip
                 raise ClientMessageConflict
             return found, False
@@ -432,7 +434,7 @@ def _in_scope(ectx: ExecutionContext, code: str, convo: Conversation) -> None:
 
 def record_outbound(
     ctx: TenantContext, *, conversation_id: UUID, client_message_id: UUID, body: str,
-    purpose: str,
+    purpose: str, media: outbound_media.Prepared | None = None,
 ) -> tuple[Message, bool]:  # fmt: skip
     """Pone en cola (`QUEUED`) un mensaje del actor al cliente, idempotente por
     `client_message_id` (el mismo id con otro texto es `ClientMessageConflict`, nunca una
@@ -445,10 +447,14 @@ def record_outbound(
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
     `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`; sin valor por omisión: quien llama
     dice para qué escribe): un seguimiento (`FOLLOW_UP`) a quien se dio de baja es `ConsentRevoked`,
-    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10."""
+    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10. Con `media` (F7-09b, el blob ya guardado
+    por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo; un reintento es el
+    mismo solo con el mismo archivo (`sha256`)."""
     alias = require_scope(ctx)
     if purpose not in PURPOSES:
         raise ValueError("propósito no admitido")
+    if media is not None:
+        outbound_media.check(ctx, media)
     conversation_id, client_id = (
         _uuid(conversation_id, "conversación"),
         _uuid(client_message_id, "id"),
@@ -464,9 +470,20 @@ def record_outbound(
             decision = messaging_decision(convo, alias=alias, purpose=purpose)
             require_allowed(decision)  # cerrada, sin canal, bloqueado, ventana cerrada o baja
             snapshot = decision.as_json()
+        elif media and not File.objects.using(alias).filter(
+            pk=earlier.file_id, sha256=media.sha256
+        ).exists():  # fmt: skip
+            raise ClientMessageConflict  # el mismo id con otro archivo
+        typed = {"message_type": media.kind, "file_id": media.file_id} if media else {}
+        if media and earlier is None:
+            File.objects.using(alias).create(
+                id=media.file_id, storage_key=media.key, original_name=media.name,
+                mime_type=media.mime, size_bytes=media.size, sha256=media.sha256,
+                purpose="message-media", created_by_user_id=ctx.user_id,
+            )  # fmt: skip
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",
-            policy_decision=snapshot,
+            policy_decision=snapshot, **typed,
         )  # fmt: skip
         if created:
             now = timezone.now()
@@ -796,6 +813,20 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
                 ctx, message_id=message.pk, status=Delivery.FAILED, reason=decision.reason
             )
             return None
+        shown = None
+        if message.file_id is not None:  # D-F7-04: solo `CLEAN`, o `PENDING` si se decidió
+            file = File.objects.using(alias).get(pk=message.file_id)
+            pending = file.scan_status == "PENDING" and settings.MEDIA_SEND_UNSCANNED
+            if file.scan_status != "CLEAN" and not pending:
+                advance_delivery(
+                    ctx, message_id=message.pk, status=Delivery.FAILED, reason="MEDIA_NOT_SCANNED"
+                )
+                return None
+            label = outbound_media.LABELS[message.message_type]
+            shown = Media(
+                message.message_type, file.storage_key, file.mime_type, file.sha256,
+                file.original_name, None if message.body == label else message.body,
+            )  # fmt: skip
         phone = Contact.objects.using(alias).filter(pk=convo.contact_id)
         live = Credential.objects.using(alias).filter(
             pk=account.credential_id, owner_id=account.pk, revoked_at__isnull=True
@@ -805,7 +836,7 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
             message_id=message.pk, account_id=account.pk, platform=account.platform,
             phone_number_id=account.external_account_id, body=message.body,
             recipient=phone.values_list("primary_phone_e164", flat=True).first() or "",
-            credential=live.first() if account.credential_id else None,
+            credential=live.first() if account.credential_id else None, media=shown,
         )  # fmt: skip
 
 
