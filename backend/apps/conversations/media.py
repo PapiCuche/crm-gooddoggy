@@ -24,7 +24,6 @@ from django.conf import settings
 from django.db import connections
 from django.db.models import F, Q
 from django.db.models.functions import Now
-from django.utils import timezone
 
 from apps.conversations import credentials, graph
 from apps.conversations.models import (
@@ -119,7 +118,7 @@ def attach(ctx: TenantContext, message: Message, kind: str, media_id: str) -> No
 
 def _close(alias: str, pk: UUID, status: str, code: str | None = None, **more: Any) -> None:
     MessageAttachment.objects.using(alias).filter(pk=pk).update(
-        download_status=status, failure_code=code, updated_at=timezone.now(), **more
+        download_status=status, failure_code=code, updated_at=Now(), **more
     )
 
 

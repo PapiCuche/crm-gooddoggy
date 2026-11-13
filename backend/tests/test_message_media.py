@@ -1162,7 +1162,7 @@ def test_the_sweeper_requeues_stranded_attachments_once_per_window_and_only_thos
     assert (done["requeued"], done["failed"]) == (2, 0) and done["organizations"] >= 2
     assert sorted(q["kwargs"]["attachment_id"] for q in queued) == sorted([str(lost), str(dead)])
     assert {q["kwargs"]["organization_id"] for q in queued} == {str(world.a)}
-    assert all("countdown" not in q for q in queued)
+    assert all(q["countdown"] == media.BUSY_WAIT for q in queued)
     logged = [r.msg for r in caplog.records if "media.swept" in str(r.msg)]
     counters = {"organizations", "requeued", "failed"}
     assert logged and set(logged[0]) <= LOGGED | counters
@@ -1281,3 +1281,28 @@ def test_the_same_task_carries_an_attachment_through_every_wait_until_it_gives_u
     assert countdowns == list(media.BACKOFF)  # la misma tarea vuelve a su hora en cada espera
     assert state(migrator, pk) == ("FAILED", "UNAVAILABLE", media.MAX_ATTEMPTS)
     assert len(world.graph.calls) == media.MAX_ATTEMPTS
+
+
+def test_the_sweepers_task_for_a_row_behind_the_cap_waits_its_turn_and_then_downloads(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.fetch_media, "apply_async", lambda **kw: queued.append(kw))
+    first, second, third = (one(world, migrator, f"wamid.S{n}") for n in range(3))
+    held = claimed(world.a, first)
+    claimed(world.a, second)  # el tope lleno
+    strand(migrator, third)
+    assert tasks.sweep_media()["requeued"] == 1
+    (rescue,) = queued
+    assert rescue["countdown"] == media.BUSY_WAIT  # llega después de la marca del barredor
+    queued.clear()
+    elapse = {"ago": dt.timedelta(seconds=media.BUSY_WAIT), "ids": [third]}
+    clock(migrator, ELAPSE, elapse)
+    tasks.fetch_media(**rescue["kwargs"])  # con el tope aún lleno: sigue, no es un duplicado
+    (again,) = queued
+    assert again["countdown"] == media.BUSY_WAIT
+    queued.clear()
+    finish(world, held, "EXPIRED")  # el tope se libera
+    clock(migrator, ELAPSE, elapse)
+    tasks.fetch_media(**again["kwargs"])
+    assert queued == [] and state(migrator, third) == ("DONE", None, 1)

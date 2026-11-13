@@ -185,8 +185,10 @@ def sweep_media(batch_size: int = MEDIA_SWEEP_BATCH) -> dict[str, int]:
             with tenant_scope(ctx):
                 ids = media.stranded(ctx, max(1, min(int(batch_size), MEDIA_SWEEP_BATCH)))
             for pk in ids:
+                # tras la marca de `stranded`: antes, con el tope lleno, se tomaría por un duplicado
                 fetch_media.apply_async(
-                    kwargs={"attachment_id": str(pk), "organization_id": str(organization_id)}
+                    kwargs={"attachment_id": str(pk), "organization_id": str(organization_id)},
+                    countdown=media.BUSY_WAIT,
                 )
                 done["requeued"] += 1
         except Exception as error:  # noqa: BLE001 — una organización no detiene a las demás
