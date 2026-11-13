@@ -8,6 +8,9 @@
 :80 {
 	encode zstd gzip
 	handle /api/* {
+		request_body {
+			max_size 11MB # F7-09b2: el ASGI de Django recibe el cuerpo entero antes de la vista
+		}
 		reverse_proxy backend:8000
 	}
 	handle /webhooks/* {

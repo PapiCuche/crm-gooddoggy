@@ -57,6 +57,12 @@ class StackProxy(unittest.TestCase):
         self.assertLess(cap, 2 * body_max)  # y uno abusivo no llega a Django
         self.assertLess(block.index("request_body"), block.index("reverse_proxy"))
 
+    def test_caddy_caps_an_api_body_just_above_the_largest_upload(self):
+        caddyfile = (ROOT / "infra/docker/proxy/Caddyfile").read_text()
+        api = caddyfile[caddyfile.index("handle /api/*") : caddyfile.index("handle /webhooks/*")]
+        (size,) = re.findall(r"request_body \{\s+max_size (\d+)MB\b", api)  # MB: 10**6 bytes
+        self.assertTrue((10 << 20) + (64 << 10) <= int(size) * 10**6 <= 12 * 10**6)  # 10 MiB + form
+
 
 if __name__ == "__main__":
     unittest.main()
