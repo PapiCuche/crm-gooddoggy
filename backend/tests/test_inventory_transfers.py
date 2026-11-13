@@ -19,13 +19,15 @@ from apps.inventory import stock, transfers, warehouses
 from apps.inventory.models import InventoryLevel, Warehouse
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
+from tests.factories import make_user
 from tests.test_inventory_stock import cell, level, move, race, wanted
-from tests.test_memberships import ctx
+from tests.test_memberships import ctx, join
 from tests.test_pipelines_tables import as_migrator
 
 world = test_authorization.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
 MIGRATION = import_module("apps.inventory.migrations.0004_transfer_checks")
+GROUP_MIGRATION = import_module("apps.inventory.migrations.0006_movements_group_index")
 
 
 def site(org: UUID, here: tuple[UUID, UUID], code: str) -> UUID:
@@ -235,6 +237,8 @@ def malformed_legs_are_refused(org: UUID, variant: UUID, origin: UUID) -> None:
     for violated, row in (
         (sign, ("TRANSFER_OUT", 1, "TRANSFER", group, group)),
         (sign, ("TRANSFER_IN", -1, "TRANSFER", group, group)),
+        (sign, ("TRANSFER_OUT", 0, "TRANSFER", group, group)),
+        (sign, ("TRANSFER_IN", 0, "TRANSFER", group, group)),
         (link, ("TRANSFER_OUT", -1, "TRANSFER", group, None)),
         (link, ("TRANSFER_IN", 1, "MANUAL", group, group)),
         (link, ("TRANSFER_IN", 1, "TRANSFER", None, group)),
@@ -450,3 +454,96 @@ def test_a_transfer_waits_for_whoever_deletes_the_variant(world: Any) -> None:
     retire = f"UPDATE product_variants SET deleted_at = now() WHERE id = '{variant}'"  # noqa: S608
     outcome = race(world.a, world.ana, [retire, does(asked(variant, origin, shop, 1))])
     assert outcome[1] == "BadReference" and written(world.a) == (0, 0)
+
+
+def test_the_legs_carry_what_stays_reserved_on_each_side(world: Any) -> None:
+    variant, origin, (shop,) = stocked(world.a, 5, "TDA")
+    with tenant_scope(ctx(world.a, world.ana)) as tenant:
+        soon = timezone.now() + timedelta(hours=1)
+        res.reserve(tenant, res.Wanted(variant, origin, 2, soon, "Apartado", "r-0003ab"))
+    (out, entry), _ = send(world.a, world.ana, asked(variant, origin, shop, 3))
+    assert [(m.on_hand_after, m.reserved_after) for m in (out, entry)] == [(2, 2), (3, 0)]
+
+
+def test_another_integrity_error_propagates_and_writes_nothing(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Solo el índice de la clave es una repetición: otra restricción violada sale tal cual."""
+    variant, origin, (shop,) = stocked(world.a, 5, "TDA")
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        connection.cursor().execute(
+            "UPDATE inventory_levels SET reserved = on_hand + 1 WHERE warehouse_id = %s", [origin]
+        )
+
+    monkeypatch.setattr(transfers, "record", broken)
+    with pytest.raises(IntegrityError) as error:
+        send(world.a, world.ana, asked(variant, origin, shop, 2))
+    assert error.value.__cause__.diag.constraint_name == "inventory_levels_stock_ck"  # type: ignore[union-attr]
+    assert level(world.a, (variant, origin)) == (5, 0, 5) and written(world.a) == (0, 0)
+
+
+def test_a_key_replays_only_for_whoever_used_it(world: Any) -> None:
+    """F3-31: como las reservas (F3-35), la clave de otra persona (o del sistema) es `KeyReused`:
+    nunca devuelve las patas ajenas. El sistema repite las suyas."""
+    variant, origin, (shop,) = stocked(world.a, 6, "TDA")
+    luis = make_user(email="luis@example.com")
+    join(world.a, luis)
+    mine, system = (asked(variant, origin, shop, 1, key) for key in ("traslado-05", "traslado-06"))
+    send(world.a, world.ana, mine)
+    for who in (luis, None):
+        with pytest.raises(stock.KeyReused):
+            send(world.a, who, mine)
+    legs = [m.pk for m in send(world.a, None, system)[0]]
+    again, new = send(world.a, None, system)
+    assert ([m.pk for m in again], new) == (legs, False)
+    with pytest.raises(stock.KeyReused):
+        send(world.a, world.ana, system)
+    assert on_hand(world.a, variant, origin, shop) == [4, 2] and written(world.a) == (4, 2)
+
+
+def test_the_same_key_at_once_from_two_people_goes_once(world: Any) -> None:
+    variant, origin, (shop,) = stocked(world.a, 4, "TDA")
+    luis = make_user(email="luis@example.com")
+    join(world.a, luis)
+    same = does(asked(variant, origin, shop, 2, "traslado-07"))
+    outcome = race(world.a, [world.ana, luis], [same, same])  # el segundo, por el índice único
+    assert outcome[0][1] is True and outcome[1] == "KeyReused"
+    assert on_hand(world.a, variant, origin, shop) == [2, 2] and written(world.a) == (2, 1)
+
+
+GROUP_INDEX = (
+    "SELECT i.indisvalid, pg_get_indexdef(i.indexrelid) FROM pg_index i JOIN pg_class c"
+    " ON c.oid = i.indexrelid WHERE c.relname = 'inventory_movements_group_idx'"
+)
+
+
+def test_the_group_index_migration_replaces_an_invalid_index_and_goes_back(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    variant, origin, (shop,) = stocked(world.a, 4, "TDA")
+    for _ in range(2):
+        send(world.a, world.ana, asked(variant, origin, shop, 1))
+    with as_migrator():
+        call_command("migrate", "inventory", "0005", verbosity=0)
+    assert migrator.execute(GROUP_INDEX).fetchall() == []
+    with pytest.raises(psycopg.errors.UniqueViolation):  # un `CONCURRENTLY` fallido: `INVALID`
+        migrator.execute(
+            "CREATE UNIQUE INDEX CONCURRENTLY inventory_movements_group_idx ON"
+            " inventory_movements (organization_id) WHERE transfer_group_id IS NOT NULL"
+        )
+    assert migrator.execute(GROUP_INDEX).fetchone()[0] is False  # type: ignore[index]
+    for _ in range(2):  # repetirla reutiliza el índice válido
+        with as_migrator():
+            call_command("migrate", "inventory", verbosity=0)
+            if _:
+                GROUP_MIGRATION.create(None, SimpleNamespace(connection=connection))
+            with connection.cursor() as cursor:
+                cursor.execute("SHOW lock_timeout")
+                assert cursor.fetchone() == ("0",)
+        ((valid, definition),) = migrator.execute(GROUP_INDEX).fetchall()
+        assert valid is True and "UNIQUE" not in definition
+        assert definition.endswith(
+            "(organization_id, transfer_group_id) WHERE (transfer_group_id IS NOT NULL)"
+        )
+    assert written(world.a) == (4, 2)
