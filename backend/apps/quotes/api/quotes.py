@@ -26,7 +26,7 @@ from rest_framework.response import Response
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
-from apps.quotes import commands, discounts, selectors
+from apps.quotes import commands, decisions, discounts, selectors
 from apps.quotes.api import inputs, limit
 from apps.quotes.api.errors import domain
 from apps.quotes.models import Quote, QuoteItem
@@ -220,10 +220,12 @@ class QuoteView(QuotesQuery, generics.RetrieveAPIView):
 
 
 def action(
-    name: str, command: Any, body: Any, permissions: tuple[str, ...], summary: str
-) -> type[views.APIView]:
-    """Un `POST` sobre el precio: los permisos antes de leer; el alcance, la versión, el estado y
-    la línea de esa cotización, en el comando. Responde con el detalle; `limit` audita negativas."""
+    name: str, command: Any, body: Any, permissions: tuple[str, ...], summary: str,
+    conflicts: tuple[str, ...] = ("QUOTE_NOT_DRAFT",), floor: bool = True,
+) -> type[views.APIView]:  # fmt: skip
+    """Un `POST` sobre una cotización: los permisos antes de leer; el alcance, la versión, el estado
+    y la línea, en el comando. Responde con el detalle; `limit` audita las negativas del precio.
+    `floor`: la ruta mide el suelo de costo y está en `limit.FLOOR` (422 y 429)."""
 
     class Action(views.APIView):
         required_permissions = {"POST": permissions}
@@ -244,10 +246,18 @@ def action(
             operation_id=f"quotes_{name.replace('-', '_')}",
             tags=["quotes"],
             request=body,
-            responses={200: QuoteDetailSerializer, **errors(400, 401, 403, 404, 409, 422, 429)},
+            responses={
+                200: QuoteDetailSerializer,
+                **errors(400, 401, 403, 404, 409, *((422, 429) if floor else ())),
+            },
             description=f"{summary} Con {shown}; fuera del alcance o inexistente: 404. 409: "
-            "`STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, "
-            "por persona y cotización y por persona, se cuenta antes de buscarla.",
+            + ", ".join(f"`{code}`" for code in ("STALE_VERSION", *conflicts))
+            + (
+                ". 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por "
+                "persona, se cuenta antes de buscarla."
+                if floor
+                else "."
+            ),  # fmt: skip
         )
     )(Action)
     return view
@@ -264,6 +274,38 @@ QuoteRequestApprovalView = action(
     ("quotes.view", "quotes.update"),
     "Envía un borrador: `APPROVED` si cabe en el límite de quien envía, o `PENDING_APPROVAL`. Un "
     "precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`).",
+)  # fmt: skip
+
+DECIDED = ("NOT_PENDING",)
+QuoteApproveView = action(
+    "approve", decisions.approve_quote, inputs.QuoteApproveSerializer,
+    ("quotes.view", "quotes.approve"),
+    "Aprueba la solicitud abierta: `APPROVED`. Nunca quien la pidió o la envió (también en una "
+    "organización de una persona), dentro de su propio límite, y cada precio manual vuelve a "
+    "medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`, siempre igual).",
+    (*DECIDED, "SELF_APPROVAL_FORBIDDEN", "BEYOND_LIMIT"),
+)  # fmt: skip
+QuoteRejectView = action(
+    "reject", decisions.reject_quote, inputs.QuoteRejectSerializer,
+    ("quotes.view", "quotes.approve"),
+    "Quien aprueba dice que no a la solicitud abierta, con motivo: vuelve a `DRAFT`. No es "
+    "`…/decline/`, que registra que el cliente rechazó una cotización emitida.",
+    DECIDED, floor=False,
+)  # fmt: skip
+QuoteWithdrawRequestView = action(
+    "withdraw-request", decisions.withdraw_approval_request, inputs.QuoteVersionSerializer,
+    ("quotes.view", "quotes.update"),
+    "Retira la solicitud abierta: vuelve a `DRAFT`. Solo quien la pidió o quien puede aprobar "
+    "(la de la IA, solo este); si no, 403 después del alcance.",
+    DECIDED, floor=False,
+)  # fmt: skip
+QuoteCancelView = action(
+    "cancel", commands.cancel_quote, inputs.QuoteCancelSerializer,
+    ("quotes.view", "quotes.cancel"),
+    "Cancela una cotización que no terminó, con motivo opcional. Si espera aprobación, cierra su "
+    "solicitud, y solo lo hace quien la pidió o quien puede aprobar (si no, 403 después del "
+    "alcance).",
+    ("QUOTE_TERMINAL",), floor=False,
 )  # fmt: skip
 
 

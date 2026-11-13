@@ -12,8 +12,11 @@ from core import storage as base
 
 
 class S3CompatibleStorage:
-    def __init__(self, *, bucket: str, client: Any) -> None:
-        self.bucket, self.client = bucket, client
+    """`signer` firma las URLs para el navegador (`presign_*`); `client` hace el resto. SigV4 firma
+    el host: una URL firmada para el host interno (`garage:3900`) no la alcanza el navegador."""
+
+    def __init__(self, *, bucket: str, client: Any, signer: Any = None) -> None:
+        self.bucket, self.client, self.signer = bucket, client, signer or client
 
     def put(
         self, key: str, stream: IO[bytes], *, content_type: str, content_length: int,
@@ -58,7 +61,7 @@ class S3CompatibleStorage:
             ),
             "ResponseCacheControl": base.PRIVATE_CACHE,
         }
-        return self.client.generate_presigned_url(  # type: ignore[no-any-return]
+        return self.signer.generate_presigned_url(  # type: ignore[no-any-return]
             "get_object", Params=params, ExpiresIn=base.check_expiry(expires_in)
         )
 
@@ -70,7 +73,7 @@ class S3CompatibleStorage:
         headers = base.upload_headers(content_type, content_length, max_bytes)
         params = {"Bucket": self.bucket, "Key": base.check_key(key), "ContentType": content_type,
                   "ContentLength": content_length}  # fmt: skip
-        url = self.client.generate_presigned_url(
+        url = self.signer.generate_presigned_url(
             "put_object", Params=params, ExpiresIn=base.check_expiry(expires_in)
         )
         return base.PresignedUpload(url, headers, content_length)
@@ -91,12 +94,20 @@ def from_settings(*, timeout: float | None = None) -> S3CompatibleStorage:
         # Con el primer intento: 4 (= `max_attempts` 3, que solo cuenta reintentos); la sonda, 1.
         retries={"total_max_attempts": 1 if timeout else 4, "mode": "standard"},
     )
-    client = boto3.client(
-        "s3",
-        endpoint_url=settings.STORAGE_ENDPOINT_URL or None,
-        region_name=settings.STORAGE_REGION,
-        aws_access_key_id=settings.STORAGE_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.STORAGE_SECRET_ACCESS_KEY,
-        config=config,
+
+    def client(endpoint: str) -> Any:
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint or None,
+            region_name=settings.STORAGE_REGION,
+            aws_access_key_id=settings.STORAGE_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.STORAGE_SECRET_ACCESS_KEY,
+            config=config,
+        )
+
+    # Firmar no toca la red: el cliente público solo firma, con el host que alcanza el navegador.
+    public = settings.STORAGE_PUBLIC_ENDPOINT_URL
+    signer = client(public) if public else None
+    return S3CompatibleStorage(
+        bucket=settings.STORAGE_BUCKET, client=client(settings.STORAGE_ENDPOINT_URL), signer=signer
     )
-    return S3CompatibleStorage(bucket=settings.STORAGE_BUCKET, client=client)
