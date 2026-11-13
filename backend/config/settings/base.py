@@ -51,6 +51,7 @@ MIDDLEWARE = [
     "apps.accounts.middleware.SessionLifetimeMiddleware",  # caducidad absoluta y por inactividad
     "core.api.middleware.ApiCsrfMiddleware",  # CSRF de /api/ antes de resolver el tenant
     "apps.conversations.throttle.ChannelThrottleMiddleware",  # F7-02e: tope por persona
+    "apps.quotes.api.limit.QuoteFloorLimitMiddleware",  # F5-09e2: el oráculo del costo
     "core.tenancy.middleware.TenantResolutionMiddleware",  # siempre tras la autenticación
 ]
 
@@ -101,6 +102,9 @@ MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
+# Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
+# cotización, y por persona en todas, por ventana (segundos). Pendiente de confirmación del PO.
+QUOTE_FLOOR_THROTTLE = {"quote": (6, 60 * 60), "user": (30, 24 * 60 * 60)}
 # Mensajes entrantes (F7-04): contactos nuevos por minuto y por cuenta; pasado el tope, el mensaje
 # se reintenta (no se pierde) y se alerta. Pendiente de confirmación del PO.
 INBOUND_NEW_CONTACTS_PER_MINUTE = 30
