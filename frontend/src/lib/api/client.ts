@@ -75,6 +75,7 @@ import type {
   MemberStatusChangeRequest,
   MembersListParams,
   Message,
+  MessageAttachmentUrl,
   MessagingPolicy,
   MfaBackupCodes,
   MfaDisableRequest,
@@ -5495,6 +5496,179 @@ export const useConversationAssign = <TError = ErrorType<Error>, TContext = unkn
 > => {
   return useMutation(getConversationAssignMutationOptions(options), queryClient);
 };
+
+export const getConversationAttachmentUrlUrl = (
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/attachments/${attachmentId}/url/`;
+};
+
+/**
+ * Una URL firmada de corta vida (60 s) para descargar el medio de un mensaje: siempre como adjunto (nunca en línea), con el tipo real del archivo y sin caché. Pide `conversations.view` sobre la conversación y `contacts.view` sobre su contacto. Solo un adjunto `DONE` cuyo archivo pasó el antivirus. 404 en cualquier otro caso: no existe, es de otra organización o conversación, queda fuera del alcance o no se puede servir.
+ */
+export const conversationAttachmentUrl = async (
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<MessageAttachmentUrl> => {
+  return apiFetch<MessageAttachmentUrl>(
+    getConversationAttachmentUrlUrl(orgSlug, conversationId, attachmentId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getConversationAttachmentUrlQueryKey = (
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/conversations/${conversationId}/attachments/${attachmentId}/url/`,
+  ] as const;
+};
+
+export const getConversationAttachmentUrlQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationAttachmentUrl>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getConversationAttachmentUrlQueryKey(orgSlug, conversationId, attachmentId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationAttachmentUrl>>> = ({
+    signal,
+  }) =>
+    conversationAttachmentUrl(orgSlug, conversationId, attachmentId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      conversationId !== null &&
+      conversationId !== undefined &&
+      attachmentId !== null &&
+      attachmentId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationAttachmentUrl>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationAttachmentUrlQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationAttachmentUrl>>
+>;
+export type ConversationAttachmentUrlQueryError = ErrorType<Error>;
+
+export function useConversationAttachmentUrl<
+  TData = Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationAttachmentUrl>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+          TError,
+          Awaited<ReturnType<typeof conversationAttachmentUrl>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationAttachmentUrl<
+  TData = Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationAttachmentUrl>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+          TError,
+          Awaited<ReturnType<typeof conversationAttachmentUrl>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationAttachmentUrl<
+  TData = Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationAttachmentUrl>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationAttachmentUrl<
+  TData = Awaited<ReturnType<typeof conversationAttachmentUrl>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  attachmentId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationAttachmentUrl>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationAttachmentUrlQueryOptions(
+    orgSlug,
+    conversationId,
+    attachmentId,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getConversationMessagesListUrl = (
   orgSlug: string,

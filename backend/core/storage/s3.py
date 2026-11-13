@@ -53,6 +53,7 @@ class S3CompatibleStorage:
             "ResponseContentDisposition": base.disposition_header(
                 filename, disposition, content_type
             ),
+            "ResponseCacheControl": base.PRIVATE_CACHE,
         }
         return self.client.generate_presigned_url(  # type: ignore[no-any-return]
             "get_object", Params=params, ExpiresIn=base.check_expiry(expires_in)
