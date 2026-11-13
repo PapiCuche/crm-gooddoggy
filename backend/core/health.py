@@ -3,6 +3,7 @@ solo al log, con el tipo de la excepción. `/health/*` es una sonda interna: el 
 (infra/docker/proxy/Caddyfile) y el HEALTHCHECK de las imágenes usa `/health/live`."""
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 TIMEOUT = 1.0  # segundos por comprobación, sin reintentos: menos que el intervalo de la sonda
 READY_TTL = 5.0  # una ráfaga de sondas cuesta como mucho una comprobación por proceso y ventana
 _last: dict[str, Any] = {}
+_lock = threading.Lock()  # sondas a la vez en un proceso: una sola comprobación, las demás esperan
 
 
 @never_cache
@@ -78,16 +80,16 @@ def forget() -> None:
 
 
 def _checks() -> dict[str, str]:
-    now = time.monotonic()
-    if _last and now - _last["at"] < READY_TTL:
-        return dict(_last["checks"])
-    checks = {
-        name: "ok" if check() else "fail"
-        for name, check in (("database", _database_ok), ("redis", _redis_ok),
-                            ("storage", _storage_ok))
-    }  # fmt: skip
-    _last.update(at=now, checks=checks)
-    return dict(checks)
+    with _lock:
+        if _last and time.monotonic() - _last["at"] < READY_TTL:
+            return dict(_last["checks"])
+        checks = {
+            name: "ok" if check() else "fail"
+            for name, check in (("database", _database_ok), ("redis", _redis_ok),
+                                ("storage", _storage_ok))
+        }  # fmt: skip
+        _last.update(at=time.monotonic(), checks=checks)  # la ventana empieza al terminar
+        return dict(checks)
 
 
 @never_cache

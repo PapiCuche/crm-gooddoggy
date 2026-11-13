@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.conf import settings
 from django.urls import ResolverMatch, URLPattern, path
 from django.urls.resolvers import RoutePattern
@@ -11,6 +13,13 @@ class SandboxOnly(URLPattern):
 
     def resolve(self, path: str) -> ResolverMatch | None:
         return super().resolve(path) if settings.SANDBOX_INBOUND_ENABLED else None
+
+
+def hide_sandbox(endpoints: list[Any], **kwargs: Any) -> list[Any]:
+    """Hook de drf-spectacular: apagada, `/api/schema/` tampoco anuncia la entrada Sandbox."""
+    if settings.SANDBOX_INBOUND_ENABLED:
+        return endpoints
+    return [e for e in endpoints if getattr(e[3], "cls", None) is not messages.SandboxInboundView]
 
 
 urlpatterns = [

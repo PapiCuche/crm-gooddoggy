@@ -1,12 +1,16 @@
+import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from unittest import mock
 
 import pytest
 from django.test import Client
 
+from config import env
 from core import health
+from core.storage.s3 import from_settings
 
 CHECKS = {"database": "ok", "redis": "ok", "storage": "ok"}
 BLACKHOLE = "192.0.2.1"  # TEST-NET-1 (RFC 5737): no responde; mide el tiempo límite
@@ -143,6 +147,60 @@ def test_the_storage_check_is_one_short_head_of_the_bucket(settings: Any) -> Non
     calls = client.return_value.method_calls
     assert [c[0] for c in calls] == ["head_bucket"]  # nada que escriba
     assert calls[0].kwargs == {"Bucket": "crm-private-bucket"}
+
+
+def test_the_upload_and_download_client_keeps_its_own_longer_limits(settings: Any) -> None:
+    settings.STORAGE_BUCKET, settings.STORAGE_ACCESS_KEY_ID = "b", "AKIDEXAMPLE"
+    settings.STORAGE_SECRET_ACCESS_KEY = "x" * 8
+    config = from_settings().client.meta.config
+    assert (config.connect_timeout, config.read_timeout) == (5, 30)
+    assert config.retries["total_max_attempts"] == 4
+
+
+def test_a_database_host_that_does_not_answer_fails_in_seconds() -> None:
+    options = env.database("postgres://u:p@db:5432/crm")["OPTIONS"]
+    assert options == {"connect_timeout": env.CONNECT_TIMEOUT} and env.CONNECT_TIMEOUT <= 3
+
+
+def test_concurrent_probes_run_the_checks_once() -> None:
+    calls, gate = [], threading.Event()
+
+    def slow() -> bool:
+        calls.append(1)
+        gate.wait(2)
+        return True
+
+    with (
+        mock.patch("core.health._database_ok", slow),
+        mock.patch("core.health._redis_ok", lambda: True),
+        mock.patch("core.health._storage_ok", lambda: True),
+        ThreadPoolExecutor(8) as pool,
+    ):
+        probes = [pool.submit(health._checks) for _ in range(8)]
+        time.sleep(0.2)
+        gate.set()
+        assert all(p.result() == CHECKS for p in probes)
+    assert len(calls) == 1
+
+
+def test_the_window_starts_when_the_checks_end() -> None:
+    now, calls = [1000.0], []
+
+    def slow() -> bool:
+        calls.append(1)
+        now[0] += 3.0  # comprobar tarda 3 s
+        return True
+
+    with (
+        mock.patch("core.health.time.monotonic", lambda: now[0]),
+        mock.patch("core.health._database_ok", slow),
+        mock.patch("core.health._redis_ok", lambda: True),
+        mock.patch("core.health._storage_ok", lambda: True),
+    ):
+        health._checks()
+        now[0] += health.READY_TTL - 1  # 4 s tras terminar (7 s tras empezar): aún guardado
+        health._checks()
+    assert len(calls) == 1
 
 
 @pytest.mark.django_db

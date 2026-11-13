@@ -98,6 +98,9 @@ def csv_list(name: str) -> list[str]:
     return [item.strip() for item in os.environ.get(name, "").split(",") if item.strip()]
 
 
+CONNECT_TIMEOUT = 3  # segundos para abrir una conexión con PostgreSQL
+
+
 def database(url: str) -> dict[str, Any]:
     """Convierte postgres://user:pass@host:port/name en la configuración de Django."""
     parts = urlsplit(url)
@@ -114,6 +117,8 @@ def database(url: str) -> dict[str, Any]:
         "PORT": str(parts.port or ""),
         "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
+        # F1-14: un host que no contesta falla en segundos (readiness, web y workers), no cuelga.
+        "OPTIONS": {"connect_timeout": CONNECT_TIMEOUT},
     }
 
 

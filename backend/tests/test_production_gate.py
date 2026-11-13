@@ -55,6 +55,15 @@ def test_off_the_route_is_the_same_404_as_an_unknown_path_and_writes_nothing(
         resolve(INBOUND)
 
 
+def test_off_the_public_schema_does_not_announce_the_route(settings: Any) -> None:
+    settings.SANDBOX_INBOUND_ENABLED = False
+    hidden = Client().get("/api/schema/")
+    assert hidden.status_code == 200 and b"/conversations/" in hidden.content
+    assert b"sandbox/inbound" not in hidden.content and b"channels_sandbox" not in hidden.content
+    settings.SANDBOX_INBOUND_ENABLED = True
+    assert b"channels_sandbox_inbound" in Client().get("/api/schema/").content
+
+
 def test_off_the_sandbox_account_cannot_be_created(
     inbox: SimpleNamespace, migrator: psycopg.Connection[Any], settings: Any
 ) -> None:

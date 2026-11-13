@@ -70,6 +70,10 @@ jobs:
           docker build --pull -t crm-frontend:ci .
           test "$(docker run --rm --entrypoint id crm-frontend:ci -u)" != "0"
           sh ../infra/docker/smoke-image.sh crm-frontend:ci 3000 /o/ci
+          # F1-14: un perfil mal escrito no construye (con /demo dentro); las capas ya están en caché.
+          if docker build -q --build-arg CRM_BUILD_PROFILE=Production . >/dev/null 2>&1; then
+            echo "CRM_BUILD_PROFILE desconocido construyó la imagen" >&2; exit 1
+          fi
         env:
           # F2-07: cabeceras de seguridad de la imagen y nonce de la CSP en cada script del HTML.
           SMOKE_CHECK: node scripts/check-security-headers.mjs

@@ -291,6 +291,7 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,  # tipos separados de petición/respuesta para orval
     "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
     "SERVE_PERMISSIONS": ["core.api.permissions.Public"],  # ruta de plataforma (ADR-014 §4)
+    "PREPROCESSING_HOOKS": ["apps.conversations.api.urls.hide_sandbox"],  # F1-14
     # Un nombre por enumeración: sin esto la primera `status` del contrato sería `StatusEnum`.
     "ENUM_NAME_OVERRIDES": {
         "MembershipStatusEnum": MEMBERSHIP_STATUSES,
