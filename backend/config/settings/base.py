@@ -330,6 +330,8 @@ SPECTACULAR_SETTINGS = {
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
 STORAGE_BACKEND = env.optional("STORAGE_BACKEND", "s3")  # s3 | memory (tests)
 STORAGE_ENDPOINT_URL = env.optional("STORAGE_ENDPOINT_URL", "")  # vacío = AWS S3
+# El origen con el que se firman las URLs que abre el navegador (`presign_*`); vacío = el de arriba.
+STORAGE_PUBLIC_ENDPOINT_URL = env.origin("STORAGE_PUBLIC_ENDPOINT_URL")
 STORAGE_REGION = env.optional("STORAGE_REGION", "us-east-1")
 STORAGE_BUCKET = env.optional("STORAGE_BUCKET", "")
 STORAGE_ACCESS_KEY_ID = env.optional("STORAGE_ACCESS_KEY_ID", "")
