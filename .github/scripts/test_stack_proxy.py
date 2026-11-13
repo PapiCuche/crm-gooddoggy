@@ -2,7 +2,6 @@
 proxy, que tiene una dirección fija fuera del rango que Docker reparte. Análisis estático con
 la stdlib: `docker compose config` valida la sintaxis, no que estas piezas encajen."""
 
-import ast
 import ipaddress
 import pathlib
 import re
@@ -49,9 +48,9 @@ class StackProxy(unittest.TestCase):
         block = re.search(r"handle /webhooks/\* \{(.*?)\n\t\}", caddyfile, re.S).group(1)
         (size,) = re.findall(r"request_body \{\s*max_size (\d+)MB\s*\}", block)
         view = (ROOT / "backend/apps/conversations/meta_webhook.py").read_text()
-        (node,) = [n.value for n in ast.parse(view).body if isinstance(n, ast.Assign)
-                   and getattr(n.targets[0], "id", "") == "BODY_MAX"]  # fmt: skip
-        body_max = eval(compile(ast.Expression(node), "BODY_MAX", "eval"), {"__builtins__": {}})
+        # Sin `ast`: el backend usa sintaxis de Python 3.14 y esta prueba corre con el del runner.
+        ((count, shift),) = re.findall(r"^BODY_MAX = (\d+) << (\d+)\b", view, re.M)
+        body_max = int(count) << int(shift)
         cap = int(size) * 10**6  # en Caddy, MB es 10^6 y MiB 2^20
         self.assertGreater(cap, body_max)  # un lote válido de Meta nunca se corta en el proxy
         self.assertLess(cap, 2 * body_max)  # y uno abusivo no llega a Django
