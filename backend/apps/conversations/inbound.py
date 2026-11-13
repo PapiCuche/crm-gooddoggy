@@ -173,13 +173,21 @@ def _capped(alias: str, account_id: Any) -> bool:
 
 def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]) -> str | None:
     """Registra un mensaje entrante de la cuenta. Devuelve `None` si quedó registrado (o ya lo
-    estaba), o el motivo por el que se ignora (`REACTION`, `BAD_PHONE`). `Throttled` si hay que
-    crear un contacto y la cuenta alcanzó el tope por minuto: el procesador reintenta."""
+    estaba), o el motivo por el que se ignora: `REACTION`, `NO_PHONE` (sin `from`: solo el BSUID) o
+    `BAD_PHONE` (un `from` mal formado). `Throttled` si hay que crear un contacto y la cuenta
+    alcanzó el tope por minuto: el procesador reintenta."""
     alias = require_scope(ctx)
     kind, external = message.get("type"), message["id"]
     if kind == "reaction":  # se ignoran, con un contador (sin quién ni a qué mensaje)
         logger.info("meta.webhook.reaction_ignored")
         return "REACTION"
+    if message.get("from") in (None, ""):  # solo el BSUID (F7-14): se cuenta, sin quién ni qué
+        logger.info(
+            "meta.webhook.no_phone", channel_account_id=str(account.pk),
+            type=kind if kind == "text" or kind in LABELS else "other",
+            user_id_seen=message.get("user_id_seen") is True,
+        )  # fmt: skip
+        return "NO_PHONE"
     if (phone := normalize_phone(message.get("from"))) is None:
         return "BAD_PHONE"
     body, message_type, attachment = None, MessageType.UNSUPPORTED, media.found(kind, message)
