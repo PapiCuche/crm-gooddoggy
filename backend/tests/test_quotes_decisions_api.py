@@ -63,9 +63,12 @@ def test_the_permission_comes_before_the_body_and_the_row_on_every_route(
         assert reply(act(signed(lab.luis), quote, verb)) == NOT_FOUND  # no es de su organización
     for verb in ("approve", "reject"):  # vera ve y cambia la suya, pero no aprueba
         assert reply(act(signed(lab.vera), quote, verb, bogus=1)) == DENIED
-    for grant, verbs in (({"quotes.approve": None}, ("approve", "reject")),
-                         ({"quotes.update": "ORGANIZATION"}, ("withdraw-request",)),
-                         ({"quotes.cancel": "ORGANIZATION"}, ("cancel",))):  # fmt: skip
+    grants: list[tuple[dict[str, str | None], tuple[str, ...]]] = [
+        ({"quotes.approve": None}, ("approve", "reject")),
+        ({"quotes.update": "ORGANIZATION"}, ("withdraw-request",)),
+        ({"quotes.cancel": "ORGANIZATION"}, ("cancel",)),
+    ]
+    for grant, verbs in grants:
         give(lab.a, lab.m["bea"], grant)  # el de la acción sin `quotes.view`: tampoco
         for verb in verbs:
             assert reply(act(signed(lab.bea), quote, verb, bogus=1)) == DENIED
@@ -138,7 +141,8 @@ def test_rejecting_needs_a_reason_and_withdrawing_is_for_the_requester_or_an_app
     done = act(sam, quote, "reject", reason="Margen DNI 12345678")  # el equipo; no mide su límite
     assert (done.status_code, done.json()["status"]) == (200, "DRAFT")
     found = "SELECT changes::text FROM audit_logs WHERE action = 'quote.rejected'"
-    assert "12345678" not in migrator.execute(found).fetchone()[0]
+    [(changes,)] = migrator.execute(found).fetchall()
+    assert "12345678" not in changes and "[texto]" in changes
     again = pending(lab)
     assert act(signed(lab.vera), again, "withdraw-request").json()["status"] == "DRAFT"  # suya
     assert decided(migrator) == ["quote.rejected", "quote.approval_withdrawn"]
