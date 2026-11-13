@@ -7,8 +7,10 @@ Comprueban `discount_policies.manage` antes que nada y que nadie da más de lo q
 porcentaje o más y, si lleva tope en importe, uno igual o mayor en la misma moneda. Crear exige
 cubrir el límite nuevo; tocar una política que ya existe (cambiarla o quitarla), también el que
 tenía: quien tiene un 10 % no rebaja a un rol de 100 %. Sin política propia no se toca ninguna.
-El rol Owner no tiene política: no tiene límite. Quien no cubre ni el porcentaje no aprende
-nada de roles ni listas: el 403 va antes de los 400 de referencias. Con su versión y `Decimal`
+El rol Owner no tiene política: no tiene límite. Quien no cubre el porcentaje (y el tope en
+importe, si se pide) para esa lista no aprende nada de roles ni listas: el 403 va antes de los 400
+de referencias; quitar una política que no existe es, para quien no lo cubre todo, el mismo 403
+que quitar una que no cubre (F5-09b5). Con su versión y `Decimal`
 exacto, auditan el antes y el después (`discount_policy.changed`); sin cambios no escriben ni
 auditan.
 
@@ -35,9 +37,12 @@ from core.tenancy.scope import require_scope
 
 MANAGE = "discount_policies.manage"
 FIELDS = ("max_discount_percent", "max_discount_amount", "currency")
-_RACE: dict[str, str | None] = {  # restricción que la base violó → campo (None: ya existe)
+NOT_ROLE = "no es un rol de la organización con un límite que fijar"
+NOT_LIST = "no es una lista de precios de la organización"
+_RACE: dict[str, tuple[str, str] | None] = {  # restricción violada → campo (None: ya existe)
     "discount_policies_all_lists_uq": None, "discount_policies_list_uq": None,
-    "discount_policies_role_fk": "role_id", "discount_policies_price_list_fk": "price_list_id",
+    "discount_policies_role_fk": ("role_id", NOT_ROLE),
+    "discount_policies_price_list_fk": ("price_list_id", NOT_LIST),
 }  # fmt: skip
 
 
@@ -84,7 +89,7 @@ def _currency(
         return wanted
     found = price_list_currency(ectx, list_id)
     if found is None:
-        raise Invalid("price_list_id", "no es una lista de precios de la organización")
+        raise Invalid("price_list_id", NOT_LIST)
     if wanted not in (None, found):
         raise Invalid("currency", "la de la lista de precios")
     return found
@@ -144,10 +149,10 @@ def _create(
         name = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
         if name not in _RACE:  # cualquier otra restricción es un fallo, no un dato del cliente
             raise
-        field = _RACE[name]
+        field = _RACE[name]  # el mismo texto que sin carrera: ajena e inexistente no se distinguen
         if field is None:
             raise DuplicatePolicy from None
-        raise Invalid(field, "no es de la organización") from None
+        raise Invalid(*field) from None
     _audit(ctx, alias, row, "created", {k: [None, v] for k, v in _shown(row).items()})
     return row
 
@@ -192,8 +197,18 @@ def set_discount_policy(
         )
         if version is not None and (type(version) is not int or version < 1):
             raise Invalid("version", "un entero desde 1")
-        owner, held = _held(alias, ectx)  # quien no llega ni al porcentaje no aprende nada más
-        if not (owner or held.filter(max_discount_percent__gte=percent).exists()):
+        owner, held = _held(alias, ectx)  # quien no llega a esto en esa lista no aprende nada más
+        held = held.filter(
+            Q(applies_to_price_list_id=None) | Q(applies_to_price_list_id=price_list_id),
+            max_discount_percent__gte=percent,
+        )  # fmt: skip
+        if cap is None:  # sin tope pedido, el importe es ilimitado: solo lo cubre quien no lo tiene
+            held = held.filter(max_discount_amount=None)
+        else:  # con lista, su moneda aún no se mira: la cifra; sin lista, también la moneda
+            same = Q(max_discount_amount__gte=cap)
+            same &= Q(currency=currency) if price_list_id is None else Q()
+            held = held.filter(Q(max_discount_amount=None) | same)
+        if not (owner or held.exists()):
             raise AccessDenied(Denied.ESCALATION)
         rows = DiscountPolicy.objects.using(alias).select_for_update(no_key=True)
         row = rows.filter(role_id=role_id, applies_to_price_list_id=price_list_id).first()
@@ -201,7 +216,7 @@ def set_discount_policy(
             raise AccessDenied(Denied.ESCALATION)
         role = Role.objects.using(alias).filter(pk=role_id).first()
         if role is None or role.is_owner_role:  # el Owner no tiene límite: no hay nada que fijar
-            raise Invalid("role_id", "no es un rol de la organización con un límite que fijar")
+            raise Invalid("role_id", NOT_ROLE)
         money = _currency(ectx, price_list_id, cap, currency)
         if not _covers(alias, ectx, price_list_id, percent, cap, money):
             raise AccessDenied(Denied.ESCALATION)
@@ -218,13 +233,18 @@ def set_discount_policy(
 
 
 def delete_discount_policy(ctx: TenantContext, *, policy_id: UUID, version: int) -> None:
-    """Quita la política: el rol vuelve a 0 %, o al límite de sus otros roles. `DoesNotExist`;
-    `StalePolicy` si cambió desde `version`; `AccessDenied` (también si no cubre su límite)."""
+    """Quita la política: el rol vuelve a 0 %, o al límite de sus otros roles. `StalePolicy` si
+    cambió desde `version`; `AccessDenied` si no cubre su límite. Una que no existe (o de otra
+    organización) es `DoesNotExist` solo para quien lo cubre todo (100 %, todas las listas, sin
+    tope); para el resto, el mismo `AccessDenied`: no se distingue por su id."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         ectx = _authorized(ctx)
-        row = DiscountPolicy.objects.using(alias).select_for_update(no_key=True).get(pk=policy_id)
-        if not _holds(alias, ectx, row):
+        rows = DiscountPolicy.objects.using(alias).select_for_update(no_key=True)
+        row = rows.filter(pk=policy_id).first()
+        if row is None and _covers(alias, ectx, None, Decimal(100), None, None):
+            raise DiscountPolicy.DoesNotExist("DiscountPolicy matching query does not exist.")
+        if row is None or not _holds(alias, ectx, row):
             raise AccessDenied(Denied.ESCALATION)
         if row.version != version:
             raise StalePolicy

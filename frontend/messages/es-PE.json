@@ -206,6 +206,7 @@
       "LAST_OWNER": "Debe quedar al menos un Owner activo en la organización.",
       "ROLE_IN_USE": "Este rol tiene miembros. Quítaselo antes de borrarlo.",
       "ROLE_IS_SYSTEM": "Un rol de plantilla no se borra.",
+      "ROLE_HAS_DEPENDENTS": "Este rol tiene una política de descuento. Quítasela antes de borrarlo.",
       "CATEGORY_HAS_CHILDREN": "Esta categoría tiene subcategorías. Muévelas o bórralas antes de borrarla.",
       "CATEGORY_IN_USE": "Hay productos en esta categoría. Cámbialos de categoría antes de borrarla.",
       "IMPORT_NOT_APPLIED": "Solo se revierte una importación aplicada.",

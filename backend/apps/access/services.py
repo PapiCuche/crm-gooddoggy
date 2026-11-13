@@ -422,7 +422,8 @@ def update_role(
 def delete_role(ctx: TenantContext, *, role_id: UUID) -> None:
     """Borra un rol y sus concesiones (F2-38). Exige lo mismo que retirárselas una a una (como
     PO-1): cubrirlas todas y, si alguna es sensible, ser Owner. Un rol de plantilla no se borra
-    (`RoleIsSystem`), y uno con miembros tampoco (`RoleInUse`): no se deja a nadie sin un rol.
+    (`RoleIsSystem`), y uno con miembros tampoco (`RoleInUse`): no se deja a nadie sin un rol. Uno
+    con política de descuento, tampoco (`RoleHasDependents`): se quita antes, con su permiso.
     """
     with _change(ctx, "roles.manage") as actor:
         role = _editable(actor, role_id)

@@ -151,6 +151,7 @@ describe("RoleDeleteAction", () => {
     [403, { code: "PERMISSION_DENIED" }, "No puedes borrar este rol"],
     [409, { code: "ROLE_IN_USE", message: "texto de la API" }, "Este rol tiene miembros"],
     [409, { code: "ROLE_IS_SYSTEM" }, "Un rol de plantilla no se borra."],
+    [409, { code: "ROLE_HAS_DEPENDENTS" }, "Este rol tiene una política de descuento"],
     [409, { code: "LAST_OWNER" }, "Debe quedar al menos un Owner activo"],
     [500, { code: "INTERNAL_ERROR" }, "Algo salió mal de nuestro lado"],
     [400, { code: "VALIDATION_ERROR" }, "Algo salió mal de nuestro lado"], // no hay campos
