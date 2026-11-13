@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db.models import QuerySet
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.exceptions import NotFound
 from rest_framework.request import Request
@@ -21,7 +21,14 @@ from apps.access.selectors import can, scoped
 from apps.contacts.selectors import contacts
 from apps.conversations import commands, policy, selectors
 from apps.conversations.api import inputs
-from apps.conversations.models import FAILURE_CODES, Conversation, Direction, Message
+from apps.conversations.models import (
+    FAILURE_CODES,
+    MEDIA_KINDS,
+    MEDIA_STATUSES,
+    Conversation,
+    Direction,
+    Message,
+)
 from core.api.errors import ApiError
 from core.api.pagination import CursorPagination
 from core.api.schema import errors
@@ -36,12 +43,33 @@ def shows_body(ectx: Any, found: Conversation) -> bool:
     return scoped(ectx, "contacts.view", contacts().filter(pk=found.contact_id)).exists()
 
 
+class MessageAttachmentSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    kind = serializers.ChoiceField(choices=[(k, k) for k in MEDIA_KINDS])
+    status = serializers.ChoiceField(
+        choices=[(s, s) for s in MEDIA_STATUSES],
+        help_text="`PENDING` y `DOWNLOADING`: aún se baja; `FAILED` y `EXPIRED`: no se pudo.",
+    )
+    mime_type = serializers.CharField(
+        allow_null=True, help_text="El tipo real (magic bytes), solo con `DONE`; nunca el que "
+        "declaró el canal.",
+    )  # fmt: skip
+    size_bytes = serializers.IntegerField(allow_null=True, help_text="Solo con `DONE`.")
+    available = serializers.BooleanField(
+        help_text="Si `…/attachments/{id}/url/` lo sirve ahora; `false` no dice por qué."
+    )
+
+
 class MessageSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     direction = serializers.ChoiceField(choices=Direction.choices)
     sender_type = serializers.CharField()
     sender_user_id = serializers.UUIDField(allow_null=True)
-    message_type = serializers.CharField(help_text="`TEXT`, `NOTE` o `UNSUPPORTED`.")
+    message_type = serializers.CharField(
+        help_text="`TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio "
+        "entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y "
+        "el medio en `attachment`. Un valor desconocido se trata como no soportado."
+    )
     body = serializers.CharField(
         allow_null=True, help_text="`null` si no se puede ver el contacto (`contacts.view`)."
     )
@@ -60,6 +88,18 @@ class MessageSerializer(serializers.Serializer[Any]):
     delivered_at = serializers.DateTimeField(allow_null=True)
     read_at = serializers.DateTimeField(allow_null=True)
     failed_at = serializers.DateTimeField(allow_null=True)
+    attachment = serializers.SerializerMethodField(
+        help_text="El medio de un mensaje entrante; `null` si no tiene."
+    )
+
+    @extend_schema_field(MessageAttachmentSerializer(allow_null=True))
+    def get_attachment(self, instance: Message) -> dict[str, Any] | None:
+        found = self.context.get("attachments", {}).get(instance.pk)
+        if found is None:
+            return None
+        seen = bool(self.context.get("show_body", False))  # D-F6-10: como el texto
+        shown = {**found, "available": found["available"] and seen}
+        return MessageAttachmentSerializer(shown).data  # type: ignore[no-any-return]
 
     def to_representation(self, instance: Message) -> dict[str, Any]:
         data: dict[str, Any] = super().to_representation(instance)
@@ -143,8 +183,15 @@ class MessagesView(generics.ListAPIView):
         self.show_body = shows_body(ectx, found)
         return selectors.messages(found.pk, notes=can(ectx, "messages.note", found))
 
+    def paginate_queryset(self, queryset: QuerySet[Message]) -> list[Message] | None:
+        page: list[Message] | None = super().paginate_queryset(queryset)
+        self.attachments = selectors.attachments([m.pk for m in page or ()])  # dos consultas
+        return page
+
     def get_serializer_context(self) -> dict[str, Any]:
-        return {**super().get_serializer_context(), "show_body": getattr(self, "show_body", False)}
+        found = {"show_body": getattr(self, "show_body", False)}
+        return {**super().get_serializer_context(), **found,
+                "attachments": getattr(self, "attachments", {})}  # fmt: skip
 
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = inputs.SendMessageSerializer(data=request.data)  # el cuerpo, antes del 404

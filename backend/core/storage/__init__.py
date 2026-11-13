@@ -17,6 +17,7 @@ PURPOSES = frozenset({"message-media", "quote-pdf", "import", "avatar", "kb", "a
 _UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 KEY = re.compile(rf"org/{_UUID}/(?:{'|'.join(PURPOSES)})/[0-9]{{4}}/(?:0[1-9]|1[0-2])/{_UUID}")
 INLINE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"})
+PRIVATE_CACHE = "private, no-store"  # toda descarga firmada: ni el navegador ni un proxy la guardan
 
 
 @dataclass(frozen=True, slots=True)

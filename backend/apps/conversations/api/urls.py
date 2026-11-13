@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.conversations.api import assignment, channels, conversations, messages
+from apps.conversations.api import assignment, channels, conversations, media, messages
 
 urlpatterns = [
     path("conversations/", conversations.ConversationsView.as_view(), name="conversations"),
@@ -13,6 +13,11 @@ urlpatterns = [
         "conversations/<uuid:conversation_id>/messages/",
         messages.MessagesView.as_view(),
         name="conversation-messages",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/attachments/<uuid:attachment_id>/url/",
+        media.AttachmentUrlView.as_view(),
+        name="conversation-attachment-url",
     ),
     path(
         "conversations/<uuid:conversation_id>/messaging-policy/",

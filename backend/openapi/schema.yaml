@@ -2627,6 +2627,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/attachments/{attachment_id}/url/:
+    get:
+      operationId: conversation_attachment_url
+      description: 'Una URL firmada de corta vida (60 s) para descargar el medio de
+        un mensaje: siempre como adjunto (nunca en línea), con el tipo real del archivo
+        y sin caché. Pide `conversations.view` sobre la conversación y `contacts.view`
+        sobre su contacto. Solo un adjunto `DONE` cuyo archivo pasó el antivirus.
+        404 en cualquier otro caso: no existe, es de otra organización o conversación,
+        queda fuera del alcance o no se puede servir.'
+      parameters:
+      - in: path
+        name: attachment_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageAttachmentUrl'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/messages/:
     get:
       operationId: conversation_messages_list
@@ -10755,7 +10811,10 @@ components:
           nullable: true
         message_type:
           type: string
-          description: '`TEXT`, `NOTE` o `UNSUPPORTED`.'
+          description: '`TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no
+            admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`,
+            con `body` una frase fija y el medio en `attachment`. Un valor desconocido
+            se trata como no soportado.'
         body:
           type: string
           nullable: true
@@ -10811,7 +10870,14 @@ components:
           type: string
           format: date-time
           nullable: true
+        attachment:
+          allOf:
+          - $ref: '#/components/schemas/MessageAttachment'
+          nullable: true
+          readOnly: true
+          description: El medio de un mensaje entrante; `null` si no tiene.
       required:
+      - attachment
       - body
       - client_message_id
       - created_at
@@ -10826,6 +10892,83 @@ components:
       - sender_type
       - sender_user_id
       - sent_at
+    MessageAttachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/MessageAttachmentKindEnum'
+        status:
+          allOf:
+          - $ref: '#/components/schemas/MessageAttachmentStatusEnum'
+          description: |-
+            `PENDING` y `DOWNLOADING`: aún se baja; `FAILED` y `EXPIRED`: no se pudo.
+
+            * `PENDING` - PENDING
+            * `DOWNLOADING` - DOWNLOADING
+            * `DONE` - DONE
+            * `FAILED` - FAILED
+            * `EXPIRED` - EXPIRED
+        mime_type:
+          type: string
+          nullable: true
+          description: El tipo real (magic bytes), solo con `DONE`; nunca el que declaró
+            el canal.
+        size_bytes:
+          type: integer
+          nullable: true
+          description: Solo con `DONE`.
+        available:
+          type: boolean
+          description: Si `…/attachments/{id}/url/` lo sirve ahora; `false` no dice
+            por qué.
+      required:
+      - available
+      - id
+      - kind
+      - mime_type
+      - size_bytes
+      - status
+    MessageAttachmentKindEnum:
+      enum:
+      - IMAGE
+      - AUDIO
+      - VIDEO
+      - STICKER
+      type: string
+      description: |-
+        * `IMAGE` - IMAGE
+        * `AUDIO` - AUDIO
+        * `VIDEO` - VIDEO
+        * `STICKER` - STICKER
+    MessageAttachmentStatusEnum:
+      enum:
+      - PENDING
+      - DOWNLOADING
+      - DONE
+      - FAILED
+      - EXPIRED
+      type: string
+      description: |-
+        * `PENDING` - PENDING
+        * `DOWNLOADING` - DOWNLOADING
+        * `DONE` - DONE
+        * `FAILED` - FAILED
+        * `EXPIRED` - EXPIRED
+    MessageAttachmentUrl:
+      type: object
+      properties:
+        url:
+          type: string
+          description: Firmada; caduca en `expires_at`. No se guarda ni se registra.
+        expires_at:
+          type: string
+          format: date-time
+      required:
+      - expires_at
+      - url
     MessagingLimitTierEnum:
       enum:
       - TIER_50

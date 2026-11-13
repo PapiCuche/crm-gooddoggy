@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { DirectionEnum } from "./directionEnum";
+import type { MessageAttachment } from "./messageAttachment";
 import type { NullEnum } from "./nullEnum";
 import type { ProviderErrorCodeEnum } from "./providerErrorCodeEnum";
 
@@ -15,7 +16,7 @@ export interface Message {
   sender_type: string;
   /** @nullable */
   sender_user_id: string | null;
-  /** `TEXT`, `NOTE` o `UNSUPPORTED`. */
+  /** `TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y el medio en `attachment`. Un valor desconocido se trata como no soportado. */
   message_type: string;
   /**
    * `null` si no se puede ver el contacto (`contacts.view`).
@@ -61,4 +62,6 @@ export interface Message {
   read_at: string | null;
   /** @nullable */
   failed_at: string | null;
+  /** El medio de un mensaje entrante; `null` si no tiene. */
+  readonly attachment: MessageAttachment | null;
 }
