@@ -22,7 +22,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import connections
-from django.db.models import Q
+from django.db.models import F, Q
 from django.db.models.functions import Now
 from django.utils import timezone
 
@@ -49,7 +49,9 @@ KINDS = {"image": "IMAGE", "audio": "AUDIO", "video": "VIDEO", "sticker": "STICK
 TYPES = {"IMAGE": "IMAGE", "STICKER": "IMAGE", "AUDIO": "AUDIO", "VIDEO": "VIDEO"}
 CAPS = {"IMAGE": 5 << 20, "STICKER": 1 << 20, "AUDIO": 16 << 20, "VIDEO": 16 << 20}  # a confirmar
 MAX_ATTEMPTS = 5
-BACKOFF = (30, 120, 600, 3600)  # segundos de espera tras el intento 1, 2, 3 y 4
+# Segundos de espera tras el intento 1, 2, 3 y 4. Ninguna pasa de `MAX_COUNTDOWN`: la tarea vuelve
+# una sola vez, a su hora, y nunca a medio esperar (que `EARLY` tomaría por un duplicado).
+BACKOFF = (30, 120, 600, 1800)
 LEASE = dt.timedelta(seconds=300)
 # Lo que queda antes de cada consulta y de la descarga. No lo cubre: el DNS (`getaddrinfo` no tiene
 # plazo propio), los tiempos de cada consulta a Graph (`core.http.request`: conexión 5 s y lectura
@@ -57,8 +59,9 @@ LEASE = dt.timedelta(seconds=300)
 # con el reloj del worker contado desde antes del reclamo: con menos de `STORE_RESERVE`, reintento.
 BUDGET = 120.0
 STORE_RESERVE = 60.0
-# Ninguna tarea de medios vuelve más tarde que esto (una espera mayor vuelve y espera otra vez):
-# por debajo de `CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"]`, o Redis la repetiría.
+# El mayor `countdown` de una tarea de medios (la última espera; el plazo, el tope y `EARLY` son
+# menores): por debajo de `CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"]`, o Redis la
+# repetiría. Requisito del despliegue: los relojes de los workers y de la base, sincronizados (NTP).
 MAX_COUNTDOWN = 1800
 SWEEP_AFTER = dt.timedelta(minutes=5)  # vencido y sin cambios desde hace esto: varado
 BUSY_WAIT = 30  # con el tope de la organización lleno, la tarea vuelve en esto
@@ -156,8 +159,12 @@ def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
         return None
     live = Q(download_status="DOWNLOADING", lease_until__gt=now)
     if MessageAttachment.objects.using(alias).filter(live).count() >= settings.MEDIA_PER_ORG:
-        # su tarea sigue viva: el barredor (`stranded`) no la toma por abandonada
-        MessageAttachment.objects.using(alias).filter(pk=row.pk).update(updated_at=Now())
+        mine = MessageAttachment.objects.using(alias).filter(pk=row.pk)
+        # Otra tarea la marcó hace menos de medio `BUSY_WAIT` (no su alta): esta es un duplicado.
+        recent = Q(updated_at__gt=now - dt.timedelta(seconds=BUSY_WAIT / 2))
+        if mine.filter(recent, updated_at__gt=F("created_at") + dt.timedelta(seconds=1)).exists():
+            return None
+        mine.update(updated_at=now)  # su tarea sigue viva: el barredor no la toma por abandonada
         return BUSY_WAIT
     message = Message.objects.using(alias).get(pk=row.message_id)
     account = ChannelAccount.objects.using(alias).filter(

@@ -273,7 +273,7 @@ def test_retries_wait_longer_each_time_until_the_last_attempt_fails_unavailable(
             else:
                 assert early is None  # mucho antes: un duplicado, termina
             due(migrator, pk)
-    assert waits == [30, 120, 600, 3600, None]
+    assert waits == [30, 120, 600, 1800, None]
     assert state(migrator, pk) == ("FAILED", "UNAVAILABLE", 5)
 
 
@@ -653,7 +653,7 @@ def test_too_large_off_list_host_encoding_and_retries_until_unavailable(
         waits.append(media.fetch(world.a, tired)[1])
         if waits[-1]:
             due(migrator, tired)
-    assert waits == [30, 120, 600, 3600, None]
+    assert waits == [30, 120, 600, 1800, None]
     assert state(migrator, tired) == ("FAILED", "UNAVAILABLE", 5) and world.blobs.objects == {}
 
 
@@ -1068,11 +1068,10 @@ def test_a_non_public_dns_answer_never_connects_nor_sends_the_token(
 
 def test_no_task_waits_longer_than_the_broker_takes_to_redeliver_it() -> None:
     visibility = app.conf.broker_transport_options["visibility_timeout"]
-    delays = (  # cada `countdown` del repositorio (con `acks_late`, espera sin confirmar)
-        media.MAX_COUNTDOWN, int(media.LEASE.total_seconds()) + 1, media.BUSY_WAIT,
-        tasks.BACKOFF_MAX, tasks.REQUEUE_WAIT + 1, 2**tasks.REALTIME_RETRIES,
-    )  # fmt: skip
-    assert max(delays) * 1.5 <= visibility == 3600
+    ours = (*media.BACKOFF, int(media.LEASE.total_seconds()) + 1, media.BUSY_WAIT, media.EARLY + 1)
+    assert max(ours) == media.MAX_COUNTDOWN  # cada `countdown` de medios
+    delays = (*ours, tasks.BACKOFF_MAX, tasks.REQUEUE_WAIT + 1, 2**tasks.REALTIME_RETRIES)
+    assert max(delays) * 1.5 <= visibility == 3600  # y los del resto del repositorio
 
 
 def test_unexpected_failures_come_back_a_bounded_number_of_times_and_waits_are_capped(
@@ -1094,10 +1093,10 @@ def test_unexpected_failures_come_back_a_bounded_number_of_times_and_waits_are_c
             assert again["countdown"] == 301 and runs < 10
             kwargs = again["kwargs"]
     assert runs == tasks.MEDIA_GIVE_UP and "media.fetch_gave_up" in caplog.text
-    monkeypatch.setattr(media, "fetch", lambda *a: ("WAIT", 3601))  # una espera larga vuelve antes
-    tasks.fetch_media(**kwargs)  # y un intento que no falla pone la cuenta a cero
+    monkeypatch.setattr(media, "fetch", lambda *a: ("WAIT", 30))
+    tasks.fetch_media(**kwargs)  # un intento que no falla pone la cuenta a cero
     assert queued == [{"kwargs": {"attachment_id": str(pk), "organization_id": str(world.a)},
-                       "countdown": media.MAX_COUNTDOWN}]  # fmt: skip
+                       "countdown": 30}]  # fmt: skip
 
 
 def test_a_download_without_time_left_on_its_lease_retries_instead_of_storing(
@@ -1128,6 +1127,12 @@ AGED = (
 )
 STRAND = AGED.replace(" WHERE", ", lease_until = CASE WHEN download_status = 'DOWNLOADING' "
                       "THEN now() - %(ago)s END WHERE")  # fmt: skip
+
+
+ELAPSE = (
+    "UPDATE message_attachments SET not_before = not_before - %(ago)s, "
+    "lease_until = lease_until - %(ago)s, updated_at = updated_at - %(ago)s WHERE id = ANY(%(ids)s)"
+)
 
 
 def strand(migrator: DB, pk: UUID, minutes: int = 10) -> None:  # su tarea se perdió hace tanto
@@ -1218,6 +1223,12 @@ def test_a_row_waiting_behind_the_cap_is_not_swept_and_duplicate_tasks_end(
     claimed(world.a, second)  # el tope de la organización (2), lleno
     strand(migrator, third)  # su alta es vieja: parecería abandonada...
     assert claimed(world.a, third) == media.BUSY_WAIT  # ...pero su tarea vuelve y la marca
+    assert claimed(world.a, third) is None  # otra tarea la marcó hace nada: esta es un duplicado
+    clock(migrator, "UPDATE message_attachments SET updated_at = updated_at - interval '20 s' "
+          "WHERE id = %s", [third])  # fmt: skip
+    assert claimed(world.a, third) == media.BUSY_WAIT  # pasado medio `BUSY_WAIT`, la que vuelve
+    fresh = one(world, migrator, "wamid.B9")  # recién llegado: su alta no cuenta como marca
+    assert claimed(world.a, fresh) == media.BUSY_WAIT
     assert tasks.sweep_media()["requeued"] == 0 and queued == []
     for _ in range(3):  # pasan las ventanas: mientras su tarea siga, ninguna tarea más
         strand(migrator, third)
@@ -1246,3 +1257,27 @@ def test_the_failure_count_from_the_message_is_clamped(
     monkeypatch.setattr(media, "fetch", lambda *a: (_ for _ in ()).throw(KeyError("x")))
     tasks.fetch_media(str(pk), str(world.a), failures=failures)
     assert [q["kwargs"]["failures"] for q in queued] == ([] if requeued is None else [requeued])
+
+
+def test_the_same_task_carries_an_attachment_through_every_wait_until_it_gives_up(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pk = one(world, migrator)
+    world.graph.media[MEDIA] = FakeMedia(JPEG, lookup=500)
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.fetch_media, "apply_async", lambda **kw: queued.append(kw))
+    kwargs: dict[str, Any] = {"attachment_id": str(pk), "organization_id": str(world.a)}
+    countdowns = []
+    while True:
+        tasks.fetch_media(**kwargs)
+        if not queued:
+            break
+        (again,) = queued
+        queued.clear()
+        countdowns.append(again["countdown"])
+        # el reloj avanza lo que espera la tarea, ni más (sin `due`, que deja la fila vencida)
+        clock(migrator, ELAPSE, {"ago": dt.timedelta(seconds=again["countdown"]), "ids": [pk]})
+        kwargs = again["kwargs"]
+    assert countdowns == list(media.BACKOFF)  # la misma tarea vuelve a su hora en cada espera
+    assert state(migrator, pk) == ("FAILED", "UNAVAILABLE", media.MAX_ATTEMPTS)
+    assert len(world.graph.calls) == media.MAX_ATTEMPTS

@@ -149,8 +149,8 @@ def _count(failures: Any) -> int:
 
 @platform_task(name="conversations.fetch_media", bind=True, ignore_result=True, acks_late=True)
 def fetch_media(task: Any, attachment_id: str, organization_id: str, failures: int = 0) -> None:
-    """Un intento de descarga de un adjunto (`media.fetch`); vuelve cuando hay que esperar, nunca
-    más tarde que `media.MAX_COUNTDOWN`. Un fallo inesperado (sin su texto) deja el reclamo hasta
+    """Un intento de descarga de un adjunto (`media.fetch`); vuelve cuando hay que esperar (como
+    mucho `media.MAX_COUNTDOWN`). Un fallo inesperado (sin su texto) deja el reclamo hasta
     que vence su plazo y la tarea vuelve después, hasta `MEDIA_GIVE_UP` seguidos: luego lo recoge
     el barredor (`sweep_media`)."""
     kwargs: dict[str, Any] = {"attachment_id": attachment_id, "organization_id": organization_id}
@@ -165,7 +165,7 @@ def fetch_media(task: Any, attachment_id: str, organization_id: str, failures: i
     logger.info("media.fetch", attachment_id=attachment_id, outcome=outcome)
     if wait is not None:
         again = kwargs | ({"failures": failures} if failures else {})
-        fetch_media.apply_async(kwargs=again, countdown=min(wait, media.MAX_COUNTDOWN))
+        fetch_media.apply_async(kwargs=again, countdown=wait)
 
 
 @platform_task(name="conversations.sweep_media", ignore_result=True)
