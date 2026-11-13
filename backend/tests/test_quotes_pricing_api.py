@@ -95,7 +95,7 @@ def test_permission_first_then_absent_other_org_out_of_scope_and_a_foreign_line_
     for target in (mine, uuid4()):  # sin rol: 403, exista o no, y sin mirar el cuerpo
         assert reply(price(signed(lab.bea), target, line, extra=1)) == DENIED
         assert reply(submit(signed(lab.bea), target)) == DENIED
-    assert reply(price(signed(lab.sam), mine, line)) == DENIED  # sin `quotes.override_price`
+    assert reply(price(signed(lab.sam), mine, line, extra=1)) == DENIED  # sin override_price
     theirs, [their_line] = draft(lab, "ana")
     vera, before = signed(lab.vera), migrator.execute(ROWS).fetchone()
     for quote, at, version in ((theirs, their_line, 7), (uuid4(), line, 7),
@@ -167,7 +167,7 @@ def test_every_refusal_is_the_same_422_audited_after_the_rollback_with_ids_only(
     ]
     assert audited == [(q, "DENIED", {"route": r, "line_id": x}, "{}") for q, r, x in wanted]
     shown = str(migrator.execute("SELECT t::text FROM audit_logs t").fetchall()) + caplog.text
-    assert "4123" not in shown
+    assert "4123." not in shown  # con el punto: un uuid puede llevar 4123
     assert migrator.execute("SELECT version FROM quotes WHERE id = %s", [quote]).fetchone() == (1,)
 
 
@@ -207,7 +207,7 @@ def test_the_cap_cuts_a_cost_bisection_and_the_429_says_nothing_about_the_quote(
     other, [at] = draft(lab)  # otra cotización: el tope por persona ya se alcanzó
     sam, [sam_line] = draft(lab, "sam")
     limited = [price(vera, other, at, "1.00"), submit(vera, other), price(vera, uuid4(), at),
-               submit(vera, sam), price(vera, lab.quotes["b"], at),
+               submit(vera, sam), price(vera, lab.quotes["b"], at), price(vera, quote, line),
                price(vera, sam, sam_line, org="org-b")]  # fmt: skip
     assert {(r.status_code, r.content, r["Retry-After"]) for r in limited} == {
         (429, b'{"code":"RATE_LIMITED"}', limited[0]["Retry-After"])
