@@ -1,9 +1,9 @@
-# Stack local completo (F1-10): servicios base + migrate (job) + web/ws/worker/beat + frontend
+# Stack local completo (F1-10): servicios base + migrate (job) + web/ws/worker/worker-media/beat + frontend
 # + Caddy (same-origin en http://localhost:8080). Runbook: docs/runbooks/local-stack.md.
 # Uso: docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d --build
 name: crm-blackdog
 
-# Runtime (web, ws, worker, beat): SOLO DATABASE_URL → crm_app (ADR-002 §1.1). Nunca reciben
+# Runtime (web, ws, worker, worker-media, beat): SOLO DATABASE_URL → crm_app (ADR-002 §1.1). Nunca reciben
 # DATABASE_MIGRATOR_URL ni CRM_MIGRATOR_PASSWORD. ENFORCE_RUNTIME_DB_ROLE: web/ws verifican el
 # rol al arrancar y el worker en cada conexión; beat no abre conexiones a la BD.
 # Sonda de la imagen (HEALTHCHECK), pero cada 1 s mientras arranca: `up --wait` no espera 30 s.
@@ -130,6 +130,13 @@ services:
   worker:
     <<: *runtime
     command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--concurrency", "2"]
+    healthcheck:
+      disable: true
+
+  # F7-09a1c: la cola `media` (descargas de medios entrantes, hasta 120 s cada una), un proceso.
+  worker-media:
+    <<: *runtime
+    command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--queues", "media", "--concurrency", "1"]
     healthcheck:
       disable: true
 

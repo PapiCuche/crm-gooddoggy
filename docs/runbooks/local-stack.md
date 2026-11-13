@@ -30,8 +30,10 @@ Orden de arranque:
 
 1. **postgres** inicializa los roles y las BD `crm` y `crm_test` (solo con el volumen vacío).
 2. **migrate** aplica las migraciones como `crm_migrator`, con solo `DATABASE_MIGRATOR_URL` (`config.settings.migrate`).
-3. **backend**, **ws**, **worker** y **beat** arrancan como `crm_app`, con solo `DATABASE_URL` (compose no les pasa `DATABASE_MIGRATOR_URL` ni `CRM_MIGRATOR_PASSWORD`) y `ENFORCE_RUNTIME_DB_ROLE=true`. Si el rol es superusuario, tiene BYPASSRLS o es propietario, web y ws se niegan a arrancar y el worker rechaza cada conexión. Beat no abre conexiones a la BD. El rechazo de las variables del migrador al arrancar solo existe en `config.settings.production`.
+3. **backend**, **ws**, **worker**, **worker-media** y **beat** arrancan como `crm_app`, con solo `DATABASE_URL` (compose no les pasa `DATABASE_MIGRATOR_URL` ni `CRM_MIGRATOR_PASSWORD`) y `ENFORCE_RUNTIME_DB_ROLE=true`. Si el rol es superusuario, tiene BYPASSRLS o es propietario, web y ws se niegan a arrancar y el worker rechaza cada conexión. Beat no abre conexiones a la BD. El rechazo de las variables del migrador al arrancar solo existe en `config.settings.production`.
 4. **frontend** (Next.js standalone) y **proxy** (Caddy).
+
+**worker-media** (F7-09a1c) atiende solo la cola `media` (`CELERY_TASK_ROUTES`): las descargas de los medios entrantes de WhatsApp, una a la vez (`--concurrency 1`), para que una descarga lenta (hasta 120 s) no ocupe al **worker** de la salida de mensajes. Usa la misma imagen y las mismas variables que **worker**, sin nada más. Sin él, los adjuntos se quedan `PENDING` hasta que arranque: `docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d worker-media`; su registro, con `logs -f worker-media`.
 
 Aplicación: **http://localhost:8080**, same-origin:
 

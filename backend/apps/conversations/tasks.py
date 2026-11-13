@@ -21,7 +21,7 @@ from django.db import connection
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.conversations import accounts, commands, credentials, graph, ingress, realtime
+from apps.conversations import accounts, commands, credentials, graph, ingress, media, realtime
 from apps.conversations.channels import (
     AmbiguousChannelError,
     ChannelAdapter,
@@ -119,6 +119,33 @@ def publish_realtime(task: Any, event_id: str) -> None:
         raise task.retry(countdown=2**task.request.retries, max_retries=REALTIME_RETRIES) from None
     if not sent:
         logger.warning("inbox.realtime_no_layer")
+
+
+@subscribe("message_attachment.pending")
+@tenant_task(name="conversations.media_event", bind=True, ignore_result=True, acks_late=True)
+def media_event(task: Any, event_id: str) -> None:
+    """Handler del outbox: encola la descarga del adjunto (F7-09a1c) en la cola `media`."""
+    event = OutboxEvent.objects.filter(id=event_id, event_type="message_attachment.pending").first()
+    if event is not None:
+        ids = {
+            "attachment_id": str(event.aggregate_id),
+            "organization_id": str(require().organization_id),
+        }
+        fetch_media.apply_async(kwargs=ids)
+
+
+@platform_task(name="conversations.fetch_media", bind=True, ignore_result=True, acks_late=True)
+def fetch_media(task: Any, attachment_id: str, organization_id: str) -> None:
+    """Un intento de descarga de un adjunto (`media.fetch`); vuelve cuando hay que esperar. Un fallo
+    inesperado deja el reclamo hasta que vence su plazo y la tarea vuelve después: sin su texto."""
+    kwargs = {"attachment_id": attachment_id, "organization_id": organization_id}
+    try:
+        outcome, wait = media.fetch(UUID(organization_id), UUID(attachment_id))
+    except Exception as error:  # noqa: BLE001 — solo la clase: el texto puede llevar la URL
+        outcome, wait = type(error).__name__, int(media.LEASE.total_seconds()) + 1
+    logger.info("media.fetch", attachment_id=attachment_id, outcome=outcome)
+    if wait is not None:
+        fetch_media.apply_async(kwargs=kwargs, countdown=wait)
 
 
 @platform_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
