@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 
 import { Assignee, AssignmentActions } from "./assignment";
 import { Composer, messagesKey, writableModes } from "./composer";
+import { MediaFile } from "./media-file";
 import { Plain } from "./plain";
 
 const WHEN = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" } as const;
@@ -143,7 +144,7 @@ export function ChatPanel({
     body = (
       <ol aria-label={t("chat.label")} className="flex flex-col gap-3">
         {rows.map((message) => (
-          <Bubble key={message.id} message={message} />
+          <Bubble key={message.id} message={message} conversationId={conversation.id} />
         ))}
       </ol>
     );
@@ -280,15 +281,15 @@ const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
 // `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
 // `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
 const STATES: readonly string[] = Object.keys(MARKS);
-// Un medio entrante (F7-09a2b): su clase con un icono y un rótulo fijos. El archivo no se pinta ni se
-// enlaza aquí (F7-09a3; D-F7-04). `Object.hasOwn`: ni `constructor` ni otra clave del prototipo.
+// Un medio entrante (F7-09a2b): su clase con un icono y un rótulo fijos, y debajo su archivo
+// (`MediaFile`, F7-09a3). `Object.hasOwn`: ni `constructor` ni otra clave del prototipo.
 const MEDIA: Record<string, ReactNode> = {
   IMAGE: <ImageIcon aria-hidden className="size-3.5" />,
   AUDIO: <AudioLines aria-hidden className="size-3.5" />,
   VIDEO: <Video aria-hidden className="size-3.5" />,
 };
 
-function Bubble({ message }: { message: Message }) {
+function Bubble({ message, conversationId }: { message: Message; conversationId: string }) {
   const t = useTranslations("inbox");
   const format = useFormatter();
   // Una nota interna es otra cosa que un mensaje al cliente: va aparte, rotulada y nunca como uno.
@@ -348,6 +349,10 @@ function Bubble({ message }: { message: Message }) {
           <Plain>{message.body}</Plain>
         </p>
       )}
+      {/* Sin `contacts.view` (cuerpo `null`) el contenido no se ve: tampoco el estado del archivo. */}
+      {media && message.attachment && message.body !== null ? (
+        <MediaFile conversationId={conversationId} attachment={message.attachment} />
+      ) : null}
       <p className="flex flex-wrap items-center gap-x-2 text-xs opacity-80">
         <span>{t(`sender.${message.sender_type}`)}</span>
         <time dateTime={message.created_at}>
