@@ -12,6 +12,7 @@ WABA_ID = "100000000000001"
 PHONE_NUMBER_ID = "100000000000002"
 DISPLAY_NUMBER = "51900000000"
 CUSTOMER = "51900000001"  # `wa_id`: teléfono sin el `+`
+BSUID = "ZZ.1000000000000000001"  # `user_id` (BSUID): la forma de Meta, `<país>.<dígitos>`
 MEDIA_HOST = "lookaside.fbsbx.com"  # donde Meta sirve los medios (a confirmar)
 SIGNATURE_HEADER = "X-Hub-Signature-256"
 UNSUPPORTED_KINDS = ("image", "audio", "video", "document", "sticker", "location", "contacts")
@@ -60,9 +61,10 @@ def value(
         "messaging_product": "whatsapp",
         "metadata": {"display_phone_number": DISPLAY_NUMBER, "phone_number_id": phone_number_id},
     }
-    senders = {m["from"] for m in messages or []}
-    if senders:
-        found["contacts"] = [{"profile": {"name": name}, "wa_id": w} for w in sorted(senders)]
+    senders = {("wa_id", m["from"]) for m in messages or [] if isinstance(m.get("from"), str)}
+    senders |= {("user_id", m["from_user_id"]) for m in messages or [] if "from_user_id" in m}
+    if senders:  # sin teléfono, Meta omite `wa_id` y el contacto lleva solo el `user_id` (BSUID)
+        found["contacts"] = [{"profile": {"name": name}, k: w} for k, w in sorted(senders)]
     if messages:
         found["messages"] = messages
     if statuses:
@@ -90,6 +92,16 @@ def text_message(
         "type": "text",
         "text": {"body": text},
     }
+
+
+def no_phone_message(
+    text: str, *, wamid: str = "wamid.SIMIN000004", user_id: str = BSUID, at: int = 1_700_000_000
+) -> dict[str, Any]:
+    """Un texto de un cliente cuyo teléfono Meta no puede incluir (F7-14): sin `from`, con su
+    BSUID en `from_user_id` (y en `contacts[].user_id`, sin `wa_id`, si va por `value`)."""
+    found = text_message(text, wamid=wamid, at=at)
+    del found["from"]
+    return found | {"from_user_id": user_id}
 
 
 def other_message(
