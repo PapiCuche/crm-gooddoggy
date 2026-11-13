@@ -5,6 +5,7 @@ import os
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
+from django.http.request import validate_host
 
 from config import env
 from config.settings.base import *  # noqa: F403
@@ -28,6 +29,7 @@ from config.settings.base import (
     QUOTE_FLOOR_THROTTLE,
     SECRET_KEY,
     SECRETS_KEKS,
+    STORAGE_PUBLIC_ENDPOINT_URL,
     TEST_ACCOUNTS_ORGANIZATION,
 )
 
@@ -58,6 +60,24 @@ _storage = urlsplit(env.optional("STORAGE_ENDPOINT_URL", ""))
 if _storage.geturl() and (_storage.scheme != "https" or _storage.username or _storage.password):
     raise ImproperlyConfigured(
         "STORAGE_ENDPOINT_URL de production debe ser https y sin credenciales"
+    )
+# Las URLs firmadas que abre el navegador: https y en otro **host** que la aplicación (las cookies
+# no distinguen puertos: con el mismo host, el almacén recibiría la cookie de sesión). Se compara el
+# host, sin puerto, sin punto final y sin mayúsculas, con el de `APP_ORIGIN` y con `ALLOWED_HOSTS`
+# por las reglas de Django (`.example.com` y `*` incluidos: con `*` no se acepta ninguno). Vacío,
+# se firma con `STORAGE_ENDPOINT_URL`, así que se comprueba ese. `env.origin` ya rechaza
+# credenciales y rutas.
+_signing = urlsplit(STORAGE_PUBLIC_ENDPOINT_URL or _storage.geturl())
+_signing_host = (_signing.hostname or "").rstrip(".").lower()
+_app_host = (urlsplit(APP_ORIGIN).hostname or "").rstrip(".").lower()
+if _signing.geturl() and (
+    _signing.scheme != "https"
+    or _signing_host == _app_host
+    or validate_host(_signing_host, ALLOWED_HOSTS)
+):
+    raise ImproperlyConfigured(
+        "El almacén que firma para el navegador (STORAGE_PUBLIC_ENDPOINT_URL o, vacío,"
+        " STORAGE_ENDPOINT_URL) debe ser https y de otro host que la app"
     )
 
 # ADR-019: sin servidor de correo, enviar falla al intentarlo. Con servidor, va cifrado
