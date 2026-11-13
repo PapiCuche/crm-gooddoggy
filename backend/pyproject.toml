@@ -138,6 +138,9 @@ ignore_imports = [
     "apps.quotes.commands -> apps.pricing.services",  # y los precios, solo del `PricingService`
     "apps.quotes.discounts -> apps.pricing.floor",  # F5-09b2: un precio manual cubre el costo
     "apps.quotes.policies -> apps.pricing.services",  # F5-09b4: la lista de una política existe
+    "apps.quotes.answers -> apps.deals.models",  # F5-09c3: aceptar mueve la oportunidad
+    "apps.quotes.answers -> apps.deals.opportunities",
+    "apps.quotes.answers -> apps.deals.opportunity_stages",
 ]
 
 [[tool.importlinter.contracts]]
@@ -214,8 +217,9 @@ allowed_importers = ["apps.contacts.api", "apps.conversations.inbound"]  # F7-04
 name = "Comandos de pipelines y oportunidades: solo su API los importa (F5-01, F5-03b, F5-03c)"
 type = "protected"
 protected_modules = ["apps.deals.commands", "apps.deals.opportunities", "apps.deals.opportunity_stages"]
-# las de oportunidades usan los validadores de los de pipelines, y las de etapa, los de crear
-allowed_importers = ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages"]
+# las de oportunidades usan los validadores de los de pipelines, y las de etapa, los de crear;
+# F5-09c3: aceptar una cotización mueve su oportunidad (con el alcance de quien acepta)
+allowed_importers = ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages", "apps.quotes.answers"]
 
 [[tool.importlinter.contracts]]
 name = "Entrantes y estados de WhatsApp: solo el procesador los importa (F7-04a, F7-06a; actor de sistema)"
@@ -232,7 +236,14 @@ protected_modules = [
 ]
 allowed_importers = [
     "apps.quotes.api", "apps.quotes.discounts", "apps.quotes.decisions", "apps.quotes.lifecycle",
+    "apps.quotes.answers",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Respuestas de cotizaciones: solo su API y su tarea de vencimiento (F5-09c3)"
+type = "protected"
+protected_modules = ["apps.quotes.answers"]
+allowed_importers = ["apps.quotes.api", "apps.quotes.tasks"]
 
 [[tool.importlinter.contracts]]
 name = "Políticas de descuento: solo su API importa apps.quotes.policies (F5-09b4)"
