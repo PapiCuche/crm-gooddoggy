@@ -18,19 +18,19 @@ El propietario quiere **un solo número** para la tienda, usado a la vez en la *
 - **Kommo no se integra**: ya no se usa.
 - **El número de producción no se activa nunca sin la autorización expresa del propietario.**
 
-ADR-029 (Proposed) dejó la coexistencia como opción en D-F7-02 («coexistir con la app de WhatsApp Business si Meta lo permite para ese número») y recomendó un número nuevo para el piloto. Este ADR estudia esa opción con la documentación oficial vigente y propone cómo encajarla sin cambiar el dominio.
+ADR-029 (Proposed) deja sus preguntas abiertas en [phase-7.md](../phases/phase-7.md) (§14), y allí la decisión D-F7-02 plantea la coexistencia como opción («coexistir con la app de WhatsApp Business si Meta lo permite para ese número») y recomienda un número nuevo para el piloto. Este ADR estudia esa opción con la documentación oficial vigente y propone cómo encajarla sin cambiar el dominio.
 
 ### Lo que ya existe y este ADR no cambia
 
 | Pieza | Dónde | Estado |
 | --- | --- | --- |
-| Cuenta de canal `WHATSAPP` (`external_account_id` = `phone_number_id`, `external_parent_id` = WABA, inmutables), credencial cifrada (ADR-022), conectar con token pegado, rotar y desconectar con MFA reciente | `apps.conversations.accounts`, `credentials`, F7-02a…e | Construido |
+| Cuenta de canal `WHATSAPP` (`external_account_id` = `phone_number_id`, `external_parent_id` = WABA, inmutables), credencial cifrada (ADR-022), conectar con token pegado y rotar con MFA reciente; desconectar con `channels.manage` | `apps.conversations.accounts`, `credentials`, F7-02a…e | Construido |
 | Webhook `POST /webhooks/meta/`: firma sobre el cuerpo crudo, tope de cuerpo `BODY_MAX` = 1 MiB, esquema estricto, una fila de `webhook_ingress` por ítem con clave de deduplicación | `meta_webhook.py`, `ingress.py`, F7-03a…c | Construido |
 | Enrutado del tenant por `resolve_channel_account('WHATSAPP', phone_number_id)` (`SECURITY DEFINER`) y cruce obligatorio `entry.id == external_parent_id` | `ingress.route`, F7-03c | Construido |
 | Hoy, todo campo distinto de `messages` se guarda como ítem `other` sin número y queda `IGNORED` (`NO_NUMBER`) con el payload vaciado | `meta_webhook._change`, `ingress.route` | Construido: con coexistencia, los ecos y el historial **se perderían en silencio** si se activara hoy |
 | Mensajes entrantes de texto, no soportados y medios; contacto por teléfono E.164 con `pg_advisory_xact_lock`, sin índice único; tope de contactos nuevos por minuto | `inbound.py`, F7-04a/b, F7-09a | Construido |
 | Un mensaje entrante sin `from` (un cliente que llega solo con su BSUID) se cierra `IGNORED` con `BAD_PHONE`, el mismo código que un teléfono mal formado: sin contacto, sin mensaje, con el payload vaciado y sin registro propio | `inbound.receive`, `ingress.route` | Construido; medirlo por separado es F7-14 (#749) |
-| `messages`: `direction`, `sender_type` (`CONTACT`, `USER`, `AI_AGENT`, `SYSTEM`), `external_message_id` único por (organización, cuenta), `provider_timestamp`, `delivery_status` obligatorio en lo saliente y que solo avanza; `messages_unsupported_ck` deja `UNSUPPORTED`, `AUDIO` y `VIDEO` solo para lo entrante (`INBOUND_ONLY`) | `models.Message` | Construido |
+| `messages`: `direction`, `sender_type` (`CONTACT`, `USER`, `AI_AGENT`, `SYSTEM`), `external_message_id` único por (organización, cuenta), `provider_timestamp`, `delivery_status` obligatorio en lo saliente y que solo avanza; `messages_unsupported_ck` deja `UNSUPPORTED`, `AUDIO` y `VIDEO` solo para lo entrante (`INBOUND_ONLY`); `messages_file_ck` exige `file_id` en una `IMAGE` saliente y en todo `DOCUMENT`; `MEDIA_KINDS` (adjuntos que se descargan) excluye los documentos hasta que haya antivirus | `models.Message` | Construido |
 | Política (`policy.evaluate`): ventana anclada en `last_inbound_at`, contacto bloqueado, baja (`CONSENT_REVOKED` solo para lo proactivo) | F7-05a, F7-08b | Construido |
 | Consentimientos con historial inmutable y palabras de baja/alta | `apps.contacts.consents`, F7-08a/b | Construido |
 | Estados de entrega por webhook; un estado de un mensaje desconocido queda `IGNORED` tras tres intentos («un número que también se usa desde la app del teléfono recibe estados de mensajes que el CRM no envió», ADR-029 §8) | F7-06a | Construido |
@@ -58,7 +58,7 @@ Cada afirmación lleva su fuente. Lo que no se pudo comprobar está marcado **SI
 - Si el negocio no acepta compartir el historial, llega un webhook `history` con el error `2593109`.
 - Se recomienda que el negocio tenga la app abierta durante la sincronización.
 
-**Webhooks que añade la coexistencia.** Todos exigen `whatsapp_business_management`; `messages` exige `whatsapp_business_messaging`. Los cuerpos pueden medir **hasta 3 MB**; Meta reintenta **hasta 7 días** y puede duplicar. [S10]
+**Webhooks que añade la coexistencia.** `messages` exige `whatsapp_business_messaging`; los cuatro campos nuevos exigen `whatsapp_business_management` (inferido: [S10] asigna ese permiso a «todos los demás webhooks» sin nombrarlos uno por uno). Los cuerpos pueden medir **hasta 3 MB**; Meta reintenta **hasta 7 días** y puede duplicar. [S10]
 
 | Campo | Qué trae | Forma | Fuente |
 | --- | --- | --- | --- |
@@ -153,16 +153,17 @@ Ajustes nuevos, sin secretos: `META_APP_ID` y `META_EMBEDDED_SIGNUP_CONFIG_ID` (
 
 - Los límites por lista (`MAX_ROWS`, `MAX_ITEMS`) siguen para los ecos y los contactos. El trozo de historial se valida en su procesador (F7-13j), no en la petición, con su propio tope por trozo.
 - **Enrutado:** ecos, historial y contactos traen `metadata.phone_number_id` y usan `resolve_channel_account` con el cruce obligatorio del WABA, igual que `messages`. Además, el procesador exige que la cuenta resuelta tenga `connection_mode = COEXISTENCE`: un eco o un historial para una cuenta `CLOUD_API` queda `IGNORED` y alerta.
-- **`account_update` no trae `phone_number_id`.** Se enruta con una función `SECURITY DEFINER` nueva y mínima, `resolve_channel_accounts_by_parent('WHATSAPP', waba_id)` (ADR-002 §3.3: propietario explícito, `search_path` fijo con `pg_temp`, argumentos tipados, solo cuentas vivas, retorno `(organization_id, channel_account_id, display_identifier)` y nada más). Si el WABA aparece en más de una organización, el ítem queda `IGNORED` y alerta (no debería pasar nunca). El número visible del evento solo filtra entre las cuentas de **esa** organización.
+- **`account_update` no trae `phone_number_id`.** Se enruta con una función `SECURITY DEFINER` nueva y mínima, `resolve_channel_accounts_by_parent('WHATSAPP', waba_id)` (ADR-002 §3.3: propietario explícito, `search_path` fijo con `pg_temp`, argumentos tipados, solo cuentas vivas, retorno `(organization_id, channel_account_id)` y nada más, como `resolve_channel_account`). Si el WABA aparece en más de una organización, el ítem queda `IGNORED` y alerta (no debería pasar nunca). Conocida la organización, el número visible del evento filtra sus cuentas **dentro de `tenant_scope` de esa organización** (lectura normal con RLS, no en la función), y solo entre las cuentas que devolvió la función.
 - **Desconexión desde el teléfono:** `PARTNER_REMOVED` o `ACCOUNT_OFFBOARDED` no desconectan a ciegas (un evento forjado con el secreto robado podría apagar el canal de otra organización): la cuenta pasa a `DEGRADED` con un código nuevo (`APP_DISCONNECTED`), se encola una comprobación de salud y **solo** si la Graph API confirma que el número ya no está en coexistencia o el token ya no vale, pasa a `DISCONNECTED`. `ACCOUNT_RECONNECTED` también se confirma antes de volver a `CONNECTED`. Se avisa a quien tenga `channels.manage`.
 - **Desconectar desde el CRM** en coexistencia: deja la cuenta `DISCONNECTED`, **no** llama al desregistro (Meta lo prohíbe) y quita la suscripción del WABA si Meta lo admite (SIN VERIFICAR 9). La pantalla explica que la desconexión real se hace en la app del teléfono.
 
 ### 4. Ecos: lo que el negocio envía desde la app (F7-13g y F7-13h)
 
-**Modelo.** Sin tabla nueva. Dos cambios en `messages` (una migración, con su funcionalidad):
+**Modelo.** Sin tabla nueva. Cambios en `messages` (cada migración con su funcionalidad):
 
-- `sender_type` admite `BUSINESS_APP`: «una persona del negocio desde la app del teléfono», sin usuario del CRM (`sender_user_id` nulo; las restricciones `messages_contact_ck` y `messages_sender_user_ck` lo permiten tal cual).
+- `sender_type` admite `BUSINESS_APP`: «una persona del negocio desde la app del teléfono», sin usuario del CRM (`sender_user_id` nulo; las restricciones `messages_contact_ck` y `messages_sender_user_ck` lo permiten tal cual). La columna hoy es `varchar(8)` y `BUSINESS_APP` mide 12: la migración la amplía a 16 y amplía `messages_sender_ck`.
 - Columna `origin` (`CRM` por omisión | `PHONE_APP` | `HISTORY`): de dónde entró el mensaje al CRM. `CRM` es lo escrito en el CRM o recibido en vivo por `messages`; `PHONE_APP`, un eco; `HISTORY`, la importación (§8).
+- `messages_unsupported_ck` se amplía solo para `origin` `PHONE_APP` o `HISTORY`, y `messages_file_ck` solo para `PHONE_APP` (abajo, «Tipos»): lo escrito en el CRM sigue con las reglas de hoy.
 
 **Un eco** se registra como `direction = OUTBOUND`, `sender_type = BUSINESS_APP`, `origin = PHONE_APP`, `external_message_id = id`, `provider_timestamp` = `timestamp` acotado a «ahora», y `delivery_status = SENT` (ya salió; si llegan estados, avanzan por el mismo `advance_delivery`).
 
@@ -177,7 +178,7 @@ Ajustes nuevos, sin secretos: `META_APP_ID` y `META_EMBEDDED_SIGNUP_CONFIG_ID` (
 
 **Atribución:** **no** se atribuye a ningún vendedor (ni al asignado): el CRM no sabe quién tenía el teléfono. El chat dice «Enviado desde la app del teléfono». La conversación pasa a `WAITING_CUSTOMER` como con una respuesta del CRM, sin cambiar la asignación (D-COEX-04).
 
-**Tipos (F7-13g):** `text` y los tipos que el corte no entiende. `messages_unsupported_ck` se amplía para admitir en lo saliente los tipos que hoy son solo entrantes (`UNSUPPORTED`, y `AUDIO` y `VIDEO` para los ecos de F7-13h y el historial) **solo** con `origin = PHONE_APP` o `HISTORY` (un vendedor sigue sin poder enviarlos). **(F7-13h):** `image`, `video` y `document` con el flujo de descarga de medios de F7-09a (el eco trae el id del medio); `edit` cambia el cuerpo mostrado de un mensaje `PHONE_APP` y guarda el original en su historial de cambios del propio mensaje; `revoke` lo marca como eliminado (el cuerpo se sustituye por una frase fija) sin borrar la fila. Un `edit` o `revoke` de un mensaje que no es del teléfono o de otra cuenta se ignora con métrica.
+**Tipos (F7-13g):** `text` y los tipos que el corte no entiende. `messages_unsupported_ck` se amplía para admitir `UNSUPPORTED` saliente **solo** con `origin` `PHONE_APP` o `HISTORY` (un vendedor sigue sin poder enviarlo). **(F7-13h):** `image` y `video` con el flujo de descarga de medios de F7-09a (el eco trae el id del medio: adjunto con `external_media_id`, sin `file_id`). Hoy el código lo impide, y F7-13h lo cambia solo para `origin = PHONE_APP`: `messages_file_ck` exige `file_id` en una `IMAGE` saliente (se amplía para admitirla sin `file_id` con ese origen) y `messages_unsupported_ck` deja `VIDEO` solo para lo entrante (se amplía igual). Un `document` del teléfono **no** entra en el primer corte: `messages_file_ck` prohíbe todo `DOCUMENT` sin `file_id` y `MEDIA_KINDS` excluye los documentos hasta que haya antivirus (D-F7-04); el eco se guarda como `UNSUPPORTED` con la etiqueta fija «Documento enviado desde el teléfono» y pasa a ser un documento descargable cuando exista el antivirus. Además, `edit` cambia el cuerpo mostrado de un mensaje `PHONE_APP` y guarda el original en su historial de cambios del propio mensaje; `revoke` lo marca como eliminado (el cuerpo se sustituye por una frase fija) sin borrar la fila. Un `edit` o `revoke` de un mensaje que no es del teléfono o de otra cuenta se ignora con métrica.
 
 ### 5. Mensajes entrantes en vivo
 
@@ -204,12 +205,12 @@ Los entrantes de un número en coexistencia siguen llegando por `messages` y se 
 - **Se pide solo si el propietario lo elige en el alta** (D-COEX-02): son hasta 6 meses de conversaciones de clientes reales, se pide una sola vez y dentro de 24 h.
 - Cada trozo se procesa en orden de `chunk_order` dentro de su fase; un trozo que llega antes que el anterior espera (fallo transitorio) hasta un plazo, y después se procesa igual (los mensajes llevan su `timestamp`). `progress` se guarda en la cuenta (`history_sync_state`, porcentaje) y la pantalla lo muestra.
 - **Dónde va:** cada hilo importado crea una conversación propia `RESOLVED`, sin asignación, sin SLA, sin IA y sin notificaciones, con sus mensajes `origin = HISTORY` ordenados por `provider_timestamp`. La conversación en vivo del mismo contacto no se toca; el chat enlaza «historial anterior a la conexión».
-- **Dirección:** si `from` es el número del negocio, `OUTBOUND` con `sender_type = BUSINESS_APP` y `delivery_status` según `history_context.status` (`error` → `FAILED` con el código propio `PROVIDER_REJECTED`; `pending` → `SENT`); si no, `INBOUND` de `CONTACT`.
+- **Dirección:** si `from` es el número del negocio, `OUTBOUND` con `sender_type = BUSINESS_APP` y `delivery_status` según `history_context.status` (`sent` → `SENT`; `delivered` → `DELIVERED`; `read` y `played` → `READ`, porque `played` es un audio escuchado y no hay estado propio; `error` → `FAILED` con el código propio `PROVIDER_REJECTED`; `pending` → `SENT`); si no, `INBOUND` de `CONTACT`.
 - **Sin duplicados:** por el mismo índice único de `external_message_id` (un mensaje del día del alta que también llegó en vivo no se repite) y por la clave de cada trozo.
 - **Nunca** cambia `last_inbound_at` de una conversación en vivo ni abre ventana (conservador: la ventana solo la abren los entrantes en vivo).
 - **Sin confirmaciones ni palabras de baja automáticas** en lo importado; ver D-COEX-05.
 - Contactos: se crean con origen `IMPORT` bajo el bloqueo por teléfono, con un tope propio por importación (no el tope por minuto del entrante en vivo), y se ignoran los hilos sin teléfono (§12).
-- Medios del historial: sin id no se pueden bajar; se muestran con la etiqueta fija del tipo («Imagen del historial, no disponible»). Bajar los de los últimos 14 días es opcional y queda fuera del primer corte (D-COEX-10).
+- Medios del historial: sin id no se pueden bajar; se guardan como `UNSUPPORTED` (así no tocan `messages_file_ck`) y se muestran con la etiqueta fija del tipo («Imagen del historial, no disponible»). Bajar los de los últimos 14 días es opcional y queda fuera del primer corte (D-COEX-10).
 - `2593109` (el negocio no compartió el historial) deja `history_sync_state = DECLINED`, visible, sin error.
 
 ### 9. Rendimiento y salud
@@ -269,7 +270,7 @@ El simulador construye y firma los cuatro campos nuevos (con los casos sin telé
 ## Consequences
 
 - El mismo número sirve para el teléfono y para Good Doggy; el CRM ve lo que se responde desde el teléfono y, si se elige, los 6 meses anteriores.
-- `channel_accounts` gana `connection_mode`, `coexistence_onboarded_at` y el estado de las dos sincronizaciones; `messages`, `origin` y el valor `BUSINESS_APP`; `STATUS_DETAILS`, `APP_DISCONNECTED`. Cada migración llega con su funcionalidad.
+- `channel_accounts` gana `connection_mode`, `coexistence_onboarded_at` y el estado de las dos sincronizaciones; `messages`, `origin`, el valor `BUSINESS_APP` (con `sender_type` ampliado a 16 caracteres) `messages_unsupported_ck` ampliado para lo del teléfono y del historial y `messages_file_ck` solo para lo del teléfono; `STATUS_DETAILS`, `APP_DISCONNECTED`. Cada migración llega con su funcionalidad.
 - El webhook acepta cuerpos de hasta 3 MiB y una función `SECURITY DEFINER` nueva para enrutar por WABA.
 - La app de Meta tiene que pasar a Tech Provider: trámite de Meta, con plazos que no controla el programa.
 - Lo que se haga en el teléfono queda fuera de la política del CRM: se ve y se cuenta, no se impide.
