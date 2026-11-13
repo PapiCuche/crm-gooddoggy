@@ -1,5 +1,6 @@
 """F7-11a: métricas y alertas mínimas de la ingesta de Meta (`apps.conversations.ingest_alerts`,
-migración `0029`; ADR-011, ADR-029 §3). PostgreSQL real con `crm_app` y el simulador de Meta."""
+migraciones `0031` y `0032`; ADR-011, ADR-029 §3). PostgreSQL real con `crm_app` y el simulador
+de Meta."""
 
 import datetime as dt
 import logging

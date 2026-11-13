@@ -13,7 +13,7 @@ INDEXES = {
 class Migration(migrations.Migration):
     atomic = False
     dependencies = [
-        ("conversations", "0029_meta_ingest_counts"),
+        ("conversations", "0031_meta_ingest_counts"),
     ]
 
     operations = [

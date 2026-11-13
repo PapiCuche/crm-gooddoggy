@@ -16,7 +16,7 @@ DEAD_AT = (
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0028_validate_outbound_media"),
+        ("conversations", "0030_validate_outbound_file_purpose"),
     ]
 
     operations = [
