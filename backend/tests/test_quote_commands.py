@@ -44,7 +44,8 @@ LONG_AGO = NOW - timedelta(days=90)
 INTERNAL = "prices.view_internal"  # una lista que quien cotiza no ve
 MINE: dict[str, str | None] = {  # quien cotiza: crea, ve, cambia y cancela todas las de la org.
     "quotes.create": None, "quotes.view": "ORGANIZATION", "quotes.update": "ORGANIZATION",
-    "quotes.cancel": "ORGANIZATION",
+    "quotes.cancel": "ORGANIZATION", "contacts.view": "ORGANIZATION",
+    "opportunities.view": "ORGANIZATION",  # crear pide ver el contacto y la oportunidad
 }  # fmt: skip
 SECRET = "Cliente Juan Perez, DNI 12345678"  # noqa: S105 — texto de prueba
 
