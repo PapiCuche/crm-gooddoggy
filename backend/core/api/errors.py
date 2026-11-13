@@ -106,8 +106,10 @@ def exception_handler(exc: Exception, context: dict[str, Any]) -> Response | Non
     tenant, una fila que no existe (`DoesNotExist` de un comando: inexistente, ajena o fuera del
     alcance) es el mismo 404; fuera de ellas sigue siendo un fallo (500)."""
     if isinstance(exc, ObjectDoesNotExist) and current_tenant() is not None:
-        # Solo en el servidor, con su traza: un `.get()` que se escapa también puede ser un fallo.
-        logger.warning("DoesNotExist en una ruta de tenant: se responde 404", exc_info=exc)
+        # Una línea en el servidor (clase y vista; sin ids, texto ni traza): un `.get()` que se
+        # escapa por un fallo se ve, y enumerar ids no inunda los registros.
+        view = type(context.get("view")).__name__
+        logger.info("404 por %s en %s", type(exc).__name__, view)
         exc = exceptions.NotFound()
     elif isinstance(exc, Http404):
         exc = exceptions.NotFound()

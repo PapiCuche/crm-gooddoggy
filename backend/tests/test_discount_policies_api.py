@@ -3,6 +3,7 @@ segundo factor, la sesión y PostgreSQL con `crm_app`: el permiso antes que el s
 cerrado y estricto, las referencias ajenas como las inexistentes, la versión, las carreras y el
 aislamiento."""
 
+import logging
 from decimal import Decimal as D
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +14,7 @@ import pytest
 from django.test import Client
 
 from apps.access.models import Role
+from apps.quotes.api.quotes import QuoteView
 from apps.quotes.commands import NotAllowed
 from apps.quotes.models import DiscountPolicy, Quote
 from apps.quotes.seed import ensure_template_policies
@@ -297,13 +299,16 @@ def test_a_missing_row_on_a_tenant_route_is_the_usual_404_and_a_quote_refusal_a_
     """`core.api.errors`: `DoesNotExist` de un comando es el 404 de siempre, solo dentro de una
     ruta de tenant (fuera sigue siendo un fallo); `NotAllowed` de las cotizaciones, un 403 sin
     motivo. Otra ruta de tenant no cambia su 404."""
+    caplog.set_level(logging.INFO, logger="core.api.errors")
+    secret = str(uuid4())  # un id en el texto de la excepción no llega al registro
     with tenant_scope(ctx(team.org)):
-        missing = exception_handler(Quote.DoesNotExist("Quote matching query..."), {})
+        missing = exception_handler(Quote.DoesNotExist(secret), {"view": QuoteView()})
         refused = exception_handler(NotAllowed("quotes.approve"), {})
     assert missing is not None and refused is not None
     assert (missing.status_code, missing.data) == (404, {"code": "NOT_FOUND"})
-    logged = [r for r in caplog.records if r.name == "core.api.errors"]  # en el servidor, con traza
-    assert len(logged) == 1 and logged[0].levelname == "WARNING" and logged[0].exc_info
+    (logged,) = [r for r in caplog.records if r.name == "core.api.errors"]  # una línea, sin traza
+    assert (logged.levelname, logged.exc_info) == ("INFO", None)
+    assert logged.getMessage() == "404 por DoesNotExist en QuoteView" and secret not in caplog.text
     assert (refused.status_code, refused.data) == (403, {"code": "PERMISSION_DENIED"})
     assert exception_handler(Quote.DoesNotExist(), {}) is None  # sin tenant: 500, sin detalle
     assert reply(team.a.get(f"/api/v1/o/org-a/quotes/{uuid4()}/")) == NOT_FOUND
