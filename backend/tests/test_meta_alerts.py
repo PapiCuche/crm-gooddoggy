@@ -12,10 +12,12 @@ from uuid import UUID
 import psycopg
 import pytest
 from django.conf import settings
-from django.db import DatabaseError, connection, connections
+from django.db import DatabaseError, InterfaceError, connection, connections
 
 from apps.conversations import ingest_alerts, ingress, tasks
 from core.observability import reporting
+from core.observability.logging import json_formatter
+from core.redaction import redact
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import CUSTOMER, TEST_APP_SECRET
 from tests.test_conversations_tables import conversation, message, world
@@ -143,8 +145,9 @@ def test_without_data_nothing_fires_and_each_window_is_measured_once(
 
 
 def test_below_every_threshold_nothing_fires_and_at_each_threshold_each_fires_once(
-    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, fresh: Spy
-) -> None:
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, fresh: Spy,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
     now = bucket_now()
     everything(world, migrator, now - 4, short=1)
     assert sweep(monkeypatch, now - 3) == []  # un punto por debajo de cada umbral
@@ -157,7 +160,11 @@ def test_below_every_threshold_nothing_fires_and_at_each_threshold_each_fires_on
     assert all(fingerprint == [name] for name, _, fingerprint in fresh.messages)  # agrupa
     context = {name: ctx for name, ctx, _ in fresh.messages}
     assert context["meta.alert.ingress_dead"]["count"] == 1
-    assert context["meta.alert.outbound_failed"]["codes"] == {"TOKEN_INVALID": 1}
+    assert context["meta.alert.outbound_failed"]["codes"] == [["TOKEN_INVALID", 1]]
+    # Tras el redactor (el de los logs y el de Sentry), el código sigue a la vista.
+    assert redact(context["meta.alert.outbound_failed"])["codes"] == [["TOKEN_INVALID", 1]]
+    record = next(r for r in caplog.records if "meta.alert.outbound_failed" in str(r.msg))
+    assert '"codes": [["TOKEN_INVALID", 1]]' in json_formatter().format(record)  # el JSON real
 
 
 def test_a_window_that_was_skipped_is_caught_up_but_the_lag_only_counts_now(
@@ -192,7 +199,7 @@ def test_a_burst_of_bad_signatures_through_the_webhook_counts_without_a_write_pe
     body = webhooks.encode(webhooks.envelope(webhooks.value(messages=[text("wamid.1")])))
     bad = webhooks.deliver(body, secret=WRONG)
     writes: list[str] = []
-    real = connection.cursor
+    real, before = connection.cursor, bucket_now()
 
     def counting() -> Any:
         writes.append("w")
@@ -210,17 +217,22 @@ def test_a_burst_of_bad_signatures_through_the_webhook_counts_without_a_write_pe
     ).fetchall()
     assert len(found) == 1 and found[0][1] == 26
     bucket = int(found[0][0].removeprefix("mwh:sig:"))
+    assert bucket in (before, bucket_now())  # la ventana en curso, y vence al acabar esta
+    assert migrator.execute(
+        "SELECT updated_at FROM login_throttles WHERE key = %s", [found[0][0]]
+    ).fetchone() == (at(bucket + 1, 0),)
     assert sweep(monkeypatch, bucket + 1) == ["signature_invalid"]
     assert post(webhooks.deliver(body)).status_code == 200  # una firma buena no cuenta
     assert migrator.execute("SELECT sum(failures) FROM login_throttles WHERE key LIKE 'mwh:sig:%%'"
                             ).fetchone() == (26,)  # fmt: skip
 
 
+@pytest.mark.parametrize("error", [DatabaseError, InterfaceError])
 def test_a_database_that_cannot_count_never_changes_the_401(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, error: type[Exception]
 ) -> None:
     def down(*args: Any, **kwargs: Any) -> Any:
-        raise DatabaseError("sin base")
+        raise error("sin base")
 
     monkeypatch.setattr(connection, "cursor", down)
     body = webhooks.encode(webhooks.envelope(webhooks.value(messages=[text("wamid.1")])))
@@ -326,6 +338,12 @@ def test_the_counts_function_gives_only_counts_and_closed_codes_and_is_locked_do
     now = bucket_now()
     failures(migrator, now - 1, 1, 8)
     failed_sends(world, migrator, now - 1, "PROVIDER_ERROR")
+    failed_sends(world, migrator, now - 1, "RATE_LIMITED")  # falla justo al cerrar: la siguiente
+    migrator.execute(
+        "UPDATE messages SET failed_at = %s WHERE provider_error_code = 'RATE_LIMITED'",
+        [at(now, 0)],
+    )
+    token_invalid(world.a, migrator, now - 1, "555000000099")  # cuenta, pero sin código
     other = make(world.b, status="ERROR", status_detail="PROVIDER_ERROR")  # otro motivo: no cuenta
     migrator.execute(
         "UPDATE channel_accounts SET updated_at = %s WHERE id = %s", [at(now - 1), other.pk]
@@ -341,7 +359,7 @@ def test_the_counts_function_gives_only_counts_and_closed_codes_and_is_locked_do
         found = {(m, c): t for m, c, t in cursor.fetchall()}
     assert found == {
         ("ingress_failed", None): 1, ("ingress_dead", None): 1, ("ingress_lag_seconds", None): 0,
-        ("token_invalid_count", None): 0, ("outbound_failed", "PROVIDER_ERROR"): 1,
+        ("token_invalid_count", None): 1, ("outbound_failed", "PROVIDER_ERROR"): 1,
     }  # fmt: skip
     for table in ("webhook_failures", "webhook_ingress"):
         with connection.cursor() as cursor, pytest.raises(DatabaseError, match="permission denied"):
@@ -377,9 +395,11 @@ def test_the_task_is_scheduled_and_its_windows_outlive_the_purge(settings: Any) 
     job = settings.CELERY_BEAT_SCHEDULE["conversations.meta_alerts"]
     assert job == {"task": tasks.meta_alerts.name, "schedule": 60.0, "options": {"expires": 60}}
     assert tasks.meta_alerts.tenancy == "platform"
-    # Un contador o una reclamación se leen hasta 3 ventanas después de nacer: la purga de los
-    # contadores de acceso (cada hora) solo borra lo que lleva una ventana de calma sin tocarse.
-    assert 3 * W <= max(window for _, window, *_ in settings.LOGIN_THROTTLE.values())
+    # Un contador (fechado al fin de su ventana) se lee hasta 2 ventanas y la gracia después, y
+    # una reclamación vive 2 ventanas: la purga de los contadores de acceso (cada hora) solo borra
+    # lo que lleva su calma sin tocarse.
+    calm = max(window for _, window, *_ in settings.LOGIN_THROTTLE.values())
+    assert 2 * W + ingest_alerts.GRACE <= calm
     assert set(settings.META_ALERTS) == ALL
 
 
@@ -402,3 +422,35 @@ def test_sentry_groups_the_same_alert_by_its_fingerprint() -> None:
     sentry.capture_message("meta.alert.ingress_dead", {"count": 1}, fingerprint=["meta.alert.x"])
     assert seen == {"context": {"count": 1}, "message": "meta.alert.ingress_dead",
                     "fingerprint": ["meta.alert.x"]}  # fmt: skip
+
+
+def test_a_sweep_that_breaks_midway_gives_its_window_back(
+    migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = bucket_now()
+    failures(migrator, now - 2, 8)
+    real, calls = ingest_alerts._measure, []
+
+    def once(*args: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("caída a medias")
+        return real(*args)
+
+    monkeypatch.setattr(ingest_alerts, "_measure", once)
+    with pytest.raises(RuntimeError):
+        sweep(monkeypatch, now)
+    claims = "SELECT count(*) FROM login_throttles WHERE key LIKE 'mwh:alr:%%'"
+    assert migrator.execute(claims).fetchone() == (0,)  # la reclamación se deshizo
+    assert sweep(monkeypatch, now) == ["ingress_dead"]  # y la ventana se evalúa de nuevo
+
+
+def test_the_current_window_trails_the_database_clock_by_the_grace() -> None:
+    grace = ingest_alerts.GRACE
+    assert ingest_alerts.window_of(10 * W + grace) == 10
+    assert ingest_alerts.window_of(10 * W + grace - 0.001) == 9  # aún en gracia: no se cierra
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT extract(epoch FROM now())")
+        before = float(cursor.fetchone()[0])
+    found = ingest_alerts._current()  # sin parchear: el reloj de la base
+    assert found in (ingest_alerts.window_of(before), ingest_alerts.window_of(before + 1))

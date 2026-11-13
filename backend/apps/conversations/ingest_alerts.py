@@ -27,19 +27,22 @@ from collections.abc import Iterable
 from typing import Any
 
 from django.conf import settings
-from django.db import DatabaseError, connection, transaction
+from django.db import Error, connection, transaction
 
 from core.observability import reporting
 from core.observability.logging import get_logger
 
 logger = get_logger(__name__)
-WINDOW = 300  # segundos; 3 ventanas caben en la calma de la purga de `login_throttles` (prueba)
+WINDOW = 300  # segundos; lo que vive un contador cabe en la calma de la purga (prueba)
 FLUSH_EVERY = 1.0  # segundos entre dos sumas a la base de un mismo proceso
 SIGNATURES, CLAIM = "mwh:sig:", "mwh:alr:"
 LAG = "ingress_lag_seconds"
+GRACE = 60  # segundos que una ventana cerrada espera antes de evaluarse
+# `updated_at` es el fin de la ventana del contador: la purga de calma lo cuenta desde ahí.
 _ADD = """
+WITH b AS (SELECT floor(extract(epoch FROM now()) / %(window)s)::bigint AS n)
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
-VALUES (%(prefix)s || floor(extract(epoch FROM now()) / %(window)s)::bigint, %(count)s, NULL, now())
+SELECT %(prefix)s || b.n, %(count)s, NULL, to_timestamp((b.n + 1) * %(window)s) FROM b
 ON CONFLICT (key) DO UPDATE SET failures = t.failures + EXCLUDED.failures
 """
 _CLAIM = """
@@ -64,19 +67,20 @@ def bad_signature() -> None:
     try:
         with connection.cursor() as cursor:
             cursor.execute(_ADD, {"prefix": SIGNATURES, "window": WINDOW, "count": count})
-    except DatabaseError:
+    except Error:  # también `InterfaceError`: contar nunca cambia el `401`
         logger.warning("meta.webhook.count_failed", count=count)
 
 
 def _measure(
     rows: Iterable[tuple[Any, ...]], signatures: int
-) -> tuple[dict[str, int], dict[str, int]]:
-    """(lo medido por métrica, los salientes `FAILED` por código)."""
+) -> tuple[dict[str, int], list[list[Any]]]:
+    """(lo medido por métrica, los salientes `FAILED` como `[código, n]`: una lista y no un
+    diccionario, porque el redactor taparía una clave como `TOKEN_INVALID`)."""
     measured = dict.fromkeys(settings.META_ALERTS, 0)
-    codes: dict[str, int] = {}
+    codes: list[list[Any]] = []
     for metric, code, total in rows:
         if metric == "outbound_failed":
-            codes[code or "NONE"] = int(total)
+            codes.append([code or "NONE", int(total)])
             if code not in settings.META_ALERT_QUIET_CODES:
                 measured[metric] += int(total)
         else:
@@ -85,7 +89,7 @@ def _measure(
     return measured, codes
 
 
-def _alert(name: str, value: int, threshold: int, start: str, codes: dict[str, int]) -> None:
+def _alert(name: str, value: int, threshold: int, start: str, codes: list[list[Any]]) -> None:
     event = f"meta.alert.{name}"
     context: dict[str, Any] = {"window_start": start, "count": value, "threshold": threshold}
     if name == "outbound_failed":
@@ -132,7 +136,13 @@ def sweep() -> list[str]:
 
 
 def _current() -> int:
-    """La ventana en curso, aún abierta, por el reloj de la base (el de las filas que cuenta)."""
+    """La ventana en curso por el reloj de la base (el de las filas que cuenta), con `GRACE` de
+    retraso: una fila que se confirma tarde (su hora es la del inicio de su transacción) o que
+    lleva la hora de un proceso algo adelantado aún cae en una ventana sin evaluar."""
     with connection.cursor() as cursor:
-        cursor.execute("SELECT floor(extract(epoch FROM now()) / %s)::bigint", [WINDOW])
-        return int(cursor.fetchone()[0])
+        cursor.execute("SELECT extract(epoch FROM now())")
+        return window_of(float(cursor.fetchone()[0]))
+
+
+def window_of(epoch: float) -> int:
+    return int((epoch - GRACE) // WINDOW)
