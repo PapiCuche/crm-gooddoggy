@@ -85,6 +85,8 @@ class QuoteUpdateSerializer(QuoteFields):
 
 
 class QuoteVersionSerializer(Closed, serializers.Serializer[Any]):
+    """Solo la versión que se leyó; cualquier otro campo, 400."""
+
     version = Whole(min_value=1, max_value=2**31 - 1, help_text=VERSION)
 
 
@@ -95,5 +97,7 @@ def _reason(value: str) -> str:
 
 
 class QuotePriceSerializer(QuoteVersionSerializer):
+    """El precio final escrito a mano, como texto (nunca un número JSON), y su motivo."""
+
     price = Checked(parse_amount, help_text=f"Final por unidad, con IGV. {AMOUNT}")
     reason = Checked(_reason, help_text=f"Obligatorio, hasta {discounts.REASON_MAX} caracteres.")

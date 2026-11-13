@@ -7,8 +7,7 @@
  */
 
 /**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
+ * El precio final escrito a mano, como texto (nunca un número JSON), y su motivo.
  */
 export interface QuotePriceRequest {
   /**

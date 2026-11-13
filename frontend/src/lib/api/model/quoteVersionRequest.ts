@@ -7,8 +7,7 @@
  */
 
 /**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
+ * Solo la versión que se leyó; cualquier otro campo, 400.
  */
 export interface QuoteVersionRequest {
   /**
