@@ -34,7 +34,7 @@ from django.db import DatabaseError
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.conversations import ingress
+from apps.conversations import ingest_alerts, ingress
 from apps.conversations.models import META_ID
 from core.observability.logging import get_logger
 
@@ -244,6 +244,7 @@ def _receive(request: HttpRequest) -> HttpResponse:
     if len(body) > BODY_MAX:
         return HttpResponse(status=413)
     if not signed(request.headers.get("X-Hub-Signature-256"), body):
+        ingest_alerts.bad_signature()  # F7-11a: solo el conteo, sin dirección ni cuerpo
         return HttpResponse(status=401)
     try:
         parsed = parse(body)

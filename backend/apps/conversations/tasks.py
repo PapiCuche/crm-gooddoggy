@@ -21,7 +21,16 @@ from django.db import connection
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.conversations import accounts, commands, credentials, graph, ingress, media, realtime
+from apps.conversations import (
+    accounts,
+    commands,
+    credentials,
+    graph,
+    ingest_alerts,
+    ingress,
+    media,
+    realtime,
+)
 from apps.conversations.channels import (
     AmbiguousChannelError,
     ChannelAdapter,
@@ -368,3 +377,9 @@ def process_webhook_ingress(batch_size: int = 50) -> dict[str, int]:
 def purge_webhook_ingress(days: int = 90, batch_size: int = 1000) -> int:
     """Borra los ítems de los webhooks de más de `days` días: el tope, no el plazo normal."""
     return ingress.purge(days, batch_size)
+
+
+@platform_task(name="conversations.meta_alerts", ignore_result=True)
+def meta_alerts() -> list[str]:
+    """F7-11a: métricas y alertas de la ingesta de Meta por ventana (`ingest_alerts.sweep`)."""
+    return ingest_alerts.sweep()
