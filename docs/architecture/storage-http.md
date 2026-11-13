@@ -16,6 +16,9 @@
   - `presign_get` exige el `content_type` real (el `files.mime_type` por magic bytes) y lo fuerza con `ResponseContentType`. Nunca se usa el tipo que declaró el cliente.
   - `Content-Disposition` lleva el `filename` en ASCII saneado más `filename*` en UTF-8 (RFC 6266).
   - `inline` solo se permite para imágenes y PDF; HTML, SVG y cualquier otro tipo se sirven siempre como `attachment`.
+  - Toda URL firmada de lectura lleva además `response-cache-control: private, no-store` (F7-09a2): ni el navegador ni un proxy guardan la respuesta.
+  - **Medios de mensajes** (`message-media`, F7-09a2): siempre `attachment`, también las imágenes, con un nombre generado (`<clase>.<extensión>`) y el `Content-Type` del mapa canónico de tipos por magic bytes (`apps.conversations.media.EXTENSIONS`), con 60 s de vida. Solo se emite para un archivo con `scan_status = CLEAN` (D-F7-04).
+  - **Requisito de despliegue:** una URL firmada de S3 no puede forzar `X-Content-Type-Options: nosniff` (solo `response-content-type`, `-disposition`, `-cache-control` y similares). El proxy o la CDN que sirva el bucket en producción tiene que añadir `nosniff` a toda respuesta del almacén. En local Garage se expone sin el proxy de Caddy, así que ahí no lo lleva; hoy no se sirve ningún medio porque no hay antivirus.
   - `presign_put(key, content_type, content_length, max_bytes)` exige `0 < content_length <= max_bytes` **antes** de emitir la URL.
     - Firma `ContentType` y `ContentLength`: `content-length` queda en `X-Amz-SignedHeaders`, y cualquier otro tamaño invalida la firma. En Garage v2.4.1 real, un PUT de 5000 bytes sobre una URL firmada para 4 recibe `403 AccessDenied: Invalid signature` y no crea el objeto.
     - El cliente envía los `headers` devueltos tal cual.
