@@ -47,7 +47,7 @@ FAILURE_CODES = (
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
     "CONSENT_REVOKED", "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID",
     "RECIPIENT_UNREACHABLE", "PROVIDER_REJECTED", "PROVIDER_UNKNOWN", "RATE_LIMITED",
-    "QUALITY_BLOCKED", "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR",
+    "QUALITY_BLOCKED", "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR", "MEDIA_NOT_SCANNED",
 )  # fmt: skip
 
 
@@ -86,13 +86,15 @@ class MessageType(models.TextChoices):
         "UNSUPPORTED"  # entrante que el canal aún no entiende: el cuerpo es una frase fija
     )
     # Un medio entrante con su adjunto (F7-09a2b): el cuerpo es la misma frase fija; el sticker es
-    # `IMAGE` (su adjunto dice `STICKER`). Solo entrantes hasta F7-09b (`messages_unsupported_ck`).
+    # `IMAGE` (su adjunto dice `STICKER`). Saliente (F7-09b): `IMAGE` y `DOCUMENT`, con su archivo.
     IMAGE = "IMAGE"
     AUDIO = "AUDIO"
     VIDEO = "VIDEO"
+    DOCUMENT = "DOCUMENT"
 
 
-INBOUND_ONLY = ("UNSUPPORTED", "IMAGE", "AUDIO", "VIDEO")  # los tipos que solo escribe un cliente
+INBOUND_ONLY = ("UNSUPPORTED", "AUDIO", "VIDEO")  # los tipos que solo escribe un cliente
+OUTBOUND_MEDIA = ("IMAGE", "DOCUMENT")  # un saliente de estos tipos lleva su archivo, y solo él
 
 
 class Delivery(models.TextChoices):
@@ -447,6 +449,7 @@ class Message(TenantModel):
     # La decisión de la política (ADR-010) al encolar y tras la última revaluación: solo la
     # instantánea de `PolicyDecision.as_json()` (permitido, modo, motivo y horas), nunca texto.
     policy_decision = models.JSONField(null=True, blank=True)
+    file_id = models.UUIDField(null=True, blank=True)  # el medio saliente: FK compuesta (0027)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -534,6 +537,17 @@ class Message(TenantModel):
             models.CheckConstraint(  # la decisión de la política es solo de lo saliente
                 condition=models.Q(policy_decision__isnull=True) | models.Q(direction="OUTBOUND"),
                 name="messages_policy_ck",
+            ),
+            models.CheckConstraint(  # un archivo solo en un medio saliente, que siempre lo lleva;
+                condition=models.Q(  # un documento nunca es entrante (aún sin antivirus)
+                    file_id__isnull=False, direction="OUTBOUND", message_type__in=OUTBOUND_MEDIA
+                )
+                | (
+                    models.Q(file_id__isnull=True)
+                    & ~models.Q(message_type="DOCUMENT")
+                    & ~models.Q(direction="OUTBOUND", message_type="IMAGE")
+                ),
+                name="messages_file_ck",
             ),
         ]
 

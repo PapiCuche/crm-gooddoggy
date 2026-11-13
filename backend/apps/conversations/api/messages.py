@@ -68,7 +68,8 @@ class MessageSerializer(serializers.Serializer[Any]):
     message_type = serializers.CharField(
         help_text="`TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio "
         "entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y "
-        "el medio en `attachment`. Un valor desconocido se trata como no soportado."
+        "el medio en `attachment`; o saliente: `IMAGE` o `DOCUMENT`, con `body` el pie de foto o "
+        "«Imagen» o «Documento». Un valor desconocido se trata como no soportado."
     )
     body = serializers.CharField(
         allow_null=True, help_text="`null` si no se puede ver el contacto (`contacts.view`)."
