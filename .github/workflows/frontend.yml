@@ -71,9 +71,12 @@ jobs:
           test "$(docker run --rm --entrypoint id crm-frontend:ci -u)" != "0"
           sh ../infra/docker/smoke-image.sh crm-frontend:ci 3000 /o/ci
           # F1-14: un perfil mal escrito no construye (con /demo dentro); las capas ya están en caché.
-          if docker build -q --build-arg CRM_BUILD_PROFILE=Production . >/dev/null 2>&1; then
+          # Solo vale la línea que imprime el rechazo (`#N <segundos> …`): un fallo de red o del registro
+          # no cuenta, y la cabecera del paso, que BuildKit muestra con el valor ya expandido, tampoco.
+          if bad="$(docker build --progress=plain --build-arg CRM_BUILD_PROFILE=Production . 2>&1)"; then
             echo "CRM_BUILD_PROFILE desconocido construyó la imagen" >&2; exit 1
           fi
+          grep -qE '^#[0-9]+ [0-9.]+ CRM_BUILD_PROFILE desconocido: Production \(' <<<"$bad"
         env:
           # F2-07: cabeceras de seguridad de la imagen y nonce de la CSP en cada script del HTML.
           SMOKE_CHECK: node scripts/check-security-headers.mjs

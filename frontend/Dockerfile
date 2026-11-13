@@ -19,7 +19,8 @@ ARG CRM_BUILD_PROFILE=production
 RUN case "$CRM_BUILD_PROFILE" in \
       production) rm -rf src/app/demo ;; \
       development) ;; \
-      *) echo "CRM_BUILD_PROFILE desconocido: production o development" >&2; exit 1 ;; \
+      *) echo "CRM_BUILD_PROFILE desconocido: $CRM_BUILD_PROFILE (production o development)" >&2; \
+         exit 1 ;; \
     esac \
     && BACKEND_ORIGIN="$BACKEND_ORIGIN" NEXT_PUBLIC_INBOX_WS="$NEXT_PUBLIC_INBOX_WS" pnpm build \
     && { [ "$CRM_BUILD_PROFILE" = development ] || node scripts/check-no-demo.mjs; }
