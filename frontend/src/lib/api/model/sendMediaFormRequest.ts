@@ -7,7 +7,8 @@
  */
 
 /**
- * Los campos del formulario de un medio (el archivo lo lee `outbound_media.Capped`).
+ * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+ * pierde en silencio).
  */
 export interface SendMediaFormRequest {
   /** La clave de idempotencia: el mismo id es el mismo mensaje. */

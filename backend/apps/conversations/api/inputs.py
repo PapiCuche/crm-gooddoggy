@@ -62,8 +62,6 @@ def _caption(value: Any) -> str:
 
 
 class SendMediaSerializer(Closed, serializers.Serializer[Any]):
-    """Los campos del formulario de un medio (el archivo lo lee `outbound_media.Capped`)."""
-
     client_message_id = Id(help_text="La clave de idempotencia: el mismo id es el mismo mensaje.")
     caption = Checked(
         _caption, required=False, trim_whitespace=False,

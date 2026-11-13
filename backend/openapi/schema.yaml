@@ -2686,12 +2686,11 @@ paths:
   /api/v1/o/{org_slug}/conversations/{conversation_id}/media/:
     post:
       operationId: conversation_media_send
-      description: 'Pone en cola una imagen (JPEG o PNG) o un documento (PDF) para
-        el cliente (`IMAGE` o `DOCUMENT`, `QUEUED`), con la política del texto, idempotente
-        por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send`
-        y `conversations.view`; 404: no existe o queda fuera del alcance. 409: `MEDIA_NOT_SCANNED`
-        (sin antivirus), la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`;
-        413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.'
+      description: 'Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente,
+        con la política del texto; idempotente por `client_message_id` (202; 200 con
+        el mismo archivo). Pide `messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`,
+        la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`;
+        415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.'
       parameters:
       - in: path
         name: conversation_id
@@ -14579,7 +14578,9 @@ components:
       - user
     SendMediaFormRequest:
       type: object
-      description: Los campos del formulario de un medio (el archivo lo lee `outbound_media.Capped`).
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
       properties:
         client_message_id:
           type: string

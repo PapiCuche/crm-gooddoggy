@@ -281,9 +281,9 @@ def download(
 
 @contextmanager
 def deadline(seconds: float) -> Iterator[_Watchdog]:
-    """Un plazo total para las peticiones del bloque (F7-09b2: la subida de un medio a Meta): el
-    vigilante corta sus sockets al vencer (`fired`) y sus conexiones no vuelven a la reserva. Lo
-    que falle por el corte llega como el error de red de quien llama; no cubre `getaddrinfo`."""
+    """Un plazo total para las conexiones que el bloque abre (F7-09b2: la subida a Meta): el
+    vigilante las corta al vencer (`fired`) y no vuelven a la reserva. No cubre `getaddrinfo` ni una
+    conexión que ya estaba en la reserva (deuda en #734); el corte llega como error de red."""
     dog = _Watchdog(seconds)
     token = _watchdog.set(dog)
     try:

@@ -5680,7 +5680,7 @@ export const getConversationMediaSendUrl = (orgSlug: string, conversationId: str
 };
 
 /**
- * Pone en cola una imagen (JPEG o PNG) o un documento (PDF) para el cliente (`IMAGE` o `DOCUMENT`, `QUEUED`), con la política del texto, idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`; 404: no existe o queda fuera del alcance. 409: `MEDIA_NOT_SCANNED` (sin antivirus), la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.
+ * Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`, la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.
  */
 export const conversationMediaSend = async (
   orgSlug: string,

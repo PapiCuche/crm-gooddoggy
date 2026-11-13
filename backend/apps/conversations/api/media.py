@@ -10,13 +10,12 @@ haría esperar a quien está fuera del alcance detrás de otro, y eso ya es una 
 La URL dura `EXPIRES` segundos, siempre `attachment` con un nombre generado, el tipo del mapa y
 `private, no-store` firmados; la respuesta no se guarda en caché y nunca se registra.
 
-`POST …/conversations/{id}/media/` (F7-09b2, formulario `multipart/form-data`): el tope por persona
-(`throttle`), el permiso, el 404 de alcance, el antivirus (D-F7-04) y la política se miran **antes**
-de leer el cuerpo: nada llega al disco ni al almacén de quien no puede enviar. El cuerpo pide
-`Content-Length` (411) dentro del tope (413) y lo lee `outbound_media.Capped`, que corta al pasarse;
-luego el tipo real (415), el blob y el comando, que vuelve a mirarlo todo con la conversación
-bloqueada. Toda la vista es una transacción (`TenantResolutionMiddleware`): ante cualquier error, o
-si era un reintento, el blob nuevo se borra (el de un mensaje ya guardado tiene otra clave).
+`POST …/conversations/{id}/media/` (F7-09b2, `multipart/form-data`): tope por persona, permiso,
+alcance (404), antivirus (D-F7-04), política y `Content-Length` (411, 413) **antes** de analizar o
+guardar el cuerpo. Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope
+del proxy (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped`
+corta al pasarse; luego el tipo real (415), el blob y el comando. Ante cualquier error, o en un
+reintento, el blob nuevo se borra (la vista es una transacción; el guardado tiene otra clave).
 """
 
 import datetime as dt
@@ -141,12 +140,11 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
             202: MessageSerializer,
             **errors(400, 401, 403, 404, 409, 411, 413, 415, 429),
         },
-        description="Pone en cola una imagen (JPEG o PNG) o un documento (PDF) para el cliente "
-        "(`IMAGE` o `DOCUMENT`, `QUEUED`), con la política del texto, idempotente por "
-        "`client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y "
-        "`conversations.view`; 404: no existe o queda fuera del alcance. 409: `MEDIA_NOT_SCANNED` "
-        "(sin antivirus), la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
-        "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.",
+        description="Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política "
+        "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
+        "`messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`, la política o "
+        "`CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 "
+        "`MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.",
     ),
 )
 class SendMediaView(APIView):

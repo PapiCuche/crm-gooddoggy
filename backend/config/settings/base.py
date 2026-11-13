@@ -102,8 +102,7 @@ MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
-# Subidas de medios salientes (F7-09b2): peticiones de una persona por ventana (segundos), como las
-# de canales (la purga del acceso pide una ventana menor que su calma). Pendiente del PO.
+# Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
 # cotización, y por persona en todas, por ventana (segundos). Pendiente de confirmación del PO.

@@ -6,9 +6,8 @@ confirmar). Sin antivirus (D-F7-04) no se guarda nada salvo con `MEDIA_SEND_UNSC
 al almacén privado **antes** de la transacción del comando, que crea el archivo
 (`scan_status = PENDING`) y el mensaje; si el comando falla, o era un reintento, quien llama lo
 borra con `discard`. Un archivo saliente nunca se sirve al navegador (`selectors.SERVED` pide un
-mensaje entrante). Su propósito es `message-media-out` (F7-09b2): la base ata la clave al propósito
-(`files_key_shape_ck`) y el reclamo exige ese propósito, así que un mensaje saliente nunca lleva un
-blob entrante. La ruta lo lee con `Capped`. Registros: ids y la clase de un error."""
+mensaje entrante). Propósito `message-media-out` (F7-09b2), que el reclamo exige: un saliente nunca
+lleva un blob entrante. La ruta lo lee con `Capped`. Registros: ids y la clase de un error."""
 
 import re
 from dataclasses import dataclass

@@ -134,8 +134,7 @@ REASONS = {
 
 
 def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
-    """`commands.record_outbound` en nombre de quien llama (una respuesta al cliente), con sus
-    errores como los del contrato: 409 con el motivo de la política o `CLIENT_MESSAGE_ID_TAKEN`."""
+    """`record_outbound` de quien llama, con sus 409 (política o `CLIENT_MESSAGE_ID_TAKEN`)."""
     tenant = context.current()
     assert tenant is not None  # noqa: S101 — la ruta es de un tenant
     try:

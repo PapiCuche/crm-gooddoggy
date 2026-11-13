@@ -12,8 +12,7 @@ entre instancias), en una sola sentencia que bloquea la fila. Cuenta antes de mi
 rechaza (429 con `Retry-After`) al pasar el tope. Las tres rutas comparten el contador. La purga
 del acceso borra estas filas cuando su ventana ya pasó (la ventana es menor que su calma).
 
-La subida de un medio (F7-09b2, `POST …/conversations/{id}/media/`) tiene su propio contador por
-persona (`med:usr:<id>`, `MEDIA_UPLOAD_THROTTLE`): cuenta antes de leer el cuerpo.
+La subida de un medio (F7-09b2) tiene su contador por persona (`med:usr:<id>`).
 """
 
 import re
