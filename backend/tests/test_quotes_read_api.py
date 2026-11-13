@@ -24,6 +24,7 @@ from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx
 from tests.test_opportunities_tables import make
 from tests.test_prices import price_list
+from tests.test_quote_tables import issued
 from tests.test_self_context import NOT_FOUND, reply, signed
 
 crm, pipelines, real_stack = scopes.crm, scopes.pipelines, scopes.real_stack
@@ -163,18 +164,22 @@ def test_the_list_never_carries_a_cost_a_margin_or_the_free_text(board: SimpleNa
         assert word not in body, word
 
 
-def test_the_filters_combine_and_each_one_is_asked_once(board: SimpleNamespace) -> None:
+def test_the_filters_combine_and_each_one_is_asked_once(
+    board: SimpleNamespace, migrator: Any
+) -> None:
     opp = make(board.a, contact_id=board.ids["plain"])
     with tenant_scope(ctx(board.a)):
         Quote.objects.filter(pk=board.quotes["vera"]).update(
             status="CANCELLED", cancelled_at=NOW, cancel_reason="No"
         )
-        Quote.objects.filter(pk=board.quotes["sam"]).update(
-            status="SENT", valid_until=NOW - timedelta(days=1)
-        )
-        Quote.objects.filter(pk=board.quotes["ana"]).update(
-            status="SENT", valid_until=NOW + timedelta(days=1), opportunity_id=opp.pk
-        )
+        for who in ("sam", "ana"):
+            Quote.objects.filter(pk=board.quotes[who]).update(status="SENT", **issued())
+        Quote.objects.filter(pk=board.quotes["ana"]).update(opportunity_id=opp.pk)
+    migrator.execute(  # ya vencida: solo quien mantiene la base reescribe lo emitido
+        "UPDATE quotes SET sent_at = %s, valid_until = %s WHERE id = %s",
+        [NOW - timedelta(days=9), NOW - timedelta(days=1), board.quotes["sam"]],
+    )
+    with tenant_scope(ctx(board.a)):
         Quote.objects.filter(pk=board.quotes["nobody"]).update(valid_until=NOW - timedelta(days=1))
     number = {}
     with tenant_scope(ctx(board.a)):

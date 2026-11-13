@@ -20,7 +20,7 @@ from tests.factories import make_user
 from tests.test_memberships import ctx, join
 from tests.test_pipelines_tables import as_migrator
 from tests.test_prices import price_list
-from tests.test_quote_tables import line, quote
+from tests.test_quote_tables import issued, line, quote
 
 world = tables.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -78,7 +78,9 @@ def go(world: SimpleNamespace, made: Quote, *states: str) -> None:
     """Lleva la cotización por esos estados, como el runtime (`crm_app`), con sus disparadores."""
     for state in states:
         with tenant_scope(ctx(world.a)):
-            Quote.objects.filter(pk=made.pk).update(status=state)
+            Quote.objects.filter(pk=made.pk).update(
+                status=state, **(issued() if state == "SENT" else {})
+            )
 
 
 def fails(world: SimpleNamespace, match: str, work: Any) -> None:
