@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 MAX_PER_RUN = 500  # por organización y pasada: el resto, en el siguiente barrido
 RUN_SECONDS = 120.0
 QUEUE_EXPIRES = 300  # sin workers no se acumulan barridos viejos
-LOCK_TIMEOUT_MS = 10_000
+LOCK_TIMEOUT = "10s"  # lo que espera una cotización bloqueada: luego, el siguiente barrido
 
 
 def expire_due(ctx: TenantContext, max_per_run: int) -> Counter[str]:
@@ -38,9 +38,7 @@ def expire_due(ctx: TenantContext, max_per_run: int) -> Counter[str]:
         try:
             with tenant_scope(ctx) as tenant:
                 with connection.cursor() as cursor:  # solo esta transacción
-                    cursor.execute(
-                        "SELECT set_config('lock_timeout', %s, true)", [f"{LOCK_TIMEOUT_MS}ms"]
-                    )
+                    cursor.execute("SELECT set_config('lock_timeout', %s, true)", [LOCK_TIMEOUT])
                 done["expired" if answers.expire_quote(tenant, pk) else "skipped"] += 1
         except Exception as error:  # noqa: BLE001 — una cotización no detiene el resto
             logger.error("quotes.expiry_failed", organization_id=str(ctx.organization_id),

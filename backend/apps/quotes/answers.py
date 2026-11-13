@@ -75,10 +75,8 @@ def _move(ctx: TenantContext, ectx: Any, alias: str, opportunity_id: UUID) -> st
             opp = _locked(alias, opportunity_id)
             if not all(can(ectx, f"opportunities.{c}", opp) for c in ("view", "update")):
                 return "skipped:forbidden"
-            stages = PipelineStage.objects.using(alias).filter(
-                pipeline_id=opp.pipeline_id, code=STAGE, is_active=True
-            )
-            stage = stages.values_list("pk", flat=True).first()
+            stages = PipelineStage.objects.using(alias).values_list("pk", flat=True)
+            stage = stages.filter(pipeline_id=opp.pipeline_id, code=STAGE, is_active=True).first()
             if stage is None:
                 return "skipped:no_stage"
             if stage == opp.stage_id:
@@ -116,10 +114,8 @@ def _answer(
                      **{k: [None, "[texto]"] for k in said}}  # fmt: skip
             about: dict[str, Any] = {}
             if why is None and (opp := quote.opportunity_id) is not None:
-                about = {
-                    "opportunity_id": str(opp),
-                    "opportunity_move": _move(ctx, ectx, alias, opp),
-                }
+                about = {"opportunity_id": str(opp),
+                         "opportunity_move": _move(ctx, ectx, alias, opp)}  # fmt: skip
             record(ctx, action, _entity(quote), shown, about)
             _event(ctx, quote, action)
     except IntegrityError as error:

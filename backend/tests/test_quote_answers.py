@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -224,11 +225,7 @@ def test_any_other_failure_while_accepting_writes_nothing(
     seller, opp = sender(shop, **OPPS), tables.make(shop.a)
     made = sold(shop, seller, opp)
     before = len(audit(migrator))
-
-    def boom(*args: Any, **kwargs: Any) -> None:
-        raise DatabaseError("boom")
-
-    monkeypatch.setattr(answers, failing, boom)
+    monkeypatch.setattr(answers, failing, Mock(side_effect=DatabaseError("boom")))
     with pytest.raises(DatabaseError, match="boom"):
         accept(shop, seller, made)
     after = reread(shop, made)
