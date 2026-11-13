@@ -215,6 +215,7 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         "apps.quotes.answers -> apps.deals.models",  # F5-09c3: aceptar mueve la oportunidad
         "apps.quotes.answers -> apps.deals.opportunities",
         "apps.quotes.answers -> apps.deals.opportunity_stages",
+        "apps.quotes.api.inputs -> apps.deals.api.inputs",  # F5-09e: los serializadores estrictos
     ]
     quotes = [c for c in contracts if "apps.quotes.commands" in c.get("protected_modules", [])]
     assert [(c["type"], c["protected_modules"], c["allowed_importers"]) for c in quotes] == [

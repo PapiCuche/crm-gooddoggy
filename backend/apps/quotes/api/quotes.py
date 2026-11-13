@@ -1,8 +1,11 @@
-"""Rutas de tenant de las cotizaciones: `…/quotes/` (F5-09d y F5-09d2, E13), solo lectura: la
+"""Rutas de tenant de las cotizaciones: `…/quotes/` (F5-09d y F5-09d2, E13). Lectura: la
 lista y el detalle con `quotes.view`, que admite alcance por quien creó la cotización (`TEAM`
 incluye a sus compañeros de equipo): `ScopeFilter` deja en el listado y en `get_object()` solo las
 que la política permite. Fuera del alcance la cotización no existe, igual que la de otra
-organización o una inexistente: 404. La escritura llega con F5-09e.
+organización o una inexistente: 404. Escritura (F5-09e): crear con `quotes.create` y
+`quotes.view` y cambiar con `quotes.view` y `quotes.update`, comprobados antes de leer el cuerpo o
+la fila; el alcance lo decide el comando sobre la fila bloqueada y la respuesta es el detalle de
+`GET`. Los errores, en `apps.quotes.api.errors`.
 
 El contacto sale con `id` y `display_name`, y el nombre solo si quien consulta puede ver ese
 contacto (`contacts.view` y su alcance); si no, `display_name` es `null`: tener las cotizaciones de
@@ -10,17 +13,22 @@ otro no da sus clientes. Los importes son texto con dos decimales y los precios 
 congelaron al cotizar. Nunca salen costos ni márgenes: la cotización no los guarda (ADR-006)."""
 
 from typing import Any
+from uuid import UUID
 
 from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.filters import BaseFilterBackend
+from rest_framework.request import Request
+from rest_framework.response import Response
 
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
-from apps.quotes import selectors
+from apps.quotes import commands, selectors
+from apps.quotes.api import inputs
+from apps.quotes.api.errors import domain
 from apps.quotes.models import Quote, QuoteItem
 from core.api.schema import errors
 from core.tenancy import context
@@ -150,12 +158,28 @@ class QuotesQuery:
         "(ADR-016). Los filtros se combinan y la página siguiente se pide con los mismos: `mine`, "
         "`status`, `contact_id`, `opportunity_id`, `number` (exacto) y `expired`. 400: un filtro "
         "repetido o inválido. Sin líneas: están en el detalle.",
-    )
+    ),
+    post=extend_schema(
+        operation_id="quotes_create",
+        tags=["quotes"],
+        request=inputs.QuoteCreateSerializer,
+        responses={201: QuoteDetailSerializer, **errors(400, 401, 403, 404)},
+        description="Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`, de "
+        "un contacto o de una oportunidad que ve (`contacts.view`, `opportunities.view`); si no, "
+        "o no existen, un único 400 general. Repetirlo crea otro borrador.",
+    ),
 )
 class QuotesView(QuotesQuery, generics.ListAPIView):
-    required_permissions = {"GET": "quotes.view"}
+    required_permissions = {"GET": "quotes.view", "POST": ("quotes.create", "quotes.view")}
     serializer_class = QuoteSerializer
     filter_backends = [ScopeFilter, QuoteSearch]  # en este orden
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        wanted = inputs.QuoteCreateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        with domain():
+            made = commands.create_quote(_tenant(), **wanted.validated_data)
+        return reply(request, made.pk, 201)
 
 
 @extend_schema_view(
@@ -165,13 +189,41 @@ class QuotesView(QuotesQuery, generics.ListAPIView):
         responses={200: QuoteDetailSerializer, **errors(401, 403, 404)},
         description="Una cotización con sus líneas en orden, tal como se congelaron. 404: no es de "
         "la organización, no existe o queda fuera del alcance de `quotes.view`.",
-    )
+    ),
+    patch=extend_schema(
+        operation_id="quotes_update",
+        tags=["quotes"],
+        request=inputs.QuoteUpdateSerializer,
+        responses={200: QuoteDetailSerializer, **errors(400, 401, 403, 404, 409)},
+        description="Cambia lo enviado de un borrador con `quotes.view` y `quotes.update` (fuera "
+        "del alcance: 404). 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. Sin cambios no escribe.",
+    ),
 )
 class QuoteView(QuotesQuery, generics.RetrieveAPIView):
-    required_permissions = {"GET": "quotes.view"}
+    required_permissions = {"GET": "quotes.view", "PATCH": ("quotes.view", "quotes.update")}
     serializer_class = QuoteDetailSerializer
     lookup_url_kwarg = "quote_id"
 
     def get_queryset(self) -> QuerySet[Quote]:
-        lines = QuoteItem.objects.order_by("sort_order")  # las líneas, en una consulta más
-        return super().get_queryset().prefetch_related(Prefetch("items", queryset=lines))
+        return detail(super().get_queryset())
+
+    def patch(self, request: Request, quote_id: UUID, **kwargs: Any) -> Response:
+        wanted = inputs.QuoteUpdateSerializer(data=request.data)
+        wanted.is_valid(raise_exception=True)
+        with domain():
+            commands.update_quote(_tenant(), quote_id=quote_id, **wanted.validated_data)
+        return reply(request, quote_id)
+
+
+def detail(found: QuerySet[Quote]) -> QuerySet[Quote]:
+    lines = QuoteItem.objects.order_by("sort_order")  # las líneas, en una consulta más
+    return found.prefetch_related(Prefetch("items", queryset=lines))
+
+
+def reply(request: Request, quote_id: UUID, status: int = 200) -> Response:
+    """La cotización como la lee `GET …/{id}/`, en el alcance de `quotes.view` de quien escribe
+    (el comando ya lo comprobó; al crear, es suya)."""
+    ectx = request_context(request)
+    assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+    found = scoped(ectx, "quotes.view", with_contact_name(detail(selectors.quotes()), request))
+    return Response(QuoteDetailSerializer(found.get(pk=quote_id)).data, status=status)

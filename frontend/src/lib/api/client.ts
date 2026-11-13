@@ -145,6 +145,7 @@ import type {
   PatchedPipelineUpdateRequest,
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
+  PatchedQuoteUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedStageUpdateRequest,
   PatchedTagUpdateRequest,
@@ -169,6 +170,7 @@ import type {
   Promotion,
   PromotionCreateRequest,
   PromotionsListParams,
+  QuoteCreateRequest,
   QuoteDetail,
   QuotesListParams,
   Reservation,
@@ -14053,6 +14055,108 @@ export function useQuotesList<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getQuotesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/`;
+};
+
+/**
+ * Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`, de un contacto o de una oportunidad que ve (`contacts.view`, `opportunities.view`); si no, o no existen, un único 400 general. Repetirlo crea otro borrador.
+ */
+export const quotesCreate = async (
+  orgSlug: string,
+  quoteCreateRequest: QuoteCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quoteCreateRequest),
+  });
+};
+
+export const getQuotesCreateMutationKey = () => ["quotesCreate"] as const;
+
+export const getQuotesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesCreate>>,
+    TError,
+    QuotesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesCreate>>,
+  TError,
+  QuotesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesCreate>>,
+    QuotesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return quotesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesCreateMutationResult = NonNullable<Awaited<ReturnType<typeof quotesCreate>>>;
+export type QuotesCreateMutationBody = QuoteCreateRequest;
+export type QuotesCreateMutationError = ErrorType<Error>;
+export type QuotesCreateMutationVariables = { orgSlug: string; data: QuoteCreateRequest };
+
+export const useQuotesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesCreate>>,
+      TError,
+      QuotesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesCreate>>,
+  TError,
+  QuotesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesCreateMutationOptions(options), queryClient);
+};
+
 export const getQuotesRetrieveUrl = (orgSlug: string, quoteId: string) => {
   return `/api/v1/o/${orgSlug}/quotes/${quoteId}/`;
 };
@@ -14179,6 +14283,113 @@ export function useQuotesRetrieve<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getQuotesUpdateUrl = (orgSlug: string, quoteId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/`;
+};
+
+/**
+ * Cambia lo enviado de un borrador con `quotes.view` y `quotes.update` (fuera del alcance: 404). 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. Sin cambios no escribe.
+ */
+export const quotesUpdate = async (
+  orgSlug: string,
+  quoteId: string,
+  patchedQuoteUpdateRequest: PatchedQuoteUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesUpdateUrl(orgSlug, quoteId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedQuoteUpdateRequest),
+  });
+};
+
+export const getQuotesUpdateMutationKey = () => ["quotesUpdate"] as const;
+
+export const getQuotesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesUpdate>>,
+    TError,
+    QuotesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesUpdate>>,
+  TError,
+  QuotesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesUpdate>>,
+    QuotesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, quoteId, data } = props ?? {};
+
+    return quotesUpdate(orgSlug, quoteId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof quotesUpdate>>>;
+export type QuotesUpdateMutationBody = PatchedQuoteUpdateRequest;
+export type QuotesUpdateMutationError = ErrorType<Error>;
+export type QuotesUpdateMutationVariables = {
+  orgSlug: string;
+  quoteId: string;
+  data: PatchedQuoteUpdateRequest;
+};
+
+export const useQuotesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesUpdate>>,
+      TError,
+      QuotesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesUpdate>>,
+  TError,
+  QuotesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesUpdateMutationOptions(options), queryClient);
+};
 
 export const getDiscountPoliciesListUrl = (
   orgSlug: string,
