@@ -9,11 +9,22 @@ haría esperar a quien está fuera del alcance detrás de otro, y eso ya es una 
 
 La URL dura `EXPIRES` segundos, siempre `attachment` con un nombre generado, el tipo del mapa y
 `private, no-store` firmados; la respuesta no se guarda en caché y nunca se registra.
+
+`POST …/conversations/{id}/media/` (F7-09b2, `multipart/form-data`): tope por persona, permiso,
+alcance (404), antivirus (D-F7-04), política y `Content-Length` (411, 413) **antes** de analizar o
+guardar el cuerpo. Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope
+del proxy (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped`
+corta al pasarse; luego el tipo real (415), el blob y el comando. Ante cualquier error, o en un
+reintento, el blob nuevo se borra (la vista es una transacción; el guardado tiene otra clave).
 """
 
 import datetime as dt
+import re
 from typing import Any
 
+from django.conf import settings
+from django.core.exceptions import SuspiciousOperation
+from django.http.multipartparser import MultiPartParser, MultiPartParserError
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import serializers
@@ -23,15 +34,26 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.access.permissions import request_context
-from apps.access.selectors import scoped
-from apps.conversations import selectors
-from apps.conversations.api.messages import shows_body
+from apps.access.selectors import can, scoped
+from apps.conversations import outbound_media, policy, selectors
+from apps.conversations.api import inputs
+from apps.conversations.api.messages import REASONS, MessageSerializer, queue, shows_body
 from apps.conversations.media import EXTENSIONS
 from apps.conversations.models import Conversation
 from core import storage
+from core.api.errors import ApiError
 from core.api.schema import errors
+from core.tenancy import context
 
 EXPIRES = 60  # segundos (el almacén admite hasta `storage.MAX_PRESIGN_SECONDS`)
+SLACK = 64 << 10  # bytes del formulario además del archivo (separadores, cabeceras y campos)
+REFUSED = {
+    "MEDIA_NOT_SCANNED": (409, "Aún no se pueden enviar archivos: falta el antivirus."),
+    "MEDIA_TOO_LARGE": (413, "El archivo pasa del tamaño permitido para su tipo."),
+    "MEDIA_TYPE_NOT_ALLOWED": (415, "Solo imágenes JPEG o PNG y documentos PDF."),
+    "LENGTH_REQUIRED": (411, "Falta la longitud del cuerpo (Content-Length)."),
+}
+FORM = "Un formulario multipart/form-data con un solo archivo, en `file`."
 
 
 class MessageAttachmentUrlSerializer(serializers.Serializer[Any]):
@@ -79,4 +101,89 @@ class AttachmentUrlView(APIView):
         )
         response["Cache-Control"] = storage.PRIVATE_CACHE
         response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
+def _refuse(code: str) -> ApiError:
+    return ApiError(code, *REFUSED[code])
+
+
+def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
+    """Los campos del formulario (cada uno una vez); el archivo queda en `handler.sink`."""
+    length = request.META.get("CONTENT_LENGTH") or ""
+    if not re.fullmatch(r"[0-9]{1,12}", length):  # `chunked` no se acota solo
+        raise _refuse("LENGTH_REQUIRED")
+    if int(length) > handler.limit + SLACK:  # sin leer nada
+        raise _refuse("MEDIA_TOO_LARGE")
+    raw = request._request
+    try:
+        fields, _ = MultiPartParser(request.META, raw, [handler], raw.encoding or "utf-8").parse()
+    except MultiPartParserError, SuspiciousOperation:
+        raise serializers.ValidationError({"file": [FORM]}) from None
+    if handler.refused == "MEDIA_TOO_LARGE":
+        raise _refuse("MEDIA_TOO_LARGE")
+    if handler.refused or handler.sink is None:
+        raise serializers.ValidationError({"file": [FORM]})
+    twice = sorted(name for name, values in fields.lists() if len(values) > 1)
+    if twice:
+        raise serializers.ValidationError(dict.fromkeys(twice, ["Una sola vez."]))
+    return fields.dict()
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="conversation_media_send",
+        tags=["conversations"],
+        request={"multipart/form-data": inputs.SendMediaFormSerializer},
+        responses={
+            200: MessageSerializer,
+            202: MessageSerializer,
+            **errors(400, 401, 403, 404, 409, 411, 413, 415, 429),
+        },
+        description="Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política "
+        "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
+        "`messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`, la política o "
+        "`CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 "
+        "`MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.",
+    ),
+)
+class SendMediaView(APIView):
+    required_permissions = {"POST": ("messages.send", "conversations.view")}
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        ectx, tenant = request_context(request), context.current()
+        assert ectx is not None and tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        mine = scoped(ectx, "conversations.view", Conversation.objects.all())
+        found = mine.filter(pk=kwargs["conversation_id"]).first()
+        if found is None or not can(ectx, "messages.send", found):  # antes de leer el cuerpo
+            raise NotFound
+        if not settings.MEDIA_SEND_UNSCANNED:  # D-F7-04: nada sale sin antivirus
+            raise _refuse("MEDIA_NOT_SCANNED")
+        decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY)
+        if decision.reason is not None:  # antes de guardar nada; el comando la repite
+            raise ApiError(decision.reason, 409, REASONS[decision.reason])
+        handler = outbound_media.Capped(max(outbound_media.CAPS.values()))
+        try:
+            wanted = inputs.SendMediaSerializer(data=_read(request, handler))
+            wanted.is_valid(raise_exception=True)
+            assert handler.sink is not None  # noqa: S101 — `_read` lo exige
+            prepared = outbound_media.prepare(tenant, handler.sink, handler.file_name)
+        except outbound_media.Refused as refused:
+            raise _refuse(refused.code) from None
+        finally:
+            if handler.sink is not None:
+                handler.sink.file.close()
+        try:  # la vista es una transacción: cualquier error la deshace, y el blob sobra
+            caption = wanted.validated_data.get("caption")
+            message, created = queue(
+                found, body=caption or outbound_media.LABELS[prepared.kind], media=prepared,
+                client_message_id=wanted.validated_data["client_message_id"],
+            )  # fmt: skip
+            shown = MessageSerializer(message, context={"show_body": shows_body(ectx, found)})
+            response = Response(shown.data, status=202 if created else 200)
+        except BaseException:  # también cada 4xx tras el comando: aquí todos son excepciones
+            outbound_media.discard(prepared)
+            raise
+        if not created:  # un reintento: el mensaje guardado tiene su propio archivo
+            outbound_media.discard(prepared)
         return response

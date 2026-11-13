@@ -9,7 +9,8 @@ import socket
 import ssl
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from typing import IO, Any
 from urllib.parse import urlsplit
 
@@ -274,11 +275,20 @@ def download(
         raise ValueError("Los hosts de una descarga tienen que ser de META_MEDIA_HOSTS")
     check_url(url, hosts)
     sent = _check_headers(headers) | {"accept-encoding": "identity"}
+    with deadline(seconds) as dog:
+        return _fetch(url, sink, max_bytes, sent, seconds, dog)
+
+
+@contextmanager
+def deadline(seconds: float) -> Iterator[_Watchdog]:
+    """Un plazo total para las conexiones que el bloque abre (F7-09b2: la subida a Meta): el
+    vigilante las corta al vencer (`fired`) y no vuelven a la reserva. No cubre `getaddrinfo` ni una
+    conexión que ya estaba en la reserva (deuda en #734); el corte llega como error de red."""
     dog = _Watchdog(seconds)
     token = _watchdog.set(dog)
     try:
         dog.start()
-        return _fetch(url, sink, max_bytes, sent, seconds, dog)
+        yield dog
     finally:
         dog.stop()
         _watchdog.reset(token)

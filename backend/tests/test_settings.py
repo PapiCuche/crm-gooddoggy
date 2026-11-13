@@ -435,7 +435,7 @@ def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -
     from config.settings import base
 
     kept = max(window for _, window, _, _ in base.LOGIN_THROTTLE.values())
-    assert base.CHANNEL_CHECK_THROTTLE[1] < kept
+    assert base.CHANNEL_CHECK_THROTTLE[1] < kept and base.MEDIA_UPLOAD_THROTTLE[1] < kept
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (5, 59), (5, 841), (5, 3600)])

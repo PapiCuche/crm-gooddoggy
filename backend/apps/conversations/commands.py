@@ -460,8 +460,8 @@ def record_outbound(
         _uuid(client_message_id, "id"),
     )
     text = _body(body)
-    if media is not None and len(text) > outbound_media.CAPTION_MAX:  # lo que admite WhatsApp
-        raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} caracteres")
+    if media is not None and outbound_media.units(text) > outbound_media.CAPTION_MAX:  # WhatsApp
+        raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} unidades UTF-16")
     with transaction.atomic(using=alias):
         ectx = _allowed(ctx, "messages.send")
         convo = _locked(alias, conversation_id)
@@ -481,7 +481,7 @@ def record_outbound(
             File.objects.using(alias).create(
                 id=media.file_id, storage_key=media.key, original_name=media.name,
                 mime_type=media.mime, size_bytes=media.size, sha256=media.sha256,
-                purpose="message-media", created_by_user_id=ctx.user_id,
+                purpose=outbound_media.PURPOSE, created_by_user_id=ctx.user_id,
             )  # fmt: skip
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",
@@ -818,6 +818,12 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         shown = None
         if message.file_id is not None:  # D-F7-04: solo `CLEAN`, o `PENDING` si se decidió
             file = File.objects.using(alias).get(pk=message.file_id)
+            kind = outbound_media.TYPES.get(file.mime_type)
+            if file.purpose != outbound_media.PURPOSE or kind != message.message_type:
+                advance_delivery(  # un archivo que no se preparó para salir (p. ej., uno entrante)
+                    ctx, message_id=message.pk, status=Delivery.FAILED, reason="ADAPTER_REJECTED"
+                )
+                return None
             pending = file.scan_status == "PENDING" and settings.MEDIA_SEND_UNSCANNED
             if file.scan_status != "CLEAN" and not pending:
                 advance_delivery(
