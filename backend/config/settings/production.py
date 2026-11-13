@@ -27,6 +27,7 @@ from config.settings.base import (
     META_WEBHOOK_VERIFY_TOKEN,
     SECRET_KEY,
     SECRETS_KEKS,
+    STORAGE_PUBLIC_ENDPOINT_URL,
     TEST_ACCOUNTS_ORGANIZATION,
 )
 
@@ -57,6 +58,17 @@ _storage = urlsplit(env.optional("STORAGE_ENDPOINT_URL", ""))
 if _storage.geturl() and (_storage.scheme != "https" or _storage.username or _storage.password):
     raise ImproperlyConfigured(
         "STORAGE_ENDPOINT_URL de production debe ser https y sin credenciales"
+    )
+# Las URLs firmadas que abre el navegador: https y en otro origen que la aplicación (un medio
+# recibido nunca se sirve desde el origen del CRM). `env.origin` ya rechaza credenciales y rutas.
+_public = urlsplit(STORAGE_PUBLIC_ENDPOINT_URL)
+if STORAGE_PUBLIC_ENDPOINT_URL and (
+    _public.scheme != "https"
+    or STORAGE_PUBLIC_ENDPOINT_URL.lower() == APP_ORIGIN.lower()
+    or (_public.hostname or "") in [host.lower() for host in ALLOWED_HOSTS]
+):
+    raise ImproperlyConfigured(
+        "STORAGE_PUBLIC_ENDPOINT_URL de production debe ser https y en otro origen que la app"
     )
 
 # ADR-019: sin servidor de correo, enviar falla al intentarlo. Con servidor, va cifrado

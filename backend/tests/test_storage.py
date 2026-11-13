@@ -7,9 +7,12 @@ import urllib.request
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import MagicMock
+from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
 import pytest
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError
 from django.test import override_settings
@@ -56,6 +59,37 @@ def test_storage_backend_comes_from_settings() -> None:
     assert isinstance(storage(), InMemoryStorage)
     with override_settings(STORAGE_BACKEND="s3", STORAGE_BUCKET=""):
         pytest.raises(ImproperlyConfigured, storage)
+
+
+def test_only_the_urls_for_the_browser_are_signed_with_the_public_endpoint() -> None:
+    client, signer, k = MagicMock(), MagicMock(), key()
+    s3 = S3CompatibleStorage(bucket="b", client=client, signer=signer)
+    s3.put(k, io.BytesIO(b"x"), content_type="image/png", content_length=1)
+    s3.open(k), s3.head(k), s3.delete(k)
+    assert not signer.method_calls  # leer y escribir el objeto: siempre el endpoint interno
+    s3.presign_get(k, expires_in=60, filename="a.png", content_type="image/png")
+    s3.presign_put(k, expires_in=60, content_type="image/png", content_length=1, max_bytes=9)
+    assert [c[1][0] for c in signer.method_calls] == ["get_object", "put_object"]
+    assert not client.generate_presigned_url.called
+    alone = MagicMock()  # sin endpoint público, firma el mismo cliente
+    S3CompatibleStorage(bucket="b", client=alone).presign_get(
+        k, expires_in=60, filename="a.png", content_type="image/png"
+    )
+    assert alone.generate_presigned_url.called
+
+
+@pytest.mark.parametrize("public", ["http://localhost:3900", ""])
+def test_the_public_endpoint_signs_and_the_internal_one_still_talks_to_the_bucket(
+    public: str,
+) -> None:
+    store = {"STORAGE_BUCKET": "b", "STORAGE_ACCESS_KEY_ID": "k", "STORAGE_SECRET_ACCESS_KEY": "s"}
+    with override_settings(
+        STORAGE_ENDPOINT_URL="http://garage:3900", STORAGE_PUBLIC_ENDPOINT_URL=public, **store
+    ):
+        s3 = from_settings()  # firmar no toca la red
+    url = s3.presign_get(key(), expires_in=60, filename="a.png", content_type="image/png")
+    assert urlsplit(url).netloc == urlsplit(public or "http://garage:3900").netloc
+    assert s3.client.meta.endpoint_url == "http://garage:3900"
 
 
 @pytest.mark.usefixtures("tenant_db")
@@ -165,6 +199,27 @@ def test_contract_presigned_get_and_put(s3: S3CompatibleStorage) -> None:
         assert response.headers["Cache-Control"] == "private, no-store"  # firmado en la URL
     with pytest.raises(ValueError):
         s3.presign_get(k, expires_in=3600, filename="foto.png", content_type="image/png")
+    s3.delete(k)
+
+
+def test_contract_a_url_signed_for_the_public_host_works_only_through_that_host(
+    s3: S3CompatibleStorage,
+) -> None:
+    """SigV4 firma `Host`: Garage acepta la URL por el host público y la rechaza por otro."""
+    internal = urlsplit(settings.STORAGE_ENDPOINT_URL)
+    alias = {"127.0.0.1": "localhost", "localhost": "127.0.0.1"}[internal.hostname or ""]
+    public = f"{internal.scheme}://{alias}:{internal.port}"
+    with override_settings(STORAGE_PUBLIC_ENDPOINT_URL=public):
+        browser = from_settings()
+    k = key()
+    browser.put(k, io.BytesIO(b"\x89PNG"), content_type="image/png", content_length=4)
+    url = browser.presign_get(k, expires_in=60, filename="a.png", content_type="image/png")
+    assert urlsplit(url).netloc == f"{alias}:{internal.port}"
+    with fetch(url) as response:
+        assert response.read() == b"\x89PNG"
+    elsewhere = urlunsplit(urlsplit(url)._replace(netloc=internal.netloc))
+    with pytest.raises(urllib.error.HTTPError, match="403"):  # el mismo URL por otro host
+        fetch(elsewhere)
     s3.delete(k)
 
 

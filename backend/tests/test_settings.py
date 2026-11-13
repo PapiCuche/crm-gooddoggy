@@ -19,6 +19,7 @@ BASE_ENV: dict[str, str | None] = {
     "CRM_MIGRATOR_PASSWORD": None,
     "UVICORN_FORWARDED_ALLOW_IPS": None,
     "STORAGE_ENDPOINT_URL": None,
+    "STORAGE_PUBLIC_ENDPOINT_URL": None,
     "MAIL_BACKEND": None,
     "EMAIL_HOST": None,
     "EMAIL_PORT": None,
@@ -174,6 +175,27 @@ def test_production_storage_endpoint_requires_tls(
         load_production(monkeypatch, STORAGE_ENDPOINT_URL=valid)
     with pytest.raises(ImproperlyConfigured):
         load_production(monkeypatch, STORAGE_ENDPOINT_URL=endpoint)
+
+
+@pytest.mark.parametrize(
+    ("public", "origin"),
+    [
+        ("http://media.example.com", None),  # sin TLS
+        ("https://app.example.com", None),  # el host de la aplicación (ALLOWED_HOSTS)
+        ("https://APP.example.com", None),
+        ("https://crm.example.org", "https://crm.example.org"),  # el origen de la aplicación
+        ("https://u:" + "p" + "@media.example.com", None),  # credenciales
+        ("https://media.example.com/bucket", None),  # no es un origen
+    ],
+)
+def test_production_signs_browser_urls_only_for_another_https_origin(
+    monkeypatch: pytest.MonkeyPatch, public: str, origin: str | None
+) -> None:
+    for valid in ("https://media.example.com", ""):  # vacío = el endpoint interno
+        loaded = load_production(monkeypatch, STORAGE_PUBLIC_ENDPOINT_URL=valid)
+        assert loaded.STORAGE_PUBLIC_ENDPOINT_URL == valid  # type: ignore[attr-defined]
+    with pytest.raises(ImproperlyConfigured):
+        load_production(monkeypatch, STORAGE_PUBLIC_ENDPOINT_URL=public, APP_ORIGIN=origin)
 
 
 def test_production_mail_is_optional_but_never_half_configured(
