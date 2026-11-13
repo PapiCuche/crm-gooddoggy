@@ -32,6 +32,7 @@ DB = psycopg.Connection[Any]
 INSERT = "webhook_ingress_insert(text, text, text, text, text, jsonb)"
 FUNCTIONS = (
     INSERT,
+    "webhook_ingress_refuse(text, text, text, text, text, text, text)",
     "webhook_ingress_claim(integer, integer)",
     "webhook_ingress_mark(uuid, integer, text, uuid, uuid, text)",
     "webhook_ingress_list(text, integer)",
@@ -226,7 +227,7 @@ def test_an_infinite_number_is_stored_as_null_and_does_not_make_meta_retry_forev
     assert (stored["n"], stored["m"], stored["ok"]) == (None, None, 1.5)
 
 
-def test_a_real_database_refusal_drops_that_item_and_the_rest_still_goes_in(
+def test_a_real_database_refusal_records_that_item_dead_and_the_rest_still_goes_in(
     migrator: DB, caplog: pytest.LogCaptureFixture
 ) -> None:
     """El rechazo real de la función aborta la transacción: sin punto de guardado, el siguiente
@@ -238,9 +239,14 @@ def test_a_real_database_refusal_drops_that_item_and_the_rest_still_goes_in(
         )
 
     caplog.set_level(logging.DEBUG)
-    batch = [item("wa:msg:1", "message"), item("wa:msg:2", "otro"), item("wa:msg:3", "message")]
-    assert ingress.store(batch) == 2
-    assert sorted(rows(migrator)) == ["wa:msg:1", "wa:msg:3"]
+    big = item("wa:msg:2", "message")
+    big.payload = {"x": "a" * 1_048_577}  # más de lo que guarda la función: un rechazo real
+    assert ingress.store([item("wa:msg:3", "message"), big, item("wa:msg:1", "message")]) == 2
+    found = rows(migrator)
+    assert {key: r["status"] for key, r in found.items()} == {
+        "wa:msg:1": "RECEIVED", "wa:msg:2": "DEAD", "wa:msg:3": "RECEIVED"
+    }  # fmt: skip
+    assert found["wa:msg:2"]["payload"] is None  # registrado, sin el contenido
     assert "meta.webhook.refused" in caplog.text and "'count': 1" in caplog.text
 
 
@@ -649,11 +655,11 @@ def test_a_delivery_of_the_maximum_size_is_stored_in_a_reasonable_time(migrator:
             kind="message", key=f"wa:msg:{n}", waba_id=WABA_ID, phone_number_id=None,
             payload={"id": f"wamid.{n}", "text": {"body": "x" * 200}},
         )
-        for n in range(500)
+        for n in range(1000)
     ]  # fmt: skip
     start = time.monotonic()
-    assert ingress.store(items) == 500
-    assert time.monotonic() - start < 10  # 500 viajes en una transacción: lejos de ser un cuello
+    assert ingress.store(items) == 1000
+    assert time.monotonic() - start < 10  # 1000 viajes en una transacción: lejos de ser un cuello
 
 
 def test_going_back_to_the_tables_only_removes_the_processing_functions(migrator: DB) -> None:
@@ -665,7 +671,9 @@ def test_going_back_to_the_tables_only_removes_the_processing_functions(migrator
     assert migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone() == (1,)
     with as_migrator():
         call_command("migrate", "conversations", verbosity=0)
-    assert migrator.execute(names, ["resolve_channel_account"]).fetchone() == (6,)
+    assert migrator.execute(names, ["resolve_channel_account"]).fetchone() == (
+        7,
+    )  # y el registro de rechazos (F7-11b)
 
 
 def test_the_purge_never_deletes_a_pending_item_before_the_cap_whatever_the_days_asked(

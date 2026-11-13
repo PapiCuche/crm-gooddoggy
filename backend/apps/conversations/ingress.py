@@ -3,14 +3,16 @@ firmado, reclamarlo, enrutarlo al tenant y cerrarlo.
 
 `webhook_ingress` y `webhook_failures` son de plataforma: `crm_app` no tiene ningún privilegio
 sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones (`0008`: insertar;
-`0009`: el resto). Aquí está todo lo que las llama. El enrutado **nunca** usa la organización que
-diga el payload: sale de `resolve_channel_account` (la cuenta que la propia organización
-registró), y el procesador solo enruta y marca: un ítem enrutado queda `PROCESSED` sin efecto
-hasta F7-04.
+`0009`: el resto; `0033`: registrar un rechazo). Aquí está todo lo que las llama. El enrutado
+**nunca** usa la organización que diga el payload: sale de `resolve_channel_account` (la cuenta
+que la propia organización registró), y el procesador solo enruta y marca: un ítem enrutado queda
+`PROCESSED` sin efecto hasta F7-04.
 """
 
+import hashlib
 import json
 import math
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -32,6 +34,7 @@ PROVIDER = "meta"
 LEASE_SECONDS = 60  # el reclamo caduca: un proceso que muere no deja el ítem para siempre
 BROKER_WAIT = 3  # segundos que la ruta pública espera a un broker que no contesta
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
+SQLSTATE = re.compile(r"[0-9A-Z]{5}")
 UNKNOWN_AFTER = 3  # intentos tras los que un estado sin mensaje se cierra como `IGNORED`
 WAKE_EVERY = 1.0  # segundos entre dos avisos de un mismo proceso: el resto lo recoge el barrido
 _last_wake = 0.0
@@ -76,19 +79,34 @@ def insert(kind: str, key: str, waba_id: str, number: str | None, payload: dict[
     return found[0][0] is not None
 
 
+def refuse(item: Any, sqlstate: str | None) -> bool:
+    """Registra un ítem que la base nunca guardará: `DEAD`, sin payload (solo su hash) y con el
+    motivo `REFUSED_<sqlstate>` en `webhook_failures`, para que se vea y alerte. Idempotente por
+    clave, y nunca toca un ítem que ya estaba guardado. Devuelve si era nuevo."""
+    reason = f"REFUSED_{sqlstate}" if SQLSTATE.fullmatch(sqlstate or "") else "REFUSED"
+    digest = hashlib.sha256(json.dumps(clean(item.payload), sort_keys=True).encode()).hexdigest()
+    sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
+    args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, digest, reason]
+    return _call(sql, args)[0][0] is not None
+
+
 def store(items: list[Any]) -> int:
-    """Guarda todos los ítems de una entrega en una transacción (un reintento de Meta repite lo
-    que falte y nada más). Devuelve cuántos eran nuevos."""
+    """Guarda todos los ítems de una entrega en una transacción, en orden de clave (dos entregas
+    que se solapan bloquean en el mismo orden). Un ítem que la base rechaza (`DataError`) no
+    envenena el lote: queda registrado con `refuse` y el resto se guarda. Cualquier otro error
+    deshace la entrega entera y sube (la ruta responde 503 y Meta reintenta; repetir no duplica).
+    Devuelve cuántos eran nuevos."""
     new = refused = 0
     with transaction.atomic():
-        for i in items:
+        for i in sorted(items, key=lambda item: item.key):
             try:
                 with transaction.atomic():  # un punto de guardado por ítem
                     new += insert(i.kind, i.key, i.waba_id, i.phone_number_id, i.payload)
-            except DataError:  # un dato que la base nunca guardará: solo ese ítem se descarta, y
-                refused += 1  # no un 503 que Meta repetiría eternamente
+            except DataError as error:  # nunca lo guardará: un 503 lo repetiría 7 días en vano
+                refuse(i, getattr(error.__cause__, "sqlstate", None))
+                refused += 1
     if refused:
-        logger.warning("meta.webhook.refused", count=refused)
+        logger.error("meta.webhook.refused", count=refused)  # solo cuántos: nunca el contenido
     return new
 
 
