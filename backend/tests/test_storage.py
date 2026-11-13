@@ -65,7 +65,9 @@ def test_only_the_urls_for_the_browser_are_signed_with_the_public_endpoint() -> 
     client, signer, k = MagicMock(), MagicMock(), key()
     s3 = S3CompatibleStorage(bucket="b", client=client, signer=signer)
     s3.put(k, io.BytesIO(b"x"), content_type="image/png", content_length=1)
-    s3.open(k), s3.head(k), s3.delete(k)
+    s3.open(k)
+    s3.head(k)
+    s3.delete(k)
     assert not signer.method_calls  # leer y escribir el objeto: siempre el endpoint interno
     s3.presign_get(k, expires_in=60, filename="a.png", content_type="image/png")
     s3.presign_put(k, expires_in=60, content_type="image/png", content_length=1, max_bytes=9)
