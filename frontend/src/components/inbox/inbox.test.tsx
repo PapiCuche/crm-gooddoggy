@@ -197,7 +197,7 @@ describe("Inbox, lista (F6-03)", () => {
     expect(document.querySelector("li b")).toBeNull();
   });
 
-  it("un medio muestra su clase y la frase fija como texto, sin enlace ni archivo", async () => {
+  it("un medio muestra su clase, la frase fija como texto y su archivo sin pintarlo", async () => {
     const file = { id: "a1", status: "DONE", mime_type: "image/jpeg", size_bytes: 9 } as const;
     const media = (id: string, type: string, changes: Partial<Message> = {}) =>
       message(id, { message_type: type, ...changes });
@@ -217,6 +217,10 @@ describe("Inbox, lista (F6-03)", () => {
         media("m5", "IMAGE", { body: '<img src="x" onerror="alert(1)">' }),
         media("m6", "DOCUMENT", { body: "Documento recibido" }),
         media("m7", "constructor", { body: "raro" }),
+        media("m8", "VIDEO", {
+          body: null, // sin `contacts.view`: ni el archivo ni su estado
+          attachment: { ...file, kind: "VIDEO", status: "PENDING", available: false },
+        }),
       ]),
     });
     show();
@@ -236,10 +240,14 @@ describe("Inbox, lista (F6-03)", () => {
     for (const odd of ["Documento recibido", "raro"]) {
       expect(at(odd)).toHaveTextContent("Mensaje de un tipo que todavía no se puede mostrar");
     }
-    // Ni el archivo ni un enlace: la pantalla del medio es de F7-09a3 (D-F7-04)
+    // El archivo nunca se pinta ni se enlaza: solo «Descargar» en los dos disponibles (F7-09a3)
     const panel = image.parentElement!;
     expect(panel.querySelector("img, audio, video, a, iframe, object, embed")).toBeNull();
-    expect(within(panel).queryAllByRole("button")).toHaveLength(0);
+    const downloads = within(panel).getAllByRole("button", { name: /^Descargar el archivo/ });
+    expect(downloads).toHaveLength(2);
+    const owners = downloads.map((button) => button.closest("li"));
+    expect(owners).toEqual(expect.arrayContaining([image, at("Sticker recibido")]));
+    expect(panel).not.toHaveTextContent("Recibiendo el archivo"); // m8: oculto con el contenido
   });
 
   it("sin permiso sobre el contacto explica en vez de dejar un hueco", async () => {
