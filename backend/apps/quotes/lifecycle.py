@@ -14,12 +14,12 @@ con la última solicitud aprobada. Congela la fotografía de la empresa (nombre)
 que ha de ser futura. Audita `quote.issued` y emite el evento `quote.issued` (solo ids), en la
 misma transacción.
 
-**Revisar** (F5-09c4) nunca edita lo emitido: con `quotes.create` y `quotes.update` (y, si ya salió,
-`quotes.send`) sobre la cotización bloqueada, una `APPROVED`, `SENT` o `VIEWED` pasa a `CANCELLED`
-y nace la revisión siguiente del mismo número, en `DRAFT`, revalorada por el `PricingService` en su
-lista a la hora de ahora, sin descuentos, precios manuales, aprobaciones, fotografías ni validez:
-para salir vuelve a pasar por enviar o emitir (que miden con quien actúa; la de la IA, que sigue
-sin autor, pide aprobación). Un borrador no se revisa: se sigue editando."""
+**Revisar** (F5-09c4) nunca edita lo emitido: con `quotes.create`, `quotes.update` y `quotes.cancel`
+(y, si ya salió, `quotes.send`) sobre la cotización bloqueada, una `APPROVED`, `SENT` o `VIEWED`
+pasa a `CANCELLED` y nace la revisión siguiente del mismo número, en `DRAFT`, revalorada por el
+`PricingService` en su lista a la hora de ahora, sin descuentos, precios manuales, aprobaciones,
+fotografías ni validez: para salir vuelve a pasar por enviar o emitir (que miden con quien actúa;
+la de la IA, que sigue sin autor, pide aprobación). Un borrador no se revisa: se sigue editando."""
 
 from typing import Any
 from uuid import UUID
@@ -171,6 +171,8 @@ def revise_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
                 raise NotRevisable(quote_id)
             if old.status != QuoteStatus.APPROVED and not can(ectx, "quotes.send", old):
                 raise NotAllowed("quotes.send")  # ya la tiene el cliente
+            if not can(ectx, "quotes.cancel", old):  # revisar cancela la anterior
+                raise NotAllowed("quotes.cancel")
             _links(alias, old.contact_id, old.opportunity_id)
             rows, price = _priced(alias, ctx, wanted, old.price_list_id)
             totals = _totals(rows, TAX_RATE)

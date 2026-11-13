@@ -69,7 +69,10 @@ def _restore(apps: Any, schema_editor: Any) -> None:
 
 def _refuse_duplicates(apps: Any, schema_editor: Any) -> None:
     """Un número con dos revisiones vivas no tiene una que elegir: hay que resolverlo antes."""
-    PREVIOUS._sees_all(schema_editor)
+    if not PREVIOUS._scalar(
+        schema_editor, "SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user"
+    ):  # con FORCE RLS, un rol sin `BYPASSRLS` no ve filas: la cuenta mentiría
+        raise RuntimeError("quotes 0007: run as crm_migrator with BYPASSRLS (RLS hides rows)")
     count = PREVIOUS._scalar(
         schema_editor,
         "SELECT count(*) FROM (SELECT 1 FROM public.quotes WHERE status <> 'CANCELLED'"

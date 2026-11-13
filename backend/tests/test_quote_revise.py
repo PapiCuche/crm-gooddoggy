@@ -29,6 +29,7 @@ from tests.test_authorization import give
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_pipelines_tables import as_migrator
+from tests.test_prices import price_list
 from tests.test_promotion_tables import promo
 from tests.test_quote_answers import accept, decline, lapse, last, sold
 from tests.test_quote_commands import DB, audit, shop
@@ -43,7 +44,13 @@ from tests.test_quote_tables import quote
 _ = shop
 pytestmark = pytest.mark.usefixtures("tenant_db")
 MIGRATION = __import__("apps.quotes.migrations.0007_revision", fromlist=["GUARD"])
-WRITE = {"quotes.create": None, "quotes.view": "ORGANIZATION", "quotes.update": "ORGANIZATION"}
+WRITE = {"quotes.create": None, "quotes.view": "ORGANIZATION", "quotes.update": "ORGANIZATION",
+         "quotes.cancel": "ORGANIZATION"}  # fmt: skip
+
+
+def reviser(shop: SimpleNamespace, **grants: Any) -> User:
+    """Quien emite (`sender`) y además cancela: revisar cancela la anterior."""
+    return sender(shop, **{"quotes.cancel": "ORGANIZATION", **grants})
 
 
 def revise(shop: SimpleNamespace, who: User, made: Quote, version: Any = 2) -> Any:
@@ -93,7 +100,7 @@ def reach(shop: SimpleNamespace, migrator: DB, who: User, state: str) -> tuple[Q
 def test_without_both_permissions_nothing_is_read_not_even_malformed_input(
     shop: SimpleNamespace,
 ) -> None:
-    made = sold(shop, sender(shop))
+    made = sold(shop, reviser(shop))
     for missing in ("quotes.create", "quotes.update"):
         grants = {k: v for k, v in {**WRITE, **SEND}.items() if k != missing}
         with pytest.raises(NotAllowed):
@@ -104,7 +111,7 @@ def test_without_both_permissions_nothing_is_read_not_even_malformed_input(
 def test_the_permission_does_not_give_the_scope_and_one_error_hides_which_case_it_is(
     shop: SimpleNamespace,
 ) -> None:
-    made = sold(shop, sender(shop))
+    made = sold(shop, reviser(shop))
     update_own = plain(shop, {**WRITE, **SEND, "quotes.update": "OWN"})
     view_own = plain(shop, {**WRITE, **SEND, "quotes.view": "OWN"})
     with tenant_scope(ctx(shop.b)):
@@ -121,6 +128,11 @@ def test_the_permission_does_not_give_the_scope_and_one_error_hides_which_case_i
         revise(shop, plain(shop, WRITE), made)
     with pytest.raises(NotAllowed):
         revise(shop, plain(shop, {**WRITE, "quotes.send": "OWN"}), made)
+    for cancel in ({}, {"quotes.cancel": "OWN"}):  # revisar cancela: `quotes.cancel` en su alcance
+        grants = {k: v for k, v in {**WRITE, **SEND}.items() if k != "quotes.cancel"} | cancel
+        with pytest.raises(NotAllowed, match="quotes.cancel"):
+            revise(shop, plain(shop, grants), made)
+    assert reread(shop, made).version == 2 and len(family(shop, made)) == 1
     with pytest.raises(StaleVersion):  # quien sí la alcanza sabe que su versión es vieja
         revise(shop, plain(shop, {**WRITE, **SEND}), made, version=9)
 
@@ -128,7 +140,7 @@ def test_the_permission_does_not_give_the_scope_and_one_error_hides_which_case_i
 def test_revising_an_issued_quote_cancels_it_and_opens_the_next_revision_priced_today(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    seller = sender(shop)
+    seller = reviser(shop)
     made, phone, _ = draft(shop, seller)
     discount(shop, seller, made, phone, "PERCENT", "5")  # dentro de su 10 %: no se copia
     submit(shop, seller, made, version=2)
@@ -171,7 +183,7 @@ def test_revising_an_issued_quote_cancels_it_and_opens_the_next_revision_priced_
 def test_a_lower_price_today_is_the_new_total_and_does_not_count_as_a_rise(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    seller = sender(shop)
+    seller = reviser(shop)
     made, version = reach(shop, migrator, seller, "APPROVED")
     now = timezone.now()
     promo(shop.a, [shop.listed], [{"variant_id": shop.iphone}],
@@ -187,7 +199,7 @@ def test_a_lower_price_today_is_the_new_total_and_does_not_count_as_a_rise(
 def test_only_an_open_approved_or_issued_quote_is_revised_and_a_draft_is_kept(
     shop: SimpleNamespace, migrator: DB, state: str
 ) -> None:
-    seller = sender(shop, **{"quotes.cancel": "ORGANIZATION"})
+    seller = reviser(shop)
     made, version = reach(shop, migrator, seller, state)
     before = (len(audit(migrator)), reread(shop, made).version)
     if state in lifecycle.REVISABLE:
@@ -205,7 +217,7 @@ def test_only_an_open_approved_or_issued_quote_is_revised_and_a_draft_is_kept(
 
 
 def test_two_revisions_at_once_leave_exactly_one(shop: SimpleNamespace, migrator: DB) -> None:
-    seller = sender(shop)
+    seller = reviser(shop)
     made = sold(shop, seller)
     first, second = race(shop.a, seller, [
         lambda t: lifecycle.revise_quote(t, quote_id=made.pk, version=2),
@@ -228,7 +240,7 @@ def test_two_revisions_at_once_leave_exactly_one(shop: SimpleNamespace, migrator
 def test_what_the_ai_wrote_stays_the_ais_and_needs_a_person_to_approve_it_again(
     shop: SimpleNamespace, migrator: DB
 ) -> None:
-    who = sender(shop, owner=True)
+    who = reviser(shop, owner=True)
     made = ai_draft(shop, migrator, who)
     submit(shop, who, made)
     act(shop, boss(shop), decisions.approve_quote, quote_id=made.pk, version=2)
@@ -243,7 +255,7 @@ def test_what_the_ai_wrote_stays_the_ais_and_needs_a_person_to_approve_it_again(
 def test_a_failure_while_revising_writes_nothing(
     shop: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch, failing: str
 ) -> None:
-    seller = sender(shop)
+    seller = reviser(shop)
     made = sold(shop, seller)
     before = len(audit(migrator))
     if failing == "price":  # la variante ya no tiene precio vigente
@@ -271,14 +283,17 @@ def test_the_database_keeps_one_live_revision_that_follows_the_one_it_cancels(
 ) -> None:
     first = quote(world, number="COT-970001")
     same = (
-        "organization_id, number, price_list_id, opportunity_id, currency, tax_mode, tax_rate,"
+        "organization_id, number, currency, tax_mode, tax_rate,"
         " subtotal, discount_total, tax_total, total, notes_to_customer, internal_notes"
     )
     copy = (f"INSERT INTO quotes (id, status, version, created_at, updated_at, revision,"  # noqa: S608
-            f" contact_id, created_by_user_id, {same}) SELECT gen_random_uuid(), 'DRAFT', 1,"
-            f" now(), now(), {{rev}}, {{contact}}, {{author}}, {same} FROM quotes"
+            f" contact_id, created_by_user_id, price_list_id, opportunity_id, {same}) SELECT"
+            f" gen_random_uuid(), 'DRAFT', 1, now(), now(), {{rev}}, {{contact}}, {{author}},"
+            f" {{price_list}}, {{opportunity}}, {same} FROM quotes"
             " WHERE id = %s")  # fmt: skip
-    legit = {"rev": "revision + 1", "contact": "contact_id", "author": "created_by_user_id"}
+    legit = {"rev": "revision + 1", "contact": "contact_id", "author": "created_by_user_id",
+             "price_list": "price_list_id", "opportunity": "opportunity_id"}  # fmt: skip
+    other_list, opp = price_list(world.a, "OTRA"), tables.make(world.a)
     cancel = "UPDATE quotes SET status = 'CANCELLED', cancelled_at = {at} WHERE id = %s"
 
     def attempt(at: str = "now()", **over: str) -> None:
@@ -294,6 +309,8 @@ def test_the_database_keeps_one_live_revision_that_follows_the_one_it_cancels(
         ("now()", {"rev": "revision + 2"}),  # se salta una
         ("now()", {"contact": f"'{tables.contact(world.a).pk}'"}),
         ("now()", {"author": "NULL"}),
+        ("now()", {"price_list": f"'{other_list}'"}),  # otra lista
+        ("now()", {"opportunity": f"'{opp.pk}'"}),  # otra oportunidad (viva)
     ):  # la de una persona no pasa a ser de la IA
         with pytest.raises(IntegrityError) as raised:
             attempt(at, **over)
