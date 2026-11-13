@@ -3400,6 +3400,12 @@ paths:
           type: string
         required: true
       - in: query
+        name: transfer_group_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo las dos patas de esa transferencia (F3-31).
+      - in: query
         name: variant_id
         schema:
           type: string
@@ -3704,6 +3710,75 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Reservation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/transfers/:
+    post:
+      operationId: inventory_transfers_create
+      description: 'Saca unidades disponibles (`on_hand - reserved`) de un almacén
+        y las mete en otro, en una sola operación con dos movimientos del mismo `transfer_group_id`.
+        200: la misma petición, de la misma persona y con esa `idempotency_key`, ya
+        registrada; se devuelve sin repetirla. 400 por campo (variante o almacén que
+        no existen, un servicio, el mismo almacén). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`
+        (el texto dice cuál), `STOCK_LIMIT` o `IDEMPOTENCY_KEY_REUSED` (otra petición,
+        o de otra persona).'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
           description: ''
         '400':
           content:
@@ -11498,6 +11573,18 @@ components:
           type: integer
         reason:
           type: string
+        reference_type:
+          $ref: '#/components/schemas/ReferenceTypeEnum'
+        reference_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: La importación o la transferencia que lo originó.
+        transfer_group_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: El mismo en las dos patas de una transferencia.
         created_by_user_id:
           type: string
           format: uuid
@@ -11513,7 +11600,10 @@ components:
       - on_hand_after
       - quantity
       - reason
+      - reference_id
+      - reference_type
       - reserved_after
+      - transfer_group_id
       - variant
       - variant_id
       - warehouse_id
@@ -14202,6 +14292,22 @@ components:
           description: La que se leyó; si no, 409.
       required:
       - version
+    ReferenceTypeEnum:
+      enum:
+      - ORDER
+      - QUOTE
+      - RESERVATION
+      - TRANSFER
+      - IMPORT
+      - MANUAL
+      type: string
+      description: |-
+        * `ORDER` - Order
+        * `QUOTE` - Quote
+        * `RESERVATION` - Reservation
+        * `TRANSFER` - Transfer
+        * `IMPORT` - Import
+        * `MANUAL` - Manual
     Reservation:
       type: object
       properties:
@@ -15218,6 +15324,57 @@ components:
             guarda cifrado.
       required:
       - access_token
+    Transfer:
+      type: object
+      properties:
+        transfer_group_id:
+          type: string
+          format: uuid
+        legs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movement'
+          description: '`TRANSFER_OUT` (origen) y `TRANSFER_IN` (destino), en ese
+            orden.'
+      required:
+      - legs
+      - transfer_group_id
+    TransferCreateRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+        from_warehouse_id:
+          type: string
+          format: uuid
+        to_warehouse_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          maximum: 1000000
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 255
+        idempotency_key:
+          type: string
+          minLength: 1
+          description: 'De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por
+            `import:`.'
+          maxLength: 100
+      required:
+      - from_warehouse_id
+      - idempotency_key
+      - quantity
+      - reason
+      - to_warehouse_id
+      - variant_id
     User:
       type: object
       properties:
