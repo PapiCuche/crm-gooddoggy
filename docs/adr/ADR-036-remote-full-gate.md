@@ -87,13 +87,26 @@ Los check runs de GitHub pertenecen a un commit. Un push nuevo es otro SHA sin `
 
 Antes del merge, el programa:
 
-0. **Rechaza el gate 5 si el PR toca el arnés del gate.** Lista los archivos cambiados del PR por API (`GET /repos/{owner}/{repo}/pulls/{N}/files`, con el nombre anterior de los renombrados y modo fail-safe si la lista puede venir truncada, como `backend_gate.py detect`). Si alguno es del arnés, el gate 5 no se da por cumplido y **solo el propietario puede mergear ese PR**. El arnés incluye:
-   - `.github/workflows/full-gate.yml`;
-   - cualquier acción local o script que el workflow llame;
-   - el `Makefile` entero, porque los targets `check*` dependen de sus variables;
-   - los scripts y la configuración que `make check` usa como arnés, no como código probado: `infra/docker/smoke-image.sh`, `frontend/scripts/check-security-headers.mjs`, `infra/docker/postgres/init/01-roles.sh`, `.gitleaks.toml`.
+0. **Rechaza el gate 5 si el PR toca el arnés del gate.** Lista los archivos cambiados del PR por API (`GET /repos/{owner}/{repo}/pulls/{N}/files`, con el nombre anterior de los renombrados y modo fail-safe si la lista puede venir truncada, como `backend_gate.py detect`). Si alguno es del arnés, el gate 5 no se da por cumplido y **solo el propietario puede mergear ese PR**.
 
-   La lista de rutas vive en `main` y el script de merge la lee de `main`, nunca del PR.
+   **Definición del arnés.** Es todo lo que `make check` o `full-gate.yml` leen como comando, como configuración o como entorno. Solo quedan fuera el código del producto y los tests. Un PR que cambia el arnés puede vaciar el gate sin tocar ningún test: un `"test": "true"`, un `addopts` que deselecciona tests, o un rol con `BYPASSRLS` que deja sin sentido las pruebas de RLS. Los archivos conocidos hoy, por categoría:
+
+   | Categoría | Archivos |
+   | --- | --- |
+   | Orquestación | `.github/workflows/full-gate.yml` y cualquier acción local o script que llame; el `Makefile` entero (los targets `check*` dependen de sus variables) |
+   | Entorno de servicios | el directorio **entero** `infra/docker/postgres/init/`, porque un `02-*.sh` nuevo con `ALTER ROLE crm_app BYPASSRLS` vaciaría las pruebas de RLS; `infra/docker/compose.yaml`; `infra/env/.env.example`; `infra/docker/garage/garage.toml`; `backend/config/settings/test.py` |
+   | Scripts del gate | `infra/docker/smoke-image.sh`, `frontend/scripts/check-security-headers.mjs` |
+   | Configuración de herramientas del backend | en `backend/pyproject.toml`, las secciones `[tool.pytest.ini_options]`, `[tool.mypy]` y `[tool.django-stubs]`, `[tool.ruff*]`, `[tool.importlinter]` y `[tool.uv]`; `backend/.python-version` |
+   | Configuración de herramientas del frontend | en `frontend/package.json`, `scripts`, `packageManager` y la configuración de `pnpm`, incluida cualquier excepción de `audit`; `frontend/pnpm-workspace.yaml`; `eslint.config.mjs`, `vitest.config.ts`, `vitest.setup.ts`, `tsconfig.json`, `orval.config.ts`, `.prettierrc`, `.prettierignore`; `.nvmrc` |
+   | Escaneo | `.gitleaks.toml` |
+
+   En los archivos mixtos (`pyproject.toml` y `package.json`), el script compara solo las secciones del arnés, interpretando el TOML o el JSON de `main` y del HEAD. Así, subir una dependencia no exige al propietario; cambiar `[tool.pytest.ini_options]`, sí.
+
+   La lista vive en `main` y el script de merge la lee de `main`, nunca del PR. El work item de implementación añade un test en `.github/scripts` (por ejemplo, `test_full_gate_harness.py`) que **falla si `make check` o `full-gate.yml` empiezan a leer un archivo que la lista no cubre**. Extrae las rutas de las recetas `check*` y de los pasos del workflow, y las cruza con una tabla de los archivos de configuración que lee cada herramienta (ruff, mypy, pytest, import-linter, Prettier, ESLint, tsc, Vitest, orval, compose, gitleaks). Es un test estático: no ve un archivo que una herramienta lea por una vía no declarada. Por eso la definición por categoría manda sobre la lista.
+
+   **Límite conocido: los `conftest.py`.** Un hook de pytest en un `conftest.py` (por ejemplo, `pytest_collection_modifyitems` que deselecciona tests) es código de test, y no se trata como arnés, porque eso convertiría en arnés cualquier PR con tests. Se detecta comparando el número de tests del JUnit con el plan recolectado, como ya hacen los shards de CI (`shard_backend.py verify`). El work item de implementación lo añade a `full gate`. Hasta entonces lo cubre la revisión del PR (gate 3).
+
+   **El gate local actual tiene la misma exposición.** También ejecuta el `Makefile` y la configuración del propio PR, y hoy lo cubre la revisión adversarial de cada PR (gates 3 y 8). El paso 0 se aplicaría igual al gate local: no es una debilidad nueva del runner remoto, sino una que hoy no tiene control técnico.
 1. Lee `headRefOid` del PR.
 2. Comprueba que la rama **no va por detrás de `main`** (`GET /repos/{owner}/{repo}/compare/main...{headRefOid}` con `behind_by == 0`). `full gate` prueba `head.sha`, no su merge con `main`. Si `main` avanzó después del gate, el programa mergea `origin/main` en la rama: eso crea un SHA nuevo y otro `full gate`. La alternativa es que el propietario active en el ruleset «Require branches to be up to date before merging» (decisión F). En una cola, cada merge deja atrás a los demás PR y los obliga a pasar el gate otra vez: es el precio de probar exactamente lo que se mergea.
 3. Pide los check runs de **ese** SHA con el nombre `full gate` (`GET /repos/{owner}/{repo}/commits/{headRefOid}/check-runs?check_name=full%20gate&filter=latest`) y exige:
@@ -105,7 +118,7 @@ Antes del merge, el programa:
 4. Comprueba el resto de los gates sobre el mismo `headRefOid` (gate 6 incluido).
 5. Mergea con `gh pr merge <N> --squash --match-head-commit <headRefOid>`, como hoy. Si el HEAD cambió entre la lectura y el merge, GitHub rechaza el merge.
 
-**Opción robusta: workflow requerido por ruleset.** Un ruleset con la regla «Require workflows to pass before merging» toma el workflow de un repositorio y una ref fijados (por ejemplo, `full-gate.yml` en un commit o una etiqueta de `main`). Así el archivo del workflow nunca viene del PR, y el paso 0 solo hace falta para el `Makefile` y los scripts que el workflow invoca. Cambiar rulesets es exclusivo del propietario (ADR-015 §3), y la disponibilidad de esa regla depende del plan y del tipo de cuenta (hoy es una regla de rulesets de organización): está en la decisión G, sin asumir que exista.
+**Opción robusta: workflow requerido por ruleset.** Un ruleset con la regla «Require workflows to pass before merging» toma el workflow de un repositorio y una ref fijados (por ejemplo, `full-gate.yml` en un commit o una etiqueta de `main`). Así el archivo del workflow nunca viene del PR. El paso 0 sigue haciendo falta para el resto del arnés (el `Makefile`, el entorno y la configuración de herramientas), que el workflow lee del checkout del PR. Cambiar rulesets es exclusivo del propietario (ADR-015 §3). Esa regla es de rulesets de **organización**, y este repositorio pertenece a una cuenta de usuario: probablemente exigiría mover el repositorio a una organización de GitHub. En la práctica, **el paso 0 es el control por defecto**, y G queda como decisión del propietario.
 
 **Descartado:** `pull_request_target` con checkout de `head.sha`. Ejecutaría código del PR con el contexto privilegiado de la rama base (token con más permisos y acceso a secretos del repositorio), que es exactamente lo que prohíbe delivery-automation.md §5.
 
@@ -167,20 +180,20 @@ Si el propietario lo acepta, este ADR enmienda **solo** el gate 5 de ADR-015 §2
 - La evidencia es un check sobre el commit, enlazable desde el handoff, en lugar de una línea copiada.
 - Más minutos de CI: una ejecución completa más por cada HEAD candidato a merge. En un repositorio público los runners estándar no se facturan; si el repositorio pasara a privado, se pagarían y habría que revisar esta decisión.
 - La red de GitHub no es infalible: un fallo de PyPI en `pip-audit` también puede pasar ahí. La diferencia es que se reejecuta sin repetir los 13 min del Mac ni bloquear la cola.
-- Un PR puede modificar `full-gate.yml`, porque con `pull_request` corre la versión del PR, como pasa con `backend.yml`. Con el paso 0 de §3, un PR que toque el arnés del gate no cumple el gate 5 y solo lo mergea el propietario. Hoy los cambios a `backend.yml` y `backend_gate.py` necesitan la misma revisión humana específica (ci-pipeline.md §6, «Límite conocido»; misma naturaleza que OBS-A-02-2 en phase-1.md). Con un workflow requerido por ruleset (decisión G), el workflow deja de venir del PR.
+- Un PR puede modificar `full-gate.yml` (con `pull_request` corre la versión del PR, como pasa con `backend.yml`), el `Makefile` o la configuración que lee el gate. Al gate local de hoy le pasa lo mismo. Con el paso 0 de §3, un PR que toque el arnés del gate no cumple el gate 5 y solo lo mergea el propietario. Hoy los cambios a `backend.yml` y `backend_gate.py` necesitan la misma revisión humana específica (ci-pipeline.md §6, «Límite conocido»; misma naturaleza que OBS-A-02-2 en phase-1.md). Con un workflow requerido por ruleset (decisión G), el workflow deja de venir del PR.
 - La base puede derivar: `full gate` prueba `head.sha`, y si `main` avanza hay que mergearlo y pasar el gate otra vez (§3, paso 2), o el propietario exige ramas al día en el ruleset (decisión F).
 
 ## Security implications
 
 - `full gate` ejecuta código del PR. Mismas reglas que el CI actual: `pull_request`, nunca `pull_request_target`; permisos de solo lectura; acciones fijadas por SHA; sin secretos; `persist-credentials: false`.
 - Sin secretos de producción ni de despliegue. Las credenciales de la base y del almacenamiento son aleatorias y efímeras.
-- La evidencia que vale es un **check run** de la app de GitHub Actions, enlazado por `check_suite.id` a un run de `.github/workflows/full-gate.yml` con `event == pull_request` sobre `headRefOid`; un *commit status* no vale (§3). Esa cadena impide suplantar el check desde la API de estados o desde otro workflow, pero **no** impide que el propio PR cambie el workflow o el `Makefile` y produzca un verde vacío. Contra eso, el gate 5 solo cuenta si el PR no toca el arnés del gate (§3, paso 0, lista leída de `main`), o si el workflow es requerido por ruleset y fijado a una ref de `main` (decisión G).
+- La evidencia que vale es un **check run** de la app de GitHub Actions, enlazado por `check_suite.id` a un run de `.github/workflows/full-gate.yml` con `event == pull_request` sobre `headRefOid`; un *commit status* no vale (§3). Esa cadena impide suplantar el check desde la API de estados o desde otro workflow, pero **no** impide que el propio PR cambie el arnés (el workflow, el `Makefile`, el entorno o la configuración de herramientas) y produzca un verde vacío. El gate local de hoy tiene la misma exposición. Contra eso, el gate 5 solo cuenta si el PR no toca el arnés del gate (§3, paso 0, lista leída de `main`), o si el workflow es requerido por ruleset y fijado a una ref de `main` (decisión G).
 - Descartado `pull_request_target` con checkout de `head.sha`: ejecutaría código del PR con el contexto privilegiado de la base.
 - La opción autoalojada exige además: `--ephemeral`, una VM por job, sin acceso a la red interna, nunca PR de forks, y aprobación de los workflows de colaboradores externos.
 
 ## Operational implications
 
-- Implementación (work item aparte, después de aceptar): `full-gate.yml` (A1), un test en `.github/scripts` que compruebe que el job llama a `make check` sin cambios y que los nombres son estables, y la actualización de AGENTS.md §12, delivery-automation.md §8 y ci-pipeline.md. El script de merge del programa sigue §3: el paso 0 con la lista del arnés leída de `main` y con tests, la comprobación de que la rama no va por detrás de `main`, y la cadena check run → check suite → workflow run.
+- Implementación (work item aparte, después de aceptar): `full-gate.yml` (A1), un test en `.github/scripts` que compruebe que el job llama a `make check` sin cambios y que los nombres son estables, y la actualización de AGENTS.md §12, delivery-automation.md §8 y ci-pipeline.md. El script de merge del programa sigue §3: el paso 0, con la lista del arnés por categoría leída de `main`, la comparación por secciones de los archivos mixtos y el test que falla si el gate empieza a leer un archivo no cubierto; la cuenta JUnit contra el plan recolectado dentro de `full gate`; la comprobación de que la rama no va por detrás de `main`, y la cadena check run → check suite → workflow run.
 - Medir A1 en 5–10 PR reales (duración, fallos ambientales) antes de plantear A2 o un runner autoalojado.
 - El gate local se queda para desarrollar. Solo es evidencia de merge si el propietario lo elige como respaldo (decisión C).
 
@@ -194,4 +207,4 @@ El programa no aprueba cambios de su propia gobernanza (ADR-015 §3). El propiet
 - **D) Requerido o no:** si `full gate` debe ser además un check requerido del ruleset de `main`. Lo cambia solo el propietario.
 - **E) Disparo:** solo con la etiqueta `full-gate` en los PR candidatos (recomendado) o en todos los PR.
 - **F) Base al día:** el programa mergea `origin/main` y pasa el gate otra vez cuando la rama va por detrás (recomendado, sin tocar el ruleset), o el propietario activa «Require branches to be up to date before merging».
-- **G) Workflow requerido por ruleset:** si la cuenta lo permite, fijar `full-gate.yml` a una ref de `main` con «Require workflows to pass before merging». Es la opción robusta contra un PR que cambia su propio gate. Sin ella rige el paso 0 de §3: un PR que toca el arnés solo lo mergea el propietario.
+- **G) Workflow requerido por ruleset:** probablemente exige una organización de GitHub (el repositorio es de una cuenta de usuario). Si el propietario la crea o la tiene, fijar `full-gate.yml` a una ref de `main` con «Require workflows to pass before merging». Es la opción robusta contra un PR que cambia su propio gate. Sin ella, que es lo esperable, rige el paso 0 de §3: un PR que toca el arnés solo lo mergea el propietario. Con ella, el paso 0 sigue rigiendo para el resto del arnés.
