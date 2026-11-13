@@ -12,12 +12,19 @@ límite; si no, `NeedsApproval` sin escribir nada. Lo de la IA (sin autor) solo 
 con la última solicitud aprobada. Congela la fotografía de la empresa (nombre), la del cliente
 (nombre y documento, nada más), las condiciones y la garantía (texto de quien emite) y la validez,
 que ha de ser futura. Audita `quote.issued` y emite el evento `quote.issued` (solo ids), en la
-misma transacción."""
+misma transacción.
+
+**Revisar** (F5-09c4) nunca edita lo emitido: con `quotes.create` y `quotes.update` (y, si ya salió,
+`quotes.send`) sobre la cotización bloqueada, una `APPROVED`, `SENT` o `VIEWED` pasa a `CANCELLED`
+y nace la revisión siguiente del mismo número, en `DRAFT`, revalorada por el `PricingService` en su
+lista a la hora de ahora, sin descuentos, precios manuales, aprobaciones, fotografías ni validez:
+para salir vuelve a pasar por enviar o emitir (que miden con quien actúa; la de la IA, que sigue
+sin autor, pide aprobación). Un borrador no se revisa: se sigue editando."""
 
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connections, transaction
 from django.utils import timezone
 
 from apps.access.selectors import can
@@ -25,26 +32,34 @@ from apps.audit.services import record
 from apps.contacts.models import Contact
 from apps.organizations.models import Organization
 from apps.quotes.commands import (
+    TAX_RATE,
     BadReference,
+    NotAllowed,
     StaleVersion,
     _entity,
     _event,
     _integer,
+    _links,
     _moment,
     _reachable,
     _reference,
     _require,
+    _shown,
     _stamp,
     _text,
+    _totals,
     _uuid,
     _within,
 )
+from apps.quotes.commands import _lines as _priced
 from apps.quotes.discounts import _floor, _lines, _verdict
-from apps.quotes.models import ApprovalStatus, Quote, QuoteApproval, QuoteStatus
+from apps.quotes.models import ApprovalStatus, Quote, QuoteApproval, QuoteItem, QuoteStatus
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
 TERMS_MAX, WARRANTY_MAX = 2000, 500
+REVISION_MAX = 32767  # la columna es `smallint`
+REVISABLE = (QuoteStatus.APPROVED, QuoteStatus.SENT, QuoteStatus.VIEWED)
 
 
 class NotIssuable(Exception):
@@ -53,6 +68,10 @@ class NotIssuable(Exception):
 
 class NeedsApproval(Exception):
     """Para salir, esta cotización necesita antes una aprobación."""
+
+
+class NotRevisable(Exception):
+    """Solo se revisa una cotización aprobada o emitida que sigue abierta."""
 
 
 def _contact(alias: str, ectx: Any, contact_id: UUID) -> Contact:
@@ -127,3 +146,60 @@ def issue_quote(
     except IntegrityError as error:
         raise _reference(error) from None
     return quote
+
+
+def revise_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
+    """La revisión siguiente (`DRAFT`) de una `APPROVED`, `SENT` o `VIEWED`, que queda `CANCELLED`
+    en la misma transacción; un borrador se devuelve tal cual, sin escribir. `NotAllowed`,
+    `DoesNotExist`, `StaleVersion`, `NotRevisable`, `BadReference`, `ValueError`; audita
+    `quote.cancelled` y `quote.revised` (con el total de antes y el de ahora) y sus eventos."""
+    alias = require_scope(ctx)
+    _require(ctx, "quotes.create")  # lo primero: sin permiso, ni se mira lo que se envía
+    ectx = _require(ctx, "quotes.update")
+    quote_id = _uuid(quote_id, "cotización")
+    _integer(version, 1, 2**31 - 1, "versión")
+    try:
+        with transaction.atomic(using=alias):
+            old = _reachable(alias, quote_id, _within(ectx, "quotes.view", "quotes.update"))
+            if old.version != version:
+                raise StaleVersion(quote_id)
+            if old.status == QuoteStatus.DRAFT:
+                return old  # se sigue editando: ninguna fila nueva
+            kept = QuoteItem.objects.using(alias).filter(quote_id=old.pk).order_by("sort_order")
+            wanted = list(kept.values_list("variant_id", "quantity"))
+            if old.status not in REVISABLE or old.revision >= REVISION_MAX or not wanted:
+                raise NotRevisable(quote_id)
+            if old.status != QuoteStatus.APPROVED and not can(ectx, "quotes.send", old):
+                raise NotAllowed("quotes.send")  # ya la tiene el cliente
+            _links(alias, old.contact_id, old.opportunity_id)
+            rows, price = _priced(alias, ctx, wanted, old.price_list_id)
+            totals = _totals(rows, TAX_RATE)
+            with connections[alias].cursor() as cursor:  # el reloj de la transacción: la base
+                cursor.execute("SELECT now()")  # exige que la anterior se cancele en ella
+                now = cursor.fetchone()[0]
+            before = old.status
+            _stamp(ctx, alias, old, {"status": QuoteStatus.CANCELLED, "cancelled_at": now})
+            new: Quote = Quote.objects.using(alias).create(
+                number=old.number, revision=old.revision + 1, contact_id=old.contact_id,
+                opportunity_id=old.opportunity_id, price_list_id=old.price_list_id,
+                currency=price.currency, tax_rate=TAX_RATE,
+                created_by_user_id=old.created_by_user_id,  # su alcance; la IA sigue sin autor
+                updated_by_user_id=ctx.user_id, notes_to_customer=old.notes_to_customer,
+                internal_notes=old.internal_notes, **totals,
+            )  # fmt: skip
+            QuoteItem.objects.using(alias).bulk_create(
+                QuoteItem(organization_id=ctx.organization_id, quote=new, **row) for row in rows
+            )
+            record(ctx, "quote.cancelled", _entity(old), {"status": [before, old.status]},
+                   {"revised_to": str(new.pk)})  # fmt: skip
+            record(ctx, "quote.revised", _entity(new), {
+                "status": [None, new.status], "revision": [old.revision, new.revision],
+                "total": [old.total, new.total], "items": [None, _shown(rows)],
+                **{f: [None, "[texto]"] for f in ("notes_to_customer", "internal_notes")
+                   if getattr(new, f)},
+            }, {"previous_quote_id": str(old.pk), "total_rose": new.total > old.total})  # fmt: skip
+            _event(ctx, old, "quote.cancelled")
+            _event(ctx, new, "quote.revised", previous_quote_id=old.pk)
+    except IntegrityError as error:
+        raise _reference(error) from None
+    return new
