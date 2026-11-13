@@ -298,6 +298,45 @@ Orden de entrega recomendado: F7-01 → F7-02 → F7-03 → F7-04 → F7-05 → 
 - **Requisitos previos de activación:** F7-03c (#600) fusionado antes de encender el canal (sin la purga a 90 días ni el vaciado del payload, la ingesta no tiene tope de almacenamiento); el proxy limita el cuerpo de `/webhooks/*` (`request_body { max_size 2MB }`), limita la tasa por IP y excluye la query del registro (ver el FIX LATER de F7-03a); F7-02e fusionado antes de encender `META_ENABLED` en producción (límite de tasa de las rutas de la cuenta: la app de Meta es una sola por despliegue y un administrador sin tope podría agotar su límite para todas las organizaciones); el arranque lo comprueba (`CHANNEL_CHECK_THROTTLE`). **F7-04b (#607) fusionado antes de recibir tráfico real:** sin él F7-04a descarta (`IGNORED`, payload vaciado) todo lo que no sea texto.
 - **Criterios:** un mensaje entra, se responde dentro de la ventana, se ven `sent/delivered/read`, una baja funciona, el webhook sobrevive a un reinicio sin perder ni duplicar eventos; el propietario firma el checklist.
 
+### F7-13 · Coexistencia con la app WhatsApp Business
+
+- **Propuesta:** [ADR-032](../adr/ADR-032-whatsapp-coexistence.md) (`Proposed`): un solo número para la tienda, en la app WhatsApp Business del teléfono y en Good Doggy a la vez, conectado por el Embedded Signup de Meta en modo coexistencia. Responde a D-F7-02 sin cambiar la recomendación de ADR-029. Kommo no se integra.
+- **Orden de ejecución:** no cambia. Todos los work items de la serie dependen de la aceptación del propietario (F7-13b) y nacen en `status:blocked`. Todo se construye y se prueba contra el simulador; ninguno llama a Meta. **El número de la tienda solo se conecta con la autorización escrita del propietario** (F7-13k).
+- **Hecho en F7-13a ([#738](https://github.com/PapiCuche/crm-gooddoggy/issues/738)):** ADR-032 archivado como `Proposed`, su fila en el índice de los ADR, esta serie, sus decisiones y lo que añade a la tabla del propietario.
+
+| ID | Issue y título | Rama | Depende de | Tipo |
+| --- | --- | --- | --- | --- |
+| F7-13a | [#738](https://github.com/PapiCuche/crm-gooddoggy/issues/738) Archivar ADR-032 (Proposed) y la serie en el plan de la fase 7 | `docs/f7-coexistence-adr` | — | docs |
+| F7-13b | [#739](https://github.com/PapiCuche/crm-gooddoggy/issues/739) Decisión del propietario sobre ADR-032 (aceptación) | `docs/f7-coexistence-accepted` | F7-13a | docs (propietario) |
+| F7-13c | [#740](https://github.com/PapiCuche/crm-gooddoggy/issues/740) El simulador de Meta firma ecos, historial, contactos y eventos de cuenta | `feature/f7-coexistence-simulator` | F7-13b, F7-01 ([#580](https://github.com/PapiCuche/crm-gooddoggy/issues/580)) | backend (pruebas) |
+| F7-13d | [#741](https://github.com/PapiCuche/crm-gooddoggy/issues/741) Alta por Embedded Signup en el servidor, token cifrado y sincronizaciones de una sola vez | `feature/f7-coexistence-signup-api` | F7-13b, F7-13c, F7-02c ([#588](https://github.com/PapiCuche/crm-gooddoggy/issues/588)), F7-02d ([#589](https://github.com/PapiCuche/crm-gooddoggy/issues/589)), F7-06b ([#646](https://github.com/PapiCuche/crm-gooddoggy/issues/646)) | backend |
+| F7-13e | [#742](https://github.com/PapiCuche/crm-gooddoggy/issues/742) Pantalla del alta con Embedded Signup y cabeceras acotadas a su ruta | `feature/f7-coexistence-signup-ui` | F7-13d, F7-07b ([#599](https://github.com/PapiCuche/crm-gooddoggy/issues/599)) | frontend |
+| F7-13f | [#743](https://github.com/PapiCuche/crm-gooddoggy/issues/743) El webhook acepta y enruta los campos nuevos y confirma la desconexión desde el teléfono | `feature/f7-coexistence-webhook` | F7-13b, F7-13c, F7-13d, F7-03c ([#600](https://github.com/PapiCuche/crm-gooddoggy/issues/600)) | backend |
+| F7-13g | [#744](https://github.com/PapiCuche/crm-gooddoggy/issues/744) Lo enviado desde la app del teléfono aparece en el chat sin duplicados (texto) | `feature/f7-coexistence-echoes` | F7-13f, F7-06a ([#645](https://github.com/PapiCuche/crm-gooddoggy/issues/645)), F7-08b ([#623](https://github.com/PapiCuche/crm-gooddoggy/issues/623)) | full-stack |
+| F7-13h | [#745](https://github.com/PapiCuche/crm-gooddoggy/issues/745) Medios, ediciones y eliminaciones hechas desde el teléfono | `feature/f7-coexistence-echo-media` | F7-13g, F7-09b ([#704](https://github.com/PapiCuche/crm-gooddoggy/issues/704)), F7-09a3 ([#703](https://github.com/PapiCuche/crm-gooddoggy/issues/703)) | full-stack |
+| F7-13i | [#746](https://github.com/PapiCuche/crm-gooddoggy/issues/746) Contactos de la libreta del teléfono con minimización | `feature/f7-coexistence-contacts-sync` | F7-13f, F7-13d, F7-08a ([#613](https://github.com/PapiCuche/crm-gooddoggy/issues/613)) | backend |
+| F7-13j | [#747](https://github.com/PapiCuche/crm-gooddoggy/issues/747) Importar el historial de 6 meses sin duplicados ni ventanas | `feature/f7-coexistence-history` | F7-13f, F7-13g | backend |
+| F7-13k | [#748](https://github.com/PapiCuche/crm-gooddoggy/issues/748) Runbook, número de prueba y autorización del propietario para el número de la tienda (cierra la serie) | `docs/f7-coexistence-go-live` | F7-13e, F7-13g, F7-13h, F7-13i, F7-13j | docs / operaciones |
+
+Decisiones del propietario de la serie (detalle y recomendaciones en ADR-032 §13):
+
+| ID | Pregunta | Recomendación | Bloquea |
+| --- | --- | --- | --- |
+| D-COEX-01 | ¿La app del despliegue se convierte en Tech Provider o se usa un Solution Partner? | Tech Provider con la app propia (mantiene D-CH-1 y D-F7-01); empezar ya la verificación del negocio | F7-13k |
+| D-COEX-02 | ¿Importar el historial de 6 meses? (una sola vez, dentro de 24 h del alta) | Sí, solo si el aviso de privacidad lo cubre | F7-13j, F7-13k |
+| D-COEX-03 | ¿Qué contactos de la libreta del teléfono entran al CRM? | Solo los que tienen o tuvieron conversación en la cuenta | F7-13i |
+| D-COEX-04 | ¿Cómo cuenta una respuesta desde el teléfono? | Sin vendedor atribuido; la conversación pasa a `WAITING_CUSTOMER`; no cambia la asignación | F7-13g |
+| D-COEX-05 | ¿Qué hacer con un `STOP` o `ALTA` del historial? | La última palabra de cada contacto, en orden, sin confirmación, salvo un cambio posterior en el CRM | F7-13j |
+| D-COEX-06 | ¿Quién responde dónde? | Los vendedores en Good Doggy; el teléfono para llamadas, estados y excepciones | F7-13k |
+| D-COEX-07 | ¿Primero un número de prueba en coexistencia y después el de la tienda? | Sí; el número de la tienda solo con autorización escrita del propietario | F7-13k |
+| D-COEX-08 | ¿Se acepta lo que se pierde en el teléfono (mensajes temporales, ver una vez, ubicación en tiempo real, listas de difusión nuevas, acompañantes Windows y WearOS)? | Aceptar, informando al equipo antes del alta | F7-13k |
+| D-COEX-09 | Precios: lo del teléfono es gratis; lo del CRM sigue el precio por mensaje vigente | Revisar el coste con el volumen real antes de activar | F7-13k |
+| D-COEX-10 | ¿Bajar los medios del historial de los últimos 14 días? | No en el primer corte | F7-13j |
+
+### F7-14 · BSUID: mensajes entrantes sin número de teléfono
+
+- **Issue:** [#749](https://github.com/PapiCuche/crm-gooddoggy/issues/749) (medir primero). Meta puede enviar un `user_id` (BSUID) sin teléfono; hoy un entrante sin `from` se cierra `IGNORED` con `BAD_PHONE` y se pierde en silencio. F7-14 lo distingue (`NO_PHONE`) y lo cuenta sin guardar su contenido; la identidad por BSUID será un ADR posterior (ADR-032 §12).
+
 ## Qué necesita el propietario (sin ningún valor real)
 
 Nada de esto bloquea el desarrollo: F7-01 a F7-11 se construyen y prueban con el simulador. Hace falta para **F7-12**, y los trámites con Meta tardan, por lo que conviene empezarlos ya.
@@ -316,6 +355,9 @@ Nada de esto bloquea el desarrollo: F7-01 a F7-11 se construyen y prueban con el
 | 10  | **Plantillas** que se quieren usar (seguimiento, cotización, reenganche), pedidas y aprobadas en Meta                                                                                                       | Escribir fuera de la ventana de 24 h                                                       | Meta; el CRM las sincroniza en `message_templates` (F7-10)                                                                                         | F7-10 en vivo                                  |
 | 11  | **Aviso de privacidad y términos** para los clientes que escriben por WhatsApp, y la lista de palabras de baja                                                                                              | Base legal y baja                                                                          | La política del negocio y la configuración de la organización (palabras de baja)                                                                   | Antes de F7-12                                 |
 | 12  | El **número de prueba** que Meta ofrece y la lista de destinatarios de prueba                                                                                                                               | Probar de punta a punta sin clientes                                                       | Meta. Se conecta como una cuenta de canal más (token en `credentials`)                                                                             | F7-12                                          |
+| 13  | Solo con coexistencia (ADR-032): la app del despliegue como **Tech Provider**: verificación del negocio y **App Review** (dos videos) para el **acceso avanzado** a los permisos de mensajería y de administración de WhatsApp (D-COEX-01) | Conectar por Embedded Signup un número que sigue en la app WhatsApp Business del teléfono | Meta. No se guarda en el CRM | Antes de F7-13k; empezar ya |
+| 14  | Solo con coexistencia: la **configuración de Embedded Signup** (Facebook Login for Business, v4 o posterior) y el dominio del CRM con HTTPS en «Allowed domains» y «Valid OAuth redirect URIs» | El botón de alta de la pantalla de canales (F7-13e) | Meta; el id de la app y el de la configuración van en variables de entorno sin secreto (`META_APP_ID`, `META_EMBEDDED_SIGNUP_CONFIG_ID`) | F7-13k |
+| 15  | Solo con coexistencia: la suscripción de la app a los campos `smb_message_echoes`, `history`, `smb_app_state_sync` y `account_update`, además de `messages` | Ver en el CRM lo enviado desde el teléfono, el historial, la libreta y la desconexión | Meta. No se guarda en el CRM | F7-13k |
 
 Cada fila dice **dónde se guarda**, nunca el valor. Los valores (tokens, secretos, ids) se entregan **solo** por el gestor de secretos o las variables de entorno del despliegue; nunca en el repositorio, en un issue ni en un chat.
 
@@ -336,6 +378,8 @@ Cada una trae una recomendación; no se programa nada que dependa de ella antes 
 | D-F7-09 | Orden y calendario de las demás redes (ver abajo) frente al roadmap de la fase 0, que pone Instagram y Facebook en la Fase 12 y TikTok en la 13 | Mantener WhatsApp primero y decidir el orden de las demás con lo que cada plataforma apruebe                                                           | Fase 7b      |
 | D-F7-10 | ¿Varios números por organización desde el primer corte (D-CH-2)?                                                                                | El modelo lo admite; la pantalla maneja uno                                                                                                            | F7-07        |
 | D-F7-11 | ¿Conectar o rotar el token de una cuenta pide MFA reciente (`step_up`)?                                                                         | Sí: es una credencial que da acceso al canal; pedirlo en el Owner y el Administrador                                                                   | F7-02c       |
+
+**Nota a D-F7-02:** la opción de coexistir con la app WhatsApp Business está estudiada en [ADR-032](../adr/ADR-032-whatsapp-coexistence.md) (`Proposed`, serie F7-13, decisiones D-COEX-01 a D-COEX-10). La recomendación de ADR-029 para D-F7-02 no cambia hasta que el propietario decida (F7-13b, #739).
 
 ## Las demás redes (Fase 7b en adelante)
 
