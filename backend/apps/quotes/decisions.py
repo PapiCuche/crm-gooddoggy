@@ -6,9 +6,10 @@ o a `DRAFT` (rechazar, retirar), con versión y auditoría del antes y el despu�
 
 **Orden.** El permiso (`quotes.approve`; para retirar, ese o `quotes.update`) va antes de leer.
 Con la cotización bloqueada, su **alcance** (aprobar y rechazar exigen verla, `quotes.view`;
-retirar, el de `quotes.update`): una que no existe, de otra organización o fuera del alcance es la
-misma `DoesNotExist`, sin oráculo de existencia. Luego la versión (`StaleVersion`) y el estado
-(`NotPending`); al retirar, quién puede con esa solicitud va antes de ambos.
+retirar, los de `quotes.view` y `quotes.update`, F5-09e3): una que no existe, de otra organización o
+fuera del alcance es la misma `DoesNotExist`, sin oráculo de existencia. Luego la versión
+(`StaleVersion`) y el estado (`NotPending`); al retirar, quién puede con esa solicitud va antes de
+ambos.
 
 **Aprobar** exige que quien aprueba no sea quien pidió (`SelfApproval`), que no supere **su propio**
 límite (`BeyondLimit`, el cálculo de `submit_quote`) y que cada precio manual **vuelva a cubrir el
@@ -35,6 +36,7 @@ from apps.quotes.commands import (
     _stamp,
     _text,
     _uuid,
+    _within,
 )
 from apps.quotes.discounts import REASON_MAX, _authority, _floor, _lines
 from apps.quotes.models import ApprovalStatus, Quote, QuoteApproval, QuoteStatus
@@ -144,8 +146,8 @@ def reject_quote(ctx: TenantContext, *, quote_id: UUID, version: int, reason: st
 
 def withdraw_approval_request(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
     """Retira la solicitud abierta y devuelve la cotización a `DRAFT`: quien la pidió (con el
-    alcance de `quotes.update`) o quien puede aprobar; la solicitud de la IA solo quien puede
-    aprobar. La solicitud queda `CANCELLED`."""
+    alcance de `quotes.view` y `quotes.update`) o quien puede aprobar; la solicitud de la IA, solo
+    quien puede aprobar. La solicitud queda `CANCELLED`."""
     alias = require_scope(ctx)
     ectx = execution_context(ctx)  # lo primero: sin permiso, ni se mira lo que se envía
     if not (has_permission(ectx, "quotes.approve") or has_permission(ectx, "quotes.update")):
@@ -155,7 +157,7 @@ def withdraw_approval_request(ctx: TenantContext, *, quote_id: UUID, version: in
     with transaction.atomic(using=alias):
         quote, asked = _pending(
             alias, quote_id, version,
-            lambda q: _can_decide(ectx, q) or can(ectx, "quotes.update", q),
+            lambda q: _can_decide(ectx, q) or _within(ectx, "quotes.view", "quotes.update")(q),
             lambda q, a: _can_decide(ectx, q) or a.requested_by_user_id == ctx.user_id,
         )  # fmt: skip
         _close(ctx, alias, quote, asked, action="quote.approval_withdrawn",
