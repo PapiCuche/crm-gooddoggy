@@ -410,8 +410,7 @@ def test_the_database_refuses_an_answer_after_the_validity_by_its_own_clock(
 def test_the_migration_only_adds_rules_and_goes_back_only_without_answers(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    new = installed(migrator)
-    assert new == MIGRATION.body(MIGRATION.GUARD)
+    new = MIGRATION.body(MIGRATION.GUARD)  # la de 0006 (0007 la amplía: test_quote_revise)
     legacy = quote(world)  # antes de volver: el modelo ya lleva las columnas nuevas
     go(world, legacy, "SENT")
     with as_migrator():
@@ -422,10 +421,10 @@ def test_the_migration_only_adds_rules_and_goes_back_only_without_answers(
     assert removed == [] and old != new  # ninguna regla anterior se perdió
     migrator.execute("UPDATE quotes SET status = 'ACCEPTED' WHERE id = %s", [legacy.pk])
     with as_migrator(), pytest.raises(RuntimeError, match="1 accepted or rejected"):
-        call_command("migrate", "quotes", verbosity=0)
+        call_command("migrate", "quotes", "0006", verbosity=0)
     migrator.execute("UPDATE quotes SET status = 'CANCELLED', cancelled_at = now()")
     with as_migrator():
-        call_command("migrate", "quotes", verbosity=0)
+        call_command("migrate", "quotes", "0006", verbosity=0)
     assert installed(migrator) == new
     answered = quote(world, number="COT-950001")
     go(world, answered, "SENT")
@@ -443,3 +442,5 @@ def test_the_migration_only_adds_rules_and_goes_back_only_without_answers(
     monkeypatch.setattr(MIGRATION.PREVIOUS, "GUARD", "otra función")
     with pytest.raises(RuntimeError, match="anchor"):  # si 0005 cambiara, no añade nada
         MIGRATION._guard()
+    with as_migrator():
+        call_command("migrate", "quotes", verbosity=0)  # de vuelta a la última

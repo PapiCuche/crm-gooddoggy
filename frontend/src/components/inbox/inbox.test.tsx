@@ -197,6 +197,51 @@ describe("Inbox, lista (F6-03)", () => {
     expect(document.querySelector("li b")).toBeNull();
   });
 
+  it("un medio muestra su clase y la frase fija como texto, sin enlace ni archivo", async () => {
+    const file = { id: "a1", status: "DONE", mime_type: "image/jpeg", size_bytes: 9 } as const;
+    const media = (id: string, type: string, changes: Partial<Message> = {}) =>
+      message(id, { message_type: type, ...changes });
+    serve({
+      [LIST]: page([rosa]),
+      [MESSAGES("1")]: page([
+        media("m1", "IMAGE", {
+          body: "Imagen recibida",
+          attachment: { ...file, kind: "IMAGE", available: true },
+        }),
+        media("m2", "AUDIO", { body: "Audio recibido", attachment: null }),
+        media("m3", "VIDEO", { body: null }),
+        media("m4", "IMAGE", {
+          body: "Sticker recibido",
+          attachment: { ...file, kind: "STICKER", available: true },
+        }),
+        media("m5", "IMAGE", { body: '<img src="x" onerror="alert(1)">' }),
+        media("m6", "DOCUMENT", { body: "Documento recibido" }),
+        media("m7", "constructor", { body: "raro" }),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const image = (await screen.findByText("Imagen recibida")).closest("li")!;
+    const items = within(image.parentElement!).getAllByRole("listitem");
+    const at = (text: string) => items.find((li) => li.textContent?.includes(text))!;
+    expect(image).toHaveTextContent("Imagen");
+    expect(image).toHaveClass("bg-surface-raised");
+    expect(image).not.toHaveTextContent("tipo que todavía");
+    expect(image.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(at("Audio recibido")).toHaveTextContent(/^Audio/);
+    expect(at("Sticker recibido")).toHaveTextContent(/^Sticker/);
+    const video = items.find((li) => li.textContent?.startsWith("Video"))!;
+    expect(video).not.toHaveTextContent("Sin permiso para ver el contenido"); // solo el marcador
+    expect(screen.getByText('<img src="x" onerror="alert(1)">').tagName).toBe("BDI"); // texto
+    for (const odd of ["Documento recibido", "raro"]) {
+      expect(at(odd)).toHaveTextContent("Mensaje de un tipo que todavía no se puede mostrar");
+    }
+    // Ni el archivo ni un enlace: la pantalla del medio es de F7-09a3 (D-F7-04)
+    const panel = image.parentElement!;
+    expect(panel.querySelector("img, audio, video, a, iframe, object, embed")).toBeNull();
+    expect(within(panel).queryAllByRole("button")).toHaveLength(0);
+  });
+
   it("sin permiso sobre el contacto explica en vez de dejar un hueco", async () => {
     const hidden = conversation("5", {
       ...{ contact: { id: "c5", display_name: null }, last_message_preview: null },

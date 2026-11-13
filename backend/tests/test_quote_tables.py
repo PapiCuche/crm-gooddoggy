@@ -255,7 +255,9 @@ def test_the_number_is_unique_per_organization_and_revision(world: SimpleNamespa
         with transaction.atomic():
             Quote.objects.create(**again)
     assert quote(world, "b").number == "COT-000001"  # cada organización cuenta lo suyo
-    assert quote(world, revision=2, price_list_id=other_list).revision == 2  # otra revisión, sí
+    with tenant_scope(ctx(world.a)), pytest.raises(IntegrityError, match="follows the one"):
+        with transaction.atomic():  # otra revisión, solo cancelando la 1 (F5-09c4)
+            Quote.objects.create(**again, revision=2)
 
 
 def test_the_lines_are_unique_per_variant_and_position_within_a_quote(
