@@ -26,7 +26,7 @@ Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3)
 
 **Automatización (A-04, #20):** las dependencias de #5–#12 están normalizadas a `- #N`, y #5 tiene además el gate `required-check:backend gate`. El orquestador `work-item-dependencies` pasa a `status:ready` cada issue cuando se cumplen sus dependencias y gates. El Builder arranca con `continuar`.
 
-**Serie R0 (producción).** Hecho en F1-11 (#752): [ADR-033](../adr/ADR-033-production-hosting.md) (`Proposed`) propone un servidor Linux con Docker Compose, neutral de proveedor, con los requisitos del servidor, la topología, los secretos, el despliegue por digest, los backups (RPO 24 h, RTO 4 h) y las decisiones del propietario. Lo acepta o lo cambia el propietario en F1-12 (#753); después siguen F1-13 a F1-18 (#754–#760). Al aceptarse responde D10-H y D-F7-03.
+**Serie R0 (producción).** Hecho en F1-11 (#752): [ADR-033](../adr/ADR-033-production-hosting.md) (`Proposed`) propone un servidor Linux con Docker Compose, neutral de proveedor, con los requisitos del servidor, la topología, los secretos, el despliegue por digest, los backups (RPO 24 h, RTO 4 h) y las decisiones del propietario. Lo acepta o lo cambia el propietario en F1-12 (#753); después siguen F1-13 a F1-18 (#754–#758, #760), con F2-127 (#759) en la misma serie. Al aceptarse responde D10-H y D-F7-03.
 
 ## Definition of Done de la fase
 
