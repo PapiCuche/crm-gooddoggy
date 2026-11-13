@@ -60,6 +60,7 @@ STORE_RESERVE = 60.0
 MAX_COUNTDOWN = 1800
 SWEEP_AFTER = dt.timedelta(minutes=5)  # vencido y sin cambios desde hace esto: varado
 BUSY_WAIT = 30  # con el tope de la organización lleno, la tarea vuelve en esto
+EARLY = 60  # segundos antes de su hora que una tarea puede llegar y volver (si no, es un duplicado)
 RETRY = "RETRY"
 OUTCOMES = frozenset({RETRY, "EXPIRED", *MEDIA_FAILURES})
 FTYP = {  # la marca principal de una caja `ftyp`, por clase
@@ -113,10 +114,10 @@ def _close(alias: str, pk: UUID, status: str, code: str | None = None, **more: A
 
 
 def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
-    """El reclamo de un intento; `None` si no hay nada que hacer (o se cerró sin llamar a Meta); o
-    en cuántos segundos volver si otro intento tiene el plazo vivo, la espera de un reintento aún
-    no venció (una tarea que llega antes, con el reloj del worker) o la organización está en su
-    tope. Los segundos se cuentan con el reloj de la base."""
+    """El reclamo de un intento; `None` si no hay nada que hacer (o se cerró sin llamar a Meta, o
+    la tarea es un duplicado); o en cuántos segundos volver si el plazo de otro intento o la espera
+    de un reintento vencen dentro de `EARLY` (una tarea que llega algo antes, con el reloj del
+    worker) o la organización está en su tope. Los segundos se cuentan con el reloj de la base."""
     alias = require_scope(ctx)
     with connections[alias].cursor() as cursor:  # el tope se cuenta y se toma uno a uno
         key = f"media:{ctx.organization_id}"
@@ -139,12 +140,17 @@ def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
         if (found := held.first()) is None:
             return None
         status, lease, wait, at = found
-        return max(int(((lease if status == "DOWNLOADING" else wait) - at).total_seconds()), 0) + 1
+        left = int(((lease if status == "DOWNLOADING" else wait) - at).total_seconds())
+        # Solo vuelve la que llega poco antes de su hora (el reloj del worker); la que llega mucho
+        # antes es un duplicado y termina: la fila ya tiene su tarea (o, si no, el barredor).
+        return max(left, 0) + 1 if left <= EARLY else None
     if row.attempts >= MAX_ATTEMPTS:  # el último intento murió sin cerrar
         _close(alias, row.pk, "FAILED", "UNAVAILABLE")
         return None
     live = Q(download_status="DOWNLOADING", lease_until__gt=now)
     if MessageAttachment.objects.using(alias).filter(live).count() >= settings.MEDIA_PER_ORG:
+        # su tarea sigue viva: el barredor (`stranded`) no la toma por abandonada
+        MessageAttachment.objects.using(alias).filter(pk=row.pk).update(updated_at=Now())
         return BUSY_WAIT
     message = Message.objects.using(alias).get(pk=row.message_id)
     account = ChannelAccount.objects.using(alias).filter(
@@ -250,11 +256,13 @@ class Sink:
         return written
 
 
-def _refused(got: Claim) -> Stop:
-    """El DNS del destino contestó una IP no pública: no se conectó (el token no salió) y no se
-    reintenta. Se registra sin la URL, el host ni la IP."""
-    logger.warning("media.blocked_ip", attachment_id=str(got.attachment_id))
-    return Stop("UNAVAILABLE")
+def _refused(got: Claim, role: str) -> Stop:
+    """El DNS del destino contestó una IP no pública: no se conectó (el token no salió). Si es el
+    de Graph (DNS64, sumidero, horizonte dividido: del despliegue), reintento, y `MAX_ATTEMPTS` lo
+    acaba; si es el de los medios (la URL de Meta), `UNAVAILABLE` sin reintento. Se registra el
+    papel (`graph` o `media`), nunca la URL, el host ni la IP."""
+    logger.error("media.blocked_ip", attachment_id=str(got.attachment_id), role=role)
+    return Stop(RETRY if role == "graph" else "UNAVAILABLE")
 
 
 def _lookup(auth: dict[str, str], got: Claim) -> str:
@@ -267,7 +275,7 @@ def _lookup(auth: dict[str, str], got: Claim) -> str:
         reply = http.request("GET", url, headers=auth)
         status, raw = reply.status, reply.data
     except http.NonPublicAddress:
-        raise _refused(got) from None
+        raise _refused(got, "graph") from None
     except http.BlockedDestination, http.HTTPError, OSError:
         raise Stop(RETRY) from None
     try:
@@ -312,7 +320,7 @@ def _download(token: str, got: Claim, deadline: float) -> Sink:
         except http.UnsupportedEncoding:
             raise Stop("UNAVAILABLE") from None
         except http.NonPublicAddress:
-            raise _refused(got) from None
+            raise _refused(got, "media") from None
         except http.BlockedDestination, http.HTTPError, OSError:  # p. ej., `getaddrinfo` falló
             raise Stop(RETRY) from None
         finally:

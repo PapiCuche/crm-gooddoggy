@@ -11,7 +11,11 @@ tiene el plazo: eso lo hace la aplicación (`media._mine`).
 
 La función nueva sale del cuerpo de `0022` con un ancla que aparece una sola vez, y antes de
 reemplazarla se compara con la que hay en la base (`0022._swap`): si no es exactamente la esperada,
-falla sin tocar nada. Hacia atrás vuelve el cuerpo exacto de `0022`."""
+falla sin tocar nada. Hacia atrás vuelve el cuerpo exacto de `0022`.
+
+Además, el índice parcial `(organization_id, updated_at)` de las filas abiertas (`PENDING` y
+`DOWNLOADING`) para el barredor (`media.stranded`); fuera del estado de Django, como el de
+`0021`. Se crea sin `CONCURRENTLY` (la tabla es de F7-09a1b y aún pequeña)."""
 
 import importlib
 
@@ -38,6 +42,10 @@ FORWARD = """    -- 0023: fuera de un reclamo, ni el plazo ni la espera vencen a
 if CLOCK.NEW.count(ANCHOR) != 1:
     raise RuntimeError("0023: el cuerpo de 0022 no es el esperado")
 NEW = CLOCK.NEW.replace(ANCHOR, ANCHOR + FORWARD)
+SWEEP_INDEX = (
+    "CREATE INDEX message_attachments_sweep_idx ON public.message_attachments "
+    "(organization_id, updated_at) WHERE download_status IN ('PENDING', 'DOWNLOADING')"
+)
 
 
 class Migration(migrations.Migration):
@@ -47,4 +55,5 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RunPython(CLOCK._swap(CLOCK.NEW, NEW), CLOCK._swap(NEW, CLOCK.NEW)),
+        migrations.RunSQL(SWEEP_INDEX, "DROP INDEX IF EXISTS public.message_attachments_sweep_idx"),
     ]

@@ -139,6 +139,14 @@ def media_event(task: Any, event_id: str) -> None:
         fetch_media.apply_async(kwargs=ids)
 
 
+def _count(failures: Any) -> int:
+    """Los fallos que trae el mensaje, entre 0 y `MEDIA_GIVE_UP`; uno inválido vale el tope."""
+    try:
+        return max(0, min(int(failures), MEDIA_GIVE_UP))
+    except TypeError, ValueError, OverflowError:
+        return MEDIA_GIVE_UP
+
+
 @platform_task(name="conversations.fetch_media", bind=True, ignore_result=True, acks_late=True)
 def fetch_media(task: Any, attachment_id: str, organization_id: str, failures: int = 0) -> None:
     """Un intento de descarga de un adjunto (`media.fetch`); vuelve cuando hay que esperar, nunca
@@ -150,7 +158,7 @@ def fetch_media(task: Any, attachment_id: str, organization_id: str, failures: i
         outcome, wait = media.fetch(UUID(organization_id), UUID(attachment_id))
         failures = 0
     except Exception as error:  # noqa: BLE001 — solo la clase: el texto puede llevar la URL
-        outcome, failures = type(error).__name__, int(failures) + 1
+        outcome, failures = type(error).__name__, _count(failures) + 1
         wait = int(media.LEASE.total_seconds()) + 1 if failures < MEDIA_GIVE_UP else None
         if wait is None:
             logger.error("media.fetch_gave_up", attachment_id=attachment_id, error=outcome)

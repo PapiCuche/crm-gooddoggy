@@ -147,9 +147,10 @@ MEDIA_PER_ORG = 2  # F7-09a1b: descargas de medios a la vez por organización (a
 # F7-09a1c: las descargas de medios (hasta 120 s cada una) van en su propia cola, de baja
 # concurrencia (`worker-media`), para no ocupar los workers de la salida de mensajes.
 CELERY_TASK_ROUTES = {"conversations.fetch_media": {"queue": "media"}}
-# F7-09a1d: con `acks_late`, Redis vuelve a entregar una tarea sin confirmar pasado este tiempo;
-# una con `countdown` espera sin confirmar, así que ninguna puede esperar tanto (es global: la de
-# medios, `MAX_COUNTDOWN` = 1800 s; las demás, 600 s como mucho). Es el de omisión, explícito.
+# F7-09a1d: Redis vuelve a entregar una tarea reservada y sin confirmar pasado este tiempo, y una
+# con `countdown` (o `eta`) espera reservada sin confirmar, con `acks_late` o sin él: ningún
+# `countdown` puede llegar a tanto (es global: medios, `MAX_COUNTDOWN` = 1800 s; las demás, 600 s
+# como mucho; una prueba lo comprueba). Es el valor por omisión, explícito.
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 # Outbox (F1-06): el publisher corre cada segundo en beat.
 CELERY_BEAT_SCHEDULE = {
