@@ -1,8 +1,10 @@
 """F7-09a1c: el disparador `message_attachments_advance` (`0021`) también ata el reclamo al reloj de
 la base: pasar de `PENDING` a `DOWNLOADING` antes de `not_before` (la espera de un reintento) y
 reclamar un `DOWNLOADING` con un `attempt_id` nuevo antes de que venza su `lease_until` (el plazo
-del intento vivo) son `check_violation`. `now()` es el instante de inicio de la transacción, el
-mismo que usa `media.claim` (`Now()`) para elegir la fila.
+del intento vivo) son `check_violation`. El reloj es `statement_timestamp()` de la sentencia que
+cambia la fila: nunca anterior al de la sentencia con la que `media.claim` la eligió (`Now()` es
+`statement_timestamp()` en Django), así que lo que el reclamo vio vencido sigue vencido aquí
+(`now()`, el inicio de la transacción, rechazaría lo que venció mientras esperaba su cerrojo).
 
 La función nueva se construye a partir del cuerpo de `0021` con un ancla que aparece una sola vez,
 y antes de reemplazarla se compara con la que hay en la base: si no es exactamente la de `0021`
@@ -23,8 +25,9 @@ ANCHOR = (
 )
 CLOCK = """    -- 0022, con el reloj de la base: ni antes de la espera ni sobre un plazo vivo.
     IF claim AND ((OLD.download_status = 'PENDING' AND OLD.not_before IS NOT NULL
-                   AND OLD.not_before > now())
-                  OR (OLD.download_status = 'DOWNLOADING' AND OLD.lease_until > now())) THEN
+                   AND OLD.not_before > statement_timestamp())
+                  OR (OLD.download_status = 'DOWNLOADING'
+                      AND OLD.lease_until > statement_timestamp())) THEN
         RAISE EXCEPTION 'message_attachments_advance: reclamo antes de tiempo'
             USING ERRCODE = 'check_violation';
     END IF;

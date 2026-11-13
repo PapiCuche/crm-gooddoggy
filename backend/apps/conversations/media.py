@@ -49,7 +49,9 @@ CAPS = {"IMAGE": 5 << 20, "STICKER": 1 << 20, "AUDIO": 16 << 20, "VIDEO": 16 << 
 MAX_ATTEMPTS = 5
 BACKOFF = (30, 120, 600, 3600)  # segundos de espera tras el intento 1, 2, 3 y 4
 LEASE = dt.timedelta(seconds=300)
-BUDGET = 120.0  # Graph y descarga juntas: menos que el plazo del reclamo
+# Lo que queda antes de cada consulta y de la descarga; una consulta a Graph tiene sus propios
+# tiempos (`core.http.request`), así que un intento real puede rozar ~180 s: menos que el plazo.
+BUDGET = 120.0
 BUSY_WAIT = 30  # con el tope de la organización lleno, la tarea vuelve en esto
 RETRY = "RETRY"
 OUTCOMES = frozenset({RETRY, "EXPIRED", *MEDIA_FAILURES})
@@ -105,21 +107,32 @@ def _close(alias: str, pk: UUID, status: str, code: str | None = None, **more: A
 
 def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
     """El reclamo de un intento; `None` si no hay nada que hacer (o se cerró sin llamar a Meta); o
-    en cuántos segundos volver si otro intento tiene el plazo vivo o la organización, su tope."""
+    en cuántos segundos volver si otro intento tiene el plazo vivo, la espera de un reintento aún
+    no venció (una tarea que llega antes, con el reloj del worker) o la organización está en su
+    tope. Los segundos se cuentan con el reloj de la base."""
     alias = require_scope(ctx)
     with connections[alias].cursor() as cursor:  # el tope se cuenta y se toma uno a uno
         key = f"media:{ctx.organization_id}"
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
-    now = Now()  # el reloj de la base, el mismo con el que lo comprueba el disparador (`0022`)
+    now = Now()  # `statement_timestamp()`; el disparador (`0022`) mira el de su propia sentencia
     due = Q(download_status="PENDING") & (Q(not_before__isnull=True) | Q(not_before__lte=now))
     due |= Q(download_status="DOWNLOADING", lease_until__lte=now)
     rows = MessageAttachment.objects.using(alias).select_for_update(skip_locked=True)
     row = rows.filter(due, pk=attachment_id).first()
-    if row is None:
-        held = MessageAttachment.objects.using(alias).filter(
-            pk=attachment_id, download_status="DOWNLOADING"
-        ).values_list("lease_until", flat=True).first()  # fmt: skip
-        return None if held is None else max(int((held - timezone.now()).total_seconds()), 0) + 1
+    if row is None:  # ¿un intento vivo, o una espera que aún no venció? Se vuelve a mirar después
+        held = (
+            MessageAttachment.objects.using(alias)
+            .filter(
+                Q(download_status="DOWNLOADING") | Q(download_status="PENDING", not_before__gt=now),
+                pk=attachment_id,
+            )
+            .annotate(at=Now())
+            .values_list("download_status", "lease_until", "not_before", "at")
+        )
+        if (found := held.first()) is None:
+            return None
+        status, lease, wait, at = found
+        return max(int(((lease if status == "DOWNLOADING" else wait) - at).total_seconds()), 0) + 1
     if row.attempts >= MAX_ATTEMPTS:  # el último intento murió sin cerrar
         _close(alias, row.pk, "FAILED", "UNAVAILABLE")
         return None
@@ -247,10 +260,10 @@ def _lookup(auth: dict[str, str], got: Claim) -> str:
         found = None
     error = found.get("error") if isinstance(found, dict) else None
     code = error.get("code") if isinstance(error, dict) else None
+    if status == 429 or status >= 500 or code in graph.THROTTLED:  # nada dice del token
+        raise Stop(RETRY)
     if code == 190 or status in (401, 403):
         raise Stop("TOKEN_INVALID")
-    if status == 429 or status >= 500 or code in graph.THROTTLED:
-        raise Stop(RETRY)
     if status in (404, 410):
         raise Stop("EXPIRED")
     link = found.get("url") if status == 200 and isinstance(found, dict) else None
@@ -265,6 +278,10 @@ def _download(token: str, got: Claim, deadline: float) -> Sink:
         if deadline - time.monotonic() <= 1:
             raise Stop(RETRY)
         url = _lookup(auth, got)
+        try:  # un host fuera de la lista es definitivo; un DNS que falla dentro de `download`, no
+            http.check_url(url, settings.META_MEDIA_HOSTS)
+        except http.BlockedDestination:
+            raise Stop("UNAVAILABLE") from None
         sink, status = Sink(), 0
         try:
             remaining = deadline - time.monotonic()
@@ -276,9 +293,9 @@ def _download(token: str, got: Claim, deadline: float) -> Sink:
             )  # fmt: skip
         except http.ResponseTooLarge:
             raise Stop("TOO_LARGE") from None
-        except http.UnsupportedEncoding, http.BlockedDestination:
+        except http.UnsupportedEncoding:
             raise Stop("UNAVAILABLE") from None
-        except http.HTTPError, OSError:
+        except http.BlockedDestination, http.HTTPError, OSError:  # p. ej., `getaddrinfo` falló
             raise Stop(RETRY) from None
         finally:
             if status != 200:

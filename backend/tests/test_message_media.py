@@ -6,7 +6,9 @@ import hashlib
 import importlib
 import io
 import logging
+import socket
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -247,7 +249,8 @@ def test_retries_wait_longer_each_time_until_the_last_attempt_fails_unavailable(
         assert isinstance(claimed(world.a, pk), int)  # ni un segundo intento a la vez
         waits.append(finish(world, got, "RETRY")[1])
         if waits[-1]:
-            assert claimed(world.a, pk) is None  # ni antes de su espera
+            early = claimed(world.a, pk)  # ni antes de su espera: vuelve cuando venza
+            assert isinstance(early, int) and waits[-1] - 2 <= early <= waits[-1] + 1
             due(migrator, pk)
     assert waits == [30, 120, 600, 3600, None]
     assert state(migrator, pk) == ("FAILED", "UNAVAILABLE", 5)
@@ -815,3 +818,75 @@ def test_0022_refuses_to_replace_a_function_it_does_not_expect(world: Any) -> No
     with as_migrator(), connection.schema_editor() as editor:
         with pytest.raises(RuntimeError, match="versión esperada"):  # ya está la de `0022`
             clock._swap(clock.OLD, clock.NEW)(None, editor)
+
+
+# ---- Revisión de #717: la tarea temprana, el DNS que falla, el reloj de la sentencia ----
+
+
+def test_a_task_that_runs_before_its_wait_comes_back_instead_of_dropping_the_attachment(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pk = one(world, migrator)
+    world.graph.media[MEDIA] = FakeMedia(JPEG, lookup=500)
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.fetch_media, "apply_async", lambda **kw: queued.append(kw))
+    tasks.fetch_media(str(pk), str(world.a))  # `PENDING` con 30 s de espera (reloj de la base)
+    tasks.fetch_media(str(pk), str(world.a))  # el reintento llega antes (reloj del worker)
+    assert [q["countdown"] for q in queued][0] == 30 and 28 <= queued[1]["countdown"] <= 31
+    assert state(migrator, pk) == ("PENDING", None, 1) and len(world.graph.calls) == 1
+
+
+def test_a_dns_failure_on_the_media_host_retries_and_an_off_list_host_does_not(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pk = one(world, migrator)
+
+    def no_dns(*args: Any, **kwargs: Any) -> Any:
+        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
+
+    def resolving(url: str, *args: Any, **kwargs: Any) -> int:  # lo que hace la conexión real
+        http.resolve_public(urllib3.util.parse_url(url).host or "", 443)
+        return 200
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_dns)
+    monkeypatch.setattr(http, "download", resolving)
+    assert media.fetch(world.a, pk) == ("RETRY", 30)
+    assert state(migrator, pk) == ("PENDING", None, 1)
+
+
+def test_throttling_codes_win_over_403_and_a_revoked_credential_without_its_key_fails(
+    world: Any, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pk = one(world, migrator)
+
+    def limited(*args: Any, **kwargs: Any) -> Any:  # como `graph.py`: el límite, antes que el token
+        body = b'{"error": {"code": 4}}'
+        return urllib3.HTTPResponse(body=io.BytesIO(body), status=403, preload_content=True)
+
+    real = http.request
+    monkeypatch.setattr(http, "request", limited)
+    assert media.fetch(world.a, pk) == ("RETRY", 30)
+    monkeypatch.setattr(http, "request", real)
+    other = one(world, migrator, "wamid.M2")
+    taken = media.claim
+
+    def then_revoke(tenant: TenantContext, attachment_id: UUID) -> Any:
+        got = taken(tenant, attachment_id)  # revocada y con una versión de clave que no hay aquí
+        migrator.execute(
+            "UPDATE credentials SET revoked_at = now(), ciphertext = NULL, key_version = 999"
+        )
+        return got
+
+    monkeypatch.setattr(media, "claim", then_revoke)
+    assert media.fetch(world.a, other) == ("TOKEN_INVALID", None) and len(world.graph.calls) == 0
+
+
+def test_a_claim_sees_what_fell_due_while_its_transaction_waited(world: Any, migrator: DB) -> None:
+    pk = one(world, migrator)
+    finish(world, claimed(world.a, pk), "RETRY")
+    with tenant_scope(ctx(world.a)) as tenant:  # la transacción ya empezó (`now()` fijo)
+        migrator.execute("UPDATE message_attachments SET not_before = clock_timestamp() + "
+                         "interval '300 milliseconds' WHERE id = %s", [pk])  # fmt: skip
+        time.sleep(0.6)  # vence entre el inicio de la transacción y la sentencia del reclamo
+        assert isinstance(media.claim(tenant, pk), media.Claim)
+    assert state(migrator, pk) == ("DOWNLOADING", None, 2)
