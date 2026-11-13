@@ -18,7 +18,7 @@ from uuid import UUID
 from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from rest_framework import generics, serializers
+from rest_framework import generics, serializers, views
 from rest_framework.filters import BaseFilterBackend
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -26,8 +26,8 @@ from rest_framework.response import Response
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
-from apps.quotes import commands, selectors
-from apps.quotes.api import inputs
+from apps.quotes import commands, discounts, selectors
+from apps.quotes.api import inputs, limit
 from apps.quotes.api.errors import domain
 from apps.quotes.models import Quote, QuoteItem
 from core.api.schema import errors
@@ -163,10 +163,12 @@ class QuotesQuery:
         operation_id="quotes_create",
         tags=["quotes"],
         request=inputs.QuoteCreateSerializer,
-        responses={201: QuoteDetailSerializer, **errors(400, 401, 403, 404)},
+        responses={201: QuoteDetailSerializer, **errors(400, 401, 403, 409)},
         description="Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`, de "
         "un contacto o de una oportunidad que ve (`contacts.view`, `opportunities.view`); si no, "
-        "o no existen, un único 400 general. Repetirlo crea otro borrador.",
+        "o no existen, un único 400 general. 400 en `price_list_id` o `variant_id` si la lista no "
+        "se puede usar o una variante no tiene precio vigente. 409 `QUOTE_REFUSED`: la base lo "
+        "rechazó. Repetirlo crea otro borrador.",
     ),
 )
 class QuotesView(QuotesQuery, generics.ListAPIView):
@@ -196,7 +198,9 @@ class QuotesView(QuotesQuery, generics.ListAPIView):
         request=inputs.QuoteUpdateSerializer,
         responses={200: QuoteDetailSerializer, **errors(400, 401, 403, 404, 409)},
         description="Cambia lo enviado de un borrador con `quotes.view` y `quotes.update` (fuera "
-        "del alcance: 404). 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. Sin cambios no escribe.",
+        "del alcance: 404). 400 en `variant_id` o `price_list_id` si una línea no tiene precio "
+        "vigente en su lista. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`, `QUOTE_REFUSED`. Sin "
+        "cambios no escribe.",
     ),
 )
 class QuoteView(QuotesQuery, generics.RetrieveAPIView):
@@ -213,6 +217,54 @@ class QuoteView(QuotesQuery, generics.RetrieveAPIView):
         with domain():
             commands.update_quote(_tenant(), quote_id=quote_id, **wanted.validated_data)
         return reply(request, quote_id)
+
+
+def action(
+    name: str, command: Any, body: Any, permissions: tuple[str, ...], summary: str
+) -> type[views.APIView]:
+    """Un `POST` sobre el precio: los permisos antes de leer; el alcance, la versión, el estado y
+    la línea de esa cotización, en el comando. Responde con el detalle; `limit` audita negativas."""
+
+    class Action(views.APIView):
+        required_permissions = {"POST": permissions}
+
+        def post(self, request: Request, quote_id: UUID, line_id: UUID | None = None,
+                 **kwargs: Any) -> Response:  # fmt: skip
+            wanted = body(data=request.data)
+            wanted.is_valid(raise_exception=True)
+            line = {} if line_id is None else {"line_id": line_id}
+            with domain(), limit.refusal(request, name, quote_id, line_id):
+                command(_tenant(), quote_id=quote_id, **line, **wanted.validated_data)
+            return reply(request, quote_id)
+
+    Action.__name__ = f"Quote{name.title().replace('-', '')}View"
+    shown = ", ".join(f"`{code}`" for code in permissions)
+    view: type[views.APIView] = extend_schema_view(
+        post=extend_schema(
+            operation_id=f"quotes_{name.replace('-', '_')}",
+            tags=["quotes"],
+            request=body,
+            responses={200: QuoteDetailSerializer, **errors(400, 401, 403, 404, 409, 422, 429)},
+            description=f"{summary} Con {shown}; fuera del alcance o inexistente: 404. 409: "
+            "`STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, "
+            "por persona y cotización y por persona, se cuenta antes de buscarla.",
+        )
+    )(Action)
+    return view
+
+
+QuotePriceView = action(
+    "price", discounts.set_manual_price, inputs.QuotePriceSerializer,
+    ("quotes.view", "quotes.update", "quotes.override_price"),
+    "Precio final a mano de una línea de esa cotización, menor que el vigente y con motivo; pide "
+    "aprobación. 422 `PRICE_NOT_ALLOWED`, siempre igual, si no se admite.",
+)  # fmt: skip
+QuoteRequestApprovalView = action(
+    "request-approval", discounts.submit_quote, inputs.QuoteVersionSerializer,
+    ("quotes.view", "quotes.update"),
+    "Envía un borrador: `APPROVED` si cabe en el límite de quien envía, o `PENDING_APPROVAL`. Un "
+    "precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`).",
+)  # fmt: skip
 
 
 def detail(found: QuerySet[Quote]) -> QuerySet[Quote]:

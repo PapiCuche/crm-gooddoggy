@@ -26,6 +26,7 @@ from config.settings.base import (
     META_ENABLED,
     META_GRAPH_VERSION,
     META_WEBHOOK_VERIFY_TOKEN,
+    QUOTE_FLOOR_THROTTLE,
     SECRET_KEY,
     SECRETS_KEKS,
     STORAGE_PUBLIC_ENDPOINT_URL,
@@ -111,6 +112,8 @@ if META_ENABLED:
         CHANNEL_SEND_LIMIT,
         CELERY_BROKER_URL,
     )
+
+env.check_floor_throttle(QUOTE_FLOOR_THROTTLE)  # el tope del oráculo del costo (F5-09e2)
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

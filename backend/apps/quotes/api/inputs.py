@@ -11,13 +11,15 @@ from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
 from apps.deals.api.inputs import Checked, sentence, version_required
-from apps.quotes import commands
+from apps.quotes import commands, discounts
 from apps.quotes.models import QUANTITY_MAX
 from core.api.strict import Closed, Id, Whole
+from core.money import parse_amount
 
 INSTANT = "ISO 8601 con zona horaria, como 2026-11-20T23:59:00-05:00."
 VERSION = "La que se leyó; si no, 409."
 NOTE = f"Texto libre de hasta {commands.NOTE_MAX} caracteres."
+AMOUNT = "Texto decimal sin signo ni exponente, hasta 12 cifras enteras y 2 decimales."
 
 
 def _instant(value: str) -> dt.datetime:
@@ -80,3 +82,22 @@ class QuoteUpdateSerializer(QuoteFields):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.fields["items"].required = False
+
+
+class QuoteVersionSerializer(Closed, serializers.Serializer[Any]):
+    """Solo la versión que se leyó; cualquier otro campo, 400."""
+
+    version = Whole(min_value=1, max_value=2**31 - 1, help_text=VERSION)
+
+
+def _reason(value: str) -> str:
+    if not (why := commands._text(value, "motivo", discounts.REASON_MAX)):
+        raise ValueError("motivo: obligatorio")
+    return why
+
+
+class QuotePriceSerializer(QuoteVersionSerializer):
+    """El precio final escrito a mano, como texto (nunca un número JSON), y su motivo."""
+
+    price = Checked(parse_amount, help_text=f"Final por unidad, con IGV. {AMOUNT}")
+    reason = Checked(_reason, help_text=f"Obligatorio, hasta {discounts.REASON_MAX} caracteres.")

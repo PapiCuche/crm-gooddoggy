@@ -173,7 +173,7 @@ def revise_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
                 raise NotAllowed("quotes.send")  # ya la tiene el cliente
             if not can(ectx, "quotes.cancel", old):  # revisar cancela la anterior
                 raise NotAllowed("quotes.cancel")
-            _links(alias, old.contact_id, old.opportunity_id)
+            _links(alias, old.contact_id, old.opportunity_id, ectx=None)  # sin alcance hasta #729
             rows, price = _priced(alias, ctx, wanted, old.price_list_id)
             totals = _totals(rows, TAX_RATE)
             with connections[alias].cursor() as cursor:  # el reloj de la transacción: la base

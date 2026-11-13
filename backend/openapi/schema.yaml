@@ -7064,9 +7064,11 @@ paths:
           description: ''
     post:
       operationId: quotes_create
-      description: Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`,
+      description: 'Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`,
         de un contacto o de una oportunidad que ve (`contacts.view`, `opportunities.view`);
-        si no, o no existen, un único 400 general. Repetirlo crea otro borrador.
+        si no, o no existen, un único 400 general. 400 en `price_list_id` o `variant_id`
+        si la lista no se puede usar o una variante no tiene precio vigente. 409 `QUOTE_REFUSED`:
+        la base lo rechazó. Repetirlo crea otro borrador.'
       parameters:
       - in: path
         name: org_slug
@@ -7108,7 +7110,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
-        '404':
+        '409':
           content:
             application/json:
               schema:
@@ -7163,8 +7165,9 @@ paths:
     patch:
       operationId: quotes_update
       description: 'Cambia lo enviado de un borrador con `quotes.view` y `quotes.update`
-        (fuera del alcance: 404). 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. Sin cambios
-        no escribe.'
+        (fuera del alcance: 404). 400 en `variant_id` o `price_list_id` si una línea
+        no tiene precio vigente en su lista. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`,
+        `QUOTE_REFUSED`. Sin cambios no escribe.'
       parameters:
       - in: path
         name: org_slug
@@ -7219,6 +7222,172 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/items/{line_id}/price/:
+    post:
+      operationId: quotes_price
+      description: 'Precio final a mano de una línea de esa cotización, menor que
+        el vigente y con motivo; pide aprobación. 422 `PRICE_NOT_ALLOWED`, siempre
+        igual, si no se admite. Con `quotes.view`, `quotes.update`, `quotes.override_price`;
+        fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`.
+        429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
+        persona, se cuenta antes de buscarla.'
+      parameters:
+      - in: path
+        name: line_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuotePriceRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/request-approval/:
+    post:
+      operationId: quotes_request_approval
+      description: 'Envía un borrador: `APPROVED` si cabe en el límite de quien envía,
+        o `PENDING_APPROVAL`. Un precio manual vuelve a medirse con el costo de hoy
+        (422 `PRICE_NOT_ALLOWED`). Con `quotes.view`, `quotes.update`; fuera del alcance
+        o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED`
+        (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta
+        antes de buscarla.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
           content:
             application/json:
               schema:
@@ -13973,6 +14142,29 @@ components:
       required:
       - quantity
       - variant_id
+    QuotePriceRequest:
+      type: object
+      description: El precio final escrito a mano, como texto (nunca un número JSON),
+        y su motivo.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        price:
+          type: string
+          minLength: 1
+          description: Final por unidad, con IGV. Texto decimal sin signo ni exponente,
+            hasta 12 cifras enteras y 2 decimales.
+        reason:
+          type: string
+          minLength: 1
+          description: Obligatorio, hasta 200 caracteres.
+      required:
+      - price
+      - reason
+      - version
     QuoteStatusEnum:
       enum:
       - DRAFT
@@ -13995,6 +14187,17 @@ components:
         * `REJECTED` - Rejected
         * `EXPIRED` - Expired
         * `CANCELLED` - Cancelled
+    QuoteVersionRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     Reservation:
       type: object
       properties:
