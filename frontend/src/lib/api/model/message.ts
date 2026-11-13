@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { DirectionEnum } from "./directionEnum";
+import type { MessageAttachment } from "./messageAttachment";
 import type { NullEnum } from "./nullEnum";
 import type { ProviderErrorCodeEnum } from "./providerErrorCodeEnum";
 
@@ -61,4 +62,6 @@ export interface Message {
   read_at: string | null;
   /** @nullable */
   failed_at: string | null;
+  /** El medio de un mensaje entrante; `null` si no tiene. */
+  readonly attachment: MessageAttachment | null;
 }

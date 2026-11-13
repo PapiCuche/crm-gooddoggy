@@ -38,7 +38,8 @@ class InMemoryStorage:
     ) -> str:  # fmt: skip
         base.check_expiry(expires_in)
         header = base.disposition_header(filename, disposition, content_type)
-        return f"memory://{base.check_key(key)}?disposition={header}"
+        return (f"memory://{base.check_key(key)}?type={content_type}&disposition={header}"
+                f"&cache={base.PRIVATE_CACHE}&expires={expires_in}")  # fmt: skip
 
     def presign_put(
         self, key: str, *, expires_in: int, content_type: str, content_length: int,
