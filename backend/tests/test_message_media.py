@@ -206,7 +206,7 @@ def test_two_attachments_or_two_attempts_at_once_make_one_row_and_one_blob(
     with tenant_scope(ctx(world.a)) as tenant:
         message = Message.objects.get()
         with pytest.raises(DatabaseError) as caught:  # un adjunto por mensaje, en la base
-            media.attach(tenant, message, "image", {"image": {"id": MEDIA}})
+            media.attach(tenant, message, "IMAGE", MEDIA)
     assert caught.value.__cause__.diag.constraint_name == "message_attachments_message_uq"  # type: ignore[union-attr]
 
     def attempt() -> Any:
