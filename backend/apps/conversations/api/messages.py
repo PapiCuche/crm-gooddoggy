@@ -65,7 +65,11 @@ class MessageSerializer(serializers.Serializer[Any]):
     direction = serializers.ChoiceField(choices=Direction.choices)
     sender_type = serializers.CharField()
     sender_user_id = serializers.UUIDField(allow_null=True)
-    message_type = serializers.CharField(help_text="`TEXT`, `NOTE` o `UNSUPPORTED`.")
+    message_type = serializers.CharField(
+        help_text="`TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio "
+        "entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y "
+        "el medio en `attachment`. Un valor desconocido se trata como no soportado."
+    )
     body = serializers.CharField(
         allow_null=True, help_text="`null` si no se puede ver el contacto (`contacts.view`)."
     )

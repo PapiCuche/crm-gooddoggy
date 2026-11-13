@@ -45,6 +45,8 @@ from core.tenancy.scope import require_scope, tenant_scope
 
 logger = get_logger(__name__)
 KINDS = {"image": "IMAGE", "audio": "AUDIO", "video": "VIDEO", "sticker": "STICKER"}
+# El `message_type` del mensaje de cada clase: un sticker es una imagen (su adjunto dice cuál).
+TYPES = {"IMAGE": "IMAGE", "STICKER": "IMAGE", "AUDIO": "AUDIO", "VIDEO": "VIDEO"}
 CAPS = {"IMAGE": 5 << 20, "STICKER": 1 << 20, "AUDIO": 16 << 20, "VIDEO": 16 << 20}  # a confirmar
 MAX_ATTEMPTS = 5
 BACKOFF = (30, 120, 600, 3600)  # segundos de espera tras el intento 1, 2, 3 y 4
@@ -83,16 +85,21 @@ class Claim:
     credential_id: UUID
 
 
-def attach(ctx: TenantContext, message: Message, kind: Any, payload: dict[str, Any]) -> None:
-    """El adjunto `PENDING` de un mensaje **recién creado** (solo lo llama esa rama de
-    `inbound.receive`), en su transacción, y su evento. Solo imagen, audio, video y sticker con un
-    id de solo dígitos (va en la URL)."""
+def found(kind: Any, payload: dict[str, Any]) -> tuple[str, str] | None:
+    """La clase y el id del medio de un mensaje de Meta, o `None` si no es imagen, audio, video ni
+    sticker (un documento aún no: sin antivirus) o su id no es de solo dígitos (va en la URL)."""
     media = payload.get(kind) if isinstance(kind, str) and kind in KINDS else None
     media_id = media.get("id") if isinstance(media, dict) else None
     if not isinstance(media_id, str) or not re.fullmatch(META_ID, media_id):
-        return
+        return None
+    return KINDS[str(kind)], media_id
+
+
+def attach(ctx: TenantContext, message: Message, kind: str, media_id: str) -> None:
+    """El adjunto `PENDING` de un mensaje **recién creado** y su evento, en la transacción de
+    `commands.record_inbound` (que ya comprobó la clase, el id y el tipo del mensaje)."""
     made = MessageAttachment.objects.using(require_scope(ctx)).create(
-        message_id=message.pk, kind=KINDS[str(kind)], external_media_id=media_id,
+        message_id=message.pk, kind=kind, external_media_id=media_id,
         download_status="PENDING", attempts=0,
     )  # fmt: skip
     emit(ctx, "message_attachment.pending", aggregate_type="message_attachment",

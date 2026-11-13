@@ -3,14 +3,17 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  AudioLines,
   Check,
   CheckCheck,
   Clock,
   RefreshCw,
   FileQuestionMark,
+  ImageIcon,
   StickyNote,
   TriangleAlert,
   UserRound,
+  Video,
 } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import { type ReactNode, type Ref, useLayoutEffect, useRef } from "react";
@@ -277,15 +280,25 @@ const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
 // `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
 // `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
 const STATES: readonly string[] = Object.keys(MARKS);
+// Un medio entrante (F7-09a2b): su clase con un icono y un rótulo fijos. El archivo no se pinta ni se
+// enlaza aquí (F7-09a3; D-F7-04). `Object.hasOwn`: ni `constructor` ni otra clave del prototipo.
+const MEDIA: Record<string, ReactNode> = {
+  IMAGE: <ImageIcon aria-hidden className="size-3.5" />,
+  AUDIO: <AudioLines aria-hidden className="size-3.5" />,
+  VIDEO: <Video aria-hidden className="size-3.5" />,
+};
 
 function Bubble({ message }: { message: Message }) {
   const t = useTranslations("inbox");
   const format = useFormatter();
   // Una nota interna es otra cosa que un mensaje al cliente: va aparte, rotulada y nunca como uno.
   const note = message.message_type === "NOTE" || message.direction === "INTERNAL";
-  // Un entrante que el canal aún no entiende (imagen, audio…): su propio marcador con el texto fijo.
-  // El cuerpo, si llega, es una frase fija del servidor («Imagen recibida»), nunca el contenido.
-  const unsupported = message.message_type === "UNSUPPORTED" && !note;
+  // Un medio o un entrante que el canal aún no entiende: su propio marcador con el texto fijo. El
+  // cuerpo, si llega, es una frase fija del servidor («Imagen recibida»), nunca el contenido. Un
+  // tipo que esta pantalla no conoce es «no soportado», nunca un texto.
+  const type = message.message_type;
+  const media = !note && Object.hasOwn(MEDIA, type) ? type : null;
+  const unsupported = !note && !media && type !== "TEXT";
   const outbound = message.direction === "OUTBOUND";
   const state = outbound && message.delivery_status ? message.delivery_status : null;
   // El motivo de un fallo sale de una tabla de textos por código cerrado; un código que la tabla
@@ -303,7 +316,7 @@ function Bubble({ message }: { message: Message }) {
         "flex max-w-[85%] flex-col gap-1 rounded-[10px] border p-3 leading-snug",
         outbound && "bg-accent text-accent-foreground border-foreground/10 self-end",
         message.direction === "INBOUND" && "bg-background border-border self-start",
-        unsupported && "bg-surface-raised",
+        (unsupported || media) && "bg-surface-raised",
         note &&
           "bg-surface-raised border-foreground/40 w-full max-w-full self-stretch border-dashed",
       )}
@@ -320,12 +333,18 @@ function Bubble({ message }: { message: Message }) {
           {t("unsupported")}
         </p>
       ) : null}
+      {media ? (
+        <p className="text-muted flex items-center gap-1.5 text-xs font-semibold uppercase">
+          {MEDIA[media]}
+          {t(`media.${message.attachment?.kind === "STICKER" ? "STICKER" : media}`)}
+        </p>
+      ) : null}
       {message.body === null ? (
-        unsupported ? null : (
+        unsupported || media ? null : (
           <p className="text-muted text-sm italic">{t("bodyHidden")}</p>
         )
       ) : (
-        <p className={unsupported ? "text-muted text-sm italic" : undefined}>
+        <p className={unsupported || media ? "text-muted text-sm italic" : undefined}>
           <Plain>{message.body}</Plain>
         </p>
       )}

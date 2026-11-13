@@ -18,6 +18,7 @@ retrocede el mensaje y no es un error (ADR-010, §E.6).
 """
 
 import datetime as dt
+import re
 import unicodedata
 from typing import Any
 from uuid import UUID
@@ -37,9 +38,11 @@ from apps.access.selectors import (
 )
 from apps.audit.services import Entity, record
 from apps.contacts.models import Contact
+from apps.conversations import media
 from apps.conversations.channels import REASONS, Claim, SendResult
 from apps.conversations.models import (
     BODY_MAX,
+    META_ID,
     PREVIEW_MAX,
     AttentionMode,
     ChannelAccount,
@@ -305,19 +308,28 @@ def record_inbound(
     body: str,
     message_type: str = MessageType.TEXT,
     provider_at: dt.datetime | None = None,
+    attachment: tuple[str, str] | None = None,
 ) -> tuple[Message, bool]:
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
     pone `last_inbound_at` y `last_message_at` y, según D-INB-2, pasa a `OPEN` una conversación en
     `WAITING_CUSTOMER` o `RESOLVED` dentro del plazo. Audita `message.received` y deja el evento
     `message.received` en el outbox (solo ids). `message_type` es `TEXT` o `UNSUPPORTED` (un
-    marcador: el cuerpo es una frase fija del canal). `provider_at` es el instante que informa el
-    canal: ancla de la ventana de 24 h (`last_inbound_at`, acotado a «ahora» y sin retroceder); el
-    orden del chat sigue siendo el de llegada. Con más de 24 h de antigüedad no reabre una
-    conversación `WAITING_CUSTOMER` ni `RESOLVED` (se anota sin cambiarle el estado)."""
+    marcador: el cuerpo es una frase fija del canal) o, con `attachment` (la clase y el id del
+    medio, `media.found`), el tipo de ese medio (`media.TYPES`): su adjunto `PENDING` nace con el
+    mensaje nuevo, en la misma transacción (un mensaje repetido no lo vuelve a crear).
+    `provider_at` es el instante que informa el canal: ancla de la ventana de 24 h
+    (`last_inbound_at`, acotado a «ahora» y sin retroceder); el orden del chat sigue siendo el de
+    llegada. Con más de 24 h de antigüedad no reabre una conversación `WAITING_CUSTOMER` ni
+    `RESOLVED` (se anota sin cambiarle el estado)."""
     alias = require_scope(ctx)
-    if message_type not in (MessageType.TEXT, MessageType.UNSUPPORTED):
-        raise ValueError("tipo: TEXT o UNSUPPORTED")
+    allowed: tuple[str, ...] = (MessageType.TEXT, MessageType.UNSUPPORTED)
+    if attachment is not None:  # un medio: su tipo y nada más, con un id de solo dígitos
+        kind, media_id = attachment
+        ok = kind in media.TYPES and re.fullmatch(META_ID, str(media_id))
+        allowed = (media.TYPES[kind],) if ok else ()
+    if message_type not in allowed:
+        raise ValueError("tipo: TEXT o UNSUPPORTED, o el de su medio")
     contact_id, account_id = _uuid(contact_id, "contacto"), _uuid(channel_account_id, "cuenta")
     external, text = _external(external_message_id), _body(body)
     same = Message.objects.using(alias).filter(
@@ -341,6 +353,8 @@ def record_inbound(
             if "messages_external_uq" not in str(error):
                 raise
             return same.get(), False  # el mismo mensaje, a la vez
+        if attachment is not None:
+            media.attach(ctx, message, *attachment)
         anchor = max(convo.last_inbound_at, seen or now) if convo.last_inbound_at else seen or now
         convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"

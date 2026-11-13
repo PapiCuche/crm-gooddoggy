@@ -23,6 +23,9 @@ from apps.files.models import File
 # El archivo de un adjunto `DONE` que se puede servir: el suyo (`message-media`), con el antivirus
 # en `CLEAN` (D-F7-04: sin antivirus, nada) y un tipo del mapa canónico (el de los magic bytes).
 SERVABLE = Q(purpose="message-media", scan_status="CLEAN", mime_type__in=EXTENSIONS)
+# El adjunto que se puede servir: `DONE` y de un mensaje **entrante** (lo saliente y las notas no,
+# aunque alguien lo dejara en la base). La misma regla para la lista (`available`) y la URL.
+SERVED = Q(download_status="DONE", message__direction="INBOUND")
 
 
 def conversations() -> QuerySet[Conversation]:
@@ -40,9 +43,10 @@ def messages(conversation_id: object, *, notes: bool) -> QuerySet[Message]:
 def attachments(message_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
     """Los adjuntos de esos mensajes, por mensaje, en dos consultas: clase, estado y, solo con
     `DONE` y un archivo `message-media`, su tipo (el de los magic bytes) y tamaño. Nunca la clave,
-    el id de Meta ni el intento. `available`: si la ruta de la URL lo serviría (sin mirar al
-    contacto: eso lo añade quien lo muestra)."""
-    rows = list(MessageAttachment.objects.filter(message_id__in=message_ids))
+    el id de Meta ni el intento. `available`: si la ruta de la URL lo serviría (`SERVED` y
+    `SERVABLE`; sin mirar al contacto: eso lo añade quien lo muestra)."""
+    found_rows = MessageAttachment.objects.filter(message_id__in=message_ids)
+    rows = list(found_rows.annotate(served=SERVED))
     done = [row.file_id for row in rows if row.download_status == "DONE"]
     mine = File.objects.filter(pk__in=done, purpose="message-media")
     shown = mine.annotate(ok=Q(SERVABLE)).values("id", "mime_type", "size_bytes", "ok")
@@ -53,18 +57,17 @@ def attachments(message_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
         found[row.message_id] = {
             "id": row.pk, "kind": row.kind, "status": row.download_status,
             "mime_type": file.get("mime_type"), "size_bytes": file.get("size_bytes"),
-            "available": bool(file.get("ok")),
+            "available": bool(row.served and file.get("ok")),
         }  # fmt: skip
     return found
 
 
 def servable(conversation_id: UUID, attachment_id: UUID) -> tuple[MessageAttachment, File] | None:
-    """El adjunto `DONE` de un mensaje entrante de esa conversación y su archivo servible
-    (`SERVABLE`), o `None` por cualquier otra razón (sin distinguir cuál)."""
-    inbound = Message.objects.filter(conversation_id=conversation_id, direction="INBOUND")
+    """El adjunto de esa conversación que se puede servir (`SERVED`) y su archivo (`SERVABLE`), o
+    `None` por cualquier otra razón (sin distinguir cuál)."""
     row = MessageAttachment.objects.filter(
-        pk=attachment_id, download_status="DONE", message_id__in=inbound.values("pk")
-    ).first()  # fmt: skip
+        SERVED, pk=attachment_id, message__conversation_id=conversation_id
+    ).first()
     file = None if row is None else File.objects.filter(SERVABLE, pk=row.file_id).first()
     return None if row is None or file is None else (row, file)
 

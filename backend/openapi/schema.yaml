@@ -10811,7 +10811,10 @@ components:
           nullable: true
         message_type:
           type: string
-          description: '`TEXT`, `NOTE` o `UNSUPPORTED`.'
+          description: '`TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no
+            admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`,
+            con `body` una frase fija y el medio en `attachment`. Un valor desconocido
+            se trata como no soportado.'
         body:
           type: string
           nullable: true

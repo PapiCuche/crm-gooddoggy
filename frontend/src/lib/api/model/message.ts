@@ -16,7 +16,7 @@ export interface Message {
   sender_type: string;
   /** @nullable */
   sender_user_id: string | null;
-  /** `TEXT`, `NOTE` o `UNSUPPORTED`. */
+  /** `TEXT`, `NOTE`, `UNSUPPORTED` (un tipo que el canal aún no admite) o un medio entrante: `IMAGE` (también un sticker), `AUDIO` o `VIDEO`, con `body` una frase fija y el medio en `attachment`. Un valor desconocido se trata como no soportado. */
   message_type: string;
   /**
    * `null` si no se puede ver el contacto (`contacts.view`).
