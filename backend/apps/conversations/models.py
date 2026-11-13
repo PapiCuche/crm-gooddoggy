@@ -85,6 +85,14 @@ class MessageType(models.TextChoices):
     UNSUPPORTED = (
         "UNSUPPORTED"  # entrante que el canal aún no entiende: el cuerpo es una frase fija
     )
+    # Un medio entrante con su adjunto (F7-09a2b): el cuerpo es la misma frase fija; el sticker es
+    # `IMAGE` (su adjunto dice `STICKER`). Solo entrantes hasta F7-09b (`messages_unsupported_ck`).
+    IMAGE = "IMAGE"
+    AUDIO = "AUDIO"
+    VIDEO = "VIDEO"
+
+
+INBOUND_ONLY = ("UNSUPPORTED", "IMAGE", "AUDIO", "VIDEO")  # los tipos que solo escribe un cliente
 
 
 class Delivery(models.TextChoices):
@@ -476,8 +484,8 @@ class Message(TenantModel):
             one_of("direction", Direction, "messages_direction_ck"),
             one_of("sender_type", SenderType, "messages_sender_ck"),
             one_of("message_type", MessageType, "messages_type_ck"),
-            models.CheckConstraint(  # «no soportado» solo lo escribe un cliente
-                condition=~models.Q(message_type="UNSUPPORTED") | models.Q(direction="INBOUND"),
+            models.CheckConstraint(  # «no soportado» y los medios solo los escribe un cliente
+                condition=~models.Q(message_type__in=INBOUND_ONLY) | models.Q(direction="INBOUND"),
                 name="messages_unsupported_ck",
             ),
             models.CheckConstraint(  # sin id externo ni remitente cliente: no sale por ningún canal

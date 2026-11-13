@@ -11,8 +11,10 @@ fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un t
 Un texto (ya saneado) que es exactamente una palabra de baja o de alta de la organización
 (`contacts.keywords`, F7-08b) revoca lo proactivo de WhatsApp o levanta una baja de palabra, con el
 mensaje como evidencia, y si cambió algo encola una confirmación fija: en la transacción del mensaje
-y solo la primera vez que llega. Lo mismo un medio (F7-09a1c): su adjunto nace con el mensaje
-nuevo (un webhook repetido no lo vuelve a crear).
+y solo la primera vez que llega. Una imagen, un audio, un video o un sticker con un id válido
+(`media.found`) es un mensaje de su tipo (F7-09a2b; el sticker, `IMAGE`) con la frase fija como
+cuerpo, y su adjunto nace con él en `record_inbound` (un webhook repetido no lo vuelve a crear); sin
+id válido sigue siendo `UNSUPPORTED`.
 """
 
 import datetime as dt
@@ -180,13 +182,15 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
         return "REACTION"
     if (phone := normalize_phone(message.get("from"))) is None:
         return "BAD_PHONE"
-    body, message_type = None, MessageType.UNSUPPORTED
+    body, message_type, attachment = None, MessageType.UNSUPPORTED, media.found(kind, message)
     if kind == "text":
         body = clean_text(message["text"]["body"])
     if body is not None and visible(body):
         message_type = MessageType.TEXT
     else:
         body = LABELS.get(str(kind), GENERIC) if kind != "text" else GENERIC
+        if attachment is not None:
+            message_type = MessageType(media.TYPES[attachment[0]])
     _lock(alias, f"wa:{ctx.organization_id}:{phone}")
     contact = _find(alias, account.pk, variants(phone))
     if contact is None:
@@ -207,11 +211,10 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
     saved, created = commands.record_inbound(
         ctx, contact_id=contact.pk, channel_account_id=account.pk, external_message_id=external,
         body=body, message_type=message_type, provider_at=instant(message.get("timestamp")),
+        attachment=attachment,
     )  # fmt: skip
     if created and message_type == MessageType.TEXT:
         _keyword(ctx, contact.pk, saved)
-    elif created:  # imagen, audio, video o sticker: su adjunto; documentos aún no (sin antivirus)
-        media.attach(ctx, saved, kind, message)
     return None
 
 

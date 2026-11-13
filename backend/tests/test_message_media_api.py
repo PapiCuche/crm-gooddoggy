@@ -66,6 +66,18 @@ def attach(
     return SimpleNamespace(pk=pk, message=message.pk, attempt=attempt, convo=convo)
 
 
+def not_inbound(migrator: DB, inbox: SimpleNamespace, convo: UUID) -> dict[str, SimpleNamespace]:
+    """Adjuntos `DONE` y `CLEAN` en una nota y en un saliente: la aplicación no los crea (solo SQL
+    del migrador), y la lista y la URL tampoco los sirven (`selectors.SERVED`)."""
+    user = {"sender_type": "USER", "sender_user_id": inbox.ana.pk}
+    note = {"direction": "INTERNAL", "message_type": "NOTE", **user}
+    out = {"direction": "OUTBOUND", "message_type": "TEXT", "delivery_status": "SENT", **user}
+    return {
+        "de una nota": attach(migrator, inbox.a, convo, **note),
+        "de un saliente": attach(migrator, inbox.a, convo, **out),
+    }
+
+
 def url_of(convo: UUID, pk: UUID) -> str:
     return f"{BASE}{convo}/attachments/{pk}/url/"
 
@@ -116,6 +128,24 @@ def test_the_message_list_shows_kind_state_real_type_and_size_and_nothing_else(
         r["id"]: r["attachment"] for r in vera.get(f"{BASE}{convo}/messages/").json()["results"]
     }
     assert seen[str(ready.message)]["available"] is True
+
+
+def test_media_typed_and_older_unsupported_messages_list_alike_and_only_inbound_is_available(
+    inbox: SimpleNamespace, migrator: DB
+) -> None:
+    convo = inbox.convs["ana"]
+    old = attach(migrator, inbox.a, convo)  # de antes de F7-09a2b: `UNSUPPORTED` con adjunto
+    typed = attach(migrator, inbox.a, convo, kind="AUDIO", message_type="AUDIO")
+    others = not_inbound(migrator, inbox, convo)
+    found = signed(inbox.ana).get(f"{BASE}{convo}/messages/").json()["results"]
+    rows = {r["id"]: r for r in found}
+    assert rows[str(old.message)]["message_type"] == "UNSUPPORTED"
+    assert rows[str(typed.message)]["message_type"] == "AUDIO"
+    for made in (old, typed):
+        assert rows[str(made.message)]["attachment"]["available"] is True
+    for case, made in others.items():  # el mismo archivo servible, pero no es de un entrante
+        shown = rows[str(made.message)]["attachment"]
+        assert (shown["status"], shown["available"]) == ("DONE", False), case
 
 
 def test_attachments_cost_two_queries_per_page_whatever_their_number(
@@ -184,9 +214,8 @@ def test_every_other_case_is_the_same_404_and_the_permission_comes_first(
     cases["antivirus INFECTED"] = url_of(mine, attach(migrator, a, mine, scan="INFECTED").pk)
     cases["otro propósito"] = url_of(mine, attach(migrator, a, mine, purpose="quote-pdf").pk)
     cases["tipo fuera del mapa"] = url_of(mine, attach(migrator, a, mine, mime="text/html").pk)
-    note = {"direction": "INTERNAL", "message_type": "NOTE", "sender_type": "USER"}
-    noted = attach(migrator, a, mine, sender_user_id=inbox.ana.pk, **note)  # no lo deja `attach`
-    cases["de una nota"] = url_of(mine, noted.pk)
+    for case, made in not_inbound(migrator, inbox, mine).items():
+        cases[case] = url_of(mine, made.pk)
     for case, url in cases.items():
         assert reply(vera.get(url)) == NOT_FOUND, case
         if case not in ("fuera del alcance", "de otra conversación"):

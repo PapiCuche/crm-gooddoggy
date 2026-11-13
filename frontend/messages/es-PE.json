@@ -2184,6 +2184,12 @@
     "bodyHidden": "Sin permiso para ver el contenido de este mensaje.",
     "note": "Nota interna · solo la ve tu equipo",
     "unsupported": "Mensaje de un tipo que todavía no se puede mostrar",
+    "media": {
+      "IMAGE": "Imagen",
+      "AUDIO": "Audio",
+      "VIDEO": "Video",
+      "STICKER": "Sticker"
+    },
     "filters": {
       "landmark": "Filtros de conversaciones",
       "box": "Bandeja",
