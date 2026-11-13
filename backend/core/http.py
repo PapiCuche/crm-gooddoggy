@@ -250,6 +250,12 @@ def request(
     )
 
 
+def form(fields: dict[str, Any]) -> tuple[bytes, str]:
+    """Un cuerpo `multipart/form-data` y su `Content-Type` (con el separador) para `request`."""
+    body, kind = urllib3.encode_multipart_formdata(fields)
+    return body, kind
+
+
 def download(
     url: str, sink: IO[bytes], *, max_bytes: int, hosts: Iterable[str],
     headers: dict[str, str] | None = None, seconds: float = DOWNLOAD_SECONDS,

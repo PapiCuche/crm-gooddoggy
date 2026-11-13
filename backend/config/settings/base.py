@@ -148,6 +148,9 @@ INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 1
 # F7-06b: cada cuánto se comprueba la salud de cada cuenta de WhatsApp (calidad, nivel, token).
 CHANNEL_HEALTH_INTERVAL_MINUTES = env.integer("CHANNEL_HEALTH_INTERVAL_MINUTES", 15)
 MEDIA_PER_ORG = 2  # F7-09a1b: descargas de medios a la vez por organización (a confirmar)
+# F7-09b (D-F7-04, decisión del propietario abierta): sin antivirus ningún archivo queda `CLEAN`,
+# así que por omisión no sale ningún medio. `true` envía también los de antivirus `PENDING`.
+MEDIA_SEND_UNSCANNED = env.boolean("MEDIA_SEND_UNSCANNED", False)
 # F7-09a1c: las descargas de medios (hasta 120 s cada una) van en su propia cola, de baja
 # concurrencia (`worker-media`), para no ocupar los workers de la salida de mensajes.
 CELERY_TASK_ROUTES = {"conversations.fetch_media": {"queue": "media"}}
