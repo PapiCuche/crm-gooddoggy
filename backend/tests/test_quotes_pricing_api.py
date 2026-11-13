@@ -187,7 +187,7 @@ def test_an_audit_that_fails_leaves_the_same_refusal_and_a_line_without_values(
 
 
 def test_the_cap_cuts_a_cost_bisection_and_the_429_says_nothing_about_the_quote(
-    lab: SimpleNamespace, migrator: DB, settings: Any
+    lab: SimpleNamespace, migrator: DB, settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings.QUOTE_FLOOR_THROTTLE = {"quote": (4, 3600), "user": (7, 86400)}
     vera, low, high = signed(lab.vera), D("0.01"), D("4398.99")
@@ -205,6 +205,8 @@ def test_the_cap_cuts_a_cost_bisection_and_the_429_says_nothing_about_the_quote(
     assert codes[4:] == [429] * 5 and len(lab.asked) == 4
     assert high - low >= D("4398.98") / 2**4  # el intervalo nunca llega al céntimo
     other, [at] = draft(lab)  # otra cotización: el tope por persona ya se alcanzó
+    fixed = f"'{timezone.now().isoformat()}'::timestamptz"  # un solo instante: la espera no oscila
+    monkeypatch.setattr(limit, "_COUNT", limit._COUNT.replace("clock_timestamp()", fixed))
     sam, [sam_line] = draft(lab, "sam")
     limited = [price(vera, other, at, "1.00"), submit(vera, other), price(vera, uuid4(), at),
                submit(vera, sam), price(vera, lab.quotes["b"], at), price(vera, quote, line),
