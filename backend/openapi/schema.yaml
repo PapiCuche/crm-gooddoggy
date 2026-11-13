@@ -7227,6 +7227,153 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/approve/:
+    post:
+      operationId: quotes_approve
+      description: 'Aprueba la solicitud abierta: `APPROVED`. Nunca quien la pidió
+        o la envió (también en una organización de una persona), dentro de su propio
+        límite, y cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`,
+        siempre igual). Con `quotes.view`, `quotes.approve`; fuera del alcance o inexistente:
+        404. 409: `STALE_VERSION`, `NOT_PENDING`, `SELF_APPROVAL_FORBIDDEN`, `BEYOND_LIMIT`.
+        429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
+        persona, se cuenta antes de buscarla.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteApproveRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/cancel/:
+    post:
+      operationId: quotes_cancel
+      description: 'Cancela una cotización que no terminó, con motivo opcional. Si
+        espera aprobación, cierra su solicitud, y solo lo hace quien la pidió o quien
+        puede aprobar (si no, 403 después del alcance). Con `quotes.view`, `quotes.cancel`;
+        fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_TERMINAL`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteCancelRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/items/{line_id}/price/:
     post:
       operationId: quotes_price
@@ -7313,6 +7460,72 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/reject/:
+    post:
+      operationId: quotes_reject
+      description: 'Quien aprueba dice que no a la solicitud abierta, con motivo:
+        vuelve a `DRAFT`. No es `…/decline/`, que registra que el cliente rechazó
+        una cotización emitida. Con `quotes.view`, `quotes.approve`; fuera del alcance
+        o inexistente: 404. 409: `STALE_VERSION`, `NOT_PENDING`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRejectRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/request-approval/:
     post:
       operationId: quotes_request_approval
@@ -7388,6 +7601,72 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/withdraw-request/:
+    post:
+      operationId: quotes_withdraw_request
+      description: 'Retira la solicitud abierta: vuelve a `DRAFT`. Solo quien la pidió
+        o quien puede aprobar (la de la IA, solo este); si no, 403 después del alcance.
+        Con `quotes.view`, `quotes.update`; fuera del alcance o inexistente: 404.
+        409: `STALE_VERSION`, `NOT_PENDING`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -13884,6 +14163,34 @@ components:
       - tax_mode
       - tax_rate
       - updated_at
+    QuoteApproveRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        comment:
+          type: string
+          description: Opcional, hasta 500 caracteres.
+      required:
+      - version
+    QuoteCancelRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        reason:
+          type: string
+          description: Opcional, hasta 500 caracteres.
+      required:
+      - version
     QuoteContactRef:
       type: object
       properties:
@@ -14163,6 +14470,22 @@ components:
           description: Obligatorio, hasta 200 caracteres.
       required:
       - price
+      - reason
+      - version
+    QuoteRejectRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        reason:
+          type: string
+          minLength: 1
+          description: Obligatorio, hasta 200 caracteres.
+      required:
       - reason
       - version
     QuoteStatusEnum:
