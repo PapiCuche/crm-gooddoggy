@@ -12,6 +12,7 @@ import socket
 import threading
 import time
 from typing import Any
+from unittest import mock
 
 import pytest
 import urllib3
@@ -101,6 +102,32 @@ def test_a_download_goes_through_the_shared_manager_without_retries_or_redirects
     monkeypatch.undo()  # el `_manager` real (el único) solo conecta con su clase protegida:
     assert http._manager.pool_classes_by_scheme == {"https": http._GuardedPool}
     assert http._GuardedPool.ConnectionCls is http._GuardedHTTPSConnection
+
+
+def test_the_hosts_can_be_any_iterable_even_a_generator(monkeypatch: pytest.MonkeyPatch) -> None:
+    serve(monkeypatch, b"hola")
+    hosts = (h for h in HOSTS)  # se leen una vez y se comprueban como tupla
+    assert http.download(URL, io.BytesIO(), max_bytes=9, hosts=hosts, headers=AUTH) == 200
+
+
+def test_a_socket_the_watchdog_cannot_watch_is_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_watch` falla en `_new_conn` (aquí `dup`): el socket del cliente se cierra, no se filtra."""
+    client, server = socket.socketpair()
+    public = [(socket.AF_INET, 1, 6, "", ("93.184.216.34", 443))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: public)
+    monkeypatch.setattr("urllib3.connection.connection.create_connection", lambda *a, **k: client)
+    manager = urllib3.PoolManager()
+    manager.pool_classes_by_scheme = {"https": http._GuardedPool}
+    monkeypatch.setattr(http, "_manager", manager)
+    broken = mock.Mock(side_effect=OSError(errno.EMFILE, "sin descriptores"))
+    try:
+        with monkeypatch.context() as patched, pytest.raises(http.DownloadFailed):
+            patched.setattr(socket.socket, "dup", broken)
+            get(seconds=5)
+        assert client.fileno() == -1
+    finally:
+        client.close()
+        server.close()
 
 
 @pytest.mark.parametrize("ip", ["127.0.0.1", "::ffff:127.0.0.1", "169.254.169.254", "10.1.2.3"])
@@ -498,13 +525,13 @@ def test_with_the_real_manager_a_media_connection_is_never_pooled_nor_logs_the_s
     only = {"urllib3": settings.LOGGING["loggers"]["urllib3"]}  # solo su entrada: no toca la raíz
     logging.config.dictConfig({"version": 1, "disable_existing_loggers": False, "loggers": only})
     try:
-        for client, server in pairs:
+        for (client, server), seconds in zip(pairs, (5, 60), strict=True):
             threading.Thread(target=answer, args=(server,), daemon=True).start()
             sink, pool = io.BytesIO(), manager.connection_from_url(URL)
-            assert (
-                http.download(f"{URL}?{SECRET}", sink, max_bytes=9, hosts=HOSTS, seconds=5) == 200
-            )
-            assert sink.getvalue() == b"hola" and 0 < (client.gettimeout() or 0) < 5  # lo que queda
+            got = http.download(f"{URL}?{SECRET}", sink, max_bytes=9, hosts=HOSTS, seconds=seconds)
+            wait = client.gettimeout() or 0  # lo que queda, y nunca más de 15 s por `recv`
+            assert got == 200 and sink.getvalue() == b"hola"
+            assert 0 < wait < 5 if seconds == 5 else 14 < wait <= 15
             assert client.fileno() == -1 and not any(pool.pool.queue)  # type: ignore[union-attr]
     finally:
         for sock in (sock for pair in pairs for sock in pair):

@@ -60,6 +60,7 @@ TENANT_TABLES = ("promotion_items", "promotion_price_lists", "promotions", *TENA
 TENANT_TABLES = ("pipeline_stages", "pipelines", "lost_reasons", *TENANT_TABLES)
 # F6-01: delante de todo lo que referencian (contactos, equipos, personas)
 TENANT_TABLES = (
+    "message_attachments",  # F7-09a1b: delante de los mensajes y los archivos
     "messages",
     "conversation_assignments",
     "conversations",

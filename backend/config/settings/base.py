@@ -144,6 +144,7 @@ INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 1
 # F7-06b: cada cuánto se comprueba la salud de cada cuenta de WhatsApp (calidad, nivel, token).
 CHANNEL_HEALTH_INTERVAL_MINUTES = env.integer("CHANNEL_HEALTH_INTERVAL_MINUTES", 15)
 # Outbox (F1-06): el publisher corre cada segundo en beat.
+MEDIA_PER_ORG = 2  # F7-09a1b: descargas de medios a la vez por organización (a confirmar)
 CELERY_BEAT_SCHEDULE = {
     "core.publish_outbox": {"task": "core.publish_outbox", "schedule": 1.0},
     # F6-04b: cada minuto vuelve a encolar los mensajes del Inbox que llevan demasiado en cola.
