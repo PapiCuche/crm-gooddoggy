@@ -77,6 +77,16 @@ def threaded(count: int, call: Any) -> list[threading.Thread]:
     return workers
 
 
+def waiting(migrator: DB, count: int) -> None:
+    """Hasta que `count` conexiones esperan un bloqueo (sin dormir a ciegas)."""
+    asked = "SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted"  # de todo rol
+    for _ in range(300):
+        if [(count,)] <= migrator.execute(asked).fetchall():
+            return
+        threading.Event().wait(0.05)
+    raise AssertionError("nadie espera el bloqueo")
+
+
 def fail(response: Any) -> tuple[int, str | None, list[str]]:
     sent = response.json()
     return response.status_code, sent.get("code"), sorted(sent.get("fields", {}))
@@ -123,9 +133,17 @@ def test_a_link_the_creator_cannot_see_is_one_identical_400_and_writes_nothing(
     shape = {"code": "VALIDATION_ERROR", "fields": {"_": [{"code": "invalid", "message": LINKS}]}}
     assert sent == {json.dumps(shape, ensure_ascii=False, separators=(",", ":")).encode()}
     assert migrator.execute(ROWS).fetchone() == before  # un solo cuerpo, nada escrito
-    for case in ({"price_list_id": str(uuid4())}, {"items": lines(uuid4())}):
-        wanted = {"contact_id": str(ids["owned"]), "items": lines(desk.phone), **case}
-        assert fail(create(vera, wanted))[2] == [next(iter(case)).replace("items", "variant_id")]
+    internal = price_list(desk.a, "INT", required_permission="prices.view_internal")
+    for field, cases in (  # inexistente, de B o que no puede ver: los mismos bytes
+        (
+            "price_list_id",
+            [{"price_list_id": str(x)} for x in (uuid4(), price_list(desk.b, "BL"), internal)],
+        ),
+        ("variant_id", [{"items": lines(x)} for x in (uuid4(), item(desk.b, "BV"))]),
+    ):
+        wanted = {"contact_id": str(ids["owned"]), "items": lines(desk.phone)}
+        sent = {create(vera, wanted | case).content for case in cases}
+        assert len(sent) == 1 and f'"{field}"' in sent.pop().decode()
 
 
 def test_the_permission_comes_before_the_body_and_the_row(
@@ -242,6 +260,24 @@ def test_a_row_out_of_scope_is_not_waited_for(desk: SimpleNamespace, migrator: D
         assert not worker.is_alive() and got == [NOT_FOUND, 400]
 
 
+def test_an_opportunity_moved_out_of_scope_while_waiting_for_its_lock_is_the_same_400(
+    desk: SimpleNamespace, migrator: DB
+) -> None:
+    """Se vuelve a mirar el alcance con la fila bloqueada (`commands._seen`)."""
+    opp = make(desk.a, contact_id=desk.ids["owned"], assigned_user_id=desk.vera.pk)
+    before, got = migrator.execute(ROWS).fetchone(), list[Any]()
+    with migrator.transaction():
+        migrator.execute("SELECT 1 FROM opportunities WHERE id = %s FOR UPDATE", [opp.pk])
+        [worker] = threaded(1, lambda: got.append(fail(create(signed(desk.vera), {
+            "opportunity_id": str(opp.pk), "items": lines(desk.phone)}))))  # fmt: skip
+        waiting(migrator, 1)
+        migrator.execute(
+            "UPDATE opportunities SET assigned_user_id = %s WHERE id = %s", [desk.sam.pk, opp.pk]
+        )
+    worker.join(timeout=15)
+    assert got == [(400, "VALIDATION_ERROR", ["_"])] and migrator.execute(ROWS).fetchone() == before
+
+
 def test_two_changes_at_once_from_one_version_leave_one(
     desk: SimpleNamespace, migrator: DB
 ) -> None:
@@ -249,7 +285,7 @@ def test_two_changes_at_once_from_one_version_leave_one(
     with migrator.transaction():  # los dos esperan la misma fila; luego, uno gana
         migrator.execute("SELECT 1 FROM quotes WHERE id = %s FOR UPDATE", [quote])
         workers = threaded(2, lambda: got.append(fail(patch(signed(desk.ana), quote, NOTE))[:2]))
-        threading.Event().wait(1)
+        waiting(migrator, 2)
     for worker in workers:
         worker.join(timeout=15)
     assert sorted(got, key=str) == [(200, None), (409, "STALE_VERSION")]
@@ -297,17 +333,22 @@ def test_every_domain_error_has_its_code_and_no_figures(error: Exception, code: 
     assert not any(ch.isdigit() for ch in str(raised.value.message))
 
 
-def test_the_mapper_covers_every_command_exception_and_hides_their_text() -> None:
+def test_the_mapper_covers_every_command_exception_and_hides_their_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     mapped = {kind for kind, _, _ in CONFLICTS}
     special = (commands.BadReference, commands.NotAllowed, discounts.PriceRefused)
     for module in (commands, decisions, discounts, lifecycle, answers):
         for value in vars(module).values():
             if isinstance(value, type) and value.__module__ == module.__name__:
                 assert not issubclass(value, Exception) or value in (*mapped, *special), value
-    for error, status in ((ValueError("812.40"), 400), (Quote.DoesNotExist(), 404),
+    with pytest.raises(Quote.DoesNotExist), domain():  # el 404 lo da el núcleo, no el mapa
+        raise Quote.DoesNotExist
+    for error, status in ((ValueError("812.40"), 400),
                           (commands.NotAllowed("quotes.update"), 403),
                           (discounts.PriceRefused(), 422)):  # fmt: skip
         with pytest.raises(Exception) as raised, domain():
             raise error
         assert raised.value.status_code == status  # type: ignore[attr-defined]
         assert "812" not in str(raised.value.detail)  # type: ignore[attr-defined]
+    assert "ValueError" in caplog.text and "812" not in caplog.text  # en el servidor, la clase

@@ -69,6 +69,7 @@ DELETE FROM login_throttles WHERE id IN (
   SELECT id FROM login_throttles AS t
   WHERE {_QUIET} AND (left(t.key, 4) <> 'par:' OR {_QUIET.replace("window", "kept")})
     AND left(t.key, 4) <> 'rst:'  -- los de pedir un enlace: su ventana es otra (`recovery`)
+    AND (left(t.key, 4) <> 'qfl:' OR t.updated_at < now() - %(floor)s::int * interval '1 second')
   FOR UPDATE SKIP LOCKED)
 """  # noqa: S608 — texto fijo, sin datos
 
@@ -193,8 +194,10 @@ def release(attempt: dict[str, str], started: list[Blocked]) -> None:
 
 def purge() -> int:
     """Borra los contadores que ya no cuentan: una ventana entera sin fallos y sin bloqueo en
-    curso (`PAIR_KEPT` los de `pair`). Salta las filas que un acceso tiene bloqueadas."""
+    curso (`PAIR_KEPT` los de `pair`; los del suelo de costo, su ventana más larga). Salta las
+    filas que un acceso tiene bloqueadas."""
     window = max(limit.window for limit in limits().values())
     with connection.cursor() as cursor:
-        cursor.execute(_PURGE, {"window": window, "kept": max(window, PAIR_KEPT)})
+        floor = max(span for _, span in settings.QUOTE_FLOOR_THROTTLE.values())  # F5-09e2
+        cursor.execute(_PURGE, {"window": window, "kept": max(window, PAIR_KEPT), "floor": floor})
         return int(cursor.rowcount)

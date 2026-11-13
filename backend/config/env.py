@@ -151,3 +151,13 @@ def check_meta(
         raise ImproperlyConfigured(
             "CHANNEL_SEND_LIMIT (1 a 60 envíos, ventana de 1 a 60 s) y CELERY_BROKER_URL"
         )
+
+
+def check_floor_throttle(rules: dict[str, tuple[int, int]]) -> None:
+    """El tope de las rutas que miden el suelo de costo (F5-09e2): sin él, el costo se deduce."""
+    quote, user = rules["quote"], rules["user"]
+    if not (1 <= quote[0] <= user[0] <= 100 and 60 <= quote[1] <= user[1] <= 7 * 24 * 60 * 60):
+        raise ImproperlyConfigured(
+            "QUOTE_FLOOR_THROTTLE: 1 a 100 peticiones y ventanas de 60 s a 7 días, la de la "
+            "cotización dentro de la de la persona"
+        )

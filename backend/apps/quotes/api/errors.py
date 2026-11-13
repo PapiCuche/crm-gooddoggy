@@ -1,6 +1,6 @@
 """Los errores de los comandos de cotizaciones con la forma del contrato (ADR-014 §1), en una sola
 tabla para todas sus rutas (F5-09e). Ningún cuerpo lleva cifras, ids ni el estado de otra persona.
-`DoesNotExist` (inexistente, de otra organización o fuera del alcance) es el mismo 404;
+`DoesNotExist` (inexistente, de otra organización o fuera del alcance), el 404 del núcleo;
 `NotAllowed`, 403 sin motivo; una carrera o un estado, 409 con su código; `PriceRefused`, siempre
 el mismo 422. El contacto y la oportunidad dan **un único** 400 que no dice cuál falló ni por qué.
 El `ValueError` de un comando es un 400 general, nunca su texto (los 400 de campo del serializador
@@ -11,7 +11,6 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from django.core.exceptions import ObjectDoesNotExist
 from django.db import DataError
 from rest_framework import exceptions, serializers
 
@@ -49,8 +48,6 @@ def domain() -> Iterator[None]:
     """Envuelve la llamada al comando (no el serializador ni la respuesta)."""
     try:
         yield
-    except ObjectDoesNotExist:
-        raise exceptions.NotFound from None
     except commands.NotAllowed:
         raise exceptions.PermissionDenied from None
     except discounts.PriceRefused:
@@ -59,7 +56,8 @@ def domain() -> Iterator[None]:
         if bad.field in BAD_REFERENCE:
             raise serializers.ValidationError({bad.field: [BAD_REFERENCE[bad.field]]}) from None
         raise serializers.ValidationError(LINKS) from None  # contacto, oportunidad o autoría
-    except ValueError:  # un comando rechazó algo que el serializador dejó pasar
+    except ValueError as error:  # un comando rechazó algo que el serializador dejó pasar
+        logger.info("quotes: 400 por %s", type(error).__name__)  # nunca el texto: lleva valores
         raise serializers.ValidationError(GENERIC) from None
     except DataError as error:
         state = getattr(error.__cause__, "sqlstate", None)

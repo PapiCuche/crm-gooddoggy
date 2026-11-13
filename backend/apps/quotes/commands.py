@@ -288,12 +288,11 @@ def _seen[M: Model](rows: QuerySet[M], ectx: Any, code: str) -> M | None:
     return found if visible(found) else None
 
 
-def _links(
-    alias: str, contact_id: UUID | None, opportunity_id: UUID | None, ectx: Any = None
-) -> UUID:
+def _links(alias: str, contact_id: UUID | None, opportunity_id: UUID | None, *, ectx: Any) -> UUID:
     """Bloquea el contacto y la oportunidad vivos y devuelve el contacto de la cotización: el dado
-    o, sin él, el de la oportunidad, que ha de ser de ese contacto. Con `ectx` (al crear), los dos
-    han de estar en el alcance de `opportunities.view` y `contacts.view` de quien actúa (también
+    o, sin él, el de la oportunidad, que ha de ser de ese contacto. `ectx` es obligatorio (al
+    crear, el de quien crea; `None` solo si quien llama lo decide a la vista): los dos han de estar
+    en el alcance de `opportunities.view` y `contacts.view` de quien actúa (también
     el contacto que trae la oportunidad); si no, el mismo `BadReference` que si no existieran."""
     if opportunity_id is not None:
         live = Opportunity.objects.using(alias).filter(pk=opportunity_id, deleted_at__isnull=True)
@@ -333,7 +332,7 @@ def create_quote(
     listed = None if price_list_id is None else _uuid(price_list_id, "lista de precios")
     try:
         with transaction.atomic(using=alias):
-            contact = _links(alias, contact, opportunity, ectx)
+            contact = _links(alias, contact, opportunity, ectx=ectx)
             rows, price = _lines(alias, ctx, wanted, listed)
             quote: Quote = Quote.objects.using(alias).create(
                 number=allocate(ctx, "COT", using=alias), contact_id=contact,
