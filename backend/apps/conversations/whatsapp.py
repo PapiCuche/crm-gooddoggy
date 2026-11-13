@@ -32,6 +32,9 @@ from core import http, sealed, storage
 from core.observability.logging import get_logger
 
 logger = get_logger(__name__)
+# Plazo total de la subida de un medio a Meta (F7-09b2): con el envío (`core.http.request`, 3
+# intentos de 5 + 15 s) cabe de sobra en `INBOX_SENDING_DEADLINE_MINUTES`; una prueba lo comprueba.
+UPLOAD_SECONDS = 120.0
 PHONE = r"^\+[1-9][0-9]{6,14}$"
 EXTERNAL_ID = r"^[A-Za-z0-9._=-]{1,200}$"  # el `wamid`: se guarda en `messages.external_message_id`
 REASONS = {190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNREACHABLE"}
@@ -78,7 +81,8 @@ def _upload(base: str, token: str, media: Media) -> dict[str, Any] | SendResult:
     body, kind = http.form(fields)
     auth = {"Authorization": f"Bearer {token}", "Content-Type": kind}
     try:
-        reply = http.request("POST", f"{base}/media", headers=auth, body=body)
+        with http.deadline(UPLOAD_SECONDS):  # un servidor que gotea no la alarga sin fin
+            reply = http.request("POST", f"{base}/media", headers=auth, body=body)
     except Exception:
         raise TemporaryChannelError from None
     found = _field(reply.data, "id")
