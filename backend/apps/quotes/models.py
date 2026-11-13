@@ -26,6 +26,8 @@ class QuoteStatus(models.TextChoices):
 
 
 TERMINAL = (QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.EXPIRED, QuoteStatus.CANCELLED)
+ISSUED = ["SENT", "VIEWED", "ACCEPTED", "REJECTED", "EXPIRED"]  # salió: lleva sus fotografías
+UNISSUED = ["DRAFT", "PENDING_APPROVAL", "APPROVED"]
 
 
 class TaxMode(models.TextChoices):
@@ -75,6 +77,11 @@ class Quote(TenantModel):
     valid_until = models.DateTimeField(null=True, blank=True)
     notes_to_customer = models.CharField(max_length=2000, default="", blank=True)
     internal_notes = models.CharField(max_length=2000, default="", blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)  # emitida (F5-09c2): con sus fotografías
+    company_snapshot = models.JSONField(null=True, blank=True)
+    customer_snapshot = models.JSONField(null=True, blank=True)
+    terms_snapshot = models.CharField(max_length=2000, null=True, blank=True)  # noqa: DJ001
+    warranty_snapshot = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     cancelled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     created_by_user_id = models.UUIDField(null=True, blank=True)
@@ -140,6 +147,29 @@ class Quote(TenantModel):
                     & models.Q(cancelled_at__isnull=True, cancel_reason__isnull=True)
                 ),
                 name="quotes_cancelled_ck",
+            ),
+            models.CheckConstraint(  # emitida: con fotografías y una validez posterior al envío;
+                condition=(  # antes de emitirse, sin nada de eso; cancelada, como quedó
+                    ~models.Q(status__in=ISSUED)
+                    | models.Q(
+                        company_snapshot__isnull=False,
+                        customer_snapshot__isnull=False,
+                        sent_at__isnull=False,
+                        valid_until__isnull=False,  # sin esto, un nulo en la comparación pasaría
+                        valid_until__gt=models.F("sent_at"),
+                    )
+                )
+                & (
+                    ~models.Q(status__in=UNISSUED)
+                    | models.Q(
+                        company_snapshot__isnull=True,
+                        customer_snapshot__isnull=True,
+                        terms_snapshot__isnull=True,
+                        warranty_snapshot__isnull=True,
+                        sent_at__isnull=True,
+                    )
+                ),
+                name="quotes_issued_ck",
             ),
             models.CheckConstraint(condition=models.Q(version__gte=1), name="quotes_version_ck"),
         ]

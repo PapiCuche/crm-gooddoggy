@@ -227,8 +227,12 @@ allowed_importers = ["apps.conversations.ingress", "apps.conversations.delivery"
 [[tool.importlinter.contracts]]
 name = "Comandos de cotizaciones: solo su API los importa (F5-09a)"
 type = "protected"
-protected_modules = ["apps.quotes.commands", "apps.quotes.discounts", "apps.quotes.decisions"]
-allowed_importers = ["apps.quotes.api", "apps.quotes.discounts", "apps.quotes.decisions"]
+protected_modules = [
+    "apps.quotes.commands", "apps.quotes.discounts", "apps.quotes.decisions", "apps.quotes.lifecycle",
+]
+allowed_importers = [
+    "apps.quotes.api", "apps.quotes.discounts", "apps.quotes.decisions", "apps.quotes.lifecycle",
+]
 
 [[tool.importlinter.contracts]]
 name = "Políticas de descuento: solo su API importa apps.quotes.policies (F5-09b4)"

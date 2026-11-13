@@ -19,7 +19,7 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.organizations.models import OrganizationMembership as Membership
 from apps.pricing import costs
-from apps.quotes import commands, decisions, discounts
+from apps.quotes import commands, decisions, discounts, lifecycle
 from apps.quotes.commands import NotAllowed, QuoteTerminal, StaleVersion
 from apps.quotes.models import Quote, QuoteApproval
 from core.tenancy.scope import tenant_scope
@@ -270,7 +270,11 @@ def test_the_floor_takes_the_largest_cost_the_current_one_and_the_ones_scheduled
                                     "discount_type": "NOPE", "discount_value": 1.5}),
      (discounts.set_manual_price, {"quote_id": "x", "version": "y", "line_id": "z", "price": 1.5,
                                    "reason": 7}),
-     (discounts.submit_quote, {"quote_id": "x", "version": "y"})],
+     (discounts.submit_quote, {"quote_id": "x", "version": "y"}),
+     (decisions.approve_quote, {"quote_id": "x", "version": "y", "comment": 7}),
+     (decisions.reject_quote, {"quote_id": "x", "version": "y", "reason": 7}),
+     (decisions.withdraw_approval_request, {"quote_id": "x", "version": "y"}),
+     (lifecycle.issue_quote, {"quote_id": "x", "version": "y", "valid_until": "z", "terms": 7})],
 )  # fmt: skip
 def test_without_permission_even_malformed_input_is_a_permission_error(
     command: Any, extra: dict[str, Any], shop: SimpleNamespace
@@ -311,7 +315,8 @@ def test_the_database_binds_who_submits_to_who_acts_and_never_approves_without_i
 ) -> None:
     seller, other = worker(shop, "3"), worker(shop, "3")
     made, _, _ = draft(shop, seller)
-    for actor, submitter in ((seller, None), (seller, other.pk), (None, None)):  # ni sin persona
+    for actor, submitter in ((seller, None), (seller, other.pk), (None, None),
+                             (None, seller.pk)):  # ni sin persona, aunque diga quién  # fmt: skip
         with tenant_scope(ctx(shop.a, actor)), pytest.raises(IntegrityError) as raised:
             QuoteApproval.objects.create(
                 quote_id=made.pk, reason="DISCOUNT_OVER_LIMIT", requested_by_user_id=seller.pk,

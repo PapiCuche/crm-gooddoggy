@@ -32,6 +32,7 @@ from tests.test_prices import price_list
 from tests.test_promotion_tables import promo
 from tests.test_quote_commands import DB, LONG_AGO, NOW, audit, lines, shop, stored
 from tests.test_quote_commands import world as world  # noqa: PLC0414
+from tests.test_quote_tables import issued
 
 _ = shop
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -417,7 +418,9 @@ def raw(shop: SimpleNamespace, user: Any, made: Quote, state: str,
     with tenant_scope(ctx(shop.a, user)), connection.cursor() as cursor:
         for name, value in (gucs or {}).items():
             cursor.execute("SELECT set_config(%s, %s, true)", [name, value])
-        Quote.objects.filter(pk=made.pk).update(status=state)
+        Quote.objects.filter(pk=made.pk).update(
+            status=state, **(issued() if state == "SENT" else {})
+        )
 
 
 BLOCKED = "go through the request"
