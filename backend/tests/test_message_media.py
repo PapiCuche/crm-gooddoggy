@@ -1,7 +1,6 @@
-"""F7-09a1b: el adjunto de un medio entrante y su máquina de estados (`apps.conversations.media`,
-migraciones `0020`, `0021` y `files.0002`): el reclamo, el cierre y el blob por intento. PostgreSQL
-real con `crm_app` (también con hilos a la vez) y un almacén en memoria compartido por la prueba.
-La descarga y la tarea son de F7-09a1c: aquí el «intento» recibe los bytes ya bajados."""
+"""F7-09a1b: el adjunto de un medio y su máquina de estados (`media`, `0020`, `0021`, `files.0002`),
+con PostgreSQL real como `crm_app`, hilos a la vez y un almacén en memoria compartido. La descarga
+es de F7-09a1c: aquí el «intento» recibe los bytes ya bajados."""
 
 import hashlib
 import logging
@@ -33,9 +32,7 @@ JPEG = b"\xff\xd8\xff\xe0" + bytes(60)
 STATE = "SELECT download_status, failure_code, attempts FROM message_attachments WHERE id = %s"
 
 
-class Storage(InMemoryStorage):
-    """El almacén en memoria, compartido por la prueba, con fallos a la carta."""
-
+class Storage(InMemoryStorage):  # compartido por la prueba, con fallos a la carta
     fail_put = fail_delete = False
 
     def put(self, key: str, *args: Any, **kwargs: Any) -> Any:
@@ -51,8 +48,7 @@ class Storage(InMemoryStorage):
 
 @pytest.fixture
 def world(orgs: dict[str, UUID], settings: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
-    settings.MEDIA_PER_ORG = 2
-    blobs = Storage()
+    settings.MEDIA_PER_ORG, blobs = 2, Storage()
     monkeypatch.setattr(storage, "storage", lambda: blobs)
     mine = uuid4()
     with tenant_scope(ctx(orgs["A"])) as tenant:
@@ -91,11 +87,8 @@ def state(migrator: DB, pk: UUID) -> tuple[Any, ...]:
 
 
 def due(migrator: DB, pk: UUID) -> None:  # el plazo o la espera, vencidos: el reloj pasa
-    migrator.execute(
-        "UPDATE message_attachments SET lease_until = now() - interval '1 second', "
-        "not_before = NULL WHERE id = %s",
-        [pk],
-    )
+    migrator.execute("UPDATE message_attachments SET lease_until = now() - interval '1 second', "
+                     "not_before = NULL WHERE id = %s", [pk])  # fmt: skip
 
 
 def files(migrator: DB) -> list[tuple[Any, ...]]:
@@ -109,8 +102,7 @@ def claimed(org: UUID, pk: UUID) -> Any:
 
 
 def bytes_of(content: bytes = JPEG) -> media.Sink:
-    sink = media.Sink()
-    sink.write(content)
+    (sink := media.Sink()).write(content)
     return sink
 
 
@@ -325,7 +317,9 @@ def test_a_storage_that_fails_leaves_no_file_row_and_retries(
 
 def test_an_expired_lease_at_the_last_attempt_fails_unavailable(world: Any, migrator: DB) -> None:
     pk = one(world, migrator)
-    migrator.execute("UPDATE message_attachments SET attempts = 4 WHERE id = %s", [pk])
+    for _ in range(4):  # cuatro intentos devueltos (los intentos solo suben de uno en uno)
+        finish(world, claimed(world.a, pk), "RETRY")
+        due(migrator, pk)
     assert isinstance(claimed(world.a, pk), media.Claim)  # el 5.º intento muere sin cerrar
     due(migrator, pk)
     assert claimed(world.a, pk) is None and state(migrator, pk) == ("FAILED", "UNAVAILABLE", 5)
@@ -365,19 +359,39 @@ def raw(org: UUID, sql: str, params: list[Any]) -> None:
 
 INSERT = (
     "INSERT INTO message_attachments (id, organization_id, message_id, kind, external_media_id, "
-    "download_status, attempts, created_at, updated_at) SELECT gen_random_uuid(), %s, %s, "
-    "'IMAGE', '300000000000001', 'PENDING', 0, now(), now()"
+    "download_status, failure_code, attempts, file_id, created_at, updated_at) SELECT "
+    "gen_random_uuid(), %s, %s, 'IMAGE', '300000000000001', {}, now(), now()"
 )
+NEW = INSERT.format("'PENDING', NULL, 0, NULL")
+CLAIM = "UPDATE message_attachments SET download_status = 'DOWNLOADING', lease_until = now(), "
+
+
+def a_file(migrator: DB, org: UUID, pk: UUID, purpose: str = "message-media") -> UUID:
+    migrator.execute(
+        "INSERT INTO files (id, organization_id, storage_key, original_name, mime_type, "
+        "size_bytes, sha256, purpose, scan_status) VALUES (%s, %s, %s, 'x', 'image/jpeg', 1, %s, "
+        "%s, 'PENDING')",
+        [pk, org, storage.tenant_key(org, purpose, pk), "0" * 64, purpose],
+    )
+    return pk
+
+
+def refused(org: UUID, rows: list[tuple[str, list[Any], str]]) -> None:
+    for sql, params, error in rows:
+        with pytest.raises(DatabaseError) as caught:
+            raw(org, sql, params)
+        assert type(caught.value.__cause__).__name__ == error, sql
 
 
 def test_the_database_guards_the_table_for_the_app_role(world: Any, migrator: DB) -> None:
     done = one(world, migrator)
     store(world, claimed(world.a, done))
     pending = one(world, migrator, "wamid.M2")
-    (message,) = migrator.execute(
-        "SELECT message_id FROM message_attachments WHERE id = %s", [done]
-    ).fetchone()  # type: ignore[misc]
-    denied = [
+    by_id = "SELECT message_id FROM message_attachments WHERE id = %s"
+    (message,) = migrator.execute(by_id, [done]).fetchone()  # type: ignore[misc]
+    quote = a_file(migrator, world.a, uuid4(), "quote-pdf")  # otro archivo de la organización
+    born = [world.a, message]  # el disparador de INSERT actúa antes que la unicidad
+    refused(world.a, [
         ("DELETE FROM message_attachments WHERE id = %s", [done], "InsufficientPrivilege"),
         ("UPDATE message_attachments SET kind = 'AUDIO' WHERE id = %s", [pending],
          "InsufficientPrivilege"),
@@ -391,27 +405,30 @@ def test_the_database_guards_the_table_for_the_app_role(world: Any, migrator: DB
          "CheckViolation"),
         ("UPDATE message_attachments SET download_status = 'FAILED' WHERE id = %s", [pending],
          "CheckViolation"),  # sin código
-        (INSERT, [world.a, message], "UniqueViolation"),  # un adjunto por mensaje
-    ]  # fmt: skip
-    for sql, params, error in denied:
-        with pytest.raises(DatabaseError) as caught:
-            raw(world.a, sql, params)
-        assert type(caught.value.__cause__).__name__ == error, sql
-    theirs = uuid4()
-    migrator.execute(
-        "INSERT INTO files (id, organization_id, storage_key, original_name, mime_type, "
-        "size_bytes, sha256, purpose, scan_status) VALUES (%s, %s, %s, 'x', 'image/jpeg', 1, %s, "
-        "'message-media', 'PENDING')",
-        [theirs, world.b, storage.tenant_key(world.b, "message-media", theirs), "0" * 64],
-    )
-    claimed(world.a, pending)
-    with pytest.raises(DatabaseError) as caught:  # el archivo de otra organización: la FK
+        (NEW, born, "UniqueViolation"),  # un adjunto por mensaje
+        (INSERT.format("'PENDING', NULL, 5, NULL"), born, "CheckViolation"),  # nace gastado
+        (INSERT.format("'EXPIRED', NULL, 0, NULL"), born, "CheckViolation"),  # o cerrado
+        (INSERT.format("'DONE', NULL, 0, %s"), [*born, quote], "CheckViolation"),  # con otro
+        (f"{CLAIM}attempt_id = gen_random_uuid() WHERE id = %s", [pending], "CheckViolation"),
+        (f"{CLAIM}attempt_id = gen_random_uuid(), attempts = 2 WHERE id = %s", [pending],
+         "CheckViolation"),  # un reclamo suma exactamente un intento
+    ])  # fmt: skip
+    got = claimed(world.a, pending)
+    refused(world.a, [
+        (f"{CLAIM}attempts = 2 WHERE id = %s", [pending], "CheckViolation"),  # el mismo intento
+        ("UPDATE message_attachments SET download_status = 'DONE', file_id = %s WHERE id = %s",
+         [quote, pending], "CheckViolation"),  # el archivo de otro intento u otro propósito
+    ])  # fmt: skip
+    a_file(migrator, world.b, got.attempt_id)  # el id del intento, en otra organización: la FK
+    with pytest.raises(DatabaseError) as caught:
         raw(world.a, "UPDATE message_attachments SET download_status = 'DONE', file_id = %s "
-            "WHERE id = %s", [theirs, pending])  # fmt: skip
+            "WHERE id = %s", [got.attempt_id, pending])  # fmt: skip
     assert caught.value.__cause__.diag.constraint_name == "message_attachments_file_fk"  # type: ignore[union-attr]
     with pytest.raises(DatabaseError) as caught:  # y el mensaje de otra organización, igual
-        raw(world.b, INSERT, [world.b, message])
+        raw(world.b, NEW, [world.b, message])
     assert caught.value.__cause__.diag.constraint_name == "message_attachments_message_fk"  # type: ignore[union-attr]
+    finish(world, got, "RETRY")  # `PENDING` con el `attempt_id` del intento devuelto
+    refused(world.a, [(f"{CLAIM}attempts = 2 WHERE id = %s", [pending], "CheckViolation")])
 
 
 def test_the_trigger_binds_the_migrator_too(world: Any, migrator: DB) -> None:

@@ -542,11 +542,8 @@ MEDIA_FAILURES = (
 
 
 class MessageAttachment(TenantModel):
-    """El medio de un mensaje entrante (F7-09a1b; ADR-029 §7): uno por mensaje. La tarea (F7-09a1c)
-    `fetch_media` lo baja al almacén privado (`files`, `message-media`). Lo de Meta (tipo, tamaño,
-    nombre, URL) no se guarda: el id del medio, solo dígitos. El disparador de la migración hace
-    cumplir la máquina de estados; `crm_app` no borra ni reescribe la identidad (UPDATE por
-    columna). `attempt_id` es el intento que tiene el reclamo y la clave de su blob."""
+    """El medio de un mensaje entrante (F7-09a1b; ADR-029 §7), uno por mensaje; de Meta solo su id.
+    La máquina de estados la cumple el disparador de `0021`; `attempt_id`: el intento y su blob."""
 
     id = uuid7_primary_key()
     message = models.ForeignKey(

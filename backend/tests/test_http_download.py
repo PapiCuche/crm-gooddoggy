@@ -12,6 +12,7 @@ import socket
 import threading
 import time
 from typing import Any
+from unittest import mock
 
 import pytest
 import urllib3
@@ -118,10 +119,7 @@ def test_a_socket_the_watchdog_cannot_watch_is_closed(monkeypatch: pytest.Monkey
     manager = urllib3.PoolManager()
     manager.pool_classes_by_scheme = {"https": http._GuardedPool}
     monkeypatch.setattr(http, "_manager", manager)
-
-    def broken(sock: socket.socket) -> socket.socket:
-        raise OSError(errno.EMFILE, "sin descriptores")
-
+    broken = mock.Mock(side_effect=OSError(errno.EMFILE, "sin descriptores"))
     try:
         with monkeypatch.context() as patched, pytest.raises(http.DownloadFailed):
             patched.setattr(socket.socket, "dup", broken)

@@ -6,11 +6,15 @@ columna: `crm_app` lee, inserta y cambia solo el estado de la descarga; nunca bo
 El disparador `message_attachments_advance` hace cumplir la máquina de estados para **todos** los
 roles (no hay salida temprana por `current_user`: el migrador tampoco reescribe un adjunto; una
 corrección de datos exigiría una migración nueva que lo reemplace a la vista):
+- Un adjunto nace `PENDING`, sin intentos, sin intento ni plazo ni espera, sin archivo ni código.
 - `DONE`, `FAILED` y `EXPIRED` son terminales: ningún UPDATE los cambia.
 - La identidad (organización, id, mensaje, clase, id del medio, alta) no se reescribe.
 - `PENDING` pasa a `DOWNLOADING` o `FAILED`; `DOWNLOADING` a `PENDING` (reintento), `DOWNLOADING`
-  (otro intento reclama un plazo vencido), `DONE`, `FAILED` o `EXPIRED`. Los intentos no bajan.
-`DONE` solo con `file_id` y `file_id` solo con `DONE` (CHECK)."""
+  (otro intento reclama un plazo vencido), `DONE`, `FAILED` o `EXPIRED`.
+- Pasar a `DOWNLOADING` con un intento nuevo suma exactamente uno a `attempts` y cambia
+  `attempt_id`; cualquier otro cambio deja los dos como estaban.
+- `DONE` lleva como `file_id` el archivo de su intento (`attempt_id`), nunca otro de la
+  organización; y `DONE` si y solo si hay `file_id` (CHECK)."""
 
 from typing import Any
 
@@ -24,15 +28,33 @@ from core.db.operations import EnableRLS
 ADVANCE = """
 CREATE FUNCTION public.message_attachments_advance() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+DECLARE claim boolean;
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.download_status <> 'PENDING' OR NEW.attempts <> 0 OR NEW.attempt_id IS NOT NULL
+           OR NEW.lease_until IS NOT NULL OR NEW.not_before IS NOT NULL
+           OR NEW.file_id IS NOT NULL OR NEW.failure_code IS NOT NULL THEN
+            RAISE EXCEPTION 'message_attachments_advance: un adjunto nace PENDING y sin intentos'
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
     IF OLD.download_status IN ('DONE', 'FAILED', 'EXPIRED') THEN
         RAISE EXCEPTION 'message_attachments_advance: un adjunto cerrado no cambia'
             USING ERRCODE = 'check_violation';
     END IF;
+    -- Un reclamo (desde PENDING, o de otro intento sobre un plazo vencido) suma un intento con un
+    -- `attempt_id` nuevo; cualquier otro cambio deja el intento y la cuenta como estaban.
+    claim := NEW.download_status = 'DOWNLOADING'
+        AND (OLD.download_status = 'PENDING' OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id);
     IF (NEW.organization_id, NEW.id, NEW.message_id, NEW.kind, NEW.external_media_id,
         NEW.created_at) IS DISTINCT FROM (OLD.organization_id, OLD.id, OLD.message_id, OLD.kind,
         OLD.external_media_id, OLD.created_at)
-       OR NEW.attempts < OLD.attempts
+       OR (claim AND (NEW.attempts <> OLD.attempts + 1
+                      OR NEW.attempt_id IS NOT DISTINCT FROM OLD.attempt_id))
+       OR (NOT claim AND (NEW.attempts <> OLD.attempts
+                          OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id))
+       OR (NEW.download_status = 'DONE' AND NEW.file_id IS DISTINCT FROM OLD.attempt_id)
        OR NOT (
            (OLD.download_status = 'PENDING' AND NEW.download_status IN ('PENDING', 'DOWNLOADING',
             'FAILED'))
@@ -45,9 +67,15 @@ BEGIN
     RETURN NEW;
 END
 $fn$;
-CREATE TRIGGER message_attachments_advance BEFORE UPDATE ON public.message_attachments
+CREATE TRIGGER message_attachments_advance BEFORE INSERT OR UPDATE ON public.message_attachments
     FOR EACH ROW EXECUTE FUNCTION public.message_attachments_advance();
 """
+# Respalda la FK compuesta a `files` (solo las filas con archivo): borrar o mover un archivo no
+# recorre la tabla. Fuera del estado de Django: no hay consulta que la use.
+FILE_INDEX = (
+    "CREATE INDEX message_attachments_file_idx ON public.message_attachments "
+    "(organization_id, file_id) WHERE file_id IS NOT NULL"
+)
 DROP = (
     "DROP TRIGGER IF EXISTS message_attachments_advance ON public.message_attachments; "
     "DROP FUNCTION IF EXISTS public.message_attachments_advance()"
@@ -207,5 +235,6 @@ class Migration(migrations.Migration):
         ),
         EnableRLS("MessageAttachment"),
         migrations.RunPython(_privileges, _restore),
+        migrations.RunSQL(FILE_INDEX, "DROP INDEX IF EXISTS public.message_attachments_file_idx"),
         migrations.RunSQL(ADVANCE, DROP),
     ]

@@ -11,6 +11,10 @@ restricción borra también su índice."""
 
 from django.db import migrations, models
 
+# El paso con `ACCESS EXCLUSIVE` no espera más de 5 s a una transacción larga (que, mientras
+# espera, bloquearía a todas las que llegan detrás): si vence, la migración falla sin cambiar
+# nada y se repite más tarde (el índice ya construido se reutiliza: `IF NOT EXISTS`).
+LIMIT = "SET lock_timeout = '5s'"
 INDEX = "messages_org_id_uq"
 
 
@@ -37,11 +41,13 @@ class Migration(migrations.Migration):
                     "ON public.messages (organization_id, id)",
                     f"DROP INDEX CONCURRENTLY IF EXISTS public.{INDEX}",
                 ),
+                migrations.RunSQL(LIMIT, "RESET lock_timeout"),
                 migrations.RunSQL(
                     f"ALTER TABLE public.messages ADD CONSTRAINT {INDEX} "
                     f"UNIQUE USING INDEX {INDEX}",
                     f"ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS {INDEX}",
                 ),
+                migrations.RunSQL("RESET lock_timeout", LIMIT),
             ],
         ),
     ]

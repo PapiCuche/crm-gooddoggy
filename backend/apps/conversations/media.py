@@ -1,11 +1,7 @@
-"""Medios entrantes de WhatsApp (F7-09a1b; ADR-029 §7): el adjunto de un mensaje y su máquina de
-estados en la aplicación (la base la hace cumplir además: disparador de `0021`). La descarga, la
-tarea `fetch_media` y el alta desde `inbound.receive` llegan con F7-09a1c. Un intento: **reclamar**
-en una transacción (tope por organización, cuenta `CONNECTED` con credencial viva, `attempt_id`
-nuevo, plazo de 300 s); bajar fuera de toda transacción; **guardar** el blob con la clave del
-intento (nunca se sobrescribe) y cerrar en otra transacción solo si el reclamo sigue siendo suyo;
-si no, o si la base falla, se borra solo ese blob. Lo que declara Meta no se guarda. Los registros
-llevan ids y códigos cerrados: nunca la URL, el token ni el texto de un error."""
+"""Medios entrantes de WhatsApp (F7-09a1b; ADR-029 §7): el adjunto y su máquina de estados (la base
+la hace cumplir además, `0021`). Un intento reclama (tope por organización, cuenta y credencial
+vivas, `attempt_id` nuevo), baja fuera de toda transacción (F7-09a1c) y guarda el blob con la clave
+del intento antes de cerrar, solo si el reclamo sigue siendo suyo. Registros: ids y códigos."""
 
 import datetime as dt
 import hashlib
@@ -61,10 +57,8 @@ class Claim:
 
 
 def attach(ctx: TenantContext, message: Message, kind: Any, payload: dict[str, Any]) -> None:
-    """El adjunto `PENDING` de un mensaje entrante recién creado, en su transacción, y su evento
-    (solo ids; el handler que encola la descarga y la llamada desde `inbound.receive` llegan con
-    F7-09a1c). Solo imagen, audio, video y sticker con un id de medio de solo dígitos (va en la
-    ruta de la URL de la Graph API): lo demás, documentos incluidos, no tiene adjunto."""
+    """El adjunto `PENDING` de un mensaje nuevo y su evento (solo ids; quien lo usa llega en
+    F7-09a1c). Solo imagen, audio, video y sticker con un id de solo dígitos (va en la URL)."""
     media = payload.get(kind) if isinstance(kind, str) and kind in KINDS else None
     media_id = media.get("id") if isinstance(media, dict) else None
     if not isinstance(media_id, str) or not re.fullmatch(META_ID, media_id):
@@ -84,10 +78,8 @@ def _close(alias: str, pk: UUID, status: str, code: str | None = None, **more: A
 
 
 def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
-    """Reclama el adjunto para un intento. `None` si no hay nada que hacer (no existe, es de otra
-    organización, está cerrado, espera su turno, o se cerró aquí sin llamar a Meta); los segundos
-    tras los que volver a mirar si lo tiene otro intento vivo (un mensaje de Celery repetido tras
-    matar un worker: vuelve al vencer el plazo) o si la organización ya está en su tope."""
+    """El reclamo de un intento; `None` si no hay nada que hacer (o se cerró sin llamar a Meta); o
+    en cuántos segundos volver si otro intento tiene el plazo vivo o la organización, su tope."""
     alias = require_scope(ctx)
     with connections[alias].cursor() as cursor:  # el tope se cuenta y se toma uno a uno
         key = f"media:{ctx.organization_id}"
@@ -133,17 +125,15 @@ def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
                  account.external_account_id, credential)  # fmt: skip
 
 
-def _mine(alias: str, got: Claim) -> MessageAttachment | None:
-    """La fila bloqueada, solo si el reclamo sigue siendo de este intento."""
+def _mine(alias: str, got: Claim) -> MessageAttachment | None:  # bloqueada, si sigue siendo suya
     rows = MessageAttachment.objects.using(alias).select_for_update()
     return rows.filter(pk=got.attachment_id, download_status="DOWNLOADING",
                        attempt_id=got.attempt_id).first()  # fmt: skip
 
 
 def finish(ctx: TenantContext, got: Claim, outcome: str) -> tuple[str, int | None]:
-    """Cierra un intento que no guardó nada: `RETRY` vuelve a `PENDING` con espera (o `FAILED
-    UNAVAILABLE` agotados los intentos), `EXPIRED`, o `FAILED` con el código. Devuelve el resultado
-    y, si hay que volver, en cuántos segundos. Un reclamo perdido no cambia nada (`LOST`)."""
+    """Cierra un intento sin archivo: `RETRY` (con espera; agotado, `UNAVAILABLE`), `EXPIRED` o un
+    código de `FAILED`. Un reclamo perdido no cambia nada (`LOST`)."""
     alias = require_scope(ctx)
     row = _mine(alias, got)
     if row is None:
@@ -184,10 +174,8 @@ def _drop(key: str, got: Claim) -> None:
 
 
 def store(ctx: TenantContext, got: Claim, sink: Sink, mime: str) -> tuple[str, int | None]:
-    """Guarda lo bajado (tipo ya comprobado): el blob primero, con la clave del intento, y luego
-    el archivo y `DONE` en una transacción, solo si el reclamo sigue siendo suyo. Un almacén que
-    falla vuelve a `PENDING` con espera, sin fila; un reclamo perdido o una base que falla borran
-    solo ese blob (`LOST`, o la excepción tal cual)."""
+    """El blob primero, y el archivo y `DONE` solo si el reclamo sigue siendo suyo; si no, o si la
+    base falla, se borra solo ese blob. Un almacén que falla: reintento, sin fila."""
     if mime not in EXTENSIONS:
         raise ValueError("tipo no permitido")
     key = storage.tenant_key(ctx.organization_id, "message-media", got.attempt_id)
