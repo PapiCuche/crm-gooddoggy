@@ -7062,6 +7062,58 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+    post:
+      operationId: quotes_create
+      description: Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`,
+        de un contacto o de una oportunidad que ve (`contacts.view`, `opportunities.view`);
+        si no, o no existen, un único 400 general. Repetirlo crea otro borrador.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/:
     get:
       operationId: quotes_retrieve
@@ -7103,6 +7155,70 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    patch:
+      operationId: quotes_update
+      description: 'Cambia lo enviado de un borrador con `quotes.view` y `quotes.update`
+        (fuera del alcance: 404). 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. Sin cambios
+        no escribe.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedQuoteUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -12556,6 +12672,36 @@ components:
           maxLength: 5000
         ai_visible:
           type: boolean
+    PatchedQuoteUpdateRequest:
+      type: object
+      description: Lo que se envía de una cotización al crearla o cambiarla.
+      properties:
+        valid_until:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria, como 2026-11-20T23:59:00-05:00.
+        notes_to_customer:
+          type: string
+          description: Texto libre de hasta 2000 caracteres.
+        internal_notes:
+          type: string
+          description: Texto libre de hasta 2000 caracteres.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuoteLineInputRequest'
+          description: Una por variante; reemplazan a todas y se valoran con los precios
+            de ahora.
+          maxItems: 50
+          minItems: 1
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     PatchedRoleUpdateRequest:
       type: object
       description: Lo que se envía cambia; lo que no, se queda como está.
@@ -13579,6 +13725,44 @@ components:
       required:
       - display_name
       - id
+    QuoteCreateRequest:
+      type: object
+      description: Lo que se envía de una cotización al crearla o cambiarla.
+      properties:
+        valid_until:
+          type: string
+          nullable: true
+          minLength: 1
+          description: ISO 8601 con zona horaria, como 2026-11-20T23:59:00-05:00.
+        notes_to_customer:
+          type: string
+          description: Texto libre de hasta 2000 caracteres.
+        internal_notes:
+          type: string
+          description: Texto libre de hasta 2000 caracteres.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuoteLineInputRequest'
+          description: Una por variante; reemplazan a todas y se valoran con los precios
+            de ahora.
+          maxItems: 50
+          minItems: 1
+        contact_id:
+          type: string
+          format: uuid
+          description: Un contacto vivo que quien crea puede ver.
+        opportunity_id:
+          type: string
+          format: uuid
+          description: Una oportunidad viva que quien crea puede ver (de ese contacto,
+            si se envía).
+        price_list_id:
+          type: string
+          format: uuid
+          description: Sin ella, la lista predeterminada.
+      required:
+      - items
     QuoteDetail:
       type: object
       description: Más las notas (texto libre), el motivo de cancelación y las líneas
@@ -13771,6 +13955,21 @@ components:
       - unit_price
       - variant_id
       - variant_name
+    QuoteLineInputRequest:
+      type: object
+      description: 'Una línea: la variante y la cantidad; el precio no se envía.'
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+          description: Una variante con precio vigente en la lista de la cotización.
+        quantity:
+          type: integer
+          maximum: 1000000
+          minimum: 1
+      required:
+      - quantity
+      - variant_id
     QuoteStatusEnum:
       enum:
       - DRAFT

@@ -199,7 +199,8 @@ def test_an_opportunity_that_cannot_move_leaves_the_quote_accepted_and_says_why(
 ) -> None:
     grants = {**OPPS, f"opportunities.{case[10:]}": "OWN"} if ":" in case else OPPS  # no es suya
     seller, opp = sender(shop, **grants), tables.make(shop.a)
-    made = sold(shop, seller, opp)
+    maker = sender(shop, **OPPS) if ":" in case else seller  # crear pide ver la oportunidad
+    made = sold(shop, maker, opp)
     fix = {
         "no_stage": ("UPDATE pipeline_stages SET is_active = false WHERE id = %s", paying.pk),
         "missing_fields": ("UPDATE pipeline_stages SET requires_fields = '{\"amount\": true}'"
