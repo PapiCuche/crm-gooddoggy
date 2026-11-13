@@ -20,10 +20,13 @@ Cada work item es un issue con el alcance completo (Incluye / No incluye / crite
 | F1-08 | [#10](https://github.com/PapiCuche/crm-gooddoggy/issues/10) Object storage + HTTP allowlist | `feature/f1-object-storage` | #7 | `status:blocked` |
 | F1-09 | [#11](https://github.com/PapiCuche/crm-gooddoggy/issues/11) Frontend skeleton | `feature/f1-frontend-skeleton` | #4 | `status:blocked` |
 | F1-10 | [#12](https://github.com/PapiCuche/crm-gooddoggy/issues/12) Local stack | `feature/f1-local-stack` | #4 … #11 | `status:blocked` |
+| F1-19 | [#792](https://github.com/PapiCuche/crm-gooddoggy/issues/792) ADR-036 gate remoto (Proposed) | `docs/f1-adr-remote-gates` | — | Hecho en F1-19 (#792) |
 
 Previos transversales: [#3](https://github.com/PapiCuche/crm-gooddoggy/issues/3) A-01 Project delivery automation → [#15](https://github.com/PapiCuche/crm-gooddoggy/issues/15) A-02 Harden trusted PR governance. **F1-02 no empieza hasta que A-02 esté mergeado.**
 
 **Automatización (A-04, #20):** las dependencias de #5–#12 están normalizadas a `- #N`, y #5 tiene además el gate `required-check:backend gate`. El orquestador `work-item-dependencies` pasa a `status:ready` cada issue cuando se cumplen sus dependencias y gates. El Builder arranca con `continuar`.
+
+**Velocidad del programa (ADR-015).** Hecho en F1-19 (#792): [ADR-036](../adr/ADR-036-remote-full-gate.md) (`Proposed`) propone ejecutar el gate 5 de ADR-015 (`make check`) en un job remoto efímero `full gate` sobre el SHA exacto del PR, con la evidencia en ese check run, en lugar del Mac del mantenedor. No cambia workflows, rulesets ni ADR-015: lo acepta o lo rechaza el propietario, y la implementación es un work item aparte.
 
 ## Definition of Done de la fase
 
