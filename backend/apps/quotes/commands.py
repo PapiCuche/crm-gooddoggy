@@ -2,7 +2,7 @@
 oportunidad, cambiarlo y cancelarlo. Solo la API (F5-09e) los importa (contrato de import-linter).
 Comprueban la autoridad de quien actúa (F5-09c), siempre en este orden: el permiso, la
 cotización bloqueada, su **alcance** (`quotes.view` y el de la acción), la versión y el estado;
-crear pide `quotes.create` y el alcance del contacto y de la oportunidad lo pone la API. Validan
+crear pide `quotes.create` y que quien crea vea el contacto y la oportunidad (`_links`). Validan
 los tipos exactos
 (`ValueError`, nunca `TypeError` ni `IntegrityError`) y auditan con el antes y el después; el
 texto libre se audita como `[texto]`.
@@ -23,7 +23,7 @@ from uuid import UUID
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
-from django.db.models import F
+from django.db.models import F, Model, QuerySet
 from django.utils import timezone
 
 from apps.access.selectors import can, execution_context, has_permission
@@ -274,19 +274,37 @@ def _within(ectx: Any, *codes: str) -> Callable[[Quote], bool]:
     return lambda quote: all(can(ectx, code, quote) for code in codes)
 
 
-def _links(alias: str, contact_id: UUID | None, opportunity_id: UUID | None) -> UUID:
+def _seen[M: Model](rows: QuerySet[M], ectx: Any, code: str) -> M | None:
+    """La fila viva de `rows`, bloqueada, si quien actúa la ve (`code` y su alcance; sin `ectx`, no
+    se mira). Se lee sin bloquear y solo si la ve se bloquea y se vuelve a mirar: quien no la ve no
+    espera a quien la tiene ni distingue si existe."""
+
+    def visible(row: M | None) -> bool:
+        return row is not None and (ectx is None or can(ectx, code, row))
+
+    if not visible(rows.first()):
+        return None
+    found = rows.select_for_update(no_key=True).first()
+    return found if visible(found) else None
+
+
+def _links(
+    alias: str, contact_id: UUID | None, opportunity_id: UUID | None, ectx: Any = None
+) -> UUID:
     """Bloquea el contacto y la oportunidad vivos y devuelve el contacto de la cotización: el dado
-    o, sin él, el de la oportunidad, que ha de ser de ese contacto."""
+    o, sin él, el de la oportunidad, que ha de ser de ese contacto. Con `ectx` (al crear), los dos
+    han de estar en el alcance de `opportunities.view` y `contacts.view` de quien actúa (también
+    el contacto que trae la oportunidad); si no, el mismo `BadReference` que si no existieran."""
     if opportunity_id is not None:
         live = Opportunity.objects.using(alias).filter(pk=opportunity_id, deleted_at__isnull=True)
-        found = live.select_for_update(no_key=True).values_list("contact_id", flat=True)[:1]
-        if not found or contact_id not in (None, found[0]):
+        found = _seen(live, ectx, "opportunities.view")
+        if found is None or contact_id not in (None, found.contact_id):
             raise BadReference("opportunity_id")
-        contact_id = found[0]
+        contact_id = found.contact_id
     if contact_id is None:
         raise ValueError("un contacto o una oportunidad")
     live_contact = Contact.objects.using(alias).filter(pk=contact_id, deleted_at__isnull=True)
-    if not live_contact.select_for_update(no_key=True).values_list("pk", flat=True)[:1]:
+    if _seen(live_contact, ectx, "contacts.view") is None:
         raise BadReference("contact_id")
     return contact_id
 
@@ -302,10 +320,11 @@ def create_quote(
 ) -> Quote:
     """Crea un borrador (`DRAFT`, revisión 1, con su número `COT-…`) de un contacto vivo o de una
     oportunidad viva (que ha de ser de ese contacto), con las líneas `{variant_id, quantity}`
-    valoradas por el `PricingService` en la lista pedida o la predeterminada. `BadReference` con el
-    campo; `ValueError`; `NotAllowed` sin `quotes.create`. Audita `quote.created`."""
+    valoradas por el `PricingService` en la lista pedida o la predeterminada. El contacto y la
+    oportunidad, en el alcance de quien crea. `BadReference` con el campo; `ValueError`;
+    `NotAllowed` sin `quotes.create`. Audita `quote.created`."""
     alias = require_scope(ctx)
-    _require(ctx, "quotes.create")  # lo primero: sin permiso, ni se mira lo que se envía
+    ectx = _require(ctx, "quotes.create")  # lo primero: sin permiso, ni se mira lo que se envía
     if unknown := set(fields) - _FIELDS:
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values, wanted = _values(fields), _items(items)
@@ -314,7 +333,7 @@ def create_quote(
     listed = None if price_list_id is None else _uuid(price_list_id, "lista de precios")
     try:
         with transaction.atomic(using=alias):
-            contact = _links(alias, contact, opportunity)
+            contact = _links(alias, contact, opportunity, ectx)
             rows, price = _lines(alias, ctx, wanted, listed)
             quote: Quote = Quote.objects.using(alias).create(
                 number=allocate(ctx, "COT", using=alias), contact_id=contact,
