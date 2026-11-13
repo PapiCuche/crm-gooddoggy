@@ -6,20 +6,22 @@ cliente y el envío que no se reenvía. PostgreSQL real con el rol `crm_app`."""
 import dataclasses
 import datetime as dt
 import hashlib
+from importlib import import_module
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import pytest
-from django.db import DatabaseError, connection
+from django.core.management import call_command
+from django.db import DatabaseError, IntegrityError, connection
 from django.utils import timezone
 
 from apps.contacts.consents import revoke_consent
-from apps.conversations import commands, media, outbound_media, tasks
+from apps.conversations import commands, media, outbound_media, tasks, whatsapp
 from apps.conversations.models import Conversation, Message
 from apps.conversations.policy import ConsentRevoked, WindowClosed
 from apps.files.models import File
-from core import storage
+from core import http, storage
 from core.storage.memory import InMemoryStorage
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim.graph import TEST_TOKEN, FakeGraph
@@ -28,6 +30,7 @@ from tests.test_conversations_dispatch import Retrying, state
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_message_media import a_file
+from tests.test_pipelines_tables import as_migrator
 from tests.test_whatsapp_outbound import graph, redis, talk, world, writer
 
 __all__ = ["graph", "redis", "world", "writer"]  # los fixtures, para pytest
@@ -86,7 +89,7 @@ def test_without_antivirus_nothing_is_stored_and_a_type_or_size_not_allowed_neve
         prepare(world, JPEG + big, "foto.pdf")
     assert blobs.objects == {}
     made = prepare(world, PDF + big)  # el tope es del tipo: un documento admite más
-    assert made.key.startswith(f"org/{world.a}/message-media/") and list(blobs.objects) == [
+    assert made.key.startswith(f"org/{world.a}/message-media-out/") and list(blobs.objects) == [
         made.key
     ]
 
@@ -124,13 +127,18 @@ def test_the_command_takes_only_a_file_prepared_for_its_organization(
     assert migrator.execute("SELECT count(*) FROM files").fetchone() == (0,)
 
 
-def test_a_caption_is_at_most_what_whatsapp_takes(world: SimpleNamespace, migrator: Any) -> None:
-    convo = talk(world)
+@pytest.mark.parametrize("data", [JPEG, PDF])  # el tope vale para los dos tipos
+@pytest.mark.parametrize("unit", ["x", "👍🏽"])  # 1 y 4 unidades UTF-16 (2 caracteres)
+def test_a_caption_is_at_most_what_whatsapp_takes_in_utf16_units(
+    world: SimpleNamespace, migrator: Any, data: bytes, unit: str
+) -> None:
+    convo, size = talk(world), len(unit.encode("utf-16-le")) // 2
+    fits = unit * (outbound_media.CAPTION_MAX // size)
     with pytest.raises(ValueError, match="pie de foto"):
-        queue(world, convo, caption="x" * (outbound_media.CAPTION_MAX + 1))
+        queue(world, convo, data, caption=fits + "x")
     assert migrator.execute("SELECT count(*) FROM files").fetchone() == (0,)
-    message, _ = queue(world, convo, caption="x" * outbound_media.CAPTION_MAX)
-    assert len(message.body) == outbound_media.CAPTION_MAX
+    message, _ = queue(world, convo, data, caption=fits)
+    assert message.body == fits and outbound_media.units(fits) == outbound_media.CAPTION_MAX
 
 
 def test_an_image_is_queued_with_its_file_once_and_a_replay_needs_the_same_file(
@@ -142,7 +150,7 @@ def test_an_image_is_queued_with_its_file_once_and_a_replay_needs_the_same_file(
     assert message.body == "Mira esto" and message.file_id is not None
     row = migrator.execute(FILES + " WHERE id = %s", [message.file_id]).fetchone()
     assert row[1:] == ("image/jpeg", len(JPEG), hashlib.sha256(JPEG).hexdigest(),
-                       "message-media", "PENDING")  # fmt: skip
+                       "message-media-out", "PENDING")  # fmt: skip
     again, created = queue(world, convo, caption="Mira esto", client_message_id=key)
     assert (again.pk, created) == (message.pk, False)  # el mismo archivo: el mismo mensaje
     for other in ({"data": PNG, "caption": "Mira esto"}, {"caption": "Otra"}):
@@ -312,6 +320,67 @@ def test_a_changed_or_missing_blob_or_a_channel_that_is_off_sends_nothing(
     saved = deliver(world, off)
     assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "CHANNEL_UNAVAILABLE")
     assert graph.requests == []
+
+
+@pytest.mark.parametrize("change", ["purpose", "mime"])
+def test_the_claim_sends_only_a_file_prepared_to_go_out(
+    world: SimpleNamespace, graph: FakeGraph, migrator: Any, change: str
+) -> None:
+    """Con SQL crudo, un saliente podría apuntar a un archivo entrante (`message-media`) o a uno de
+    otro tipo: el reclamo lo deja `FAILED` sin leer el blob ni llamar a Meta."""
+    message, _ = queue(world, talk(world))
+    if change == "purpose":  # un archivo entrante de la misma organización
+        inbound = a_file(migrator, world.a, uuid4())
+        migrator.execute("UPDATE messages SET file_id = %s", [inbound])
+    else:
+        migrator.execute("UPDATE files SET mime_type = 'application/pdf'")
+    saved = deliver(world, message)
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "ADAPTER_REJECTED")
+    assert graph.requests == []
+
+
+def test_only_the_upload_runs_under_its_total_deadline_and_it_fits_the_sending_one(
+    world: SimpleNamespace, graph: FakeGraph, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    budget = whatsapp.UPLOAD_SECONDS + 3 * (5 + 15)  # la subida y el envío, con sus reintentos
+    assert budget < settings.INBOX_SENDING_DEADLINE_MINUTES * 60 / 2
+    seen, real = [], http.request
+
+    def watched(method: str, url: str, **kwargs: Any) -> Any:
+        dog = http._watchdog.get()
+        seen.append((url.rsplit("/", 1)[1], dog and dog._timer.interval))
+        return real(method, url, **kwargs)
+
+    monkeypatch.setattr(http, "request", watched)
+    assert deliver(world, queue(world, talk(world))[0]).delivery_status == "SENT"
+    assert seen == [("media", whatsapp.UPLOAD_SECONDS), ("messages", None)]
+
+
+PURPOSE_0029 = import_module("apps.conversations.migrations.0029_outbound_file_purpose")
+CHECKED = "SELECT convalidated FROM pg_constraint WHERE conname = 'files_values_ck'"
+
+
+def test_the_files_migration_refuses_outbound_messages_on_an_inbound_file_with_a_count(
+    world: SimpleNamespace, migrator: Any
+) -> None:
+    message, _ = queue(world, talk(world))
+    with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app`, bajo RLS: no vería filas
+        PURPOSE_0029.refuse_inbound_files(None, SimpleNamespace(connection=connection))
+    with as_migrator(), pytest.raises(IntegrityError):  # atrás, con un archivo saliente: nada
+        call_command("migrate", "conversations", "0028", verbosity=0)
+    migrator.execute("UPDATE messages SET file_id = %s", [a_file(migrator, world.a, uuid4())])
+    migrator.execute("DELETE FROM files WHERE purpose = 'message-media-out'")
+    with as_migrator():
+        call_command("migrate", "conversations", "0028", verbosity=0)
+    with as_migrator(), pytest.raises(RuntimeError, match="0029: 1 outbound messages"):
+        call_command("migrate", "conversations", verbosity=0)  # quedaría varado: no en silencio
+    migrator.execute("DELETE FROM messages WHERE id = %s", [message.pk])
+    with as_migrator():
+        call_command("migrate", "conversations", "0029", verbosity=0)
+    assert migrator.execute(CHECKED).fetchone() == (False,)  # rige, sin recorrer
+    with as_migrator():
+        call_command("migrate", "conversations", verbosity=0)
+    assert migrator.execute(CHECKED).fetchone() == (True,)
 
 
 INSERT = (

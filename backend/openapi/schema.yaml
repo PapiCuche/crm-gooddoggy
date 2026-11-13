@@ -2683,6 +2683,103 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/media/:
+    post:
+      operationId: conversation_media_send
+      description: 'Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente,
+        con la política del texto; idempotente por `client_message_id` (202; 200 con
+        el mismo archivo). Pide `messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`,
+        la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`;
+        415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SendMediaFormRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '411':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/messages/:
     get:
       operationId: conversation_messages_list
@@ -14802,6 +14899,29 @@ components:
       - permissions
       - roles
       - user
+    SendMediaFormRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        client_message_id:
+          type: string
+          format: uuid
+          description: 'La clave de idempotencia: el mismo id es el mismo mensaje.'
+        caption:
+          type: string
+          minLength: 1
+          description: El pie de foto, hasta 1024 unidades UTF-16 (un emoji puede
+            contar 2); sin él, el chat dice «Imagen» o «Documento».
+        file:
+          type: string
+          format: binary
+          description: Una imagen JPEG o PNG (hasta 5 MiB) o un documento PDF (hasta
+            10 MiB). El tipo sale del contenido, nunca del nombre ni del tipo declarado.
+      required:
+      - client_message_id
+      - file
     SendMessageRequest:
       type: object
       description: |-
