@@ -6,9 +6,10 @@ Tras cada secuencia, `reserved` es la suma de las reservas ACTIVE de la celda.""
 import json
 import logging
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -19,11 +20,16 @@ from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
+from apps.catalog import products
+from apps.catalog.models import ProductVariant
+from apps.catalog.products import update_product
 from apps.inventory import reservations as res
 from apps.inventory import stock, tasks
 from apps.inventory.models import InventoryMovement, InventoryReservation, Warehouse
+from apps.organizations.models import Organization
 from config.celery import app
 from core.observability.logging import json_formatter
+from core.tenancy.resolution import ACCESSIBLE_STATUSES
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.test_inventory_reservations import (
@@ -54,7 +60,7 @@ def later(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
     return go
 
 
-def run(org: UUID, **limits: int) -> dict[str, int]:
+def run(org: UUID, **limits: Any) -> dict[str, int]:
     done: dict[str, int] = tasks.expire_reservations(str(org), **limits)
     return done
 
@@ -163,12 +169,14 @@ def test_the_database_refuses_to_undo_or_repeat_an_expiry(
 
 
 def overlap(
-    monkeypatch: pytest.MonkeyPatch, first: Callable[[], Any], second: Callable[[], Any]
-) -> list[Any]:
-    """`first` toma la celda y espera dentro de su transacción; `second` arranca y tiene que
-    esperar su bloqueo; `first` sigue y confirma, y `second` continúa."""
+    monkeypatch: pytest.MonkeyPatch, first: Callable[[], Any], second: Callable[[], Any], *,
+    where: tuple[Any, str] = (stock, "lock_cell"),
+) -> list[Any]:  # fmt: skip
+    """`first` toma la celda (o lo que bloquee antes de llamar a `where`) y espera dentro de su
+    transacción; `second` arranca y tiene que esperar su bloqueo; `first` sigue y confirma, y
+    `second` continúa."""
     paused, free, out = threading.Event(), threading.Event(), list[Any]([None, None])
-    real = stock.lock_cell
+    real = getattr(*where)
 
     def slow(*args: Any) -> Any:
         found = real(*args)
@@ -186,7 +194,7 @@ def overlap(
             paused.set()
             connection.close()
 
-    monkeypatch.setattr(stock, "lock_cell", slow)
+    monkeypatch.setattr(*where, slow)
     one, two = (threading.Thread(target=go, args=(i, w)) for i, w in enumerate((first, second)))
     one.start()
     assert paused.wait(timeout=10)
@@ -290,10 +298,12 @@ def test_the_batch_and_the_run_limits_hold_across_runs(
     seen = [run(world.a, batch_size=1, max_per_run=2) for _ in range(3)]
     assert [(s["expired"], s["capped"]) for s in seen] == [(2, 1), (2, 1), (1, 0)]
     assert len(chained) == 2  # se encadena mientras queda y se avanzó
+    second = sorted((r.variant_id, r.pk) for r in made)[1]  # sigue tras la última que tomó
     assert chained[0]["kwargs"] == {
         "organization_id": str(world.a),
         "batch_size": 1,
         "max_per_run": 2,
+        "after": [str(second[0]), str(second[1])],
     }
     assert chained[0]["expires"] == tasks.QUEUE_EXPIRES
     with tenant_scope(ctx(world.a)):
@@ -327,7 +337,7 @@ def test_a_failing_reservation_is_logged_and_does_not_stop_the_batch(
     monkeypatch.setattr(res, "expire", flaky)
     monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **kw: chained.append(kw))
     later(2)
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.INFO):  # un error de esa fila: la de detrás, en su celda, vence
         assert run(world.a) == {**ZERO, "expired": 2, "failed": 1}
     logged = "\n".join(json_formatter().format(record) for record in caplog.records)
     failed = next(json.loads(line) for line in logged.splitlines() if "expiry_failed" in line)
@@ -337,7 +347,9 @@ def test_a_failing_reservation_is_logged_and_does_not_stop_the_batch(
         json.loads(line) for line in logged.splitlines() if "reservations_expired" in line
     )
     assert (summary["expired"], summary["failed"], summary["skipped"]) == (2, 1, 0)
-    assert states(world.a)[bad] == "ACTIVE" and consistent(world.a, here) == (5, 1, 4)
+    assert states(world.a) == {pk: "ACTIVE" if pk == bad else "EXPIRED" for pk in made}
+    assert consistent(world.a, here) == (5, 1, 4)
+    assert run(world.a) == {**ZERO, "failed": 1}  # cada barrido la reintenta, sola
     assert chained == []  # sin lote lleno no se encadena
     monkeypatch.setattr(res, "expire", real)
     assert run(world.a) == {**ZERO, "expired": 1}  # la siguiente pasada la recoge
@@ -362,7 +374,9 @@ def test_a_failure_in_the_middle_of_one_expiry_leaves_nothing_behind(
         assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
         assert consistent(world.a, here) == (3, 2, 1)
     assert set(states(world.a).values()) == {"ACTIVE"} and releases(world.a, made) == []
-    assert consistent(world.a, here) == (3, 2, 1) and chained == []  # sin avance no se encadena
+    assert consistent(world.a, here) == (3, 2, 1)
+    first = [str(here[0]), str(min(made))]  # una fila mala no corta la cadena: sigue tras ella
+    assert [c["kwargs"]["after"] for c in chained] == [first, first]
     assert run(world.a) == {**ZERO, "expired": 2} and consistent(world.a, here) == (3, 0, 3)
 
 
@@ -507,3 +521,212 @@ def test_the_task_needs_its_organization_and_the_schedule_exists() -> None:
         assert task.tenancy == "platform" and task.name in app.tasks
     assert entry["task"] in app.tasks and entry["options"] == {"expires": 300}
     assert SimpleNamespace(**entry).schedule == 300.0
+
+
+def following(monkeypatch: pytest.MonkeyPatch, org: UUID, **limits: Any) -> list[dict[str, int]]:
+    """Una pasada y las que encadena, una tras otra (el worker, aquí mismo)."""
+    queued: list[dict[str, Any]] = []
+    monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **kw: queued.append(kw))
+    seen = [run(org, **limits)]
+    while queued and len(seen) < 20:
+        seen.append(tasks.expire_reservations(**queued.pop(0)["kwargs"]))
+    assert queued == []
+    return seen
+
+
+def failing(monkeypatch: pytest.MonkeyPatch, bad: set[UUID]) -> None:
+    real = res.expire
+
+    def flaky(tenant: Any, pk: UUID) -> bool:
+        if pk in bad:
+            raise RuntimeError("siempre")
+        return real(tenant, pk)
+
+    monkeypatch.setattr(res, "expire", flaky)
+
+
+def test_a_busy_cell_costs_one_attempt_and_the_rest_of_the_run_goes_on(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    later: Callable[[float], None],
+) -> None:  # fmt: skip
+    sick, fine = stocked(world.a, 9, world.ana, "MALA"), stocked(world.a, 9, world.ana, "BUENA")
+    bad = [reserve(world.a, world.ana, asked(sick, 1, hours=1))[0].pk for _ in range(5)]
+    good = [reserve(world.a, world.ana, asked(fine, 1, hours=1))[0].pk for _ in range(2)]
+    later(2)
+    monkeypatch.setattr(tasks, "LOCK_TIMEOUT_MS", 200)
+    lock = "SELECT 1 FROM inventory_levels WHERE variant_id = %s AND warehouse_id = %s FOR UPDATE"
+    with migrator.transaction():  # el saldo de la celda, ocupado: 5 detrás, más que el tope de 3
+        migrator.execute(lock, list(sick))
+        assert following(monkeypatch, world.a, max_per_run=3) == [
+            {**ZERO, "expired": 2, "failed": 1}
+        ]
+    assert {states(world.a)[pk] for pk in good} == {"EXPIRED"} and consistent(world.a, fine)[1] == 0
+    assert consistent(world.a, sick) == (9, 5, 4) and releases(world.a, bad) == []
+    assert run(world.a) == {**ZERO, "expired": 5} and consistent(world.a, sick) == (9, 0, 9)
+
+
+def test_a_poison_row_does_not_hold_back_the_healthy_ones_of_its_cell(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None]
+) -> None:
+    here = stocked(world.a, 4, world.ana)
+    made = sorted(reserve(world.a, world.ana, asked(here, 1, hours=1))[0].pk for _ in range(2))
+    later(2)
+    with monkeypatch.context() as patch:  # la primera de la celda falla siempre, no por bloqueo
+        failing(patch, {made[0]})
+        assert run(world.a) == {**ZERO, "expired": 1, "failed": 1}  # la sana, en la misma pasada
+        assert run(world.a) == {**ZERO, "failed": 1}  # cada barrido reintenta solo la mala
+    assert states(world.a) == {made[0]: "ACTIVE", made[1]: "EXPIRED"}
+    assert consistent(world.a, here) == (4, 1, 3) and len(releases(world.a, made)) == 1
+
+
+def test_a_run_out_of_time_without_progress_does_not_chain(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    later: Callable[[float], None],
+) -> None:  # fmt: skip
+    one, two = stocked(world.a, 2, world.ana, "UNA"), stocked(world.a, 2, world.ana, "DOS")
+    for where in (one, two):
+        reserve(world.a, world.ana, asked(where, 1, hours=1))
+    later(2)
+    with monkeypatch.context() as patch, migrator.transaction():  # un bloqueo amplio: todo espera
+        patch.setattr(tasks, "RUN_SECONDS", 0.001)  # la primera espera lo agota
+        migrator.execute("SELECT 1 FROM inventory_levels FOR UPDATE")
+        assert following(patch, world.a) == [{**ZERO, "failed": 1, "capped": 1}]
+    assert consistent(world.a, one) == (2, 1, 1) and consistent(world.a, two) == (2, 1, 1)
+    assert run(world.a) == {**ZERO, "expired": 2}  # el siguiente barrido
+
+
+def test_persistent_failures_beyond_the_cap_do_not_stop_the_chain_and_the_chain_ends(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None]
+) -> None:
+    cells = [stocked(world.a, 2, world.ana, f"V{i}") for i in range(4)]  # por variant_id
+    made = [reserve(world.a, world.ana, asked(c, 1, hours=1))[0].pk for c in cells]
+    later(2)
+    with monkeypatch.context() as patch:  # las tres primeras celdas fallan siempre; tope 1
+        failing(patch, set(made[:3]))
+        seen = following(patch, world.a, max_per_run=1)
+        failed = {**ZERO, "failed": 1, "capped": 1}
+        assert seen == [failed, failed, failed, {**ZERO, "expired": 1}]  # la de detrás, vencida
+        failing(patch, set(made))  # solo quedan filas que fallan: la cadena termina igual
+        assert following(patch, world.a, max_per_run=1) == [failed, failed, {**ZERO, "failed": 1}]
+    assert [states(world.a)[pk] for pk in made] == ["ACTIVE"] * 3 + ["EXPIRED"]
+    assert run(world.a) == {**ZERO, "expired": 3}  # el siguiente barrido empieza sin cursor
+    assert all(consistent(world.a, c) == (2, 0, 2) for c in cells)
+    assert sorted(r[0] for r in releases(world.a, made)) == sorted(f"R/{pk}/release" for pk in made)
+
+
+def test_a_cursor_from_a_message_only_chooses_where_to_start(
+    world: Any, later: Callable[[float], None]
+) -> None:
+    here, there = stocked(world.a, 2, world.ana), stocked(world.b, 2, None)
+    made = reserve(world.a, world.ana, asked(here, 1, hours=1))[0]
+    other = reserve(world.b, None, asked(there, 1, hours=1))[0]
+    later(2)
+    for wrong in (["x"], [str(made.pk)] * 3, ["no-es", str(made.pk)], "ab"):
+        with pytest.raises(ValueError):
+            run(world.a, after=wrong)
+    top = str(UUID(int=2**128 - 1))
+    assert run(world.a, after=[top, top]) == ZERO  # tras todas: termina sin más
+    assert run(world.a, after=[str(other.variant_id), str(other.pk)]) == ZERO  # la de B, tras A
+    assert states(world.b) == {other.pk: "ACTIVE"} and consistent(world.b, there) == (2, 1, 1)
+    assert states(world.a) == {made.pk: "ACTIVE"}  # saltada por el cursor, no perdida:
+    assert run(world.a) == {**ZERO, "expired": 1}  # el barredor empieza sin cursor
+    assert consistent(world.a, here) == (2, 0, 2) and len(releases(world.a, [made.pk])) == 1
+
+
+def test_a_lock_on_the_reservation_row_itself_fails_that_cell_and_not_the_others(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    later: Callable[[float], None],
+) -> None:  # fmt: skip
+    free, busy = stocked(world.a, 3, world.ana, "LIBRE"), stocked(world.a, 3, world.ana, "OCUPADA")
+    held = sorted(reserve(world.a, world.ana, asked(busy, 1, hours=1))[0].pk for _ in range(2))
+    loose = reserve(world.a, world.ana, asked(free, 1, hours=1))[0].pk
+    later(2)
+    monkeypatch.setattr(tasks, "LOCK_TIMEOUT_MS", 200)
+    with migrator.transaction():  # solo la fila de la reserva: la celda está libre
+        migrator.execute("SELECT 1 FROM inventory_reservations WHERE id = %s FOR UPDATE", [held[0]])
+        chained: list[Any] = []
+        monkeypatch.setattr(tasks.expire_reservations, "apply_async", lambda **k: chained.append(k))
+        assert run(world.a) == {**ZERO, "expired": 1, "failed": 1}  # la otra de la celda: sin
+        assert chained == []  # cadena (tras el cursor, pero ocupada), al siguiente barrido
+    assert states(world.a) == {held[0]: "ACTIVE", held[1]: "ACTIVE", loose: "EXPIRED"}
+    assert consistent(world.a, busy) == (3, 2, 1) and consistent(world.a, free) == (3, 0, 3)
+    assert run(world.a) == {**ZERO, "expired": 2} and consistent(world.a, busy) == (3, 0, 3)
+
+
+def test_each_row_waits_at_most_its_share_of_what_is_left_of_the_run(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None]
+) -> None:
+    started = time.monotonic()
+    assert tasks._lock_wait_ms(started) == tasks.LOCK_TIMEOUT_MS
+    assert 490 <= tasks._lock_wait_ms(started - tasks.RUN_SECONDS + 2) <= 500  # 2 s entre 4
+    assert tasks._lock_wait_ms(started - 10 * tasks.RUN_SECONDS) == 1  # nunca 0: sin límite
+    here = stocked(world.a, 2, world.ana)
+    reserve(world.a, world.ana, asked(here, 1, hours=1))
+    later(2)
+    seen: list[str] = []
+    real = res.expire
+
+    def spy(tenant: Any, pk: UUID) -> bool:
+        seen.append(connection.cursor().execute("SHOW lock_timeout").fetchone()[0])
+        return real(tenant, pk)
+
+    monkeypatch.setattr(res, "expire", spy)
+    monkeypatch.setattr(tasks, "RUN_SECONDS", 2.0)
+    assert run(world.a) == {**ZERO, "expired": 1} and consistent(world.a, here) == (2, 0, 2)
+    assert len(seen) == 1 and 400 <= int(seen[0].removesuffix("ms")) <= 500
+
+
+@pytest.mark.parametrize("job_first", [True, False])
+def test_the_job_against_a_product_rename_on_the_same_variant_does_not_deadlock(
+    world: Any, monkeypatch: pytest.MonkeyPatch, later: Callable[[float], None], job_first: bool
+) -> None:
+    here = stocked(world.a, 2, world.ana)
+    made = reserve(world.a, world.ana, asked(here, 1, hours=1))[0]
+    with tenant_scope(ctx(world.a)):
+        product = ProductVariant.objects.get(pk=here[0]).product_id
+    later(2)
+
+    def rename() -> Any:
+        with tenant_scope(ctx(world.a, world.ana)) as tenant:
+            return update_product(tenant, product_id=product, name="Nuevo nombre").name
+
+    where = (stock, "lock_cell") if job_first else (products, "variant_name")
+    work = [job(world), rename]  # el renombrado bloquea el producto y sus variantes (NO KEY)
+    outcome = overlap(monkeypatch, *(work if job_first else work[::-1]), where=where)
+    by_job, by_rename = outcome if job_first else outcome[::-1]
+    assert by_job == {**ZERO, "expired": 1} and by_rename == "Nuevo nombre"
+    with tenant_scope(ctx(world.a)):
+        assert ProductVariant.objects.get(pk=here[0]).name.startswith("Nuevo nombre")
+    assert states(world.a) == {made.pk: "EXPIRED"} and consistent(world.a, here) == (2, 0, 2)
+
+
+def test_the_sweep_rotates_so_a_backlogged_queue_serves_every_organization(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for count in range(1, 61):  # en `count` barridos seguidos, cada una va primera una vez
+        assert sorted(tasks._start(t, count) for t in range(7, 7 + count)) == list(range(count))
+    ranks = [tasks._start(t, 50) for t in range(50)]  # 10 servidas por barrido, de 50
+    served = [{o for o in range(50) if (o - start) % 50 < 10} for start in ranks]
+    assert all(set(range(50)) <= set().union(*served[t : t + 10]) for t in range(41))
+    names = [f"org-{i}" for i in range(3)]
+    for name in names:
+        migrator.execute("INSERT INTO organizations (id, slug, name, status, created_at) VALUES "
+                         "(uuidv7(), %s, %s, 'ACTIVE', now())", [name, name])  # fmt: skip
+    first: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        tasks.expire_reservations, "apply_async", lambda kwargs, **kw: first.append(kwargs)
+    )
+    try:
+        active = Organization.objects.filter(status__in=ACCESSIBLE_STATUSES)
+        everyone = {str(o) for o in active.values_list("pk", flat=True)}
+        served_orgs = set()
+        for tick in range(len(everyone)):  # el worker solo llega a la primera antes de que venzan
+            moment = datetime.fromtimestamp(tick * tasks.SWEEP_SECONDS + 7, tz=UTC)
+            monkeypatch.setattr(timezone, "now", lambda moment=moment: moment)
+            first.clear()
+            assert tasks.expire_reservations_sweep()["enqueued"] == len(everyone)
+            assert {f["organization_id"] for f in first} == everyone  # todas, en otro orden
+            served_orgs.add(first[0]["organization_id"])
+    finally:
+        migrator.execute("DELETE FROM organizations WHERE slug = ANY(%s)", [names])
+    assert served_orgs == everyone

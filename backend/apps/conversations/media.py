@@ -22,9 +22,8 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import connections
-from django.db.models import Q
+from django.db.models import F, Q
 from django.db.models.functions import Now
-from django.utils import timezone
 
 from apps.conversations import credentials, graph
 from apps.conversations.models import (
@@ -49,12 +48,23 @@ KINDS = {"image": "IMAGE", "audio": "AUDIO", "video": "VIDEO", "sticker": "STICK
 TYPES = {"IMAGE": "IMAGE", "STICKER": "IMAGE", "AUDIO": "AUDIO", "VIDEO": "VIDEO"}
 CAPS = {"IMAGE": 5 << 20, "STICKER": 1 << 20, "AUDIO": 16 << 20, "VIDEO": 16 << 20}  # a confirmar
 MAX_ATTEMPTS = 5
-BACKOFF = (30, 120, 600, 3600)  # segundos de espera tras el intento 1, 2, 3 y 4
+# Segundos de espera tras el intento 1, 2, 3 y 4. Ninguna pasa de `MAX_COUNTDOWN`: la tarea vuelve
+# una sola vez, a su hora, y nunca a medio esperar (que `EARLY` tomaría por un duplicado).
+BACKOFF = (30, 120, 600, 1800)
 LEASE = dt.timedelta(seconds=300)
-# Lo que queda antes de cada consulta y de la descarga; una consulta a Graph tiene sus propios
-# tiempos (`core.http.request`), así que un intento real puede rozar ~180 s: menos que el plazo.
+# Lo que queda antes de cada consulta y de la descarga. No lo cubre: el DNS (`getaddrinfo` no tiene
+# plazo propio), los tiempos de cada consulta a Graph (`core.http.request`: conexión 5 s y lectura
+# 15 s, con reintentos) ni el almacén. Por eso, antes de guardar se mira lo que queda del plazo
+# con el reloj del worker contado desde antes del reclamo: con menos de `STORE_RESERVE`, reintento.
 BUDGET = 120.0
+STORE_RESERVE = 60.0
+# El mayor `countdown` de una tarea de medios (la última espera; el plazo, el tope y `EARLY` son
+# menores): por debajo de `CELERY_BROKER_TRANSPORT_OPTIONS["visibility_timeout"]`, o Redis la
+# repetiría. Requisito del despliegue: los relojes de los workers y de la base, sincronizados (NTP).
+MAX_COUNTDOWN = 1800
+SWEEP_AFTER = dt.timedelta(minutes=5)  # vencido y sin cambios desde hace esto: varado
 BUSY_WAIT = 30  # con el tope de la organización lleno, la tarea vuelve en esto
+EARLY = 60  # segundos antes de su hora que una tarea puede llegar y volver (si no, es un duplicado)
 RETRY = "RETRY"
 OUTCOMES = frozenset({RETRY, "EXPIRED", *MEDIA_FAILURES})
 FTYP = {  # la marca principal de una caja `ftyp`, por clase
@@ -108,15 +118,15 @@ def attach(ctx: TenantContext, message: Message, kind: str, media_id: str) -> No
 
 def _close(alias: str, pk: UUID, status: str, code: str | None = None, **more: Any) -> None:
     MessageAttachment.objects.using(alias).filter(pk=pk).update(
-        download_status=status, failure_code=code, updated_at=timezone.now(), **more
+        download_status=status, failure_code=code, updated_at=Now(), **more
     )
 
 
 def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
-    """El reclamo de un intento; `None` si no hay nada que hacer (o se cerró sin llamar a Meta); o
-    en cuántos segundos volver si otro intento tiene el plazo vivo, la espera de un reintento aún
-    no venció (una tarea que llega antes, con el reloj del worker) o la organización está en su
-    tope. Los segundos se cuentan con el reloj de la base."""
+    """El reclamo de un intento; `None` si no hay nada que hacer (o se cerró sin llamar a Meta, o
+    la tarea es un duplicado); o en cuántos segundos volver si el plazo de otro intento o la espera
+    de un reintento vencen dentro de `EARLY` (una tarea que llega algo antes, con el reloj del
+    worker) o la organización está en su tope. Los segundos se cuentan con el reloj de la base."""
     alias = require_scope(ctx)
     with connections[alias].cursor() as cursor:  # el tope se cuenta y se toma uno a uno
         key = f"media:{ctx.organization_id}"
@@ -139,12 +149,21 @@ def claim(ctx: TenantContext, attachment_id: UUID) -> Claim | int | None:
         if (found := held.first()) is None:
             return None
         status, lease, wait, at = found
-        return max(int(((lease if status == "DOWNLOADING" else wait) - at).total_seconds()), 0) + 1
+        left = int(((lease if status == "DOWNLOADING" else wait) - at).total_seconds())
+        # Solo vuelve la que llega poco antes de su hora (el reloj del worker); la que llega mucho
+        # antes es un duplicado y termina: la fila ya tiene su tarea (o, si no, el barredor).
+        return max(left, 0) + 1 if left <= EARLY else None
     if row.attempts >= MAX_ATTEMPTS:  # el último intento murió sin cerrar
         _close(alias, row.pk, "FAILED", "UNAVAILABLE")
         return None
     live = Q(download_status="DOWNLOADING", lease_until__gt=now)
     if MessageAttachment.objects.using(alias).filter(live).count() >= settings.MEDIA_PER_ORG:
+        mine = MessageAttachment.objects.using(alias).filter(pk=row.pk)
+        # Otra tarea la marcó hace menos de medio `BUSY_WAIT` (no su alta): esta es un duplicado.
+        recent = Q(updated_at__gt=now - dt.timedelta(seconds=BUSY_WAIT / 2))
+        if mine.filter(recent, updated_at__gt=F("created_at") + dt.timedelta(seconds=1)).exists():
+            return None
+        mine.update(updated_at=now)  # su tarea sigue viva: el barredor no la toma por abandonada
         return BUSY_WAIT
     message = Message.objects.using(alias).get(pk=row.message_id)
     account = ChannelAccount.objects.using(alias).filter(
@@ -250,6 +269,15 @@ class Sink:
         return written
 
 
+def _refused(got: Claim, role: str) -> Stop:
+    """El DNS del destino contestó una IP no pública: no se conectó (el token no salió). Si es el
+    de Graph (DNS64, sumidero, horizonte dividido: del despliegue), reintento, y `MAX_ATTEMPTS` lo
+    acaba; si es el de los medios (la URL de Meta), `UNAVAILABLE` sin reintento. Se registra el
+    papel (`graph` o `media`), nunca la URL, el host ni la IP."""
+    logger.error("media.blocked_ip", attachment_id=str(got.attachment_id), role=role)
+    return Stop(RETRY if role == "graph" else "UNAVAILABLE")
+
+
 def _lookup(auth: dict[str, str], got: Claim) -> str:
     """La URL fresca del medio según la Graph API (en cada intento; nunca se guarda)."""
     url = (
@@ -259,6 +287,8 @@ def _lookup(auth: dict[str, str], got: Claim) -> str:
     try:
         reply = http.request("GET", url, headers=auth)
         status, raw = reply.status, reply.data
+    except http.NonPublicAddress:
+        raise _refused(got, "graph") from None
     except http.BlockedDestination, http.HTTPError, OSError:
         raise Stop(RETRY) from None
     try:
@@ -302,6 +332,8 @@ def _download(token: str, got: Claim, deadline: float) -> Sink:
             raise Stop("TOO_LARGE") from None
         except http.UnsupportedEncoding:
             raise Stop("UNAVAILABLE") from None
+        except http.NonPublicAddress:
+            raise _refused(got, "media") from None
         except http.BlockedDestination, http.HTTPError, OSError:  # p. ej., `getaddrinfo` falló
             raise Stop(RETRY) from None
         finally:
@@ -387,6 +419,7 @@ def fetch(organization_id: UUID, attachment_id: UUID) -> tuple[str, int | None]:
     """Un intento de descarga. Devuelve el resultado (un código cerrado) y, si la tarea tiene que
     volver, en cuántos segundos. Uno de otra organización o que no existe: `SKIPPED`, sin más."""
     ctx = TenantContext(organization_id, "celery")
+    started = time.monotonic()  # antes del reclamo: su plazo acaba, como mucho, en `+ LEASE`
     with tenant_scope(ctx):
         got = claim(ctx, attachment_id)
     if got is None:
@@ -403,6 +436,8 @@ def fetch(organization_id: UUID, attachment_id: UUID) -> tuple[str, int | None]:
         found = sniff(sink.file)
         if found is None or found[0] != got.kind:
             raise Stop("TYPE_NOT_ALLOWED" if found is None else "TYPE_MISMATCH")
+        if time.monotonic() - started > LEASE.total_seconds() - STORE_RESERVE:
+            raise Stop(RETRY)  # sin tiempo para guardar antes de que otro pueda reclamarlo
         return store(ctx, got, sink, found[1])
     except Stop as stop:
         with tenant_scope(ctx):
@@ -410,3 +445,24 @@ def fetch(organization_id: UUID, attachment_id: UUID) -> tuple[str, int | None]:
     finally:
         if sink is not None:
             sink.file.close()
+
+
+def stranded(ctx: TenantContext, limit: int) -> list[UUID]:
+    """Hasta `limit` adjuntos de la organización de `ctx` que ninguna tarea atiende: `PENDING` sin
+    espera o con la espera vencida hace `SWEEP_AFTER`, o `DOWNLOADING` con el plazo vencido hace lo
+    mismo, y en ambos casos sin cambios (`updated_at`) desde entonces (reloj de la base). Los marca
+    (`updated_at`) en la misma transacción: uno no se vuelve a barrer antes de `SWEEP_AFTER` aunque
+    la cola vaya lenta."""
+    alias = require_scope(ctx)
+    old = Now() - SWEEP_AFTER
+    waiting = Q(not_before__isnull=True) | Q(not_before__lte=old)
+    late = (Q(download_status="PENDING") & waiting) | Q(
+        download_status="DOWNLOADING", lease_until__lte=old
+    )
+    rows = MessageAttachment.objects.using(alias).select_for_update(skip_locked=True)
+    found = list(
+        rows.filter(late, updated_at__lte=old).order_by("updated_at", "pk")
+        .values_list("pk", flat=True)[:limit]
+    )  # fmt: skip
+    MessageAttachment.objects.using(alias).filter(pk__in=found).update(updated_at=Now())
+    return found
