@@ -3,11 +3,11 @@
 Es dato no confiable. El tipo sale de los magic bytes (JPEG y PNG, imagen; PDF, documento), nunca
 del que declara el cliente; el tamaño, de los bytes leídos (`media.Sink`), con un tope por tipo (a
 confirmar). Sin antivirus (D-F7-04) no se guarda nada salvo con `MEDIA_SEND_UNSCANNED`. El blob va
-al almacén privado (`message-media`) **antes** de la transacción del comando, que crea el archivo
+al almacén privado **antes** de la transacción del comando, que crea el archivo
 (`scan_status = PENDING`) y el mensaje; si el comando falla, o era un reintento, quien llama lo
 borra con `discard`. Un archivo saliente nunca se sirve al navegador (`selectors.SERVED` pide un
-mensaje entrante). La ruta que lo sube (formulario con tope en flujo) es F7-09b2. Registros: ids y
-la clase de un error."""
+mensaje entrante). Propósito `message-media-out` (F7-09b2), que el reclamo exige: un saliente nunca
+lleva un blob entrante. La ruta lo lee con `Capped`. Registros: ids y la clase de un error."""
 
 import re
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
+from django.core.files.uploadhandler import FileUploadHandler, StopUpload
 
 from apps.conversations import media
 from core import storage
@@ -27,7 +28,8 @@ TYPES = {"image/jpeg": "IMAGE", "image/png": "IMAGE", "application/pdf": "DOCUME
 CAPS = {"IMAGE": 5 << 20, "DOCUMENT": 10 << 20}  # bytes; decisión del propietario abierta
 LABELS = {"IMAGE": "Imagen", "DOCUMENT": "Documento"}  # el cuerpo de un medio sin pie de foto
 NAME_MAX = 100
-CAPTION_MAX = 1024  # el pie de foto que admite WhatsApp
+CAPTION_MAX = 1024  # el pie de foto que admite WhatsApp, en unidades UTF-16
+PURPOSE = "message-media-out"
 
 
 class Refused(Exception):  # noqa: N818 — un motivo cerrado, no un fallo
@@ -47,6 +49,38 @@ class Prepared:
     size: int
     sha256: str
     name: str
+
+
+def units(text: str) -> int:
+    """La longitud en unidades UTF-16 (un emoji fuera del plano básico cuenta 2)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+class Capped(FileUploadHandler):
+    """**Un** archivo, `file`, de hasta `limit` bytes, con su `sha256` al paso (`sink`), nunca en
+    `request.FILES`. Otro archivo u otro nombre (`ONE_FILE`) o un byte de más paran la lectura."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__()
+        self.limit, self.refused = limit, ""
+        self.sink: media.Sink | None = None
+
+    def new_file(self, field_name: str, *args: Any, **kwargs: Any) -> None:
+        super().new_file(field_name, *args, **kwargs)
+        if self.sink is not None or field_name != "file":
+            self.refused = "ONE_FILE"
+            raise StopUpload
+        self.sink = media.Sink()
+
+    def receive_data_chunk(self, raw_data: bytes, start: int) -> None:
+        assert self.sink is not None  # noqa: S101 — `new_file` lo crea antes del primer trozo
+        if self.sink.size + len(raw_data) > self.limit:
+            self.refused = "MEDIA_TOO_LARGE"
+            raise StopUpload
+        self.sink.write(raw_data)
+
+    def file_complete(self, file_size: int) -> None:
+        pass  # el archivo es `sink`
 
 
 def sniff(head: bytes) -> str | None:
@@ -80,7 +114,7 @@ def prepare(ctx: TenantContext, sink: media.Sink, name: str | None) -> Prepared:
     if sink.size > CAPS[kind]:
         raise Refused("MEDIA_TOO_LARGE")
     file_id = new_id()
-    key = storage.tenant_key(ctx.organization_id, "message-media", file_id)
+    key = storage.tenant_key(ctx.organization_id, PURPOSE, file_id)
     digest, shown = sink.digest.hexdigest(), filename(name, kind, mime)
     made = Prepared(file_id, key, kind, mime, sink.size, digest, shown)
     sink.file.seek(0)
@@ -96,7 +130,7 @@ def check(ctx: TenantContext, prepared: Any) -> Prepared:
     """Lo que el comando exige de un archivo preparado: de esta organización, con la clave de su
     id, un tipo permitido y dentro del tope; si no, `ValueError`."""
     ok = isinstance(prepared, Prepared) and TYPES.get(prepared.mime) == prepared.kind
-    prefix = f"org/{ctx.organization_id}/message-media/"
+    prefix = f"org/{ctx.organization_id}/{PURPOSE}/"
     ok = ok and prepared.key.startswith(prefix) and prepared.key.endswith(f"/{prepared.file_id}")
     if not ok or not 0 < prepared.size <= CAPS[prepared.kind]:
         raise ValueError("medio: no preparado para esta organización")
