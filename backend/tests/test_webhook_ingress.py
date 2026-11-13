@@ -32,7 +32,7 @@ DB = psycopg.Connection[Any]
 INSERT = "webhook_ingress_insert(text, text, text, text, text, jsonb)"
 FUNCTIONS = (
     INSERT,
-    "webhook_ingress_refuse(text, text, text, text, text, text, text)",
+    "webhook_ingress_refuse(text, text, text, text, text, jsonb, text)",
     "webhook_ingress_claim(integer, integer)",
     "webhook_ingress_mark(uuid, integer, text, uuid, uuid, text)",
     "webhook_ingress_list(text, integer)",
@@ -120,7 +120,7 @@ def test_the_same_event_twice_is_one_row_and_the_second_is_not_new(migrator: DB)
     [
         {"kind": "otro"}, {"key": ""}, {"key": "x" * 701}, {"waba": "abc"}, {"waba": None},
         {"number": "abc"}, {"payload": None}, {"payload": [1]}, {"provider": "Meta"},
-        {"key": "con espacio"}, {"key": "a\nb"}, {"payload": {"x": "a" * 1_048_577}},
+        {"key": "con espacio"}, {"key": "a\nb"}, {"payload": {"x": "a" * 8_388_609}},
     ],
 )  # fmt: skip
 def test_the_insert_function_refuses_what_is_not_a_validated_item(bad: dict[str, Any]) -> None:
@@ -198,14 +198,15 @@ def test_a_delivery_is_stored_whole_or_not_at_all(
             kind=kind, key=key, waba_id=WABA_ID, phone_number_id=None, payload={"id": key}
         )
 
-    real = ingress.insert
+    real = ingress._insert_all
 
-    def flaky(kind: str, key: str, *rest: Any) -> bool:
-        if key == "wa:msg:2":
-            raise OperationalError("la base se cayó")  # transitorio: todo o nada
-        return real(kind, key, *rest)
+    def flaky(items: list[Any]) -> int:
+        new = real(items)  # guarda y después falla: transitorio, todo o nada
+        if any(i.key == "wa:msg:2" for i in items):
+            raise OperationalError("la base se cayó")
+        return new
 
-    monkeypatch.setattr(ingress, "insert", flaky)
+    monkeypatch.setattr(ingress, "_insert_all", flaky)
     with pytest.raises(OperationalError):
         ingress.store([item("wa:msg:1", "message"), item("wa:msg:2", "message")])
     monkeypatch.undo()
@@ -240,7 +241,7 @@ def test_a_real_database_refusal_records_that_item_dead_and_the_rest_still_goes_
 
     caplog.set_level(logging.DEBUG)
     big = item("wa:msg:2", "message")
-    big.payload = {"x": "a" * 1_048_577}  # más de lo que guarda la función: un rechazo real
+    big.payload = {"x": "a" * 8_388_609}  # más de lo que guarda la función: un rechazo real
     assert ingress.store([item("wa:msg:3", "message"), big, item("wa:msg:1", "message")]) == 2
     found = rows(migrator)
     assert {key: r["status"] for key, r in found.items()} == {
@@ -633,14 +634,13 @@ def test_the_failure_and_the_refusal_logs_never_carry_the_payload_or_the_signatu
     monkeypatch.setattr(ingress, "store", down)
     assert post(delivery).status_code == 503
     monkeypatch.undo()
-    real = ingress.insert
 
-    def refuse(kind: str, key: str, *rest: Any) -> bool:
+    def refuse(items: list[Any]) -> int:
         raise DataError("Texto privado del cliente")
 
-    monkeypatch.setattr(ingress, "insert", refuse)
+    monkeypatch.setattr(ingress, "_insert_all", refuse)
     assert post(delivery).status_code == 200
-    monkeypatch.setattr(ingress, "insert", real)
+    monkeypatch.undo()
     signature = delivery.headers[webhooks.SIGNATURE_HEADER]
     assert "meta.webhook.store_failed" in caplog.text and "meta.webhook.refused" in caplog.text
     for secret in ("Texto privado", webhooks.TEST_APP_SECRET, signature):

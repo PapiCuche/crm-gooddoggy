@@ -25,7 +25,7 @@ ADR-029 (Proposed) deja sus preguntas abiertas en [phase-7.md](../phases/phase-7
 | Pieza | Dónde | Estado |
 | --- | --- | --- |
 | Cuenta de canal `WHATSAPP` (`external_account_id` = `phone_number_id`, `external_parent_id` = WABA, inmutables), credencial cifrada (ADR-022), conectar con token pegado y rotar con MFA reciente; desconectar con `channels.manage` | `apps.conversations.accounts`, `credentials`, F7-02a…e | Construido |
-| Webhook `POST /webhooks/meta/`: firma sobre el cuerpo crudo, tope de cuerpo `BODY_MAX` = 3 MiB y 1000 ítems (F7-11b), esquema estricto, una fila de `webhook_ingress` por ítem con clave de deduplicación | `meta_webhook.py`, `ingress.py`, F7-03a…c | Construido |
+| Webhook `POST /webhooks/meta/`: firma sobre el cuerpo crudo, tope de cuerpo `BODY_MAX` = 3 MiB, 5000 ítems y 8 MiB por ítem (F7-11b), esquema estricto, una fila de `webhook_ingress` por ítem con clave de deduplicación | `meta_webhook.py`, `ingress.py`, F7-03a…c | Construido |
 | Enrutado del tenant por `resolve_channel_account('WHATSAPP', phone_number_id)` (`SECURITY DEFINER`) y cruce obligatorio `entry.id == external_parent_id` | `ingress.route`, F7-03c | Construido |
 | Hoy, todo campo distinto de `messages` se guarda como ítem `other` sin número y queda `IGNORED` (`NO_NUMBER`) con el payload vaciado | `meta_webhook._change`, `ingress.route` | Construido: con coexistencia, los ecos y el historial **se perderían en silencio** si se activara hoy |
 | Mensajes entrantes de texto, no soportados y medios; contacto por teléfono E.164 con `pg_advisory_xact_lock`, sin índice único; tope de contactos nuevos por minuto | `inbound.py`, F7-04a/b, F7-09a | Construido |

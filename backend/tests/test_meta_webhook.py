@@ -367,13 +367,15 @@ def test_a_bad_message_is_discarded_and_the_next_one_still_counts(fields: dict[s
 
 
 def test_item_and_row_counts_are_bounded() -> None:
-    many = [message(wamid=f"wamid.{n}") for n in range(1000)]
+    cap = meta_webhook.MAX_ITEMS
+    many = [message(wamid=f"wamid.{n}") for n in range(cap)]
+    half = cap // 2
     with pytest.raises(Overflow) as caught:  # nunca `Invalid`: sería un 200 que pierde el lote
-        parse(delivery_of(messages_change(*many[:500]), messages_change(*many[:501])))
+        parse(delivery_of(messages_change(*many[:half]), messages_change(*many[: half + 1])))
     assert caught.value.reason == "items"
     with pytest.raises(Overflow) as caught:
-        parse(delivery_of(messages_change(*many, message(wamid="wamid.1001"))))
-    assert caught.value.reason == "messages"  # un cambio con más de 1000 filas
+        parse(delivery_of(messages_change(*many, message(wamid="wamid.over"))))
+    assert caught.value.reason == "messages"  # un cambio con más filas que el tope
 
 
 @pytest.mark.parametrize(

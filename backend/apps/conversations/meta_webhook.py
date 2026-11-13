@@ -22,8 +22,10 @@ Los topes son los de Meta (F7-11b, consultado el 2026-11-13): «Event Notificati
 and sent in a batch with a maximum of 1000 updates» (developers.facebook.com/docs/graph-api/
 webhooks/getting-started) y «Webhook payloads can be up to 3 MB» (developers.facebook.com/docs/
 whatsapp/cloud-api/guides/set-up-webhooks); lo que no recibe un `200` lo reintenta «for up to
-7 days». Un cuerpo con más de `MAX_ITEMS` en alguna lista (o ítems en total) es `503` sin guardar
-nada: nunca un `200` que pierda una parte del lote.
+7 days». Una «actualización» es muy probablemente un cambio, que puede traer varias filas
+(mensajes y estados): `MAX_ITEMS` es cinco veces el máximo documentado y lo que de verdad acota el
+trabajo es el cuerpo (3 MiB, y el proxy antes). Solo una cuenta absurda, más de `MAX_ITEMS` en
+alguna lista o en total, es `503` sin guardar nada: nunca un `200` que pierda una parte del lote.
 """
 
 import hashlib
@@ -50,7 +52,7 @@ CHALLENGE = re.compile(r"[A-Za-z0-9]{1,128}")
 ID = re.compile(META_ID)
 FIELD = re.compile(r"[a-z_]{1,64}")
 OBJECT = "whatsapp_business_account"
-MAX_ITEMS, MAX_DEPTH = 1000, 16  # «a batch with a maximum of 1000 updates»
+MAX_ITEMS, MAX_DEPTH = 5000, 16  # 5 × «a batch with a maximum of 1000 updates»
 MAX_ENTRIES = MAX_CHANGES = MAX_ROWS = MAX_ITEMS  # ninguna lista corta antes que el total
 ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
 PROFILE_NAME_MAX = 200  # el nombre de perfil que viaja en el ítem; `inbound` lo recorta a 100
@@ -64,7 +66,7 @@ class Invalid(Exception):  # noqa: N818 — un cuerpo firmado que no es lo que M
         self.reason = reason
 
 
-class Overflow(Exception):  # noqa: N818 — un lote firmado mayor de lo que Meta documenta
+class Overflow(Exception):  # noqa: N818 — un lote firmado de un tamaño absurdo
     """Más de `MAX_ITEMS` en alguna lista o en total: no se guarda nada y Meta reintenta (`503`).
     Solo lleva la lista que lo superó, nunca el contenido."""
 
@@ -261,7 +263,9 @@ def _subscribe(request: HttpRequest) -> HttpResponse:
 def _receive(request: HttpRequest) -> HttpResponse:
     length = request.META.get("CONTENT_LENGTH", "")
     declared = length.isascii() and length.isdigit() and int(length) > BODY_MAX
-    body = b"" if declared else request.read(BODY_MAX + 1)  # sin leer nada si ya lo dice
+    # Si `Content-Length` ya lo supera, no se pide nada más. Con ASGI el servidor ya recibió el
+    # cuerpo entero antes de la vista: el tope que de verdad protege la memoria es el del proxy.
+    body = b"" if declared else request.read(BODY_MAX + 1)
     if declared or len(body) > BODY_MAX:
         logger.warning("meta.webhook.too_large")  # Meta reintenta; sin firma, nada más que el aviso
         return HttpResponse(status=413)

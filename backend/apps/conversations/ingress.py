@@ -9,7 +9,6 @@ que la propia organización registró), y el procesador solo enruta y marca: un 
 `PROCESSED` sin efecto hasta F7-04.
 """
 
-import hashlib
 import json
 import math
 import re
@@ -80,14 +79,45 @@ def insert(kind: str, key: str, waba_id: str, number: str | None, payload: dict[
 
 
 def refuse(item: Any, sqlstate: str | None) -> bool:
-    """Registra un ítem que la base nunca guardará: `DEAD`, sin payload (solo su hash) y con el
-    motivo `REFUSED_<sqlstate>` en `webhook_failures`, para que se vea y alerte. Idempotente por
-    clave, y nunca toca un ítem que ya estaba guardado. Devuelve si era nuevo."""
+    """Registra un ítem que la base nunca guardará: `DEAD`, sin payload y con el motivo
+    `REFUSED_<sqlstate>` en `webhook_failures`, para que se vea y alerte. El hash lo calcula la
+    base igual que al guardar (del `jsonb`), así que se compara con el de cualquier otra fila.
+    Idempotente por clave, y nunca toca un ítem que ya estaba guardado. Devuelve si era nuevo."""
     reason = f"REFUSED_{sqlstate}" if SQLSTATE.fullmatch(sqlstate or "") else "REFUSED"
-    digest = hashlib.sha256(json.dumps(clean(item.payload), sort_keys=True).encode()).hexdigest()
     sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
-    args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, digest, reason]
+    payload = Jsonb(clean(item.payload))
+    args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, payload, reason]
     return _call(sql, args)[0][0] is not None
+
+
+def _insert_all(items: list[Any]) -> int:
+    """Todos los ítems en una sola sentencia, en el orden dado; devuelve cuántos eran nuevos."""
+    rows = [
+        {"k": i.key, "t": i.kind, "w": i.waba_id, "n": i.phone_number_id, "p": clean(i.payload)}
+        for i in items
+    ]
+    sql = (
+        "SELECT count(public.webhook_ingress_insert(%s, e->>'k', e->>'t', e->>'w', e->>'n',"
+        " e->'p')) FROM jsonb_array_elements(%s) AS e"
+    )
+    return int(_call(sql, [PROVIDER, Jsonb(rows)])[0][0])
+
+
+def _store(items: list[Any], refused: list[Any]) -> int:
+    """Intenta el lote entero con un solo punto de guardado; si la base rechaza un ítem, deshace
+    ese intento y prueba cada mitad, hasta aislarlo y registrarlo con `refuse`. Unos 2·log2(n)
+    puntos de guardado por ítem rechazado, no uno por ítem: más de 64 desbordan la caché de
+    subtransacciones del proceso y frenan las instantáneas de todas las sesiones."""
+    try:
+        with transaction.atomic():
+            return _insert_all(items)
+    except DataError as error:  # nunca lo guardará: un 503 lo repetiría 7 días en vano
+        if len(items) > 1:
+            half = len(items) // 2
+            return _store(items[:half], refused) + _store(items[half:], refused)
+        refuse(items[0], getattr(error.__cause__, "sqlstate", None))
+        refused.append(items[0])
+        return 0
 
 
 def store(items: list[Any]) -> int:
@@ -96,17 +126,11 @@ def store(items: list[Any]) -> int:
     envenena el lote: queda registrado con `refuse` y el resto se guarda. Cualquier otro error
     deshace la entrega entera y sube (la ruta responde 503 y Meta reintenta; repetir no duplica).
     Devuelve cuántos eran nuevos."""
-    new = refused = 0
+    refused: list[Any] = []
     with transaction.atomic():
-        for i in sorted(items, key=lambda item: item.key):
-            try:
-                with transaction.atomic():  # un punto de guardado por ítem
-                    new += insert(i.kind, i.key, i.waba_id, i.phone_number_id, i.payload)
-            except DataError as error:  # nunca lo guardará: un 503 lo repetiría 7 días en vano
-                refuse(i, getattr(error.__cause__, "sqlstate", None))
-                refused += 1
+        new = _store(sorted(items, key=lambda item: item.key), refused) if items else 0
     if refused:
-        logger.error("meta.webhook.refused", count=refused)  # solo cuántos: nunca el contenido
+        logger.error("meta.webhook.refused", count=len(refused))  # solo cuántos, nunca el contenido
     return new
 
 
