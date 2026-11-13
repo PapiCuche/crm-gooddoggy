@@ -285,7 +285,7 @@ Helper: Any = type("Helper", (views.APIView,), {"post": lambda self, request: _g
 
 def test_every_quote_route_that_reaches_the_cost_floor_is_counted() -> None:
     found, unlimited = floor_paths(urls.urlpatterns)
-    assert len(found) == 2 and unlimited == []  # el precio y pedir aprobación
+    assert len(found) == 3 and unlimited == []  # el precio, pedir aprobación y aprobar
     fake = [path(f"quotes/<uuid:quote_id>/{v.__name__}/", v.as_view()) for v in (Direct, Helper)]
     assert len(floor_paths(fake, pathlib.Path(__file__))[1]) == 2  # sin contar: la prueba falla
 
