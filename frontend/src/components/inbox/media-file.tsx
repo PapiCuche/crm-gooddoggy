@@ -15,23 +15,25 @@ import type { ApiError } from "@/lib/http";
 // si la API dice `available` (DONE, entrante, antivirus CLEAN, tipo del mapa y contacto visible): sin
 // antivirus (D-F7-04) nada lo está y la burbuja lo explica. La URL nunca se guarda (ni en el estado ni
 // en la caché de TanStack: la mutación no devuelve nada) ni va a un `src`: el almacén la sirve siempre
-// como `attachment`, así que se abre una vez con un enlace temporal y la página no se va.
-const STATES: Record<string, { icon: ReactNode; text: string; alert?: boolean }> = {
+// como `attachment` y se abre una vez, con un enlace temporal, en otra pestaña: si el almacén responde
+// un error (firma caducada, objeto borrado, 5xx) sin `attachment`, el CRM y el borrador no se pierden.
+const STATES: Record<string, { icon: ReactNode; text: string }> = {
   PENDING: { icon: <Hourglass aria-hidden />, text: "receiving" },
   DOWNLOADING: { icon: <Hourglass aria-hidden />, text: "receiving" },
   DONE: { icon: <ShieldEllipsis aria-hidden />, text: "waiting" },
-  FAILED: { icon: <TriangleAlert aria-hidden />, text: "failed", alert: true },
-  EXPIRED: { icon: <TriangleAlert aria-hidden />, text: "expired", alert: true },
+  FAILED: { icon: <TriangleAlert aria-hidden />, text: "failed" },
+  EXPIRED: { icon: <TriangleAlert aria-hidden />, text: "expired" },
 };
 const UNKNOWN = { icon: <TriangleAlert aria-hidden />, text: "unknown" };
 
-// Un enlace que no está en el documento, sin `Referer` (la URL del CRM no llega al almacén) y solo a
-// http(s): lo que devuelva la API no puede ser un `javascript:`.
+// Un enlace que no está en el documento, a otra pestaña sin `opener` ni `Referer` (la URL del CRM no
+// llega al almacén) y solo a http(s): lo que devuelva la API no puede ser un `javascript:`.
 function leave(url: string) {
   const target = new URL(url);
   if (target.protocol !== "https:" && target.protocol !== "http:") throw new Error("unsafe url");
   const link = document.createElement("a");
   link.href = target.href;
+  link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.referrerPolicy = "no-referrer";
   link.click();

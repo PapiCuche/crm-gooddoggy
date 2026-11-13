@@ -90,6 +90,7 @@ describe("MediaFile (F7-09a3)", () => {
     expect(init).toMatchObject({ method: "GET" });
     const link = opened[0]!;
     expect(link.href).toBe(SIGNED);
+    expect(link.target).toBe("_blank"); // un error del almacén no reemplaza el CRM
     expect(link.rel).toBe("noopener noreferrer");
     expect(link.referrerPolicy).toBe("no-referrer");
     expect(link.isConnected).toBe(false);

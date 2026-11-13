@@ -178,24 +178,32 @@ def test_production_storage_endpoint_requires_tls(
 
 
 @pytest.mark.parametrize(
-    ("public", "origin"),
+    ("public", "changes"),
     [
-        ("http://media.example.com", None),  # sin TLS
-        ("https://app.example.com", None),  # el host de la aplicación (ALLOWED_HOSTS)
-        ("https://APP.example.com", None),
-        ("https://crm.example.org", "https://crm.example.org"),  # el origen de la aplicación
-        ("https://u:" + "p" + "@media.example.com", None),  # credenciales
-        ("https://media.example.com/bucket", None),  # no es un origen
+        ("http://media.example.com", {}),  # sin TLS
+        ("https://app.example.com", {}),  # el host de la aplicación (ALLOWED_HOSTS)
+        ("https://APP.example.com.", {}),  # mayúsculas y punto final
+        ("https://media.example.com", {"DJANGO_ALLOWED_HOSTS": "MEDIA.example.com"}),
+        ("https://media.example.com", {"DJANGO_ALLOWED_HOSTS": ".example.com"}),
+        ("https://media.example.com", {"DJANGO_ALLOWED_HOSTS": "*"}),  # con `*`, ninguno
+        ("https://crm.example.org", {"APP_ORIGIN": "https://crm.example.org"}),
+        ("https://crm.example.org:443", {"APP_ORIGIN": "https://crm.example.org"}),
+        ("https://crm.example.org:8443", {"APP_ORIGIN": "https://crm.example.org"}),  # puerto
+        ("https://crm.example.org", {"APP_ORIGIN": "https://CRM.example.org"}),
+        ("https://crm.example.org", {"APP_ORIGIN": "https://crm.example.org."}),
+        ("https://u:" + "p" + "@media.example.com", {}),  # credenciales
+        ("https://media.example.com/bucket", {}),  # no es un origen
+        ("", {"STORAGE_ENDPOINT_URL": "https://app.example.com"}),  # vacío: firma el interno
     ],
 )
-def test_production_signs_browser_urls_only_for_another_https_origin(
-    monkeypatch: pytest.MonkeyPatch, public: str, origin: str | None
+def test_production_signs_browser_urls_only_for_another_https_host(
+    monkeypatch: pytest.MonkeyPatch, public: str, changes: dict[str, str]
 ) -> None:
-    for valid in ("https://media.example.com", ""):  # vacío = el endpoint interno
+    for valid in ("https://media.example.com", ""):  # vacío = el endpoint interno (o AWS)
         loaded = load_production(monkeypatch, STORAGE_PUBLIC_ENDPOINT_URL=valid)
         assert loaded.STORAGE_PUBLIC_ENDPOINT_URL == valid  # type: ignore[attr-defined]
     with pytest.raises(ImproperlyConfigured):
-        load_production(monkeypatch, STORAGE_PUBLIC_ENDPOINT_URL=public, APP_ORIGIN=origin)
+        load_production(monkeypatch, STORAGE_PUBLIC_ENDPOINT_URL=public, **changes)
 
 
 def test_production_mail_is_optional_but_never_half_configured(
