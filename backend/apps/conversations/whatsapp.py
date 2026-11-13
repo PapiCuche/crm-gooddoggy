@@ -128,8 +128,12 @@ class WhatsAppAdapter:
                 body = {**body, "type": kind, kind: part}
                 del body["text"]
             try:
-                auth = {"Authorization": f"Bearer {token}"}
-                reply = http.request("POST", f"{base}/messages", headers=auth, json=body)
+                reply = http.request(
+                    "POST",
+                    f"{base}/messages",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=body,
+                )
             except Exception as error:  # se clasifica; el texto del error puede llevar la URL
                 if http.never_connected(error):
                     raise TemporaryChannelError from None

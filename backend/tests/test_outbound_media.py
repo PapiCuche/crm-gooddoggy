@@ -78,7 +78,7 @@ def test_without_antivirus_nothing_is_stored_and_a_type_or_size_not_allowed_neve
     with pytest.raises(outbound_media.Refused, match="MEDIA_NOT_SCANNED"):
         prepare(world)
     settings.MEDIA_SEND_UNSCANNED = True
-    for data in (b"GIF89a" + b"g" * 40, b"<html><script>", b"", b"\xff\xd8", b"%PDF"):
+    for data in (b"GIF89a" + b"g" * 40, b"<html>", b"", b"\xff\xd8", b"%PDF", PNG[:7] + b"x" * 40):
         with pytest.raises(outbound_media.Refused, match="MEDIA_TYPE_NOT_ALLOWED"):
             prepare(world, data)  # el tipo sale del contenido, nunca del nombre
     big = b"x" * (outbound_media.CAPS["IMAGE"] - len(JPEG) + 1)
@@ -122,6 +122,15 @@ def test_the_command_takes_only_a_file_prepared_for_its_organization(
         with pytest.raises(ValueError, match="medio"):
             queue(world, convo, media=bad)
     assert migrator.execute("SELECT count(*) FROM files").fetchone() == (0,)
+
+
+def test_a_caption_is_at_most_what_whatsapp_takes(world: SimpleNamespace, migrator: Any) -> None:
+    convo = talk(world)
+    with pytest.raises(ValueError, match="pie de foto"):
+        queue(world, convo, caption="x" * (outbound_media.CAPTION_MAX + 1))
+    assert migrator.execute("SELECT count(*) FROM files").fetchone() == (0,)
+    message, _ = queue(world, convo, caption="x" * outbound_media.CAPTION_MAX)
+    assert len(message.body) == outbound_media.CAPTION_MAX
 
 
 def test_an_image_is_queued_with_its_file_once_and_a_replay_needs_the_same_file(
@@ -255,6 +264,24 @@ def test_an_upload_that_meta_refuses_fails_with_a_closed_reason(
     graph.then(outcome)
     saved = deliver(world, message)
     assert (saved.delivery_status, saved.provider_error_code, graph.sent) == ("FAILED", reason, [])
+
+
+def test_an_upload_reply_without_a_numeric_id_is_retried_and_nothing_is_sent(
+    world: SimpleNamespace, graph: FakeGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    message, _ = queue(world, talk(world))
+    real = graph.handle
+
+    def odd(method: str, target: str, *args: Any) -> Any:
+        status, headers, raw = real(method, target, *args)
+        return (status, headers, b'{"id": "../12345"}') if target.endswith("/media") else (
+            status, headers, raw,
+        )  # fmt: skip
+
+    monkeypatch.setattr(graph, "handle", odd)
+    with pytest.raises(RuntimeError, match="retry"):
+        deliver(world, message)
+    assert state(world, message).delivery_status == "QUEUED" and graph.sent == []
 
 
 def test_a_send_lost_after_the_upload_is_never_resent(

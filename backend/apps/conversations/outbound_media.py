@@ -27,6 +27,7 @@ TYPES = {"image/jpeg": "IMAGE", "image/png": "IMAGE", "application/pdf": "DOCUME
 CAPS = {"IMAGE": 5 << 20, "DOCUMENT": 10 << 20}  # bytes; decisión del propietario abierta
 LABELS = {"IMAGE": "Imagen", "DOCUMENT": "Documento"}  # el cuerpo de un medio sin pie de foto
 NAME_MAX = 100
+CAPTION_MAX = 1024  # el pie de foto que admite WhatsApp
 
 
 class Refused(Exception):  # noqa: N818 — un motivo cerrado, no un fallo

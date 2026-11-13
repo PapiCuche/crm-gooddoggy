@@ -146,7 +146,8 @@ class FakeGraph:
             return self._error(outcome)
         if upload:  # un formulario con el producto y el archivo; el id, de solo dígitos
             form = body or b""
-            if not all(f'name="{n}"'.encode() in form for n in ("messaging_product", "file")):
+            needed = ("messaging_product", "type", "file")  # como Meta: también el tipo
+            if not all(f'name="{n}"'.encode() in form for n in needed):
                 return self._error("no_number", "Invalid parameter")
             self.uploads.append(form)
             if outcome in LOST:

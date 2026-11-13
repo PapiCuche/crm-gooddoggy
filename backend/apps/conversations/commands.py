@@ -460,6 +460,8 @@ def record_outbound(
         _uuid(client_message_id, "id"),
     )
     text = _body(body)
+    if media is not None and len(text) > outbound_media.CAPTION_MAX:  # lo que admite WhatsApp
+        raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} caracteres")
     with transaction.atomic(using=alias):
         ectx = _allowed(ctx, "messages.send")
         convo = _locked(alias, conversation_id)
