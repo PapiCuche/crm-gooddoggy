@@ -30,6 +30,18 @@ ISSUED = ["SENT", "VIEWED", "ACCEPTED", "REJECTED", "EXPIRED"]  # salió: lleva 
 UNISSUED = ["DRAFT", "PENDING_APPROVAL", "APPROVED"]
 
 
+ANSWERED = (  # F5-09c3: aceptada, o rechazada con motivo, con su fecha dentro de la validez
+    models.Q(status="ACCEPTED", accepted_at__isnull=False,  # sin esto, un nulo pasaría
+             accepted_at__gte=models.F("sent_at"), accepted_at__lt=models.F("valid_until"))
+    | (~models.Q(status="ACCEPTED") & models.Q(accepted_at__isnull=True)),
+    models.Q(status="REJECTED", rejected_at__isnull=False, rejection_reason__isnull=False,
+             rejection_reason__regex=r"\S", rejected_at__gte=models.F("sent_at"),
+             rejected_at__lt=models.F("valid_until"))
+    | (~models.Q(status="REJECTED") & models.Q(rejected_at__isnull=True,
+                                               rejection_reason__isnull=True)),
+)  # fmt: skip
+
+
 class TaxMode(models.TextChoices):
     INCLUDED = "INCLUDED"  # los precios ya llevan IGV (D-PRC-1)
     EXCLUDED = "EXCLUDED"
@@ -84,6 +96,9 @@ class Quote(TenantModel):
     warranty_snapshot = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     cancelled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
+    accepted_at = models.DateTimeField(null=True, blank=True)  # la respuesta (F5-09c3)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     created_by_user_id = models.UUIDField(null=True, blank=True)
     updated_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -172,6 +187,8 @@ class Quote(TenantModel):
                 name="quotes_issued_ck",
             ),
             models.CheckConstraint(condition=models.Q(version__gte=1), name="quotes_version_ck"),
+            models.CheckConstraint(condition=ANSWERED[0], name="quotes_accepted_ck"),
+            models.CheckConstraint(condition=ANSWERED[1], name="quotes_rejected_ck"),
         ]
 
     def __str__(self) -> str:

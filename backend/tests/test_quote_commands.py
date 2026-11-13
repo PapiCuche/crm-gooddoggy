@@ -325,8 +325,8 @@ def test_cancel_works_from_any_open_state_and_audits_the_reason_as_text(
     with tenant_scope(ctx(shop.a)):
         Quote.objects.filter(pk=again.pk).update(status="SENT", **issued())
     for state in ("ACCEPTED",):  # un estado terminal: el grafo de la base solo deja llegar por SENT
-        with tenant_scope(ctx(shop.a)):
-            Quote.objects.filter(pk=again.pk).update(status=state)
+        with tenant_scope(ctx(shop.a, shop.quoter)):  # la respuesta, con su fecha (F5-09c3)
+            Quote.objects.filter(pk=again.pk).update(status=state, accepted_at=timezone.now())
         with pytest.raises(QuoteTerminal):
             move(shop, commands.cancel_quote, again)
     with pytest.raises(QuoteTerminal):  # ya cancelada
