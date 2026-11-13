@@ -2190,6 +2190,17 @@
       "VIDEO": "Video",
       "STICKER": "Sticker"
     },
+    "file": {
+      "receiving": "Recibiendo el archivo del canal…",
+      "waiting": "Archivo recibido. Todavía no se puede abrir: primero tiene que pasar la revisión de seguridad.",
+      "failed": "No se pudo recibir el archivo. Pide al cliente que lo vuelva a enviar.",
+      "expired": "El archivo caducó en el canal antes de recibirlo. Pide al cliente que lo vuelva a enviar.",
+      "unknown": "Archivo no disponible.",
+      "save": "Descargar",
+      "opening": "Abriendo…",
+      "download": "Descargar el archivo ({detail})",
+      "error": "No se pudo abrir el archivo ahora. Vuelve a intentarlo en unos segundos."
+    },
     "filters": {
       "landmark": "Filtros de conversaciones",
       "box": "Bandeja",
