@@ -34,6 +34,7 @@ from tests.test_opportunity_commands import change
 from tests.test_prices import price_list
 from tests.test_pricing_engine import item, person, row
 from tests.test_promotion_tables import promo
+from tests.test_quote_tables import issued
 
 world = tables.world
 pytestmark = pytest.mark.usefixtures("tenant_db")
@@ -298,7 +299,7 @@ def test_a_stale_version_a_closed_quote_and_a_missing_one_are_refused(
     with pytest.raises(StaleVersion):
         move(shop, commands.cancel_quote, made)
     with tenant_scope(ctx(shop.a)):
-        Quote.objects.filter(pk=made.pk).update(status="SENT")
+        Quote.objects.filter(pk=made.pk).update(status="SENT", **issued())
     with pytest.raises(QuoteNotDraft):  # solo un borrador se edita
         move(shop, commands.update_quote, made, version=2, internal_notes="x")
     with pytest.raises(Quote.DoesNotExist):
@@ -313,7 +314,7 @@ def test_cancel_works_from_any_open_state_and_audits_the_reason_as_text(
     assert first.cancelled_at is not None and first.updated_by_user_id == shop.quoter.pk
     sent = new(shop)
     with tenant_scope(ctx(shop.a)):
-        Quote.objects.filter(pk=sent.pk).update(status="SENT")
+        Quote.objects.filter(pk=sent.pk).update(status="SENT", **issued())
     plain = move(shop, commands.cancel_quote, sent)  # el motivo es opcional
     assert (plain.status, plain.cancel_reason) == ("CANCELLED", None)
     cancelled = [c for a, c in audit(migrator) if a == "quote.cancelled"]
@@ -322,7 +323,7 @@ def test_cancel_works_from_any_open_state_and_audits_the_reason_as_text(
     assert "12345678" not in json.dumps(cancelled)
     again = new(shop)
     with tenant_scope(ctx(shop.a)):
-        Quote.objects.filter(pk=again.pk).update(status="SENT")
+        Quote.objects.filter(pk=again.pk).update(status="SENT", **issued())
     for state in ("ACCEPTED",):  # un estado terminal: el grafo de la base solo deja llegar por SENT
         with tenant_scope(ctx(shop.a)):
             Quote.objects.filter(pk=again.pk).update(status=state)

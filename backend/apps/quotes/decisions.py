@@ -107,11 +107,11 @@ def approve_quote(
     `NotAllowed`, `DoesNotExist`, `StaleVersion`, `NotPending`, `SelfApproval`, `BeyondLimit`,
     `PriceRefused` (nada se escribe)."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.approve")  # lo primero: sin permiso, ni se mira lo que se envía
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
     note = "" if comment is None else _text(comment, "comentario", COMMENT_MAX)
     with transaction.atomic(using=alias):
-        ectx = _require(ctx, "quotes.approve")
         quote, asked = _pending(alias, quote_id, version, lambda q: _can_decide(ectx, q))
         who = (asked.requested_by_user_id, asked.submitted_by_user_id)
         if asked.submitted_by_user_id is None or ctx.user_id in who:  # una anterior a 0004 (sin
@@ -129,13 +129,13 @@ def reject_quote(ctx: TenantContext, *, quote_id: UUID, version: int, reason: st
     """Rechaza la solicitud abierta (`quotes.approve`), con su motivo obligatorio: la cotización
     vuelve a `DRAFT`. Quien pidió también puede (equivale a retirarla), si puede aprobar."""
     alias = require_scope(ctx)
+    ectx = _require(ctx, "quotes.approve")  # lo primero: sin permiso, ni se mira lo que se envía
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
     why = _text(reason, "motivo", REASON_MAX)
     if not why:
         raise ValueError("motivo: obligatorio")
     with transaction.atomic(using=alias):
-        ectx = _require(ctx, "quotes.approve")
         quote, asked = _pending(alias, quote_id, version, lambda q: _can_decide(ectx, q))
         _close(ctx, alias, quote, asked, action="quote.rejected", approval=ApprovalStatus.REJECTED,
                status=QuoteStatus.DRAFT, comment=why)  # fmt: skip
@@ -147,12 +147,12 @@ def withdraw_approval_request(ctx: TenantContext, *, quote_id: UUID, version: in
     alcance de `quotes.update`) o quien puede aprobar; la solicitud de la IA solo quien puede
     aprobar. La solicitud queda `CANCELLED`."""
     alias = require_scope(ctx)
+    ectx = execution_context(ctx)  # lo primero: sin permiso, ni se mira lo que se envía
+    if not (has_permission(ectx, "quotes.approve") or has_permission(ectx, "quotes.update")):
+        raise NotAllowed("quotes.update")
     quote_id = _uuid(quote_id, "cotización")
     _integer(version, 1, 2**31 - 1, "versión")
     with transaction.atomic(using=alias):
-        ectx = execution_context(ctx)
-        if not (has_permission(ectx, "quotes.approve") or has_permission(ectx, "quotes.update")):
-            raise NotAllowed("quotes.update")
         quote, asked = _pending(
             alias, quote_id, version,
             lambda q: _can_decide(ectx, q) or can(ectx, "quotes.update", q),

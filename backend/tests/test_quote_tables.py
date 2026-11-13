@@ -2,6 +2,7 @@
 aislamiento (también por SQL), FKs compuestas, `CHECK` de importes y estados, unicidad, permisos
 de la aplicación y la migración. Los comandos llegan con F5-09a2 y la API, después."""
 
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -40,6 +41,13 @@ def quote(world: SimpleNamespace, org: str = "a", **over: Any) -> Quote:
     with tenant_scope(ctx(mine)):
         made: Quote = Quote.objects.create(**{**fields, **over})
     return made
+
+
+def issued(**over: Any) -> dict[str, Any]:
+    """Lo que lleva una cotización al pasar a `SENT` (F5-09c2): fotografías, envío y validez."""
+    now = timezone.now()
+    return {"company_snapshot": {"name": "Tienda"}, "customer_snapshot": {"display_name": "Ana"},
+            "sent_at": now, "valid_until": now + timedelta(days=7), **over}  # fmt: skip
 
 
 def new_variant(world: SimpleNamespace) -> Any:
