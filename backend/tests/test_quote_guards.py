@@ -14,8 +14,10 @@ from django.utils import timezone
 
 from apps.access.models import Role
 from apps.quotes.models import DiscountPolicy, Quote, QuoteApproval, QuoteItem
+from core.tenancy.context import current
 from core.tenancy.scope import tenant_scope
 from tests import test_opportunities_tables as tables
+from tests.conftest import migrator_conninfo
 from tests.factories import make_user
 from tests.test_memberships import ctx, join
 from tests.test_pipelines_tables import as_migrator
@@ -75,12 +77,23 @@ def approval(world: SimpleNamespace, made: Quote, **over: Any) -> QuoteApproval:
 
 
 def go(world: SimpleNamespace, made: Quote, *states: str) -> None:
-    """Lleva la cotización por esos estados, como el runtime (`crm_app`), con sus disparadores."""
+    """Lleva la cotización por esos estados, como el runtime (`crm_app`), con sus disparadores. La
+    respuesta del cliente la registra una persona (Ana) con su fecha; para vencerla, antes el
+    migrador deja su validez en el pasado (F5-09c3)."""
     for state in states:
-        with tenant_scope(ctx(world.a)):
-            Quote.objects.filter(pk=made.pk).update(
-                status=state, **(issued() if state == "SENT" else {})
-            )
+        at = timezone.now()  # la respuesta, con su fecha
+        said = {"rejected_at": at, "rejection_reason": "No"}
+        extra = {"SENT": issued(), "ACCEPTED": {"accepted_at": at}, "REJECTED": said}.get(state, {})
+        if state == "EXPIRED":
+            with psycopg.connect(migrator_conninfo(), autocommit=True) as owner:
+                owner.execute("UPDATE quotes SET sent_at = now() - interval '2 days', valid_until"
+                              " = now() - interval '1 day' WHERE id = %s"
+                              " AND status IN ('SENT', 'VIEWED')", [made.pk])  # fmt: skip
+        if current() is not None:  # dentro de `fails`: en su transacción, que deshace lo que haga
+            Quote.objects.filter(pk=made.pk).update(status=state, **extra)
+            continue
+        with tenant_scope(ctx(world.a, world.ana if state in ("ACCEPTED", "REJECTED") else None)):
+            Quote.objects.filter(pk=made.pk).update(status=state, **extra)
 
 
 def fails(world: SimpleNamespace, match: str, work: Any) -> None:

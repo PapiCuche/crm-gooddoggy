@@ -183,8 +183,13 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         (  # los comandos de oportunidades usan los validadores de los de pipelines (F5-03b)
             "protected",
             ["apps.deals.commands", "apps.deals.opportunities", "apps.deals.opportunity_stages"],
-            ["apps.deals.api", "apps.deals.opportunities", "apps.deals.opportunity_stages"],
-        )
+            [
+                "apps.deals.api",
+                "apps.deals.opportunities",
+                "apps.deals.opportunity_stages",
+                "apps.quotes.answers",
+            ],  # F5-09c3: aceptar mueve la oportunidad (con su alcance)
+        )  # fmt: skip
     ]
     layered = next(c for c in contracts if c["type"] == "layers")
     row = (
@@ -207,6 +212,9 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
         "apps.quotes.commands -> apps.pricing.services",  # y los precios, del servicio
         "apps.quotes.discounts -> apps.pricing.floor",  # F5-09b2: el precio manual cubre el costo
         "apps.quotes.policies -> apps.pricing.services",  # F5-09b4: la lista de una política existe
+        "apps.quotes.answers -> apps.deals.models",  # F5-09c3: aceptar mueve la oportunidad
+        "apps.quotes.answers -> apps.deals.opportunities",
+        "apps.quotes.answers -> apps.deals.opportunity_stages",
     ]
     quotes = [c for c in contracts if "apps.quotes.commands" in c.get("protected_modules", [])]
     assert [(c["type"], c["protected_modules"], c["allowed_importers"]) for c in quotes] == [
@@ -217,12 +225,15 @@ def test_the_import_contracts_keep_the_commands_behind_their_api() -> None:
                 "apps.quotes.discounts",
                 "apps.quotes.decisions",
                 "apps.quotes.lifecycle",
+                "apps.quotes.answers",
             ],
             [
                 "apps.quotes.api",
                 "apps.quotes.discounts",
                 "apps.quotes.decisions",
                 "apps.quotes.lifecycle",
+                "apps.quotes.answers",
+                "apps.quotes.tasks",
             ],
         )  # fmt: skip
     ]

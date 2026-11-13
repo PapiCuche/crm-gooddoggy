@@ -84,6 +84,9 @@ class Quote(TenantModel):
     warranty_snapshot = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     cancelled_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
+    accepted_at = models.DateTimeField(null=True, blank=True)  # la respuesta (F5-09c3)
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.CharField(max_length=500, null=True, blank=True)  # noqa: DJ001
     created_by_user_id = models.UUIDField(null=True, blank=True)
     updated_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -172,6 +175,31 @@ class Quote(TenantModel):
                 name="quotes_issued_ck",
             ),
             models.CheckConstraint(condition=models.Q(version__gte=1), name="quotes_version_ck"),
+            models.CheckConstraint(  # aceptada: con su fecha, dentro de la validez (F5-09c3)
+                condition=models.Q(
+                    status="ACCEPTED",
+                    accepted_at__isnull=False,  # un nulo no compara: pasaría
+                    accepted_at__gte=models.F("sent_at"),
+                    accepted_at__lt=models.F("valid_until"),
+                )  # fmt: skip
+                | (~models.Q(status="ACCEPTED") & models.Q(accepted_at__isnull=True)),
+                name="quotes_accepted_ck",
+            ),
+            models.CheckConstraint(  # rechazada por el cliente: con fecha y motivo, en la validez
+                condition=models.Q(
+                    status="REJECTED",
+                    rejected_at__isnull=False,
+                    rejection_reason__isnull=False,
+                    rejected_at__gte=models.F("sent_at"),
+                    rejected_at__lt=models.F("valid_until"),
+                    rejection_reason__regex=r"\S",
+                )  # fmt: skip
+                | (
+                    ~models.Q(status="REJECTED")
+                    & models.Q(rejected_at__isnull=True, rejection_reason__isnull=True)
+                ),
+                name="quotes_rejected_ck",
+            ),
         ]
 
     def __str__(self) -> str:

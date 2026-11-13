@@ -384,9 +384,8 @@ def installed(migrator: DB) -> str:
 def test_the_migration_only_adds_rules_and_goes_back_only_without_issued_quotes(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    new = installed(migrator)
-    assert new == MIGRATION.body(MIGRATION.GUARD)
-    legacy = quote(world)
+    new = MIGRATION.body(MIGRATION.GUARD)  # la de 0005 (0006 la amplía: test_quote_answers)
+    legacy, sent = quote(world), quote(world, number="COT-930001")  # con el modelo de ahora
     with as_migrator():
         call_command("migrate", "quotes", "0004", verbosity=0)
     old = installed(migrator)
@@ -395,18 +394,22 @@ def test_the_migration_only_adds_rules_and_goes_back_only_without_issued_quotes(
     assert removed == [] and old != new  # ninguna regla anterior se perdió
     migrator.execute("UPDATE quotes SET status = 'SENT' WHERE id = %s", [legacy.pk])
     with as_migrator(), pytest.raises(RuntimeError, match="issued before snapshots"):
-        call_command("migrate", "quotes", verbosity=0)
-    migrator.execute("UPDATE quotes SET status = 'CANCELLED', cancelled_at = now()")
+        call_command("migrate", "quotes", "0005", verbosity=0)
+    migrator.execute("UPDATE quotes SET status = 'CANCELLED', cancelled_at = now() WHERE id = %s",
+                     [legacy.pk])  # fmt: skip
     with as_migrator():
-        call_command("migrate", "quotes", verbosity=0)
+        call_command("migrate", "quotes", "0005", verbosity=0)
     assert installed(migrator) == new
-    sent = quote(world, number="COT-930001")
     go(world, sent, "SENT")
     with as_migrator(), pytest.raises(RuntimeError, match="refusing to go back"):
         call_command("migrate", "quotes", "0004", verbosity=0)
-    assert installed(migrator) == new and reread(world, sent).sent_at is not None
+    assert installed(migrator) == new
+    row = migrator.execute("SELECT sent_at FROM quotes WHERE id = %s", [sent.pk]).fetchone()
+    assert row is not None and row[0] is not None
     with connection.schema_editor() as editor, pytest.raises(RuntimeError, match="not the one"):
         MIGRATION._replace(None, editor)  # instalada otra que la de 0003: no reemplaza nada
     monkeypatch.setattr(MIGRATION.PREVIOUS, "QUOTES_GUARD", "otra función")
     with pytest.raises(RuntimeError, match="anchors"):  # si 0003 cambiara, no añade nada
         MIGRATION._guard()
+    with as_migrator():
+        call_command("migrate", "quotes", verbosity=0)  # de vuelta a la última
