@@ -7052,6 +7052,135 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/discount-policies/:
+    get:
+      operationId: discount_policies_list
+      description: Las políticas de descuento de la organización, paginadas por creación
+        (ADR-016). Un rol sin política tiene 0 %; el rol Owner no tiene límite.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - quotes
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDiscountPolicyList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    put:
+      operationId: discount_policies_set
+      description: 'Fija el límite de un rol para una lista (o todas): sin `version`
+        la crea (201), con ella la cambia (200; lo que no se envía se quita; si nada
+        cambia no escribe ni audita). Pide un segundo factor reciente: 403 `STEP_UP_REQUIRED`.
+        403 sin motivo si el límite pasa del que tiene quien actúa (también al tocar
+        uno mayor que el suyo). 400: un rol o una lista que no es de la organización,
+        o el rol Owner. 409 `DISCOUNT_POLICY_EXISTS` (sin `version`, ya hay una) o
+        `STALE_VERSION`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountPolicySetRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountPolicy'
+          description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountPolicy'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/roles/:
     get:
       operationId: roles_list
@@ -9888,6 +10017,93 @@ components:
         * `INBOUND` - Inbound
         * `OUTBOUND` - Outbound
         * `INTERNAL` - Internal
+    DiscountPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        role_id:
+          type: string
+          format: uuid
+        price_list_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: '`null`: todas las listas.'
+        max_discount_percent:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,3}(?:\.\d{0,2})?$
+        max_discount_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+          maxLength: 3
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - max_discount_percent
+      - price_list_id
+      - role_id
+      - updated_at
+    DiscountPolicySetRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        price_list_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 'Sin ella: todas las listas.'
+        max_discount_percent:
+          type: string
+          minLength: 1
+          description: De 0 a 100. Texto con hasta 2 decimales, sin exponente.
+          maxLength: 16
+        max_discount_amount:
+          type: string
+          nullable: true
+          minLength: 1
+          description: Tope en importe. Texto con hasta 2 decimales, sin exponente.
+          maxLength: 24
+        currency:
+          type: string
+          nullable: true
+          minLength: 1
+          description: 'La del tope: con lista, la de la lista; sin ella, va con el
+            tope y solo él.'
+          maxLength: 3
+        version:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Sin ella crea; con ella cambia.
+      required:
+      - max_discount_percent
+      - role_id
     DiscountTypeEnum:
       enum:
       - FIXED_PRICE
@@ -11534,6 +11750,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Conversation'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedDiscountPolicyList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscountPolicy'
         next:
           type: string
           nullable: true

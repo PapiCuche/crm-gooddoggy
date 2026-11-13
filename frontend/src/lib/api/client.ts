@@ -50,6 +50,9 @@ import type {
   CostHistoryListParams,
   CostPage,
   CostSetRequest,
+  DiscountPoliciesListParams,
+  DiscountPolicy,
+  DiscountPolicySetRequest,
   Error,
   GrantScopeRequest,
   InventoryImportsRowsListParams,
@@ -102,6 +105,7 @@ import type {
   PaginatedChannelAccountList,
   PaginatedContactList,
   PaginatedConversationList,
+  PaginatedDiscountPolicyList,
   PaginatedInvitationList,
   PaginatedLevelList,
   PaginatedListMarginList,
@@ -14001,6 +14005,270 @@ export function useQuotesRetrieve<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getDiscountPoliciesListUrl = (
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/quotes/discount-policies/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/quotes/discount-policies/`;
+};
+
+/**
+ * Las políticas de descuento de la organización, paginadas por creación (ADR-016). Un rol sin política tiene 0 %; el rol Owner no tiene límite.
+ */
+export const discountPoliciesList = async (
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedDiscountPolicyList> => {
+  return apiFetch<PaginatedDiscountPolicyList>(getDiscountPoliciesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDiscountPoliciesListQueryKey = (
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/quotes/discount-policies/`, ...(params ? [params] : [])] as const;
+};
+
+export const getDiscountPoliciesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof discountPoliciesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof discountPoliciesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getDiscountPoliciesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof discountPoliciesList>>> = ({ signal }) =>
+    discountPoliciesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof discountPoliciesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type DiscountPoliciesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof discountPoliciesList>>
+>;
+export type DiscountPoliciesListQueryError = ErrorType<Error>;
+
+export function useDiscountPoliciesList<
+  TData = Awaited<ReturnType<typeof discountPoliciesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | DiscountPoliciesListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof discountPoliciesList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof discountPoliciesList>>,
+          TError,
+          Awaited<ReturnType<typeof discountPoliciesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useDiscountPoliciesList<
+  TData = Awaited<ReturnType<typeof discountPoliciesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof discountPoliciesList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof discountPoliciesList>>,
+          TError,
+          Awaited<ReturnType<typeof discountPoliciesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useDiscountPoliciesList<
+  TData = Awaited<ReturnType<typeof discountPoliciesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof discountPoliciesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useDiscountPoliciesList<
+  TData = Awaited<ReturnType<typeof discountPoliciesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: DiscountPoliciesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof discountPoliciesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getDiscountPoliciesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getDiscountPoliciesSetUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/discount-policies/`;
+};
+
+/**
+ * Fija el límite de un rol para una lista (o todas): sin `version` la crea (201), con ella la cambia (200; lo que no se envía se quita; si nada cambia no escribe ni audita). Pide un segundo factor reciente: 403 `STEP_UP_REQUIRED`. 403 sin motivo si el límite pasa del que tiene quien actúa (también al tocar uno mayor que el suyo). 400: un rol o una lista que no es de la organización, o el rol Owner. 409 `DISCOUNT_POLICY_EXISTS` (sin `version`, ya hay una) o `STALE_VERSION`.
+ */
+export const discountPoliciesSet = async (
+  orgSlug: string,
+  discountPolicySetRequest: DiscountPolicySetRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<DiscountPolicy> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<DiscountPolicy>(getDiscountPoliciesSetUrl(orgSlug), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(discountPolicySetRequest),
+  });
+};
+
+export const getDiscountPoliciesSetMutationKey = () => ["discountPoliciesSet"] as const;
+
+export const getDiscountPoliciesSetMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof discountPoliciesSet>>,
+    TError,
+    DiscountPoliciesSetMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof discountPoliciesSet>>,
+  TError,
+  DiscountPoliciesSetMutationVariables,
+  TContext
+> => {
+  const mutationKey = getDiscountPoliciesSetMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof discountPoliciesSet>>,
+    DiscountPoliciesSetMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return discountPoliciesSet(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DiscountPoliciesSetMutationResult = NonNullable<
+  Awaited<ReturnType<typeof discountPoliciesSet>>
+>;
+export type DiscountPoliciesSetMutationBody = DiscountPolicySetRequest;
+export type DiscountPoliciesSetMutationError = ErrorType<Error>;
+export type DiscountPoliciesSetMutationVariables = {
+  orgSlug: string;
+  data: DiscountPolicySetRequest;
+};
+
+export const useDiscountPoliciesSet = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof discountPoliciesSet>>,
+      TError,
+      DiscountPoliciesSetMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof discountPoliciesSet>>,
+  TError,
+  DiscountPoliciesSetMutationVariables,
+  TContext
+> => {
+  return useMutation(getDiscountPoliciesSetMutationOptions(options), queryClient);
+};
 
 export const getRolesListUrl = (orgSlug: string, params?: RolesListParams) => {
   const normalizedParams = new URLSearchParams();

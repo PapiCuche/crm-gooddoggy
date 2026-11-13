@@ -21,6 +21,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID
 
+from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
@@ -89,8 +90,8 @@ class QuoteRefused(Exception):
     """La base rechazó el cambio por una regla que los comandos no previeron."""
 
 
-class NotAllowed(Exception):
-    """Quien actúa no tiene el permiso que pide esta acción."""
+class NotAllowed(PermissionDenied):
+    """Quien actúa no tiene el permiso que pide esta acción (la API: 403 sin motivo)."""
 
 
 NOT_FOUND = "Quote matching query does not exist."
