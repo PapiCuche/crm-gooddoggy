@@ -25,7 +25,7 @@ CLOCK = importlib.import_module(
     "apps.conversations.migrations.0022_message_attachments_claim_clock"
 )
 ANCHOR = CLOCK.CLOCK
-FORWARD = """    -- 0023: fuera de un reclamo, ni el plazo ni la espera vencen antes.
+FORWARD = """    -- 0026: fuera de un reclamo, ni el plazo ni la espera vencen antes.
     IF NOT claim AND (
         (OLD.lease_until IS NOT NULL
          AND (NEW.lease_until IS NULL OR NEW.lease_until < OLD.lease_until))
@@ -40,7 +40,7 @@ FORWARD = """    -- 0023: fuera de un reclamo, ni el plazo ni la espera vencen a
     END IF;
 """
 if CLOCK.NEW.count(ANCHOR) != 1:
-    raise RuntimeError("0023: el cuerpo de 0022 no es el esperado")
+    raise RuntimeError("0026: el cuerpo de 0022 no es el esperado")
 NEW = CLOCK.NEW.replace(ANCHOR, ANCHOR + FORWARD)
 SWEEP_INDEX = (
     "CREATE INDEX message_attachments_sweep_idx ON public.message_attachments "
@@ -50,7 +50,7 @@ SWEEP_INDEX = (
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0022_message_attachments_claim_clock"),
+        ("conversations", "0025_validate_media_message_types"),
     ]
 
     operations = [

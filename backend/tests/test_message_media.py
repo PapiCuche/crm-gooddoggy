@@ -1,5 +1,5 @@
-"""F7-09a1b a F7-09a1d: el adjunto de un medio, su máquina de estados (`media`, `0020` a `0023`,
-`files.0002`), su descarga (`media.fetch`, `tasks.fetch_media`) y el barredor de los varados
+"""F7-09a1b a F7-09a1d: el adjunto de un medio, su máquina de estados (`media`, `0020` a `0022`,
+`0026`, `files.0002`), su descarga (`media.fetch`, `tasks.fetch_media`) y el barredor de los varados
 (`tasks.sweep_media`), con PostgreSQL real como `crm_app`, hilos a la vez, la Graph API del
 simulador por `core.http` y un almacén en memoria."""
 
@@ -115,7 +115,7 @@ TRIGGER = "ALTER TABLE message_attachments {} TRIGGER message_attachments_advanc
 
 
 def clock(migrator: DB, sql: str, params: Any) -> None:
-    """El reloj a mano (`0023` lo prohíbe a todos): solo el dueño de la tabla, con el disparador
+    """El reloj a mano (`0026` lo prohíbe a todos): solo el dueño de la tabla, con el disparador
     apagado dentro de una transacción; si algo falla, el ROLLBACK lo deja encendido."""
     with migrator.transaction():
         migrator.execute(TRIGGER.format("DISABLE"))
@@ -504,12 +504,12 @@ def test_the_migrations_go_back_and_forward(world: Any, migrator: DB) -> None:
     sweep = "SELECT count(*) FROM pg_class WHERE relname = 'message_attachments_sweep_idx'"
     assert migrator.execute(sweep).fetchone() == (1,)
     with as_migrator():
-        call_command("migrate", "conversations", "0022", verbosity=0)
+        call_command("migrate", "conversations", "0025", verbosity=0)
     assert (
         migrator.execute(ahead).fetchone() == migrator.execute(sweep).fetchone() == (0,)
-    )  # `0023` vuelve al cuerpo exacto de `0022`
+    )  # `0026` vuelve al cuerpo exacto de `0022`
     forward = importlib.import_module(
-        "apps.conversations.migrations.0023_message_attachments_clock_forward"
+        "apps.conversations.migrations.0026_message_attachments_clock_forward"
     )
     live = "SELECT prosrc FROM pg_proc WHERE proname = 'message_attachments_advance'"
     assert migrator.execute(live).fetchone() == (forward.CLOCK.NEW,)
@@ -934,7 +934,7 @@ def test_a_claim_sees_what_fell_due_while_its_transaction_waited(world: Any, mig
     assert state(migrator, pk) == ("DOWNLOADING", None, 2)
 
 
-# ---- F7-09a1d: el reloj no se adelanta (`0023`), la IP no pública, el barredor, los topes ----
+# ---- F7-09a1d: el reloj no se adelanta (`0026`), la IP no pública, el barredor, los topes ----
 
 
 def test_outside_a_claim_the_database_never_moves_the_clock_forward(
