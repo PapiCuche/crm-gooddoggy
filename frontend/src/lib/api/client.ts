@@ -184,6 +184,7 @@ import type {
   SandboxInboundRequest,
   SandboxInboundResult,
   SelfContext,
+  SendMediaFormRequest,
   SendMessageRequest,
   Session,
   StageOrderRequest,
@@ -5673,6 +5674,102 @@ export function useConversationAttachmentUrl<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getConversationMediaSendUrl = (orgSlug: string, conversationId: string) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/media/`;
+};
+
+/**
+ * Pone en cola una imagen (JPEG o PNG) o un documento (PDF) para el cliente (`IMAGE` o `DOCUMENT`, `QUEUED`), con la política del texto, idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide `messages.send` y `conversations.view`; 404: no existe o queda fuera del alcance. 409: `MEDIA_NOT_SCANNED` (sin antivirus), la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.
+ */
+export const conversationMediaSend = async (
+  orgSlug: string,
+  conversationId: string,
+  sendMediaFormRequest: SendMediaFormRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Message> => {
+  const formData = new FormData();
+  formData.append(`client_message_id`, sendMediaFormRequest.client_message_id);
+  if (sendMediaFormRequest.caption !== undefined) {
+    formData.append(`caption`, sendMediaFormRequest.caption);
+  }
+  formData.append(`file`, sendMediaFormRequest.file);
+
+  return apiFetch<Message>(getConversationMediaSendUrl(orgSlug, conversationId), {
+    ...options,
+    method: "POST",
+    body: formData,
+  });
+};
+
+export const getConversationMediaSendMutationKey = () => ["conversationMediaSend"] as const;
+
+export const getConversationMediaSendMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationMediaSend>>,
+    TError,
+    ConversationMediaSendMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationMediaSend>>,
+  TError,
+  ConversationMediaSendMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationMediaSendMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationMediaSend>>,
+    ConversationMediaSendMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, data } = props ?? {};
+
+    return conversationMediaSend(orgSlug, conversationId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationMediaSendMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationMediaSend>>
+>;
+export type ConversationMediaSendMutationBody = SendMediaFormRequest;
+export type ConversationMediaSendMutationError = ErrorType<Error>;
+export type ConversationMediaSendMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  data: SendMediaFormRequest;
+};
+
+export const useConversationMediaSend = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationMediaSend>>,
+      TError,
+      ConversationMediaSendMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationMediaSend>>,
+  TError,
+  ConversationMediaSendMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationMediaSendMutationOptions(options), queryClient);
+};
 
 export const getConversationMessagesListUrl = (
   orgSlug: string,

@@ -133,6 +133,26 @@ REASONS = {
 }
 
 
+def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
+    """`commands.record_outbound` en nombre de quien llama (una respuesta al cliente), con sus
+    errores como los del contrato: 409 con el motivo de la política o `CLIENT_MESSAGE_ID_TAKEN`."""
+    tenant = context.current()
+    assert tenant is not None  # noqa: S101 — la ruta es de un tenant
+    try:
+        with rbac_errors():  # el comando vuelve a comprobar `messages.send` y su alcance
+            message, created = commands.record_outbound(
+                tenant, conversation_id=found.pk, purpose=policy.CUSTOMER_REPLY, **wanted
+            )  # la pantalla solo responde al cliente
+    except tuple(policy.DENIALS.values()) as blocked:  # la política dijo que no
+        code = policy.CODES[type(blocked)]
+        raise ApiError(code, 409, REASONS[code]) from None
+    except commands.ClientMessageConflict:
+        raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"]) from None
+    if not created and message.sender_user_id != tenant.user_id:  # el id es de otra persona
+        raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"])
+    return message, created
+
+
 @extend_schema_view(
     get=extend_schema(
         operation_id="conversation_messages_list",
@@ -197,28 +217,16 @@ class MessagesView(generics.ListAPIView):
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = inputs.SendMessageSerializer(data=request.data)  # el cuerpo, antes del 404
         wanted.is_valid(raise_exception=True)
-        ectx, tenant = request_context(request), context.current()
-        assert ectx is not None and tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+        ectx = request_context(request)
+        assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
         mine = scoped(ectx, "conversations.view", Conversation.objects.all())
         found = mine.filter(pk=self.kwargs["conversation_id"]).first()
         if found is None:  # desconocida, de otra organización o fuera del alcance: la misma
             raise NotFound
-        try:
-            with rbac_errors():  # el comando vuelve a comprobar `messages.send` y su alcance
-                message, created = commands.record_outbound(
-                    tenant, conversation_id=found.pk, body=wanted.validated_data["body"],
-                    client_message_id=wanted.validated_data["client_message_id"],
-                    purpose=policy.CUSTOMER_REPLY,  # la pantalla solo responde al cliente
-                )  # fmt: skip
-        except tuple(policy.DENIALS.values()) as blocked:  # la política dijo que no
-            code = policy.CODES[type(blocked)]
-            raise ApiError(code, 409, REASONS[code]) from None
-        except commands.ClientMessageConflict:
-            raise ApiError(
-                "CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"]
-            ) from None
-        if not created and message.sender_user_id != tenant.user_id:  # el id es de otra persona
-            raise ApiError("CLIENT_MESSAGE_ID_TAKEN", 409, REASONS["CLIENT_MESSAGE_ID_TAKEN"])
+        message, created = queue(
+            found, body=wanted.validated_data["body"],
+            client_message_id=wanted.validated_data["client_message_id"],
+        )  # fmt: skip
         shown = MessageSerializer(message, context={"show_body": shows_body(ectx, found)})
         return Response(shown.data, status=202 if created else 200)
 

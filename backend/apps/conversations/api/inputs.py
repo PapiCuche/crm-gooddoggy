@@ -7,7 +7,7 @@ from typing import Any
 
 from rest_framework import serializers
 
-from apps.conversations import commands
+from apps.conversations import commands, outbound_media
 from apps.conversations.accounts import NUMBER_REFUSED
 from apps.conversations.models import BODY_MAX, META_ID, TOKEN_FORMAT
 from core.api.strict import Choice, Closed, Id, Text, Whole
@@ -51,6 +51,31 @@ class SendMessageSerializer(Closed, serializers.Serializer[Any]):
         trim_whitespace=False,
         max_length=BODY_MAX,
         help_text=f"Hasta {BODY_MAX} caracteres, con algo visible.",
+    )
+
+
+def _caption(value: Any) -> str:
+    text = commands._body(value)
+    if outbound_media.units(text) > outbound_media.CAPTION_MAX:  # como cuenta WhatsApp
+        raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} unidades UTF-16")
+    return text
+
+
+class SendMediaSerializer(Closed, serializers.Serializer[Any]):
+    """Los campos del formulario de un medio (el archivo lo lee `outbound_media.Capped`)."""
+
+    client_message_id = Id(help_text="La clave de idempotencia: el mismo id es el mismo mensaje.")
+    caption = Checked(
+        _caption, required=False, trim_whitespace=False,
+        help_text=f"El pie de foto, hasta {outbound_media.CAPTION_MAX} unidades UTF-16 (un emoji "
+        "puede contar 2); sin él, el chat dice «Imagen» o «Documento».",
+    )  # fmt: skip
+
+
+class SendMediaFormSerializer(SendMediaSerializer):  # solo para el contrato
+    file = serializers.FileField(
+        help_text="Una imagen JPEG o PNG (hasta 5 MiB) o un documento PDF (hasta 10 MiB). El tipo "
+        "sale del contenido, nunca del nombre ni del tipo declarado."
     )
 
 
