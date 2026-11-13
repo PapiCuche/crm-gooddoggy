@@ -4,14 +4,17 @@
 de una ruta de tenant es idéntico venga de donde venga (ADR-001 §5.6).
 """
 
+import logging
 from typing import Any
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.http import Http404, JsonResponse
 from rest_framework import exceptions
 from rest_framework.response import Response
 
 from core.api import AUTH_SCHEME
+from core.tenancy.context import current as current_tenant
 
 NOT_FOUND = "NOT_FOUND"
 NOT_AUTHENTICATED = "NOT_AUTHENTICATED"
@@ -41,6 +44,7 @@ _BY_EXCEPTION: tuple[tuple[type[exceptions.APIException], str], ...] = (
     (exceptions.UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE"),
     (exceptions.Throttled, "RATE_LIMITED"),
 )
+logger = logging.getLogger(__name__)
 _JSON = {"ensure_ascii": False, "separators": (",", ":")}  # como el JSONRenderer de DRF
 
 
@@ -98,8 +102,16 @@ def _fields(detail: Any) -> dict[str, Any]:
 def exception_handler(exc: Exception, context: dict[str, Any]) -> Response | None:
     """`EXCEPTION_HANDLER` de DRF. Lo que no conoce devuelve None: Django responde 500 y el
     middleware de la API lo convierte en `INTERNAL_ERROR`, sin detalle. En una ruta de tenant,
-    quien deshace la transacción ante un error es `TenantResolutionMiddleware`."""
-    if isinstance(exc, Http404):
+    quien deshace la transacción ante un error es `TenantResolutionMiddleware`. En una ruta de
+    tenant, una fila que no existe (`DoesNotExist` de un comando: inexistente, ajena o fuera del
+    alcance) es el mismo 404; fuera de ellas sigue siendo un fallo (500)."""
+    if isinstance(exc, ObjectDoesNotExist) and current_tenant() is not None:
+        # Una línea en el servidor (clase y vista; sin ids, texto ni traza): un `.get()` que se
+        # escapa por un fallo se ve, y enumerar ids no inunda los registros.
+        view = type(context.get("view")).__name__
+        logger.info("404 por %s en %s", type(exc).__name__, view)
+        exc = exceptions.NotFound()
+    elif isinstance(exc, Http404):
         exc = exceptions.NotFound()
     elif isinstance(exc, DjangoPermissionDenied):
         exc = exceptions.PermissionDenied()

@@ -308,7 +308,8 @@ def test_a_policy_change_applies_at_once_to_the_database_rule_and_is_not_retroac
 def test_a_role_with_a_policy_is_not_deleted_until_its_policy_is_removed_with_its_command(
     shop: SimpleNamespace, staff: SimpleNamespace, migrator: DB
 ) -> None:
-    owner = member(shop, owner=True, **{"roles.manage": None})
+    member(shop, owner=True)  # la organización tiene su Owner, pero no es quien borra
+    owner = member(shop, **{"roles.manage": None})  # ni Owner ni `discount_policies.manage`
     row = put(shop, staff.boss, staff.target, "5")
     before = audits(migrator)
     with pytest.raises(RoleHasDependents):  # roles.manage no borra, en silencio, un límite
@@ -331,6 +332,38 @@ def test_who_cannot_reach_the_percent_learns_nothing_about_roles_or_lists(
             put(shop, low, target, "11", **extra)
     with pytest.raises(Invalid):  # dentro de lo que tiene, sí se le dice
         put(shop, low, uuid4(), "10")
+    here = price_list(shop.a, "AQUI")
+    narrow = member(shop, "20", list_id=here, **MANAGE)  # el porcentaje se mide para esa lista
+    asks = [(owner_role, uuid4()), (uuid4(), uuid4()), (staff.target, uuid4()),
+            (staff.target, price_list(shop.a, "OTRA")), (owner_role, None)]  # fmt: skip
+    for target, listed in asks:
+        with pytest.raises(AccessDenied):
+            put(shop, narrow, target, "5", price_list_id=listed)
+    capped = member(shop, "50", cap="10", **MANAGE)  # y el tope, antes de las referencias:
+    usd = {"max_discount_amount": "5", "currency": "USD"}  # su tope es en PEN
+    asked: list[dict[str, str]] = [{"max_discount_amount": "11", "currency": "PEN"}, {}, usd]
+    for cap in asked:  # `{}`: sin tope pedido es ilimitado
+        for target in (uuid4(), owner_role, staff.target):  # el mismo 403 exista o no el rol
+            with pytest.raises(AccessDenied) as denied:
+                put(shop, capped, target, "5", **cap)
+            assert denied.value.reason is Denied.ESCALATION
+
+
+def test_deleting_a_policy_id_tells_nothing_to_who_does_not_hold_everything(
+    shop: SimpleNamespace, staff: SimpleNamespace
+) -> None:
+    """Quitar una política que no existe (o de otra organización) es, para quien no cubre el
+    máximo, el mismo 403 que quitar una que no cubre; solo quien lo cubre todo oye que no existe."""
+    high, low = put(shop, staff.boss, staff.target, "50"), member(shop, "10", **MANAGE)
+    with tenant_scope(ctx(shop.b)):
+        foreign = DiscountPolicy.objects.create(role_id=role(shop.b), max_discount_percent=D(1))
+    for policy_id in (high.pk, uuid4(), foreign.pk):
+        with pytest.raises(AccessDenied) as denied:
+            act(shop, low, policies.delete_discount_policy, policy_id=policy_id, version=1)
+        assert denied.value.reason is Denied.ESCALATION
+    for policy_id in (uuid4(), foreign.pk):
+        with pytest.raises(DiscountPolicy.DoesNotExist):
+            act(shop, staff.boss, policies.delete_discount_policy, policy_id=policy_id, version=1)
 
 
 def test_deleting_a_policy_needs_the_permission_and_the_version_and_the_limit_falls_at_once(
