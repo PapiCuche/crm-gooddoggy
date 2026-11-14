@@ -13,6 +13,7 @@ from django.test import Client
 from apps.access.catalog import ADMIN_TEMPLATE
 from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.second_factor import required as second_factor_required
+from core.tenancy import checks
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import tenant_scope
 from core.tenancy.second_factor import MESSAGE, SecondFactor, evaluate
@@ -79,6 +80,31 @@ def test_stripping_the_template_admin_or_renaming_it_does_not_free_it(team: Any)
         own.delete()
 
 
+def test_the_owner_requires_it_without_any_grant(
+    team: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """La marca de Owner basta: sin ninguna concesión en su rol, lo sigue exigiendo."""
+    owner = "SELECT id FROM roles WHERE organization_id = %s AND is_owner_role"
+    found = migrator.execute(owner, [team.a]).fetchone()
+    assert found is not None
+    migrator.execute("DELETE FROM role_permissions WHERE role_id = %s", [found[0]])
+    assert required(team.a, team.ana)
+
+
+def test_a_permission_marked_sensitive_only_in_the_database_requires_it(
+    team: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """Lo más estricto del catálogo y de `permissions.is_sensitive`: basta con la tabla."""
+    give(team.a, team.m["bea"], {"users.view": None})
+    assert not required(team.a, team.bea)
+    flag = "UPDATE permissions SET is_sensitive = %s WHERE code = 'users.view'"
+    migrator.execute(flag, [True])
+    try:
+        assert required(team.a, team.bea)
+    finally:
+        migrator.execute(flag, [False])
+
+
 def test_warn_opens_everything_and_me_says_it_is_required_and_missing(team: Any) -> None:
     assert get(team.ana).json()["mfa"] == WARNED
     assert get(team.ana, route="roles/").status_code == 200
@@ -103,6 +129,8 @@ def test_enforce_closes_every_route_of_that_organization_until_a_device_is_confi
     enrolled(team.ada, confirmed=False)  # un alta a medias no cuenta
     assert get(team.ada).status_code == 403
     enrolled(team.ana)
+    answer = get(team.ada, route="roles/")  # el dispositivo de otra cuenta no cuenta
+    assert (answer.status_code, answer.json()) == (403, REFUSED)
     assert get(team.ana).json()["mfa"] == {"required": True, "missing": False}
     assert get(team.ana, route="roles/").status_code == 200
     migrator.execute("UPDATE organizations SET status = 'SUSPENDED' WHERE id = %s", [team.a])
@@ -113,12 +141,31 @@ def answer_true(ctx: TenantContext) -> object:
     return True  # una política que no devuelve un `SecondFactor`
 
 
+def answer_not_bool(ctx: TenantContext) -> object:
+    return SecondFactor(required=1, enrolled=0)  # type: ignore[arg-type]
+
+
+def explode(ctx: TenantContext) -> object:
+    raise RuntimeError("la política no responde")
+
+
 def test_a_policy_or_a_mode_that_does_not_answer_fails_closed(team: Any, settings: Any) -> None:
     settings.MFA_ENFORCEMENT = "enforce"
-    settings.TENANCY_SECOND_FACTOR_POLICY = f"{__name__}.answer_true"
     client = signed(team.vera)
-    with pytest.raises(TypeError):
-        client.get("/api/v1/o/org-a/me/")
+    # También una ruta que no es `me/`: ahí solo `admit` lee la política, y no se traga el error.
+    failures = (
+        ("answer_true", TypeError),
+        ("answer_not_bool", TypeError),
+        ("explode", RuntimeError),
+    )
+    for policy, error in failures:
+        settings.TENANCY_SECOND_FACTOR_POLICY = f"{__name__}.{policy}"
+        for route in ("me/", "roles/"):
+            with pytest.raises(error):
+                client.get(f"/api/v1/o/org-a/{route}")
+    settings.TENANCY_SECOND_FACTOR_POLICY = "apps.nope.policy"
+    with pytest.raises(ImportError):
+        client.get("/api/v1/o/org-a/roles/")
     settings.MFA_ENFORCEMENT = "strict"
     with pytest.raises(ImproperlyConfigured):
         client.get("/api/v1/o/org-a/me/")
@@ -134,3 +181,11 @@ def test_the_answer_says_missing_only_when_required() -> None:
 def test_without_a_session_it_is_still_401(team: Any, settings: Any) -> None:
     settings.MFA_ENFORCEMENT = "enforce"
     assert Client().get("/api/v1/o/org-a/me/").status_code == 401
+
+
+def test_the_system_check_names_a_policy_that_cannot_be_used(settings: Any) -> None:
+    assert checks.second_factor_policy() == []
+    settings.TENANCY_SECOND_FACTOR_POLICY = "apps.nope.policy"
+    assert [error.id for error in checks.second_factor_policy()] == [checks.UNUSABLE]
+    settings.TENANCY_SECOND_FACTOR_POLICY, settings.MFA_ENFORCEMENT = f"{__name__}.MESSAGE", "x"
+    assert [error.id for error in checks.second_factor_policy()] == [checks.UNUSABLE] * 2

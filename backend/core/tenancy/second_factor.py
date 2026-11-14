@@ -51,7 +51,9 @@ def evaluate(ctx: TenantContext) -> SecondFactor:
     """Lo que dice la política de la membresía de `ctx`, dentro de su `tenant_scope` activo."""
     require_scope(ctx)
     found = import_string(settings.TENANCY_SECOND_FACTOR_POLICY)(ctx)
-    if type(found) is not SecondFactor:  # una política que no responde no deja pasar
+    if type(found) is not SecondFactor or not all(  # una política que no responde no deja pasar
+        type(value) is bool for value in (found.required, found.enrolled)
+    ):
         raise TypeError("TENANCY_SECOND_FACTOR_POLICY no devolvió un SecondFactor")
     return found
 

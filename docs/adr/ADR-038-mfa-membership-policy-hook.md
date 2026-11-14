@@ -54,7 +54,7 @@ Al final de `resolve_tenant`, **después** del 404 (organización inexistente o 
 
 ### 7. Falla cerrado
 
-Una política que lanza, que no se puede importar o que no devuelve un `SecondFactor` deja la petición en error (500) con `enforce`: no abre nada. `admit` y `evaluate` exigen el `tenant_scope` de su contexto.
+Una política que lanza, que no se puede importar o que no devuelve un `SecondFactor` con dos booleanos deja la petición en error (500) con `enforce`, y en el WebSocket el cierre de error del servidor (1011, o 1013 en la comprobación del Inbox): no abre nada. La comprobación de sistema `tenancy.E001` (`manage.py check`) avisa antes si `TENANCY_SECOND_FACTOR_POLICY` no se puede importar o `MFA_ENFORCEMENT` no vale. `admit` y `evaluate` exigen el `tenant_scope` de su contexto.
 
 ### 8. Lo que no se activa
 
@@ -73,7 +73,8 @@ Una política que lanza, que no se puede importar o que no devuelve un `SecondFa
 
 ## Consequences
 
-- Con `enforce`, cada petición de tenant suma una transacción corta y dos consultas; con `warn`, ninguna. `me/` suma dos consultas en los dos modos.
+- Con `enforce`, cada petición de tenant suma una transacción corta: `BEGIN`, el `set_config` del `tenant_scope`, dos `SELECT` y `COMMIT`; con `warn`, nada. `me/` suma dos consultas en los dos modos.
+- Un rechazo cierra la entrada, no lo ya emitido: las tareas de Celery y los correos ya encolados y las URLs firmadas ya entregadas no se revocan.
 - Lo leído en `admit` vale para esa petición, como la membresía: un rol concedido entre esa lectura y la vista se aplica en la siguiente petición. En el WebSocket del Inbox, en la siguiente comprobación (`INBOX_WS_RECHECK_SECONDS`).
 - La frase «nada decide por el código o el nombre de un rol» (`apps.access.catalog`, `backend/README.md`) gana su única excepción, la de ADR-023 §9, que solo añade una exigencia.
 - La pantalla que avisa (`warn`) o lleva al alta (`enforce`) es el work item siguiente.
