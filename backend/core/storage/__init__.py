@@ -45,6 +45,7 @@ class ObjectStorageService(Protocol):
     def open(self, key: str) -> IO[bytes]: ...
     def head(self, key: str) -> ObjectInfo | None: ...
     def delete(self, key: str) -> None: ...
+    def ping(self) -> None: ...  # readiness: barato y sin efectos; lanza si no responde
     def presign_get(
         self, key: str, *, expires_in: int, filename: str, content_type: str,
         disposition: str = "attachment",
@@ -105,3 +106,14 @@ def storage() -> ObjectStorageService:
     if settings.STORAGE_BACKEND not in backends:
         raise ImproperlyConfigured(f"STORAGE_BACKEND desconocido: {settings.STORAGE_BACKEND!r}")
     return import_string(backends[settings.STORAGE_BACKEND])()  # type: ignore[no-any-return]
+
+
+def ping(timeout: float) -> None:
+    """Readiness (F1-14): un `HEAD` del bucket con `timeout` segundos y un solo intento; nunca
+    escribe. Lanza si el almacenamiento no responde o falta su configuración."""
+    if settings.STORAGE_BACKEND == "s3":
+        from core.storage.s3 import from_settings
+
+        from_settings(timeout=timeout).ping()
+    else:
+        storage().ping()

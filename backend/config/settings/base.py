@@ -122,6 +122,9 @@ ENFORCE_RUNTIME_DB_ROLE = False
 # Tenancy (F1-04): inyección para que core no importe módulos superiores.
 TENANCY_ORGANIZATION_SELECTOR = "apps.organizations.selectors.organization_by_slug"
 TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  # F2-02
+# F1-14: la entrada del simulador Sandbox (inyecta mensajes de clientes). Apagada por omisión;
+# `local` y `test` la encienden y `production` no arranca con ella.
+SANDBOX_INBOUND_ENABLED = env.boolean("SANDBOX_INBOUND_ENABLED", False)
 # Celery (F1-10): broker Redis por entorno (compose: redis://redis:6379/0).
 CELERY_BROKER_URL = env.optional("CELERY_BROKER_URL", "")
 # Capa de canales (F6-07a): Redis; sin URL, el WebSocket del Inbox no abre (1013). Test: memoria.
@@ -212,6 +215,12 @@ CELERY_BEAT_SCHEDULE = {
         # Si los workers se paran no se acumulan ~5760 tareas al día para despacharse de golpe.
         "options": {"expires": 15},
     },
+    # F7-11a: métricas y alertas de la ingesta de Meta, por ventanas de 5 minutos ya cerradas.
+    "conversations.meta_alerts": {
+        "task": "conversations.meta_alerts",
+        "schedule": 60.0,
+        "options": {"expires": 60},
+    },
     # F7-03c: purga a 90 días, el tope de la ingesta (ADR-029 §3).
     "conversations.purge_webhook_ingress": {
         "task": "conversations.purge_webhook_ingress",
@@ -288,6 +297,7 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,  # tipos separados de petición/respuesta para orval
     "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
     "SERVE_PERMISSIONS": ["core.api.permissions.Public"],  # ruta de plataforma (ADR-014 §4)
+    "PREPROCESSING_HOOKS": ["apps.conversations.api.urls.hide_sandbox"],  # F1-14
     # Un nombre por enumeración: sin esto la primera `status` del contrato sería `StatusEnum`.
     "ENUM_NAME_OVERRIDES": {
         "MembershipStatusEnum": MEMBERSHIP_STATUSES,
@@ -389,6 +399,24 @@ if TEST_ACCOUNTS_ORGANIZATION and not re.fullmatch(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", TEST_ACCOUNTS_ORGANIZATION
 ):
     raise ImproperlyConfigured("DJANGO_TEST_ACCOUNTS_ORGANIZATION no es un slug válido")
+# F7-11a (ADR-011): umbrales por ventana de 5 minutos de las alertas `meta.alert.<tipo>` de la
+# ingesta de Meta; cada uno se sube con `META_ALERT_<TIPO>` (p. ej. `META_ALERT_OUTBOUND_FAILED=5`).
+# Por omisión: una ráfaga de 20 firmas inválidas, 5 intentos fallidos de la ingesta, cualquier
+# `DEAD`, la cola parada 10 minutos, cualquier envío fallido (sin los rechazos de la política) y
+# cualquier token marcado inválido. Pendientes de confirmación del propietario.
+META_ALERTS = {
+    name: env.integer(f"META_ALERT_{name.upper()}", default)
+    for name, default in (
+        ("signature_invalid", 20), ("ingress_failed", 5), ("ingress_dead", 1),
+        ("ingress_lag_seconds", 600), ("outbound_failed", 1), ("token_invalid_count", 1),
+    )
+}  # fmt: skip
+# Códigos de un envío `FAILED` que son decisiones de la política o del cliente, no una avería del
+# canal: se cuentan en las métricas, pero no disparan `meta.alert.outbound_failed`.
+META_ALERT_QUIET_CODES = (
+    "CONVERSATION_CLOSED", "CONTACT_BLOCKED", "WINDOW_CLOSED", "CONSENT_REVOKED",
+    "MEDIA_NOT_SCANNED", "RECIPIENT_UNREACHABLE",
+)  # fmt: skip
 # Reporte de errores (ADR-011 §3): sin SENTRY_DSN, NoopReporter (sin red).
 SENTRY_DSN = env.optional("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = env.optional("SENTRY_ENVIRONMENT", "")

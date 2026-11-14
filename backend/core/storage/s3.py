@@ -44,6 +44,9 @@ class S3CompatibleStorage:
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=base.check_key(key))
 
+    def ping(self) -> None:
+        self.client.head_bucket(Bucket=self.bucket)
+
     def presign_get(
         self, key: str, *, expires_in: int, filename: str, content_type: str,
         disposition: str = "attachment",
@@ -76,7 +79,8 @@ class S3CompatibleStorage:
         return base.PresignedUpload(url, headers, content_length)
 
 
-def from_settings() -> S3CompatibleStorage:
+def from_settings(*, timeout: float | None = None) -> S3CompatibleStorage:
+    """`timeout`: la sonda de readiness (F1-14), con ese límite y un solo intento."""
     required = ("STORAGE_BUCKET", "STORAGE_ACCESS_KEY_ID", "STORAGE_SECRET_ACCESS_KEY")
     if missing := [name for name in required if not getattr(settings, name)]:
         raise ImproperlyConfigured("Falta configuración de storage: " + ", ".join(missing))
@@ -85,9 +89,10 @@ def from_settings() -> S3CompatibleStorage:
         s3={"addressing_style": settings.STORAGE_ADDRESSING_STYLE},
         request_checksum_calculation="when_required",
         response_checksum_validation="when_required",
-        connect_timeout=5,
-        read_timeout=30,
-        retries={"max_attempts": 3, "mode": "standard"},
+        connect_timeout=timeout or 5,
+        read_timeout=timeout or 30,
+        # Con el primer intento: 4 (= `max_attempts` 3, que solo cuenta reintentos); la sonda, 1.
+        retries={"total_max_attempts": 1 if timeout else 4, "mode": "standard"},
     )
 
     def client(endpoint: str) -> Any:

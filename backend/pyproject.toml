@@ -34,6 +34,7 @@ dev = [
     "pip-audit==2.10.1",
     "pytest==9.1.1",
     "pytest-django==4.14.0",
+    "pytest-timeout==2.4.0",
     "ruff==0.16.9",
 ]
 
@@ -93,6 +94,11 @@ addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 # ADR-012 §3: deprecaciones como error desde el inicio (facilita el salto a Django 6.2 LTS).
 filterwarnings = ["error::DeprecationWarning", "error::PendingDeprecationWarning"]
+# F3-38 (#365): un test que espera un bloqueo sin `lock_timeout` falla a los 300 s (pytest-timeout)
+# en vez de colgar la suite hasta matarla a mano; el job de CI tiene además su `timeout-minutes`.
+timeout = 300
+# Sin el plugin, `timeout` sería solo un aviso y la suite correría sin límite: falla al arrancar.
+required_plugins = ["pytest-timeout"]
 
 [tool.importlinter]
 root_packages = ["config", "core", "apps"]
