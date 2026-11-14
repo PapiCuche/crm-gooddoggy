@@ -366,13 +366,16 @@ def test_an_answer_is_born_empty_and_written_only_when_answering(world: SimpleNa
     made = quote(world)
     go(world, made, "SENT")
     change = "UPDATE quotes SET {} WHERE id = %s"
+    # La respuesta lleva `sent_at` (lo escribió el reloj de Python) y no `now()` de la base: con los
+    # relojes desfasados unos milisegundos, `now()` quedaría antes del envío (`quotes_accepted_ck`).
     for assignment, name in (
         ("accepted_at = now()", "quotes_answer_frozen"),
         ("rejection_reason = 'x'", "quotes_answer_frozen"),
         ("status = 'ACCEPTED'", "quotes_accepted_ck"),  # sin fecha
-        ("status = 'ACCEPTED', accepted_at = now(), rejected_at = now()", "quotes_rejected_ck"),
-        ("status = 'REJECTED', rejected_at = now(), rejection_reason = ' '", "quotes_rejected_ck"),
-        ("status = 'REJECTED', rejected_at = now()", "quotes_rejected_ck"),  # sin motivo
+        ("status = 'ACCEPTED', accepted_at = sent_at, rejected_at = sent_at", "quotes_rejected_ck"),
+        ("status = 'REJECTED', rejected_at = sent_at, rejection_reason = ' '",
+         "quotes_rejected_ck"),
+        ("status = 'REJECTED', rejected_at = sent_at", "quotes_rejected_ck"),  # sin motivo
         ("status = 'ACCEPTED', accepted_at = valid_until", "quotes_accepted_ck"),
         ("status = 'EXPIRED'", "quotes_not_expired"),  # aún vigente
     ):  # fmt: skip
@@ -381,9 +384,9 @@ def test_an_answer_is_born_empty_and_written_only_when_answering(world: SimpleNa
         assert constraint(raised) == name
     with pytest.raises(IntegrityError) as raised:  # el sistema (o la IA) no responde
         with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
-            cursor.execute(change.format("status = 'ACCEPTED', accepted_at = now()"), [made.pk])
+            cursor.execute(change.format("status = 'ACCEPTED', accepted_at = sent_at"), [made.pk])
     assert constraint(raised) == "quotes_answer_by_person"
-    sql(world.a, change.format("status = 'ACCEPTED', accepted_at = now()"), made.pk,
+    sql(world.a, change.format("status = 'ACCEPTED', accepted_at = sent_at"), made.pk,
         user=world.ana)  # fmt: skip
     for assignment in ("accepted_at = now() - interval '1 second'", "accepted_at = NULL",
                        "rejection_reason = 'x'"):  # fmt: skip
@@ -429,7 +432,7 @@ def test_the_migration_only_adds_rules_and_goes_back_only_without_answers(
     assert installed(migrator) == new
     answered = quote(world, number="COT-950001")
     go(world, answered, "SENT")
-    sql(world.a, "UPDATE quotes SET status = 'ACCEPTED', accepted_at = now() WHERE id = %s",
+    sql(world.a, "UPDATE quotes SET status = 'ACCEPTED', accepted_at = sent_at WHERE id = %s",
         answered.pk, user=world.ana)  # fmt: skip
     with as_migrator(), pytest.raises(RuntimeError, match="refusing to go back"):
         call_command("migrate", "quotes", "0005", verbosity=0)

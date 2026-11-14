@@ -18,9 +18,16 @@ TO, SUBJECT, BODY = "ana.lopez@cliente.pe", "Te invitaron a Acme", "Abre el enla
 VALID = Message(to=TO, subject=SUBJECT, body=BODY, purpose="invitation")
 
 
+# Dónde y cuándo se emitió (la ruta del checkout, el proceso): no es del evento y no lleva datos.
+PLACE = {"pathname", "filename", "module", "funcName", "lineno", "created", "msecs",
+         "relativeCreated", "thread", "threadName", "process", "processName",
+         "taskName"}  # fmt: skip
+
+
 def logged(caplog: pytest.LogCaptureFixture) -> str:
-    """Todo lo que quedó en el log: el mensaje y sus campos."""
-    return " ".join(f"{record.getMessage()} {record.__dict__}" for record in caplog.records)
+    """Todo lo que quedó en el log: el mensaje y sus campos, sin los del lugar de emisión."""
+    fields = [{k: v for k, v in r.__dict__.items() if k not in PLACE} for r in caplog.records]
+    return " ".join(f"{r.getMessage()} {f}" for r, f in zip(caplog.records, fields, strict=True))
 
 
 def line(caplog: pytest.LogCaptureFixture) -> dict[str, Any]:
