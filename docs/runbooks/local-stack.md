@@ -18,6 +18,7 @@ En `infra/env/.env`:
 
 - **Contraseñas:** `POSTGRES_PASSWORD`, `CRM_MIGRATOR_PASSWORD` y `CRM_APP_PASSWORD`. Usa valores propios, nunca credenciales reales.
 - **Garage:** genera `GARAGE_RPC_SECRET` (`openssl rand -hex 32`), `STORAGE_ACCESS_KEY_ID` (`GK` + `openssl rand -hex 16`) y `STORAGE_SECRET_ACCESS_KEY` (`openssl rand -hex 32`). Garage no arranca con valores de ejemplo.
+- **Abre la app en `localhost`, nunca en `127.0.0.1`:** el almacén (Garage) se publica para el navegador en `127.0.0.1` (`STORAGE_PUBLIC_ENDPOINT_URL`); si la app también estuviera en `127.0.0.1`, el almacén recibiría su cookie de sesión (las cookies no distinguen puertos).
 - **Puertos ocupados:** si 5432, 6379, 3900, 8080, 8025 o 1025 ya están en uso en tu máquina, define `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `GARAGE_HOST_PORT`, `PROXY_HOST_PORT`, `MAILPIT_UI_HOST_PORT` o `MAILPIT_SMTP_HOST_PORT`. Todos se publican solo en 127.0.0.1.
 
 ## 2. Arranque

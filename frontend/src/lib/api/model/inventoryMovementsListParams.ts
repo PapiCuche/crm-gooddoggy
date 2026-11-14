@@ -18,6 +18,10 @@ export type InventoryMovementsListParams = {
    */
   limit?: number;
   /**
+   * Solo las dos patas de esa transferencia (F3-31).
+   */
+  transfer_group_id?: string;
+  /**
    * Solo los de esa variante.
    */
   variant_id?: string;

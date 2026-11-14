@@ -2683,6 +2683,103 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/media/:
+    post:
+      operationId: conversation_media_send
+      description: 'Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente,
+        con la política del texto; idempotente por `client_message_id` (202; 200 con
+        el mismo archivo). Pide `messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`,
+        la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`;
+        415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SendMediaFormRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '411':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '413':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '415':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/{conversation_id}/messages/:
     get:
       operationId: conversation_messages_list
@@ -3400,6 +3497,12 @@ paths:
           type: string
         required: true
       - in: query
+        name: transfer_group_id
+        schema:
+          type: string
+          format: uuid
+        description: Solo las dos patas de esa transferencia (F3-31).
+      - in: query
         name: variant_id
         schema:
           type: string
@@ -3704,6 +3807,75 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Reservation'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/inventory/transfers/:
+    post:
+      operationId: inventory_transfers_create
+      description: 'Saca unidades disponibles (`on_hand - reserved`) de un almacén
+        y las mete en otro, en una sola operación con dos movimientos del mismo `transfer_group_id`.
+        200: la misma petición, de la misma persona y con esa `idempotency_key`, ya
+        registrada; se devuelve sin repetirla. 400 por campo (variante o almacén que
+        no existen, un servicio, el mismo almacén). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`
+        (el texto dice cuál), `STOCK_LIMIT` o `IDEMPOTENCY_KEY_REUSED` (otra petición,
+        o de otra persona).'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - inventory
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
           description: ''
         '400':
           content:
@@ -7227,6 +7399,153 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/approve/:
+    post:
+      operationId: quotes_approve
+      description: 'Aprueba la solicitud abierta: `APPROVED`. Nunca quien la pidió
+        o la envió (también en una organización de una persona), dentro de su propio
+        límite, y cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`,
+        siempre igual). Con `quotes.view`, `quotes.approve`; fuera del alcance o inexistente:
+        404. 409: `STALE_VERSION`, `NOT_PENDING`, `SELF_APPROVAL_FORBIDDEN`, `BEYOND_LIMIT`.
+        429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
+        persona, se cuenta antes de buscarla.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteApproveRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/cancel/:
+    post:
+      operationId: quotes_cancel
+      description: 'Cancela una cotización que no terminó, con motivo opcional. Si
+        espera aprobación, cierra su solicitud, y solo lo hace quien la pidió o quien
+        puede aprobar (si no, 403 después del alcance). Con `quotes.view`, `quotes.cancel`;
+        fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_TERMINAL`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteCancelRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/items/{line_id}/price/:
     post:
       operationId: quotes_price
@@ -7313,6 +7632,72 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/reject/:
+    post:
+      operationId: quotes_reject
+      description: 'Quien aprueba dice que no a la solicitud abierta, con motivo:
+        vuelve a `DRAFT`. No es `…/decline/`, que registra que el cliente rechazó
+        una cotización emitida. Con `quotes.view`, `quotes.approve`; fuera del alcance
+        o inexistente: 404. 409: `STALE_VERSION`, `NOT_PENDING`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRejectRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/request-approval/:
     post:
       operationId: quotes_request_approval
@@ -7388,6 +7773,72 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/withdraw-request/:
+    post:
+      operationId: quotes_withdraw_request
+      description: 'Retira la solicitud abierta: vuelve a `DRAFT`. Solo quien la pidió
+        o quien puede aprobar (la de la IA, solo este); si no, 403 después del alcance.
+        Con `quotes.view`, `quotes.update`; fuera del alcance o inexistente: 404.
+        409: `STALE_VERSION`, `NOT_PENDING`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -11498,6 +11949,18 @@ components:
           type: integer
         reason:
           type: string
+        reference_type:
+          $ref: '#/components/schemas/ReferenceTypeEnum'
+        reference_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: La importación o la transferencia que lo originó.
+        transfer_group_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: El mismo en las dos patas de una transferencia.
         created_by_user_id:
           type: string
           format: uuid
@@ -11513,7 +11976,10 @@ components:
       - on_hand_after
       - quantity
       - reason
+      - reference_id
+      - reference_type
       - reserved_after
+      - transfer_group_id
       - variant
       - variant_id
       - warehouse_id
@@ -13888,6 +14354,34 @@ components:
       - tax_mode
       - tax_rate
       - updated_at
+    QuoteApproveRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        comment:
+          type: string
+          description: Opcional, hasta 500 caracteres.
+      required:
+      - version
+    QuoteCancelRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        reason:
+          type: string
+          description: Opcional, hasta 500 caracteres.
+      required:
+      - version
     QuoteContactRef:
       type: object
       properties:
@@ -14169,6 +14663,22 @@ components:
       - price
       - reason
       - version
+    QuoteRejectRequest:
+      type: object
+      description: Solo la versión que se leyó; cualquier otro campo, 400.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        reason:
+          type: string
+          minLength: 1
+          description: Obligatorio, hasta 200 caracteres.
+      required:
+      - reason
+      - version
     QuoteStatusEnum:
       enum:
       - DRAFT
@@ -14202,6 +14712,22 @@ components:
           description: La que se leyó; si no, 409.
       required:
       - version
+    ReferenceTypeEnum:
+      enum:
+      - ORDER
+      - QUOTE
+      - RESERVATION
+      - TRANSFER
+      - IMPORT
+      - MANUAL
+      type: string
+      description: |-
+        * `ORDER` - Order
+        * `QUOTE` - Quote
+        * `RESERVATION` - Reservation
+        * `TRANSFER` - Transfer
+        * `IMPORT` - Import
+        * `MANUAL` - Manual
     Reservation:
       type: object
       properties:
@@ -14479,6 +15005,29 @@ components:
       - permissions
       - roles
       - user
+    SendMediaFormRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        client_message_id:
+          type: string
+          format: uuid
+          description: 'La clave de idempotencia: el mismo id es el mismo mensaje.'
+        caption:
+          type: string
+          minLength: 1
+          description: El pie de foto, hasta 1024 unidades UTF-16 (un emoji puede
+            contar 2); sin él, el chat dice «Imagen» o «Documento».
+        file:
+          type: string
+          format: binary
+          description: Una imagen JPEG o PNG (hasta 5 MiB) o un documento PDF (hasta
+            10 MiB). El tipo sale del contenido, nunca del nombre ni del tipo declarado.
+      required:
+      - client_message_id
+      - file
     SendMessageRequest:
       type: object
       description: |-
@@ -15218,6 +15767,57 @@ components:
             guarda cifrado.
       required:
       - access_token
+    Transfer:
+      type: object
+      properties:
+        transfer_group_id:
+          type: string
+          format: uuid
+        legs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movement'
+          description: '`TRANSFER_OUT` (origen) y `TRANSFER_IN` (destino), en ese
+            orden.'
+      required:
+      - legs
+      - transfer_group_id
+    TransferCreateRequest:
+      type: object
+      description: |-
+        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+        pierde en silencio).
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+        from_warehouse_id:
+          type: string
+          format: uuid
+        to_warehouse_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          maximum: 1000000
+          minimum: 1
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 255
+        idempotency_key:
+          type: string
+          minLength: 1
+          description: 'De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por
+            `import:`.'
+          maxLength: 100
+      required:
+      - from_warehouse_id
+      - idempotency_key
+      - quantity
+      - reason
+      - to_warehouse_id
+      - variant_id
     User:
       type: object
       properties:

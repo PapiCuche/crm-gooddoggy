@@ -102,6 +102,8 @@ MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
+# Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
+MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
 # cotización, y por persona en todas, por ventana (segundos). Pendiente de confirmación del PO.
 QUOTE_FLOOR_THROTTLE = {"quote": (6, 60 * 60), "user": (30, 24 * 60 * 60)}
@@ -330,6 +332,8 @@ SPECTACULAR_SETTINGS = {
 # Object storage S3-compatible (ADR-008): credenciales solo por entorno.
 STORAGE_BACKEND = env.optional("STORAGE_BACKEND", "s3")  # s3 | memory (tests)
 STORAGE_ENDPOINT_URL = env.optional("STORAGE_ENDPOINT_URL", "")  # vacío = AWS S3
+# El origen con el que se firman las URLs que abre el navegador (`presign_*`); vacío = el de arriba.
+STORAGE_PUBLIC_ENDPOINT_URL = env.origin("STORAGE_PUBLIC_ENDPOINT_URL")
 STORAGE_REGION = env.optional("STORAGE_REGION", "us-east-1")
 STORAGE_BUCKET = env.optional("STORAGE_BUCKET", "")
 STORAGE_ACCESS_KEY_ID = env.optional("STORAGE_ACCESS_KEY_ID", "")

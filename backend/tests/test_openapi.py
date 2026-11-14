@@ -62,6 +62,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/notes/",  # F6-05a2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/messaging-policy/",  # F7-05a
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/attachments/{attachment_id}/url/",
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/media/",  # F7-09b2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/assign/",
         "/api/v1/o/{org_slug}/channels/",  # F7-07a
         "/api/v1/o/{org_slug}/channels/{account_id}/",
@@ -73,6 +74,10 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/quotes/{quote_id}/",  # F5-09d2
         "/api/v1/o/{org_slug}/quotes/{quote_id}/items/{line_id}/price/",  # F5-09e2
         "/api/v1/o/{org_slug}/quotes/{quote_id}/request-approval/",
+        "/api/v1/o/{org_slug}/quotes/{quote_id}/approve/",  # F5-09e3
+        "/api/v1/o/{org_slug}/quotes/{quote_id}/reject/",
+        "/api/v1/o/{org_slug}/quotes/{quote_id}/withdraw-request/",
+        "/api/v1/o/{org_slug}/quotes/{quote_id}/cancel/",
         "/api/v1/o/{org_slug}/quotes/discount-policies/",  # F5-09b5
         "/api/v1/o/{org_slug}/tasks/",  # F5-08b
         "/api/v1/o/{org_slug}/tasks/{task_id}/",
@@ -110,6 +115,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/inventory/movements/",
         "/api/v1/o/{org_slug}/inventory/reservations/",
         "/api/v1/o/{org_slug}/inventory/reservations/{reservation_id}/release/",
+        "/api/v1/o/{org_slug}/inventory/transfers/",  # F3-31
         "/api/v1/o/{org_slug}/invitations/",
         "/api/v1/o/{org_slug}/invitations/{invitation_id}/status/",
         "/api/v1/o/{org_slug}/me/",

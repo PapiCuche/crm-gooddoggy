@@ -1,5 +1,5 @@
 """Rutas de tenant de las existencias: `…/inventory/levels/` y `…/inventory/movements/` (F3-11,
-E04-02 y E04-03)."""
+E04-02 y E04-03). El ledger se filtra también por transferencia (F3-31)."""
 
 from typing import Any
 
@@ -16,6 +16,7 @@ from apps.inventory.models import InventoryLevel, InventoryMovement
 from apps.inventory.selectors import levels, movements
 from core.api.errors import ApiError
 from core.api.schema import errors
+from core.api.strict import Id
 
 NOT_ENOUGH = "No hay stock suficiente: no puede quedar en negativo ni por debajo de lo reservado."
 INACTIVE = "El almacén está desactivado."
@@ -33,6 +34,12 @@ class LevelFilterSerializer(CellFilterSerializer):
         required=False,
         help_text="`true`: solo las filas con existencias (`on_hand > 0`); `false`: solo las "
         "que se quedaron en cero.",
+    )
+
+
+class MovementFilterSerializer(CellFilterSerializer):
+    transfer_group_id = Id(
+        required=False, help_text="Solo las dos patas de esa transferencia (F3-31)."
     )
 
 
@@ -101,6 +108,13 @@ class MovementSerializer(serializers.Serializer[Any]):
     on_hand_after = serializers.IntegerField()
     reserved_after = serializers.IntegerField()
     reason = serializers.CharField()
+    reference_type = serializers.ChoiceField(choices=InventoryMovement.Reference.choices)
+    reference_id = serializers.UUIDField(
+        allow_null=True, help_text="La importación o la transferencia que lo originó."
+    )
+    transfer_group_id = serializers.UUIDField(
+        allow_null=True, help_text="El mismo en las dos patas de una transferencia."
+    )
     created_by_user_id = serializers.UUIDField(allow_null=True)
     created_at = serializers.DateTimeField()
 
@@ -135,7 +149,7 @@ class MovementCreateSerializer(serializers.Serializer[Any]):
     get=extend_schema(
         operation_id="inventory_movements_list",
         tags=["inventory"],
-        parameters=[CellFilterSerializer],
+        parameters=[MovementFilterSerializer],
         responses={200: MovementSerializer(many=True), **errors(400, 401, 403, 404)},
         description="El ledger: los movimientos, con el SKU y el nombre de su variante, del más "
         "reciente al más antiguo (ADR-016).",
@@ -161,7 +175,7 @@ class MovementsView(generics.ListAPIView):
     ordering = "-id"  # UUIDv7: el orden en que se registraron
 
     def get_queryset(self) -> QuerySet[InventoryMovement]:
-        return movements().filter(**_filters(self.request, CellFilterSerializer))
+        return movements().filter(**_filters(self.request, MovementFilterSerializer))
 
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = MovementCreateSerializer(data=request.data)

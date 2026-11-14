@@ -3,7 +3,7 @@
 `Retry-After` (al minuto), igual exista o no la cotización. Ventana fija en `login_throttles` (en un
 cambio de ventana caben dos topes). Va antes de `TenantResolutionMiddleware`, que deshace los
 errores: el contador queda, y la negativa marcada (`refusal`) se audita luego en su transacción
-(`quote.price_refused`, `DENIED`, ruta e ids). Aprobar y emitir añadirán su ruta a `FLOOR`."""
+(`quote.price_refused`, `DENIED`, ruta e ids). Aprobar (F5-09e3) cuenta; emitir añadirá su ruta."""
 
 import logging
 import re
@@ -23,7 +23,7 @@ from core.tenancy.scope import tenant_scope
 
 logger = logging.getLogger(__name__)
 ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-FLOOR = (rf"items/{ID}/price", "request-approval")  # las rutas que miden el suelo de costo
+FLOOR = (rf"items/{ID}/price", "request-approval", "approve")  # miden el suelo de costo
 PATH = re.compile(rf"^/api/v1/o/[^/]+/quotes/(?P<quote>{ID})/(?:{'|'.join(FLOOR)})/$", re.I)
 _SPAN = "%(window)s::int * interval '1 second'"
 _COUNT = f"""

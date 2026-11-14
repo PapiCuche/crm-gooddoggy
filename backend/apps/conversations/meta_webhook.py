@@ -139,6 +139,14 @@ def _profiles(contacts: Any) -> dict[Any, str]:
     return found
 
 
+def _user_id_seen(contacts: Any, message: dict[str, Any]) -> bool:
+    """¿El cambio trae algún BSUID (`contacts[].user_id` o `messages[].from_user_id`)? Solo el
+    sí o el no: el id es un dato personal y nunca se copia (F7-14)."""
+    rows = contacts[:MAX_ROWS] if isinstance(contacts, list) else []
+    found = [message.get("from_user_id")] + [c.get("user_id") for c in rows if isinstance(c, dict)]
+    return any(isinstance(user, str) and user for user in found)
+
+
 def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     """Los ítems de un cambio. Un ítem que no vale se descarta solo (`rejected`): un cliente no
     puede envenenar el lote de otros. Lo que invalida el cambio entero lanza `Invalid`."""
@@ -165,7 +173,10 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
                 if not isinstance(row, dict):
                     raise Invalid(name)
                 item = build(waba, number, row)
-                if item.kind == "message" and (profile := names.get(row.get("from"))):
+                sender = row.get("from") if item.kind == "message" else False
+                if sender in (None, ""):  # sin teléfono (F7-14): solo si traía un BSUID
+                    item.payload["user_id_seen"] = _user_id_seen(value.get("contacts"), row)
+                elif isinstance(sender, str) and (profile := names.get(sender)):
                     item.payload["profile_name"] = profile  # el nombre de perfil va por `wa_id`
                 items.append(item)
             except Invalid as error:

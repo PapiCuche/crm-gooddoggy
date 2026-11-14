@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.inventory.api import imports, reservations, stock, views
+from apps.inventory.api import imports, reservations, stock, transfers, views
 
 urlpatterns = [
     path("warehouses/", views.WarehousesView.as_view(), name="warehouses"),
@@ -13,6 +13,7 @@ urlpatterns = [
         reservations.ReservationReleaseView.as_view(),
         name="reservation-release",
     ),
+    path("inventory/transfers/", transfers.TransfersView.as_view(), name="inventory-transfers"),
     path("inventory/imports/", imports.StockImportsView.as_view(), name="stock-imports"),
     path("inventory/imports/template/", imports.TemplateView.as_view(), name="stock-template"),
     path(
