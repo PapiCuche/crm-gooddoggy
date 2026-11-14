@@ -89,7 +89,8 @@ BEGIN
   ON CONFLICT (provider, event_key) DO NOTHING
   RETURNING webhook_ingress.id INTO v_id;
   IF v_id IS NOT NULL THEN
-    INSERT INTO public.webhook_failures (ingress_id, attempt, reason) VALUES (v_id, 0, p_reason);
+    -- 8 es el `DEAD_AT` de 0031: el ítem está muerto ya, y cuenta como `ingress_dead` (alerta).
+    INSERT INTO public.webhook_failures (ingress_id, attempt, reason) VALUES (v_id, 8, p_reason);
   END IF;
   RETURN v_id;
 END""",  # noqa: S608 — texto fijo, sin datos

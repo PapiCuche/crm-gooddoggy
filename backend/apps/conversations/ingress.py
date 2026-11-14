@@ -11,7 +11,6 @@ que la propia organización registró), y el procesador solo enruta y marca: un 
 
 import json
 import math
-import re
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -33,7 +32,7 @@ PROVIDER = "meta"
 LEASE_SECONDS = 60  # el reclamo caduca: un proceso que muere no deja el ítem para siempre
 BROKER_WAIT = 3  # segundos que la ruta pública espera a un broker que no contesta
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
-SQLSTATE = re.compile(r"[0-9A-Z]{5}")
+REFUSABLE = ("22023", "22P05")  # el rechazo de la propia función y un carácter que no se traduce
 UNKNOWN_AFTER = 3  # intentos tras los que un estado sin mensaje se cierra como `IGNORED`
 WAKE_EVERY = 1.0  # segundos entre dos avisos de un mismo proceso: el resto lo recoge el barrido
 _last_wake = 0.0
@@ -78,12 +77,12 @@ def insert(kind: str, key: str, waba_id: str, number: str | None, payload: dict[
     return found[0][0] is not None
 
 
-def refuse(item: Any, sqlstate: str | None) -> bool:
+def refuse(item: Any, sqlstate: str) -> bool:
     """Registra un ítem que la base nunca guardará: `DEAD`, sin payload y con el motivo
     `REFUSED_<sqlstate>` en `webhook_failures`, para que se vea y alerte. El hash lo calcula la
     base igual que al guardar (del `jsonb`), así que se compara con el de cualquier otra fila.
     Idempotente por clave, y nunca toca un ítem que ya estaba guardado. Devuelve si era nuevo."""
-    reason = f"REFUSED_{sqlstate}" if SQLSTATE.fullmatch(sqlstate or "") else "REFUSED"
+    reason = f"REFUSED_{sqlstate}"
     sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
     payload = Jsonb(clean(item.payload))
     args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, payload, reason]
@@ -96,9 +95,10 @@ def _insert_all(items: list[Any]) -> int:
         {"k": i.key, "t": i.kind, "w": i.waba_id, "n": i.phone_number_id, "p": clean(i.payload)}
         for i in items
     ]
-    sql = (
-        "SELECT count(public.webhook_ingress_insert(%s, e->>'k', e->>'t', e->>'w', e->>'n',"
-        " e->'p')) FROM jsonb_array_elements(%s) AS e"
+    sql = (  # la función, volátil, se evalúa después del `ORDER BY`: en el orden dado
+        "SELECT count(s.id) FROM (SELECT public.webhook_ingress_insert(%s, e->>'k', e->>'t',"
+        " e->>'w', e->>'n', e->'p') AS id FROM jsonb_array_elements(%s) WITH ORDINALITY AS a(e, n)"
+        " ORDER BY a.n) AS s"
     )
     return int(_call(sql, [PROVIDER, Jsonb(rows)])[0][0])
 
@@ -112,10 +112,13 @@ def _store(items: list[Any], refused: list[Any]) -> int:
         with transaction.atomic():
             return _insert_all(items)
     except DataError as error:  # nunca lo guardará: un 503 lo repetiría 7 días en vano
+        state = getattr(error.__cause__, "sqlstate", None)
+        if state not in REFUSABLE:
+            raise  # un error de la base, no de un ítem: la ruta responde 503 y Meta reintenta
         if len(items) > 1:
             half = len(items) // 2
             return _store(items[:half], refused) + _store(items[half:], refused)
-        refuse(items[0], getattr(error.__cause__, "sqlstate", None))
+        refuse(items[0], state)
         refused.append(items[0])
         return 0
 

@@ -13,6 +13,7 @@ import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, DataError, connection
 from django.utils import timezone
+from psycopg.errors import InvalidParameterValue
 
 from apps.conversations import ingress, tasks
 from apps.conversations.models import ChannelAccount
@@ -636,7 +637,7 @@ def test_the_failure_and_the_refusal_logs_never_carry_the_payload_or_the_signatu
     monkeypatch.undo()
 
     def refuse(items: list[Any]) -> int:
-        raise DataError("Texto privado del cliente")
+        raise DataError("Texto privado del cliente") from InvalidParameterValue("Texto privado")
 
     monkeypatch.setattr(ingress, "_insert_all", refuse)
     assert post(delivery).status_code == 200

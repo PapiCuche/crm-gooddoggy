@@ -8,13 +8,16 @@ import logging
 import threading
 import time
 from collections.abc import Iterator, Sequence
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import psycopg
 import pytest
 from django.core.management import call_command
-from django.db import DatabaseError, OperationalError, connection, transaction
+from django.db import DatabaseError, DataError, OperationalError, connection, transaction
+from django.utils import timezone
+from psycopg.errors import NumericValueOutOfRange
 from psycopg.types.json import Jsonb
 
 from apps.conversations import ingress, meta_webhook
@@ -199,7 +202,7 @@ def test_a_poison_item_is_recorded_dead_without_content_and_the_rest_is_stored(
     assert post(delivery).status_code == 200
     assert count(migrator) == 1000
     assert count(migrator, "SELECT count(*) FROM webhook_ingress WHERE status = 'RECEIVED'") == 999
-    assert failures(migrator) == [("wa:msg:wamid.P00999", "DEAD", True, 0, "REFUSED_22023", 0)]
+    assert failures(migrator) == [("wa:msg:wamid.P00999", "DEAD", True, 0, "REFUSED_22023", 8)]
     [record] = [r for r in caplog.records if "meta.webhook.refused" in r.getMessage()]
     assert record.levelno == logging.ERROR and "Texto privado" not in caplog.text
     assert post(delivery).status_code == 200  # Meta repite: ni filas ni fallos nuevos
@@ -258,6 +261,48 @@ def test_a_large_delivery_never_overflows_the_subtransaction_cache(bad: int | No
         assert ingress.store(items) == (1000 if bad is None else 999)
         used, overflowed = subtransactions()
     assert not overflowed and used <= (2 if bad is None else 30), used
+
+
+def test_items_go_in_by_key_order_whatever_order_they_arrive_in(migrator: DB) -> None:
+    """El orden de clave fija el orden de los bloqueos entre entregas solapadas; `uuidv7()` de
+    PostgreSQL 18 es creciente dentro de una sesión, así que el id muestra el orden de inserción."""
+    keys = [f"wa:msg:{n:03d}" for n in range(200)]
+    arrived = keys[1::2] + keys[::2][::-1]
+    items = [SimpleNamespace(kind="message", key=k, waba_id=WABA_ID, phone_number_id=None,
+                             payload={"id": k}) for k in arrived]  # fmt: skip
+    assert ingress.store(items) == 200
+    found = migrator.execute("SELECT event_key FROM webhook_ingress ORDER BY id").fetchall()
+    assert [k for (k,) in found] == keys
+
+
+def test_a_refusal_counts_as_dead_for_the_ingest_alerts(migrator: DB) -> None:
+    """Una fila de `webhook_failures` con intento 8 (el `DEAD_AT` de 0031) alerta como `DEAD`."""
+    item = SimpleNamespace(kind="message", key="wa:msg:d", waba_id=WABA_ID, phone_number_id=None,
+                           payload={"id": "d"})  # fmt: skip
+    assert ingress.refuse(item, "22023") is True
+    now = timezone.now()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT metric, total FROM public.meta_ingest_counts(%s, %s)"
+            " WHERE metric IN ('ingress_dead', 'ingress_failed')",
+            [now - timedelta(hours=1), now + timedelta(minutes=1)],
+        )
+        found = dict(cursor.fetchall())
+    assert found == {"ingress_dead": 1, "ingress_failed": 0}
+
+
+def test_a_database_error_that_is_not_about_one_item_is_503_and_stores_nothing(
+    migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Solo se registra como rechazado lo que la función rechaza (22023) o un carácter que no se
+    traduce (22P05); otro `DataError` sería de la base entera: nunca filas `DEAD` con un 200."""
+
+    def systemic(items: list[Any]) -> int:
+        raise DataError("fuera de rango") from NumericValueOutOfRange("fuera de rango")
+
+    monkeypatch.setattr(ingress, "_insert_all", systemic)
+    assert post(webhooks.deliver(body([change([msg(1), msg(2)])]))).status_code == 503
+    assert count(migrator) == 0 and failures(migrator) == []
 
 
 @pytest.mark.usefixtures("inflate")
@@ -321,7 +366,7 @@ def test_the_refuse_function_is_idempotent_and_only_opens_through_itself(migrato
         assert cursor.fetchone()[0] is not None
         cursor.execute(REFUSE, args)
         assert cursor.fetchone() == (None,)
-    assert failures(migrator) == [("wa:msg:x", "DEAD", True, 0, "REFUSED", 0)]
+    assert failures(migrator) == [("wa:msg:x", "DEAD", True, 0, "REFUSED", 8)]
     assert ingress.insert("message", "wa:msg:y", WABA_ID, None, {"id": "y"}) is True
     with connection.cursor() as cursor:  # un ítem ya guardado no pasa a `DEAD`
         cursor.execute(REFUSE, [*args[:1], "wa:msg:y", *args[2:]])
