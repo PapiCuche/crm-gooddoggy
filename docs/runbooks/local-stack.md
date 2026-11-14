@@ -110,6 +110,6 @@ El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED`
 4. Abre `/o/<slug>/inbox`, la conversación del cliente, y pulsa el clip («Adjuntar imagen o PDF»). Elige un JPEG, PNG o PDF: se ve su nombre y tamaño, y el cuadro pasa a decir «Pie de foto (opcional)». Pulsa «Enviar».
    - **Esperado (apagado):** no aparece ningún mensaje nuevo; bajo el cuadro, «Por ahora no se pueden enviar archivos…», y el clip ya no abre el selector.
 5. **Encendido.** Pon `MEDIA_SEND_UNSCANNED=true` en `infra/env/.env`, `make up` (recrea backend y worker) y recarga la página.
-   - Envía una imagen con un pie de foto y un PDF sin él. **Esperado:** dos burbujas a la derecha, «Imagen» con el pie y «Documento», que pasan de «En cola» a «Entregado» (pulsa «Actualizar» si no cambia sola).
+   - Envía una imagen con un pie de foto y un PDF sin él. **Esperado:** dos burbujas a la derecha, «Imagen» con el pie y «Documento», que pasan de «En cola» a «Entregado» (pulsa «Actualizar mensajes» si no cambia sola).
    - Un GIF o una imagen de más de 5 MB (un PDF de más de 10 MB) no se adjunta y se explica; no se sube nada.
 6. Al terminar, vuelve a `MEDIA_SEND_UNSCANNED=false` y `make up`: sin antivirus (D-F7-04), ningún medio debe salir fuera de una prueba local.

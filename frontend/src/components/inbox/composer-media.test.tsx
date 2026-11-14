@@ -267,7 +267,14 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     show();
     await openChat();
     await attach(pdf());
+    const reads = () =>
+      s.api.mock.calls.filter(
+        ([url, init]) => String(url).endsWith("/1/messages/") && init?.method === "GET",
+      ).length;
+    const before = reads();
     send();
+    // El envío canceló la lectura en curso: tras el fallo se vuelve a pedir (no queda «Cargando…»).
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
     const [why] = await screen.findAllByText(/Por ahora no se pueden enviar archivos/, {
       selector: "p:not([role])",
     });

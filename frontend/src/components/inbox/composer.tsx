@@ -236,7 +236,7 @@ function ComposeBox({
     onSuccess: (done, request) => {
       attempt.current = null; // un id por acción: el siguiente texto lleva otro
       setText("");
-      setFile(null);
+      setFile((current) => (current === request.file ? null : current)); // solo el que salió
       const mine = `pending-${request.client_message_id}`;
       client.setQueryData<Pages>(key, (data) => {
         const known = data?.pages.some((page) => page.results.some(({ id }) => id === done.id));
@@ -258,6 +258,8 @@ function ComposeBox({
           rows.filter(({ id }) => id !== `pending-${request.client_message_id}`),
         ),
       );
+      // `onMutate` canceló la lectura en curso: si era la primera, el chat se quedaría «Cargando…».
+      void client.invalidateQueries({ queryKey: key });
       // Ese id ya es de otro envío: reintentar con él chocaría siempre.
       if (error.code === "CLIENT_MESSAGE_ID_TAKEN") attempt.current = null;
       if (error.code === "MEDIA_NOT_SCANNED") {
