@@ -2,7 +2,9 @@
 
 La URL solo **selecciona**: la autorización sale de la membresía. El selector de
 organizaciones y el resolvedor de membresías se inyectan por settings (el kernel no importa
-módulos superiores). El resolvedor real vive en `apps.organizations.selectors` (F2-02).
+módulos superiores). El resolvedor real vive en `apps.organizations.selectors` (F2-02). Al
+final, la política de segundo factor (`second_factor.admit`, ADR-038): HTTP y WebSocket la pasan
+por aquí, así que ninguna entrada se la salta.
 """
 
 from dataclasses import dataclass
@@ -13,6 +15,7 @@ from django.conf import settings
 from django.utils.module_loading import import_string
 
 from core.tenancy.context import ActorType, TenantContext
+from core.tenancy.second_factor import admit
 
 ACCESSIBLE_STATUSES = frozenset({"ACTIVE", "TRIAL"})
 NO_ORGANIZATION = UUID(int=0)  # ninguna organización tiene este id (los reales son UUIDv7)
@@ -55,4 +58,6 @@ def resolve_tenant(
         raise TenantNotFound  # antes que el estado: un no miembro no aprende nada
     if org.status not in ACCESSIBLE_STATUSES:
         raise OrganizationSuspended
-    return TenantContext(org.id, source, user_id, ActorType.USER, user_id, correlation_id)
+    ctx = TenantContext(org.id, source, user_id, ActorType.USER, user_id, correlation_id)
+    admit(ctx)  # después del 404 y del 403: solo un miembro sabe que le falta (ADR-038)
+    return ctx

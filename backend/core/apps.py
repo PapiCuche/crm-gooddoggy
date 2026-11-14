@@ -9,6 +9,7 @@ class CoreConfig(AppConfig):
 
     def ready(self) -> None:
         from core.observability import logging, reporting
+        from core.tenancy import checks  # noqa: F401 — registra la de la política de segundo factor
 
         logging.configure()
         reporting.reporter()  # Noop sin SENTRY_DSN; si hay DSN, inicializa Sentry al arrancar

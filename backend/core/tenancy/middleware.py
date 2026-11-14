@@ -12,6 +12,7 @@ from core.observability.context import current_correlation_id
 from core.tenancy.context import TenantContextError
 from core.tenancy.resolution import OrganizationSuspended, TenantNotFound, resolve_tenant
 from core.tenancy.scope import assert_clean_connection, tenant_scope
+from core.tenancy.second_factor import MESSAGE, MFA_REQUIRED, SecondFactorRequired
 
 TENANT_PREFIX = "/api/v1/o/"
 TENANT_PATH = re.compile(r"^/api/v1/o/(?P<slug>[-a-zA-Z0-9_]+)/")
@@ -44,6 +45,8 @@ class TenantResolutionMiddleware:
             return not_found()
         except OrganizationSuspended:
             return error_response("ORG_SUSPENDED", 403)
+        except SecondFactorRequired:  # ADR-023 §9 con `enforce`: ninguna ruta de tenant se abre
+            return error_response(MFA_REQUIRED, 403, MESSAGE)
         request.tenant = ctx  # type: ignore[attr-defined]
         with tenant_scope(ctx):  # toda la vista y su serialización en una transacción
             response = self.get_response(request)

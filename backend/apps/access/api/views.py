@@ -48,7 +48,7 @@ from apps.access.services import (
 )
 from core.api.errors import ApiError
 from core.api.schema import errors
-from core.tenancy import context
+from core.tenancy import context, second_factor
 
 
 class MemberUserSerializer(serializers.Serializer[Any]):
@@ -77,12 +77,24 @@ class GrantSerializer(serializers.Serializer[Any]):
     )
 
 
+class SecondFactorSerializer(serializers.Serializer[Any]):
+    required = serializers.BooleanField(
+        help_text="La membresía exige segundo factor (rol Owner, Administrador de plantilla o "
+        "algún permiso sensible, ADR-023 §9)."
+    )
+    missing = serializers.BooleanField(
+        help_text="Lo exige y la cuenta no tiene un dispositivo confirmado. Con `MFA_ENFORCEMENT` "
+        "en `enforce` no se llega a leer: la organización responde 403 `MFA_REQUIRED`."
+    )
+
+
 class SelfContextSerializer(serializers.Serializer[Any]):
     user = MemberUserSerializer()
     organization = MemberOrganizationSerializer()
     membership_id = serializers.UUIDField()
     roles = RoleNameSerializer(many=True, help_text="Solo para mostrar: no autorizan nada.")
     permissions = GrantSerializer(many=True)
+    mfa = SecondFactorSerializer()
 
 
 class SelfContextView(APIView):
@@ -109,6 +121,7 @@ class SelfContextView(APIView):
             "membership_id": ectx.membership_id,
             "roles": role_names(ectx),
             "permissions": grants,
+            "mfa": second_factor.evaluate(ectx.tenant),
         }
         return Response(SelfContextSerializer(payload).data)
 

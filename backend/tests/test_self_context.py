@@ -62,6 +62,7 @@ def test_a_member_without_roles_gets_an_empty_context(world: Any) -> None:
         "membership_id": str(world.membership),
         "roles": [],
         "permissions": [],  # ser miembro no da ningún permiso
+        "mfa": {"required": False, "missing": False},  # F2-115: sin roles no lo exige
     }
 
 
@@ -85,7 +86,7 @@ def test_permissions_come_with_their_scopes_and_roles_are_only_names(world: Any)
         {"code": "d", "name": "Rol propio"},
         {"code": "a", "name": "Zeta"},
     ]
-    assert len(queries) <= 16  # no crece con el número de roles ni de permisos
+    assert len(queries) <= 18  # no crece con el número de roles ni de permisos (+2: `mfa`)
 
 
 def test_the_owner_sees_the_whole_catalog_and_a_change_shows_on_the_next_request(

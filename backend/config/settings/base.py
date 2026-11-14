@@ -122,6 +122,13 @@ ENFORCE_RUNTIME_DB_ROLE = False
 # Tenancy (F1-04): inyección para que core no importe módulos superiores.
 TENANCY_ORGANIZATION_SELECTOR = "apps.organizations.selectors.organization_by_slug"
 TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  # F2-02
+# Segundo factor por membresía (ADR-023 §9, ADR-038): con `enforce`, una membresía que lo exige no
+# entra a su organización sin dispositivo confirmado; con `warn` (por defecto) entra y su `me/` lo
+# dice. `enforce` espera al comando de operador de ADR-023 §11 en todo entorno con cuentas reales.
+MFA_ENFORCEMENT = env.optional("MFA_ENFORCEMENT", "warn")
+if MFA_ENFORCEMENT not in ("warn", "enforce"):
+    raise ImproperlyConfigured("MFA_ENFORCEMENT debe ser warn o enforce")
+TENANCY_SECOND_FACTOR_POLICY = "apps.members.second_factor.membership_second_factor"
 # F1-14: la entrada del simulador Sandbox (inyecta mensajes de clientes). Apagada por omisión;
 # `local` y `test` la encienden y `production` no arranca con ella.
 SANDBOX_INBOUND_ENABLED = env.boolean("SANDBOX_INBOUND_ENABLED", False)

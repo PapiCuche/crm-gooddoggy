@@ -95,6 +95,8 @@ Request /api/v1/o/{org_slug}/contacts/…
                         WHERE organization_id = org.id AND status = ACTIVE
            no existe → 404
         5. org.status ∈ {ACTIVE, TRIAL}? si no → 403 ORG_SUSPENDED
+        5b. MFA_ENFORCEMENT = enforce y la membresía exige segundo factor sin dispositivo
+            confirmado → 403 MFA_REQUIRED (ADR-038; la política, en su propio tenant_scope)
         6. request.tenant = TenantContext(org.id, "http", user.id, USER, user.id, correlation_id)
         7. with tenant_scope(request.tenant): response = get_response(request)
 ```
@@ -126,7 +128,9 @@ def recalc_lead_score(*, organization_id: str, lead_id: str, correlation_id: str
 ws /ws/o/{org_slug}/
   connect():
     - scope["user"] autenticado (AuthMiddlewareStack con la cookie de sesión); Origin permitido
-    - resolución org + membership igual que en HTTP (función compartida) vía database_sync_to_async
+    - resolución org + membership igual que en HTTP (función compartida) vía database_sync_to_async;
+      cierra con 4404 (sin organización o sin membresía), 4403 (suspendida) o 4428 (segundo factor
+      exigido y ausente con `enforce`, ADR-038)
     - guarda self.tenant = TenantContext(org.id, "ws", user.id, USER, user.id)
     - se une a grupos con prefijo del tenant: org.{org_id}.user.{user_id}, …
   receive_json(subscribe conversation X):

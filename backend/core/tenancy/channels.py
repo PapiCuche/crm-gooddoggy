@@ -13,8 +13,10 @@ from channels.db import database_sync_to_async
 from core.tenancy.context import TenantContext, TenantContextError
 from core.tenancy.resolution import OrganizationSuspended, TenantNotFound, resolve_tenant
 from core.tenancy.scope import assert_clean_connection, tenant_scope
+from core.tenancy.second_factor import SecondFactorRequired
 
 CLOSE_NOT_FOUND, CLOSE_SUSPENDED = 4404, 4403
+CLOSE_MFA_REQUIRED = 4428  # ADR-038: el 403 `MFA_REQUIRED` de HTTP, que un cierre no puede llevar
 
 
 class TenantConsumerMixin:
@@ -34,6 +36,9 @@ class TenantConsumerMixin:
             return False
         except OrganizationSuspended:
             await self.close(code=CLOSE_SUSPENDED)
+            return False
+        except SecondFactorRequired:
+            await self.close(code=CLOSE_MFA_REQUIRED)
             return False
         return True
 

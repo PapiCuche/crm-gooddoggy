@@ -63,9 +63,9 @@ Variables de producción: `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `FORWARDE
 
 | Entrada | Pieza | Comportamiento |
 |---|---|---|
-| HTTP `/api/v1/o/{slug}/…` | `core.tenancy.middleware.TenantResolutionMiddleware` | Sin usuario → 401. Organización inexistente o sin membresía → **404 idéntico** (`{"code":"NOT_FOUND"}`). Miembro de una organización suspendida → 403 `ORG_SUSPENDED`. La vista completa corre dentro de `tenant_scope` (streaming prohibido) |
+| HTTP `/api/v1/o/{slug}/…` | `core.tenancy.middleware.TenantResolutionMiddleware` | Sin usuario → 401. Organización inexistente o sin membresía → **404 idéntico** (`{"code":"NOT_FOUND"}`). Miembro de una organización suspendida → 403 `ORG_SUSPENDED`. Con `MFA_ENFORCEMENT = enforce`, miembro que necesita segundo factor y no lo tiene → 403 `MFA_REQUIRED` (F2-115). La vista completa corre dentro de `tenant_scope` (streaming prohibido) |
 | Celery | `@tenant_task` / `@platform_task` (`core.tenancy.celery`), app en `config/celery.py` | `@tenant_task` exige el kwarg `organization_id` (UUID) **al encolar** y ejecuta en `tenant_scope`. El bootstep `TenancyCheck` impide arrancar el worker si hay tareas sin decorar |
-| WebSockets | `TenantConsumerMixin` (`core.tenancy.channels`) | `connect_tenant()` resuelve igual que HTTP (cierra con 4404/4403). `in_tenant(fn)` ejecuta cada acceso a BD en su propio scope vía `database_sync_to_async`: sin transacciones entre `await` |
+| WebSockets | `TenantConsumerMixin` (`core.tenancy.channels`) | `connect_tenant()` resuelve igual que HTTP (cierra con 4404/4403, y 4428 sin el segundo factor que exige `enforce`). `in_tenant(fn)` ejecuta cada acceso a BD en su propio scope vía `database_sync_to_async`: sin transacciones entre `await` |
 | Comandos | `TenantCommand` (`--org`, `--reason`) / `PlatformCommand` (`--reason`) | El motivo y el operador se registran en el log (auditoría persistente en F1-06) |
 
 - `apps.organizations`: tabla `organizations` mínima (platform-owned, sin RLS) y el selector `organization_by_slug`.
@@ -197,7 +197,7 @@ Esta sección cubre el **modelo** RBAC de `apps.access`; el cálculo de permisos
 - **`roles`**, **`role_permissions`** y **`membership_roles`** (tenant-owned, RLS con FORCE): roles por organización, concesiones con alcance (`OWN`, `TEAM`, `BRANCH`, `ORGANIZATION`, o `NULL` si el permiso no lo admite) y roles asignados a membresías.
 - **Integridad en la BD:** FK compuestas con `organization_id` impiden enlazar una membresía de una organización con un rol de otra, también con SQL directo.
 - **Roles plantilla** (`owner`, `admin`, `supervisor`, `seller`): `clone_role_templates(ctx)` los crea en una organización de forma idempotente y no asigna roles a nadie. Una organización puede crear roles propios sin cambios de esquema.
-- **Nada decide por el código o el nombre de un rol:** la autorización depende de permisos y alcances.
+- **Nada decide por el código o el nombre de un rol:** la autorización depende de permisos y alcances. La única excepción solo **añade** una exigencia (ADR-023 §9): el rol Administrador de plantilla (`is_system` y el código `ADMIN_TEMPLATE`, nunca el nombre) pide segundo factor para entrar a su organización (F2-115, abajo). El código o el nombre de un rol siguen sin autorizar nada.
 
 ## Autorización: motor (F2-05A, ADR-003 §5)
 
@@ -381,7 +381,8 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
   "organization": {"id": "…", "slug": "acme", "name": "Acme SAC"},
   "membership_id": "…",
   "roles": [{"code": "seller", "name": "Vendedor"}],
-  "permissions": [{"code": "organization.view", "scopes": []}]
+  "permissions": [{"code": "organization.view", "scopes": []}],
+  "mfa": {"required": false, "missing": false}
 }
 ```
 
@@ -391,6 +392,7 @@ Cada intento de acceso se cuenta en la tabla `login_throttles` (platform-owned, 
 - **Quién lo lee:** cualquier miembro activo, también sin roles (recibe listas vacías). La clase es `apps.access.permissions.IsMember`, no `HasPermission`: no hay un permiso del catálogo para "leer mi propio contexto".
 - **`IsMember` está acotada:** solo admite `GET` (y su `HEAD`); `OPTIONS` y las escrituras responden 403. La auditoría del URLconf solo la acepta en las rutas listadas en `MEMBER` (`tests/test_access_api.py`), en vistas no genéricas, que solo atienden `GET` y que no redefinen los ganchos de DRF. Fuera de esa lista, una vista de tenant sin `HasPermission` falla el test.
 - **Lo que la auditoría no ve:** es estática. No detecta una consulta escrita a mano dentro del manejador. Tampoco ve una vista que redefina `setup` o `http_method_not_allowed` para atender otro método. Una vista de `MEMBER` solo puede leer el contexto de ejecución, la organización de ese contexto, los roles de la propia membresía (código y nombre) y `request.user`; eso se revisa en el PR que añade la ruta.
+- **`mfa`** (F2-115, ADR-038): `required` si la membresía exige segundo factor (rol Owner, Administrador de plantilla o algún permiso sensible) y `missing` si lo exige y la cuenta no tiene un dispositivo confirmado. Con `MFA_ENFORCEMENT = enforce`, quien lo necesita y no lo tiene recibe 403 `MFA_REQUIRED` en vez de este contexto. La vista lo lee con `core.tenancy.second_factor.evaluate`.
 - Sin sesión, 401; sin membresía activa, en otra organización o con un slug inexistente, el mismo 404 con cualquier método; escribir siendo miembro, 403.
 
 ## Directorio de miembros (F2-16, ADR-016)
@@ -619,7 +621,7 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 
 ## MFA: las tablas (F2-95, ADR-023)
 
-- **Qué hay:** las dos tablas del segundo factor de una cuenta y sus reglas ([ADR-023](../docs/adr/ADR-023-mfa-totp.md)). **Las usan el alta empezada** (F2-97, abajo), que deja en `user_mfa_devices` un dispositivo sin confirmar, **y su confirmación** (F2-100, abajo), que lo confirma y guarda los códigos de respaldo en `user_mfa_backup_codes`. Nada las lee todavía para dejar entrar.
+- **Qué hay:** las dos tablas del segundo factor de una cuenta y sus reglas ([ADR-023](../docs/adr/ADR-023-mfa-totp.md)). **Las usan el alta empezada** (F2-97, abajo), que deja en `user_mfa_devices` un dispositivo sin confirmar, **y su confirmación** (F2-100, abajo), que lo confirma y guarda los códigos de respaldo en `user_mfa_backup_codes`. La política por membresía (F2-115, abajo) mira si hay un dispositivo confirmado.
 - **Platform-owned** (ADR-001 §2): sin `organization_id` ni política de tenant, como `users` y `password_resets`. El runtime las lee y las escribe sin contexto de tenant. Modelos `apps.accounts.models.MfaDevice` y `MfaBackupCode`.
 - **`user_mfa_devices`:** `user` (la cuenta), `type` (hoy solo `TOTP`), `secret`, `created_at`, `confirmed_at`, `last_step` y `failed_codes`. Como mucho un dispositivo TOTP por cuenta (`user_mfa_devices_user_type_uq`).
   - `secret` es el secreto TOTP cifrado con `core.sealed` (propósito `mfa.totp`, dueño `user:<id de la cuenta>`): copiado a la fila de otra cuenta no se abre. La columna solo admite algo con la forma de un valor cifrado: de 32 a 4127 bytes y con el byte de formato de `core.sealed` delante (`user_mfa_devices_secret_ck`). Un secreto TOTP en claro no entra: sus 20 bytes no llegan, y escrito en base32 (32 caracteres) o en hexadecimal (40) no empieza por ese byte. Un formato nuevo de `core.sealed` pide cambiar antes esta restricción. La base no comprueba que de verdad esté cifrado.
@@ -737,7 +739,7 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 ## MFA: el acceso deja la marca en vez de abrir sesión (F2-106, ADR-023 §5 y §10)
 
 - **Desde aquí el segundo factor se pide al entrar.** `POST /api/v1/auth/login/`, con la contraseña correcta de una cuenta **con dispositivo confirmado**, no abre sesión: responde **202 `{"mfa_required": true}`**, sin ningún dato de la cuenta, y deja el acceso a medias (`second_step.begin`). La sesión la abre `POST /api/v1/auth/login/mfa/` (F2-105, arriba) con un código, en los 5 minutos siguientes.
-- **Vale siempre que la cuenta tenga un dispositivo confirmado.** `MFA_ENFORCEMENT`, cuando exista, decidirá a quién se le exige tener segundo factor, no si el de quien lo tiene se comprueba (ADR-023 §5). Un alta sin confirmar no exige nada.
+- **Vale siempre que la cuenta tenga un dispositivo confirmado.** `MFA_ENFORCEMENT` (F2-115, abajo) decide a quién se le exige tener segundo factor, no si el de quien lo tiene se comprueba (ADR-023 §5). Un alta sin confirmar no exige nada.
 - **En una transacción:** la fila de auditoría `auth.login.mfa_required` (resultado `SUCCESS`, actor anónimo porque todavía no hay sesión, la huella del correo y la cuenta como entidad afectada: ADR-023 §10 dejó el nombre a este work item), el cierre de la sesión que el navegador tuviera, de esa cuenta o de otra, y la marca, que queda bajo un ID de sesión nuevo. **Sin esa fila no hay marca** (500), y la sesión que hubiera sigue como estaba. Lo mismo si falla lo que viene después en esa transacción, con la sesión ya cerrada: se deshace entero. La marca la guarda `SessionMiddleware` al responder, con la transacción ya confirmada, como los datos de una sesión que abre el acceso: si ese guardado falla (500) quedan la fila y la sesión anterior cerrada, sin marca; nunca una marca sin fila. **El token CSRF no cambia aquí:** cambia al completar el segundo paso.
 - **Lo contado en el límite por dirección no se devuelve** con la contraseña: lo devuelve el segundo paso al completarse. Los bloqueos que empezaron con esa contraseña sí acaban al dejar la marca (`throttle.release`, F2-105).
 - **Una contraseña incorrecta, o una cuenta desactivada, responde lo de siempre** (401 `INVALID_CREDENTIALS`), tenga o no la cuenta segundo factor.
@@ -787,6 +789,15 @@ La tarea de plataforma `accounts.send_password_reset(email)` decide si una cuent
 - **Si vale,** audita `auth.mfa.step_up` con `{"method": ...}` (sin esa fila, 500 y el código no se gasta) y la sesión cambia de ID y anota `mfa_at`. **Errores:** 400 en `code` (siempre igual, con su fila `DENIED`); 409 `MFA_NOT_ENABLED` sin dispositivo confirmado (`MFA_ENFORCEMENT` no exime); 401 si la sesión se revocó o cerró con la petición en curso (no se gasta nada); 429 con el tope alcanzado, también para el código correcto.
 - **`core.api.step_up`** (en `core`: `access` y `accounts` no se importan) tiene `require_recent_mfa(request, max_age=15 min)`; vale hasta el segundo 900 inclusive. Una vista de tenant declara `step_up_methods = {"GET", "POST"}` junto a `required_permissions` y `HasPermission` lo aplica **después** de los permisos (HEAD pide lo de GET): 403 `STEP_UP_REQUIRED` con un `message`, el mismo para la cuenta sin segundo factor (le dice que lo active). Una declaración que no es un conjunto de métodos lo pide para todos.
 - **`GET /api/v1/auth/mfa/`** gana `step_up_expires_in` (segundos que le quedan a esta sesión, o `null`). Ninguna ruta lo usa todavía (costos F3-46, edición masiva); la pantalla es F2-126.
+
+## MFA: la política por membresía (F2-115, ADR-023 §9, ADR-038)
+
+- **Quién lo necesita:** la membresía con el rol Owner (`is_owner_role`), con el Administrador de plantilla (`is_system` y `catalog.ADMIN_TEMPLATE`: quitarle `users.manage`, o todos sus permisos sensibles, o renombrarlo no lo libera) o con algún permiso sensible concedido por sus roles (según el catálogo o `permissions.is_sensitive`). Es `access.second_factor.required(ctx)`, una consulta bajo RLS. Tenerlo es un dispositivo **confirmado** (`accounts.selectors.has_second_factor`): un alta a medias no cuenta, uno con el secreto ilegible sí.
+- **`MFA_ENFORCEMENT`** (`warn` por defecto, o `enforce`; del entorno). Otro valor, también vacío, no deja arrancar ningún proceso. El stack local no pasa la variable: siempre es `warn`. **`enforce` no se activa** en ningún entorno con cuentas reales hasta que exista el comando de operador (ADR-023 §11).
+- **Con `enforce`,** al final de `resolve_tenant` (después del 404 y del 403 `ORG_SUSPENDED`), toda ruta de tenant de esa organización responde 403 `{"code": "MFA_REQUIRED", "message": …}` y el WebSocket cierra con 4428, al conectar y, en el Inbox, si quita el factor con la conexión abierta. Sus otras organizaciones que no lo exigen se abren; quien no es miembro sigue recibiendo el 404. Con el dispositivo confirmado, entra. La política se lee en un `tenant_scope` propio, corto, antes del de la vista.
+- **Con `warn`,** no se lee nada al entrar y todo se abre; `GET …/me/` dice `mfa.required` y `mfa.missing`.
+- **Dónde vive** (ADR-038): `core.tenancy.second_factor` llama a la función de `TENANCY_SECOND_FACTOR_POLICY`, que sirve `apps.members.second_factor` uniendo `access.second_factor` y `accounts.selectors` (no se importan entre sí). `access.second_factor` no es parte del motor de autorización (`access.selectors`), que sigue sin leer la marca de Owner ni el código de un rol. Si la política falla o no responde un `SecondFactor` con dos booleanos, la petición falla (500; en el WebSocket, cierre de error), nunca se abre. `manage.py check` falla (`tenancy.E001`) si la política no se puede importar.
+- **Sin auditoría** del rechazo (ADR-023 §10 no le da acción): queda la línea de la petición en el log. La pantalla que avisa o lleva al alta es el work item siguiente.
 
 ## Invitaciones: la tabla (F2-79, ADR-020)
 
@@ -979,7 +990,7 @@ Crear y editar exigen `branches.manage` (F2-44 y F2-45):
 - Cada cambio corre en un savepoint: toma el bloqueo del rol Owner de la organización (`SELECT … FOR NO KEY UPDATE`), relee los permisos del actor, comprueba las reglas, escribe y audita. Si algo falla, incluida la auditoría, no queda nada escrito.
 - **Reglas:** hace falta `roles.manage` para crear, renombrar o borrar un rol y para conceder, y `users.manage` para asignar o quitar. Nadie delega un permiso que no tiene ni con un alcance más amplio (`TEAM` y `BRANCH` no se contienen entre sí). Un permiso sensible solo lo delega quien tiene asignado el rol Owner, y además debe tenerlo. Asignar y quitar un rol, y renombrarlo o borrarlo, exigen cubrir todas sus concesiones. Nadie se asigna ni se quita roles, ni concede permisos a un rol que tiene asignado. Cambiar el alcance de una concesión exige cubrir el que había y el nuevo, y retirarla, cubrirla. Las concesiones del rol Owner no se editan.
 - **Siempre queda un Owner activo** (membresía `ACTIVE` y usuario activo). `ensure_can_manage_member(ctx, membership_id=, leaving=)` aplica la misma garantía, y las reglas de escalada, a quien suspende o reactiva una membresía (F2-19).
-- `is_owner_role` solo localiza el rol Owner para esas restricciones; por sí solo no concede nada. `is_system` solo impide borrar una plantilla. Nada decide por el código o el nombre de un rol, ni por `is_platform_staff`.
+- `is_owner_role` solo localiza el rol Owner para esas restricciones; por sí solo no concede nada. `is_system` solo impide borrar una plantilla. Nada decide por el código o el nombre de un rol, ni por `is_platform_staff`, salvo la exigencia de segundo factor del Administrador de plantilla (ADR-023 §9, F2-115), que no autoriza nada.
 - Una denegación lanza `AccessDenied` con su motivo (`membership`, `permission`, `escalation`, `sensitive`, `self`, `last_owner`, `owner_role`); un id de otra organización, quitar un rol que la membresía no tiene o retirar una concesión que el rol no tiene (también al repetir la llamada), `DoesNotExist`. Repetir una concesión o una asignación no hace nada.
 - Auditoría: `role.created`, `role.updated`, `role.deleted`, `role.permission_granted`, `role.permission_scope_changed`, `role.permission_revoked`, `membership.role_assigned` y `membership.role_removed`, con el antes y el después. `create_role` y `update_role` lanzan además `RoleNameTaken` y `ValueError` (nombre o descripción que no sirven); `delete_role`, `RoleIsSystem` y `RoleInUse`.
 

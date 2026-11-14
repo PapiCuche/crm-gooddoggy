@@ -1,7 +1,10 @@
 """Catálogo de permisos y roles plantilla (ADR-003 §5): lo define el código, no la UI.
 
 El alcance es un atributo de la concesión, nunca parte del código del permiso. La autorización
-dependerá de permisos y alcances (F2-05): nada debe decidir por el código o el nombre de un rol.
+depende de permisos y alcances (F2-05): nada decide por el código o el nombre de un rol, salvo una
+excepción (ADR-023 §9) que solo **añade** una exigencia: el rol Administrador de plantilla
+(`is_system` y el código `ADMIN_TEMPLATE`, nunca su nombre) pide segundo factor para entrar a su
+organización. El código o el nombre de un rol siguen sin autorizar nada.
 El catálogo solo incluye permisos de módulos que existen; cada fase añade los suyos.
 """
 
@@ -128,6 +131,9 @@ TASK_SCOPED = (
 QUOTE_SCOPED = ("quotes.view", "quotes.update", "quotes.send", "quotes.cancel")  # F5-09d
 
 
+ADMIN_TEMPLATE = "admin"  # ADR-023 §9: su rol exige segundo factor aunque pierda `users.manage`
+
+
 def _unscoped(*codes: str) -> dict[str, Scope | None]:
     return dict.fromkeys(codes)
 
@@ -140,7 +146,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
         is_owner_role=True,
     ),
     RoleTemplate(
-        "admin",
+        ADMIN_TEMPLATE,
         "Administrador",
         _unscoped(
             "organization.view",
