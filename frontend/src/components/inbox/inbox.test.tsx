@@ -237,9 +237,8 @@ describe("Inbox, lista (F6-03)", () => {
     const video = items.find((li) => li.textContent?.startsWith("Video"))!;
     expect(video).not.toHaveTextContent("Sin permiso para ver el contenido"); // solo el marcador
     expect(screen.getByText('<img src="x" onerror="alert(1)">').tagName).toBe("BDI"); // texto
-    for (const odd of ["Documento recibido", "raro"]) {
-      expect(at(odd)).toHaveTextContent("Mensaje de un tipo que todavía no se puede mostrar");
-    }
+    expect(at("Documento recibido")).toHaveTextContent(/^Documento/); // F7-09b3: ya no «no soportado»
+    expect(at("raro")).toHaveTextContent("Mensaje de un tipo que todavía no se puede mostrar");
     // El archivo nunca se pinta ni se enlaza: solo «Descargar» en los dos disponibles (F7-09a3)
     const panel = image.parentElement!;
     expect(panel.querySelector("img, audio, video, a, iframe, object, embed")).toBeNull();

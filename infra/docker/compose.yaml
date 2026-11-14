@@ -46,6 +46,9 @@ x-runtime: &runtime
     META_ENABLED: ${META_ENABLED:-false}
     META_APP_SECRETS: ${META_APP_SECRETS:-}
     META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+    # Enviar imágenes y PDF sin antivirus (D-F7-04): apagado por omisión. La ruta de subida y el
+    # despachador (worker) lo leen; sin pasarlo aquí, el valor de infra/env/.env no llegaba.
+    MEDIA_SEND_UNSCANNED: ${MEDIA_SEND_UNSCANNED:-false}
   depends_on:
     migrate:
       condition: service_completed_successfully
