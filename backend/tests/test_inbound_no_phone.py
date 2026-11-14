@@ -16,7 +16,7 @@ from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import BSUID, CUSTOMER
 from tests.test_contacts_api import crm
 from tests.test_inbound_whatsapp import PRIVATE, run, snap
-from tests.test_meta_webhook import channel
+from tests.test_meta_webhook import channel, post
 from tests.test_webhook_ingress import OTHER_NUMBER, OTHER_WABA, deliver, rows
 from tests.test_whatsapp_account import make
 
@@ -128,12 +128,52 @@ def test_the_flag_says_whether_the_change_carried_any_user_id_and_cannot_be_forg
     assert seen(bare | {"from_user_id": ""}, contacts=[{"user_id": ""}, {"user_id": 5}]) is False
     assert seen(bare, contacts="x") is False  # type: ignore[arg-type]
     assert seen(bare | {"user_id_seen": "forjado"}, contacts=[]) is False  # se sobrescribe
-    with_phone = webhooks.text_message("x") | {"user_id_seen": True}
-    assert seen(webhooks.text_message("x")) == "unset" and seen(with_phone) is True  # sin uso
+    with_phone = webhooks.text_message("x") | {"user_id_seen": True, "from_user_id": BSUID}
+    assert seen(webhooks.text_message("x")) is seen(with_phone) is False  # con teléfono, siempre
     [item] = parse(webhooks.encode(webhooks.envelope(webhooks.value(messages=[no_phone()])))).items
     assert "profile_name" not in item.payload  # el nombre va por `wa_id`; sin él, no viaja
     [state] = parse(webhooks.status_delivery("wamid.OUT1", "delivered").body).items
     assert "user_id_seen" not in state.payload  # un estado no es un mensaje sin teléfono
+
+
+@pytest.mark.parametrize("sender", [b"1e999", b"-1e999"])
+def test_a_non_text_from_with_a_forged_flag_is_bad_phone_and_the_flag_is_overwritten(
+    crm: SimpleNamespace, migrator: DB, caplog: pytest.LogCaptureFixture, sender: bytes
+) -> None:
+    """`ingress.clean` guarda `1e999` (infinito) como `null`: sin el arreglo, el ítem llegaba a
+    `inbound` sin `from` y con la marca falsificada del cuerpo, y contaba como `NO_PHONE` visto."""
+    make(crm.a)
+    caplog.set_level(logging.DEBUG)
+    forged = no_phone() | {"from": "SENDER", "user_id_seen": True}  # y con su BSUID
+    found = webhooks.value(messages=[forged])
+    found["contacts"] = [{"user_id": BSUID}]
+    raw = webhooks.encode(webhooks.envelope(found))
+    assert raw.count(b'"SENDER"') == 1  # el cuerpo crudo: `1e999` no sale de `json.dumps`
+    assert post(webhooks.deliver(raw.replace(b'"SENDER"', sender))).status_code == 200
+    stored = rows(migrator)["wa:msg:wamid.1"]["payload"]
+    assert stored["user_id_seen"] is False and stored["from"] is not None
+    assert ingress.process() == {"IGNORED": 1}
+    row = rows(migrator)["wa:msg:wamid.1"]
+    assert (row["ignored_reason"], row["payload"]) == ("BAD_PHONE", None)
+    assert logged(caplog) == [] and snap(crm.a).contacts == []
+    private_free(caplog)
+
+
+@pytest.mark.parametrize("sender", ["absent", None, ""], ids=["absent", "null", "empty"])
+@pytest.mark.parametrize("with_user_id", [True, False])
+def test_parse_adds_only_the_flag_to_a_message_without_a_phone(
+    sender: str | None, with_user_id: bool
+) -> None:
+    """Ni el BSUID ni nada del cambio (`contacts[]`) se copia a otra clave del ítem."""
+    row = no_phone() if sender == "absent" else no_phone() | {"from": sender}
+    if not with_user_id:
+        del row["from_user_id"]
+    found = webhooks.value(messages=[row])
+    found["contacts"] = [{"user_id": BSUID, "profile": {"name": "Cliente de prueba"}}]
+    [item] = parse(webhooks.encode(webhooks.envelope(found))).items
+    assert set(item.payload) - set(row) == {"user_id_seen"}
+    assert {key: item.payload[key] for key in row} == row  # nada cambia de valor
+    assert item.payload["user_id_seen"] is True
 
 
 def test_the_number_of_a_writes_only_in_a_and_never_in_b(
