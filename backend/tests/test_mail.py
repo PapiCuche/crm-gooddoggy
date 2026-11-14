@@ -13,21 +13,10 @@ from django.core.exceptions import ImproperlyConfigured
 
 from core.mail import MailError, Message, deliverable, send
 from core.observability.logging import json_formatter
+from tests.logs import log_text
 
 TO, SUBJECT, BODY = "ana.lopez@cliente.pe", "Te invitaron a Acme", "Abre el enlace: https://x/y"
 VALID = Message(to=TO, subject=SUBJECT, body=BODY, purpose="invitation")
-
-
-# Dónde y cuándo se emitió (la ruta del checkout, el proceso): no es del evento y no lleva datos.
-PLACE = {"pathname", "filename", "module", "funcName", "lineno", "created", "msecs",
-         "relativeCreated", "thread", "threadName", "process", "processName",
-         "taskName"}  # fmt: skip
-
-
-def logged(caplog: pytest.LogCaptureFixture) -> str:
-    """Todo lo que quedó en el log: el mensaje y sus campos, sin los del lugar de emisión."""
-    fields = [{k: v for k, v in r.__dict__.items() if k not in PLACE} for r in caplog.records]
-    return " ".join(f"{r.getMessage()} {f}" for r, f in zip(caplog.records, fields, strict=True))
 
 
 def line(caplog: pytest.LogCaptureFixture) -> dict[str, Any]:
@@ -50,7 +39,7 @@ def test_it_delivers_the_message_as_given_and_logs_only_the_purpose(
     assert (sent_line["event"], sent_line["level"]) == ("mail.sent", "info")
     assert (sent_line["purpose"], sent_line["to"]) == ("invitation", "[EMAIL]")
     for private in (TO, "ana.lopez", SUBJECT, BODY, "https://x/y"):
-        assert private not in logged(caplog) + json.dumps(sent_line)
+        assert private not in log_text(caplog) + json.dumps(sent_line)
 
 
 @pytest.mark.parametrize(
@@ -150,7 +139,7 @@ def test_a_failed_delivery_is_a_mail_error_that_names_no_one(
     assert (failed["purpose"], failed["to"]) == ("invitation", "[EMAIL]")
     assert failed["error"] == type(failure).__name__
     for private in (TO, SUBJECT, BODY, "apikey", "no such user"):
-        assert private not in logged(caplog) + json.dumps(failed) + str(error.value)
+        assert private not in log_text(caplog) + json.dumps(failed) + str(error.value)
 
 
 def test_a_bug_is_not_dressed_up_as_a_delivery_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,7 +215,7 @@ def test_smtp_uses_the_configured_server_with_a_timeout(
     assert b"Bcc" not in calls["data"] and b"Subject: Te invitaron a Acme" in calls["data"]
     assert f"\r\nTo: {to}\r\n".encode() in calls["data"]
     # Ninguna forma de dirección queda en el log, ni entera ni a medias (`{a}=b%c.pe@…`).
-    assert line(caplog)["to"] == "[EMAIL]" and to.split("@")[0] not in logged(caplog)
+    assert line(caplog)["to"] == "[EMAIL]" and to.split("@")[0] not in log_text(caplog)
 
 
 def test_a_failure_of_the_smtp_backend_is_a_mail_error_too(
@@ -243,7 +232,7 @@ def test_a_failure_of_the_smtp_backend_is_a_mail_error_too(
     with caplog.at_level(logging.DEBUG), pytest.raises(MailError, match="ConnectionRefusedError"):
         send(odd)
     # Tampoco en un fallo queda media dirección: `mask_emails` dejaría `{a}=` a la vista.
-    assert line(caplog)["to"] == "[EMAIL]" and "{a}" not in logged(caplog)
+    assert line(caplog)["to"] == "[EMAIL]" and "{a}" not in log_text(caplog)
 
 
 def test_outbound_mail_only_through_core_mail() -> None:

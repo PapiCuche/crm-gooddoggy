@@ -97,6 +97,8 @@ filterwarnings = ["error::DeprecationWarning", "error::PendingDeprecationWarning
 # F3-38 (#365): un test que espera un bloqueo sin `lock_timeout` falla a los 300 s (pytest-timeout)
 # en vez de colgar la suite hasta matarla a mano; el job de CI tiene además su `timeout-minutes`.
 timeout = 300
+# Sin el plugin, `timeout` sería solo un aviso y la suite correría sin límite: falla al arrancar.
+required_plugins = ["pytest-timeout"]
 
 [tool.importlinter]
 root_packages = ["config", "core", "apps"]

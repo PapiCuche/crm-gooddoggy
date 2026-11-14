@@ -377,6 +377,7 @@ def test_an_answer_is_born_empty_and_written_only_when_answering(world: SimpleNa
          "quotes_rejected_ck"),
         ("status = 'REJECTED', rejected_at = sent_at", "quotes_rejected_ck"),  # sin motivo
         ("status = 'ACCEPTED', accepted_at = valid_until", "quotes_accepted_ck"),
+        ("status = 'ACCEPTED', accepted_at = sent_at - interval '1 second'", "quotes_accepted_ck"),
         ("status = 'EXPIRED'", "quotes_not_expired"),  # aún vigente
     ):  # fmt: skip
         with pytest.raises(IntegrityError) as raised:
