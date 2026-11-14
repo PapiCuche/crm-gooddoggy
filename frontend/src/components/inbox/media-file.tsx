@@ -39,6 +39,16 @@ function leave(url: string) {
   link.click();
 }
 
+// El tamaño de un archivo en KB o MB, con un decimal (también el del adjunto del compositor).
+export function fileSize(format: ReturnType<typeof useFormatter>, bytes: number) {
+  const mb = bytes / 1_048_576;
+  return format.number(mb < 1 ? mb * 1024 : mb, {
+    style: "unit",
+    unit: mb < 1 ? "kilobyte" : "megabyte",
+    maximumFractionDigits: 1,
+  });
+}
+
 export function MediaFile({
   conversationId,
   attachment,
@@ -68,15 +78,7 @@ export function MediaFile({
       </p>
     );
   }
-  const mb = (attachment.size_bytes ?? 0) / 1_048_576;
-  const size =
-    attachment.size_bytes === null
-      ? null
-      : format.number(mb < 1 ? mb * 1024 : mb, {
-          style: "unit",
-          unit: mb < 1 ? "kilobyte" : "megabyte",
-          maximumFractionDigits: 1,
-        });
+  const size = attachment.size_bytes === null ? null : fileSize(format, attachment.size_bytes);
   const type = attachment.mime_type?.split("/")[1]?.toUpperCase() ?? null;
   const detail = [type, size].filter(Boolean).join(" · ");
   return (

@@ -89,3 +89,27 @@ Pide la contraseña del Owner dos veces y no la muestra. Debe cumplir la políti
 - **`network crm-blackdog_default has active endpoints`** (tras actualizar a F2-03D, o al cambiar entre ramas de antes y de después): la red del stack cambió de subred y Compose no puede recrearla mientras queden contenedores conectados. Se ha visto en `make check`, que solo levanta `postgres` y `garage`: los deja parados y falla. `make down` y después `make up`; los volúmenes se conservan. Hasta entonces, el stack que sigue en marcha no tiene base de datos.
 - **`crm_test` no existe:** el volumen de PostgreSQL es anterior a F1-10. Reinicia en limpio (`down -v`).
 - **Garage `Invalid RPC secret key`:** `GARAGE_RPC_SECRET` debe tener 64 caracteres hex.
+
+## 6. Probar el envío de imágenes y PDF (F7-09b3)
+
+El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED` al instante. Necesitas una cuenta con `channels.manage`, `contacts.view`, `conversations.view` y `messages.send` (el Owner las tiene).
+
+1. **Apagado (por omisión).** `make up` con `MEDIA_SEND_UNSCANNED=false` en `infra/env/.env`.
+2. Entra en **http://localhost:8080** y abre un cliente en `/o/<slug>/clientes`: el id del contacto es el último tramo de la URL.
+3. Simula que ese cliente escribe (abre la conversación y su ventana de 24 h). En la consola del navegador, en la misma pestaña:
+
+   ```js
+   const csrf = document.cookie.match(/csrftoken=([^;]+)/)[1];
+   await fetch("/api/v1/o/<slug>/channels/sandbox/inbound/", {
+     method: "POST",
+     headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+     body: JSON.stringify({ contact_id: "<id del contacto>", external_message_id: "prueba-medios-1", text: "Hola, ¿me mandan la cotización?" }),
+   }).then((r) => r.json());
+   ```
+
+4. Abre `/o/<slug>/inbox`, la conversación del cliente, y pulsa el clip («Adjuntar imagen o PDF»). Elige un JPEG, PNG o PDF: se ve su nombre y tamaño, y el cuadro pasa a decir «Pie de foto (opcional)». Pulsa «Enviar».
+   - **Esperado (apagado):** no aparece ningún mensaje nuevo; bajo el cuadro, «Por ahora no se pueden enviar archivos…», y el clip ya no abre el selector.
+5. **Encendido.** Pon `MEDIA_SEND_UNSCANNED=true` en `infra/env/.env`, `make up` (recrea backend y worker) y recarga la página.
+   - Envía una imagen con un pie de foto y un PDF sin él. **Esperado:** dos burbujas a la derecha, «Imagen» con el pie y «Documento», que pasan de «En cola» a «Entregado» (pulsa «Actualizar» si no cambia sola).
+   - Un GIF o una imagen de más de 5 MB (un PDF de más de 10 MB) no se adjunta y se explica; no se sube nada.
+6. Al terminar, vuelve a `MEDIA_SEND_UNSCANNED=false` y `make up`: sin antivirus (D-F7-04), ningún medio debe salir fuera de una prueba local.
