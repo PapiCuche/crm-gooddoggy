@@ -11,6 +11,7 @@ from config import env  # noqa: E402
 from config.settings.base import *  # noqa: E402,F403
 
 DEBUG = True
+SANDBOX_INBOUND_ENABLED = env.boolean("SANDBOX_INBOUND_ENABLED", True)  # F1-14
 # Compose (F1-10): sondas internas por nombre de servicio (p. ej. `backend`).
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", *env.csv_list("DJANGO_ALLOWED_HOSTS")]
 # Compose lo activa: el stack local también prueba que el runtime es crm_app (ADR-002 §1.1).
