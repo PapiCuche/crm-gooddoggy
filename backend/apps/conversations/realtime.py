@@ -26,10 +26,11 @@ from apps.access.selectors import AccessDenied, execution_context, has_permissio
 from apps.accounts.websocket import user_for
 from apps.conversations.models import Conversation
 from core.observability.logging import get_logger
+from core.tenancy.channels import CLOSE_MFA_REQUIRED, TenantConsumerMixin
 from core.tenancy.channels import CLOSE_SUSPENDED as CLOSE_FORBIDDEN
-from core.tenancy.channels import TenantConsumerMixin
 from core.tenancy.context import require
 from core.tenancy.resolution import OrganizationSuspended, TenantNotFound, resolve_tenant
+from core.tenancy.second_factor import SecondFactorRequired
 
 logger = get_logger(__name__)
 VIEW = "conversations.view"
@@ -103,7 +104,7 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
         if layer is None or not getattr(user, "is_authenticated", False):
             await self.close(code=CLOSE_RETRY if layer is None else CLOSE_UNAUTHENTICATED)
             return
-        if not await self.connect_tenant():  # 4404 (sin organización o sin membresía) o 4403
+        if not await self.connect_tenant():  # 4404 (sin organización o sin membresía), 4403, 4428
             return
         tenant = self.tenant
         if tenant is None or tenant.user_id is None or not await self.in_tenant(self._may_view):
@@ -212,6 +213,9 @@ class InboxConsumer(TenantConsumerMixin, AsyncWebsocketConsumer):  # type: ignor
         try:
             await database_sync_to_async(resolve_tenant)(slug, user, "ws")
             allowed = await self.in_tenant(self._may_view)
+        except SecondFactorRequired:  # quitó su segundo factor con la conexión abierta (ADR-038)
+            await self._close(CLOSE_MFA_REQUIRED)
+            return False
         except TenantNotFound, OrganizationSuspended, AccessDenied:
             allowed = False
         if not allowed:

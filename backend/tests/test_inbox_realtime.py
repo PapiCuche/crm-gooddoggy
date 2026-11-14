@@ -32,6 +32,7 @@ from tests.test_authorization import give
 from tests.test_conversation_commands import send
 from tests.test_conversation_scopes import crm, inbox, real_stack
 from tests.test_memberships import ctx
+from tests.test_mfa_second_factor import enrolled
 
 __all__ = ["crm", "inbox", "real_stack"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
@@ -478,5 +479,24 @@ def test_a_connection_that_sends_too_many_frames_is_closed_and_the_window_resets
                 assert await vera.frames(1) == [{"type": "pong"}]
             await vera.send_to(PING)  # la cuarta de la ventana
             assert await vera.closed_with() == 1008 and not realtime._open
+
+    run(go)
+
+
+def test_with_enforce_a_member_who_needs_the_second_factor_gets_4428_and_loses_it_later(
+    inbox: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """ADR-038: el Owner sin dispositivo confirmado no conecta; la Vendedora, que no lo necesita,
+    sí. Con el dispositivo conecta, y si lo quita con la conexión abierta, se cierra."""
+    settings.MFA_ENFORCEMENT = "enforce"
+    settings.INBOX_WS_RECHECK_SECONDS, settings.INBOX_WS_IDLE_SECONDS = 0.1, 2.5
+    assert attempt("org-a", inbox.ana) == (False, 4428)
+    assert attempt("org-a", inbox.vera)[0]
+    enrolled(inbox.ana)
+
+    async def go() -> None:
+        async with connected("org-a", inbox.ana) as ana:
+            migrator.execute("DELETE FROM user_mfa_devices WHERE user_id = %s", [inbox.ana.pk])
+            assert await ana.closed_with() == 4428
 
     run(go)

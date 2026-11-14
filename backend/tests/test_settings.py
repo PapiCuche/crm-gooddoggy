@@ -35,6 +35,7 @@ BASE_ENV: dict[str, str | None] = {
     "META_ENABLED": None,
     "META_APP_SECRETS": None,
     "META_WEBHOOK_VERIFY_TOKEN": None,
+    "MFA_ENFORCEMENT": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
@@ -161,6 +162,20 @@ def test_production_refuses_the_sandbox_inbound_and_has_it_off(
         assert settings.SANDBOX_INBOUND_ENABLED is False  # type: ignore[attr-defined]
     assert load_local(monkeypatch).SANDBOX_INBOUND_ENABLED is True
     assert load_local(monkeypatch, SANDBOX_INBOUND_ENABLED="false").SANDBOX_INBOUND_ENABLED is False
+
+
+@pytest.mark.parametrize("value", ["strict", "Enforce", "", "off"])
+def test_mfa_enforcement_is_warn_by_default_and_anything_else_than_its_two_values_stops_it(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """ADR-023 §9 y ADR-038: un valor que no es `warn` ni `enforce` no arranca ningún proceso."""
+    assert load_production(monkeypatch).MFA_ENFORCEMENT == "warn"  # type: ignore[attr-defined]
+    on = load_production(monkeypatch, MFA_ENFORCEMENT="enforce")
+    assert on.MFA_ENFORCEMENT == "enforce"  # type: ignore[attr-defined]
+    with pytest.raises(ImproperlyConfigured, match="MFA_ENFORCEMENT"):
+        load_production(monkeypatch, MFA_ENFORCEMENT=value)
+    with pytest.raises(ImproperlyConfigured, match="MFA_ENFORCEMENT"):
+        load_local(monkeypatch, MFA_ENFORCEMENT=value)
 
 
 @pytest.mark.parametrize(

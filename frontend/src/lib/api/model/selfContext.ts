@@ -9,6 +9,7 @@ import type { Grant } from "./grant";
 import type { MemberOrganization } from "./memberOrganization";
 import type { MemberUser } from "./memberUser";
 import type { RoleName } from "./roleName";
+import type { SecondFactor } from "./secondFactor";
 
 export interface SelfContext {
   user: MemberUser;
@@ -17,4 +18,5 @@ export interface SelfContext {
   /** Solo para mostrar: no autorizan nada. */
   roles: RoleName[];
   permissions: Grant[];
+  mfa: SecondFactor;
 }

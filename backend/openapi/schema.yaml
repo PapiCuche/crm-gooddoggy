@@ -14980,6 +14980,21 @@ components:
         * `TEAM` - Team
         * `BRANCH` - Branch
         * `ORGANIZATION` - Organization
+    SecondFactor:
+      type: object
+      properties:
+        required:
+          type: boolean
+          description: La membresía exige segundo factor (rol Owner, Administrador
+            de plantilla o algún permiso sensible, ADR-023 §9).
+        missing:
+          type: boolean
+          description: 'Lo exige y la cuenta no tiene un dispositivo confirmado. Con
+            `MFA_ENFORCEMENT` en `enforce` no se llega a leer: la organización responde
+            403 `MFA_REQUIRED`.'
+      required:
+      - missing
+      - required
     SelfContext:
       type: object
       properties:
@@ -14999,8 +15014,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Grant'
+        mfa:
+          $ref: '#/components/schemas/SecondFactor'
       required:
       - membership_id
+      - mfa
       - organization
       - permissions
       - roles

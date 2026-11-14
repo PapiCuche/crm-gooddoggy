@@ -23,6 +23,7 @@ from core.tenancy.celery import TenancyCheck
 from core.tenancy.commands import PlatformCommand, TenantCommand
 from core.tenancy.context import TenantContext, TenantContextError, TenantContextMissing
 from core.tenancy.scope import tenant_scope
+from core.tenancy.second_factor import MESSAGE, SecondFactor
 from tests import fakes
 from tests.tenancy_app.consumers import WidgetConsumer
 from tests.tenancy_app.models import Widget
@@ -164,6 +165,42 @@ def test_t10_ws_subscription_to_other_tenant_is_rejected(
     connected, _, replies = ws("org-a", member, {"subscribe": own}, {"subscribe": other})
     assert connected and replies == [{"subscribed": own}, {"error": "NOT_FOUND"}]
     assert ws("org-b", member)[:2] == (False, 4404)  # sin membresía: no conecta
+
+
+def lacking(ctx: TenantContext) -> SecondFactor:
+    return SecondFactor(required=True, enrolled=False)
+
+
+def enrolled(ctx: TenantContext) -> SecondFactor:
+    return SecondFactor(required=True, enrolled=True)
+
+
+def test_with_enforce_a_member_who_lacks_the_second_factor_opens_no_route(
+    orgs: dict[str, UUID], member: UUID, settings: Any
+) -> None:
+    """ADR-038: el 403 `MFA_REQUIRED` en toda ruta de tenant y el 4428 en el WebSocket, solo para
+    quien es miembro; quien no lo es sigue recibiendo el 404 común (4404)."""
+    settings.MFA_ENFORCEMENT = "enforce"
+    settings.TENANCY_SECOND_FACTOR_POLICY = f"{__name__}.lacking"
+    client = Client(headers={"X-Test-User": str(member)})
+    for route in tenant_routes():
+        for method in ("get", "patch", "delete"):
+            response = getattr(client, method)(fill(route, "org-a", orgs["widget_A"]))
+            assert (response.status_code, response.json()) == (
+                403,
+                {"code": "MFA_REQUIRED", "message": MESSAGE},
+            ), (method, route)
+        for slug in ("org-b", "no-existe"):
+            response = client.get(fill(route, slug, orgs["widget_A"]))
+            assert (response.status_code, response.json()) == (404, NOT_FOUND), (slug, route)
+    assert ws("org-a", member)[:2] == (False, 4428)
+    assert ws("org-b", member)[:2] == (False, 4404)
+    settings.TENANCY_SECOND_FACTOR_POLICY = f"{__name__}.enrolled"
+    assert client.get("/api/v1/o/org-a/widgets/").status_code == 200
+    assert ws("org-a", member, {"subscribe": str(orgs["widget_A"])})[0]
+    settings.MFA_ENFORCEMENT, settings.TENANCY_SECOND_FACTOR_POLICY = "warn", f"{__name__}.lacking"
+    assert client.get("/api/v1/o/org-a/widgets/").status_code == 200  # `warn` no cierra nada
+    assert ws("org-a", member)[0]
 
 
 class Probe(TenantCommand):

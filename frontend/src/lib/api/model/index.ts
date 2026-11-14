@@ -268,6 +268,7 @@ export * from "./rolesListParams";
 export * from "./sandboxInboundRequest";
 export * from "./sandboxInboundResult";
 export * from "./scopesEnum";
+export * from "./secondFactor";
 export * from "./selfContext";
 export * from "./sendMediaFormRequest";
 export * from "./sendMessageRequest";

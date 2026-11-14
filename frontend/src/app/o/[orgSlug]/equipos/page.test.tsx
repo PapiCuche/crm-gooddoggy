@@ -11,6 +11,7 @@ const tenant: SelfContext = {
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
   organization: { id: "o1", slug: "acme", name: "Acme SAC" },
   membership_id: "m1",
+  mfa: { required: false, missing: false },
   roles: [],
   permissions: [],
 };
