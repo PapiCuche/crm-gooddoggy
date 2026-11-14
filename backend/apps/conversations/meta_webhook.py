@@ -41,7 +41,7 @@ from django.db import DatabaseError
 from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.conversations import ingress
+from apps.conversations import ingest_alerts, ingress
 from apps.conversations.models import META_ID
 from core.observability.logging import get_logger
 
@@ -156,6 +156,14 @@ def _profiles(contacts: Any) -> dict[Any, str]:
     return found
 
 
+def _user_id_seen(contacts: Any, message: dict[str, Any]) -> bool:
+    """¿El cambio trae algún BSUID (`contacts[].user_id` o `messages[].from_user_id`)? Solo el
+    sí o el no: el id es un dato personal y nunca se copia (F7-14)."""
+    rows = contacts[:MAX_ROWS] if isinstance(contacts, list) else []
+    found = [message.get("from_user_id")] + [c.get("user_id") for c in rows if isinstance(c, dict)]
+    return any(isinstance(user, str) and user for user in found)
+
+
 def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     """Los ítems de un cambio. Un ítem que no vale se descarta solo (`rejected`): un cliente no
     puede envenenar el lote de otros. Lo que invalida el cambio entero lanza `Invalid`."""
@@ -184,7 +192,10 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
                 if not isinstance(row, dict):
                     raise Invalid(name)
                 item = build(waba, number, row)
-                if item.kind == "message" and (profile := names.get(row.get("from"))):
+                sender = row.get("from") if item.kind == "message" else False
+                if sender in (None, ""):  # sin teléfono (F7-14): solo si traía un BSUID
+                    item.payload["user_id_seen"] = _user_id_seen(value.get("contacts"), row)
+                elif isinstance(sender, str) and (profile := names.get(sender)):
                     item.payload["profile_name"] = profile  # el nombre de perfil va por `wa_id`
                 items.append(item)
             except Invalid as error:
@@ -270,13 +281,14 @@ def _receive(request: HttpRequest) -> HttpResponse:
         logger.warning("meta.webhook.too_large")  # Meta reintenta; sin firma, nada más que el aviso
         return HttpResponse(status=413)
     if not signed(request.headers.get("X-Hub-Signature-256"), body):
+        ingest_alerts.bad_signature()  # F7-11a: solo el conteo, sin dirección ni cuerpo
         return HttpResponse(status=401)
     try:
         parsed = parse(body)
     except Invalid as error:
         logger.warning("meta.webhook.invalid", reason=error.reason)
         return HttpResponse(status=200)  # firmado pero mal formado: 200, contado y sin procesar
-    except Overflow as error:  # más de lo que Meta documenta: nada a medias, y Meta reintenta
+    except Overflow as error:  # una cuenta absurda: nada a medias, y Meta reintenta
         logger.error("meta.webhook.over_cap", reason=error.reason)
         return HttpResponse(status=503)
     if parsed.rejected:

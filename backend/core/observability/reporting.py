@@ -6,7 +6,7 @@ Sentry: sin PII por defecto, sin tracing ni profiling, sin variables locales ni 
 generan eventos (evita la doble captura con las integraciones de Django y Celery).
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import cache
 from typing import Any, Protocol
 
@@ -25,7 +25,12 @@ class ErrorReporter(Protocol):
         self, exception: BaseException, context: Mapping[str, Any] | None = None
     ) -> None: ...
 
-    def capture_message(self, message: str, context: Mapping[str, Any] | None = None) -> None: ...
+    def capture_message(
+        self,
+        message: str,
+        context: Mapping[str, Any] | None = None,
+        fingerprint: Sequence[str] | None = None,
+    ) -> None: ...
 
 
 class NoopReporter:
@@ -34,7 +39,12 @@ class NoopReporter:
     ) -> None:
         pass
 
-    def capture_message(self, message: str, context: Mapping[str, Any] | None = None) -> None:
+    def capture_message(
+        self,
+        message: str,
+        context: Mapping[str, Any] | None = None,
+        fingerprint: Sequence[str] | None = None,
+    ) -> None:
         pass
 
 
@@ -112,9 +122,16 @@ class SentryReporter:
             scope.set_context("crm", redact(dict(context or {})))
             self._sdk.capture_exception(exception)
 
-    def capture_message(self, message: str, context: Mapping[str, Any] | None = None) -> None:
+    def capture_message(
+        self,
+        message: str,
+        context: Mapping[str, Any] | None = None,
+        fingerprint: Sequence[str] | None = None,
+    ) -> None:
         with self._sdk.new_scope() as scope:
             scope.set_context("crm", redact(dict(context or {})))
+            if fingerprint:  # la misma huella agrupa el mismo aviso (F7-11a)
+                scope.fingerprint = list(fingerprint)
             self._sdk.capture_message(redact_text(message))
 
 

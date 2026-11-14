@@ -62,7 +62,9 @@ def plain(shop: SimpleNamespace, grants: dict[str, Any]) -> User:
 
 def events(migrator: DB, made: Quote) -> list[str]:
     found = migrator.execute(
-        "SELECT event_type, payload::text FROM outbox_events WHERE aggregate_id = %s", [made.pk]
+        "SELECT event_type, payload::text FROM outbox_events WHERE aggregate_id = %s"
+        " ORDER BY occurred_at, id",  # sin ORDER BY, PostgreSQL las da en cualquier orden
+        [made.pk],
     ).fetchall()
     assert all(set(json.loads(p)) == {"quote_id", "contact_id", "opportunity_id", "status",
                                       "revision"} for _, p in found)  # fmt: skip

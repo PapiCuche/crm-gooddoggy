@@ -21,6 +21,7 @@ from django.utils import timezone
 from core import storage
 from core.storage.memory import InMemoryStorage
 from core.storage.s3 import S3CompatibleStorage
+from tests.logs import log_text
 from tests.test_authorization import give
 from tests.test_conversations_api import BASE, UNAUTHENTICATED, crm, inbox, real_stack
 from tests.test_conversations_messages_api import SEES, say
@@ -233,7 +234,7 @@ def test_the_signed_url_and_its_signature_never_reach_the_logs(
     made = attach(migrator, inbox.a, convo)
     with caplog.at_level(logging.DEBUG):
         url = signed(inbox.ana).get(url_of(convo, made.pk)).json()["url"]
-    text = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    text = log_text(caplog)
     assert "http.request.completed" in text  # el registro de la petición sí está
     for leaked in (url, "memory://", "disposition", str(made.attempt), "org/"):
         assert leaked not in text, leaked

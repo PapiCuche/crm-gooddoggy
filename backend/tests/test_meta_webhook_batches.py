@@ -344,7 +344,7 @@ def test_the_migration_goes_back_to_the_old_cap_and_forward(migrator: DB) -> Non
     exists = "SELECT count(*) FROM pg_proc WHERE proname = 'webhook_ingress_refuse'"
     big = {"x": "x" * (2 << 20)}
     with as_migrator():
-        call_command("migrate", "conversations", "0030", verbosity=0)
+        call_command("migrate", "conversations", "0032", verbosity=0)
     assert count(migrator, exists) == 0
     with pytest.raises(DatabaseError, match="no válidos"), transaction.atomic():
         ingress.insert("other", "wa:x:old", WABA_ID, None, big)  # el tope de 1 MiB de `0008`

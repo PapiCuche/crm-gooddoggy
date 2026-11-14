@@ -52,7 +52,7 @@ class Replace(SecurityDefinerFunction):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0030_validate_outbound_file_purpose"),
+        ("conversations", "0032_meta_ingest_indexes"),
     ]
 
     operations = [

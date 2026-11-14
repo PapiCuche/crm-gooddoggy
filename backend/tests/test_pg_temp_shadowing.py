@@ -35,6 +35,7 @@ FUNCTIONS = (
     "public.webhook_ingress_purge(integer, integer)",
     "public.webhook_ingress_refuse(text, text, text, text, text, jsonb, text)",  # F7-11b
     "public.resolve_channel_account(text, text)",
+    "public.meta_ingest_counts(timestamptz, timestamptz)",  # F7-11a, SECURITY DEFINER
     "public.quotes_guard()",  # F5-09b: guardas de la cotización, INVOKER
     "public.quote_items_guard()",
     "public.quote_approvals_guard()",
