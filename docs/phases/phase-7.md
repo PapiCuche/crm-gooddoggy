@@ -352,7 +352,7 @@ Decisiones del propietario de la serie (detalle y recomendaciones en ADR-032 §1
   ```
 
   Sigue siendo una cota inferior (los 200 `IGNORED` más recientes); el total sale de los registros.
-- **F7-14b ([#787](https://github.com/PapiCuche/crm-gooddoggy/issues/787)):** [ADR-037](../adr/ADR-037-whatsapp-bsuid-identity.md) (`Proposed`) propone la identidad por BSUID: el id solo en `contact_identities` por cuenta, enlace automático solo cuando Meta afirma la pareja teléfono–BSUID, sin fusión, contacto sin teléfono, envío por `to` o por `recipient`, y las decisiones D-BSUID-01 a D-BSUID-12. Los arreglos de código de la revisión de #784 (`user_id_seen` en todo ítem de mensaje, la prueba con `1e999` y la de las claves que añade `parse`) van en un PR aparte después de #794.
+- **F7-14b ([#787](https://github.com/PapiCuche/crm-gooddoggy/issues/787)):** [ADR-037](../adr/ADR-037-whatsapp-bsuid-identity.md) (`Proposed`) propone la identidad por BSUID: el id solo en `contact_identities` por cuenta, enlace automático solo cuando Meta afirma la pareja teléfono–BSUID, sin fusión, contacto sin teléfono, envío por `to` o por `recipient`, y las decisiones D-BSUID-01 a D-BSUID-13. Los arreglos de código de la revisión de #784 (`user_id_seen` en todo ítem de mensaje, la prueba con `1e999` y la de las claves que añade `parse`) pasan a F7-14b2 ([#799](https://github.com/PapiCuche/crm-gooddoggy/issues/799)).
 
 ## Qué necesita el propietario (sin ningún valor real)
 
