@@ -31,6 +31,7 @@ alguna lista o en total, es `503` sin guardar nada: nunca un `200` que pierda un
 import hashlib
 import hmac
 import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -164,6 +165,19 @@ def _user_id_seen(contacts: Any, message: dict[str, Any]) -> bool:
     return any(isinstance(user, str) and user for user in found)
 
 
+def _sender(message: dict[str, Any], contacts: Any, names: dict[Any, str]) -> None:
+    """Lo que el ítem de un mensaje añade sobre su remitente. `user_id_seen` se escribe siempre
+    (F7-14b2): el del cuerpo nunca sobrevive, y solo es cierto sin `from` y con algún BSUID. Un
+    `from` infinito (`1e999`) se guarda como texto: `ingress.clean` lo dejaría nulo e `inbound` lo
+    contaría sin teléfono (`NO_PHONE`); es un `from` presente y mal formado (`BAD_PHONE`)."""
+    sender = message.get("from")
+    message["user_id_seen"] = sender in (None, "") and _user_id_seen(contacts, message)
+    if isinstance(sender, float) and not math.isfinite(sender):
+        message["from"] = str(sender)
+    elif isinstance(sender, str) and sender and (profile := names.get(sender)):
+        message["profile_name"] = profile  # el nombre de perfil va por `wa_id`
+
+
 def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     """Los ítems de un cambio. Un ítem que no vale se descarta solo (`rejected`): un cliente no
     puede envenenar el lote de otros. Lo que invalida el cambio entero lanza `Invalid`."""
@@ -192,11 +206,8 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
                 if not isinstance(row, dict):
                     raise Invalid(name)
                 item = build(waba, number, row)
-                sender = row.get("from") if item.kind == "message" else False
-                if sender in (None, ""):  # sin teléfono (F7-14): solo si traía un BSUID
-                    item.payload["user_id_seen"] = _user_id_seen(value.get("contacts"), row)
-                elif isinstance(sender, str) and (profile := names.get(sender)):
-                    item.payload["profile_name"] = profile  # el nombre de perfil va por `wa_id`
+                if item.kind == "message":
+                    _sender(item.payload, value.get("contacts"), names)
                 items.append(item)
             except Invalid as error:
                 rejected.append(error.reason)
