@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+import psycopg
 from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
@@ -70,10 +71,22 @@ def _call(sql: str, params: list[Any]) -> list[tuple[Any, ...]]:
         return rows
 
 
+def _bound(sql: str, params: list[Any]) -> list[tuple[Any, ...]]:
+    """Como `_call`, pero con los parámetros aparte (`$1…`) y no escritos en el texto: si la base
+    rechaza la sentencia, su registro de errores la copia sin el payload (textos, teléfonos y
+    nombres de clientes). Es la misma conexión y la misma transacción de Django, así que los puntos
+    de guardado de `atomic` siguen valiendo; la conexión entera no cambia de modo. Los valores
+    tampoco salen por `log_parameter_max_length_on_error`, que queda en 0 (su valor por omisión)."""
+    connection.ensure_connection()
+    with connection.wrap_database_errors, psycopg.Cursor(connection.connection) as cursor:
+        cursor.execute(sql, params, prepare=False)  # sin sentencias preparadas: vale con un pool
+        return cursor.fetchall()
+
+
 def insert(kind: str, key: str, waba_id: str, number: str | None, payload: dict[str, Any]) -> bool:
     """Guarda un ítem validado, idempotente por `(proveedor, clave)`. Devuelve si era nuevo."""
     sql = "SELECT public.webhook_ingress_insert(%s, %s, %s, %s, %s, %s)"
-    found = _call(sql, [PROVIDER, key, kind, waba_id, number, Jsonb(clean(payload))])
+    found = _bound(sql, [PROVIDER, key, kind, waba_id, number, Jsonb(clean(payload))])
     return found[0][0] is not None
 
 
@@ -86,7 +99,7 @@ def refuse(item: Any, sqlstate: str) -> bool:
     sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
     payload = Jsonb(clean(item.payload))
     args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, payload, reason]
-    return _call(sql, args)[0][0] is not None
+    return _bound(sql, args)[0][0] is not None
 
 
 def _insert_all(items: list[Any]) -> int:
@@ -100,7 +113,7 @@ def _insert_all(items: list[Any]) -> int:
         " e->>'w', e->>'n', e->'p') AS id FROM jsonb_array_elements(%s) WITH ORDINALITY AS a(e, n)"
         " ORDER BY a.n) AS s"
     )
-    return int(_call(sql, [PROVIDER, Jsonb(rows)])[0][0])
+    return int(_bound(sql, [PROVIDER, Jsonb(rows)])[0][0])
 
 
 def _store(items: list[Any], refused: list[Any]) -> int:

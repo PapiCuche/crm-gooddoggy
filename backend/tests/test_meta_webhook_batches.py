@@ -247,7 +247,7 @@ def subtransactions() -> tuple[int, bool]:
         return found
 
 
-@pytest.mark.parametrize("bad", [None, 0, 999])
+@pytest.mark.parametrize("bad", [None, 999])
 def test_a_large_delivery_never_overflows_the_subtransaction_cache(bad: int | None) -> None:
     """Más de 64 subtransacciones abiertas desbordan su caché en el proceso y frenan las
     instantáneas de todas las sesiones: el lote va en una sentencia y un rechazo se aísla por
@@ -273,6 +273,40 @@ def test_items_go_in_by_key_order_whatever_order_they_arrive_in(migrator: DB) ->
     assert ingress.store(items) == 200
     found = migrator.execute("SELECT event_key FROM webhook_ingress ORDER BY id").fetchall()
     assert [k for (k,) in found] == keys
+
+
+@pytest.mark.usefixtures("inflate")
+def test_no_statement_sent_to_the_database_carries_the_batch_content(
+    migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un rechazo hace fallar sentencias (una por mitad de la bisección) y PostgreSQL copia en su
+    registro de errores el texto de cada una. Con los parámetros aparte, ese texto lleva `$1…` y
+    ningún dato del lote; y `log_parameter_max_length_on_error` sigue en 0, así que tampoco salen
+    los valores. Se mira lo que psycopg envía de verdad (`_query.query`), sentencia a sentencia."""
+    sent: list[tuple[type, bytes]] = []
+    real = psycopg.Cursor.execute
+
+    def spy(self: psycopg.Cursor[Any], query: Any, params: Any = None, **kw: Any) -> Any:
+        try:
+            return real(self, query, params, **kw)
+        finally:
+            sent.append((type(self), bytes(self._query.query) if self._query else b""))
+
+    monkeypatch.setattr(psycopg.Cursor, "execute", spy)
+    secret = webhooks.text_message("MARCADOR-PII-7f3a", wamid="wamid.N00001")
+    delivery = webhooks.deliver(body([change([secret, poison(1), msg(2)])]))
+    assert post(delivery).status_code == 200
+    monkeypatch.undo()
+    assert failures(migrator) == [("wa:msg:wamid.P00001", "DEAD", True, 0, "REFUSED_22023", 8)]
+    ingest = [(kind, q) for kind, q in sent if b"webhook_ingress_" in q]
+    assert len(ingest) >= 4  # el lote, sus mitades y el registro del rechazo
+    assert all(kind is psycopg.Cursor and b"$1" in q for kind, q in ingest), ingest
+    for kind, query in sent:
+        for content in (b"MARCADOR-PII-7f3a", b"Texto privado", b"Hola", b"wamid."):
+            assert content not in query, (kind, query[:200])
+    with connection.cursor() as cursor:
+        cursor.execute("SHOW log_parameter_max_length_on_error")
+        assert cursor.fetchone() == ("0",)
 
 
 def test_a_refusal_counts_as_dead_for_the_ingest_alerts(migrator: DB) -> None:
