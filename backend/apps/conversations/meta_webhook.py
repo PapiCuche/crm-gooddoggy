@@ -10,15 +10,22 @@ ruta no existe (404 como cualquier ruta desconocida: ni siquiera revela que est�
 hasta 128), nunca otra cosa. Todo lo demás, `403` vacío y sin distinguir la causa.
 
 `POST` (eventos), en este orden: (1) leer el cuerpo **crudo**, como mucho `BODY_MAX` bytes (más es
-`413`, sin leer más de ese tope más uno); (2) la firma `X-Hub-Signature-256`
+`413`, sin leer más de ese tope más uno, y se registra); (2) la firma `X-Hub-Signature-256`
 (`sha256=<64 hex>`, HMAC-SHA256 del cuerpo crudo) contra **cada** secreto de `META_APP_SECRETS`,
 sin cortar al primero y con el mismo trabajo se envíe lo que se envíe: ausente, mal formada o
-inválida es `401` vacío; (3) solo ahora, parsear y validar el esquema. Con firma válida la respuesta
-es siempre `200` vacío, también si el cuerpo no se puede parsear o no cumple el esquema (Meta
-reintenta durante días lo que no recibe con `200` y puede desactivar el webhook): se cuenta y no se
-procesa. Nada de esto escribe todavía (F7-03b guarda cada ítem); ningún registro lleva el cuerpo, la
-firma ni el token.
-El tope y los reintentos de Meta están **a confirmar** con su documentación.
+inválida es `401` vacío; (3) solo ahora, parsear y validar el esquema. Un cuerpo firmado que no se
+puede parsear o no cumple el esquema es `200` (se cuenta y no se procesa: repetirlo no lo arregla);
+(4) guardar cada ítem (`ingress.store`) y responder `200` solo cuando todos están guardados o
+registrados como rechazados. Ningún registro lleva el cuerpo, la firma ni el token.
+
+Los topes son los de Meta (F7-11b, consultado el 2026-11-13): «Event Notifications are aggregated
+and sent in a batch with a maximum of 1000 updates» (developers.facebook.com/docs/graph-api/
+webhooks/getting-started) y «Webhook payloads can be up to 3 MB» (developers.facebook.com/docs/
+whatsapp/cloud-api/guides/set-up-webhooks); lo que no recibe un `200` lo reintenta «for up to
+7 days». Una «actualización» es muy probablemente un cambio, que puede traer varias filas
+(mensajes y estados): `MAX_ITEMS` es cinco veces el máximo documentado y lo que de verdad acota el
+trabajo es el cuerpo (3 MiB, y el proxy antes). Solo una cuenta absurda, más de `MAX_ITEMS` en
+alguna lista o en total, es `503` sin guardar nada: nunca un `200` que pierda una parte del lote.
 """
 
 import hashlib
@@ -39,19 +46,29 @@ from apps.conversations.models import META_ID
 from core.observability.logging import get_logger
 
 logger = get_logger(__name__)
-BODY_MAX = 1 << 20  # 1 MiB: a confirmar con el tamaño máximo documentado de un lote de Meta
+BODY_MAX = 3 << 20  # 3 MiB: «Webhook payloads can be up to 3 MB»
 SIGNATURE = re.compile(r"sha256=([0-9a-fA-F]{64})")
 CHALLENGE = re.compile(r"[A-Za-z0-9]{1,128}")
 ID = re.compile(META_ID)
 FIELD = re.compile(r"[a-z_]{1,64}")
 OBJECT = "whatsapp_business_account"
-MAX_ENTRIES, MAX_CHANGES, MAX_ROWS, MAX_ITEMS, MAX_DEPTH = 20, 20, 100, 500, 16
+MAX_ITEMS, MAX_DEPTH = 5000, 16  # 5 × «a batch with a maximum of 1000 updates»
+MAX_ENTRIES = MAX_CHANGES = MAX_ROWS = MAX_ITEMS  # ninguna lista corta antes que el total
 ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
 PROFILE_NAME_MAX = 200  # el nombre de perfil que viaja en el ítem; `inbound` lo recorta a 100
 
 
 class Invalid(Exception):  # noqa: N818 — un cuerpo firmado que no es lo que Meta envía
     """El cuerpo no cumple el esquema. Solo lleva un motivo corto y fijo, nunca el contenido."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class Overflow(Exception):  # noqa: N818 — un lote firmado de un tamaño absurdo
+    """Más de `MAX_ITEMS` en alguna lista o en total: no se guarda nada y Meta reintenta (`503`).
+    Solo lleva la lista que lo superó, nunca el contenido."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -166,8 +183,10 @@ def _change(waba: str, change: Any, rejected: list[str]) -> list[Item]:
     names = _profiles(value.get("contacts"))
     for name, build in (("messages", _message), ("statuses", _status)):
         rows = value.get(name, [])
-        if not isinstance(rows, list) or len(rows) > MAX_ROWS:
+        if not isinstance(rows, list):
             raise Invalid(name)
+        if len(rows) > MAX_ROWS:
+            raise Overflow(name)
         for row in rows:
             try:
                 if not isinstance(row, dict):
@@ -192,8 +211,9 @@ class Parsed:
 
 def parse(body: bytes) -> Parsed:
     """Valida el cuerpo (ya firmado) y lo divide en ítems. `Invalid` si no es lo que Meta envía:
-    ni JSON, ni el objeto, ni la lista de entradas, ni los topes. Dentro de eso, lo que no vale se
-    descarta por ítem, por cambio o por entrada, y el resto sigue. No guarda nada."""
+    ni JSON, ni el objeto, ni la lista de entradas. `Overflow` si alguna lista o el total pasa de
+    `MAX_ITEMS`. Dentro de eso, lo que no vale se descarta por ítem, por cambio o por entrada, y el
+    resto sigue. No guarda nada."""
     try:
         event = json.loads(body, parse_constant=_no_constant)
     except ValueError, RecursionError:  # incluye UnicodeDecodeError; 100 000 corchetes
@@ -201,8 +221,10 @@ def parse(body: bytes) -> Parsed:
     if not isinstance(event, dict) or event.get("object") != OBJECT or _deep(event):
         raise Invalid("object")
     entries = event.get("entry")
-    if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_ENTRIES:
+    if not isinstance(entries, list) or not entries:
         raise Invalid("entry")
+    if len(entries) > MAX_ENTRIES:
+        raise Overflow("entry")
     items: list[Item] = []
     rejected: list[str] = []
     for entry in entries:
@@ -211,8 +233,10 @@ def parse(body: bytes) -> Parsed:
             changes = entry.get("changes") if isinstance(entry, dict) else None
             if not isinstance(waba, str) or not ID.fullmatch(waba):
                 raise Invalid("waba")
-            if not isinstance(changes, list) or not 1 <= len(changes) <= MAX_CHANGES:
+            if not isinstance(changes, list) or not changes:
                 raise Invalid("changes")
+            if len(changes) > MAX_CHANGES:
+                raise Overflow("changes")
             for change in changes:
                 try:
                     items += _change(waba, change, rejected)
@@ -221,7 +245,7 @@ def parse(body: bytes) -> Parsed:
         except Invalid as error:
             rejected.append(error.reason)
     if len(items) > MAX_ITEMS:
-        raise Invalid("items")
+        raise Overflow("items")
     return Parsed(items, rejected)
 
 
@@ -249,10 +273,12 @@ def _subscribe(request: HttpRequest) -> HttpResponse:
 
 def _receive(request: HttpRequest) -> HttpResponse:
     length = request.META.get("CONTENT_LENGTH", "")
-    if length.isascii() and length.isdigit() and int(length) > BODY_MAX:
-        return HttpResponse(status=413)  # sin leer nada
-    body = request.read(BODY_MAX + 1)
-    if len(body) > BODY_MAX:
+    declared = length.isascii() and length.isdigit() and int(length) > BODY_MAX
+    # Si `Content-Length` ya lo supera, no se pide nada más. Con ASGI el servidor ya recibió el
+    # cuerpo entero antes de la vista: el tope que de verdad protege la memoria es el del proxy.
+    body = b"" if declared else request.read(BODY_MAX + 1)
+    if declared or len(body) > BODY_MAX:
+        logger.warning("meta.webhook.too_large")  # Meta reintenta; sin firma, nada más que el aviso
         return HttpResponse(status=413)
     if not signed(request.headers.get("X-Hub-Signature-256"), body):
         ingest_alerts.bad_signature()  # F7-11a: solo el conteo, sin dirección ni cuerpo
@@ -262,6 +288,9 @@ def _receive(request: HttpRequest) -> HttpResponse:
     except Invalid as error:
         logger.warning("meta.webhook.invalid", reason=error.reason)
         return HttpResponse(status=200)  # firmado pero mal formado: 200, contado y sin procesar
+    except Overflow as error:  # una cuenta absurda: nada a medias, y Meta reintenta
+        logger.error("meta.webhook.over_cap", reason=error.reason)
+        return HttpResponse(status=503)
     if parsed.rejected:
         logger.warning("meta.webhook.rejected", reasons=sorted(set(parsed.rejected)),
                        count=len(parsed.rejected))  # fmt: skip

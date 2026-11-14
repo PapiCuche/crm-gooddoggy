@@ -14,6 +14,11 @@
 		reverse_proxy backend:8000
 	}
 	handle /webhooks/* {
+		# Pública y sin sesión: el tope llega antes que Django, que con ASGI lee el cuerpo entero.
+		# 4 MB (10^6) cubre los 3 MiB de BODY_MAX en meta_webhook.py (F7-11b) con margen.
+		request_body {
+			max_size 4MB
+		}
 		reverse_proxy backend:8000
 	}
 	handle /ws/* {

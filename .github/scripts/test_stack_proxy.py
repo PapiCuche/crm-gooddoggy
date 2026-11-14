@@ -43,6 +43,19 @@ class StackProxy(unittest.TestCase):
         self.assertNotIn("trusted_proxies", caddyfile)  # con ella conservaría la del cliente
         self.assertNotRegex(caddyfile, r"(?i)header_up\s+\S*X-Forwarded-For")  # ni `+` ni `-`
 
+    def test_the_webhook_body_cap_covers_the_view_cap_with_a_small_margin(self):
+        caddyfile = (ROOT / "infra/docker/proxy/Caddyfile").read_text()
+        block = re.search(r"handle /webhooks/\* \{(.*?)\n\t\}", caddyfile, re.S).group(1)
+        (size,) = re.findall(r"request_body \{\s*max_size (\d+)MB\s*\}", block)
+        view = (ROOT / "backend/apps/conversations/meta_webhook.py").read_text()
+        # Sin `ast`: el backend usa sintaxis de Python 3.14 y esta prueba corre con el del runner.
+        ((count, shift),) = re.findall(r"^BODY_MAX = (\d+) << (\d+)\b", view, re.M)
+        body_max = int(count) << int(shift)
+        cap = int(size) * 10**6  # en Caddy, MB es 10^6 y MiB 2^20
+        self.assertGreater(cap, body_max)  # un lote válido de Meta nunca se corta en el proxy
+        self.assertLess(cap, 2 * body_max)  # y uno abusivo no llega a Django
+        self.assertLess(block.index("request_body"), block.index("reverse_proxy"))
+
     def test_caddy_caps_an_api_body_just_above_the_largest_upload(self):
         caddyfile = (ROOT / "infra/docker/proxy/Caddyfile").read_text()
         api = caddyfile[caddyfile.index("handle /api/*") : caddyfile.index("handle /webhooks/*")]

@@ -3,10 +3,10 @@ firmado, reclamarlo, enrutarlo al tenant y cerrarlo.
 
 `webhook_ingress` y `webhook_failures` son de plataforma: `crm_app` no tiene ningún privilegio
 sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones (`0008`: insertar;
-`0009`: el resto). Aquí está todo lo que las llama. El enrutado **nunca** usa la organización que
-diga el payload: sale de `resolve_channel_account` (la cuenta que la propia organización
-registró), y el procesador solo enruta y marca: un ítem enrutado queda `PROCESSED` sin efecto
-hasta F7-04.
+`0009`: el resto; `0033`: registrar un rechazo). Aquí está todo lo que las llama. El enrutado
+**nunca** usa la organización que diga el payload: sale de `resolve_channel_account` (la cuenta
+que la propia organización registró), y el procesador solo enruta y marca: un ítem enrutado queda
+`PROCESSED` sin efecto hasta F7-04.
 """
 
 import json
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+import psycopg
 from django.db import DataError, connection, transaction
 from psycopg.types.json import Jsonb
 
@@ -32,6 +33,7 @@ PROVIDER = "meta"
 LEASE_SECONDS = 60  # el reclamo caduca: un proceso que muere no deja el ítem para siempre
 BROKER_WAIT = 3  # segundos que la ruta pública espera a un broker que no contesta
 _NO_WAIT = {"max_retries": 0, "socket_connect_timeout": BROKER_WAIT, "socket_timeout": BROKER_WAIT}
+REFUSABLE = ("22023", "22P05")  # el rechazo de la propia función y un carácter que no se traduce
 UNKNOWN_AFTER = 3  # intentos tras los que un estado sin mensaje se cierra como `IGNORED`
 WAKE_EVERY = 1.0  # segundos entre dos avisos de un mismo proceso: el resto lo recoge el barrido
 _last_wake = 0.0
@@ -69,26 +71,82 @@ def _call(sql: str, params: list[Any]) -> list[tuple[Any, ...]]:
         return rows
 
 
+def _bound(sql: str, params: list[Any]) -> list[tuple[Any, ...]]:
+    """Como `_call`, pero con los parámetros aparte (`$1…`) y no escritos en el texto: si la base
+    rechaza la sentencia, su registro de errores la copia sin el payload (textos, teléfonos y
+    nombres de clientes). Es la misma conexión y la misma transacción de Django, así que los puntos
+    de guardado de `atomic` siguen valiendo; la conexión entera no cambia de modo. Los valores
+    tampoco salen por `log_parameter_max_length_on_error`, que queda en 0 (su valor por omisión)."""
+    connection.ensure_connection()
+    with connection.wrap_database_errors, psycopg.Cursor(connection.connection) as cursor:
+        cursor.execute(sql, params, prepare=False)  # sin sentencias preparadas: vale con un pool
+        return cursor.fetchall()
+
+
 def insert(kind: str, key: str, waba_id: str, number: str | None, payload: dict[str, Any]) -> bool:
     """Guarda un ítem validado, idempotente por `(proveedor, clave)`. Devuelve si era nuevo."""
     sql = "SELECT public.webhook_ingress_insert(%s, %s, %s, %s, %s, %s)"
-    found = _call(sql, [PROVIDER, key, kind, waba_id, number, Jsonb(clean(payload))])
+    found = _bound(sql, [PROVIDER, key, kind, waba_id, number, Jsonb(clean(payload))])
     return found[0][0] is not None
 
 
+def refuse(item: Any, sqlstate: str) -> bool:
+    """Registra un ítem que la base nunca guardará: `DEAD`, sin payload y con el motivo
+    `REFUSED_<sqlstate>` en `webhook_failures`, para que se vea y alerte. El hash lo calcula la
+    base igual que al guardar (del `jsonb`), así que se compara con el de cualquier otra fila.
+    Idempotente por clave, y nunca toca un ítem que ya estaba guardado. Devuelve si era nuevo."""
+    reason = f"REFUSED_{sqlstate}"
+    sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
+    payload = Jsonb(clean(item.payload))
+    args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, payload, reason]
+    return _bound(sql, args)[0][0] is not None
+
+
+def _insert_all(items: list[Any]) -> int:
+    """Todos los ítems en una sola sentencia, en el orden dado; devuelve cuántos eran nuevos."""
+    rows = [
+        {"k": i.key, "t": i.kind, "w": i.waba_id, "n": i.phone_number_id, "p": clean(i.payload)}
+        for i in items
+    ]
+    sql = (  # la función, volátil, se evalúa después del `ORDER BY`: en el orden dado
+        "SELECT count(s.id) FROM (SELECT public.webhook_ingress_insert(%s, e->>'k', e->>'t',"
+        " e->>'w', e->>'n', e->'p') AS id FROM jsonb_array_elements(%s) WITH ORDINALITY AS a(e, n)"
+        " ORDER BY a.n) AS s"
+    )
+    return int(_bound(sql, [PROVIDER, Jsonb(rows)])[0][0])
+
+
+def _store(items: list[Any], refused: list[Any]) -> int:
+    """Intenta el lote entero con un solo punto de guardado; si la base rechaza un ítem, deshace
+    ese intento y prueba cada mitad, hasta aislarlo y registrarlo con `refuse`. Unos 2·log2(n)
+    puntos de guardado por ítem rechazado, no uno por ítem: más de 64 desbordan la caché de
+    subtransacciones del proceso y frenan las instantáneas de todas las sesiones."""
+    try:
+        with transaction.atomic():
+            return _insert_all(items)
+    except DataError as error:  # nunca lo guardará: un 503 lo repetiría 7 días en vano
+        state = getattr(error.__cause__, "sqlstate", None)
+        if state not in REFUSABLE:
+            raise  # un error de la base, no de un ítem: la ruta responde 503 y Meta reintenta
+        if len(items) > 1:
+            half = len(items) // 2
+            return _store(items[:half], refused) + _store(items[half:], refused)
+        refuse(items[0], state)
+        refused.append(items[0])
+        return 0
+
+
 def store(items: list[Any]) -> int:
-    """Guarda todos los ítems de una entrega en una transacción (un reintento de Meta repite lo
-    que falte y nada más). Devuelve cuántos eran nuevos."""
-    new = refused = 0
+    """Guarda todos los ítems de una entrega en una transacción, en orden de clave (dos entregas
+    que se solapan bloquean en el mismo orden). Un ítem que la base rechaza (`DataError`) no
+    envenena el lote: queda registrado con `refuse` y el resto se guarda. Cualquier otro error
+    deshace la entrega entera y sube (la ruta responde 503 y Meta reintenta; repetir no duplica).
+    Devuelve cuántos eran nuevos."""
+    refused: list[Any] = []
     with transaction.atomic():
-        for i in items:
-            try:
-                with transaction.atomic():  # un punto de guardado por ítem
-                    new += insert(i.kind, i.key, i.waba_id, i.phone_number_id, i.payload)
-            except DataError:  # un dato que la base nunca guardará: solo ese ítem se descarta, y
-                refused += 1  # no un 503 que Meta repetiría eternamente
+        new = _store(sorted(items, key=lambda item: item.key), refused) if items else 0
     if refused:
-        logger.warning("meta.webhook.refused", count=refused)
+        logger.error("meta.webhook.refused", count=len(refused))  # solo cuántos, nunca el contenido
     return new
 
 
