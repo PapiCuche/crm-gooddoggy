@@ -70,7 +70,9 @@ def withdraw(desk: SimpleNamespace, quote: str, version: int) -> None:
 
 def refusals(migrator: DB) -> list[Any]:
     found = "SELECT entity_id::text, result, metadata, changes::text FROM audit_logs "
-    return migrator.execute(found + "WHERE action = 'quote.price_refused'").fetchall()
+    return migrator.execute(
+        found + "WHERE action = 'quote.price_refused' ORDER BY occurred_at, id"
+    ).fetchall()
 
 
 @pytest.fixture

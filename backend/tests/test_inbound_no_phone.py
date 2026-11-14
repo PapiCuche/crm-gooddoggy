@@ -11,6 +11,7 @@ import pytest
 
 from apps.conversations import ingress
 from apps.conversations.meta_webhook import parse
+from tests.logs import log_text
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import BSUID, CUSTOMER
 from tests.test_contacts_api import crm
@@ -40,7 +41,7 @@ def logged(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 
 
 def private_free(caplog: pytest.LogCaptureFixture) -> None:
-    text = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    text = log_text(caplog)
     for secret in (BSUID, PRIVATE, "Cliente de prueba", "wamid.1", CUSTOMER):
         assert secret not in text, secret
 

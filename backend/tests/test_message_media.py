@@ -31,6 +31,7 @@ from core.outbox import handlers_for
 from core.storage.memory import InMemoryStorage
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
+from tests.logs import log_text
 from tests.meta_sim import GRAPH_VERSION, transport
 from tests.meta_sim.graph import TEST_TOKEN, FakeGraph, FakeMedia
 from tests.meta_sim.webhooks import CUSTOMER, MEDIA_HOST, PHONE_NUMBER_ID, WABA_ID
@@ -800,7 +801,7 @@ def test_logs_carry_ids_and_codes_only(
         tasks.fetch_media(str(one(world, migrator, "wamid.M2")), str(world.a))
         world.blobs.fail_put = True
         tasks.fetch_media(str(one(world, migrator, "wamid.M3")), str(world.a))
-    text = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    text = log_text(caplog)
     for secret in (TEST_TOKEN, "lookaside", "/blob/", "evil.html", "text/html", CUSTOMER, "Bearer"):
         assert secret not in text, secret
 
@@ -1061,7 +1062,7 @@ def test_a_non_public_dns_answer_never_connects_nor_sends_the_token(
     blocked = [r.msg for r in caplog.records if "media.blocked_ip" in str(r.msg)]
     assert len(blocked) == 1 and set(blocked[0]) <= LOGGED | {"attachment_id", "role"}
     assert blocked[0]["role"] == ("media" if host == MEDIA_HOST else "graph")  # type: ignore[index]
-    text = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    text = log_text(caplog)
     for secret in ("10.0.0.1", MEDIA_HOST, transport.GRAPH_HOST, TEST_TOKEN, "lookaside"):
         assert secret not in text, secret
 
