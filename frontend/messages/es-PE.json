@@ -2312,7 +2312,8 @@
       "attach": "Adjuntar imagen o PDF",
       "attached": "Adjunto: {name}, {detail}",
       "remove": "Quitar el archivo",
-      "captionHint": "Se envía como pie de foto; puedes dejarlo vacío.",
+      "captionHint": "Puedes escribir un texto que lo acompañe (opcional).",
+      "idTakenMedia": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el archivo.",
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
         "note": "Pasaste el tope de caracteres: no se puede guardar."

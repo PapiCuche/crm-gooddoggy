@@ -191,7 +191,8 @@ function ComposeBox({
   const key = messagesKey(slug, conversation.id);
   // Con un archivo, el texto es su pie de foto: otro tope, contado en unidades UTF-16.
   const max = file ? CAPTION_MAX : BODY_MAX;
-  const count = file ? text.length : Array.from(text).length;
+  // El navegador manda cada salto de línea del formulario como `\r\n`: cuenta dos.
+  const count = file ? text.length + (text.match(/\n/g)?.length ?? 0) : Array.from(text).length;
   // Una nota se admite también en una conversación cerrada; una respuesta no.
   const closed = !note && conversation.status === "CLOSED";
   const over = count > max;
@@ -266,6 +267,14 @@ function ComposeBox({
         setProblem(null);
         return;
       }
+      const reason = failure(error);
+      if (reason === "MEDIA_TOO_LARGE" || reason === "MEDIA_TYPE_NOT_ALLOWED") {
+        // Reenviar el mismo archivo daría lo mismo: se quita y se explica, sin «Reintentar».
+        attempt.current = null;
+        setFile(null);
+        setRefusal(errors(`api.${reason}`));
+        return;
+      }
       if (REFRESH_ON.includes(error.code)) {
         void client.invalidateQueries({
           queryKey: getConversationsRetrieveQueryKey(slug, conversation.id),
@@ -274,7 +283,9 @@ function ComposeBox({
       setProblem(
         error.status === 403 || error.status === 404
           ? t(note ? "deniedNote" : "denied")
-          : errors(`api.${failure(error)}`),
+          : reason === "CLIENT_MESSAGE_ID_TAKEN" && request.file
+            ? t("idTakenMedia")
+            : errors(`api.${reason}`),
       );
     },
   });
@@ -380,6 +391,7 @@ function ComposeBox({
         onChange={(event) => {
           setText(event.target.value);
           setProblem(null);
+          setRefusal(null);
           setSaved(null);
         }}
         onKeyDown={keys}
@@ -420,7 +432,11 @@ function ComposeBox({
         </div>
       ) : null}
       <p role="status" className="sr-only">
-        {send.isPending ? t(note ? "saving" : "sending") : ""}
+        {send.isPending
+          ? t(note ? "saving" : "sending")
+          : off && !note
+            ? errors("api.MEDIA_NOT_SCANNED")
+            : ""}
       </p>
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
@@ -477,8 +493,9 @@ function ComposeBox({
             <Button
               type="button"
               variant="ghost"
-              className="border-border size-10 border px-0 lg:size-11"
+              className="border-border size-10 rounded-[14px] border px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 lg:size-11"
               aria-label={t("attach")}
+              title={off ? errors("api.MEDIA_NOT_SCANNED") : t("attach")}
               aria-describedby={off ? `${field}-off` : undefined}
               disabled={closed}
               aria-disabled={send.isPending || off}

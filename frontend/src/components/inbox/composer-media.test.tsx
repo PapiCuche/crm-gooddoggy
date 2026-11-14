@@ -117,6 +117,63 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     expect(screen.queryByText("cotizacion.pdf")).toBeNull();
   });
 
+  it("un pie de solo espacios no viaja", async () => {
+    const s = server(() => ({ status: 202, body: outbound("s1", "DOCUMENT", "Documento") }));
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "   " } });
+    send();
+    await waitFor(() => expect(s.forms()).toHaveLength(1));
+    expect(s.forms()[0]!.has("caption")).toBe(false);
+  });
+
+  it("el pie cuenta cada salto de línea como dos (CRLF) y los emojis como dos unidades", async () => {
+    server(() => ({ status: 500 }));
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "🐶".repeat(512) } }); // 1024 unidades
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeEnabled();
+    fireEvent.change(await caption(), { target: { value: "🐶".repeat(513) } });
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+    fireEvent.change(await caption(), { target: { value: `${"a".repeat(1023)}\n` } }); // 1025 con el CRLF
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+  });
+
+  it("los topes exactos se adjuntan (5 MB una imagen, 10 MB un PDF)", async () => {
+    server(() => ({ status: 500 }));
+    show();
+    await openChat();
+    await attach(pdf("limite.pdf", 10 << 20));
+    expect(await caption()).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Quitar el archivo" }));
+    const png = new File(["x"], "limite.png", { type: "image/png" });
+    Object.defineProperty(png, "size", { value: 5 << 20 });
+    await attach(png);
+    expect(await caption()).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("otro archivo con el mismo pie es otro intento: otro id", async () => {
+    let reply: Reply = { status: 500, body: { code: "INTERNAL_ERROR" } };
+    const s = server(() => reply);
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "Su cotización" } });
+    send();
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Quitar el archivo" }));
+    await attach(pdf("otra.pdf"));
+    reply = { status: 202, body: outbound("s1", "DOCUMENT", "Su cotización") };
+    send(); // quitar el archivo deja de ser un reintento
+    await waitFor(() => expect(s.forms()).toHaveLength(2));
+    const [first, second] = s.forms();
+    expect(second!.get("caption")).toBe("Su cotización");
+    expect(second!.get("client_message_id")).not.toBe(first!.get("client_message_id"));
+  });
+
   it("una imagen con pie de foto lo envía tal cual; solo espacios no cuenta como pie", async () => {
     const s = server(() => ({ status: 202, body: outbound("s1", "IMAGE", "Collar rojo") }));
     show();
@@ -146,6 +203,7 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
       })(),
       "El archivo es demasiado grande",
     ],
+    ["un PDF de más de 10 MB", pdf("grande.pdf", (10 << 20) + 1), "El archivo es demasiado grande"],
   ])("%s no se adjunta y se explica sin subir nada", async (_name, file, text) => {
     const s = server(() => ({ status: 500 }));
     show();
@@ -158,10 +216,30 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
   });
 
   it.each([
-    [411, { code: "LENGTH_REQUIRED" }, "no llegó completo"],
     [413, { code: "MEDIA_TOO_LARGE" }, "demasiado grande"],
     [413, undefined, "demasiado grande"], // el tope del proxy responde sin el `code` de la API
     [415, { code: "MEDIA_TYPE_NOT_ALLOWED" }, "Solo se pueden enviar"],
+    [415, undefined, "Solo se pueden enviar"],
+  ])("un %i quita el archivo y se explica, sin «Reintentar»", async (status, body, text) => {
+    const s = server(() => ({ status, body }));
+    show();
+    await openChat();
+    await attach(pdf());
+    fireEvent.change(await caption(), { target: { value: "Su cotización" } });
+    send();
+    expect(await screen.findByRole("alert")).toHaveTextContent(text);
+    expect(screen.queryByText("cotizacion.pdf")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+    // El texto queda como respuesta: enviarlo ya no es un medio.
+    expect(await screen.findByRole("textbox", { name: "Responder al cliente" })).toHaveValue(
+      "Su cotización",
+    );
+    expect(s.forms()).toHaveLength(1);
+  });
+
+  it.each([
+    [411, { code: "LENGTH_REQUIRED" }, "no llegó completo"],
+    [411, undefined, "no llegó completo"],
     [409, { code: "WINDOW_CLOSED" }, "Ya pasó la ventana de atención"],
     [429, { code: "RATE_LIMITED" }, "Demasiados intentos"],
   ])(
@@ -190,9 +268,18 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     await openChat();
     await attach(pdf());
     send();
-    const why = await screen.findByText(/Por ahora no se pueden enviar archivos/);
+    const [why] = await screen.findAllByText(/Por ahora no se pueden enviar archivos/, {
+      selector: "p:not([role])",
+    });
     expect(why).toBeVisible();
+    // También lo anuncia la región viva que decía «Enviando…» (WCAG 4.1.3).
+    const regions = screen.getAllByRole("status").map((region) => region.textContent);
+    expect(regions).toContainEqual(expect.stringMatching(/Por ahora no se pueden enviar archivos/));
     expect(screen.queryByRole("alert")).toBeNull(); // un aviso fijo, no un error del envío
+    expect(screen.getByRole("button", { name: "Adjuntar imagen o PDF" })).toHaveAttribute(
+      "title",
+      expect.stringMatching(/Por ahora no se pueden enviar archivos/),
+    );
     expect(screen.queryByText("cotizacion.pdf")).toBeNull();
     const clip = screen.getByRole("button", { name: "Adjuntar imagen o PDF" });
     expect(clip).toHaveAttribute("aria-disabled", "true");
