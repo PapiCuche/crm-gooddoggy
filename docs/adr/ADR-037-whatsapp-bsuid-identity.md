@@ -87,7 +87,7 @@ El BSUID se toma **solo** de `from_user_id` del mismo mensaje, nunca de otra fil
 
 | Regla | Evidencia de Meta | Qué hace |
 | --- | --- | --- |
-| A. Pareja en el mismo objeto | Un mismo mensaje trae `from` y `from_user_id`; o un estado de un mensaje **enviado por el CRM** (su `id` es un `external_message_id` nuestro) trae `recipient_id` y `recipient_user_id`; o un eco trae `to` y `to_user_id`, un hilo del historial `wa_id` y `user_id`, una entrada de la agenda de la app `phone_number` y `user_id` (ADR-032) | Crea la identidad en el contacto del teléfono o, si ya existe, actualiza `phone_e164` y `phone_seen_at` |
+| A. Pareja en el mismo objeto | Un mismo mensaje trae `from` y `from_user_id`; o un estado de un mensaje **enviado por el CRM** (su `id` es un `external_message_id` nuestro) trae `recipient_id` y `recipient_user_id`; o un eco trae `to` y `to_user_id`, un hilo del historial `wa_id` y `user_id`, una entrada de la agenda de la app `phone_number` y `user_id` (ADR-032) | Crea la identidad en el contacto del teléfono o, si ya existe, actualiza `phone_e164` y `phone_seen_at`. Para un estado, el contacto es el del mensaje enviado (no se busca por teléfono), y solo si `recipient_id` es el teléfono al que se envió; si no coincide, es un conflicto (§4) |
 | B. Cambio de número | Mensaje `system` `user_changed_number` o `user_changed_user_id` con `previous_user_id` igual a una identidad vigente de la cuenta | Crea la identidad nueva en el **mismo** contacto y marca la anterior `superseded_at` (§5) |
 | C. El cliente comparte su número | Mensaje `contacts` con `origin = contact_request` desde una identidad conocida | Guarda `phones[].wa_id` normalizado en `phone_e164` de la identidad y, si el contacto no tiene teléfono, en el contacto |
 
@@ -97,7 +97,7 @@ El BSUID se toma **solo** de `from_user_id` del mismo mensaje, nunca de otra fil
 
 - El mensaje va a **A** (la identidad que Meta liga a la persona gana sobre un teléfono sin índice único).
 - El teléfono se escribe en A **solo si A no tiene uno**; nunca se sobrescribe un teléfono escrito por una persona.
-- **No se fusiona** A con B. Se cuenta en una métrica (`identity_conflict`, solo la cuenta y el tipo) y la ficha muestra un aviso de posible duplicado cuando exista la vinculación humana y auditada de D-F7b-05 (D-BSUID-03).
+- **No se fusiona** A con B. Se registra la pareja (A, B) con ids internos (§7, D-BSUID-13) y se cuenta en `identity_conflict` (solo la cuenta y el tipo); la ficha muestra un aviso de posible duplicado cuando exista la vinculación humana y auditada de D-F7b-05 (D-BSUID-03).
 
 **Por qué hay que empezar pronto.** Mientras el cliente no tenga nombre de usuario, Meta envía el teléfono y el BSUID juntos: cada mensaje enlaza (regla A) a los clientes actuales. Cuando ese cliente adopte un nombre de usuario, su BSUID ya estará en su ficha y su conversación seguirá en el mismo contacto. Cuanto más tarde se active la regla A, más clientes aparecerán como contactos nuevos (D-BSUID-12).
 
@@ -105,7 +105,7 @@ El BSUID se toma **solo** de `from_user_id` del mismo mensaje, nunca de otra fil
 
 - Con la regla B, la identidad anterior queda `superseded_at` y ya **no sirve para enviar**; se conserva solo para reconocer eventos atrasados o desordenados.
 - Un entrante atrasado con un BSUID sustituido se atribuye a su contacto (sin crear contacto ni identidad); la identidad sustituida no sirve para enviar.
-- Si el `user_id` nuevo ya es una identidad de otro contacto, no se mueve ni se fusiona: la anterior queda `superseded_at`, se cuenta `identity_conflict` y aplica D-BSUID-03.
+- Si el `user_id` nuevo ya es una identidad de otro contacto, no se mueve ni se fusiona: la anterior queda `superseded_at`, se cuenta `identity_conflict`, se registra la pareja (A, C) como en §4 y aplican D-BSUID-03 y D-BSUID-13.
 - `user_changed_number` trae el número nuevo en `wa_id`: se guarda en `phone_e164` de la identidad nueva, pero el teléfono del **contacto** no se cambia solo (podría ser un número compartido o uno que alguien escribió a mano); la ficha muestra «WhatsApp informó un cambio de número» para que una persona lo confirme (D-BSUID-06). El cuerpo `system.body` (contiene los dos números) no se guarda: se vacía con el payload.
 - `user_changed_user_id` trae en `system.body` el BSUID anterior y el nuevo: tampoco se guarda. Ninguno de los dos mensajes `system` se convierte en un `Message` ni en una fila del historial del chat; solo cambian identidades.
 - Si `previous_user_id` falta o no coincide con ninguna identidad, el mensaje `system` se ignora con una métrica; el próximo mensaje del cliente entra por §3.
@@ -163,7 +163,8 @@ Los ecos, el historial y la agenda de la app de la coexistencia (ADR-032 §4, §
 
 No cambian la decisión; los resuelve el work item que toque esa parte y los documenta en su PR:
 
-- §3.1: si la búsqueda de la identidad mira también las cuentas hermanas con el mismo `external_parent_id` en la organización (§2) o solo la cuenta del mensaje.
+- §3.1: cómo se implementa la búsqueda en las cuentas hermanas (§2: misma organización y mismo WABA); la decisión es la de §2.
+- Dónde se guarda la pareja (A, B) de un conflicto: una tabla del tenant con FORCE RLS, por ejemplo `contact_merge_candidates` de `02` §E.5; se decide en F7-14d.
 - Qué identidad toma `conversations.contact_identity_id` cuando el contacto tiene varias (vigente de esa cuenta; qué pasa con una conversación abierta cuando su identidad queda sustituida).
 - Qué pasa con la identidad cuando el contacto se borra de forma lógica (si sigue atribuyendo entrantes o se crea un contacto nuevo).
 - `user_changed_number` sin `wa_id` (Meta lo omite si no puede compartir el número): se trata como `user_changed_user_id`.
@@ -219,7 +220,7 @@ No cambian la decisión; los resuelve el work item que toque esa parte y los doc
 
 - Nuevo identificador personal con las reglas del teléfono y más: fuera de registros, métricas, auditoría, outbox, IA, API y búsqueda.
 - El tenant nunca sale del payload; la identidad es por cuenta y la tabla tiene FORCE RLS: un BSUID firmado para otra organización no encuentra nada.
-- Un webhook firmado puede traer un BSUID falso solo si se filtró el app secret (ADR-029 §10); aun así, la regla A exige teléfono y BSUID en el mismo objeto y nunca fusiona, así que el daño queda en un contacto nuevo o un aviso de duplicado.
+- Un webhook firmado puede traer un BSUID falso solo si se filtró el app secret (ADR-029 §10); aun así, la regla A exige teléfono y BSUID en el mismo objeto y nunca fusiona, así que el daño queda en un contacto nuevo, un aviso de duplicado o un bloqueo de lo proactivo (un conflicto falsificado activa D-BSUID-13: el lado seguro).
 - La IA no ve el BSUID ni puede pedir el número al cliente: el botón lo envía una persona.
 
 ## Operational implications
