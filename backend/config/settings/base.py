@@ -122,6 +122,9 @@ ENFORCE_RUNTIME_DB_ROLE = False
 # Tenancy (F1-04): inyección para que core no importe módulos superiores.
 TENANCY_ORGANIZATION_SELECTOR = "apps.organizations.selectors.organization_by_slug"
 TENANCY_MEMBERSHIP_RESOLVER = "apps.organizations.selectors.active_membership"  # F2-02
+# F1-14: la entrada del simulador Sandbox (inyecta mensajes de clientes). Apagada por omisión;
+# `local` y `test` la encienden y `production` no arranca con ella.
+SANDBOX_INBOUND_ENABLED = env.boolean("SANDBOX_INBOUND_ENABLED", False)
 # Celery (F1-10): broker Redis por entorno (compose: redis://redis:6379/0).
 CELERY_BROKER_URL = env.optional("CELERY_BROKER_URL", "")
 # Capa de canales (F6-07a): Redis; sin URL, el WebSocket del Inbox no abre (1013). Test: memoria.
@@ -294,6 +297,7 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,  # tipos separados de petición/respuesta para orval
     "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
     "SERVE_PERMISSIONS": ["core.api.permissions.Public"],  # ruta de plataforma (ADR-014 §4)
+    "PREPROCESSING_HOOKS": ["apps.conversations.api.urls.hide_sandbox"],  # F1-14
     # Un nombre por enumeración: sin esto la primera `status` del contrato sería `StatusEnum`.
     "ENUM_NAME_OVERRIDES": {
         "MembershipStatusEnum": MEMBERSHIP_STATUSES,

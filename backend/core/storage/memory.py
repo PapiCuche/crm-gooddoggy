@@ -32,6 +32,9 @@ class InMemoryStorage:
     def delete(self, key: str) -> None:
         self.objects.pop(base.check_key(key), None)
 
+    def ping(self) -> None:
+        pass
+
     def presign_get(
         self, key: str, *, expires_in: int, filename: str, content_type: str,
         disposition: str = "attachment",

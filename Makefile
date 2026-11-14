@@ -48,6 +48,8 @@ check-images: ## Imágenes como en CI: build, usuario no root y prueba de humo H
 	docker build --pull -t crm-frontend:ci frontend
 	test "$$(docker run --rm --entrypoint id crm-frontend:ci -u)" != "0"
 	SMOKE_CHECK="node frontend/scripts/check-security-headers.mjs" sh infra/docker/smoke-image.sh crm-frontend:ci 3000 /o/ci
+	docker build --progress=plain --build-arg CRM_BUILD_PROFILE=Production frontend 2>&1 \
+		| grep -qE '^#[0-9]+ [0-9.]+ CRM_BUILD_PROFILE desconocido: Production \('  # F1-14
 
 check-backend:  # `@`: la línea lleva credenciales locales (TEST_ENV); make no la imprime
 	$(COMPOSE) up -d --wait postgres garage
