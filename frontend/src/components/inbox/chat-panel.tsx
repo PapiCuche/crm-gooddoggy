@@ -9,6 +9,7 @@ import {
   Clock,
   RefreshCw,
   FileQuestionMark,
+  FileText,
   ImageIcon,
   StickyNote,
   TriangleAlert,
@@ -281,12 +282,14 @@ const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
 // `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
 // `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
 const STATES: readonly string[] = Object.keys(MARKS);
-// Un medio entrante (F7-09a2b): su clase con un icono y un rótulo fijos, y debajo su archivo
-// (`MediaFile`, F7-09a3). `Object.hasOwn`: ni `constructor` ni otra clave del prototipo.
+// Un medio (F7-09a2b): su clase con un icono y un rótulo fijos, y debajo su archivo si es entrante
+// (`MediaFile`, F7-09a3). Un documento solo sale (F7-09b3). `Object.hasOwn`: ni `constructor` ni otra
+// clave del prototipo.
 const MEDIA: Record<string, ReactNode> = {
   IMAGE: <ImageIcon aria-hidden className="size-3.5" />,
   AUDIO: <AudioLines aria-hidden className="size-3.5" />,
   VIDEO: <Video aria-hidden className="size-3.5" />,
+  DOCUMENT: <FileText aria-hidden className="size-3.5" />,
 };
 
 function Bubble({ message, conversationId }: { message: Message; conversationId: string }) {
@@ -301,6 +304,10 @@ function Bubble({ message, conversationId }: { message: Message; conversationId:
   const media = !note && Object.hasOwn(MEDIA, type) ? type : null;
   const unsupported = !note && !media && type !== "TEXT";
   const outbound = message.direction === "OUTBOUND";
+  // El cuerpo de un medio saliente es el pie de foto de quien lo envió (un texto suyo) o, sin él, la
+  // misma etiqueta que el rótulo, que no se repite. El de un entrante es una frase fija.
+  const label = media && t(`media.${message.attachment?.kind === "STICKER" ? "STICKER" : media}`);
+  const fixed = unsupported || (media && !outbound);
   const state = outbound && message.delivery_status ? message.delivery_status : null;
   // El motivo de un fallo sale de una tabla de textos por código cerrado; un código que la tabla
   // no conoce (o ninguno) no muestra nada más que «No se pudo enviar»: nunca el valor crudo.
@@ -317,7 +324,7 @@ function Bubble({ message, conversationId }: { message: Message; conversationId:
         "flex max-w-[85%] flex-col gap-1 rounded-[10px] border p-3 leading-snug",
         outbound && "bg-accent text-accent-foreground border-foreground/10 self-end",
         message.direction === "INBOUND" && "bg-background border-border self-start",
-        (unsupported || media) && "bg-surface-raised",
+        fixed && "bg-surface-raised",
         note &&
           "bg-surface-raised border-foreground/40 w-full max-w-full self-stretch border-dashed",
       )}
@@ -337,15 +344,15 @@ function Bubble({ message, conversationId }: { message: Message; conversationId:
       {media ? (
         <p className="text-muted flex items-center gap-1.5 text-xs font-semibold uppercase">
           {MEDIA[media]}
-          {t(`media.${message.attachment?.kind === "STICKER" ? "STICKER" : media}`)}
+          {label}
         </p>
       ) : null}
       {message.body === null ? (
         unsupported || media ? null : (
           <p className="text-muted text-sm italic">{t("bodyHidden")}</p>
         )
-      ) : (
-        <p className={unsupported || media ? "text-muted text-sm italic" : undefined}>
+      ) : outbound && media && message.body === label ? null : (
+        <p className={fixed ? "text-muted text-sm italic" : undefined}>
           <Plain>{message.body}</Plain>
         </p>
       )}
