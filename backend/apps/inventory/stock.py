@@ -91,7 +91,7 @@ class ActorMismatch(ActorRefused):
     Así llega una tarea de Celery encolada con `actor_type=USER`: `@tenant_task` arma el contexto
     con `user_id=None` (tenancy-context §3; `user_id` fija `app.user_id`, que lee RLS, y cambiarlo
     es una decisión de ADR). Por eso una tarea que mueve, reserva o transfiere stock actúa como
-    `SYSTEM` (el valor por defecto) y, si lo hace por una persona, la guarda en sus propios datos."""
+    `SYSTEM` (el valor por defecto) y, si lo hace por una persona, la guarda en sus datos."""
 
     def __init__(self) -> None:
         super().__init__(ActorType.USER)
