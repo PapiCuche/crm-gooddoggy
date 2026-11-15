@@ -170,7 +170,7 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
         </h1>
         <div className="flex flex-wrap items-center gap-3">
           <QuoteStatus status={quote.status} late={late} />
-          {editable && !editing ? (
+          {editable ? (
             <Button
               variant="ghost"
               className="border-border min-h-11 border sm:min-h-9"
@@ -188,12 +188,7 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
       <p role="status" className={said ? "text-sm" : "sr-only"}>
         {said}
       </p>
-      {quote.status === "PENDING_APPROVAL" ? (
-        <p className="border-border bg-surface-raised rounded-lg border p-4 text-sm">
-          {t("pendingNotice")}
-        </p>
-      ) : null}
-      {editing && editable ? (
+      {editing ? (
         <QuoteEditor
           quote={quote}
           onCancel={() => setEditing(false)}
@@ -253,7 +248,7 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
                       {line.discount_amount && Number(line.discount_amount) > 0
                         ? money(line.discount_amount, line.currency)
                         : t("none")}
-                      {discountable && !editing && discounting !== line.id ? (
+                      {discountable && !editing ? (
                         <Button
                           variant="ghost"
                           className="border-border mt-1 flex min-h-11 border sm:min-h-9"
@@ -279,7 +274,7 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
             </table>
           </div>
         )}
-        {target && discountable ? (
+        {target ? (
           <LineDiscount
             key={target.id}
             quote={quote}

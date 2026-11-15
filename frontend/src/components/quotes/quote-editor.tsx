@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTimeZone, useTranslations } from "next-intl";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { type Target, TargetPicker } from "@/components/pricing/target-picker";
@@ -81,6 +81,17 @@ export function Field(props: {
   );
 }
 
+// Al abrir un formulario, el foco pasa a su primer control; al cerrarlo, vuelve a donde estaba.
+export function useFocusTrip() {
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const back = document.activeElement as HTMLElement | null;
+    form.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    return () => back?.focus();
+  }, []);
+  return form;
+}
+
 const label = (line: QuoteDetail["items"][number]) =>
   `${line.product_name} · ${line.variant_name} (${line.sku})`;
 
@@ -104,6 +115,7 @@ export function QuoteEditor({
   const slug = useTenant().organization.slug;
   const problemOf = useQuoteProblem();
   const id = useId();
+  const form = useFocusTrip();
   // La cotización como estaba al abrir: si se vuelve a leer mientras se escribe, lo que se compara
   // y la `version` que se envía siguen siendo los que vio quien edita.
   const [quote] = useState(shown);
@@ -171,13 +183,11 @@ export function QuoteEditor({
 
   return (
     <form
+      ref={form}
       noValidate
       aria-label={t(quote ? "editTitle" : "newTitle")}
       aria-busy={busy}
       className="border-border bg-surface flex max-w-3xl flex-col gap-5 rounded-lg border p-4"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy && !event.nativeEvent.isComposing) onCancel();
-      }}
       onSubmit={(event) => {
         event.preventDefault();
         setChecked(true);
@@ -227,21 +237,19 @@ export function QuoteEditor({
             ) : null}
           </div>
         ))}
-        {lines.length < 50 ? (
-          <Button
-            type="button"
-            variant="ghost"
-            className="border-border min-h-11 self-start border sm:min-h-9"
-            onClick={() =>
-              setLines((all) => [
-                ...all,
-                { key: Math.max(-1, ...all.map((x) => x.key)) + 1, variant: null, quantity: "1" },
-              ])
-            }
-          >
-            {t("add")}
-          </Button>
-        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          className="border-border min-h-11 self-start border sm:min-h-9"
+          onClick={() =>
+            setLines((all) => [
+              ...all,
+              { key: Math.max(-1, ...all.map((x) => x.key)) + 1, variant: null, quantity: "1" },
+            ])
+          }
+        >
+          {t("add")}
+        </Button>
       </fieldset>
       <Field id={`${id}-until`} label={t("validUntil")}>
         <input

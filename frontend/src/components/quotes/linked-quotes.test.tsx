@@ -37,12 +37,7 @@ afterEach(() => {
 });
 
 describe("cotizaciones de una oportunidad y de un cliente (F5-09f3)", () => {
-  it("«Nueva cotización» solo con `quotes.create`: abre el editor del vínculo y se cancela", async () => {
-    serve(() => page());
-    show({ opportunity_id: "o9" });
-    expect(await screen.findByText("Todavía no hay cotizaciones.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Nueva cotización" })).toBeNull();
-    cleanup();
+  it("«Nueva cotización» con `quotes.create`: abre el editor del vínculo y se cancela", async () => {
     serve(() => page());
     withTenant(<LinkedQuotes link={{ opportunity_id: "o9" }} contactId={ID} />, "quotes.create");
     fireEvent.click(await screen.findByRole("button", { name: "Nueva cotización" }));
@@ -65,6 +60,7 @@ describe("cotizaciones de una oportunidad y de un cliente (F5-09f3)", () => {
     });
     expect(rows[0]).toHaveTextContent("COT-000001");
     expect(rows[0]).toHaveTextContent("Enviada");
+    expect(screen.queryByRole("button", { name: "Nueva cotización" })).toBeNull(); // sin `quotes.create`
     expect(rows[0]).toHaveTextContent("S/ 500.00");
     expect(rows[0]).toHaveTextContent("Válida hasta 30 nov. 2026");
     expect(within(rows[0]!).getByRole("link", { name: "COT-000001" })).toHaveAttribute(

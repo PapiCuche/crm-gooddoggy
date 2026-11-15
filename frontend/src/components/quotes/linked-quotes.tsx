@@ -105,7 +105,7 @@ export function LinkedQuotes({
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">{t("title")}</h2>
-        {creates && !creating ? (
+        {creates ? (
           <Button
             variant="accent"
             className="min-h-11 sm:min-h-9"

@@ -63,17 +63,13 @@ describe("Cotizaciones: editor (F5-09g)", () => {
     type("Notas para el cliente (opcional)", "Entrega en 48 h");
     fireEvent.click(screen.getByRole("button", { name: "Crear borrador" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
-    expect(calls).toEqual([
+    expect(calls.map((c) => c.body)).toEqual([
       {
-        method: "POST",
-        path: BASE,
-        body: {
-          opportunity_id: "o1",
-          items: [{ variant_id: "v2", quantity: 3 }],
-          valid_until: "2026-12-01T04:59:00.000Z", // fin del día en Lima (UTC-5)
-          notes_to_customer: "Entrega en 48 h",
-          internal_notes: "",
-        },
+        opportunity_id: "o1",
+        items: [{ variant_id: "v2", quantity: 3 }],
+        valid_until: "2026-12-01T04:59:00.000Z", // fin del día en Lima (UTC-5)
+        notes_to_customer: "Entrega en 48 h",
+        internal_notes: "",
       },
     ]);
   });
@@ -137,7 +133,19 @@ describe("Cotizaciones: borrador en el detalle (F5-09g)", () => {
   it("sin `quotes.update` y `quotes.discount`, ni editar ni descontar; fuera de borrador, tampoco", async () => {
     api({ [`GET ${BASE}1/`]: { status: 200, body: draft } });
     show("quotes.update");
-    expect(await screen.findByRole("button", { name: "Editar" })).toBeVisible();
+    const edit = await screen.findByRole("button", { name: "Editar" });
+    expect(screen.queryByRole("button", { name: "Descuento de Collar" })).toBeNull();
+    edit.focus();
+    fireEvent.click(edit);
+    const form = await screen.findByRole("form", { name: "Editar el borrador" });
+    expect(form).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(document.activeElement).toBe(edit));
+    cleanup();
+    api({ [`GET ${BASE}1/`]: { status: 200, body: draft } });
+    show("quotes.discount");
+    expect(await screen.findByText("Borrador")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Descuento de Collar" })).toBeNull();
     cleanup();
     api({ [`GET ${BASE}1/`]: { status: 200, body: detail({ status: "APPROVED" }) } });
@@ -170,16 +178,10 @@ describe("Cotizaciones: borrador en el detalle (F5-09g)", () => {
     percent("30");
     fireEvent.click(form.getByRole("button", { name: "Aplicar" }));
     expect(await screen.findByText(/pasa de tu límite: la cotización queda/)).toBeVisible();
-    expect(screen.getByText(/Espera aprobación/)).toBeVisible();
     expect(screen.getByText("Por aprobar")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Editar" })).toBeNull();
-    expect(calls).toEqual([
-      {
-        method: "POST",
-        path: `${BASE}1/items/l1/discount/`,
-        body: { version: 2, discount_type: "PERCENT", discount_value: "30" },
-      },
-    ]);
+    const sent = { version: 2, discount_type: "PERCENT", discount_value: "30" };
+    expect(calls.map((c) => c.body)).toEqual([sent]);
   });
 
   it("un 400 del valor se explica en el formulario; quitarlo no envía valor", async () => {

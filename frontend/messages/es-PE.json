@@ -2683,8 +2683,7 @@
       "edit": "Editar",
       "saved": "Cambios guardados.",
       "discount": "Descuento",
-      "discountLabel": "Descuento de {product}",
-      "pendingNotice": "Espera aprobación: un descuento o un precio pasa del límite de quien lo dio. Una persona que puede aprobar decide; mientras tanto no se cambia."
+      "discountLabel": "Descuento de {product}"
     },
     "emptyAll": "Todavía no hay cotizaciones.",
     "linked": {

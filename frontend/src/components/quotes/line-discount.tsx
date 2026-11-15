@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { quotesDiscount } from "@/lib/api/client";
 import type { QuoteDetail, QuoteDiscountTypeEnum } from "@/lib/api/model";
 
-import { Field, FIELD as BASE, useQuoteProblem, useQuoteWrite } from "./quote-editor";
+import { Field, FIELD as BASE, useFocusTrip, useQuoteProblem, useQuoteWrite } from "./quote-editor";
 
 const FIGURE = /^\d{1,12}(\.\d{1,2})?$/; // como la API: sin signo ni exponente, hasta 2 decimales
 const KINDS = ["PERCENT", "AMOUNT", "NONE"] as const;
@@ -31,6 +31,7 @@ export function LineDiscount({
   const slug = useTenant().organization.slug;
   const problemOf = useQuoteProblem();
   const id = useId();
+  const form = useFocusTrip();
   const [version] = useState(quote.version ?? 1);
   const was = line.discount_type === "AMOUNT" ? "AMOUNT" : "PERCENT";
   const [kind, setKind] = useState<QuoteDiscountTypeEnum>(was);
@@ -56,13 +57,11 @@ export function LineDiscount({
 
   return (
     <form
+      ref={form}
       noValidate
       aria-label={t("title", { product: line.product_name })}
       aria-busy={busy}
       className="flex flex-col gap-3 py-1"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy && !event.nativeEvent.isComposing) onClose();
-      }}
       onSubmit={(event) => {
         event.preventDefault();
         setChecked(true);
