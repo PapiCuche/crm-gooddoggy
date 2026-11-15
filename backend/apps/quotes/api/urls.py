@@ -36,6 +36,11 @@ urlpatterns = [
         name="quote-price",
     ),
     path(
+        "quotes/<uuid:quote_id>/items/<uuid:line_id>/discount/",
+        quotes.QuoteDiscountView.as_view(),
+        name="quote-discount",
+    ),
+    path(
         "quotes/discount-policies/",
         policies.DiscountPoliciesView.as_view(),
         name="discount-policies",

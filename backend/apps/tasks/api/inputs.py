@@ -11,10 +11,9 @@ from typing import Any
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.deals.api.inputs import Checked, version_required
 from apps.tasks import commands
 from apps.tasks.models import Task
-from core.api.strict import Choice, Closed, Flag, Id, Whole
+from core.api.strict import Checked, Choice, Closed, Flag, Id, Whole, version_required
 
 OPEN = [(s, s) for s in (Task.Status.PENDING, Task.Status.IN_PROGRESS)]
 INSTANT = "ISO 8601 con zona horaria, como 2026-11-20T09:00:00-05:00."

@@ -204,11 +204,12 @@ def test_a_cost_that_rose_refuses_the_approval_audited_counted_and_capped(
     assert price(signed(lab.vera), quote, line, "95.00").status_code == 200
     cost(lab, lab.case, "99", starts_at=later)  # programado: el precio ya no lo cubre
     ana = signed(lab.ana)
+    assert reply(act(signed(lab.sam), quote, "approve")) == REFUSED  # 0 %: el suelo, antes
     assert reply(act(ana, quote, "approve")) == REFUSED
     assert migrator.execute(STATE, [quote]).fetchone() == ("PENDING_APPROVAL", 2, "PENDING")
     assert [r[:3] for r in refusals(migrator)] == [
         (quote, "DENIED", {"route": "approve", "line_id": None})
-    ]
+    ] * 2
     settings.QUOTE_FLOOR_THROTTLE = {"quote": (2, 3600), "user": (30, 86400)}
     assert reply(act(ana, quote, "approve")) == REFUSED  # la segunda; la tercera, el tope
     assert act(ana, quote, "approve").status_code == 429

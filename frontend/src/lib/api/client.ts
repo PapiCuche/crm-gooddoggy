@@ -174,6 +174,7 @@ import type {
   QuoteCancelRequest,
   QuoteCreateRequest,
   QuoteDetail,
+  QuoteDiscountRequest,
   QuotePriceRequest,
   QuoteRejectRequest,
   QuoteVersionRequest,
@@ -14714,7 +14715,7 @@ export const getQuotesCancelUrl = (orgSlug: string, quoteId: string) => {
 };
 
 /**
- * Cancela una cotización que no terminó, con motivo opcional. Si espera aprobación, cierra su solicitud, y solo lo hace quien la pidió o quien puede aprobar (si no, 403 después del alcance). Con `quotes.view`, `quotes.cancel`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_TERMINAL`.
+ * Cancela una cotización que no terminó, con motivo opcional. Si espera aprobación, cierra su solicitud, y solo lo hace quien la pidió o quien puede aprobar (si no, 403 después del alcance). 400 si la base rechaza una referencia. Con `quotes.view`, `quotes.cancel`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_TERMINAL`, `QUOTE_REFUSED`.
  */
 export const quotesCancel = async (
   orgSlug: string,
@@ -14814,6 +14815,115 @@ export const useQuotesCancel = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getQuotesCancelMutationOptions(options), queryClient);
+};
+
+export const getQuotesDiscountUrl = (orgSlug: string, quoteId: string, lineId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/items/${lineId}/discount/`;
+};
+
+/**
+ * Descuento de una línea de esa cotización: `PERCENT`, `AMOUNT` por unidad o `NONE` (quita también un precio manual). Pasar del límite de quien descuenta deja `PENDING_APPROVAL`. 400 si deja el precio en cero o menos. Con `quotes.view`, `quotes.update`, `quotes.discount`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`.
+ */
+export const quotesDiscount = async (
+  orgSlug: string,
+  quoteId: string,
+  lineId: string,
+  quoteDiscountRequest: QuoteDiscountRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesDiscountUrl(orgSlug, quoteId, lineId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quoteDiscountRequest),
+  });
+};
+
+export const getQuotesDiscountMutationKey = () => ["quotesDiscount"] as const;
+
+export const getQuotesDiscountMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesDiscount>>,
+    TError,
+    QuotesDiscountMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesDiscount>>,
+  TError,
+  QuotesDiscountMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesDiscountMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesDiscount>>,
+    QuotesDiscountMutationVariables
+  > = (props) => {
+    const { orgSlug, quoteId, lineId, data } = props ?? {};
+
+    return quotesDiscount(orgSlug, quoteId, lineId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesDiscountMutationResult = NonNullable<Awaited<ReturnType<typeof quotesDiscount>>>;
+export type QuotesDiscountMutationBody = QuoteDiscountRequest;
+export type QuotesDiscountMutationError = ErrorType<Error>;
+export type QuotesDiscountMutationVariables = {
+  orgSlug: string;
+  quoteId: string;
+  lineId: string;
+  data: QuoteDiscountRequest;
+};
+
+export const useQuotesDiscount = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesDiscount>>,
+      TError,
+      QuotesDiscountMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesDiscount>>,
+  TError,
+  QuotesDiscountMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesDiscountMutationOptions(options), queryClient);
 };
 
 export const getQuotesPriceUrl = (orgSlug: string, quoteId: string, lineId: string) => {
@@ -15146,7 +15256,7 @@ export const getQuotesWithdrawRequestUrl = (orgSlug: string, quoteId: string) =>
 };
 
 /**
- * Retira la solicitud abierta: vuelve a `DRAFT`. Solo quien la pidió o quien puede aprobar (la de la IA, solo este); si no, 403 después del alcance. Con `quotes.view`, `quotes.update`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_PENDING`.
+ * Retira la solicitud abierta: vuelve a `DRAFT`. Solo quien la pidió o quien puede aprobar (la de la IA, solo este), y siempre con los permisos de la ruta (quien aprueba sin `quotes.update` usa `…/reject/`); si no, 403 después del alcance. Con `quotes.view`, `quotes.update`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_PENDING`.
  */
 export const quotesWithdrawRequest = async (
   orgSlug: string,
