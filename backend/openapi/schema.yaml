@@ -10178,6 +10178,18 @@ components:
       description: |-
         * `ACTIVE` - ACTIVE
         * `SUSPENDED` - SUSPENDED
+    ActorTypeEnum:
+      enum:
+      - USER
+      - AI_AGENT
+      - SYSTEM
+      - INTEGRATION
+      type: string
+      description: |-
+        * `USER` - USER
+        * `AI_AGENT` - AI_AGENT
+        * `SYSTEM` - SYSTEM
+        * `INTEGRATION` - INTEGRATION
     AddStageRequest:
       type: object
       description: 'Una etapa nueva: pide `name`, `code`, `stage_type`, `default_probability`
@@ -12300,7 +12312,8 @@ components:
           $ref: '#/components/schemas/MovementTypeEnum'
         quantity:
           type: integer
-          description: El cambio en `on_hand`, con su signo.
+          description: El cambio en `on_hand`, con su signo; en `RESERVE` y `RELEASE`,
+            en `reserved`.
         on_hand_after:
           type: integer
         reserved_after:
@@ -12313,7 +12326,7 @@ components:
           type: string
           format: uuid
           nullable: true
-          description: La importación o la transferencia que lo originó.
+          description: La importación, la transferencia o la reserva que lo originó.
         transfer_group_id:
           type: string
           format: uuid
@@ -12326,6 +12339,17 @@ components:
           nullable: true
           description: En una pata de transferencia, el almacén de la otra pata; si
             no, `null`.
+        created_by_type:
+          allOf:
+          - $ref: '#/components/schemas/ActorTypeEnum'
+          readOnly: true
+          description: |-
+            Quién lo hizo. Sin persona (`created_by_user_id` nulo) si no es `USER`; un `RELEASE` de `SYSTEM` es una reserva que venció (F3-36b).
+
+            * `USER` - USER
+            * `AI_AGENT` - AI_AGENT
+            * `SYSTEM` - SYSTEM
+            * `INTEGRATION` - INTEGRATION
         created_by_user_id:
           type: string
           format: uuid
@@ -12335,6 +12359,7 @@ components:
           format: date-time
       required:
       - created_at
+      - created_by_type
       - created_by_user_id
       - id
       - movement_type

@@ -316,6 +316,7 @@ SPECTACULAR_SETTINGS = {
         "TeamRoleEnum": "apps.organizations.models.TeamMember.Role",  # F2-55, por lo mismo
         # La auditoría (F2-73): nombres propios, para que otro `result` no se los quede.
         "AuditActorTypeEnum": "apps.audit.models.ACTOR_TYPES",
+        "ActorTypeEnum": "core.tenancy.context.ActorType",  # quién hizo un movimiento (F3-36b)
         "AuditResultEnum": "apps.audit.services.Result",
         "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
         "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED"],  # F7-05a: no un `ModeEnum` suelto

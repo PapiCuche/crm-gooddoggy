@@ -17,6 +17,7 @@ from apps.inventory.selectors import levels, movements
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.api.strict import Id
+from core.tenancy.context import ActorType
 
 NOT_ENOUGH = "No hay stock suficiente: no puede quedar en negativo ni por debajo de lo reservado."
 INACTIVE = "El almacén está desactivado."
@@ -104,13 +105,15 @@ class MovementSerializer(serializers.Serializer[Any]):
     variant = VariantLabelSerializer(read_only=True)
     warehouse_id = serializers.UUIDField()
     movement_type = serializers.ChoiceField(choices=InventoryMovement.Type.choices)
-    quantity = serializers.IntegerField(help_text="El cambio en `on_hand`, con su signo.")
+    quantity = serializers.IntegerField(
+        help_text="El cambio en `on_hand`, con su signo; en `RESERVE` y `RELEASE`, en `reserved`."
+    )
     on_hand_after = serializers.IntegerField()
     reserved_after = serializers.IntegerField()
     reason = serializers.CharField()
     reference_type = serializers.ChoiceField(choices=InventoryMovement.Reference.choices)
     reference_id = serializers.UUIDField(
-        allow_null=True, help_text="La importación o la transferencia que lo originó."
+        allow_null=True, help_text="La importación, la transferencia o la reserva que lo originó."
     )
     transfer_group_id = serializers.UUIDField(
         allow_null=True, help_text="El mismo en las dos patas de una transferencia."
@@ -119,6 +122,12 @@ class MovementSerializer(serializers.Serializer[Any]):
         allow_null=True,
         read_only=True,
         help_text="En una pata de transferencia, el almacén de la otra pata; si no, `null`.",
+    )
+    created_by_type = serializers.ChoiceField(
+        choices=[actor.value for actor in ActorType],
+        read_only=True,
+        help_text="Quién lo hizo. Sin persona (`created_by_user_id` nulo) si no es `USER`; un"
+        " `RELEASE` de `SYSTEM` es una reserva que venció (F3-36b).",
     )
     created_by_user_id = serializers.UUIDField(allow_null=True)
     created_at = serializers.DateTimeField()

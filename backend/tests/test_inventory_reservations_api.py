@@ -331,3 +331,29 @@ def test_the_same_key_from_two_cells_and_the_cap_at_once_over_http(
         (409, "TOO_MANY_RESERVATIONS"),
     ]
     assert consistent(world.a, wide) == (5, 2, 3)
+
+
+def test_the_ledger_tells_the_systems_expiry_from_a_persons_release(
+    ana: Client, world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3-36b: cada movimiento dice quién lo hizo (`created_by_type`); un `RELEASE` del sistema es
+    una reserva vencida, y el que liberó una persona lleva su id."""
+    here = stocked(world.a, 5, world.ana)
+    assert release(ana, reserve(ana, here).json()["id"]).status_code == 200
+    assert reserve(ana, here).status_code == 201  # vence: la cierra la próxima reserva de la celda
+    later = timezone.now() + timedelta(hours=3)
+    monkeypatch.setattr(res, "_now", lambda: later)
+    soon = (later + timedelta(hours=1)).isoformat()
+    assert reserve(ana, here, expires_at=soon).status_code == 201
+    rows = ana.get("/api/v1/o/org-a/inventory/movements/", {"variant_id": str(here[0])}).json()
+    seen = sorted(
+        (row["movement_type"], row["created_by_type"], row["created_by_user_id"], row["quantity"])
+        for row in rows["results"]
+    )
+    ana_id = str(world.ana.pk)
+    assert seen == [
+        ("RECEIPT", "USER", ana_id, 5),
+        ("RELEASE", "SYSTEM", None, -1),
+        ("RELEASE", "USER", ana_id, -1),
+        *[("RESERVE", "USER", ana_id, 1)] * 3,
+    ]

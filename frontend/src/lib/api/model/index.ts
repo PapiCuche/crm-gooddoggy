@@ -7,6 +7,7 @@
  */
 
 export * from "./activeOrSuspendedEnum";
+export * from "./actorTypeEnum";
 export * from "./addStageRequest";
 export * from "./addStageRequestRequiresFields";
 export * from "./assignActionEnum";

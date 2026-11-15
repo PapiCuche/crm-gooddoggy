@@ -1532,7 +1532,7 @@
   "ledger": {
     "eyebrow": "Good Doggy / Inventario",
     "title": "Movimientos",
-    "intro": "Lo que entró, salió, se ajustó, o se transfirió en {organization}, del más reciente al más antiguo. Filtra por almacén o por variante.",
+    "intro": "Lo que entró, salió, se ajustó, se transfirió o se reservó en {organization}, del más reciente al más antiguo. Reservar y liberar cambian lo reservado, no las existencias. Filtra por almacén o por variante.",
     "loading": "Cargando movimientos…",
     "denied": "No tienes permiso para ver el inventario de esta organización.",
     "count": "{count, plural, =0 {Sin movimientos en la lista} one {# movimiento en la lista} other {# movimientos en la lista}}",
@@ -1547,10 +1547,13 @@
       "TRANSFER_IN": "Transferencia recibida",
       "RESERVE": "Reserva",
       "RELEASE": "Reserva liberada",
+      "EXPIRED": "Reserva vencida: la liberó el sistema",
       "SALE": "Venta"
     },
     "change": "Cambio en existencias: {change}",
     "after": "Quedan {on_hand}",
+    "reservedChange": "Cambio en lo reservado: {change}",
+    "reservedAfter": "Reservado: {reserved}",
     "warehouse": "{name} ({code}){active, select, false {, inactivo} other {}}",
     "route": "{from} → {to}",
     "unknownWarehouse": "Un almacén que ya no existe",
