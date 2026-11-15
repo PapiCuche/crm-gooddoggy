@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { Clock } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -15,8 +16,9 @@ import type { QuoteDetail as Detail } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
 import { LineDiscount } from "./line-discount";
+import { QuoteActions } from "./quote-actions";
 import { QuoteEditor } from "./quote-editor";
-import { isLate, QuoteStatus, ratePercent, useDay, useMoney } from "./quote-parts";
+import { isLate, QuoteStatus, ratePercent, useDay, useHeld, useMoney } from "./quote-parts";
 
 const BOX = "border-border bg-surface flex flex-col gap-3 rounded-lg border p-4";
 const COLUMNS = ["product", "quantity", "list", "promotion", "discount", "final", "total"] as const;
@@ -27,12 +29,12 @@ const COLUMNS = ["product", "quantity", "list", "promotion", "discount", "final"
 // página de «no encontrada». El nombre del cliente llega `null` sin `contacts.view`: se dice sin
 // enlace. Todo lo que escribió otra persona (cliente, producto, notas, motivo) va por `Plain`. Los
 // importes solo se formatean; ningún costo ni margen: la API no los da. Un borrador se edita y se
-// descuenta por línea (F5-09g) según los permisos de la sesión (la API los vuelve a comprobar).
+// descuenta por línea (F5-09g) y se pide, decide o retira su aprobación (F5-09h) según los permisos
+// de la sesión (la API los vuelve a comprobar); mientras espera, un aviso fijo lo dice.
 export function QuoteDetail({ quoteId }: { quoteId: string }) {
   const t = useTranslations("quotes.detail");
-  const { organization, permissions } = useTenant();
-  const slug = organization.slug;
-  const held = (code: string) => permissions.some((grant) => grant.code === code);
+  const slug = useTenant().organization.slug;
+  const held = useHeld();
   const [editing, setEditing] = useState(false);
   const [discounting, setDiscounting] = useState<string | null>(null);
   const [said, setSaid] = useState("");
@@ -85,8 +87,8 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
   }
   const cur = quote.currency;
   const late = isLate(quote, now);
-  const editable = quote.status === "DRAFT" && held("quotes.update");
-  const discountable = editable && held("quotes.discount");
+  const editable = quote.status === "DRAFT" && held("quotes.update", quote);
+  const discountable = editable && held("quotes.discount", quote);
   const target = quote.items.find((x) => x.id === discounting);
   const facts: [string, ReactNode][] = [
     [
@@ -160,7 +162,11 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
     <section className="flex max-w-5xl flex-col gap-6">
       {back}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-        <h1 className="flex flex-col text-[28px] leading-tight font-bold tracking-[0.02em]">
+        <h1
+          tabIndex={-1}
+          data-focus-home
+          className="flex flex-col text-[28px] leading-tight font-bold tracking-[0.02em] outline-none"
+        >
           <span className="font-mono">{quote.number}</span>
           {quote.revision && quote.revision > 1 ? (
             <span className="text-muted text-base font-normal">
@@ -185,6 +191,21 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
           ) : null}
         </div>
       </div>
+      {quote.status === "PENDING_APPROVAL" ? (
+        <aside
+          aria-label={t("waiting.title")}
+          className="border-border bg-surface-raised flex gap-3 rounded-lg border p-4"
+        >
+          <Clock aria-hidden className="text-muted mt-0.5 size-5 shrink-0" />
+          <div className="flex flex-col gap-1">
+            <p className="font-medium">{t("waiting.title")}</p>
+            <p className="text-muted text-sm">
+              {t(quote.approval_asked_by_me ? "waiting.mine" : "waiting.other")}
+            </p>
+          </div>
+        </aside>
+      ) : null}
+      {editing ? null : <QuoteActions quote={quote} onDone={setSaid} />}
       <p role="status" className={said ? "text-sm" : "sr-only"}>
         {said}
       </p>

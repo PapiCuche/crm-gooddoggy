@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { useId, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
+import { Plain } from "@/components/inbox/plain";
 import { Button } from "@/components/ui/button";
 import { quotesDiscount } from "@/lib/api/client";
 import type { QuoteDetail, QuoteDiscountTypeEnum } from "@/lib/api/model";
@@ -68,6 +69,9 @@ export function LineDiscount({
         if (!wrong && !busy) apply.mutate();
       }}
     >
+      <p className="font-medium">
+        {t("line")} <Plain>{line.product_name}</Plain> · <Plain>{line.variant_name}</Plain>
+      </p>
       <div className="flex flex-wrap items-end gap-3">
         <Field id={`${id}-kind`} label={t("kind")}>
           <select

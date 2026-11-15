@@ -15,7 +15,7 @@ congelaron al cotizar. Nunca salen costos ni márgenes: la cotización no los gu
 from typing import Any
 from uuid import UUID
 
-from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
+from django.db.models import Exists, OuterRef, Prefetch, Q, QuerySet, Subquery
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers, views
@@ -29,7 +29,7 @@ from apps.contacts.selectors import contacts
 from apps.quotes import answers, commands, decisions, discounts, lifecycle, selectors
 from apps.quotes.api import inputs, limit
 from apps.quotes.api.errors import domain
-from apps.quotes.models import Quote, QuoteItem
+from apps.quotes.models import ApprovalStatus, Quote, QuoteApproval, QuoteItem
 from core.api.schema import errors
 from core.tenancy import context
 
@@ -98,12 +98,19 @@ class QuoteDetailSerializer(QuoteSerializer):
         help_text="Desde que se emitió; `null` antes, o si quien consulta no puede ver el contacto "
         "(`contacts.view`): lleva su documento."
     )
+    approval_asked_by_me = serializers.SerializerMethodField(
+        help_text="Si la solicitud de aprobación abierta la pidió o la envió quien consulta, que "
+        "entonces no la aprueba (409 `SELF_APPROVAL_FORBIDDEN`). Sin solicitud abierta, `false`."
+    )
     items = QuoteItemSerializer(many=True)
 
     class Meta:
         model = Quote
         fields = (*LIST_FIELDS, "notes_to_customer", "internal_notes", "cancel_reason",
-                  "customer_snapshot", "items")  # fmt: skip
+                  "customer_snapshot", "approval_asked_by_me", "items")  # fmt: skip
+
+    def get_approval_asked_by_me(self, quote: Quote) -> bool:
+        return bool(getattr(quote, "asked_by_me", False))
 
     @extend_schema_field(QuoteCustomerSnapshotSerializer(allow_null=True))
     def get_customer_snapshot(self, quote: Quote) -> Any:
@@ -228,7 +235,7 @@ class QuoteView(QuotesQuery, generics.RetrieveAPIView):
     lookup_url_kwarg = "quote_id"
 
     def get_queryset(self) -> QuerySet[Quote]:
-        return detail(super().get_queryset())
+        return detail(super().get_queryset(), getattr(self, "request", None))
 
     def patch(self, request: Request, quote_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.QuoteUpdateSerializer(data=request.data)
@@ -377,9 +384,18 @@ QuoteReviseView = action(
 )  # fmt: skip
 
 
-def detail(found: QuerySet[Quote]) -> QuerySet[Quote]:
-    lines = QuoteItem.objects.order_by("sort_order")  # las líneas, en una consulta más
-    return found.prefetch_related(Prefetch("items", queryset=lines))
+def detail(found: QuerySet[Quote], request: Request | None) -> QuerySet[Quote]:
+    """Con las líneas, en una consulta más, y `asked_by_me` (la solicitud abierta la pidió o la
+    envió quien consulta), en la misma. Sin persona (el esquema OpenAPI), solo las líneas."""
+    lines = QuoteItem.objects.order_by("sort_order")
+    found = found.prefetch_related(Prefetch("items", queryset=lines))
+    ectx = request_context(request)
+    me = None if ectx is None else ectx.tenant.user_id
+    if me is None:  # nunca `IS NULL`: la solicitud de la IA no tiene a nadie
+        return found
+    asked = QuoteApproval.objects.filter(quote_id=OuterRef("pk"), status=ApprovalStatus.PENDING)
+    mine = asked.filter(Q(requested_by_user_id=me) | Q(submitted_by_user_id=me))
+    return found.annotate(asked_by_me=Exists(mine))
 
 
 def reply(request: Request, quote_id: UUID, status: int = 200) -> Response:
@@ -387,5 +403,6 @@ def reply(request: Request, quote_id: UUID, status: int = 200) -> Response:
     (el comando ya lo comprobó; al crear, es suya)."""
     ectx = request_context(request)
     assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
-    found = scoped(ectx, "quotes.view", with_contact_name(detail(selectors.quotes()), request))
+    found = with_contact_name(detail(selectors.quotes(), request), request)
+    found = scoped(ectx, "quotes.view", found)
     return Response(QuoteDetailSerializer(found.get(pk=quote_id)).data, status=status)

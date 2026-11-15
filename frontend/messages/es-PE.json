@@ -2683,7 +2683,12 @@
       "edit": "Editar",
       "saved": "Cambios guardados.",
       "discount": "Descuento",
-      "discountLabel": "Descuento de {product}"
+      "discountLabel": "Descuento de {product}",
+      "waiting": {
+        "title": "Espera aprobación",
+        "mine": "La pediste tú: la decide otra persona con permiso para aprobar. Mientras tanto no se edita.",
+        "other": "La decide una persona con permiso para aprobar que no la haya pedido. Mientras tanto no se edita."
+      }
     },
     "emptyAll": "Todavía no hay cotizaciones.",
     "linked": {
@@ -2715,7 +2720,9 @@
       "incomplete": "Elige una variante en cada línea y una cantidad entera de 1 a 1000000.",
       "create": "Crear borrador",
       "save": "Guardar cambios",
-      "cancel": "Cancelar"
+      "cancel": "Cancelar",
+      "badDay": "Elige una fecha de validez entre los años 2000 y 2999.",
+      "cap": "Hasta {max} líneas por cotización."
     },
     "discount": {
       "title": "Descuento de {product}",
@@ -2731,7 +2738,8 @@
       "invalid": "Escribe un número sin signo, con hasta 2 decimales.",
       "refused": "Ese descuento no se admite: el precio no puede quedar en cero o menos, y el porcentaje llega hasta 100.",
       "done": "Descuento aplicado.",
-      "pending": "El descuento pasa de tu límite: la cotización queda «Por aprobar»."
+      "pending": "El descuento pasa de tu límite: la cotización queda «Por aprobar».",
+      "line": "Línea:"
     },
     "errors": {
       "STALE_VERSION": "Otra persona cambió la cotización. Cancela, revisa lo que cambió y repite el cambio.",
@@ -2741,8 +2749,47 @@
         "items": "Revisa las líneas: una variante por línea, hasta 50, con cantidad de 1 a 1000000.",
         "variant_id": "Una variante no existe o no tiene precio vigente en la lista de precios.",
         "valid_until": "La fecha de validez no se admite.",
-        "_": "El cliente o la oportunidad no existe o no lo puedes ver.",
+        "reason": "Escribe un motivo de hasta 200 caracteres.",
+        "comment": "El comentario admite hasta 500 caracteres.",
+        "_": "Algún dato no se admite, o el cliente o la oportunidad ya no se pueden usar. Revísalo y vuelve a intentarlo.",
         "other": "Algún dato no se admite. Revísalo y vuelve a intentarlo."
+      },
+      "NOT_PENDING": "La cotización ya no espera una decisión: otra persona la decidió o la retiró.",
+      "SELF_APPROVAL_FORBIDDEN": "La solicitud la pediste tú: la decide otra persona.",
+      "BEYOND_LIMIT": "El descuento de la cotización pasa de tu límite: la aprueba alguien con un límite mayor.",
+      "PRICE_NOT_ALLOWED": "Un precio puesto a mano ya no se admite. Quítalo o cámbialo y vuelve a enviarla."
+    },
+    "actions": {
+      "verbs": {
+        "request": "Enviar a aprobación",
+        "withdraw": "Retirar la solicitud",
+        "approve": "Aprobar",
+        "reject": "Rechazar la solicitud"
+      },
+      "titles": {
+        "approve": "Aprobar {number}",
+        "reject": "Rechazar la solicitud de {number}"
+      },
+      "fields": {
+        "approve": "Comentario (opcional)",
+        "reject": "Motivo del rechazo"
+      },
+      "hints": {
+        "approve": "Hasta {max} caracteres. No lo ve el cliente.",
+        "reject": "Hasta {max} caracteres. La cotización vuelve a ser un borrador."
+      },
+      "confirm": {
+        "approve": "Confirmar la aprobación",
+        "reject": "Confirmar el rechazo"
+      },
+      "cancel": "Cancelar",
+      "needReason": "Escribe el motivo del rechazo.",
+      "done": {
+        "request": "Enviada a aprobación: espera la decisión de otra persona.",
+        "approvedNow": "Aprobada: el descuento cabe en tu límite.",
+        "withdraw": "Solicitud retirada: la cotización vuelve a ser un borrador.",
+        "approve": "Cotización aprobada.",
+        "reject": "Solicitud rechazada: la cotización vuelve a ser un borrador."
       }
     }
   }

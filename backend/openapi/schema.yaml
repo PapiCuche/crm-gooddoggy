@@ -14933,11 +14933,18 @@ components:
           readOnly: true
           description: 'Desde que se emitió; `null` antes, o si quien consulta no
             puede ver el contacto (`contacts.view`): lleva su documento.'
+        approval_asked_by_me:
+          type: boolean
+          readOnly: true
+          description: Si la solicitud de aprobación abierta la pidió o la envió quien
+            consulta, que entonces no la aprueba (409 `SELF_APPROVAL_FORBIDDEN`).
+            Sin solicitud abierta, `false`.
         items:
           type: array
           items:
             $ref: '#/components/schemas/QuoteItem'
       required:
+      - approval_asked_by_me
       - contact
       - created_at
       - currency
