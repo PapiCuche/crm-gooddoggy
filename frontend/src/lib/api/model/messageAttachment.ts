@@ -7,6 +7,8 @@
  */
 import type { MessageAttachmentKindEnum } from "./messageAttachmentKindEnum";
 import type { MessageAttachmentStatusEnum } from "./messageAttachmentStatusEnum";
+import type { NullEnum } from "./nullEnum";
+import type { ScanStatusEnum } from "./scanStatusEnum";
 
 export interface MessageAttachment {
   id: string;
@@ -31,6 +33,15 @@ export interface MessageAttachment {
    * @nullable
    */
   size_bytes: number | null;
-  /** Si `…/attachments/{id}/url/` lo sirve ahora; `false` no dice por qué. */
+  /**
+   * El antivirus, solo con `DONE`: `PENDING` (aún se analiza), `CLEAN`, `INFECTED` (nunca se sirve) o `ERROR` (no se pudo analizar; nunca se sirve).
+   *
+   * * `PENDING` - Pending
+   * * `CLEAN` - Clean
+   * * `INFECTED` - Infected
+   * * `ERROR` - Error
+   */
+  scan_status: ScanStatusEnum | NullEnum | null;
+  /** Si `…/attachments/{id}/url/` lo sirve ahora (solo con antivirus `CLEAN`). */
   available: boolean;
 }

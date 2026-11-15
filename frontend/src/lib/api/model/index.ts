@@ -281,6 +281,7 @@ export * from "./rolesListParams";
 export * from "./roundingEnum";
 export * from "./sandboxInboundRequest";
 export * from "./sandboxInboundResult";
+export * from "./scanStatusEnum";
 export * from "./scopesEnum";
 export * from "./secondFactor";
 export * from "./selfContext";

@@ -19,6 +19,7 @@ class File(TenantModel):
         PENDING = "PENDING"
         CLEAN = "CLEAN"
         INFECTED = "INFECTED"
+        ERROR = "ERROR"  # F7-15: sin veredicto tras los reintentos; nunca se sirve
 
     id = uuid7_primary_key()
     storage_key = models.CharField(max_length=300)
@@ -28,6 +29,8 @@ class File(TenantModel):
     sha256 = models.CharField(max_length=64)
     purpose = models.CharField(max_length=20, choices=Purpose.choices)
     scan_status = models.CharField(max_length=10, choices=ScanStatus.choices, default="PENDING")
+    # F7-15: el último intento de antivirus (o su barrido); un `PENDING` sin cambios se rebarre
+    scan_checked_at = models.DateTimeField(null=True)
     created_by_user_id = models.UUIDField(null=True)  # FK compuesta a membresías (0004, F2-128)
     created_at = models.DateTimeField(
         db_default=models.Func(function="now", output_field=models.DateTimeField())
