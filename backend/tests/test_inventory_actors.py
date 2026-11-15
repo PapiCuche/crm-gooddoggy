@@ -92,7 +92,9 @@ def test_a_refused_actor_is_never_a_value_error() -> None:
     reservas): un actor rechazado, ni el desacuerdo de una persona, nunca debe caer ahí."""
     assert not issubclass(stock.ActorRefused, ValueError)
     assert issubclass(stock.ActorMismatch, stock.ActorRefused)
-    assert stock.ActorMismatch().actor_type == ActorType.USER
+    assert stock.ActorMismatch().args == (ActorType.USER,)  # lo que Celery guarda y le devuelve
+    for given in ((), (ActorType.AI_AGENT,), ("otro", 1)):  # siempre una persona sin su persona
+        assert stock.ActorMismatch(*given).actor_type == ActorType.USER
 
 
 @pytest.mark.parametrize("error", [stock.ActorRefused(ActorType.AI_AGENT), stock.ActorMismatch()])
