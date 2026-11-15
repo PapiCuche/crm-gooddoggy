@@ -1,0 +1,34 @@
+name: infra-prod
+
+# F1-13: valida infra/prod (ADR-033) sin servidor ni secretos: shellcheck, `docker compose config`
+# con valores ficticios (solo el proxy publica 80 y 443) y `caddy validate` con la imagen del borde.
+# Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
+on:
+  pull_request:
+    paths: &paths
+      - "infra/prod/**"
+      - ".github/workflows/infra-prod.yml"
+  push:
+    branches: [main]
+    paths: *paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-prod-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: infra-prod validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: shellcheck infra/prod/*.sh infra/prod/postgres/*.sh
+      - name: Compose y Caddyfile (validate.sh --caddy)
+        run: sh infra/prod/validate.sh --caddy

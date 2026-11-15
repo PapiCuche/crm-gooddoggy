@@ -1,0 +1,78 @@
+# Borde de producción (ADR-033 §4): HTTPS automático (ACME) para crm.{$CRM_DOMAIN}, que llega por
+# proxy.env: ningún dominio real en el repositorio. Mismas rutas que infra/docker/proxy/Caddyfile.
+# Requiere la imagen de infra/prod/caddy (módulo caddy-ratelimit). HSTS lo emiten Django y Next
+# (ADR-033 §4.1): Caddy no añade otro.
+
+# Los registros de Caddy (errores incluidos) llevan la URI: sin la query, que en /webhooks lleva el
+# verify token de Meta (hub.verify_token) y en /api, búsquedas con datos de clientes.
+(redacted_fields) {
+	request>uri regexp \?.* ?redacted
+	request>headers>Referer delete
+}
+
+{
+	admin off
+	servers {
+		protocols h1 h2 # sin HTTP/3: solo 80/tcp y 443/tcp abiertos
+	}
+	order rate_limit before basic_auth
+	log default {
+		output stderr
+		format filter {
+			fields {
+				import redacted_fields
+			}
+			wrap json
+		}
+	}
+}
+
+crm.{$CRM_DOMAIN} {
+	log {
+		output stderr
+		format filter {
+			fields {
+				import redacted_fields
+			}
+			wrap json
+		}
+	}
+	encode zstd gzip
+	header {
+		defer
+		-Server
+		?X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+	}
+	handle /api/* {
+		request_body {
+			max_size 11MB # F7-09b2: el ASGI de Django recibe el cuerpo entero antes de la vista
+		}
+		reverse_proxy backend:8000
+	}
+	handle /webhooks/* {
+		# Pública y sin sesión: el tope llega antes que Django, que con ASGI lee el cuerpo entero.
+		# 4 MB (10^6) cubre los 3 MiB de BODY_MAX en meta_webhook.py (F7-11b) con margen.
+		request_body {
+			max_size 4MB
+		}
+		# Por IP del cliente (Caddy es el borde: {remote_host} es la conexión, sin X-Forwarded-For).
+		rate_limit {
+			zone webhooks_per_ip {
+				key {remote_host}
+				events 300
+				window 1m
+			}
+		}
+		reverse_proxy backend:8000
+	}
+	handle /ws/* {
+		reverse_proxy ws:8000
+	}
+	handle /health/* {
+		respond 404 # sondas internas: /health/ready dice qué dependencia falla
+	}
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
