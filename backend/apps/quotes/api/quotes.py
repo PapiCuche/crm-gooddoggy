@@ -17,7 +17,7 @@ from uuid import UUID
 
 from django.db.models import OuterRef, Prefetch, QuerySet, Subquery
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers, views
 from rest_framework.filters import BaseFilterBackend
 from rest_framework.request import Request
@@ -26,7 +26,7 @@ from rest_framework.response import Response
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
-from apps.quotes import commands, decisions, discounts, selectors
+from apps.quotes import commands, decisions, discounts, lifecycle, selectors
 from apps.quotes.api import inputs, limit
 from apps.quotes.api.errors import domain
 from apps.quotes.models import Quote, QuoteItem
@@ -82,14 +82,33 @@ class QuoteSerializer(serializers.ModelSerializer[Quote]):
         fields = LIST_FIELDS
 
 
-class QuoteDetailSerializer(QuoteSerializer):
-    """Más las notas (texto libre), el motivo de cancelación y las líneas en orden."""
+class QuoteCustomerSnapshotSerializer(serializers.Serializer[Any]):
+    """El cliente como se congeló al emitir (nombre y documento)."""
 
+    display_name = serializers.CharField()
+    document_type = serializers.CharField(allow_null=True)
+    document_number = serializers.CharField(allow_null=True)
+
+
+class QuoteDetailSerializer(QuoteSerializer):
+    """Más las notas (texto libre), el motivo de cancelación, el cliente congelado y las líneas en
+    orden."""
+
+    customer_snapshot = serializers.SerializerMethodField(
+        help_text="Desde que se emitió; `null` antes, o si quien consulta no puede ver el contacto "
+        "(`contacts.view`): lleva su documento."
+    )
     items = QuoteItemSerializer(many=True)
 
     class Meta:
         model = Quote
-        fields = (*LIST_FIELDS, "notes_to_customer", "internal_notes", "cancel_reason", "items")
+        fields = (*LIST_FIELDS, "notes_to_customer", "internal_notes", "cancel_reason",
+                  "customer_snapshot", "items")  # fmt: skip
+
+    @extend_schema_field(QuoteCustomerSnapshotSerializer(allow_null=True))
+    def get_customer_snapshot(self, quote: Quote) -> Any:
+        seen = getattr(quote, "contact_name", None) is not None  # como el nombre; sin él, nada
+        return quote.customer_snapshot if seen else None
 
 
 class QuoteSearchSerializer(serializers.Serializer[Any]):
@@ -315,6 +334,15 @@ QuoteCancelView = action(
     "solicitud, y solo lo hace quien la pidió o quien puede aprobar (si no, 403 después del "
     "alcance). 400 si la base rechaza una referencia.",
     ("QUOTE_TERMINAL", "QUOTE_REFUSED"), floor=False,
+)  # fmt: skip
+QuoteIssueView = action(
+    "issue", lifecycle.issue_quote, inputs.QuoteIssueSerializer, ("quotes.view", "quotes.send"),
+    "Emite (`SENT`) una cotización aprobada, o un borrador que cabe en el límite de quien emite "
+    "(se vuelve a medir), y congela el cliente, la empresa, las condiciones y la validez (la dada "
+    "o la que tiene; futura, o 400). Quien emite ha de ver el contacto (si no, el 400 de crear). "
+    "La de la IA, solo aprobada. Cada precio manual vuelve a medirse con el costo de hoy (422 "
+    "`PRICE_NOT_ALLOWED`, siempre igual).",
+    ("NOT_ISSUABLE", "NEEDS_APPROVAL", "QUOTE_REFUSED"),
 )  # fmt: skip
 
 

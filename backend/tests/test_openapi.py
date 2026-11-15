@@ -79,6 +79,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/quotes/{quote_id}/reject/",
         "/api/v1/o/{org_slug}/quotes/{quote_id}/withdraw-request/",
         "/api/v1/o/{org_slug}/quotes/{quote_id}/cancel/",
+        "/api/v1/o/{org_slug}/quotes/{quote_id}/issue/",  # F5-09e4
         "/api/v1/o/{org_slug}/quotes/discount-policies/",  # F5-09b5
         "/api/v1/o/{org_slug}/tasks/",  # F5-08b
         "/api/v1/o/{org_slug}/tasks/{task_id}/",

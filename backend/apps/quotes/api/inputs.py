@@ -7,10 +7,11 @@ variante y cantidad: el precio lo pone el `PricingService`, nunca el cliente."""
 import datetime as dt
 from typing import Any
 
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.quotes import commands, decisions, discounts
+from apps.quotes import commands, decisions, discounts, lifecycle
 from apps.quotes.models import QUANTITY_MAX, DiscountType
 from core.api.strict import Checked, Choice, Closed, Id, Whole, sentence, version_required
 from core.money import parse_amount
@@ -26,6 +27,12 @@ def _instant(value: str) -> dt.datetime:
     if moment is None:
         raise ValueError(f"fecha y hora {INSTANT[:-1]}")
     return commands._moment(moment)
+
+
+def _future(value: str) -> dt.datetime:
+    if (moment := _instant(value)) <= timezone.now():  # el comando lo vuelve a mirar
+        raise ValueError("validez: una fecha futura")
+    return moment
 
 
 def _note(value: str) -> str:
@@ -136,4 +143,20 @@ class QuoteCancelSerializer(QuoteVersionSerializer):
     reason = Checked(
         lambda v: commands._text(v, "motivo", commands.REASON_MAX), required=False,
         allow_blank=True, help_text=f"Opcional, hasta {commands.REASON_MAX} caracteres.",
+    )  # fmt: skip
+
+
+class QuoteIssueSerializer(QuoteVersionSerializer):
+    """Lo que congela la emisión además de lo que ya tiene la cotización."""
+
+    valid_until = Checked(
+        _future, required=False, help_text=f"Sin ella, la que tiene. Futura; {INSTANT}"
+    )
+    terms = Checked(
+        lambda v: commands._text(v, "condiciones", lifecycle.TERMS_MAX), required=False,
+        allow_blank=True, help_text=f"Condiciones, hasta {lifecycle.TERMS_MAX} caracteres.",
+    )  # fmt: skip
+    warranty = Checked(
+        lambda v: commands._text(v, "garantía", lifecycle.WARRANTY_MAX), required=False,
+        allow_blank=True, help_text=f"Garantía, hasta {lifecycle.WARRANTY_MAX} caracteres.",
     )  # fmt: skip
