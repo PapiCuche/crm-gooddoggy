@@ -82,7 +82,11 @@ def _domain(stages: str = "") -> Iterator[None]:
 def _capped(tenant: Any, count: Callable[[], int], limit: int, what: str) -> None:
     """El tope de una colección de la organización (los comandos no lo ponen), contado con el
     bloqueo consultivo de pipelines que los comandos vuelven a tomar: dos altas a la vez no lo
-    pasan. Los motivos de pérdida comparten ese bloqueo (es configuración poco escrita)."""
+    pasan. Los motivos de pérdida comparten ese bloqueo (es configuración poco escrita).
+
+    Cuenta todo lo no borrado, también lo inactivo: desactivar no libera un hueco (si no, el tope
+    no acotaría nada). Ninguna ruta borra, así que lo libera solo un borrado que haga otra vía;
+    con la API, lo que sobra se reactiva o se renombra en lugar de crear otro."""
     lock_pipelines(require_scope(tenant), tenant.organization_id)
     if count() >= limit:
         raise serializers.ValidationError(FULL.format("La organización", limit, what))
@@ -147,9 +151,9 @@ class LostReasonSerializer(serializers.Serializer[Any]):
         request=inputs.PipelineCreateSerializer,
         responses={201: PipelineSerializer, **errors(400, 401, 403, 404, 409)},
         description="Crea un pipeline con sus etapas, de una vez. Con `pipelines.manage`. "
-        f"Hasta {inputs.PIPELINES_MAX} pipelines por organización y {inputs.STAGES_MAX} etapas "
-        "por pipeline (400). 409: `PIPELINE_INVARIANT` (sin una WON, una LOST o una OPEN), "
-        "`CODE_TAKEN`.",
+        f"Hasta {inputs.PIPELINES_MAX} pipelines por organización, también los inactivos, y "
+        f"{inputs.STAGES_MAX} etapas por pipeline (400). 409: `PIPELINE_INVARIANT` (sin una "
+        "WON, una LOST o una OPEN), `CODE_TAKEN`.",
     ),
 )
 class PipelinesView(generics.ListAPIView):
@@ -207,14 +211,9 @@ class StagesView(APIView):
     def post(self, request: Request, pipeline_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.AddStageSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
-        with _domain():
-            pipeline = selectors.locked_pipeline(pipeline_id)  # el tope, con el pipeline bloqueado
-            if selectors.stage_count(pipeline.pk) >= inputs.STAGES_MAX:
-                raise serializers.ValidationError(
-                    FULL.format("El pipeline", inputs.STAGES_MAX, "etapas")
-                )
-            commands.add_stage(_tenant(), pipeline_id=pipeline.pk, **wanted.validated_data)
-        return _reply(pipeline.pk, 201)
+        with _domain():  # el tope de etapas lo cuenta el comando, con el pipeline bloqueado
+            commands.add_stage(_tenant(), pipeline_id=pipeline_id, **wanted.validated_data)
+        return _reply(pipeline_id, 201)
 
 
 class StageOrderView(APIView):
@@ -276,7 +275,7 @@ class StageView(APIView):
         request=inputs.LostReasonCreateSerializer,
         responses={201: LostReasonSerializer, **errors(400, 401, 403, 404, 409)},
         description=f"Crea un motivo, activo. Con `pipelines.manage`. Hasta {inputs.REASONS_MAX} "
-        "por organización (400). 409 `CODE_TAKEN`.",
+        "por organización, también los inactivos (400). 409 `CODE_TAKEN`.",
     ),
 )
 class LostReasonsView(generics.ListAPIView):

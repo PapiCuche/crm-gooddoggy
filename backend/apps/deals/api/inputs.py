@@ -2,8 +2,9 @@
 serializadores estrictos (el tipo exacto de cada campo, ninguna clave desconocida) y los topes de
 tamaño: los de `requires_fields` (4 KB serializado, 4 niveles, sin NaN, infinitos ni NUL) y de 30
 etapas por pipeline son los de los comandos (F5-01d), que aquí dan el 400 antes de llamar al
-comando; 50 pipelines y 100 motivos de pérdida por organización los pone la API. Los textos se
-limpian con el criterio de los comandos, para que un dato inválido sea un 400 en su campo."""
+comando (el de añadir una etapa lo cuenta solo el comando); 50 pipelines y 100 motivos de pérdida
+por organización, también los inactivos, los pone la API. Los textos se limpian con el criterio
+de los comandos, para que un dato inválido sea un 400 en su campo."""
 
 import re
 from typing import Any
@@ -11,7 +12,7 @@ from typing import Any
 from rest_framework import serializers
 
 from apps.deals import commands
-from apps.deals.commands import CODE_MAX, DAYS_MAX, NAME_MAX, _code
+from apps.deals.commands import CODE_MAX, DAYS_MAX, NAME_MAX, clean_code
 from apps.deals.models import CODE, COLOR, REASON_CODE, Kind, StageType
 from core.api.strict import Checked, Choice, Closed, Flag, Id, Whole, sentence, version_required
 from core.text import name as clean_name
@@ -47,7 +48,7 @@ class RequiresFields(serializers.DictField):
 
 
 class StageFields(Closed, serializers.Serializer[Any]):
-    """Los datos de una etapa, todos opcionales; el código y el orden no se cambian."""
+    # Los campos de una etapa; cada subclase dice cuáles pide (comentario: no va al esquema).
 
     name = Checked(_name, max_length=NAME_MAX, required=False)
     stage_type = Choice(choices=StageType.choices, required=False)
@@ -66,8 +67,10 @@ class StageFields(Closed, serializers.Serializer[Any]):
 
 
 class NewStageSerializer(StageFields):
+    """Una etapa nueva: pide `name`, `code`, `stage_type`, `default_probability` y `color`."""
+
     code = Checked(
-        lambda v: _code(v, CODE, str.lower),
+        lambda v: clean_code(v, CODE, str.lower),
         max_length=CODE_MAX,
         help_text="Minúsculas, cifras y guiones; único en el pipeline. No cambia.",
     )
@@ -81,7 +84,7 @@ class NewStageSerializer(StageFields):
 class PipelineCreateSerializer(Closed, serializers.Serializer[Any]):
     name = Checked(_name, max_length=NAME_MAX)
     code = Checked(
-        lambda v: _code(v, CODE, str.lower),
+        lambda v: clean_code(v, CODE, str.lower),
         max_length=CODE_MAX,
         help_text="Minúsculas, cifras y guiones; único en la organización. No cambia.",
     )
@@ -103,7 +106,7 @@ class PipelineCreateSerializer(Closed, serializers.Serializer[Any]):
 class LostReasonCreateSerializer(Closed, serializers.Serializer[Any]):
     name = Checked(_name, max_length=NAME_MAX)
     code = Checked(
-        lambda v: _code(v, REASON_CODE, str.upper),
+        lambda v: clean_code(v, REASON_CODE, str.upper),
         max_length=CODE_MAX,
         help_text="`MAYÚSCULAS_Y_GUION_BAJO`; único entre los vivos. No cambia.",
     )

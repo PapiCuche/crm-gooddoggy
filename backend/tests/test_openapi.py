@@ -157,3 +157,23 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
     parts = schema["components"]["schemas"]
     assert set(parts["User"]["properties"]) == {"id", "email", "first_name", "last_name"}
     assert parts["LoginRequest"]["properties"]["password"]["writeOnly"] is True
+
+
+def test_no_component_borrows_the_strict_mixin_text_and_the_stages_are_bounded() -> None:
+    """F5-02f: la docstring de `Closed` (el `overide_value` de promociones) no describe los
+    serializadores estrictos; `NewStageRequest` dice lo que pide; `stages` lleva sus topes."""
+    text = COMMITTED.read_text()
+    assert "overide_value" not in text and "todos opcionales" not in text
+    parts = yaml.safe_load(text)["components"]["schemas"]
+    for name in ("NewStageRequest", "AddStageRequest"):
+        assert parts[name]["description"].startswith("Una etapa nueva: pide `name`, `code`")
+        assert set(parts[name]["required"]) >= {
+            "name", "code", "stage_type", "default_probability", "color",
+        }  # fmt: skip
+    for name in ("PipelineCreateRequest", "LostReasonCreateRequest", "StageOrderRequest"):
+        assert "description" not in parts[name], name
+    stages = parts["PipelineCreateRequest"]["properties"]["stages"]
+    assert (stages["minItems"], stages["maxItems"]) == (1, 30)
+    assert stages["items"] == {"$ref": "#/components/schemas/NewStageRequest"}
+    order = parts["StageOrderRequest"]["properties"]["stage_ids"]
+    assert (order["minItems"], order["maxItems"]) == (1, 30)

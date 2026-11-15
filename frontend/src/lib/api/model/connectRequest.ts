@@ -6,10 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-/**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
- */
 export interface ConnectRequest {
   /**
    * El token de acceso del usuario del sistema de Meta. Solo se guarda cifrado.

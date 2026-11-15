@@ -82,7 +82,9 @@ class StageInvariant(ValueError):
     """El cambio dejaría el pipeline sin su única etapa WON, sin una LOST o sin una OPEN."""
 
 
-def _code(value: str, pattern: str, fold: Callable[[str], str]) -> str:
+def clean_code(value: str, pattern: str, fold: Callable[[str], str]) -> str:
+    """Un código como se guarda (`fold` sobre el texto sin espacios exteriores), si cumple
+    `pattern`; `ValueError` con un texto que no repite lo recibido. Lo usa también la API."""
     text = fold(value.strip()) if value.isascii() else ""
     if not (len(text) <= CODE_MAX and re.fullmatch(pattern, text)):
         raise ValueError(f"código con letras sin acento, cifras y guiones, hasta {CODE_MAX}")
@@ -167,7 +169,7 @@ def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
     if "name" in values:
         values["name"] = clean_name(_text(values["name"], "nombre"), NAME_MAX)
     if "code" in values:
-        values["code"] = _code(_text(values["code"], "código"), CODE, str.lower)
+        values["code"] = clean_code(_text(values["code"], "código"), CODE, str.lower)
     if "stage_type" in values and values["stage_type"] not in StageType.values:
         raise ValueError("tipo de etapa no admitido")
     if "default_probability" in values:
@@ -325,7 +327,7 @@ def create_pipeline(
         raise ValueError(f"solo {', '.join(CURRENCIES)}")
     flags = {} if is_default is None else {"is_default": is_default}
     values = _pipeline_values({"name": name, "kind": kind, "sort_order": sort_order, **flags}) | {
-        "code": _code(_text(code, "código"), CODE, str.lower),
+        "code": clean_code(_text(code, "código"), CODE, str.lower),
         "currency": currency,
     }
     values.pop("is_default", None)
@@ -415,7 +417,7 @@ def add_stage(
         with transaction.atomic(using=alias):
             pipeline = _locked(alias, pipeline_id)
             stages = _stages(alias, pipeline.pk)
-            if len(stages) >= STAGES_MAX:  # también las inactivas; sin campo, como la API
+            if len(stages) >= STAGES_MAX:  # también las inactivas; el único tope, sin campo
                 raise Invalid("_", f"el pipeline ya tiene {STAGES_MAX} etapas")
             _check(
                 [
@@ -518,7 +520,7 @@ def create_lost_reason(
     alias = require_scope(ctx)
     values: dict[str, Any] = {
         "name": clean_name(_text(name, "nombre"), NAME_MAX),
-        "code": _code(_text(code, "código"), REASON_CODE, str.upper),
+        "code": clean_code(_text(code, "código"), REASON_CODE, str.upper),
     }
     if sort_order is not None:
         _integer(sort_order, -ORDER_MAX - 1, ORDER_MAX, "orden")
