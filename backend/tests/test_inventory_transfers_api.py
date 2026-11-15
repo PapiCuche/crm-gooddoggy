@@ -80,6 +80,7 @@ def test_a_transfer_over_http_and_its_two_legs_in_the_ledger(ana: Client, world:
         *("id", "variant_id", "variant", "warehouse_id", "movement_type", "quantity"),
         *("on_hand_after", "reserved_after", "reason", "created_by_user_id", "created_at"),
         *("reference_type", "reference_id", "transfer_group_id", "other_warehouse_id"),
+        "created_by_type",
     }
     assert [(m["movement_type"], m["warehouse_id"], m["quantity"]) for m in (out, entry)] == [
         ("TRANSFER_OUT", str(origin), -4),

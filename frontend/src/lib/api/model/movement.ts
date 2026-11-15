@@ -5,6 +5,7 @@
  * Contrato de la API del backend. Fuente para el cliente TypeScript (orval).
  * OpenAPI spec version: 0.1.0
  */
+import type { ActorTypeEnum } from "./actorTypeEnum";
 import type { MovementTypeEnum } from "./movementTypeEnum";
 import type { ReferenceTypeEnum } from "./referenceTypeEnum";
 import type { VariantLabel } from "./variantLabel";
@@ -15,14 +16,14 @@ export interface Movement {
   readonly variant: VariantLabel;
   warehouse_id: string;
   movement_type: MovementTypeEnum;
-  /** El cambio en `on_hand`, con su signo. */
+  /** El cambio en `on_hand`, con su signo; en `RESERVE` y `RELEASE`, en `reserved`. */
   quantity: number;
   on_hand_after: number;
   reserved_after: number;
   reason: string;
   reference_type: ReferenceTypeEnum;
   /**
-   * La importación o la transferencia que lo originó.
+   * La importación, la transferencia o la reserva que lo originó.
    * @nullable
    */
   reference_id: string | null;
@@ -36,6 +37,15 @@ export interface Movement {
    * @nullable
    */
   readonly other_warehouse_id: string | null;
+  /**
+   * Quién lo hizo. Sin persona (`created_by_user_id` nulo) si no es `USER`; un `RELEASE` de `SYSTEM` es una reserva que venció (F3-36b).
+   *
+   * * `USER` - USER
+   * * `AI_AGENT` - AI_AGENT
+   * * `SYSTEM` - SYSTEM
+   * * `INTEGRATION` - INTEGRATION
+   */
+  readonly created_by_type: ActorTypeEnum;
   /** @nullable */
   created_by_user_id: string | null;
   created_at: string;

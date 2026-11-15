@@ -25,7 +25,7 @@ const page = (results: unknown[], next: string | null = null) => ({
 const movement = (id: string, movement_type: string, quantity: number, after: number) => ({
   ...{ id, variant_id: "v1", warehouse_id: "w1", movement_type, quantity, reason: `Motivo ${id}` },
   variant: { id: "v1", name: "Collar", sku: "C-1", product_id: "p1", is_deleted: false },
-  ...{ on_hand_after: after, reserved_after: 0, created_by_user_id: "u1" },
+  ...{ on_hand_after: after, reserved_after: 0, created_by_type: "USER", created_by_user_id: "u1" },
   created_at: "2026-10-22T15:30:00Z",
 });
 const CATALOG = {
@@ -147,6 +147,37 @@ describe("MovementsHistory", () => {
       `${API}/inventory/movements/`,
       `${API}/inventory/movements/?warehouse_id=w2`,
     ]);
+  });
+
+  it("reservar y liberar cambian lo reservado; lo que venció el sistema lo dice", async () => {
+    const held = (id: string, type: string, quantity: number, by: string, reserved: number) => ({
+      ...movement(id, type, quantity, 10),
+      ...{ reserved_after: reserved, created_by_type: by },
+      ...(by === "USER" ? {} : { created_by_user_id: null }),
+    });
+    mockApi({
+      ...CATALOG,
+      [EVERYTHING]: page([
+        held("m4", "RELEASE", -1, "AI_AGENT", 0), // sin persona, pero no es el sistema
+        held("m3", "RELEASE", -2, "SYSTEM", 1),
+        held("m2", "RELEASE", -4, "USER", 3),
+        held("m1", "RESERVE", 4, "USER", 7),
+        held("m0", "RESERVE", 3, "SYSTEM", 3), // el sistema reserva: no es una vencida
+      ]),
+    });
+    screenOf();
+    const list = await screen.findByRole("list", { name: "Movimientos" });
+    const [agent, lapsed, released, reserved, bySystem] = within(list).getAllByRole("listitem");
+    expect(within(lapsed!).getByText("Reserva vencida: la liberó el sistema")).toBeVisible();
+    expect(lapsed).toHaveTextContent(/−2Cambio en lo reservado: -2Reservado: 1/);
+    expect(within(agent!).getByText("Reserva liberada")).toBeVisible();
+    expect(within(released!).getByText("Reserva liberada")).toBeVisible();
+    expect(released).toHaveTextContent(/−4Cambio en lo reservado: -4Reservado: 3/);
+    expect(within(reserved!).getByText("Reserva")).toBeVisible();
+    expect(reserved).toHaveTextContent(/\+4Cambio en lo reservado: 4Reservado: 7/);
+    expect(within(reserved!).getByText("+4").parentElement).not.toHaveClass("text-success");
+    expect(within(bySystem!).getByText("Reserva")).toBeVisible();
+    expect(list).not.toHaveTextContent(/Quedan|existencias/); // las existencias no cambian
   });
 
   it("sin permiso, la API decide y la pantalla lo explica", async () => {

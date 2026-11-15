@@ -114,7 +114,7 @@ export function CellReservations({
     body = (
       <>
         <p role="alert" className="text-danger">
-          {failed(list, t("denied"))}
+          {failed(list, t("viewDenied"))}
         </p>
         {retry(list)}
       </>

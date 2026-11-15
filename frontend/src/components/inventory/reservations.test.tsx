@@ -119,6 +119,18 @@ describe("Reservas de la celda", () => {
     expect(screen.queryByRole("button", { name: /Liberar|Reservar/ })).toBeNull();
   });
 
+  it("sin permiso para ver la lista, lo dice con su propio texto", async () => {
+    routes = {
+      [LEVELS]: level(10, 6),
+      [LIST]: { status: 403, body: { code: "PERMISSION_DENIED" } },
+    };
+    await cell();
+    expect(
+      await screen.findByText("No tienes permiso para ver las reservas de esta organización."),
+    ).toBeVisible();
+    expect(screen.queryByText(/No tienes permiso para reservar/)).toBeNull();
+  });
+
   it("reserva lo disponible, anuncia lo reservado y lo disponible, y libera con confirmación", async () => {
     let reserved = 0;
     let list: unknown[] = [];

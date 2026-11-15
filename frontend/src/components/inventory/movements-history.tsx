@@ -15,7 +15,9 @@ import { placed, useCellPicker } from "./cell-picker";
 // un almacén, de una variante o de los dos. Cada fila nombra su variante con el SKU que trae la
 // API (F3-19), también si ya se borró del catálogo. Quién lo ve lo decide la API
 // (`inventory.view`). Las dos patas de una transferencia dicen las dos su ruta (F3-32), con el
-// almacén de la otra pata que trae cada fila (F3-32b): ninguna petición por fila.
+// almacén de la otra pata que trae cada fila (F3-32b): ninguna petición por fila. Reservar y
+// liberar (F3-36) cambian lo reservado, no las existencias, y la fila lo dice así; un `RELEASE` del
+// sistema (`created_by_type`) es una reserva que venció (F3-36b).
 export function MovementsHistory() {
   const t = useTranslations("ledger");
   const format = useFormatter();
@@ -45,10 +47,13 @@ export function MovementsHistory() {
       {(movement) => {
         const where = named.get(movement.warehouse_id);
         const change = movement.quantity;
+        const kind = movement.movement_type;
+        const held = kind === "RESERVE" || kind === "RELEASE"; // `quantity`: el cambio en lo reservado
+        const lapsed = kind === "RELEASE" && movement.created_by_type === "SYSTEM";
         return (
           <>
             <p className="flex min-w-0 flex-col leading-snug">
-              <span className="font-medium">{t(`types.${movement.movement_type}`)}</span>
+              <span className="font-medium">{t(`types.${lapsed ? "EXPIRED" : kind}`)}</span>
               <span className="wrap-anywhere">
                 {t("variantLabel", {
                   name: movement.variant.name,
@@ -68,14 +73,18 @@ export function MovementsHistory() {
               </span>
             </p>
             <p className="flex flex-wrap gap-x-3 text-sm sm:flex-col sm:items-end sm:text-right">
-              <span className={cn("font-medium tabular-nums", change > 0 && "text-success")}>
+              <span
+                className={cn("font-medium tabular-nums", change > 0 && !held && "text-success")}
+              >
                 <span aria-hidden>
                   {change > 0 ? `+${change}` : change < 0 ? `−${-change}` : "0"}
                 </span>
-                <span className="sr-only">{t("change", { change })}</span>
+                <span className="sr-only">{t(held ? "reservedChange" : "change", { change })}</span>
               </span>
               <span className="tabular-nums">
-                {t("after", { on_hand: movement.on_hand_after })}
+                {held
+                  ? t("reservedAfter", { reserved: movement.reserved_after })
+                  : t("after", { on_hand: movement.on_hand_after })}
               </span>
               <time className="text-muted" dateTime={movement.created_at}>
                 {format.dateTime(new Date(movement.created_at), {
