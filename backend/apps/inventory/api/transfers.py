@@ -34,6 +34,7 @@ class TransferCreateSerializer(Closed, serializers.Serializer[Any]):
     reason = Text(max_length=stock.REASON_MAX)
     idempotency_key = Text(
         max_length=100,
+        trim_whitespace=False,  # tal cual: una clave con espacios es otra clave, y no vale
         help_text="De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`.",
     )
 
@@ -90,5 +91,7 @@ class TransfersView(APIView):
             raise ApiError("STOCK_LIMIT", 409, LIMIT) from None
         except stock.KeyReused:
             raise ApiError("IDEMPOTENCY_KEY_REUSED", 409, REUSED) from None
+        for leg, other in zip(legs, reversed(legs), strict=True):  # como en el ledger (F3-32b)
+            leg.other_warehouse_id = other.warehouse_id  # type: ignore[attr-defined]
         made = {"transfer_group_id": legs[0].transfer_group_id, "legs": legs}
         return Response(TransferSerializer(made).data, status=201 if new else 200)

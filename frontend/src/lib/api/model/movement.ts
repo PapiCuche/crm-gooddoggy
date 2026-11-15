@@ -31,6 +31,11 @@ export interface Movement {
    * @nullable
    */
   transfer_group_id: string | null;
+  /**
+   * En una pata de transferencia, el almacén de la otra pata; si no, `null`.
+   * @nullable
+   */
+  readonly other_warehouse_id: string | null;
   /** @nullable */
   created_by_user_id: string | null;
   created_at: string;

@@ -1554,6 +1554,7 @@
     "warehouse": "{name} ({code}){active, select, false {, inactivo} other {}}",
     "route": "{from} → {to}",
     "unknownWarehouse": "Un almacén que ya no existe",
+    "otherUnknown": "Almacén desconocido",
     "variantLabel": "{name} · {sku}{deleted, select, true {, borrada del catálogo} other {}}"
   },
   "stockImport": {

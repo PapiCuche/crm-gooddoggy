@@ -69,6 +69,11 @@ def _in_key(group: UUID) -> str:
 
 
 def _actor(ctx: TenantContext) -> tuple[str, UUID | None]:
+    """Quién registra, como lo guarda el ledger. Un agente o una integración no tienen `user_id`
+    y el ledger no guarda su `actor_id`: dos de la misma organización repetirían las patas del
+    otro con su clave. Ninguno transfiere todavía; se rechazan hasta que el ledger los distinga."""
+    if ctx.actor_type in (ActorType.AI_AGENT, ActorType.INTEGRATION):
+        raise ValueError(f"actor {ctx.actor_type}: el ledger aún no lo distingue de otro igual")
     return ctx.actor_type, ctx.user_id if ctx.actor_type == ActorType.USER else None
 
 

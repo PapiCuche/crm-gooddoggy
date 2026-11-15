@@ -1,6 +1,5 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
@@ -15,7 +14,8 @@ import { placed, useCellPicker } from "./cell-picker";
 // …/inventory/movements/`, F3-11), página a página con `CursorList`: de toda la organización, de
 // un almacén, de una variante o de los dos. Cada fila nombra su variante con el SKU que trae la
 // API (F3-19), también si ya se borró del catálogo. Quién lo ve lo decide la API
-// (`inventory.view`). Las dos patas de una transferencia dicen las dos su ruta (F3-32).
+// (`inventory.view`). Las dos patas de una transferencia dicen las dos su ruta (F3-32), con el
+// almacén de la otra pata que trae cada fila (F3-32b): ninguna petición por fila.
 export function MovementsHistory() {
   const t = useTranslations("ledger");
   const format = useFormatter();
@@ -42,7 +42,7 @@ export function MovementsHistory() {
       empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
     >
-      {(movement, rows) => {
+      {(movement) => {
         const where = named.get(movement.warehouse_id);
         const change = movement.quantity;
         return (
@@ -59,7 +59,7 @@ export function MovementsHistory() {
               <span className="text-muted text-sm wrap-anywhere">{movement.reason}</span>
               <span className="text-muted text-sm wrap-anywhere">
                 {movement.transfer_group_id ? (
-                  <TransferRoute leg={movement} rows={rows} named={named} slug={slug} />
+                  <TransferRoute leg={movement} named={named} />
                 ) : where ? (
                   t("warehouse", placed(where))
                 ) : (
@@ -91,38 +91,16 @@ export function MovementsHistory() {
   );
 }
 
-// «Origen → destino» de una pata de transferencia. La otra pata suele estar en la lista (se
-// registraron juntas); si un filtro o la paginación la dejan fuera, se pide su transferencia
-// (`?transfer_group_id=`, F3-31). Mientras tanto, o si no llega, el otro lado no se nombra.
-function TransferRoute({
-  leg,
-  rows,
-  named,
-  slug,
-}: {
-  leg: Movement;
-  rows: readonly Movement[];
-  named: Map<string, Warehouse>;
-  slug: string;
-}) {
+// «Origen → destino» de una pata de transferencia. La fila trae el almacén de la otra pata
+// (`other_warehouse_id`, F3-32b): si no llega, ese lado es «Almacén desconocido»; si no está en
+// la lista de almacenes, ya no existe.
+function TransferRoute({ leg, named }: { leg: Movement; named: Map<string, Warehouse> }) {
   const t = useTranslations("ledger");
-  const group = leg.transfer_group_id!;
-  const pair = (list: readonly Movement[]) =>
-    list.find((row) => row.transfer_group_id === group && row.id !== leg.id);
-  const loaded = pair(rows);
-  const params = { transfer_group_id: group };
-  const legs = useQuery({
-    queryKey: getInventoryMovementsListQueryKey(slug, params),
-    queryFn: ({ signal }) => inventoryMovementsList(slug, params, { signal }),
-    enabled: !loaded,
-    staleTime: Infinity, // las patas no cambian
-  });
-  const other = loaded ?? pair(legs.data?.results ?? []);
-  const name = (id: string | undefined) => {
+  const name = (id: string | null | undefined) => {
     const where = id ? named.get(id) : undefined;
-    return where ? t("warehouse", placed(where)) : id ? t("unknownWarehouse") : "…";
+    return where ? t("warehouse", placed(where)) : t(id ? "unknownWarehouse" : "otherUnknown");
   };
-  const out = leg.movement_type === "TRANSFER_OUT";
-  const [from, to] = out ? [leg, other] : [other, leg];
-  return t("route", { from: name(from?.warehouse_id), to: name(to?.warehouse_id) });
+  const ends = [leg.warehouse_id, leg.other_warehouse_id];
+  const [from, to] = leg.movement_type === "TRANSFER_OUT" ? ends : ends.reverse();
+  return t("route", { from: name(from), to: name(to) });
 }
