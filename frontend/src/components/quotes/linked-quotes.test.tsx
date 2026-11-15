@@ -2,6 +2,7 @@ import { cleanup, configure, fireEvent, screen, within } from "@testing-library/
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
   },
@@ -36,6 +37,15 @@ afterEach(() => {
 });
 
 describe("cotizaciones de una oportunidad y de un cliente (F5-09f3)", () => {
+  it("«Nueva cotización» con `quotes.create`: abre el editor del vínculo y se cancela", async () => {
+    serve(() => page());
+    withTenant(<LinkedQuotes link={{ opportunity_id: "o9" }} contactId={ID} />, "quotes.create");
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva cotización" }));
+    expect(screen.getByRole("form", { name: "Nueva cotización" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("form")).toBeNull();
+  });
+
   it("pide las del vínculo y enseña número, estado, total y validez, enlazadas al detalle", async () => {
     const urls = serve(() =>
       page(quote("1"), quote("2", { status: "DRAFT", valid_until: null, number: "<b>X</b>" })),
@@ -50,6 +60,7 @@ describe("cotizaciones de una oportunidad y de un cliente (F5-09f3)", () => {
     });
     expect(rows[0]).toHaveTextContent("COT-000001");
     expect(rows[0]).toHaveTextContent("Enviada");
+    expect(screen.queryByRole("button", { name: "Nueva cotización" })).toBeNull(); // sin `quotes.create`
     expect(rows[0]).toHaveTextContent("S/ 500.00");
     expect(rows[0]).toHaveTextContent("Válida hasta 30 nov. 2026");
     expect(within(rows[0]!).getByRole("link", { name: "COT-000001" })).toHaveAttribute(
