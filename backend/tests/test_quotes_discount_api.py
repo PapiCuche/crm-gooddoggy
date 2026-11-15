@@ -3,12 +3,14 @@ reales (ana Owner, vera Vendedora `OWN`, sam Supervisor `TEAM`, bea sin rol, lui
 `crm_app`: permisos antes de leer, el mismo 404, el límite de 3 % al céntimo, entradas hostiles, la
 versión, una carrera y que la ruta nunca llega al suelo de costo ni cuenta en su tope."""
 
+from datetime import timedelta
 from decimal import Decimal as D
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import pytest
+from django.utils import timezone
 
 from apps.quotes.models import DiscountPolicy
 from core.tenancy.scope import tenant_scope
@@ -16,7 +18,8 @@ from tests.factories import make_user
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
 from tests.test_memberships import ctx, join
-from tests.test_quotes_pricing_api import SENTINEL, draft, lab, submit
+from tests.test_pricing_engine import item, row
+from tests.test_quotes_pricing_api import SENTINEL, draft, lab, price, submit
 from tests.test_quotes_read_api import QUOTES, board, crm, pipelines, real_stack
 from tests.test_quotes_write_api import DB, ROWS, desk, fail, threaded, waiting
 from tests.test_self_context import NOT_FOUND, reply, signed
@@ -49,6 +52,9 @@ def test_the_permissions_come_before_the_body_and_anything_out_of_reach_is_one_4
     assert reply(discount(signed(viewer), mine, line, bogus=1)) == DENIED
     asked = f"{QUOTES}{mine}/request-approval/"
     assert reply(send(signed(viewer), "post", asked, {"version": 1, "bogus": 1})) == DENIED
+    blind = make_user()  # cambia y descuenta, pero no ve: tampoco
+    give(lab.a, join(lab.a, blind).pk, {"quotes.update": "ORGANIZATION", "quotes.discount": None})
+    assert reply(discount(signed(blind), mine, line, bogus=1)) == DENIED
     give(lab.a, lab.m["bea"], {"quotes.view": "ORGANIZATION", "quotes.update": "ORGANIZATION"})
     assert reply(discount(signed(lab.bea), mine, line, bogus=1)) == DENIED  # sin quotes.discount
     vera = signed(lab.vera)
@@ -82,7 +88,14 @@ def test_three_percent_fits_and_is_approved_on_submit_and_a_cent_more_never_is(
         assert submit(vera, over, 2).json()["code"] == "QUOTE_NOT_DRAFT"  # nunca APPROVED
     edge, [case] = draft(lab, "vera", lab.case)  # 3,01 de 100,50 es 2,995 %: cabe
     assert discount(vera, edge, case, "AMOUNT", "3.01").json()["status"] == "DRAFT"
-    assert migrator.execute(DISCOUNTED).fetchone() == (4,) and lab.asked == []
+    [(listed,)] = migrator.execute("SELECT DISTINCT price_list_id FROM product_prices").fetchall()
+    cheap = item(lab.a, "CHEAP")
+    row(lab.a, (cheap, listed), "10.00", timezone.now() - timedelta(9))
+    low, [ten] = draft(lab, "vera", cheap)  # el límite se mide con el dinero de la línea: 3,01 %
+    done = discount(vera, low, ten, "PERCENT", "3.01").json()  # de 10,00 quita 0,30, un 3,00 %
+    assert [done["items"][0][k] for k in ("discount_value", "discount_amount")] == ["3.01", "0.30"]
+    assert done["status"] == "DRAFT" and submit(vera, low, 2).json()["status"] == "APPROVED"
+    assert migrator.execute(DISCOUNTED).fetchone() == (5,) and lab.asked == []
 
 
 @pytest.mark.parametrize(
@@ -114,7 +127,23 @@ def test_a_hostile_value_or_field_is_a_400_and_writes_nothing(
     assert migrator.execute(ROWS).fetchone() == before
 
 
-def test_none_takes_a_manual_price_back_and_the_route_is_never_counted_nor_measured(
+def test_none_takes_a_manual_price_back_with_one_audit_row(
+    lab: SimpleNamespace, migrator: DB
+) -> None:
+    quote, [line] = draft(lab)
+    vera = signed(lab.vera)
+    assert price(vera, quote, line, "4200.00").json()["status"] == "PENDING_APPROVAL"
+    back = send(vera, "post", f"{QUOTES}{quote}/withdraw-request/", {"version": 2})
+    assert back.json()["status"] == "DRAFT"
+    done = discount(vera, quote, line, "NONE", GONE, 3)
+    shown = [done.json()["items"][0][k] for k in ("final_unit_price", "discount_amount")]
+    assert (done.status_code, done.json()["status"], shown) == (200, "DRAFT", ["4399.00", "0.00"])
+    marks = "SELECT manual_price_override, override_reason FROM quote_items WHERE id = %s"
+    assert migrator.execute(marks, [line]).fetchone() == (False, None)
+    assert migrator.execute(DISCOUNTED).fetchone() == (1,)
+
+
+def test_the_route_is_never_counted_nor_measured_against_the_cost(
     lab: SimpleNamespace, migrator: DB, settings: Any
 ) -> None:
     settings.QUOTE_FLOOR_THROTTLE = {"quote": (1, 3600), "user": (1, 86400)}
@@ -125,9 +154,9 @@ def test_none_takes_a_manual_price_back_and_the_route_is_never_counted_nor_measu
         assert (done.status_code, done.json()["status"]) == (200, "DRAFT")
         version = done.json()["version"]
     assert done.json()["items"][0]["final_unit_price"] == "4399.00" and version == 4
-    price = f"{QUOTES}{quote}/items/{line}/price/"
+    floor = f"{QUOTES}{quote}/items/{line}/price/"
     for method in ("get", "put", "options"):  # una ruta del suelo cuenta solo con POST
-        send(ana, method, price, {})
+        send(ana, method, floor, {})
     assert migrator.execute(COUNTED).fetchone() == (0,) and lab.asked == []
     assert migrator.execute(DISCOUNTED).fetchone() == (3,)
 
