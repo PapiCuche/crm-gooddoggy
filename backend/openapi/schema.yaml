@@ -14840,8 +14840,9 @@ components:
     QuoteDetail:
       type: object
       description: |-
-        Más las notas (texto libre), el motivo de cancelación, el cliente congelado y las líneas en
-        orden.
+        Más las notas (texto libre), los motivos de cancelación y del rechazo del cliente, lo que se
+        congeló al emitir (el cliente, las condiciones y la garantía), las fechas de la emisión y de la
+        respuesta, y las líneas en orden.
       properties:
         id:
           type: string
@@ -14926,6 +14927,30 @@ components:
           type: string
           nullable: true
           maxLength: 500
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        terms_snapshot:
+          type: string
+          nullable: true
+          maxLength: 2000
+        warranty_snapshot:
+          type: string
+          nullable: true
+          maxLength: 500
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejection_reason:
+          type: string
+          nullable: true
+          maxLength: 500
         customer_snapshot:
           allOf:
           - $ref: '#/components/schemas/QuoteCustomerSnapshot'
@@ -14939,12 +14964,19 @@ components:
           description: Si la solicitud de aprobación abierta la pidió o la envió quien
             consulta, que entonces no la aprueba (409 `SELF_APPROVAL_FORBIDDEN`).
             Sin solicitud abierta, `false`.
+        approval_requested_by_me:
+          type: boolean
+          readOnly: true
+          description: 'Si la solicitud abierta la pidió quien consulta (la de la
+            IA no la pidió nadie): entonces la puede retirar. Sin solicitud abierta,
+            `false`.'
         items:
           type: array
           items:
             $ref: '#/components/schemas/QuoteItem'
       required:
       - approval_asked_by_me
+      - approval_requested_by_me
       - contact
       - created_at
       - currency

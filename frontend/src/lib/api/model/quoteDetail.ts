@@ -12,8 +12,9 @@ import type { QuoteStatusEnum } from "./quoteStatusEnum";
 import type { TaxModeEnum } from "./taxModeEnum";
 
 /**
- * Más las notas (texto libre), el motivo de cancelación, el cliente congelado y las líneas en
- * orden.
+ * Más las notas (texto libre), los motivos de cancelación y del rechazo del cliente, lo que se
+ * congeló al emitir (el cliente, las condiciones y la garantía), las fechas de la emisión y de la
+ * respuesta, y las líneas en orden.
  */
 export interface QuoteDetail {
   readonly id: string;
@@ -64,9 +65,32 @@ export interface QuoteDetail {
    * @nullable
    */
   cancel_reason?: string | null;
+  /** @nullable */
+  sent_at?: string | null;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  terms_snapshot?: string | null;
+  /**
+   * @maxLength 500
+   * @nullable
+   */
+  warranty_snapshot?: string | null;
+  /** @nullable */
+  accepted_at?: string | null;
+  /** @nullable */
+  rejected_at?: string | null;
+  /**
+   * @maxLength 500
+   * @nullable
+   */
+  rejection_reason?: string | null;
   /** Desde que se emitió; `null` antes, o si quien consulta no puede ver el contacto (`contacts.view`): lleva su documento. */
   readonly customer_snapshot: QuoteCustomerSnapshot | null;
   /** Si la solicitud de aprobación abierta la pidió o la envió quien consulta, que entonces no la aprueba (409 `SELF_APPROVAL_FORBIDDEN`). Sin solicitud abierta, `false`. */
   readonly approval_asked_by_me: boolean;
+  /** Si la solicitud abierta la pidió quien consulta (la de la IA no la pidió nadie): entonces la puede retirar. Sin solicitud abierta, `false`. */
+  readonly approval_requested_by_me: boolean;
   items: QuoteItem[];
 }
