@@ -46,7 +46,7 @@ def _restore(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("catalog", "0005_deleted_by_member_fk"),
+        ("catalog", "0004_variant_label"),  # no la 0005: su test la deshace y la rehace sola
         ("pricing", "0006_variant_costs"),
     ]
 
