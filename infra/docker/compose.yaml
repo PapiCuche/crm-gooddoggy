@@ -143,11 +143,13 @@ services:
       disable: true
 
   # F7-09a1c: la cola `media` (descargas de medios entrantes, hasta 120 s cada una), un proceso.
+  # F7-15: también el antivirus; es el único proceso en la red `av` de clamd.
   worker-media:
     <<: *runtime
     command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--queues", "media", "--concurrency", "1"]
     healthcheck:
       disable: true
+    networks: [default, av]
 
   beat:
     <<: *runtime
@@ -186,14 +188,16 @@ services:
       ws:
         condition: service_healthy
 
-  # F7-15 (ADR-008): ClamAV. `clamd` en 3310 solo dentro de la red del stack (sin `ports:`) y
-  # `freshclam` actualiza las firmas en el volumen. La imagen trae firmas: arranca sin red, aunque
-  # cargarlas tarda ~1 min y ocupa ~1 GiB de memoria.
+  # F7-15 (ADR-008): ClamAV. `clamd` en 3310 solo en su red `av` (sin `ports:` y fuera de
+  # `default`: no ve postgres, redis ni garage) y `freshclam` actualiza las firmas en el volumen.
+  # La imagen trae firmas: arranca sin red, aunque cargarlas tarda ~1 min y ocupa ~1 GiB.
   clamd:
     image: clamav/clamav:1.5.4-debian # multiarquitectura (amd64 y arm64)
     restart: unless-stopped
+    networks: [av]
     volumes:
       - clamavdata:/var/lib/clamav
+      - ./clamav/clamd.conf:/etc/clamav/clamd.conf:ro
     healthcheck:
       test: ["CMD", "clamdcheck.sh"]
       interval: 30s
@@ -215,6 +219,9 @@ networks:
       config:
         - subnet: ${STACK_SUBNET:-172.31.250.0/24}
           ip_range: ${STACK_IP_RANGE:-172.31.250.128/25}
+  # F7-15: clamd y worker-media (backend también, cuando escanee los envíos: F7-15b, #838). Con
+  # salida a Internet: la necesita `freshclam`.
+  av:
 
 volumes:
   pgdata:

@@ -1,6 +1,7 @@
 """F7-15: el antivirus de un medio entrante descargado (`scan`, `tasks.scan_media`, el barredor),
 con PostgreSQL real como `crm_app`, el almacén en memoria y un `clamd` falso (`test_antivirus`)."""
 
+import io
 import logging
 from typing import Any
 from uuid import UUID, uuid4
@@ -10,6 +11,7 @@ import pytest
 
 from apps.conversations import media, scan, tasks
 from config.celery import app
+from core import antivirus, storage
 from core.observability import reporting
 from core.outbox import handlers_for
 from tests.logs import log_text
@@ -101,6 +103,9 @@ def test_eicar_is_infected_audited_and_alerted_without_its_content(
 def test_clamd_down_retries_with_backoff_and_then_is_error_never_clean(
     world: Any, migrator: DB, settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    seen: list[Any] = []
+    capture = lambda *a, **kw: seen.append((a, kw))  # noqa: E731
+    monkeypatch.setattr(reporting, "reporter", lambda: type("R", (), {"capture_message": capture}))
     file_id = stored(world, migrator)
     settings.CLAMD_ADDRESS = "127.0.0.1:9"  # nadie escucha
     queued: list[Any] = []
@@ -114,6 +119,7 @@ def test_clamd_down_retries_with_backoff_and_then_is_error_never_clean(
     assert status(migrator, file_id) == "ERROR" and len(queued) == 3  # sin más intentos
     ((action, _),) = migrator.execute(AUDIT, [file_id]).fetchall()
     assert action == "file.scan_error"
+    assert [s[1]["fingerprint"] for s in seen] == [["media.alert.scan_error"]]  # una caída se ve
     blobs, other = world.blobs, stored(world, migrator, wamid="wamid.M2")
     blobs.objects.clear()  # el almacén no lo tiene: tampoco es un veredicto
     assert scan.scan(world.a, other, 1) == ("RETRY", scan.BACKOFF[0])
@@ -135,3 +141,59 @@ def test_the_sweeper_queues_only_stale_pending_scans_once_per_window(
     migrator.execute("UPDATE files SET scan_checked_at = now() - interval '16 minutes'")
     assert tasks.sweep_media()["scans"] == 1  # su tarea se perdió: otra vez
     assert status(migrator, fresh) == "PENDING"  # el reciente sigue esperando su evento
+
+
+class Broken(io.BytesIO):
+    def read(self, *args: Any) -> bytes:
+        raise RuntimeError("se cortó el almacén a mitad")  # no es un OSError
+
+
+def test_a_storage_error_mid_stream_is_no_verdict_and_retries(
+    world: Any, migrator: DB, clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_id = stored(world, migrator)
+    monkeypatch.setattr(world.blobs, "open", lambda key: Broken(b"x"))
+    assert scan.scan(world.a, file_id, 1) == ("RETRY", scan.BACKOFF[0])  # sin excepción
+    assert scan.scan(world.a, file_id, scan.MAX_ATTEMPTS) == ("ERROR", None)
+    assert status(migrator, file_id) == "ERROR" and clamd.bodies == []
+
+
+def test_only_inbound_media_files_are_scanned(world: Any, migrator: DB, clamd: FakeClamd) -> None:
+    out = uuid4()  # un archivo `PENDING` de otro propósito (el que sube una persona para enviar)
+    key = storage.tenant_key(world.a, "message-media-out", out)
+    world.blobs.put(key, io.BytesIO(JPEG), content_type="image/jpeg", content_length=len(JPEG))
+    migrator.execute(
+        "INSERT INTO files (id, organization_id, storage_key, original_name, mime_type, "
+        "size_bytes, sha256, purpose, scan_status) VALUES (%s, %s, %s, 'imagen.jpg', "
+        "'image/jpeg', %s, %s, 'message-media-out', 'PENDING')",
+        [out, world.a, key, len(JPEG), "0" * 64],
+    )
+    assert scan.scan(world.a, out, 1) == ("SKIPPED", None)  # ni se mira
+    assert clamd.bodies == [] and status(migrator, out) == "PENDING"
+
+
+def test_a_verdict_never_overwrites_another_written_meanwhile(
+    world: Any, migrator: DB, clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_id = stored(world, migrator, JPEG + EICAR)
+    real = scan._verdict
+
+    def slow(key: str) -> antivirus.Verdict:  # otra tarea escribe mientras esta escanea
+        migrator.execute("UPDATE files SET scan_status = 'CLEAN' WHERE id = %s", [file_id])
+        return real(key)
+
+    monkeypatch.setattr(scan, "_verdict", slow)
+    assert scan.scan(world.a, file_id, 1) == ("SKIPPED", None)
+    assert (
+        status(migrator, file_id) == "CLEAN" and migrator.execute(AUDIT, [file_id]).fetchall() == []
+    )
+
+
+def test_the_scan_uses_the_size_cap(
+    world: Any, migrator: DB, clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert scan.CAP >= max(media.CAPS.values())  # ningún medio permitido pasa del tope
+    file_id = stored(world, migrator)
+    monkeypatch.setattr(scan, "CAP", 8)  # menor que el archivo: sin veredicto, nunca `CLEAN`
+    assert scan.scan(world.a, file_id, scan.MAX_ATTEMPTS) == ("ERROR", None)
+    assert clamd.bodies == []

@@ -3,9 +3,10 @@
 Tras la descarga (`media.store` emite `file.stored`), `tasks.scan_media` lee el blob del almacén en
 flujo y lo pasa a `clamd` (`core.antivirus`, INSTREAM con tope y plazo). Un veredicto real escribe
 `CLEAN` o `INFECTED`; sin veredicto (clamd caído, plazo, almacén que falla) se reintenta con espera
-y, agotados los intentos, queda `ERROR`. Solo un `PENDING` cambia: nada pisa un veredicto. Un
-`INFECTED` deja auditoría y una alerta (`media.alert.infected`) con ids y la firma, nunca bytes,
-nombre ni clave. El barredor (`stale`) vuelve a encolar un `PENDING` sin tarea viva."""
+y, agotados los intentos, queda `ERROR`. Solo un `PENDING` cambia: nada pisa un veredicto.
+`INFECTED` y `ERROR` dejan auditoría y una alerta (`media.alert.infected`, `media.alert.scan_error`)
+con ids y la firma, nunca bytes, nombre ni clave. El barredor (`stale`) vuelve a encolar un
+`PENDING` sin tarea viva."""
 
 import datetime as dt
 from uuid import UUID
@@ -30,6 +31,7 @@ SECONDS = 60.0  # plazo de un escaneo (envío y respuesta)
 CAP = max(media.CAPS.values())  # ningún medio entrante pasa de aquí (`media.CAPS`)
 STALE = dt.timedelta(minutes=15)  # un `PENDING` sin intento desde hace esto: sin tarea viva
 ALERT = "media.alert.infected"
+ALERTS = {"INFECTED": ALERT, "ERROR": "media.alert.scan_error"}
 
 
 def _pending(alias: str, file_id: UUID) -> str | None:
@@ -42,15 +44,19 @@ def _pending(alias: str, file_id: UUID) -> str | None:
 
 
 def _verdict(key: str) -> antivirus.Verdict:
-    """El veredicto de `clamd`; `antivirus.Unavailable` si no lo hay (o si el almacén falla)."""
+    """El veredicto de `clamd`; `antivirus.Unavailable` si no lo hay. Cualquier otro fallo (el
+    almacén al abrir o a mitad de la lectura, al cerrar) también: se reintenta y acaba en `ERROR`,
+    nunca en una tarea que cae una y otra vez con el barredor."""
     try:
         blob = storage.storage().open(key)
+        try:
+            return antivirus.scan(blob, max_bytes=CAP, seconds=SECONDS)
+        finally:
+            blob.close()
+    except antivirus.Unavailable:
+        raise
     except Exception as error:
         raise antivirus.Unavailable(type(error).__name__) from None
-    try:
-        return antivirus.scan(blob, max_bytes=CAP, seconds=SECONDS)
-    finally:
-        blob.close()
 
 
 def _write(ctx: TenantContext, file_id: UUID, status: str, signature: str | None) -> bool:
@@ -67,12 +73,12 @@ def _write(ctx: TenantContext, file_id: UUID, status: str, signature: str | None
     return True
 
 
-def _alert(ctx: TenantContext, file_id: UUID, signature: str | None) -> None:
+def _alert(ctx: TenantContext, name: str, file_id: UUID, signature: str | None) -> None:
     context = {"organization_id": str(ctx.organization_id), "file_id": str(file_id),
                "signature": signature}  # fmt: skip
-    logger.error(ALERT, **context)
+    logger.error(name, **context)
     try:
-        reporting.reporter().capture_message(ALERT, context, fingerprint=[ALERT])
+        reporting.reporter().capture_message(name, context, fingerprint=[name])
     except Exception:  # noqa: BLE001 — un reporte roto no deshace el veredicto
         logger.warning("media.alert.report_failed", file_id=str(file_id))
 
@@ -97,8 +103,8 @@ def scan(organization_id: UUID, file_id: UUID, attempt: int) -> tuple[str, int |
         status = "ERROR"
     with tenant_scope(ctx):
         written = _write(ctx, file_id, status, signature)
-    if written and status == "INFECTED":
-        _alert(ctx, file_id, signature)
+    if written and status in ALERTS:  # una caída de clamd que deja todo en `ERROR` también se ve
+        _alert(ctx, ALERTS[status], file_id, signature)
     return (status if written else "SKIPPED"), None
 
 

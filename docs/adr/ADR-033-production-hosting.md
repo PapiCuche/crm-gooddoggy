@@ -88,7 +88,6 @@ Internet ──80/443──▶ proxy (Caddy, HTTPS automático)
 backend, ws, worker, worker-media, beat ──▶ postgres (crm_app) y redis (red de datos interna)
 migrate (job por despliegue)            ──▶ postgres (crm_migrator)
 backend, ws, worker, worker-media       ──▶ S3 externo (https), SMTP externo, Meta, Sentry (opcional)
-worker-media                            ──▶ clamd (TCP 3310, red interna; F7-15)
 ```
 
 | Servicio       | Imagen                        | Credencial de BD                       | Publica puertos | Notas                                                                   |
@@ -103,7 +102,6 @@ worker-media                            ──▶ clamd (TCP 3310, red interna; 
 | `postgres`     | `postgres:18.x`               | superusuario, por el socket local      | No              | Volumen persistente; roles según ADR-002 §1; el backup vuelca aquí (§8) |
 | `redis`        | `redis:8.x`                   | —                                      | No              | Broker y capa de canales; AOF                                           |
 | `migrate`      | backend del repo              | `DATABASE_MIGRATOR_URL` → crm_migrator | No              | Job efímero por despliegue (§7); nunca recibe secretos de runtime       |
-| `clamd`        | `clamav/clamav:1.5.x-debian`  | —                                      | No              | Antivirus (F7-15, ADR-008); ~1 GiB de memoria; `freshclam` necesita salida a Internet |
 
 **Fuera de producción:** Garage (AGPL-3.0, OBS-F1-01-2, un solo nodo sin redundancia) y Mailpit. En producción el almacenamiento es un servicio S3 compatible externo por `https` (ADR-008) y el correo, un proveedor SMTP (ADR-019).
 
@@ -249,7 +247,7 @@ El runbook de F1-17 (#758) lo detalla: aprovisionar y endurecer el servidor, cre
 - Los archivos de `infra/` (F1-13), los scripts de despliegue (F1-15) y de backup (F1-16).
 - Alta disponibilidad, varios servidores o réplicas de lectura.
 - La firma y la verificación de procedencia de las imágenes (§7): mejora posterior.
-- El antivirus de los archivos (ClamAV, ADR-008): F7-15 (#837) añade `clamd` al compose y a la topología de §3. Queda para F1-13 (#754): su límite de memoria (carga ~1 GiB de firmas y, al recargarlas, puede pasar un momento del doble: con 4 GB de servidor conviene `ConcurrentDatabaseReload no` o subir a 8 GB) y su salida a Internet para `freshclam`.
+- El antivirus de los archivos (ClamAV, ADR-008): sigue pendiente antes de servir archivos de clientes (D-F7-04).
 
 ## Alternatives considered
 

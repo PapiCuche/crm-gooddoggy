@@ -118,7 +118,7 @@ El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED`
 
 Un medio que llega por WhatsApp (imagen, audio, video o sticker) se descarga y queda en espera hasta que el antivirus **ClamAV** lo revisa. Solo un archivo limpio se puede descargar desde el chat; uno infectado o que no se pudo revisar nunca se sirve.
 
-**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host: solo lo ven los procesos del stack, en `clamd:3310`. Trae firmas en la imagen y `freshclam` las actualiza en el volumen `clamavdata`. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
+**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host y vive en su propia red `av`: solo lo ve **worker-media**, en `clamd:3310`. Su configuración es `infra/docker/clamav/clamd.conf`. Trae firmas en la imagen y `freshclam` las actualiza en el volumen `clamavdata`. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
 
 ```bash
 docker compose -f infra/docker/compose.yaml --env-file infra/env/.env ps clamd   # «healthy»
