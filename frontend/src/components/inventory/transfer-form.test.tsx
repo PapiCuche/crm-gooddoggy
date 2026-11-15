@@ -77,6 +77,8 @@ async function opened() {
   press("Transferir a otro almacén");
   await waitFor(() => expect(field("Unidades que se transfieren")).toHaveFocus());
 }
+const levelsAsked = (api: ReturnType<typeof mockApi>) =>
+  api.mock.calls.filter(([url]) => String(url) === LEVELS.slice("GET ".length)).length;
 const figures = (heading: string) =>
   within(screen.getByRole("heading", { name: heading }).parentElement!)
     .getAllByRole("definition")
@@ -202,11 +204,17 @@ describe("TransferForm", () => {
         expect(within(where()).getByText(text, { exact: typeof text !== "string" })).toBeVisible(),
       );
     };
+    const before = levelsAsked(api);
+    const refetched = (times: number) =>
+      waitFor(() => expect(levelsAsked(api)).toBe(before + times));
     await again(reply, /Ya no hay tantas unidades disponibles/);
+    await refetched(1); // lo que la respuesta dice que cambió se vuelve a pedir
     await waitFor(() => expect(field("Unidades que se transfieren")).toHaveFocus());
     await again({ status: 409, body: { code: "STOCK_LIMIT" } }, /no puede guardar tantas/);
+    await refetched(2);
     await again({ status: 409, body: { code: "WAREHOUSE_INACTIVE" } }, /está desactivado/);
     await again({ status: 409, body: { code: "IDEMPOTENCY_KEY_REUSED" } }, /sí se registró/);
+    await refetched(3);
     const bad = { code: "VALIDATION_ERROR", fields: { to_warehouse_id: ["x"] } };
     await again({ status: 400, body: bad }, /ya no existen/);
     await again(
@@ -214,6 +222,7 @@ describe("TransferForm", () => {
       /No tienes permiso para transferir/,
     );
     await again({ status: 500, body: { code: "INTERNAL_ERROR" } }, /Algo salió/);
+    expect(levelsAsked(api)).toBe(before + 3); // ni inactivo, ni 400, ni 403, ni 500
     // Inactivo y referencia perdida: los almacenes se vuelven a pedir.
     expect(api.mock.calls.filter(([url]) => String(url).includes("warehouses"))).toHaveLength(3);
     const keys = posts(api).map((body) => body.idempotency_key);
@@ -221,6 +230,53 @@ describe("TransferForm", () => {
     expect(keys[4]).not.toBe(keys[3]); // tras `IDEMPOTENCY_KEY_REUSED`, una clave nueva
     press("Cancelar", form());
     expect(screen.getByRole("button", { name: "Transferir a otro almacén" })).toHaveFocus();
+  });
+
+  it("anuncia la transferencia cuando ya volvieron los dos saldos", async () => {
+    let levels = [level("w1", 10), level("w2", 1)];
+    const api = mockApi({
+      ...CATALOG,
+      [LEVELS]: () => page(levels),
+      [MOVE]: () => {
+        levels = [level("w1", 7), level("w2", 4)];
+        return {
+          status: 201,
+          body: { transfer_group_id: "g1", legs: [leg("w1", -3, 7), leg("w2", 3, 4)] },
+        };
+      },
+    });
+    await opened();
+    const real = api.getMockImplementation()!;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    api.mockImplementation(async (input, init) => {
+      if (String(input) === LEVELS.slice("GET ".length)) await held; // los saldos tardan
+      return real(input, init);
+    });
+    const before = levelsAsked(api);
+    type("Unidades que se transfieren", "3");
+    type("Motivo", "Reponer");
+    press("Transferir", form());
+    await waitFor(() => expect(levelsAsked(api)).toBe(before + 1));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(form()).getByRole("button", { name: "Transfiriendo…" })).toBeVisible();
+    expect(screen.queryByText(/Transferidas/)).toBeNull();
+    release();
+    expect(
+      await screen.findByText(
+        "Transferidas 3 unidades de Collar: ahora hay 7 en Central y 4 en Norte.",
+      ),
+    ).toBeVisible();
+    expect(figures("Collar en Central")).toEqual(["7", "0", "7"]);
+  });
+
+  it("mantener Enter pulsado no envía otra vez; una pulsación sí", async () => {
+    mockApi({ ...CATALOG, [LEVELS]: page([level("w1", 10)]) });
+    await opened();
+    const held = { key: "Enter", repeat: true };
+    expect(fireEvent.keyDown(field("Motivo"), held)).toBe(false); // se anula: no envía
+    expect(fireEvent.keyDown(field("Motivo"), { ...held, repeat: false })).toBe(true);
+    expect(fireEvent.keyDown(field("Motivo"), { ...held, key: "a" })).toBe(true);
   });
 
   it("sin nada disponible o sin otro almacén activo, dice por qué no se puede", async () => {

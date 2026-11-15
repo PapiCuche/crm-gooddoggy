@@ -10,6 +10,7 @@ import psycopg
 import pytest
 from django.db import connection
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.inventory import stock
@@ -78,7 +79,7 @@ def test_a_transfer_over_http_and_its_two_legs_in_the_ledger(ana: Client, world:
     assert set(out) == {  # sin clave de idempotencia, organización ni costos
         *("id", "variant_id", "variant", "warehouse_id", "movement_type", "quantity"),
         *("on_hand_after", "reserved_after", "reason", "created_by_user_id", "created_at"),
-        *("reference_type", "reference_id", "transfer_group_id"),
+        *("reference_type", "reference_id", "transfer_group_id", "other_warehouse_id"),
     }
     assert [(m["movement_type"], m["warehouse_id"], m["quantity"]) for m in (out, entry)] == [
         ("TRANSFER_OUT", str(origin), -4),
@@ -88,6 +89,7 @@ def test_a_transfer_over_http_and_its_two_legs_in_the_ledger(ana: Client, world:
     links = {(m["reference_type"], m["reference_id"], m["transfer_group_id"]) for m in data["legs"]}
     assert links == {("TRANSFER", group, group)}
     assert out["created_by_user_id"] == str(world.ana.pk) and out["variant"]["sku"] == "IP16"
+    assert (out["other_warehouse_id"], entry["other_warehouse_id"]) == (str(shop), str(origin))
     again = call(ana, "post", URL, asked_)
     assert (again.status_code, again.json()) == (200, data)  # no se repite
     send(world.a, None, asked(variant, origin, shop, 1))  # otra transferencia: otro grupo
@@ -110,6 +112,41 @@ def test_the_ledger_filter_by_group(ana: Client, world: Any) -> None:
     assert bad[0].status_code == 400 and list(bad[0].json()["fields"]) == ["transfer_group_id"]
     assert b"hola" not in bad[2].content
     assert only_transfer(world).get(LEDGER).status_code == 403  # transferir no lee el ledger
+
+
+def test_each_leg_names_the_other_warehouse_in_the_same_query(
+    ana: Client, world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """F3-32b: el ledger filtrado por un almacén nombra el de la otra pata sin una petición ni una
+    consulta por fila; nunca el de otra organización, aunque comparta el grupo."""
+    variant, origin, (shop, depot) = stocked(world.a, 20, "TDA", "DEP")
+
+    def ledger(where: Any) -> tuple[int, list[tuple[str, str | None]]]:
+        with CaptureQueriesContext(connection) as captured:
+            found = ana.get(LEDGER, {"warehouse_id": str(where)})
+        assert found.status_code == 200, found.content
+        rows = found.json()["results"]
+        return len(captured), [(r["movement_type"], r["other_warehouse_id"]) for r in rows]
+
+    group = send(world.a, None, asked(variant, origin, shop, 1))[0][0].transfer_group_id
+    few, rows = ledger(shop)
+    assert rows == [("TRANSFER_IN", str(origin))]
+    for target in (shop, depot, shop, depot):
+        send(world.a, None, asked(variant, origin, target, 1))
+    count, rows = ledger(origin)
+    assert count == few  # seis filas, las mismas consultas que una
+    assert rows == [("TRANSFER_OUT", str(t)) for t in (depot, shop, depot, shop, shop)] + [
+        ("RECEIPT", None)
+    ]
+    theirs_variant, theirs_origin, (theirs_shop,) = stocked(world.b, 3, "TDB")
+    theirs = send(world.b, None, asked(theirs_variant, theirs_origin, theirs_shop, 1))[0]
+    migrator.execute(  # otra organización con el mismo grupo: nunca se mezcla
+        "UPDATE inventory_movements SET transfer_group_id = %s, reference_id = %s"
+        " WHERE id = ANY(%s)",
+        [group, group, [leg.pk for leg in theirs]],
+    )
+    assert ledger(shop)[1][-1] == ("TRANSFER_IN", str(origin))
+    assert ledger(origin)[1][-2] == ("TRANSFER_OUT", str(shop))
 
 
 def test_permissions_and_methods(world: Any, migrator: psycopg.Connection[Any]) -> None:
@@ -142,7 +179,10 @@ def test_permissions_and_methods(world: Any, migrator: psycopg.Connection[Any]) 
         *(("reason", v) for v in (" ", "", "x" * 256, "a\x00b", None, 7, ["Reponer"])),
         *(
             ("idempotency_key", v)
-            for v in ("corta", "import:abcdefgh", "con/barra-01", "a b c d e f", 12345678, None)
+            for v in (
+                *("corta", "import:abcdefgh", "con/barra-01", "a b c d e f", 12345678, None),
+                *(" traslado-01", "traslado-01 ", "\ttraslado-01"),  # tal cual: sin recortar
+            )
         ),
         ("organization_id", "00000000-0000-0000-0000-000000000000"),
         ("movement_type", "RECEIPT"),

@@ -3,7 +3,7 @@ las sirve (`HasPermission`)."""
 
 from uuid import UUID
 
-from django.db.models import QuerySet
+from django.db.models import OuterRef, QuerySet, Subquery
 
 from apps.imports.models import DataImport, DataImportRow
 from apps.inventory.models import (
@@ -27,8 +27,16 @@ def levels() -> QuerySet[InventoryLevel]:
 
 def movements() -> QuerySet[InventoryMovement]:
     """El ledger de la organización: solo se añade. Con su variante en la misma consulta, también
-    si está borrada: el ledger la conserva."""
-    return InventoryMovement.objects.select_related("variant")
+    si está borrada: el ledger la conserva. Cada pata de una transferencia trae el almacén de la
+    otra (`other_warehouse_id`, F3-32b) en la misma consulta, por el índice de su grupo; la busca
+    en la misma organización (`TenantManager` y RLS), así que nunca nombra un almacén ajeno."""
+    other = (
+        InventoryMovement.objects.filter(transfer_group_id=OuterRef("transfer_group_id"))
+        .exclude(pk=OuterRef("pk"))
+        .values("warehouse_id")[:1]
+    )
+    rows: QuerySet[InventoryMovement] = InventoryMovement.objects.select_related("variant")
+    return rows.annotate(other_warehouse_id=Subquery(other))
 
 
 def reservations() -> QuerySet[InventoryReservation]:

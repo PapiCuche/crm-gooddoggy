@@ -12319,6 +12319,13 @@ components:
           format: uuid
           nullable: true
           description: El mismo en las dos patas de una transferencia.
+        other_warehouse_id:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+          description: En una pata de transferencia, el almacén de la otra pata; si
+            no, `null`.
         created_by_user_id:
           type: string
           format: uuid
@@ -12332,6 +12339,7 @@ components:
       - id
       - movement_type
       - on_hand_after
+      - other_warehouse_id
       - quantity
       - reason
       - reference_id

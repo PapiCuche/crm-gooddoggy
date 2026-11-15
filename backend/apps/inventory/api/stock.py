@@ -115,6 +115,11 @@ class MovementSerializer(serializers.Serializer[Any]):
     transfer_group_id = serializers.UUIDField(
         allow_null=True, help_text="El mismo en las dos patas de una transferencia."
     )
+    other_warehouse_id = serializers.UUIDField(
+        allow_null=True,
+        read_only=True,
+        help_text="En una pata de transferencia, el almacén de la otra pata; si no, `null`.",
+    )
     created_by_user_id = serializers.UUIDField(allow_null=True)
     created_at = serializers.DateTimeField()
 

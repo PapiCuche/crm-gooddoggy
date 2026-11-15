@@ -17,6 +17,7 @@ from django.utils import timezone
 from apps.inventory import reservations as res
 from apps.inventory import stock, transfers, warehouses
 from apps.inventory.models import InventoryLevel, Warehouse
+from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests import test_authorization
 from tests.factories import make_user
@@ -502,6 +503,19 @@ def test_a_key_replays_only_for_whoever_used_it(world: Any) -> None:
     assert on_hand(world.a, variant, origin, shop) == [4, 2] and written(world.a) == (4, 2)
 
 
+@pytest.mark.parametrize("actor", [ActorType.AI_AGENT, ActorType.INTEGRATION])
+def test_an_actor_without_a_user_is_refused_and_writes_nothing(
+    world: Any, actor: ActorType
+) -> None:
+    """Dos agentes (o dos integraciones) sin `user_id` repetirían las patas del otro: hasta que el
+    ledger guarde quién es cada uno, no transfieren (revisión de #782)."""
+    variant, origin, (shop,) = stocked(world.a, 2, "TDA")
+    with tenant_scope(TenantContext(world.a, "test", actor_type=actor, actor_id=uuid4())) as t:
+        with pytest.raises(ValueError, match=f"actor {actor}"):
+            transfers.transfer(t, asked(variant, origin, shop, 1, "traslado-08"))
+    assert on_hand(world.a, variant, origin, shop) == [2, 0] and written(world.a) == (0, 0)
+
+
 def test_the_same_key_at_once_from_two_people_goes_once(world: Any) -> None:
     variant, origin, (shop,) = stocked(world.a, 4, "TDA")
     luis = make_user(email="luis@example.com")
@@ -547,3 +561,52 @@ def test_the_group_index_migration_replaces_an_invalid_index_and_goes_back(
             "(organization_id, transfer_group_id) WHERE (transfer_group_id IS NOT NULL)"
         )
     assert written(world.a) == (4, 2)
+
+
+def test_the_group_index_migration_refuses_an_index_with_its_name_and_another_definition(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """F3-32b: `IF NOT EXISTS` solo mira el nombre; uno válido sobre otras columnas no pasa."""
+    with as_migrator():
+        call_command("migrate", "inventory", "0005", verbosity=0)
+    migrator.execute(
+        "CREATE INDEX inventory_movements_group_idx ON public.inventory_movements (reason)"
+    )
+    with as_migrator(), pytest.raises(RuntimeError, match="otra definición"):
+        call_command("migrate", "inventory", verbosity=0)
+    assert migrator.execute(GROUP_INDEX).fetchone()[1].endswith("(reason)")  # type: ignore[index]
+    migrator.execute("DROP INDEX public.inventory_movements_group_idx")
+    with as_migrator():
+        call_command("migrate", "inventory", verbosity=0)
+    assert migrator.execute(GROUP_INDEX).fetchone() == (True, GROUP_MIGRATION.DEFINITION)
+
+
+def test_the_group_index_migration_gives_up_on_an_old_snapshot_and_retries(
+    world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`CONCURRENTLY` espera a toda instantánea más antigua: con `lock_timeout` falla en vez de
+    esperar sin fin, deja el índice `INVALID` y la conexión sin el límite; al repetirla, lo borra
+    y construye uno válido. Sin `lock_timeout`, el temporizador suelta la instantánea y la
+    migración acaba bien: la prueba falla en vez de colgarse."""
+    monkeypatch.setattr(GROUP_MIGRATION, "LOCK_TIMEOUT", "300ms")
+    with as_migrator():
+        call_command("migrate", "inventory", "0005", verbosity=0)
+    with psycopg.connect(migrator.info.dsn, password=migrator.info.password) as holder:
+        holder.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        holder.execute("SELECT 1")  # una instantánea abierta, sin bloquear la tabla
+        release = threading.Timer(10, holder.rollback)
+        release.start()
+        try:
+            with as_migrator():
+                with pytest.raises(DatabaseError, match="lock timeout"):
+                    call_command("migrate", "inventory", verbosity=0)
+                with connection.cursor() as cursor:
+                    cursor.execute("SHOW lock_timeout")
+                    assert cursor.fetchone() == ("0",)
+        finally:
+            release.cancel()
+            holder.rollback()
+    assert migrator.execute(GROUP_INDEX).fetchone()[0] is False  # type: ignore[index]
+    with as_migrator():
+        call_command("migrate", "inventory", verbosity=0)
+    assert migrator.execute(GROUP_INDEX).fetchone() == (True, GROUP_MIGRATION.DEFINITION)
