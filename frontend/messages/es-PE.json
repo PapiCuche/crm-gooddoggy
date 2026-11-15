@@ -128,14 +128,14 @@
         "created": "Organización creada"
       },
       "membership": {
-        "created": "Miembro añadido por un operador",
         "role_assigned": "Rol asignado a un miembro",
         "role_removed": "Rol quitado a un miembro",
         "suspended": "Miembro suspendido",
         "reactivated": "Miembro reactivado",
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
-        "invitation_revoked": "Invitación revocada"
+        "invitation_revoked": "Invitación revocada",
+        "created": "Miembro añadido por un operador"
       },
       "role": {
         "created": "Rol creado",
