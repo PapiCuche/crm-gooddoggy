@@ -191,6 +191,29 @@ def test_the_validity_ends_at_valid_until_by_both_clocks(
     assert len(audit(migrator)) == before
 
 
+def test_the_command_refuses_an_expired_quote_before_writing_without_the_database(
+    shop: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F5-09j: vencida para la aplicación y vigente para la base: `_answer` no llega a escribir,
+    así que la restricción `quotes_answer_expired` no es la que la rechaza."""
+    seller = sender(shop)
+    made = sold(shop, seller)
+    clock(monkeypatch, reread(shop, made).valid_until + timedelta(seconds=1))
+    spies = {name: Mock() for name in ("_stamp", "record", "_event", "_move")}
+    for name, spy in spies.items():
+        monkeypatch.setattr(answers, name, spy)
+    before = len(audit(migrator))
+    for command, extra in ((answers.accept_quote, {}),
+                           (answers.reject_quote_by_customer, {"reason": "No"})):  # fmt: skip
+        with pytest.raises(QuoteExpired) as caught:
+            act(shop, seller, command, quote_id=made.pk, version=2, **extra)
+        assert caught.value.args == (made.pk,)
+        assert caught.value.__context__ is None  # no viene de un error de la base
+    assert [spy.call_count for spy in spies.values()] == [0] * 4
+    assert (reread(shop, made).status, reread(shop, made).version) == ("SENT", 2)
+    assert len(audit(migrator)) == before
+
+
 @pytest.mark.parametrize("case", ["forbidden:view", "forbidden:update", "no_stage", "missing",
                                   "missing_fields", "bad_reference", "same_stage", "closed",
                                   "closing_stage"])  # fmt: skip

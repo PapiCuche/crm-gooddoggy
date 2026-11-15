@@ -15,6 +15,11 @@ export type Target = { id: string; label: string };
 export const RESULTS = 8;
 export const DEBOUNCE = 300;
 
+// Una variante con su producto y su SKU; si su nombre ya empieza por el del producto («Collar» y
+// «Collar Talla M», o la única, que se llama igual), el producto no se repite.
+export const variantLabel = (product: string, name: string, sku: string) =>
+  `${name.trim().startsWith(product.trim()) ? name.trim() : `${product} · ${name}`} (${sku})`;
+
 // Busca en el catálogo por texto (`q`, F3-48i): nunca se baja el catálogo entero.
 async function search(slug: string, kind: Kind, q: string, signal: AbortSignal): Promise<Target[]> {
   const [params, options] = [{ q, limit: RESULTS }, { signal }];
@@ -22,7 +27,7 @@ async function search(slug: string, kind: Kind, q: string, signal: AbortSignal):
     const page = await variantsSearch(slug, params, options);
     return page.results.map((v) => ({
       id: v.id,
-      label: `${v.product_name} · ${v.name} (${v.sku})`,
+      label: variantLabel(v.product_name, v.name, v.sku),
     }));
   }
   const list = { product_id: productsList, category_id: categoriesList, brand_id: brandsList }[

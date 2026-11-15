@@ -55,6 +55,29 @@ describe("Cotizaciones: editor (F5-09g)", () => {
     ]);
   });
 
+  it("una variante que se llama como su producto se nombra una sola vez (F5-09j)", async () => {
+    const only = {
+      id: "v3",
+      name: "Collar reflectivo",
+      sku: "COL",
+      product_name: "Collar reflectivo",
+    };
+    const sized = { ...only, id: "v4", name: "Collar reflectivo Talla M", sku: "COL-M" };
+    api({ "GET /api/v1/o/acme/variants/": page(only, sized, ...variants.body.results) });
+    withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
+    type("Variante 1", "coll");
+    expect(await screen.findByRole("button", { name: "Correa · Roja (COR-R)" })).toBeVisible();
+    // Con varias variantes, la que empieza por el nombre del producto tampoco lo repite.
+    expect(screen.getByRole("button", { name: "Collar reflectivo Talla M (COL-M)" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Collar reflectivo (COL)" }));
+    expect(screen.getByText("Variante 1: Collar reflectivo (COL)")).toBeVisible();
+    cleanup();
+    const same = line("l1", { product_name: "Arnés", variant_name: " Arnés ", sku: "ARN" });
+    const quote = detail({ status: "DRAFT", items: [same] });
+    withTenant(<QuoteEditor quote={quote} onCancel={() => {}} onSaved={() => {}} />);
+    expect(screen.getByText("Variante 1: Arnés (ARN)")).toBeVisible();
+  });
+
   it("sin variante o con una cantidad no entera no envía nada y lo dice", async () => {
     const calls = api({});
     withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);

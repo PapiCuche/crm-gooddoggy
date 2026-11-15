@@ -14802,9 +14802,9 @@ components:
     QuoteDetail:
       type: object
       description: |-
-        Más las notas (texto libre), los motivos de cancelación y del rechazo del cliente, lo que se
-        congeló al emitir (el cliente, las condiciones y la garantía), las fechas de la emisión y de la
-        respuesta, y las líneas en orden.
+        Más las notas (texto libre), los motivos de cancelación, del rechazo del cliente y del de la
+        última solicitud de aprobación, lo que se congeló al emitir (el cliente, las condiciones y la
+        garantía), las fechas de la emisión y de la respuesta, y las líneas en orden.
       properties:
         id:
           type: string
@@ -14932,12 +14932,20 @@ components:
           description: 'Si la solicitud abierta la pidió quien consulta (la de la
             IA no la pidió nadie): entonces la puede retirar. Sin solicitud abierta,
             `false`.'
+        approval_rejection_reason:
+          type: string
+          readOnly: true
+          nullable: true
+          description: 'El motivo de quien rechazó la última solicitud de aprobación,
+            como `cancel_reason`: lo ve quien ve la cotización. `null` si la última
+            no se rechazó.'
         items:
           type: array
           items:
             $ref: '#/components/schemas/QuoteItem'
       required:
       - approval_asked_by_me
+      - approval_rejection_reason
       - approval_requested_by_me
       - contact
       - created_at
