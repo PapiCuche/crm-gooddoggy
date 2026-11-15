@@ -250,3 +250,32 @@ def test_two_requests_at_once_never_pass_the_cap_or_the_version(
     monkeypatch.setattr(inputs, "REASONS_MAX", 100)
     same = http_race(monkeypatch, [body(code="SOLO"), body(code="SOLO")], "post", REASONS)
     assert same == [(201, "SOLO"), (409, "CODE_TAKEN")]
+
+
+def test_a_hundred_reasons_fit_and_the_hundred_and_first_is_a_400(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    ana = signed(crm.ana)
+    for index in range(99):  # por el comando, con su contexto: sin SQL
+        reason(crm, f"R{index}", is_active=index % 2 == 0)  # la mitad, inactivos
+    assert create(ana, code="CIEN").status_code == 201
+    full = create(ana, code="CIENTO_UNO")
+    assert fail(full) == (400, "VALIDATION_ERROR", ["_"]), full.content
+    assert full.json()["fields"]["_"][0]["message"] == (
+        "La organización ya tiene 100 motivos de pérdida."
+    )
+    assert stored(migrator)[0] == 100
+
+
+def test_an_inactive_reason_still_counts_and_the_api_frees_no_room(
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ana = signed(crm.ana)
+    monkeypatch.setattr(inputs, "REASONS_MAX", 2)
+    first, second = create(ana).json(), create(ana, code="OTHER").json()
+    off = change(ana, second["id"], is_active=False)
+    assert (off.status_code, off.json()["is_active"]) == (200, False)
+    assert fail(create(ana, code="THIRD")) == (400, "VALIDATION_ERROR", ["_"])
+    reused = change(ana, second["id"], version=2, is_active=True, name="Tercero")
+    assert (reused.status_code, reused.json()["name"]) == (200, "Tercero")  # se reutiliza
+    assert [row["id"] for row in read(ana, REASONS)["results"]] == [first["id"], second["id"]]

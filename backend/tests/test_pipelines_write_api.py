@@ -19,6 +19,7 @@ from apps.deals import commands
 from apps.deals.api import inputs
 from apps.deals.models import Pipeline
 from core.tenancy.scope import tenant_scope
+from core.text import name as clean_name
 from tests import test_contacts_api, test_self_context
 from tests.factories import make_user
 from tests.test_authorization import give
@@ -152,7 +153,8 @@ BAD = [  # (lo que se cambia del cuerpo válido, el campo del 400)
     ({"code": 7}, "code"), ({"code": "Ñu"}, "code"), ({"code": "a b"}, "code"),
     ({"code": "-a"}, "code"), ({"code": "x" * 31}, "code"), ({"code": ""}, "code"),
     ({"kind": "retail"}, "kind"), ({"kind": 1}, "kind"), ({"kind": ["RETAIL"]}, "kind"),
-    ({"kind": {"a": 1}}, "kind"), ({"kind": None}, "kind"), ({"currency": "USD"}, "currency"),
+    ({"kind": {"a": 1}}, "kind"), ({"kind": None}, "kind"), ({"kind": "\u202e"}, "kind"),
+    ({"kind": "Ñu"}, "kind"), ({"name": "\u3164"}, "name"), ({"currency": "USD"}, "currency"),
     ({"currency": 1}, "currency"), ({"sort_order": "1"}, "sort_order"),
     ({"sort_order": 1.0}, "sort_order"), ({"sort_order": True}, "sort_order"),
     ({"sort_order": 32768}, "sort_order"), ({"sort_order": -32769}, "sort_order"),
@@ -166,6 +168,8 @@ BAD = [  # (lo que se cambia del cuerpo válido, el campo del 400)
     ({"stages": [without("color"), *basic()]}, "stages"),
     ({"stages": [without("name"), *basic()]}, "stages"),
     ({"stages": [spec("a", name=5), *basic()]}, "stages"),
+    *(({"stages": [spec("a", name=bad), *basic()]}, "stages")
+      for bad in ("a\x00b", "a\u202eb", "a\nb", "!!!", "\u3164")),
     ({"stages": [{**spec("a"), "code": "A B"}, *basic()]}, "stages"),
     ({"stages": [spec("a", stage_type="WIN"), *basic()]}, "stages"),
     ({"stages": [spec("a", default_probability="10"), *basic()]}, "stages"),
@@ -210,9 +214,9 @@ def test_requires_fields_is_a_bounded_json_object(crm: SimpleNamespace) -> None:
     made = with_fields(nested)
     assert made.status_code == 201, made.content
     assert made.json()["stages"][0]["requires_fields"] == nested
-    exact = {"k": "x" * (inputs.FIELDS_BYTES - len('{"k":""}'))}
-    assert with_fields(exact).status_code == 201  # 4096 bytes serializados
-    assert with_fields({"k": "x" * (len(exact["k"]) + 1)}).status_code == 400
+    assert with_fields({"k": "x" * 4088}).status_code == 201  # 4096 bytes: `{"k":""}` son 8
+    over = with_fields({"k": "x" * 4089})  # 4097 bytes
+    assert fail(over) == (400, "VALIDATION_ERROR", ["stages"]), over.content
     assert with_fields({"k": "ñ" * 2049}).status_code == 400  # bytes, no caracteres
     raw = '{"name":"n","code":"n","kind":"RETAIL","stages":[%s]}'
     for hostile in ('{"a":NaN}', '{"a":Infinity}', '{"a":-Infinity}', '{"a":1e999}'):
@@ -229,9 +233,10 @@ def test_the_caps_on_pipelines_per_organization_and_stages_per_pipeline(
     crm: SimpleNamespace, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ana = signed(crm.ana)
-    many = [spec(f"s{i}") for i in range(inputs.STAGES_MAX - 2)]
+    many = [spec(f"s{i}") for i in range(28)]  # 28 OPEN, todas válidas y distintas
     ends = [spec("ganado", "WON"), spec("perdido", "LOST")]
-    assert create(ana, code="treinta", stages=[*many, *ends]).status_code == 201  # exactamente 30
+    thirty = create(ana, code="treinta", stages=[*many, *ends])
+    assert thirty.status_code == 201 and len(thirty.json()["stages"]) == 30
     over = create(ana, code="treinta-y-uno", stages=[spec("extra"), *many, *ends])
     assert fail(over) == (400, "VALIDATION_ERROR", ["stages"])
     monkeypatch.setattr(inputs, "PIPELINES_MAX", 3)
@@ -352,3 +357,72 @@ def test_two_creations_at_once_never_pass_the_cap_or_repeat_a_code(
     assert capped == [(201, "uno"), (400, "VALIDATION_ERROR")]
     with tenant_scope(ctx(crm.a)):
         assert Pipeline.objects.count() == 2
+
+
+def test_fifty_pipelines_fit_and_the_fifty_first_is_a_400(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    ana = signed(crm.ana)
+    assert create(ana).status_code == 201
+    migrator.execute(  # 48 más, sin etapas: el tope solo cuenta pipelines
+        "INSERT INTO pipelines (id, organization_id, name, code, kind, currency, is_default, "
+        "sort_order, is_active, created_at, updated_at, version) SELECT gen_random_uuid(), "
+        "organization_id, name, code || '-' || n, kind, currency, false, 0, n % 2 = 0, now(), "
+        "now(), 1 FROM pipelines, generate_series(1, 48) AS n WHERE code = 'mayoristas'"
+    )
+    assert create(ana, code="cincuenta").status_code == 201
+    assert stored(migrator)[0] == 50  # la mitad de los insertados, inactivos: cuentan igual
+    full = create(ana, code="cincuenta-y-uno")
+    assert fail(full) == (400, "VALIDATION_ERROR", ["_"]), full.content
+    assert full.json()["fields"]["_"][0]["message"] == "La organización ya tiene 50 pipelines."
+    assert stored(migrator)[0] == 50
+
+
+def test_an_inactive_pipeline_still_counts_and_the_api_frees_no_room(
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ana = signed(crm.ana)
+    monkeypatch.setattr(inputs, "PIPELINES_MAX", 2)
+    assert create(ana).status_code == 201
+    second = create(ana, code="segundo").json()
+    path = f"{PIPELINES}{second['id']}/"
+    off = send(ana, "patch", path, {"version": 1, "is_active": False})
+    assert (off.status_code, off.json()["is_active"]) == (200, False)
+    assert fail(create(ana, code="tercero")) == (400, "VALIDATION_ERROR", ["_"])
+    reused = send(ana, "patch", path, {"version": 2, "is_active": True, "name": "Tercero"})
+    assert (reused.status_code, reused.json()["name"]) == (200, "Tercero")  # se reutiliza
+    assert len(read(ana, PIPELINES)["results"]) == 2
+
+
+def test_an_unexpected_value_error_is_a_generic_400_that_echoes_nothing(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("Ñu \u202e\x00 secreto")
+
+    monkeypatch.setattr(commands, "create_pipeline", refuse)
+    before = stored(migrator)
+    response = create(signed(crm.ana))
+    assert response.status_code == 400, response.content
+    assert response.json() == {
+        "code": "VALIDATION_ERROR",
+        "fields": {"_": [{"code": "invalid", "message": "Dato no admitido."}]},
+    }
+    assert stored(migrator) == before
+
+
+def test_an_unknown_key_comes_back_short_and_printable(crm: SimpleNamespace) -> None:
+    ana = signed(crm.ana)
+    huge = "x" * 100_000 + "\x00\u202e"
+    response = send(ana, "post", PIPELINES, {**body(), huge: 1, "Ñu\u202e": 2})
+    assert response.status_code == 400 and len(response.content) < 400, len(response.content)
+    assert set(response.json()["fields"]) == {"x" * 64 + "...", "?u?"}
+    for echoed in ("\x00", "\u202e", "Ñ", "\\u0000", "\\u202e", "\\u00d1", "x" * 65):
+        assert echoed not in response.content.decode()
+
+
+def test_a_name_of_hangul_fillers_only_is_refused() -> None:
+    for filler in ("\u3164", "\u115f\u1160", "\uffa0 \u3164"):
+        with pytest.raises(ValueError, match="alguna letra o cifra"):
+            clean_name(filler, 100)
+    assert clean_name("\u3164 Ventas", 100) == "\u3164 Ventas"  # con algo que se ve, vale

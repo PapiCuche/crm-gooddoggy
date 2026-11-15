@@ -8512,7 +8512,7 @@ export const getLostReasonsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea un motivo, activo. Con `pipelines.manage`. Hasta 100 por organización (400). 409 `CODE_TAKEN`.
+ * Crea un motivo, activo. Con `pipelines.manage`. Hasta 100 por organización, también los inactivos (400). 409 `CODE_TAKEN`.
  */
 export const lostReasonsCreate = async (
   orgSlug: string,
@@ -10777,7 +10777,7 @@ export const getPipelinesCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Crea un pipeline con sus etapas, de una vez. Con `pipelines.manage`. Hasta 50 pipelines por organización y 30 etapas por pipeline (400). 409: `PIPELINE_INVARIANT` (sin una WON, una LOST o una OPEN), `CODE_TAKEN`.
+ * Crea un pipeline con sus etapas, de una vez. Con `pipelines.manage`. Hasta 50 pipelines por organización, también los inactivos, y 30 etapas por pipeline (400). 409: `PIPELINE_INVARIANT` (sin una WON, una LOST o una OPEN), `CODE_TAKEN`.
  */
 export const pipelinesCreate = async (
   orgSlug: string,

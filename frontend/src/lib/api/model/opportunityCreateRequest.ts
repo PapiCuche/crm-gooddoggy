@@ -39,7 +39,10 @@ export interface OpportunityCreateRequest {
    * @nullable
    */
   expected_close_date?: string | null;
-  /** Hasta 50, una por variante; al cambiar, reemplazan todas las líneas. */
+  /**
+   * Hasta 50, una por variante; al cambiar, reemplazan todas las líneas.
+   * @maxItems 50
+   */
   items?: ItemInputRequest[];
   /** Un contacto vivo que quien crea puede ver (`contacts.view`). */
   contact_id: string;

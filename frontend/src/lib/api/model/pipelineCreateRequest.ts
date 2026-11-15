@@ -9,10 +9,6 @@ import type { NewStageRequest } from "./newStageRequest";
 import type { PipelineKindEnum } from "./pipelineKindEnum";
 import type { PriceListCurrencyEnum } from "./priceListCurrencyEnum";
 
-/**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
- */
 export interface PipelineCreateRequest {
   /**
    * @minLength 1
@@ -39,6 +35,10 @@ export interface PipelineCreateRequest {
   sort_order?: number;
   /** El primer pipeline de la organización lo es aunque se diga que no. */
   is_default?: boolean;
-  /** En el orden en que se numeran: una WON, al menos una LOST y una OPEN. */
+  /**
+   * En el orden en que se numeran: una WON, al menos una LOST y una OPEN.
+   * @minItems 1
+   * @maxItems 30
+   */
   stages: NewStageRequest[];
 }

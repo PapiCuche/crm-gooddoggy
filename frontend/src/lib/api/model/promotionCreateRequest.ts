@@ -8,10 +8,6 @@
 import type { DiscountTypeEnum } from "./discountTypeEnum";
 import type { PromotionItemRequest } from "./promotionItemRequest";
 
-/**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
- */
 export interface PromotionCreateRequest {
   /**
    * @minLength 1
@@ -48,5 +44,9 @@ export interface PromotionCreateRequest {
    * @maxItems 20
    */
   price_list_ids: string[];
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
   items: PromotionItemRequest[];
 }

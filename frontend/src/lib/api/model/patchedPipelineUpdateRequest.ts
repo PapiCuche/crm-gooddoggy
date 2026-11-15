@@ -7,10 +7,6 @@
  */
 import type { PipelineKindEnum } from "./pipelineKindEnum";
 
-/**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
- */
 export interface PatchedPipelineUpdateRequest {
   /**
    * @minLength 1

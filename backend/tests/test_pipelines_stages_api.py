@@ -11,7 +11,6 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.deals.api import inputs
 from tests import test_contacts_api, test_self_context
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
@@ -162,15 +161,18 @@ def test_at_most_thirty_stages_and_the_cap_counts_the_inactive_ones(
     crm: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
     ana = signed(crm.ana)
-    many = [spec(f"s{i}", is_active=i != 0) for i in range(inputs.STAGES_MAX - 3)]
+    many = [spec(f"s{i}", is_active=i != 0) for i in range(27)]
     full = pipeline(crm, stages=[*many, spec("sin-ganar", "OPEN"), *basic()[2:]])
-    assert len(read(ana, PIPELINES)["results"][0]["stages"]) == inputs.STAGES_MAX
+    assert len(read(ana, PIPELINES)["results"][0]["stages"]) == 30
     before = snapshot(migrator)
-    over = add(ana, full.pk, code="treinta-y-una")
-    assert fail(over) == (400, "VALIDATION_ERROR", ["_"]), over.content
+    over = add(ana, full.pk, code="treinta-y-una")  # el tope es solo el del comando (F5-02f)
+    assert over.json() == {
+        "code": "VALIDATION_ERROR",
+        "fields": {"_": [{"code": "invalid", "message": "El pipeline ya tiene 30 etapas."}]},
+    }
     assert snapshot(migrator) == before
     roomy = pipeline(crm, code="holgado", is_default=False)
-    for index in range(inputs.STAGES_MAX - 4):  # el básico ya lleva cuatro
+    for index in range(26):  # el básico ya lleva cuatro
         assert add(ana, roomy.pk, code=f"e{index}").status_code == 201, index
     assert add(ana, roomy.pk, code="ultima").status_code == 400  # exactamente 30 caben, no 31
 

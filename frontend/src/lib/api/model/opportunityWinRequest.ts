@@ -6,10 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-/**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
- */
 export interface OpportunityWinRequest {
   /**
    * Importe final, mayor que 0; reemplaza el estimado. Texto con hasta 12 cifras enteras y 2 decimales, como `1500.50`.
