@@ -2597,7 +2597,7 @@
   "quotes": {
     "eyebrow": "Good Doggy / Cotizaciones",
     "title": "Cotizaciones",
-    "intro": "Las cotizaciones de {organization} que puedes ver. Solo se leen aquí: los importes son los que se congelaron al cotizar.",
+    "intro": "Las cotizaciones de {organization} que puedes ver. Se crean desde la ficha de un cliente o de una oportunidad; los importes son los que se congelaron al cotizar.",
     "loading": "Cargando cotizaciones…",
     "denied": "No tienes permiso para ver las cotizaciones de esta organización.",
     "count": "{count, plural, =0 {Sin cotizaciones en la lista} one {# cotización en la lista} other {# cotizaciones en la lista}}",
@@ -2679,7 +2679,12 @@
         "cancelledAt": "Cancelada el {date}"
       },
       "revision": "Revisión {number}",
-      "late": "Vencida"
+      "late": "Vencida",
+      "edit": "Editar",
+      "saved": "Cambios guardados.",
+      "discount": "Descuento",
+      "discountLabel": "Descuento de {product}",
+      "pendingNotice": "Espera aprobación: un descuento o un precio pasa del límite de quien lo dio. Una persona que puede aprobar decide; mientras tanto no se cambia."
     },
     "emptyAll": "Todavía no hay cotizaciones.",
     "linked": {
@@ -2690,7 +2695,56 @@
       "validUntil": "Válida hasta {date}",
       "noValidity": "Sin fecha de validez",
       "partial": "Se muestran las primeras {count}.",
-      "viewAll": "Ver todas las de este cliente"
+      "viewAll": "Ver todas las de este cliente",
+      "new": "Nueva cotización"
+    },
+    "editor": {
+      "newTitle": "Nueva cotización",
+      "editTitle": "Editar el borrador",
+      "lines": "Líneas",
+      "priceHint": "El precio lo pone la lista de precios al guardar, con sus promociones vigentes.",
+      "repriceHint": "Si cambias las líneas, se vuelven a valorar con los precios de hoy y se quitan sus descuentos.",
+      "variant": "Variante {n}",
+      "quantity": "Cantidad",
+      "remove": "Quitar",
+      "removeLabel": "Quitar la línea {n}",
+      "add": "Añadir línea",
+      "validUntil": "Válida hasta (opcional)",
+      "validHint": "Hasta el final de ese día, hora de la organización (zona {zone}).",
+      "customer": "Notas para el cliente (opcional)",
+      "internal": "Notas internas (opcional; no las ve el cliente)",
+      "incomplete": "Elige una variante en cada línea y una cantidad entera de 1 a 1000000.",
+      "create": "Crear borrador",
+      "save": "Guardar cambios",
+      "cancel": "Cancelar"
+    },
+    "discount": {
+      "title": "Descuento de {product}",
+      "kind": "Tipo",
+      "kinds": {
+        "PERCENT": "Porcentaje (%)",
+        "AMOUNT": "Importe por unidad, con IGV ({currency})",
+        "NONE": "Sin descuento"
+      },
+      "apply": "Aplicar",
+      "cancel": "Cancelar",
+      "limitHint": "Si pasa de tu límite de descuento, la cotización queda «Por aprobar».",
+      "invalid": "Escribe un número sin signo, con hasta 2 decimales.",
+      "refused": "Ese descuento no se admite: el precio no puede quedar en cero o menos, y el porcentaje llega hasta 100.",
+      "done": "Descuento aplicado.",
+      "pending": "El descuento pasa de tu límite: la cotización queda «Por aprobar»."
+    },
+    "errors": {
+      "STALE_VERSION": "Otra persona cambió la cotización. Cancela, revisa lo que cambió y repite el cambio.",
+      "QUOTE_NOT_DRAFT": "La cotización ya no es un borrador: no se puede cambiar.",
+      "QUOTE_REFUSED": "La cotización no admite ese cambio.",
+      "fields": {
+        "items": "Revisa las líneas: una variante por línea, hasta 50, con cantidad de 1 a 1000000.",
+        "variant_id": "Una variante no existe o no tiene precio vigente en la lista de precios.",
+        "valid_until": "La fecha de validez no se admite.",
+        "_": "El cliente o la oportunidad no existe o no lo puedes ver.",
+        "other": "Algún dato no se admite. Revísalo y vuelve a intentarlo."
+      }
     }
   }
 }

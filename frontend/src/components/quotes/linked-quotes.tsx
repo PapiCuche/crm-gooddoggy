@@ -2,16 +2,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Plain } from "@/components/inbox/plain";
 import { useReads } from "@/components/inventory/cell-picker";
+import { Button } from "@/components/ui/button";
 import { getQuotesListQueryKey, quotesList } from "@/lib/api/client";
 import type { PaginatedQuoteList } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
+import { QuoteEditor } from "./quote-editor";
 import { isLate, QuoteStatus, useDay, useMoney } from "./quote-parts";
 
 const SHOWN = 50;
@@ -23,6 +26,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // `?opportunity_id=` (F5-09d). Solo lectura. Lo que se ve lo decide la API (`quotes.view` y su
 // alcance); un 403 solo se explica. Si hay más de las que caben se dice y «Ver todas» abre la lista
 // de ese cliente (`contactId`). Los importes solo se formatean; los números van como texto plano.
+// Con `quotes.create`, «Nueva cotización» crea un borrador de ese cliente u oportunidad y abre su
+// detalle (F5-09g).
 export function LinkedQuotes({
   link,
   contactId,
@@ -31,7 +36,10 @@ export function LinkedQuotes({
   contactId: string;
 }) {
   const t = useTranslations("quotes.linked");
-  const slug = useTenant().organization.slug;
+  const { organization, permissions } = useTenant();
+  const slug = organization.slug;
+  const [creating, setCreating] = useState(false);
+  const creates = permissions.some((grant) => grant.code === "quotes.create");
   const { failed, retry } = useReads();
   const money = useMoney();
   const day = useDay();
@@ -95,7 +103,19 @@ export function LinkedQuotes({
   }
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold">{t("title")}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">{t("title")}</h2>
+        {creates && !creating ? (
+          <Button
+            variant="accent"
+            className="min-h-11 sm:min-h-9"
+            onClick={() => setCreating(true)}
+          >
+            {t("new")}
+          </Button>
+        ) : null}
+      </div>
+      {creating ? <NewQuote link={link} slug={slug} onCancel={() => setCreating(false)} /> : null}
       {body}
       {read.data && (read.data.next !== null || (rows > 0 && UUID.test(contactId))) ? (
         <p className="text-sm">
@@ -112,5 +132,21 @@ export function LinkedQuotes({
         </p>
       ) : null}
     </section>
+  );
+}
+
+// Solo montado al crear: el enrutador se pide cuando hace falta.
+function NewQuote(props: {
+  link: { contact_id: string } | { opportunity_id: string };
+  slug: string;
+  onCancel: () => void;
+}) {
+  const router = useRouter();
+  return (
+    <QuoteEditor
+      link={props.link}
+      onCancel={props.onCancel}
+      onSaved={(saved) => router.push(`/o/${props.slug}/cotizaciones/${saved.id}`)}
+    />
   );
 }

@@ -9,10 +9,13 @@ import { type ReactNode, useEffect, useState } from "react";
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Plain } from "@/components/inbox/plain";
 import { useReads } from "@/components/inventory/cell-picker";
+import { Button } from "@/components/ui/button";
 import { getQuotesRetrieveQueryKey, quotesRetrieve } from "@/lib/api/client";
 import type { QuoteDetail as Detail } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
+import { LineDiscount } from "./line-discount";
+import { QuoteEditor } from "./quote-editor";
 import { isLate, QuoteStatus, ratePercent, useDay, useMoney } from "./quote-parts";
 
 const BOX = "border-border bg-surface flex flex-col gap-3 rounded-lg border p-4";
@@ -23,10 +26,16 @@ const COLUMNS = ["product", "quantity", "list", "promotion", "discount", "final"
 // Fuera del alcance, de otra organización o inexistente la API da el mismo 404 y la pantalla es la
 // página de «no encontrada». El nombre del cliente llega `null` sin `contacts.view`: se dice sin
 // enlace. Todo lo que escribió otra persona (cliente, producto, notas, motivo) va por `Plain`. Los
-// importes solo se formatean; ningún costo ni margen: la API no los da.
+// importes solo se formatean; ningún costo ni margen: la API no los da. Un borrador se edita y se
+// descuenta por línea (F5-09g) según los permisos de la sesión (la API los vuelve a comprobar).
 export function QuoteDetail({ quoteId }: { quoteId: string }) {
   const t = useTranslations("quotes.detail");
-  const slug = useTenant().organization.slug;
+  const { organization, permissions } = useTenant();
+  const slug = organization.slug;
+  const held = (code: string) => permissions.some((grant) => grant.code === code);
+  const [editing, setEditing] = useState(false);
+  const [discounting, setDiscounting] = useState<string | null>(null);
+  const [said, setSaid] = useState("");
   const { failed, retry } = useReads();
   const money = useMoney();
   const day = useDay();
@@ -76,6 +85,9 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
   }
   const cur = quote.currency;
   const late = isLate(quote, now);
+  const editable = quote.status === "DRAFT" && held("quotes.update");
+  const discountable = editable && held("quotes.discount");
+  const target = quote.items.find((x) => x.id === discounting);
   const facts: [string, ReactNode][] = [
     [
       t("contact"),
@@ -156,8 +168,41 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
             </span>
           ) : null}
         </h1>
-        <QuoteStatus status={quote.status} late={late} />
+        <div className="flex flex-wrap items-center gap-3">
+          <QuoteStatus status={quote.status} late={late} />
+          {editable && !editing ? (
+            <Button
+              variant="ghost"
+              className="border-border min-h-11 border sm:min-h-9"
+              onClick={() => {
+                setSaid("");
+                setDiscounting(null);
+                setEditing(true);
+              }}
+            >
+              {t("edit")}
+            </Button>
+          ) : null}
+        </div>
       </div>
+      <p role="status" className={said ? "text-sm" : "sr-only"}>
+        {said}
+      </p>
+      {quote.status === "PENDING_APPROVAL" ? (
+        <p className="border-border bg-surface-raised rounded-lg border p-4 text-sm">
+          {t("pendingNotice")}
+        </p>
+      ) : null}
+      {editing && editable ? (
+        <QuoteEditor
+          quote={quote}
+          onCancel={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            setSaid(t("saved"));
+          }}
+        />
+      ) : null}
       <dl
         aria-label={t("facts")}
         className={`${BOX} sm:grid sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-6`}
@@ -208,6 +253,19 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
                       {line.discount_amount && Number(line.discount_amount) > 0
                         ? money(line.discount_amount, line.currency)
                         : t("none")}
+                      {discountable && !editing && discounting !== line.id ? (
+                        <Button
+                          variant="ghost"
+                          className="border-border mt-1 flex min-h-11 border sm:min-h-9"
+                          aria-label={t("discountLabel", { product: line.product_name })}
+                          onClick={() => {
+                            setSaid("");
+                            setDiscounting(line.id);
+                          }}
+                        >
+                          {t("discount")}
+                        </Button>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       {money(line.final_unit_price, line.currency)}
@@ -221,6 +279,17 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
             </table>
           </div>
         )}
+        {target && discountable ? (
+          <LineDiscount
+            key={target.id}
+            quote={quote}
+            line={target}
+            onClose={(text) => {
+              setDiscounting(null);
+              if (text) setSaid(text);
+            }}
+          />
+        ) : null}
       </section>
       <section className={`${BOX} sm:max-w-sm`} aria-label={t("totals.title")}>
         <h2 className="font-medium">{t("totals.title")}</h2>
