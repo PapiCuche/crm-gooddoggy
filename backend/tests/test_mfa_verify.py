@@ -17,9 +17,9 @@ from apps.accounts import code_limit, mfa, second_factor
 from apps.accounts.models import MfaBackupCode, MfaCodeAttempt, MfaDevice, User
 from apps.accounts.tasks import send_mfa_code_limit
 from apps.audit import platform
-from core.observability.logging import json_formatter
 from tests import test_mfa_second_factor
 from tests.factories import TEST_PASSWORD, make_user
+from tests.logs import json_lines
 from tests.test_auth_api import audit
 from tests.test_mfa_second_factor import code_at, enrolled
 
@@ -207,7 +207,7 @@ def test_the_attempt_that_reaches_the_cap_is_audited_and_the_account_is_told(
     assert ran == [] and counted(ana) == LIMIT
     assert not MfaBackupCode.objects.exclude(used_at=None).exists()
     assert len(audit(migrator)) == 1 and len(queued) == 1  # un rechazo no vuelve a avisar
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     assert "000000" not in logged and code_at(clock) not in logged and EMAIL not in logged
 
 

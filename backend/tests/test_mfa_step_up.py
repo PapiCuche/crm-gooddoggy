@@ -26,6 +26,7 @@ from core.api import step_up
 from core.api.errors import ApiError
 from tests import test_auth_api, test_authorization, test_mfa_second_factor
 from tests.factories import make_user
+from tests.logs import log_text
 from tests.test_auth_api import SESSION, audit, login, reply, send
 from tests.test_authorization import give
 from tests.test_login_second_step import STEP_TWO
@@ -284,8 +285,9 @@ def test_a_wrong_code_is_the_same_answer_whatever_the_reason_and_counts(
     assert [row[:2] for row in rows[1:]] == [("auth.mfa.step_up", "DENIED")] * len(wrong)
     assert {row[7] for row in rows[1:]} == {'{"reason": "code"}'}
     assert browser.cookies["crm_session"].value != before  # solo rotó el acierto, no los fallos
+    logged = str(rows) + log_text(caplog)  # sin la hora, con seis cifras como un código
     for text in (*wrong[:3], spent, *shown):
-        assert text not in str(rows) + caplog.text
+        assert text not in logged
 
 
 def test_the_same_code_is_not_reusable_and_a_backup_code_is_spent_once(

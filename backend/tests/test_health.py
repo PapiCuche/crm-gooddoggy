@@ -11,6 +11,7 @@ from django.test import Client
 from config import env
 from core import health
 from core.storage.s3 import from_settings
+from tests.logs import log_text
 
 CHECKS = {"database": "ok", "redis": "ok", "storage": "ok"}
 BLACKHOLE = "192.0.2.1"  # TEST-NET-1 (RFC 5737): no responde; mide el tiempo límite
@@ -102,8 +103,9 @@ def test_redis_down_is_a_bounded_503_that_names_only_the_check(
     assert time.monotonic() - started < 2.5
     assert (response.status_code, response.json()) == (503, failing("redis"))
     assert "readiness: Redis" in caplog.text
+    logged = log_text(caplog)  # sin la hora: `…:41.826379Z` contiene el puerto (F3-38b, #823)
     for secret in ("s3cret", BLACKHOLE, "rabbit", "6379"):
-        assert secret not in response.text and secret not in caplog.text
+        assert secret not in response.text and secret not in logged
 
 
 @pytest.mark.django_db
@@ -132,8 +134,9 @@ def test_storage_down_is_a_bounded_503_without_details(
     assert time.monotonic() - started < 2.5
     assert (response.status_code, response.json()) == (503, failing("storage"))
     assert "readiness: almacenamiento" in caplog.text
+    logged = log_text(caplog)  # sin la hora ni la petición, que pueden contener `3900`
     for secret in ("s3cret", "AKIDEXAMPLE", "crm-private-bucket", BLACKHOLE, "3900", "ftp"):
-        assert secret not in response.text and secret not in caplog.text
+        assert secret not in response.text and secret not in logged
 
 
 def test_the_storage_check_is_one_short_head_of_the_bucket(settings: Any) -> None:

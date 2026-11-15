@@ -15,9 +15,9 @@ from apps.accounts import code_limit, mfa, second_step, throttle
 from apps.accounts.models import MfaCodeAttempt, MfaDevice, User
 from apps.accounts.tasks import send_mfa_code_limit
 from apps.audit import platform
-from core.observability.logging import json_formatter
 from tests import test_auth_api, test_mfa_second_factor
 from tests.factories import make_user
+from tests.logs import json_lines
 from tests.test_auth_api import AGENT, EMAIL, SESSION, audit, login, reply, send
 from tests.test_mfa_enrollment_start import KEYS
 from tests.test_mfa_second_factor import SECRET, code_at, enrolled
@@ -100,7 +100,7 @@ def test_with_the_mark_and_a_valid_code_the_session_opens_like_a_sign_in(
     assert second(again, typed).json() == WRONG  # el mismo código no vale otra vez
     assert second(again, shown[0].lower()).status_code == 200  # uno de respaldo, sí
     assert audit(migrator)[-1][7] == '{"method": "backup_code"}'
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     assert not any(text in logged for text in (typed, shown[0], shown[0].lower(), SECRET.hex()))
 
 

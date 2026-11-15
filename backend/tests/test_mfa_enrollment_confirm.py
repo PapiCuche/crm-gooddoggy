@@ -16,6 +16,7 @@ from django.core import mail as outbox
 from django.db import DatabaseError, connection, transaction
 from django.test import Client, RequestFactory
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from apps.accounts import backup_codes, mfa, throttle, totp
 from apps.accounts.models import ENROLLMENT_FAILURES, MfaBackupCode, MfaDevice, User
@@ -23,9 +24,9 @@ from apps.accounts.tasks import send_mfa_enabled
 from apps.audit import platform
 from core import sealed
 from core.observability import reporting
-from core.observability.logging import json_formatter
 from tests import test_auth_api
 from tests.factories import TEST_PASSWORD, make_user
+from tests.logs import json_lines
 from tests.test_auth_api import AGENT, EMAIL, SESSION, audit, login, reply, send
 from tests.test_mfa_enrollment_start import KEYS, start
 
@@ -33,10 +34,18 @@ real_stack, browser = test_auth_api.real_stack, test_auth_api.browser
 pytestmark = pytest.mark.usefixtures("tenant_db")
 CONFIRM = "/api/v1/auth/mfa/totp/confirm/"
 SHOWN = re.compile(r"[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}")
-OLDER = "UPDATE user_mfa_devices SET created_at = now() - %s::interval"
 NOT_STARTED = (409, b'{"code":"MFA_ENROLLMENT_NOT_STARTED"}')
 INVALID = {"code": "invalid", "message": "El código no vale."}
 WRONG = {"code": "VALIDATION_ERROR", "fields": {"code": [INVALID]}}
+
+
+def started_ago(migrator: psycopg.Connection[Any], interval: str) -> None:
+    """Lleva el alta a medias `interval` atrás con el reloj de Python: el de `auto_now_add`, que
+    la escribe, y el de `confirm_enrollment` y `status`, que la miran. Con el `now()` de la base,
+    si ese reloj iba unos milisegundos adelantado, el límite exacto no caducaba (F3-38b, #823)."""
+    migrator.execute(
+        "UPDATE user_mfa_devices SET created_at = %s - %s::interval", [timezone.now(), interval]
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -124,7 +133,7 @@ def test_a_code_of_the_device_confirms_it_gives_backup_codes_once_and_closes_oth
         202,
         b'{"mfa_required":true}',
     )  # el acceso ya pide el segundo paso
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     kept = json.dumps([row[7] for row in audit(migrator)])
     for text in (code, secret.hex(), base64.b32encode(secret).decode(), *codes, *stored):
         assert text not in logged and text not in kept
@@ -209,10 +218,10 @@ def test_an_enrolment_expires_ten_minutes_after_it_started(
 ) -> None:
     make_user(email=EMAIL)
     secret = begun(browser)
-    migrator.execute(OLDER, ["10 minutes"])
+    started_ago(migrator, "10 minutes")
     assert reply(confirm(browser, now_code(secret))) == NOT_STARTED  # caducó: hay que empezar otra
     assert MfaDevice.objects.get().confirmed_at is None and not MfaBackupCode.objects.exists()
-    migrator.execute(OLDER, ["9 minutes 55 seconds"])
+    started_ago(migrator, "9 minutes 55 seconds")
     assert confirm(browser, now_code(secret)).status_code == 200  # dentro del plazo
 
 
@@ -319,7 +328,7 @@ def test_the_fifth_wrong_code_ends_the_enrolment_whatever_address_it_comes_from(
     assert not MfaDevice.objects.exists() and not MfaBackupCode.objects.exists()
     denied = [row[7] for row in audit(migrator) if row[:2] == ("auth.mfa.enabled", "DENIED")]
     assert denied == ['{"reason": "code"}'] * 4 + ['{"reason": "code_limit"}']
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     for text in ("12345a", secret.hex(), base64.b32encode(secret).decode()):
         assert text not in logged  # ni el código que no vale ni el secreto
     assert reply(confirm(browser, now_code(secret))) == NOT_STARTED  # ni con el bueno

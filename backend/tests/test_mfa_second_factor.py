@@ -19,8 +19,8 @@ from apps.accounts import backup_codes, mfa, second_factor, totp
 from apps.accounts.models import MfaBackupCode, MfaDevice, User
 from core import sealed
 from core.observability import reporting
-from core.observability.logging import json_formatter
 from tests.factories import make_user
+from tests.logs import json_lines
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
 SECRET = bytes(range(20))
@@ -81,7 +81,7 @@ def test_a_totp_code_is_accepted_once_and_never_one_of_an_earlier_step(
     assert MfaDevice.objects.get(user=ana).last_step == now + 2
     assert MfaDevice.objects.get(user=luis).last_step == 1  # el de otra cuenta, sin tocar
     assert not MfaBackupCode.objects.exclude(used_at=None).exists()
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     assert code_at(clock) not in logged and SECRET.hex() not in logged
 
 
@@ -103,7 +103,7 @@ def test_a_backup_code_is_spent_once_however_it_is_typed_and_only_for_its_accoun
     assert MfaBackupCode.objects.filter(user=ana, used_at__isnull=False).count() == 3
     assert not MfaBackupCode.objects.filter(user=luis, used_at__isnull=False).exists()
     assert MfaDevice.objects.get(user=ana).last_step == 1  # un código de respaldo no mueve el paso
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     assert not any(code in logged or code.replace("-", "") in logged for code in hers)
 
 
