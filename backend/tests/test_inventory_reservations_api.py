@@ -334,7 +334,7 @@ def test_the_same_key_from_two_cells_and_the_cap_at_once_over_http(
 
 
 def test_the_ledger_tells_the_systems_expiry_from_a_persons_release(
-    ana: Client, world: Any, monkeypatch: pytest.MonkeyPatch
+    ana: Client, world: Any, monkeypatch: pytest.MonkeyPatch, migrator: psycopg.Connection[Any]
 ) -> None:
     """F3-36b: cada movimiento dice quién lo hizo (`created_by_type`); un `RELEASE` del sistema es
     una reserva vencida, y el que liberó una persona lleva su id."""
@@ -357,3 +357,8 @@ def test_the_ledger_tells_the_systems_expiry_from_a_persons_release(
         ("RELEASE", "USER", ana_id, -1),
         *[("RESERVE", "USER", ana_id, 1)] * 3,
     ]
+    ends = migrator.execute(  # cada `RELEASE`, con el estado de su reserva (`reference_id`)
+        "SELECT m.created_by_type, r.status FROM inventory_movements m JOIN"
+        " inventory_reservations r ON r.id = m.reference_id WHERE m.movement_type = 'RELEASE'"
+    ).fetchall()
+    assert sorted(ends) == [("SYSTEM", "EXPIRED"), ("USER", "RELEASED")]
