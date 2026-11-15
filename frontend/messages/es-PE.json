@@ -1476,7 +1476,7 @@
   "reservations": {
     "title": "Reservas activas",
     "loading": "Cargando las reservas…",
-    "denied": "No tienes permiso para ver las reservas de esta organización.",
+    "viewDenied": "No tienes permiso para ver las reservas de esta organización.",
     "none": "No hay unidades reservadas de esta variante en este almacén.",
     "units": "{quantity, plural, one {# unidad} other {# unidades}}",
     "until": "Vence el {at}",
