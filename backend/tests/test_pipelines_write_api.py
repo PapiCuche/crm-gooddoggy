@@ -304,10 +304,11 @@ def test_hostile_bodies_are_never_a_500(crm: SimpleNamespace, raw: str) -> None:
 def http_race(
     monkeypatch: pytest.MonkeyPatch,
     bodies: list[dict[str, Any]],
-    method: str = "post",
+    method: str | list[str] = "post",
     path: str | list[str] = PIPELINES,
 ) -> list[Any]:
-    """La primera petición retiene su transacción (tras auditar) y la segunda espera su bloqueo."""
+    """La primera petición retiene su transacción (tras auditar) y la segunda espera su bloqueo.
+    `method` y `path`: los de las dos, o una lista con el de cada una."""
     wrote, release, outcome = threading.Event(), threading.Event(), list[Any]([None, None])
     real = audit_services.record
 
@@ -323,9 +324,9 @@ def http_race(
 
     def run(index: int) -> None:
         try:
-            response = send(
-                signed(owner), method, path if isinstance(path, str) else path[index], bodies[index]
-            )
+            verb = method if isinstance(method, str) else method[index]
+            target = path if isinstance(path, str) else path[index]
+            response = send(signed(owner), verb, target, bodies[index])
             outcome[index] = (response.status_code, response.json().get("code"))
         except Exception as error:  # noqa: BLE001 — el resultado lo comprueba cada test
             outcome[index] = type(error).__name__
@@ -411,6 +412,17 @@ def test_an_unexpected_value_error_is_a_generic_400_that_echoes_nothing(
     assert stored(migrator) == before
 
 
+def test_a_400_names_ten_unknown_keys_at_most_and_counts_the_rest(crm: SimpleNamespace) -> None:
+    ana = signed(crm.ana)
+    for sent in (10, 11, 50_000):  # 50 000 claves cortas daban un 400 de 3 MB (F5-02g)
+        response = send(ana, "post", PIPELINES, {**body(), **{f"k{i}": 0 for i in range(sent)}})
+        assert response.status_code == 400 and len(response.content) < 1000, len(response.content)
+        fields = response.json()["fields"]
+        assert sorted(fields.keys() - {"_"}) == sorted(f"k{i}" for i in range(10))
+        more = f"{sent} campos desconocidos; se nombran los 10 primeros."
+        assert fields.get("_", []) == ([] if sent == 10 else [{"code": "invalid", "message": more}])
+
+
 def test_an_unknown_key_comes_back_short_and_printable(crm: SimpleNamespace) -> None:
     ana = signed(crm.ana)
     huge = "x" * 100_000 + "\x00\u202e"
@@ -422,7 +434,13 @@ def test_an_unknown_key_comes_back_short_and_printable(crm: SimpleNamespace) -> 
 
 
 def test_a_name_of_hangul_fillers_only_is_refused() -> None:
-    for filler in ("\u3164", "\u115f\u1160", "\uffa0 \u3164"):
+    for filler in (
+        "\u3164",
+        "\u115f\u1160",
+        "\uffa0 \u3164",
+        "\U00013441",
+        "\U00013442 \U00013441",
+    ):
         with pytest.raises(ValueError, match="alguna letra o cifra"):
             clean_name(filler, 100)
     assert clean_name("\u3164 Ventas", 100) == "\u3164 Ventas"  # con algo que se ve, vale

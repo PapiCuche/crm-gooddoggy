@@ -9,8 +9,12 @@ el audit de un reordenamiento tampoco crece sin límite).
 Invariantes tras cada comando: una etapa WON activa, al menos una LOST y una OPEN activas, y un
 pipeline predeterminado vivo y activo por organización. Los pipelines toman un bloqueo consultivo
 por organización; las etapas, la fila del pipeline (`FOR NO KEY UPDATE`).
+
+La auditoría de una etapa no guarda los valores de `requires_fields` (pueden nombrar o llevar datos
+de clientes): guarda su huella (`fingerprint`), que dice si cambió sin decir qué tenía.
 """
 
+import hashlib
 import json
 import math
 import re
@@ -161,6 +165,22 @@ def requires_fields(value: Any) -> dict[str, Any]:
         raise Invalid("requires_fields", f"hasta {FIELDS_BYTES} bytes serializado")
     found: dict[str, Any] = value
     return found
+
+
+def fingerprint(value: dict[str, Any]) -> str:
+    """Lo que la auditoría guarda de un `requires_fields`: los 16 primeros caracteres del SHA-256
+    de su JSON canónico (claves ordenadas, compacto): el mismo objeto da la misma huella."""
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _audited(changes: dict[str, list[Any]]) -> dict[str, list[Any]]:
+    """`changes` como los guarda la auditoría: `requires_fields`, por su huella."""
+    if "requires_fields" not in changes:
+        return changes
+    before, after = changes["requires_fields"]
+    hidden = [None if before is None else fingerprint(before), fingerprint(after)]
+    return {**changes, "requires_fields": hidden}
 
 
 def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
@@ -407,7 +427,8 @@ def add_stage(
     demás (empezando en 0); sin él, una OPEN va tras la última OPEN y otra, al final. Las demás se
     renumeran. `StageInvariant` si el pipeline dejaría de cumplir sus invariantes (p. ej., una
     segunda WON), `CodeTaken` si su código ya está en el pipeline, `ValueError`, `DoesNotExist`.
-    Con `STAGES_MAX` etapas ya (contado con el pipeline bloqueado), `Invalid` sin campo (`_`)."""
+    Con `STAGES_MAX` etapas ya (contado con el pipeline bloqueado), `Invalid` sin campo (`_`).
+    No cambia la `version` del pipeline: la escritura concurrente la ordena su bloqueo."""
     alias = require_scope(ctx)
     values = _new_stage(fields)
     pipeline_id = _uuid(pipeline_id, "pipeline")
@@ -438,28 +459,34 @@ def add_stage(
             _renumber(alias, [*stages[:position], stage, *stages[position:]])
             changes = {k: [None, v] for k, v in {**values, "sort_order": position}.items()}
             changes["pipeline_id"] = [None, str(pipeline.pk)]
-            record(ctx, "stage.added", Entity("stage", stage.pk, stage.code), changes)
+            record(ctx, "stage.added", Entity("stage", stage.pk, stage.code), _audited(changes))
     except IntegrityError as error:
         raise _taken(error, "pipeline_stages_code_uq") from None
     return stage
 
 
-def update_stage(ctx: TenantContext, *, stage_id: UUID, **fields: Any) -> PipelineStage:
-    """Cambia lo que se envía de una etapa y lo audita con el antes y el después (`stage.updated`);
-    sin cambios no escribe. La probabilidad de una WON es 100 y la de una LOST, 0: cambiar el tipo
-    pide la que le corresponde. `StageInvariant` si el cambio dejaría al pipeline sin su WON, sin
-    una LOST o sin una OPEN; desactivar o sacar de OPEN pasa por el gancho de las oportunidades.
-    El código y el orden no cambian aquí. `DoesNotExist` si no es de la organización."""
+def update_stage(
+    ctx: TenantContext, *, pipeline_id: UUID, stage_id: UUID, **fields: Any
+) -> PipelineStage:
+    """Cambia lo que se envía de una etapa del pipeline `pipeline_id` y lo audita con el antes y
+    el después (`stage.updated`; `requires_fields`, por su huella); sin cambios no escribe. La
+    probabilidad de una WON es 100 y la de una LOST, 0: cambiar el tipo pide la que le
+    corresponde. `StageInvariant` si el cambio dejaría al pipeline sin su WON, sin una LOST o sin
+    una OPEN, así que la WON no cambia de tipo (se renombra; cambiar qué etapa es la WON pediría un
+    comando que haga el cambio de las dos a la vez). Desactivar o sacar de OPEN pasa por el gancho
+    de las oportunidades. El código y el orden no cambian aquí, ni la `version` del pipeline.
+    `DoesNotExist` si el pipeline no es de la organización o está borrado, o la etapa no es suya."""
     alias = require_scope(ctx)
     if unknown := set(fields) - (STAGE_FIELDS | {"is_active"}):
         raise ValueError(f"campos no admitidos: {sorted(unknown)}")
     values = _stage_values(fields)
-    stage_id = _uuid(stage_id, "etapa")
+    pipeline_id, stage_id = _uuid(pipeline_id, "pipeline"), _uuid(stage_id, "etapa")
     with transaction.atomic(using=alias):
-        owner = PipelineStage.objects.using(alias).values_list("pipeline_id", flat=True)
-        pipeline = _locked(alias, owner.get(pk=stage_id))
+        pipeline = _locked(alias, pipeline_id)
         stages = _stages(alias, pipeline.pk)
-        stage = next(s for s in stages if s.pk == stage_id)
+        stage = next((s for s in stages if s.pk == stage_id), None)
+        if stage is None:  # de otro pipeline, de otra organización o inexistente
+            raise PipelineStage.DoesNotExist(stage_id)
         changes = _diff(stage, values)
         if changes:
             for field, (_, value) in changes.items():
@@ -472,7 +499,7 @@ def update_stage(ctx: TenantContext, *, stage_id: UUID, **fields: Any) -> Pipeli
             if "stage_type" in changes:
                 _stage_not_in_use(alias, stage.pk)
             stage.save(using=alias, update_fields=[*changes, "updated_at"])
-            record(ctx, "stage.updated", Entity("stage", stage.pk, stage.code), changes)
+            record(ctx, "stage.updated", Entity("stage", stage.pk, stage.code), _audited(changes))
     return stage
 
 
@@ -482,7 +509,8 @@ def reorder_stages(
     """Deja las etapas del pipeline en el orden de `stage_ids`, que las lleva todas (también las
     inactivas) una vez cada una, y lo audita (`stage.reordered`, con los códigos antes y después);
     si ya están en ese orden, no escribe. `ValueError` si la lista no es esa o pasa de `STAGES_MAX`
-    (antes de leer nada); `DoesNotExist`."""
+    (antes de leer nada); `DoesNotExist`. No cambia la `version` del pipeline: lo ordena su
+    bloqueo, y una etapa añadida mientras tanto hace que la lista ya no sea la de todas (400)."""
     alias = require_scope(ctx)
     if not isinstance(stage_ids, list | tuple):
         raise ValueError("las etapas, una lista de identificadores")

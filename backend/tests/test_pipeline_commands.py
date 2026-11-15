@@ -1,6 +1,7 @@
 """F5-01: los comandos de pipelines, etapas y motivos de pérdida, con PostgreSQL real y el rol
 `crm_app`, también con dos transacciones a la vez. Sin API: llega con F5-02."""
 
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -221,7 +222,8 @@ def test_update_stage_keeps_the_invariants_after_each_change(
     made = new(world)
 
     def up(code: str, **fields: Any) -> Any:
-        return run(world, commands.update_stage, stage_id=stage(made, code).pk, **fields)
+        at = {"pipeline_id": made.pk, "stage_id": stage(made, code).pk}
+        return run(world, commands.update_stage, **at, **fields)
 
     up("nuevo", name="Nuevo", default_probability=10)  # nada cambia: ni escribe ni audita
     assert len(audit(migrator)) == 1
@@ -277,8 +279,14 @@ def test_reorder_rewrites_only_what_changes_and_audits(
 def test_what_belongs_to_a_cannot_be_touched_from_b(world: SimpleNamespace) -> None:
     made = new(world)
     mine = stage(made, "nuevo")
+    with pytest.raises(Pipeline.DoesNotExist):  # desde B, ni el pipeline existe
+        run(
+            world, commands.update_stage, org="b", pipeline_id=made.pk, stage_id=mine.pk, name="Mío"
+        )
+    other = new(world, "otro")  # misma organización, otro pipeline: la etapa no es suya
     with pytest.raises(PipelineStage.DoesNotExist):
-        run(world, commands.update_stage, org="b", stage_id=mine.pk, name="Mío")
+        run(world, commands.update_stage, pipeline_id=other.pk, stage_id=mine.pk, name="Mío")
+    assert stage(made, "nuevo").name == "Nuevo"
     with pytest.raises(Pipeline.DoesNotExist):
         run(world, commands.update_pipeline, org="b", pipeline_id=made.pk, version=1, name="Mío")
     with pytest.raises(Pipeline.DoesNotExist):
@@ -327,7 +335,9 @@ def test_two_deactivations_at_once_keep_an_open_stage(world: SimpleNamespace) ->
     ids = [stage(made, code).pk for code in ("nuevo", "cotizado")]
 
     def deactivate(stage_id: Any) -> Callable[[Any], Any]:
-        return lambda tenant: commands.update_stage(tenant, stage_id=stage_id, is_active=False)
+        return lambda tenant: commands.update_stage(
+            tenant, pipeline_id=made.pk, stage_id=stage_id, is_active=False
+        )
 
     first, second = race(world.a, world.ana, [deactivate(ids[0]), deactivate(ids[1])])
     assert isinstance(first, PipelineStage) and second == "StageInvariant"
@@ -346,7 +356,10 @@ def test_flags_must_be_real_booleans_not_what_django_would_coerce(
     for flag in ("False", 0, "True", None):
         make = {"name": "X", "code": "x", "kind": "OTHER", "stages": basic()}
         calls: list[tuple[Callable[..., Any], dict[str, Any]]] = [
-            (commands.update_stage, {"stage_id": last_lost, "is_active": flag}),
+            (
+                commands.update_stage,
+                {"pipeline_id": made.pk, "stage_id": last_lost, "is_active": flag},
+            ),
             (commands.update_pipeline, {"pipeline_id": other.pk, "version": 1, "is_active": flag}),
             (commands.update_pipeline, {"pipeline_id": other.pk, "version": 1, "is_default": flag}),
             (commands.create_pipeline, {**make, "is_default": flag}),
@@ -377,7 +390,7 @@ def test_the_opportunities_hook_runs_when_something_stops_being_open_or_active(
         run(world, commands.update_pipeline, pipeline_id=made.pk, version=version, **fields)
 
     def change(stage_id: Any, **fields: Any) -> None:
-        run(world, commands.update_stage, stage_id=stage_id, **fields)
+        run(world, commands.update_stage, pipeline_id=made.pk, stage_id=stage_id, **fields)
 
     pipeline(1, name="Otro nombre")
     change(nuevo, name="Nuevo 2", color="#abcdef")  # nada que vigilar
@@ -395,18 +408,20 @@ def test_the_opportunities_hook_runs_when_something_stops_being_open_or_active(
 def test_stage_commands_reject_bad_types_and_foreign_fields(world: SimpleNamespace) -> None:
     made = new(world)
     nuevo = stage(made, "nuevo").pk
+    here = {"pipeline_id": made.pk, "stage_id": nuevo}
     good = {"quote": {"required": True, "tags": ["a", "b"]}}
-    run(world, commands.update_stage, stage_id=nuevo, requires_fields=good)
+    run(world, commands.update_stage, **here, requires_fields=good)
     assert stage(made, "nuevo").requires_fields == good
     edits: list[dict[str, Any]] = [{"name": 5}, {"color": None}, {"requires_fields": []}]
     for edit in edits:
         with pytest.raises(ValueError):
-            run(world, commands.update_stage, stage_id=nuevo, **edit)
-    for field in ("code", "organization_id", "sort_order", "pipeline_id"):  # no se cambian aquí
+            run(world, commands.update_stage, **here, **edit)
+    for field in ("code", "organization_id", "sort_order"):  # no se cambian aquí
         with pytest.raises(ValueError, match="no admitidos"):
-            run(world, commands.update_stage, stage_id=nuevo, **{field: "x"})
+            run(world, commands.update_stage, **here, **{field: "x"})
     bad_ids: list[tuple[Callable[..., Any], dict[str, Any]]] = [
-        (commands.update_stage, {"stage_id": "no-es-un-uuid", "name": "X"}),
+        (commands.update_stage, {"pipeline_id": made.pk, "stage_id": "no-es-un-uuid", "name": "X"}),
+        (commands.update_stage, {"pipeline_id": "x", "stage_id": nuevo, "name": "X"}),
         (commands.add_stage, {"pipeline_id": None, **spec("x")}),
         (commands.update_pipeline, {"pipeline_id": 5, "version": 1, "name": "X"}),
         (commands.reorder_stages, {"pipeline_id": "x", "stage_ids": [nuevo]}),
@@ -418,7 +433,7 @@ def test_stage_commands_reject_bad_types_and_foreign_fields(world: SimpleNamespa
     for stage_ids in (None, "abc", [None], [nuevo, nuevo]):
         with pytest.raises(ValueError):
             run(world, commands.reorder_stages, pipeline_id=made.pk, stage_ids=stage_ids)
-    run(world, commands.update_stage, stage_id=nuevo, stale_after_days=32767)  # el tope entra
+    run(world, commands.update_stage, **here, stale_after_days=32767)  # el tope entra
 
 
 def test_the_actor_who_changes_a_pipeline_is_the_one_recorded(world: SimpleNamespace) -> None:
@@ -428,3 +443,29 @@ def test_the_actor_who_changes_a_pipeline_is_the_one_recorded(world: SimpleNames
     with tenant_scope(ctx(world.a, other)) as tenant:
         changed = commands.update_pipeline(tenant, pipeline_id=made.pk, version=1, name="Nuevo")
     assert (changed.created_by_user_id, changed.updated_by_user_id) == (world.ana.pk, other.pk)
+
+
+def test_the_audit_keeps_a_fingerprint_of_requires_fields_never_its_values(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    made = new(world)
+    secret = {"email": {"valor": "ana@example.com"}, "dni": "12345678", "nota": "Ñu"}
+    run(world, commands.add_stage, pipeline_id=made.pk, **spec("datos", requires_fields=secret))
+    here = {"pipeline_id": made.pk, "stage_id": stage(made, "datos").pk}
+    run(world, commands.update_stage, **here, requires_fields={"dni": "87654321"})
+    rows = audit(migrator)[-2:]
+    assert [(action, changes["requires_fields"]) for action, _, changes in rows] == [
+        ("stage.added", [None, commands.fingerprint(secret)]),
+        (
+            "stage.updated",
+            [commands.fingerprint(secret), commands.fingerprint({"dni": "87654321"})],
+        ),
+    ]
+    for value in ("ana@example.com", "12345678", "87654321", "Ñu", "nota", "valor"):
+        assert value not in str(rows)
+    shuffled = {"nota": "Ñu", "dni": "12345678", "email": {"valor": "ana@example.com"}}
+    assert commands.fingerprint(shuffled) == commands.fingerprint(secret)  # el orden no cuenta
+    canonical: list[tuple[dict[str, Any], str]] = [({}, "{}"), ({"a": ["ñ", 1]}, '{"a":["ñ",1]}')]
+    for fields, text in canonical:  # compacto, en UTF-8
+        expected = "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
+        assert commands.fingerprint(fields) == expected

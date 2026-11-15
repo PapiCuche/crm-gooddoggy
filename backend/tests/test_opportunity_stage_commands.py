@@ -292,6 +292,7 @@ def test_the_hook_blocks_deactivating_what_has_open_opportunities(
     world: SimpleNamespace, migrator: DB
 ) -> None:
     other = new_pipeline(world, "mayoristas")
+    on = {"pipeline_id": other.pk}
     opp = create(world, pipeline_id=other.pk)  # en su primera etapa OPEN: `nuevo`
     with tenant_scope(ctx(world.a)):
         mine = PipelineStage.objects.get(pipeline=other, code="nuevo")
@@ -299,11 +300,8 @@ def test_the_hook_blocks_deactivating_what_has_open_opportunities(
     audited = count(migrator, "audit_logs")
     for call, kw in (
         (commands.update_pipeline, {"pipeline_id": other.pk, "version": 1, "is_active": False}),
-        (commands.update_stage, {"stage_id": mine.pk, "is_active": False}),  # sale de OPEN:
-        (
-            commands.update_stage,
-            {"stage_id": mine.pk, **LOST},
-        ),
+        (commands.update_stage, {**on, "stage_id": mine.pk, "is_active": False}),  # sale de OPEN:
+        (commands.update_stage, {**on, "stage_id": mine.pk, **LOST}),
     ):
         with pytest.raises(commands.OpenOpportunities):
             run(world, call, **kw)
@@ -313,7 +311,7 @@ def test_the_hook_blocks_deactivating_what_has_open_opportunities(
             Pipeline.objects.get(pk=other.pk).is_active
             and PipelineStage.objects.get(pk=mine.pk).is_active
         )
-    run(world, commands.update_stage, stage_id=spare.pk, is_active=False)  # otra etapa, sin nadie
+    run(world, commands.update_stage, **on, stage_id=spare.pk, is_active=False)  # otra, sin nadie
     closed = win(world, opp, amount="10")
     run(world, commands.update_pipeline, pipeline_id=other.pk, version=1, is_active=False)
     assert closed.status == "WON" and not reload(world, opp.pk).deleted_at  # solo ganadas
@@ -323,14 +321,15 @@ def test_the_hook_ignores_deleted_opportunities_and_closed_ones_pin_the_stage_ty
     world: SimpleNamespace,
 ) -> None:
     other = new_pipeline(world, "mayoristas")
+    on = {"pipeline_id": other.pk}
     gone = create(world, pipeline_id=other.pk)
     run(world, opportunities.delete_opportunity, opportunity_id=gone.pk)
     with tenant_scope(ctx(world.a)):
         nuevo = PipelineStage.objects.get(pipeline=other, code="nuevo")
-    run(world, commands.update_stage, stage_id=nuevo.pk, is_active=False)  # la borrada no cuenta
-    run(world, commands.update_stage, stage_id=nuevo.pk, is_active=True)
+    run(world, commands.update_stage, **on, stage_id=nuevo.pk, is_active=False)  # la borrada no
+    run(world, commands.update_stage, **on, stage_id=nuevo.pk, is_active=True)  # cuenta
     with pytest.raises(commands.StageInUse):  # tiene (aunque borrada) una oportunidad
-        run(world, commands.update_stage, stage_id=nuevo.pk, **LOST)
+        run(world, commands.update_stage, **on, stage_id=nuevo.pk, **LOST)
     run(world, commands.add_stage, pipeline_id=other.pk, name="Descartado", code="descartado",
         stage_type="LOST", default_probability=0, color="#aa0000", position=2)  # fmt: skip
     kept = create(world, pipeline_id=other.pk)
@@ -339,7 +338,7 @@ def test_the_hook_ignores_deleted_opportunities_and_closed_ones_pin_the_stage_ty
         discarded = PipelineStage.objects.get(pipeline=other, code="descartado")
     assert lost.stage_id == discarded.pk  # la primera LOST por orden
     with pytest.raises(commands.StageInUse):  # LOST → OPEN con una perdida dentro
-        run(world, commands.update_stage, stage_id=discarded.pk, stage_type="OPEN",
+        run(world, commands.update_stage, **on, stage_id=discarded.pk, stage_type="OPEN",
             default_probability=5)  # fmt: skip
 
 
@@ -366,9 +365,10 @@ def test_a_move_and_a_stage_deactivation_wait_for_each_other_and_see_each_other(
     world: SimpleNamespace,
 ) -> None:
     opp, target = create(world), stage(world.a, "contactado").pk
+    at = {"pipeline_id": stage(world.a).pipeline_id, "stage_id": target}
 
     def deactivate(tenant: Any) -> Any:
-        return commands.update_stage(tenant, stage_id=target, is_active=False)
+        return commands.update_stage(tenant, **at, is_active=False)
 
     def enter(tenant: Any) -> Any:
         return stages.move_opportunity(tenant, opportunity_id=opp.pk, version=1, stage_id=target)
@@ -376,7 +376,7 @@ def test_a_move_and_a_stage_deactivation_wait_for_each_other_and_see_each_other(
     done, refused = race(world.a, world.ana, [deactivate, enter])  # la desactivación, primero
     assert done.is_active is False and refused == "BadReference"
     assert reload(world, opp.pk).stage_id == stage(world.a).pk
-    run(world, commands.update_stage, stage_id=target, is_active=True)
+    run(world, commands.update_stage, **at, is_active=True)
     moved, refused = race(world.a, world.ana, [enter, deactivate])  # el movimiento, primero
     assert moved.stage_id == target and refused == "OpenOpportunities"
 
@@ -407,6 +407,7 @@ def test_a_mixed_stress_leaves_only_allowed_errors_and_consistent_records(
         [],
         threading.Lock(),
     )
+    retail = stage(world.a).pipeline_id
 
     def worker(seed: int) -> None:
         rng = random.Random(seed)  # noqa: S311 — semilla fija: reparto reproducible
@@ -416,6 +417,7 @@ def test_a_mixed_stress_leaves_only_allowed_errors_and_consistent_records(
                 at = {"opportunity_id": pk, "version": reload(world, pk).version}
                 target = {"stage_id": ids[rng.choice(codes)]}
                 toggle = {"stage_id": ids["negociacion"], "is_active": seed % 2 == 0}
+                toggle["pipeline_id"] = retail
                 calls = (
                     (stages.move_opportunity, target),
                     (stages.win_opportunity, {"amount": str(rng.randint(1, 999))}),

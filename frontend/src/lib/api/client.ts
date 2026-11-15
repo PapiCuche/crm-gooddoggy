@@ -10990,7 +10990,7 @@ export const getPipelineStagesCreateUrl = (orgSlug: string, pipelineId: string) 
 };
 
 /**
- * Añade una etapa (hasta 30 por pipeline, también las inactivas: 400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda WON), `CODE_TAKEN` (en el pipeline).
+ * Añade una etapa (hasta 30 por pipeline, también las inactivas: 400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda WON, también inactiva), `CODE_TAKEN` (en el pipeline). No cambia la `version` del pipeline.
  */
 export const pipelineStagesCreate = async (
   orgSlug: string,
@@ -11103,7 +11103,7 @@ export const getPipelineStagesUpdateUrl = (
 };
 
 /**
- * Cambia lo enviado de una etapa, sin `version`: se apoya en el bloqueo del pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`. El código y el orden no cambian aquí. Con `pipelines.manage`.
+ * Cambia lo enviado de una etapa, sin `version`: se apoya en el bloqueo del pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`: la WON no cambia de tipo. El código y el orden no cambian aquí, ni la `version` del pipeline. Con `pipelines.manage`.
  */
 export const pipelineStagesUpdate = async (
   orgSlug: string,
@@ -11214,7 +11214,7 @@ export const getPipelineStagesReorderUrl = (orgSlug: string, pipelineId: string)
 };
 
 /**
- * Deja las etapas en el orden de `stage_ids`, que las lleva todas (también las inactivas) una vez cada una; si falta, sobra, se repite o es de otro pipeline, 400 en `stage_ids`. Con `pipelines.manage`.
+ * Deja las etapas en el orden de `stage_ids`, que las lleva todas (también las inactivas) una vez cada una; si falta, sobra, se repite o es de otro pipeline, 400 en `stage_ids`. Con `pipelines.manage`. No cambia la `version` del pipeline.
  */
 export const pipelineStagesReorder = async (
   orgSlug: string,
