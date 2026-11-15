@@ -12,6 +12,7 @@ import psycopg
 import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.inventory import reservations as res
@@ -507,12 +508,13 @@ def test_a_key_replays_only_for_whoever_used_it(world: Any) -> None:
 def test_an_actor_without_a_user_is_refused_and_writes_nothing(
     world: Any, actor: ActorType
 ) -> None:
-    """Dos agentes (o dos integraciones) sin `user_id` repetirían las patas del otro: hasta que el
-    ledger guarde quién es cada uno, no transfieren (revisión de #782)."""
+    """Dos agentes (o dos integraciones) sin `user_id` repetirían las patas del otro, y la IA no
+    transfiere (ADR-034): `ActorRefused`, comprobado antes de la primera consulta (F3-39)."""
     variant, origin, (shop,) = stocked(world.a, 2, "TDA")
     with tenant_scope(TenantContext(world.a, "test", actor_type=actor, actor_id=uuid4())) as t:
-        with pytest.raises(ValueError, match=f"actor {actor}"):
+        with CaptureQueriesContext(connection) as seen, pytest.raises(stock.ActorRefused) as no:
             transfers.transfer(t, asked(variant, origin, shop, 1, "traslado-08"))
+    assert (no.value.actor_type, len(seen)) == (actor, 0)
     assert on_hand(world.a, variant, origin, shop) == [2, 0] and written(world.a) == (0, 0)
 
 

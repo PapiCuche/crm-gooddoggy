@@ -20,11 +20,12 @@ from apps.audit.services import Entity, record
 from apps.inventory import stock
 from apps.inventory.models import InventoryLevel, InventoryMovement
 from core.ids import new_id
-from core.tenancy.context import ActorType, TenantContext
+from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
 Type = InventoryMovement.Type
 Legs = tuple[InventoryMovement, InventoryMovement]  # (TRANSFER_OUT, TRANSFER_IN)
+Actor = tuple[str, UUID | None]  # `stock.actor`: el tipo y, si es una persona, su `user_id`
 SIDES = ("from_warehouse_id", "to_warehouse_id")
 
 
@@ -68,16 +69,7 @@ def _in_key(group: UUID) -> str:
     return f"T/{group}/in"
 
 
-def _actor(ctx: TenantContext) -> tuple[str, UUID | None]:
-    """Quién registra, como lo guarda el ledger. Un agente o una integración no tienen `user_id`
-    y el ledger no guarda su `actor_id`: dos de la misma organización repetirían las patas del
-    otro con su clave. Ninguno transfiere todavía; se rechazan hasta que el ledger los distinga."""
-    if ctx.actor_type in (ActorType.AI_AGENT, ActorType.INTEGRATION):
-        raise ValueError(f"actor {ctx.actor_type}: el ledger aún no lo distingue de otro igual")
-    return ctx.actor_type, ctx.user_id if ctx.actor_type == ActorType.USER else None
-
-
-def _replay(alias: str, ctx: TenantContext, wanted: Wanted) -> Legs | None:
+def _replay(alias: str, who: Actor, wanted: Wanted) -> Legs | None:
     """Las dos patas ya registradas con esa clave, si son lo que se pide y de quien lo pide;
     `KeyReused` si la clave es de otra transferencia, de otro movimiento o de otra persona (como
     en las reservas, F3-35: nunca se devuelven las patas ajenas)."""
@@ -97,7 +89,7 @@ def _replay(alias: str, ctx: TenantContext, wanted: Wanted) -> Legs | None:
         -out.quantity,
         out.reason,
     ) != (
-        *_actor(ctx),
+        *who,
         wanted.variant_id,
         wanted.from_warehouse_id,
         wanted.to_warehouse_id,
@@ -112,9 +104,10 @@ def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
     """Saca `quantity` del origen y la mete en el destino, deja los dos saldos y sus dos
     movimientos, y lo audita (`inventory.transferred`). Devuelve las patas y si son nuevas: la
     misma clave con lo mismo, de quien la usó, devuelve las de entonces sin escribir nada.
-    `ValueError`, `BadReference`, `WarehouseInactive`, `InsufficientStock`, `StockLimit` o
-    `KeyReused` sin escribir nada."""
+    `ActorRefused` (un agente de IA o una integración), `ValueError`, `BadReference`,
+    `WarehouseInactive`, `InsufficientStock`, `StockLimit` o `KeyReused` sin escribir nada."""
     alias = require_scope(ctx)
+    who = stock.actor(ctx)  # una vez, antes de bloquear nada
     _check(wanted)
     try:
         with transaction.atomic(using=alias):
@@ -124,7 +117,7 @@ def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
             )
             warehouses = {w: stock.lock_warehouse(alias, w, sides[w]) for w in sorted(sides)}
             levels = stock.lock_levels(alias, ctx, wanted.variant_id, *sides)
-            if (done := _replay(alias, ctx, wanted)) is not None:
+            if (done := _replay(alias, who, wanted)) is not None:
                 return done, False
             for warehouse_id, field in sides.items():
                 if not warehouses[warehouse_id][0]:
@@ -137,8 +130,8 @@ def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
                 raise stock.StockLimit(wanted.variant_id)
             group = new_id()
             legs = (
-                _leg(alias, ctx, wanted, source, -wanted.quantity, group),
-                _leg(alias, ctx, wanted, target, wanted.quantity, group),
+                _leg(alias, who, wanted, source, -wanted.quantity, group),
+                _leg(alias, who, wanted, target, wanted.quantity, group),
             )
             codes = (warehouses[wanted.from_warehouse_id][1], warehouses[wanted.to_warehouse_id][1])
             changes = {
@@ -157,14 +150,14 @@ def transfer(ctx: TenantContext, wanted: Wanted) -> tuple[Legs, bool]:
         violated = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
         if violated != stock.KEY_TAKEN:  # por su nombre, no por el texto
             raise
-        done = _replay(alias, ctx, wanted)  # la misma clave a la vez: otra variante o persona
+        done = _replay(alias, who, wanted)  # la misma clave a la vez: otra variante o persona
         assert done is not None  # noqa: S101 — el índice único acaba de verla
         return done, False
     return legs, True
 
 
 def _leg(
-    alias: str, ctx: TenantContext, wanted: Wanted, level: InventoryLevel, delta: int, group: UUID
+    alias: str, who: Actor, wanted: Wanted, level: InventoryLevel, delta: int, group: UUID
 ) -> InventoryMovement:
     """Cambia `on_hand` del saldo bloqueado y deja su pata en el ledger."""
     level.on_hand += delta
@@ -183,7 +176,7 @@ def _leg(
         reference_id=group,
         transfer_group_id=group,
         idempotency_key=wanted.idempotency_key if out else _in_key(group),
-        created_by_type=ctx.actor_type,
-        created_by_user_id=_actor(ctx)[1],
+        created_by_type=who[0],
+        created_by_user_id=who[1],
     )
     return movement

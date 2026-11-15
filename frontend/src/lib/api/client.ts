@@ -7688,7 +7688,7 @@ export const getInventoryReservationsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Aparta unidades disponibles hasta `expires_at` (con zona horaria, a 30 días como mucho). 200: la misma petición, con el mismo `expires_at` exacto, de la misma persona y con esa `idempotency_key`. 400 por campo. 409: `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).
+ * Aparta unidades disponibles hasta `expires_at` (con zona horaria, a 30 días como mucho). 200: la misma petición, con el mismo `expires_at` exacto, de la misma persona y con esa `idempotency_key`. 400 por campo. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no reserva. 409: `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).
  */
 export const inventoryReservationsCreate = async (
   orgSlug: string,
@@ -7796,7 +7796,7 @@ export const getInventoryReservationsReleaseUrl = (orgSlug: string, reservationI
 };
 
 /**
- * Libera una reserva activa y devuelve sus unidades al disponible. 200 también si ya estaba liberada (no escribe nada). 409 `RESERVATION_NOT_ACTIVE`: venció o se consumió. 404: no es de la organización.
+ * Libera una reserva activa y devuelve sus unidades al disponible. 200 también si ya estaba liberada (no escribe nada). 409 `RESERVATION_NOT_ACTIVE`: venció o se consumió. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no libera. 404: no es de la organización.
  */
 export const inventoryReservationsRelease = async (
   orgSlug: string,
@@ -7906,7 +7906,7 @@ export const getInventoryTransfersCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Saca unidades disponibles (`on_hand - reserved`) de un almacén y las mete en otro, en una sola operación con dos movimientos del mismo `transfer_group_id`. 200: la misma petición, de la misma persona y con esa `idempotency_key`, ya registrada; se devuelve sin repetirla. 400 por campo (variante o almacén que no existen, un servicio, el mismo almacén). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` (el texto dice cuál), `STOCK_LIMIT` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona).
+ * Saca unidades disponibles (`on_hand - reserved`) de un almacén y las mete en otro, en una sola operación con dos movimientos del mismo `transfer_group_id`. 200: la misma petición, de la misma persona y con esa `idempotency_key`, ya registrada; se devuelve sin repetirla. 400 por campo (variante o almacén que no existen, un servicio, el mismo almacén). 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no transfiere. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` (el texto dice cuál), `STOCK_LIMIT` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona).
  */
 export const inventoryTransfersCreate = async (
   orgSlug: string,
