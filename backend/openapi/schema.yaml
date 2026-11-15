@@ -5724,6 +5724,106 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/pricing/batches/:
+    post:
+      operationId: price_batches_create
+      description: 'Crea el lote (`PREVIEWED`) con una línea por variante: el precio
+        de antes y el de después. No cambia ningún precio. 400 en su campo (los de
+        la selección, dentro de `filters`); más de 2000 variantes, 400 en `filters`
+        con el recuento. 403 `ACTOR_NOT_ALLOWED`: no es una persona.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batch'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/batches/{batch_id}/:
+    get:
+      operationId: price_batches_retrieve
+      description: 'Un lote con sus recuentos. 404: no existe, es de otra organización
+        o de una lista que el actor no ve.'
+      parameters:
+      - in: path
+        name: batch_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/pricing/price-lists/:
     get:
       operationId: price_lists_list
@@ -10418,6 +10518,220 @@ components:
         * `SUCCESS` - SUCCESS
         * `DENIED` - DENIED
         * `FAILED` - FAILED
+    Batch:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/BatchKindEnum'
+        status:
+          $ref: '#/components/schemas/BatchStatusEnum'
+        price_list_id:
+          type: string
+          format: uuid
+        operation:
+          $ref: '#/components/schemas/OperationEnum'
+        value:
+          type: string
+          description: 'Como se guardó: `5.00`.'
+        rounding:
+          $ref: '#/components/schemas/RoundingEnum'
+        filters:
+          $ref: '#/components/schemas/BatchFilters'
+        reason:
+          type: string
+        effective_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: '`null`: al aplicar.'
+        summary:
+          $ref: '#/components/schemas/BatchSummary'
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Quién lo fijó; `null` si no fue una persona. El nombre lo resuelve
+            `users.view`.
+        applied_at:
+          type: string
+          format: date-time
+          nullable: true
+        applied_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+      - applied_at
+      - applied_by_user_id
+      - created_at
+      - created_by_user_id
+      - effective_at
+      - filters
+      - id
+      - kind
+      - operation
+      - price_list_id
+      - reason
+      - rounding
+      - status
+      - summary
+      - value
+      - version
+    BatchCreateRequest:
+      type: object
+      properties:
+        price_list_id:
+          type: string
+          format: uuid
+          description: Una lista activa que el actor ve.
+        operation:
+          $ref: '#/components/schemas/OperationEnum'
+        value:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          minLength: 1
+          description: Un importe, o un porcentaje hasta 100, con 2 decimales como
+            mucho.
+        rounding:
+          allOf:
+          - $ref: '#/components/schemas/RoundingEnum'
+          description: |-
+            Sin él, `CENTS`.
+
+            * `CENTS` - CENTS
+            * `INTEGER` - INTEGER
+        filters:
+          allOf:
+          - $ref: '#/components/schemas/BatchFiltersRequest'
+          description: Al menos uno; se combinan con «y». Solo las variantes vivas.
+        reason:
+          type: string
+          minLength: 1
+          description: Sin HTML.
+          maxLength: 500
+        effective_at:
+          type: string
+          format: date-time
+          description: 'Desde cuándo regirá: en el futuro. Sin él, al aplicar.'
+      required:
+      - filters
+      - operation
+      - price_list_id
+      - reason
+      - value
+    BatchFilters:
+      type: object
+      properties:
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Con sus subcategorías.
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        variant_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          maxItems: 2000
+          minItems: 1
+    BatchFiltersRequest:
+      type: object
+      properties:
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Con sus subcategorías.
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        variant_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          maxItems: 2000
+          minItems: 1
+    BatchKindEnum:
+      enum:
+      - BULK_ADJUST
+      - IMPORT
+      - MANUAL_MULTI
+      type: string
+      description: |-
+        * `BULK_ADJUST` - Bulk Adjust
+        * `IMPORT` - Import
+        * `MANUAL_MULTI` - Manual Multi
+    BatchStatusEnum:
+      enum:
+      - DRAFT
+      - PREVIEWED
+      - APPLYING
+      - APPLIED
+      - CANCELLED
+      - FAILED
+      type: string
+      description: |-
+        * `DRAFT` - Draft
+        * `PREVIEWED` - Previewed
+        * `APPLYING` - Applying
+        * `APPLIED` - Applied
+        * `CANCELLED` - Cancelled
+        * `FAILED` - Failed
+    BatchSummary:
+      type: object
+      properties:
+        lines:
+          type: integer
+          description: Una línea por variante de la selección.
+        changes:
+          type: integer
+          description: Las que cambiarán (`PENDING`).
+        no_price:
+          type: integer
+          description: Sin precio en la lista en esa fecha.
+        unchanged:
+          type: integer
+          description: Quedan igual con el redondeo.
+        errors:
+          type: integer
+          description: El resultado no es mayor que cero o pasa del tope.
+        alerts:
+          type: integer
+          description: Una variación de más del 30 %.
+        currency:
+          type: string
+      required:
+      - alerts
+      - changes
+      - currency
+      - errors
+      - lines
+      - no_price
+      - unchanged
     Branch:
       type: object
       properties:
@@ -12573,6 +12887,18 @@ components:
     NullEnum:
       enum:
       - null
+    OperationEnum:
+      enum:
+      - PERCENT_INCREASE
+      - PERCENT_DECREASE
+      - AMOUNT_INCREASE
+      - AMOUNT_DECREASE
+      type: string
+      description: |-
+        * `PERCENT_INCREASE` - PERCENT_INCREASE
+        * `PERCENT_DECREASE` - PERCENT_DECREASE
+        * `AMOUNT_INCREASE` - AMOUNT_INCREASE
+        * `AMOUNT_DECREASE` - AMOUNT_DECREASE
     Opportunity:
       type: object
       properties:
@@ -15437,6 +15763,14 @@ components:
       required:
       - code
       - name
+    RoundingEnum:
+      enum:
+      - CENTS
+      - INTEGER
+      type: string
+      description: |-
+        * `CENTS` - CENTS
+        * `INTEGER` - INTEGER
     SandboxInboundRequest:
       type: object
       properties:

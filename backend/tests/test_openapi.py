@@ -138,6 +138,8 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/pricing/promotions/",  # F3-48d
         "/api/v1/o/{org_slug}/pricing/promotions/{promotion_id}/",
         "/api/v1/o/{org_slug}/pricing/promotions/{promotion_id}/cancel/",  # F3-48e
+        "/api/v1/o/{org_slug}/pricing/batches/",  # F3-49b
+        "/api/v1/o/{org_slug}/pricing/batches/{batch_id}/",
         "/api/v1/o/{org_slug}/pricing/promotions/{promotion_id}/publish/",
         "/api/v1/o/{org_slug}/roles/",
         "/api/v1/o/{org_slug}/roles/{role_id}/",
