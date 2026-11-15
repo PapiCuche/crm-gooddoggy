@@ -236,8 +236,10 @@ def _apply_row(alias: str, ctx: TenantContext, job: DataImport, row: DataImportR
 
 def apply(ctx: TenantContext, *, import_id: UUID) -> DataImport:
     """Aplica una importación previsualizada y la audita. Una aplicada se devuelve tal cual.
-    `DataImport.DoesNotExist` si no es una importación de stock de la organización."""
+    `DataImport.DoesNotExist` si no es una importación de stock de la organización;
+    `stock.ActorRefused` (como `stock.move`, F3-39b) antes de tocar ninguna fila."""
     alias = require_scope(ctx)
+    stock.actor(ctx)  # cada fila pasa por `stock.move`: rechazarlo a mitad dejaría filas escritas
     found = DataImport.objects.using(alias).select_for_update().filter(kind=Kind.STOCK)
     job: DataImport = found.get(pk=import_id)
     if job.status != DataImport.Status.VALIDATED:
@@ -307,8 +309,10 @@ def _revert_row(
 
 def revert(ctx: TenantContext, *, import_id: UUID) -> DataImport:
     """Revierte una importación aplicada y la audita. Una revertida se devuelve tal cual.
-    `DataImport.DoesNotExist` como `apply`; `NotApplied` si no está aplicada."""
+    `DataImport.DoesNotExist` y `stock.ActorRefused` como `apply`; `NotApplied` si no está
+    aplicada."""
     alias = require_scope(ctx)
+    stock.actor(ctx)
     found = DataImport.objects.using(alias).select_for_update().filter(kind=Kind.STOCK)
     job: DataImport = found.get(pk=import_id)
     if job.status == DataImport.Status.REVERTED:
