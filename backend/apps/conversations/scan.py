@@ -45,14 +45,17 @@ def _pending(alias: str, file_id: UUID) -> str | None:
 
 def _verdict(key: str) -> antivirus.Verdict:
     """El veredicto de `clamd`; `antivirus.Unavailable` si no lo hay. Cualquier otro fallo (el
-    almacén al abrir o a mitad de la lectura, al cerrar) también: se reintenta y acaba en `ERROR`,
+    almacén al abrir o a mitad de la lectura) también: se reintenta y acaba en `ERROR`,
     nunca en una tarea que cae una y otra vez con el barredor."""
     try:
         blob = storage.storage().open(key)
         try:
             return antivirus.scan(blob, max_bytes=CAP, seconds=SECONDS)
         finally:
-            blob.close()
+            try:  # cerrar no deshace un veredicto real
+                blob.close()
+            except Exception as error:  # noqa: BLE001
+                logger.warning("media.scan_close_failed", error=type(error).__name__)
     except antivirus.Unavailable:
         raise
     except Exception as error:

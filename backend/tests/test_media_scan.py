@@ -158,6 +158,19 @@ def test_a_storage_error_mid_stream_is_no_verdict_and_retries(
     assert status(migrator, file_id) == "ERROR" and clamd.bodies == []
 
 
+class Unclosable(io.BytesIO):
+    def close(self) -> None:
+        raise RuntimeError("cerrar falla")
+
+
+def test_a_failing_close_keeps_the_real_verdict(
+    world: Any, migrator: DB, clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_id = stored(world, migrator)
+    monkeypatch.setattr(world.blobs, "open", lambda key: Unclosable(JPEG))
+    assert scan.scan(world.a, file_id, 1) == ("CLEAN", None)
+
+
 def test_only_inbound_media_files_are_scanned(world: Any, migrator: DB, clamd: FakeClamd) -> None:
     out = uuid4()  # un archivo `PENDING` de otro propósito (el que sube una persona para enviar)
     key = storage.tenant_key(world.a, "message-media-out", out)
