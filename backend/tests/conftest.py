@@ -38,7 +38,8 @@ TENANT_TABLES += ("branches",)  # F2-43
 # F2-52: delante, porque referencia a los equipos y a las membresías.
 TENANT_TABLES = ("team_members", *TENANT_TABLES, "teams")  # F2-50, F2-52
 TENANT_TABLES = ("user_invitations", *TENANT_TABLES)  # F2-79: delante, referencia a membresías
-TENANT_TABLES += ("brands",)  # F3-01
+# F3-01; F3-37: delante de las membresías, a las que referencia quien la borró
+TENANT_TABLES = ("brands", *TENANT_TABLES)
 TENANT_TABLES = ("categories", *TENANT_TABLES)  # F3-04
 TENANT_TABLES = ("product_variants", "products", *TENANT_TABLES)  # F3-06: delante de marcas
 TENANT_TABLES = ("warehouses", *TENANT_TABLES)  # F3-08: delante de las sucursales
