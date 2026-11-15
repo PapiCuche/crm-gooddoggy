@@ -1,10 +1,13 @@
-"""F3-39 y F3-39b: un agente de IA o una integración no mueve, reserva, libera ni transfiere stock
-(ADR-034), ni aplica o revierte una importación, y las rutas lo responden con un 403
+"""F3-39, F3-39b y F3-39c: un agente de IA o una integración no mueve, reserva, libera ni
+transfiere stock (ADR-034), ni previsualiza, aplica o revierte una importación, y las rutas lo
+responden con un 403
 `ACTOR_NOT_ALLOWED`, nunca con un 400 sobre un campo ni con un 500. Un contexto de persona sin su
 persona (`ActorMismatch`, así llega una tarea de Celery con `actor_type=USER`) recibe lo mismo.
 Y una sola regla para la `idempotency_key` de movimientos, transferencias y reservas: tal cual,
 sin recortar."""
 
+import base64
+import json
 import pickle
 from collections.abc import Callable
 from dataclasses import replace
@@ -13,9 +16,11 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from celery import current_app
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
+from apps.imports.models import DataImport
 from apps.inventory import imports, stock, transfers
 from apps.inventory import reservations as res
 from apps.inventory.api.stock import REFUSED
@@ -39,6 +44,7 @@ from tests.test_stock_import_preview import preview
 world, real_stack = test_authorization.world, test_self_context.real_stack
 pytestmark = pytest.mark.usefixtures("tenant_db")
 ROBOTS = [ActorType.AI_AGENT, ActorType.INTEGRATION]
+CSV = "sku,almacen,cantidad\nIP16,ALM,5\n"
 BASE = "/api/v1/o/org-a/inventory/"
 ALL: dict[str, str | None] = dict.fromkeys(
     ("inventory.view", "inventory.adjust", "inventory.manage", "inventory.transfer")
@@ -86,25 +92,42 @@ def test_a_refused_actor_is_never_a_value_error() -> None:
     reservas): un actor rechazado, ni el desacuerdo de una persona, nunca debe caer ahí."""
     assert not issubclass(stock.ActorRefused, ValueError)
     assert issubclass(stock.ActorMismatch, stock.ActorRefused)
-    for error in (stock.ActorRefused(ActorType.AI_AGENT), stock.ActorMismatch()):
-        again = pickle.loads(pickle.dumps(error))  # noqa: S301 — así la devuelve Celery
+    assert stock.ActorMismatch().args == (ActorType.USER,)  # lo que Celery guarda y le devuelve
+    for given in ((), (ActorType.AI_AGENT,), ("otro", 1)):  # siempre una persona sin su persona
+        assert stock.ActorMismatch(*given).actor_type == ActorType.USER
+
+
+@pytest.mark.parametrize("error", [stock.ActorRefused(ActorType.AI_AGENT), stock.ActorMismatch()])
+def test_a_refused_actor_is_rebuilt_from_its_args(error: stock.ActorRefused) -> None:
+    """Celery devuelve la excepción de una tarea como `cls(*args)` con JSON (F3-39c), y con pickle
+    también la reconstruye: el mismo tipo, el mismo mensaje y el mismo actor, nunca otra."""
+    backend = current_app.backend
+    sent = json.loads(json.dumps(backend.prepare_exception(error, "json")))
+    rebuilt = [
+        type(error)(*error.args),
+        pickle.loads(pickle.dumps(error)),  # noqa: S301 — así la devuelve Celery con pickle
+        backend.exception_to_python(sent),
+    ]
+    for again in rebuilt:
         assert (type(again), str(again)) == (type(error), str(error))
-    assert stock.ActorMismatch().actor_type == ActorType.USER
+        assert (again.args, again.actor_type) == (error.args, error.actor_type)
 
 
 @pytest.mark.parametrize("actor", ROBOTS)
-def test_a_robot_neither_moves_nor_applies_or_reverts_an_import(
+def test_a_robot_neither_moves_nor_previews_applies_or_reverts_an_import(
     world: Any, actor: ActorType
 ) -> None:
     """La misma regla en `stock.move` (F3-39b): rechazado antes de la primera consulta. Y en la
-    importación, antes de tocar ninguna fila (cada una pasa por `stock.move`)."""
+    importación, antes de tocar ninguna fila (cada una pasa por `stock.move`) y antes de guardar
+    una previsualización (F3-39c)."""
     here = stocked(world.a, 2, world.ana)
-    job = preview(world.a, world.ana, "sku,almacen,cantidad\nIP16,ALM,5\n")
+    job = preview(world.a, world.ana, CSV)
     robot = TenantContext(world.a, "test", actor_type=actor, actor_id=uuid4())
     calls: list[Callable[[TenantContext], Any]] = [
         lambda tenant: stock.move(tenant, wanted(here, "RECEIPT", 1)),
         lambda tenant: imports.apply(tenant, import_id=job.pk),
         lambda tenant: imports.revert(tenant, import_id=job.pk),
+        lambda tenant: imports.preview(tenant, file_name="conteo.csv", data=CSV.encode()),
     ]
     for call in calls:
         with tenant_scope(robot) as tenant, CaptureQueriesContext(connection) as seen:
@@ -112,6 +135,8 @@ def test_a_robot_neither_moves_nor_applies_or_reverts_an_import(
                 call(tenant)
         assert (refused.value.actor_type, len(seen)) == (actor, 0)
     assert level(world.a, here) == (2, 0, 2) and ledger(world.a, "ADJUSTMENT") == []
+    with tenant_scope(ctx(world.a)):
+        assert list(DataImport.objects.values_list("pk", flat=True)) == [job.pk]
 
 
 def test_the_system_and_a_person_still_move_and_apply_an_import(world: Any) -> None:
@@ -152,8 +177,9 @@ def routes(where: tuple[Any, Any], target: Any) -> list[tuple[str, dict[str, Any
 
 def every_route(world: Any, here: tuple[Any, Any]) -> list[tuple[str, Any]]:
     """Las de `routes` y, con la regla de F3-39b, movimientos y aplicar o revertir una importación
-    previsualizada (aún sin aplicar)."""
-    job = preview(world.a, world.ana, "sku,almacen,cantidad\nIP16,ALM,5\n").pk
+    previsualizada (aún sin aplicar). Con la de F3-39c, previsualizar otra."""
+    job = preview(world.a, world.ana, CSV).pk
+    upload = {"file_name": "conteo.csv", "content": base64.b64encode(CSV.encode()).decode()}
     receipt = {"variant_id": str(here[0]), "warehouse_id": str(here[1]), "quantity": 1}
     receipt |= {"movement_type": "RECEIPT", "reason": "Compra", "idempotency_key": uuid4().hex}
     return [
@@ -161,6 +187,7 @@ def every_route(world: Any, here: tuple[Any, Any]) -> list[tuple[str, Any]]:
         ("movements/", receipt),
         (f"imports/{job}/apply/", None),
         (f"imports/{job}/revert/", {"confirm": True}),
+        ("imports/", upload),
     ]
 
 
@@ -171,6 +198,7 @@ SERVICES = (
     (stock, "move"),
     (imports, "apply"),
     (imports, "revert"),
+    (imports, "preview"),
 )
 
 
@@ -218,7 +246,7 @@ def test_a_person_without_her_user_gets_the_403_on_every_route_never_a_field(
     world: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`ActorMismatch` (`actor_id` no es `user_id`) pasa el permiso y llega al servicio real: el
-    403 en las seis rutas, nunca un 400 sobre `expires_at` (reservas) ni un 500, sin escribir."""
+    403 en las siete rutas, nunca un 400 sobre `expires_at` (reservas) ni un 500, sin escribir."""
     give(world.a, world.membership, ALL)
     here = stocked(world.a, 2, world.ana)
     sent = every_route(world, here)

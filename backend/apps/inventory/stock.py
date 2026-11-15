@@ -93,11 +93,8 @@ class ActorMismatch(ActorRefused):
     es una decisión de ADR). Por eso una tarea que mueve, reserva o transfiere stock actúa como
     `SYSTEM` (el valor por defecto) y, si lo hace por una persona, la guarda en sus datos."""
 
-    def __init__(self) -> None:
+    def __init__(self, *_: object) -> None:  # `cls(*args)`: así la reconstruyen pickle y Celery
         super().__init__(ActorType.USER)
-
-    def __reduce__(self) -> tuple[type[ActorMismatch], tuple[()]]:
-        return type(self), ()
 
     def __str__(self) -> str:
         return "un contexto de persona necesita user_id igual a actor_id"
