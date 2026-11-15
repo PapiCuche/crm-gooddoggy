@@ -18,7 +18,13 @@ from rest_framework.views import APIView
 
 from apps.inventory import reservations as service
 from apps.inventory import stock
-from apps.inventory.api.stock import INACTIVE, NOT_ENOUGH, VariantLabelSerializer
+from apps.inventory.api.stock import (
+    INACTIVE,
+    NOT_ENOUGH,
+    VariantLabelSerializer,
+    key_field,
+    refused,
+)
 from apps.inventory.api.views import _checked, _tenant
 from apps.inventory.models import InventoryReservation
 from apps.inventory.selectors import reservations
@@ -73,13 +79,7 @@ class ReservationCreateSerializer(ReservationReleaseSerializer):
     warehouse_id = Id()
     quantity = Whole(min_value=1, max_value=stock.QUANTITY_MAX)
     expires_at = Instant()
-    idempotency_key = Text(
-        max_length=100,
-        help_text="De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`.",
-    )
-
-    def validate_idempotency_key(self, value: str) -> str:
-        return str(_checked(stock.idempotency_key, value))
+    idempotency_key = key_field()
 
 
 class ReservationFilterSerializer(serializers.Serializer[Any]):
@@ -126,7 +126,8 @@ class ReservationsView(generics.ListAPIView):
         },
         description="Aparta unidades disponibles hasta `expires_at` (con zona horaria, a 30 días "
         "como mucho). 200: la misma petición, con el mismo `expires_at` exacto, de la misma "
-        "persona y con esa `idempotency_key`. 400 por campo. 409: `INSUFFICIENT_STOCK`, "
+        "persona y con esa `idempotency_key`. 400 por campo. 403 `ACTOR_NOT_ALLOWED`: un "
+        "agente de IA o una integración no reserva. 409: `INSUFFICIENT_STOCK`, "
         "`WAREHOUSE_INACTIVE`, `VARIANT_INACTIVE`, `TOO_MANY_RESERVATIONS` o "
         "`IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona, con esa clave).",
     )
@@ -135,6 +136,8 @@ class ReservationsView(generics.ListAPIView):
         wanted.is_valid(raise_exception=True)
         try:
             made, new = service.reserve(_tenant(), service.Wanted(**wanted.validated_data))
+        except stock.ActorRefused:
+            raise refused() from None
         except stock.BadReference as error:
             raise serializers.ValidationError({error.field: [str(error)]}) from None
         except ValueError as error:  # solo `expires_at` llega aquí: lo demás ya lo cerró el cuerpo
@@ -166,13 +169,16 @@ class ReservationReleaseView(APIView):
         responses={200: ReservationSerializer, **errors(400, 401, 403, 404, 409)},
         description="Libera una reserva activa y devuelve sus unidades al disponible. 200 también "
         "si ya estaba liberada (no escribe nada). 409 `RESERVATION_NOT_ACTIVE`: venció o se "
-        "consumió. 404: no es de la organización.",
+        "consumió. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no libera. 404: no "
+        "es de la organización.",
     )
     def post(self, request: Request, reservation_id: UUID, **kwargs: Any) -> Response:
         wanted = ReservationReleaseSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
         try:
             ended, _ = service.release(_tenant(), reservation_id, wanted.validated_data["reason"])
+        except stock.ActorRefused:
+            raise refused() from None
         except InventoryReservation.DoesNotExist, stock.BadReference:
             raise NotFound from None
         except service.ReservationNotActive:
