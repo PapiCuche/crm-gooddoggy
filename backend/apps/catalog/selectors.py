@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db.models import Q, QuerySet
+from django.db.models.functions import Collate
 
 from apps.catalog.models import Brand, Category, Product, ProductVariant
 
@@ -20,6 +21,14 @@ def categories() -> QuerySet[Category]:
     """Las categorías no borradas de la organización del `tenant_scope` activo. El orden lo pone
     la paginación (ADR-016); quien las enseña en árbol las ordena por `path`."""
     return Category.objects.filter(deleted_at__isnull=True)
+
+
+def branch(category: Category) -> QuerySet[Category]:
+    """La categoría y sus descendientes no borradas: las de `path` con su `path` por prefijo, como
+    un rango en orden de bytes (el de `categories._branch`, que usa `categories_org_path_c_idx`)."""
+    path = category.path
+    within = categories().alias(c_path=Collate("path", "C"))
+    return within.filter(c_path__gte=path, c_path__lt=f"{path[:-1]}0")
 
 
 def products() -> QuerySet[Product]:
