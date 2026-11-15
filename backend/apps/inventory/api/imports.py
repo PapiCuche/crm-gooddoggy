@@ -20,7 +20,8 @@ from rest_framework.views import APIView
 
 from apps.imports import csvfile
 from apps.imports.models import DataImport, DataImportRow
-from apps.inventory import imports
+from apps.inventory import imports, stock
+from apps.inventory.api.stock import refused
 from apps.inventory.api.views import _tenant
 from apps.inventory.selectors import stock_import_rows, stock_imports
 from core.api.errors import ApiError
@@ -195,13 +196,16 @@ class StockImportApplyView(APIView):
         responses={200: StockImportSerializer, **errors(401, 403, 404)},
         description="Confirma la importación: cada fila válida deja su celda con la cantidad del "
         "archivo (un ajuste en el ledger). Una celda que cambió desde la previsualización queda "
-        "`STALE` y no se toca. Aplicar otra vez no cambia nada.",
+        "`STALE` y no se toca. Aplicar otra vez no cambia nada. 403 `ACTOR_NOT_ALLOWED`: un agente "
+        "de IA o una integración no aplica.",
     )
     def post(self, request: Request, import_id: UUID, **kwargs: Any) -> Response:
         try:
             job = imports.apply(_tenant(), import_id=import_id)
         except DataImport.DoesNotExist:
             raise NotFound from None
+        except stock.ActorRefused:
+            raise refused() from None
         return Response(StockImportSerializer(job).data)
 
 
@@ -225,7 +229,8 @@ class StockImportRevertView(APIView):
         description="Revierte una importación aplicada: cada celda que movió vuelve al saldo de "
         "antes con otro ajuste en el ledger, que no se edita. Una celda con algún movimiento "
         "después de la importación (aunque vuelva al mismo saldo) queda `STALE` y no se toca. "
-        "Revertir otra vez no cambia nada. 409 `IMPORT_NOT_APPLIED` si no está aplicada.",
+        "Revertir otra vez no cambia nada. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una "
+        "integración no revierte. 409 `IMPORT_NOT_APPLIED` si no está aplicada.",
     )
     def post(self, request: Request, import_id: UUID, **kwargs: Any) -> Response:
         StockImportRevertSerializer(data=request.data).is_valid(raise_exception=True)
@@ -233,6 +238,8 @@ class StockImportRevertView(APIView):
             job = imports.revert(_tenant(), import_id=import_id)
         except DataImport.DoesNotExist:
             raise NotFound from None
+        except stock.ActorRefused:
+            raise refused() from None
         except imports.NotApplied:
             raise ApiError("IMPORT_NOT_APPLIED", 409, NOT_APPLIED) from None
         return Response(StockImportSerializer(job).data)

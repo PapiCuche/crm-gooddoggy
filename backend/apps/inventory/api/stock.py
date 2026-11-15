@@ -23,11 +23,12 @@ NOT_ENOUGH = "No hay stock suficiente: no puede quedar en negativo ni por debajo
 INACTIVE = "El almacén está desactivado."
 REUSED = "Esa clave de idempotencia ya se usó para otro movimiento."
 LIMIT = f"El saldo no puede pasar de {stock.ON_HAND_MAX} unidades."
-REFUSED = "Un agente de IA o una integración no reserva ni transfiere stock."
+REFUSED = "Solo una persona o el sistema mueve, reserva o transfiere stock."
 
 
 def refused() -> ApiError:
-    """`stock.ActorRefused` como lo responden reservas y transferencias (F3-39): 403, nunca 500."""
+    """`stock.ActorRefused` (y `stock.ActorMismatch`) como lo responden movimientos,
+    importaciones, reservas y transferencias (F3-39, F3-39b): 403, nunca un 400 ni un 500."""
     return ApiError("ACTOR_NOT_ALLOWED", 403, REFUSED)
 
 
@@ -192,7 +193,8 @@ class MovementCreateSerializer(serializers.Serializer[Any]):
         },
         description="Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo "
         "como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se "
-        "devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, "
+        "devuelve sin repetirlo. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no "
+        "mueve stock. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, "
         "`IDEMPOTENCY_KEY_REUSED` o `STOCK_LIMIT` (el saldo pasaría de 2147483647).",
     ),
 )
@@ -209,6 +211,8 @@ class MovementsView(generics.ListAPIView):
         wanted.is_valid(raise_exception=True)
         try:
             movement, new = stock.move(_tenant(), stock.Wanted(**wanted.validated_data))
+        except stock.ActorRefused:
+            raise refused() from None
         except stock.BadReference as error:
             raise serializers.ValidationError({error.field: [str(error)]}) from None
         except stock.InsufficientStock:

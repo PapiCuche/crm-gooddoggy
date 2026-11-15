@@ -6472,7 +6472,7 @@ export const getInventoryImportsApplyUrl = (orgSlug: string, importId: string) =
 };
 
 /**
- * Confirma la importación: cada fila válida deja su celda con la cantidad del archivo (un ajuste en el ledger). Una celda que cambió desde la previsualización queda `STALE` y no se toca. Aplicar otra vez no cambia nada.
+ * Confirma la importación: cada fila válida deja su celda con la cantidad del archivo (un ajuste en el ledger). Una celda que cambió desde la previsualización queda `STALE` y no se toca. Aplicar otra vez no cambia nada. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no aplica.
  */
 export const inventoryImportsApply = async (
   orgSlug: string,
@@ -6695,7 +6695,7 @@ export const getInventoryImportsRevertUrl = (orgSlug: string, importId: string) 
 };
 
 /**
- * Revierte una importación aplicada: cada celda que movió vuelve al saldo de antes con otro ajuste en el ledger, que no se edita. Una celda con algún movimiento después de la importación (aunque vuelva al mismo saldo) queda `STALE` y no se toca. Revertir otra vez no cambia nada. 409 `IMPORT_NOT_APPLIED` si no está aplicada.
+ * Revierte una importación aplicada: cada celda que movió vuelve al saldo de antes con otro ajuste en el ledger, que no se edita. Una celda con algún movimiento después de la importación (aunque vuelva al mismo saldo) queda `STALE` y no se toca. Revertir otra vez no cambia nada. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no revierte. 409 `IMPORT_NOT_APPLIED` si no está aplicada.
  */
 export const inventoryImportsRevert = async (
   orgSlug: string,
@@ -7423,7 +7423,7 @@ export const getInventoryMovementsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se devuelve sin repetirlo. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `IDEMPOTENCY_KEY_REUSED` o `STOCK_LIMIT` (el saldo pasaría de 2147483647).
+ * Registra un ingreso, una salida o un ajuste (lo contado) y deja el saldo como queda. 200: esa `idempotency_key` ya registró este mismo movimiento, que se devuelve sin repetirlo. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no mueve stock. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE`, `IDEMPOTENCY_KEY_REUSED` o `STOCK_LIMIT` (el saldo pasaría de 2147483647).
  */
 export const inventoryMovementsCreate = async (
   orgSlug: string,

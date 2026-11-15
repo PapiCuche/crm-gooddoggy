@@ -1,5 +1,6 @@
 from typing import Any
 
+from apps.inventory import stock
 from core.observability.logging import get_logger
 from core.observability.reporting import safe_ids
 from core.outbox import subscribe
@@ -18,6 +19,13 @@ def visible_widgets() -> list[str]:
 def bound_probe(task: Any, widget_ref: str) -> str:
     """Una tarea de tenant con `bind=True`: recibe la tarea como primer argumento."""
     return f"{task.name}:{widget_ref}"
+
+
+@tenant_task(name="tenancy_app.stock_actor")
+def stock_actor() -> list[str | None]:
+    """Quién mueve stock desde una tarea (F3-39b): `stock.actor` con el contexto de la tarea."""
+    who, user = stock.actor(require())
+    return [who, str(user) if user else None]
 
 
 PINGS: list[str] = []  # ejecuciones reales del cuerpo de platform_ping

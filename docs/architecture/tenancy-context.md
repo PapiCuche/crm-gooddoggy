@@ -120,6 +120,7 @@ def recalc_lead_score(*, organization_id: str, lead_id: str, correlation_id: str
 - `@platform_task` para tareas sin tenant (health checks, particiones, purga de `webhook_ingress`). No pueden usar `TenantManager` y, si necesitan iterar sobre tenants, lo hacen así: `for org_id in platform_selectors.active_organization_ids(): with tenant_scope(TenantContext(org_id, "celery")): …` (un scope por tenant, nunca varios a la vez).
 - **Verificación al arrancar el worker:** toda tarea registrada debe estar decorada con `@tenant_task` o `@platform_task`; si no, el worker no arranca.
 - Si el contexto de la tarea incluye un actor humano (acción iniciada por un usuario), se pasan `actor_type` y `actor_id` para la auditoría.
+  La tarea no recibe `user_id`: su contexto lleva `user_id=None` (fijarlo cambiaría `app.user_id`, que lee RLS, y sería una decisión de ADR). Por eso el inventario rechaza ese contexto (`stock.ActorMismatch`, F3-39b): una tarea que mueve, reserva o transfiere stock actúa como `SYSTEM` y, si lo hace por una persona, la guarda en sus propios datos.
 - Los argumentos son IDs; la tarea re-lee el estado dentro de su scope (idempotencia).
 
 ## 4. WebSockets (Channels)

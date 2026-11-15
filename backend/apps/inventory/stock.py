@@ -68,28 +68,54 @@ class KeyReused(Exception):
 
 
 class ActorRefused(Exception):
-    """Un agente de IA o una integración: no reservan ni transfieren stock (ADR-034 §11: la IA no
-    toca el stock en el primer corte; F3-39). Tampoco tienen `user_id` y el ledger no guarda su
-    `actor_id`: dos de la misma organización repetirían lo del otro con su clave."""
+    """Un agente de IA o una integración: no mueve, reserva ni transfiere stock (ADR-034 §11: la IA
+    no toca el stock en el primer corte; F3-39). Tampoco tiene `user_id` y el ledger no guarda su
+    `actor_id`: dos de la misma organización repetirían lo del otro con su clave.
+
+    Hereda de `Exception` y no de `ValueError` a propósito: las rutas convierten ciertos
+    `ValueError` del servicio en un 400 sobre un campo (`expires_at` en reservas). Un actor
+    rechazado nunca debe acabar ahí, ni en ningún otro campo: su respuesta es el 403."""
 
     def __init__(self, actor_type: str) -> None:
-        super().__init__(f"actor {actor_type}: no reserva ni transfiere stock")
+        super().__init__(actor_type)  # `args` reconstruye la excepción (Celery la serializa)
         self.actor_type = actor_type
+
+    def __str__(self) -> str:
+        return f"actor {self.actor_type}: no mueve, reserva ni transfiere stock"
+
+
+class ActorMismatch(ActorRefused):
+    """Un contexto de persona sin su persona: `user_id` falta o no es `actor_id` (F3-39b). Es un
+    `ActorRefused` (el mismo 403, nunca un 400 sobre un campo ni un 500).
+
+    Así llega una tarea de Celery encolada con `actor_type=USER`: `@tenant_task` arma el contexto
+    con `user_id=None` (tenancy-context §3; `user_id` fija `app.user_id`, que lee RLS, y cambiarlo
+    es una decisión de ADR). Por eso una tarea que mueve, reserva o transfiere stock actúa como
+    `SYSTEM` (el valor por defecto) y, si lo hace por una persona, la guarda en sus datos."""
+
+    def __init__(self) -> None:
+        super().__init__(ActorType.USER)
+
+    def __reduce__(self) -> tuple[type[ActorMismatch], tuple[()]]:
+        return type(self), ()
+
+    def __str__(self) -> str:
+        return "un contexto de persona necesita user_id igual a actor_id"
 
 
 REFUSED_ACTORS = (ActorType.AI_AGENT, ActorType.INTEGRATION)
 
 
 def actor(ctx: TenantContext) -> tuple[str, UUID | None]:
-    """Quién reserva o transfiere, como lo guarda el ledger: una persona (con `user_id`, que es su
-    `actor_id`: la auditoría lee este) o el sistema. `ActorRefused` para un agente de IA o una
-    integración; `ValueError` si un contexto de persona no trae a la persona."""
+    """Quién mueve, reserva o transfiere, como lo guarda el ledger: una persona (con `user_id`, que
+    es su `actor_id`: la auditoría lee este) o el sistema. `ActorRefused` para un agente de IA o
+    una integración; `ActorMismatch` si un contexto de persona no trae a la persona."""
     if ctx.actor_type in REFUSED_ACTORS:
         raise ActorRefused(ctx.actor_type)
     if ctx.actor_type != ActorType.USER:
         return ctx.actor_type, None
     if ctx.user_id is None or ctx.actor_id != ctx.user_id:
-        raise ValueError("un contexto de persona necesita user_id igual a actor_id")
+        raise ActorMismatch
     return ctx.actor_type, ctx.user_id
 
 
@@ -228,9 +254,11 @@ def lock_cell(
 def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
     """Registra el movimiento y deja el saldo como queda, en la misma transacción, y lo audita.
     Devuelve el movimiento y si es nuevo: la misma clave con lo mismo devuelve el de entonces
-    sin escribir nada. `BadReference`, `WarehouseInactive`, `Stale`, `InsufficientStock`,
+    sin escribir nada. `ActorRefused` (un agente de IA o una integración: ADR-034, F3-39b) antes
+    de la primera consulta; `BadReference`, `WarehouseInactive`, `Stale`, `InsufficientStock`,
     `StockLimit` o `KeyReused` sin escribir nada."""
     alias = require_scope(ctx)
+    who = actor(ctx)  # antes de bloquear nada
     _check(wanted)
     try:
         with transaction.atomic(using=alias):
@@ -245,7 +273,7 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
                 wanted.expected_version not in (None, level.version)
             ):
                 raise Stale(level.on_hand)
-            movement = _apply(alias, ctx, wanted, level)
+            movement = _apply(alias, who, wanted, level)
             label = f"{variant.sku} @ {warehouse[1]}"
             changes = {"on_hand": [level.on_hand - movement.quantity, level.on_hand]}
             metadata = {"variant_id": str(variant.pk), "warehouse_id": str(wanted.warehouse_id)}
@@ -262,7 +290,7 @@ def move(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryMovement, bool]:
 
 
 def _apply(
-    alias: str, ctx: TenantContext, wanted: Wanted, level: InventoryLevel
+    alias: str, who: tuple[str, UUID | None], wanted: Wanted, level: InventoryLevel
 ) -> InventoryMovement:
     if wanted.movement_type == Type.ADJUSTMENT:
         delta = wanted.quantity - level.on_hand
@@ -275,7 +303,6 @@ def _apply(
     level.on_hand += delta
     level.version += 1
     level.save(using=alias, update_fields=["on_hand", "version", "updated_at"])
-    user = ctx.user_id if ctx.actor_type == ActorType.USER else None
     movement: InventoryMovement = InventoryMovement.objects.using(alias).create(
         variant_id=wanted.variant_id,
         warehouse_id=wanted.warehouse_id,
@@ -287,7 +314,7 @@ def _apply(
         reference_type=wanted.reference_type,
         reference_id=wanted.reference_id,
         idempotency_key=wanted.idempotency_key,
-        created_by_type=ctx.actor_type,
-        created_by_user_id=user,
+        created_by_type=who[0],
+        created_by_user_id=who[1],
     )
     return movement

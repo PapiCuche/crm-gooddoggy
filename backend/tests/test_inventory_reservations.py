@@ -117,7 +117,7 @@ def test_what_a_reservation_cannot_ask(world: Any) -> None:
         with pytest.raises(ValueError, match=field):  # ni se llega a pedir
             replace(asked(here), **dict[str, Any]({field: "no-es-un-uuid"}))
     nobody = TenantContext(world.a, "celery", None, ActorType.USER, None)  # USER sin persona
-    with pytest.raises(ValueError, match="user_id"), tenant_scope(nobody) as tenant:
+    with pytest.raises(stock.ActorMismatch, match="user_id"), tenant_scope(nobody) as tenant:
         res.reserve(tenant, asked(here))
     service, foreign = cell(world.a, "SRV", "SERVICE"), cell(world.b, "B")
     for field, where in (
