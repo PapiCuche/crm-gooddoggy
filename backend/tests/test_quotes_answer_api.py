@@ -114,6 +114,9 @@ def test_the_customer_answers_once_with_one_audit_and_one_event(
     assert vera.get(f"{QUOTES}{accepted}/").json() == yes.json()  # el mismo detalle
     no = answer(vera, declined, "decline", reason="Compró en otra tienda")
     assert (no.status_code, no.json()["status"], no.json()["version"]) == (200, "REJECTED", 3)
+    said = [(r["accepted_at"] is None, r["rejected_at"] is None, r["rejection_reason"])
+            for r in (yes.json(), no.json())]  # fmt: skip
+    assert said == [(False, True, None), (True, False, "Compró en otra tienda")]  # F5-09i
     for quote in (accepted, declined):  # no se responde dos veces
         for verb in ("accept", "decline"):
             assert fail(answer(vera, quote, verb, version=3))[:2] == (409, "NOT_ANSWERABLE")

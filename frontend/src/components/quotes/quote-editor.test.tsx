@@ -264,7 +264,7 @@ describe("Cotizaciones: seguimientos del editor (F5-09h)", () => {
     );
   });
 
-  it("hasta 50 líneas, y una fecha fuera de 2000-2999 no se envía", async () => {
+  it("hasta 50 líneas, y una fecha fuera de 2000-2099 (como la API) no se envía", async () => {
     const calls = api({});
     withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
     const add = screen.getByRole("button", { name: "Añadir línea" });
@@ -277,11 +277,12 @@ describe("Cotizaciones: seguimientos del editor (F5-09h)", () => {
     withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
     type("Variante 1", "corr");
     fireEvent.click(await screen.findByRole("button", { name: "Correa · Roja (COR-R)" }));
-    type("Válida hasta (opcional)", "3000-01-01");
+    type("Válida hasta (opcional)", "2099-12-31");
     fireEvent.click(screen.getByRole("button", { name: "Crear borrador" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("entre los años 2000 y 2999");
+    expect(screen.getByRole("alert")).toHaveTextContent("entre los años 2000 y 2099");
     expect(field("Válida hasta (opcional)")).toHaveAttribute("aria-invalid", "true");
     expect(field("Válida hasta (opcional)")).toHaveAttribute("min", "2000-01-01");
+    expect(field("Válida hasta (opcional)")).toHaveAttribute("max", "2099-12-30");
     await new Promise((done) => setTimeout(done, 100)); // un envío sería asíncrono
     expect([...calls, ...sent]).toEqual([]);
   });

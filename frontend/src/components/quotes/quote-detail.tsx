@@ -29,8 +29,10 @@ const COLUMNS = ["product", "quantity", "list", "promotion", "discount", "final"
 // página de «no encontrada». El nombre del cliente llega `null` sin `contacts.view`: se dice sin
 // enlace. Todo lo que escribió otra persona (cliente, producto, notas, motivo) va por `Plain`. Los
 // importes solo se formatean; ningún costo ni margen: la API no los da. Un borrador se edita y se
-// descuenta por línea (F5-09g) y se pide, decide o retira su aprobación (F5-09h) según los permisos
-// de la sesión (la API los vuelve a comprobar); mientras espera, un aviso fijo lo dice.
+// descuenta por línea (F5-09g) y se pide, decide o retira su aprobación (F5-09h); se emite, se
+// registra la respuesta del cliente, se revisa o se cancela (F5-09i), según los permisos de la
+// sesión (la API los vuelve a comprobar); mientras espera aprobación, un aviso fijo lo dice. Lo
+// congelado al emitir y el motivo del rechazo del cliente se muestran como el de la cancelación.
 export function QuoteDetail({ quoteId }: { quoteId: string }) {
   const t = useTranslations("quotes.detail");
   const slug = useTenant().organization.slug;
@@ -132,6 +134,11 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
       ),
     ],
     [t("created"), day(quote.created_at)],
+    // La emisión y la respuesta del cliente (F5-09i), cuando las hay.
+    ...(["sent", "accepted", "rejected"] as const).flatMap((key) => {
+      const at = quote[`${key}_at`];
+      return at ? [[t(key), day(at)] as [string, ReactNode]] : [];
+    }),
     [t("currency"), cur],
     // Según `tax_mode`: con IGV incluido los precios ya lo llevan; si no, se suma aparte. Un modo que
     // esta versión no conoce dice solo la tasa.
@@ -156,6 +163,9 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
   const notes = [
     ["customer", quote.notes_to_customer],
     ["internal", quote.internal_notes],
+    ["terms", quote.terms_snapshot],
+    ["warranty", quote.warranty_snapshot],
+    ["rejection", quote.rejection_reason],
     ["cancel", quote.cancel_reason],
   ] as const;
   return (
@@ -205,7 +215,7 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
           </div>
         </aside>
       ) : null}
-      {editing ? null : <QuoteActions quote={quote} onDone={setSaid} />}
+      {editing ? null : <QuoteActions quote={quote} late={late} onDone={setSaid} />}
       <p role="status" className={said ? "text-sm" : "sr-only"}>
         {said}
       </p>

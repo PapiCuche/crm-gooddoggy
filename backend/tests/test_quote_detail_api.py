@@ -30,8 +30,10 @@ LINE = {
     "discount_value", "discount_amount", "final_unit_price", "line_total", "currency",
 }  # fmt: skip
 _skus = iter(range(10_000))
+CLOSING = ("sent_at", "terms_snapshot", "warranty_snapshot", "accepted_at", "rejected_at",
+           "rejection_reason")  # fmt: skip
 TEXT = {"notes_to_customer", "internal_notes", "cancel_reason", "customer_snapshot", "items",
-        "approval_asked_by_me"}  # fmt: skip
+        "approval_asked_by_me", "approval_requested_by_me", *CLOSING}  # fmt: skip
 
 
 def add_line(org: UUID, quote: UUID, order: int, **over: Any) -> UUID:
@@ -63,6 +65,7 @@ def test_the_detail_is_the_list_row_plus_the_text_and_the_lines(board: SimpleNam
     assert {k: v for k, v in row.items() if k not in TEXT} == listed
     assert row["notes_to_customer"] == "Hola\nGracias" and row["internal_notes"] == "Ojo"
     assert (row["cancel_reason"], row["items"], row["approval_asked_by_me"]) == (None, [], False)
+    assert [row[k] for k in (*CLOSING, "approval_requested_by_me")] == [None] * 6 + [False]
 
 
 def test_the_lines_come_in_order_with_what_was_frozen(board: SimpleNamespace) -> None:

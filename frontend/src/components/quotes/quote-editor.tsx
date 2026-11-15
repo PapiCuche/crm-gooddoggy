@@ -22,14 +22,25 @@ type Line = { key: number; variant: Target | null; quantity: string };
 export const FIELD =
   "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger rounded-[10px] border px-3 text-[16px]";
 // Lo que un 400 dice por campo, con su texto; uno sin texto propio es el general.
-const FIELDS = ["items", "variant_id", "valid_until", "reason", "comment", "_"] as const;
+const FIELDS = [
+  "items",
+  "variant_id",
+  "valid_until",
+  "reason",
+  "comment",
+  "terms",
+  "warranty",
+  "_",
+];
 const CODES = [
   ...["STALE_VERSION", "QUOTE_NOT_DRAFT", "QUOTE_REFUSED", "NOT_PENDING"],
-  ...["SELF_APPROVAL_FORBIDDEN", "BEYOND_LIMIT", "PRICE_NOT_ALLOWED"],
+  ...["SELF_APPROVAL_FORBIDDEN", "BEYOND_LIMIT", "PRICE_NOT_ALLOWED", "NOT_ISSUABLE"],
+  ...["NEEDS_APPROVAL", "NOT_REVISABLE", "NOT_ANSWERABLE", "QUOTE_EXPIRED", "QUOTE_TERMINAL"],
 ];
 const MAX_LINES = 50; // como la API
-// Lo que admite el campo de fecha: fuera de ahí no se convierte (un año de 3 cifras rompe la zona).
-const DAYS = { min: "2000-01-01", max: "2999-12-31" };
+// Lo que admite el campo de fecha: fuera de ahí no se convierte (un año de 3 cifras rompe la zona),
+// y la API admite hasta el 1 de enero de 2100 (`commands._moment`).
+export const DAYS = { min: "2000-01-01", max: "2099-12-30" };
 
 // El texto de un error de escritura de cotizaciones, por su `code` (nunca el de la respuesta).
 // Un 401 no se explica aquí: la sesión lo atiende.

@@ -273,6 +273,24 @@ def test_the_detail_says_whether_the_open_request_is_of_whoever_reads(lab: Simpl
         for who in ("vera", "sam", "ana")
     }
     assert mine == {"vera": True, "sam": False, "ana": False}
+    assert asked.json()["approval_requested_by_me"] is True  # F5-09i: la pidió, la retira
     back = act(signed(lab.vera), quote, "withdraw-request")
     assert (back.json()["status"], back.json()["approval_asked_by_me"]) == ("DRAFT", False)
     assert signed(lab.vera).get(f"{QUOTES}{quote}/").json()["approval_asked_by_me"] is False
+
+
+def test_who_only_submitted_the_request_of_the_ai_does_not_see_it_as_requested(
+    lab: SimpleNamespace, migrator: DB
+) -> None:
+    """F5-09i: la de la IA no la pidió nadie; quien la envió no la aprueba ni la retira."""
+    quote = pending(lab)
+    migrator.execute("UPDATE quote_approvals SET reason = 'AI_CREATED', requested_by_user_id = NULL"
+                     " WHERE quote_id = %s AND status = 'PENDING'", [quote])  # fmt: skip
+    seen = {
+        who: signed(getattr(lab, who)).get(f"{QUOTES}{quote}/").json() for who in ("vera", "sam")
+    }
+    flags = {
+        who: (s["approval_asked_by_me"], s["approval_requested_by_me"]) for who, s in seen.items()
+    }
+    assert flags == {"vera": (True, False), "sam": (False, False)}
+    assert reply(act(signed(lab.vera), quote, "withdraw-request")) == DENIED  # lo que no se ofrece

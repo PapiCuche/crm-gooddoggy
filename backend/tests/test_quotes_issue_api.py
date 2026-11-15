@@ -87,6 +87,8 @@ def test_issuing_freezes_the_customer_and_only_who_sees_the_contact_reads_it(
     done = issue(vera, quote, terms="Pago 50 % al pedir", warranty="12 meses")
     body = done.json()
     assert (done.status_code, body["status"], body["version"]) == (200, "SENT", 2)
+    said = (body["terms_snapshot"], body["warranty_snapshot"], body["sent_at"] is not None)
+    assert said == ("Pago 50 % al pedir", "12 meses", True)  # F5-09i: la pantalla los muestra
     frozen = {"display_name": "De vera", "document_type": "DNI", "document_number": DOCUMENT}
     assert body["customer_snapshot"] == frozen and vera.get(f"{QUOTES}{quote}/").json() == body
     assert signed(lab.ana).get(f"{QUOTES}{quote}/").json()["customer_snapshot"] == frozen
