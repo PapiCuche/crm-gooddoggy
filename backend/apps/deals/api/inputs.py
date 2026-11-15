@@ -1,27 +1,26 @@
 """Lo que entra por las rutas de escritura de pipelines y motivos de pérdida (F5-02b, F5-02c):
 serializadores estrictos (el tipo exacto de cada campo, ninguna clave desconocida) y los topes de
-tamaño que los comandos no ponen (F5-01d los llevará a los comandos): `requires_fields` hasta 4 KB
-serializado y 4 niveles, sin NaN, infinitos ni NUL; hasta 30 etapas por pipeline, 50 pipelines y
-100 motivos de pérdida por organización. Los textos se limpian con el criterio de los comandos,
-para que un dato inválido sea un 400 en su campo."""
+tamaño: los de `requires_fields` (4 KB serializado, 4 niveles, sin NaN, infinitos ni NUL) y de 30
+etapas por pipeline son los de los comandos (F5-01d), que aquí dan el 400 antes de llamar al
+comando; 50 pipelines y 100 motivos de pérdida por organización los pone la API. Los textos se
+limpian con el criterio de los comandos, para que un dato inválido sea un 400 en su campo."""
 
-import json
-import math
 import re
 from typing import Any
 
 from rest_framework import serializers
 
+from apps.deals import commands
 from apps.deals.commands import CODE_MAX, DAYS_MAX, NAME_MAX, _code
 from apps.deals.models import CODE, COLOR, REASON_CODE, Kind, StageType
-from core.api.strict import Checked, Choice, Closed, Flag, Id, Whole, version_required
+from core.api.strict import Checked, Choice, Closed, Flag, Id, Whole, sentence, version_required
 from core.text import name as clean_name
 
-STAGES_MAX, PIPELINES_MAX, REASONS_MAX = 30, 50, 100
-FIELDS_BYTES, FIELDS_DEPTH = 4096, 4
+STAGES_MAX = commands.STAGES_MAX  # los topes de los comandos, con el nombre de siempre
+FIELDS_BYTES, FIELDS_DEPTH = commands.FIELDS_BYTES, commands.FIELDS_DEPTH
+PIPELINES_MAX, REASONS_MAX = 50, 100
 COLOR_RE = re.compile(COLOR)
 ORDER = (-32768, 32767)  # `sort_order` de un pipeline o un motivo, como lo validan los comandos
-SHAPE = f"Un objeto JSON de hasta {FIELDS_DEPTH} niveles, sin NaN, infinitos ni NUL."
 NEW_STAGE_REQUIRED = ("name", "code", "stage_type", "default_probability", "color")
 
 
@@ -36,37 +35,15 @@ def _color(value: str) -> str:
     return text
 
 
-def _plain(value: Any, depth: int) -> bool:
-    """JSON de verdad y acotado: sin NaN ni infinitos, sin NUL (PostgreSQL no lo guarda), con
-    claves de texto y a lo más `FIELDS_DEPTH` niveles de objeto o lista (el primero es 1)."""
-    kind = type(value)
-    if kind is str:
-        return "\x00" not in value
-    if kind is float:
-        return math.isfinite(value)
-    if kind in (int, bool) or value is None:
-        return True
-    if depth > FIELDS_DEPTH or kind not in (dict, list):
-        return False
-    if kind is list:
-        return all(_plain(item, depth + 1) for item in value)
-    return all(
-        type(key) is str and "\x00" not in key and _plain(item, depth + 1)
-        for key, item in value.items()
-    )
-
-
 class RequiresFields(serializers.DictField):
-    """Qué datos pide una etapa antes de entrar en ella (objeto JSON, solo se guarda)."""
+    """Qué datos pide una etapa antes de entrar en ella (objeto JSON, solo se guarda), con la
+    regla del comando; su texto no repite lo recibido."""
 
     def to_internal_value(self, data: Any) -> dict[str, Any]:
-        if type(data) is not dict or not _plain(data, 1):
-            raise serializers.ValidationError(SHAPE)
-        size = len(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode())
-        if size > FIELDS_BYTES:
-            raise serializers.ValidationError(f"Hasta {FIELDS_BYTES} bytes serializado.")
-        found: dict[str, Any] = data
-        return found
+        try:
+            return commands.requires_fields(data)
+        except ValueError as error:
+            raise serializers.ValidationError(sentence(error)) from None
 
 
 class StageFields(Closed, serializers.Serializer[Any]):
