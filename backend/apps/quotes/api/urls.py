@@ -36,6 +36,21 @@ urlpatterns = [
         name="quote-issue",
     ),
     path(
+        "quotes/<uuid:quote_id>/accept/",
+        quotes.QuoteAcceptView.as_view(),
+        name="quote-accept",
+    ),
+    path(
+        "quotes/<uuid:quote_id>/decline/",
+        quotes.QuoteDeclineView.as_view(),
+        name="quote-decline",
+    ),
+    path(
+        "quotes/<uuid:quote_id>/revise/",
+        quotes.QuoteReviseView.as_view(),
+        name="quote-revise",
+    ),
+    path(
         "quotes/<uuid:quote_id>/items/<uuid:line_id>/price/",
         quotes.QuotePriceView.as_view(),
         name="quote-price",

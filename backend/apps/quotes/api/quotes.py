@@ -26,7 +26,7 @@ from rest_framework.response import Response
 from apps.access.permissions import ScopeFilter, request_context
 from apps.access.selectors import scoped
 from apps.contacts.selectors import contacts
-from apps.quotes import commands, decisions, discounts, lifecycle, selectors
+from apps.quotes import answers, commands, decisions, discounts, lifecycle, selectors
 from apps.quotes.api import inputs, limit
 from apps.quotes.api.errors import domain
 from apps.quotes.models import Quote, QuoteItem
@@ -243,8 +243,9 @@ def action(
     conflicts: tuple[str, ...] = ("QUOTE_NOT_DRAFT",), floor: bool = True,
 ) -> type[views.APIView]:  # fmt: skip
     """Un `POST` sobre una cotización: los permisos antes de leer; el alcance, la versión, el estado
-    y la línea, en el comando. Responde con el detalle; `limit` audita las negativas del precio.
-    `floor`: la ruta mide el suelo de costo y está en `limit.FLOOR` (422 y 429)."""
+    y la línea, en el comando. Responde con el detalle de la que devuelve el comando (al revisar,
+    la revisión nueva); `limit` audita las negativas del precio. `floor`: la ruta mide el suelo de
+    costo y está en `limit.FLOOR` (422 y 429)."""
 
     class Action(views.APIView):
         required_permissions = {"POST": permissions}
@@ -255,8 +256,8 @@ def action(
             wanted.is_valid(raise_exception=True)
             line = {} if line_id is None else {"line_id": line_id}
             with domain(), limit.refusal(request, name, quote_id, line_id):
-                command(_tenant(), quote_id=quote_id, **line, **wanted.validated_data)
-            return reply(request, quote_id)
+                made = command(_tenant(), quote_id=quote_id, **line, **wanted.validated_data)
+            return reply(request, made.pk)
 
     Action.__name__ = f"Quote{name.title().replace('-', '')}View"
     shown = ", ".join(f"`{code}`" for code in permissions)
@@ -273,7 +274,7 @@ def action(
             + ", ".join(f"`{code}`" for code in ("STALE_VERSION", *conflicts))
             + (
                 ". 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por "
-                "persona, se cuenta antes de buscarla."
+                "persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta)."
                 if floor
                 else "."
             ),  # fmt: skip
@@ -343,6 +344,36 @@ QuoteIssueView = action(
     "La de la IA, solo aprobada. Cada precio manual vuelve a medirse con el costo de hoy (422 "
     "`PRICE_NOT_ALLOWED`, siempre igual).",
     ("NOT_ISSUABLE", "NEEDS_APPROVAL", "QUOTE_REFUSED"),
+)  # fmt: skip
+
+
+ANSWERED = ("NOT_ANSWERABLE", "QUOTE_EXPIRED", "QUOTE_REFUSED")
+QuoteAcceptView = action(
+    "accept", answers.accept_quote, inputs.QuoteVersionSerializer, ("quotes.view", "quotes.send"),
+    "Registra que el cliente aceptó una cotización emitida (`SENT` o `VIEWED`) dentro de su "
+    "validez: `ACCEPTED`. Lleva su oportunidad a la etapa `pago-pendiente` si quien acepta la ve y "
+    "la puede cambiar y el pipeline la tiene; si no, la cotización se acepta igual. Con la validez "
+    "pasada, 409 `QUOTE_EXPIRED` aunque aún no esté marcada como vencida.",
+    ANSWERED, floor=False,
+)  # fmt: skip
+QuoteDeclineView = action(
+    "decline", answers.reject_quote_by_customer, inputs.QuoteDeclineSerializer,
+    ("quotes.view", "quotes.send"),
+    "Registra que el cliente rechazó una cotización emitida (`SENT` o `VIEWED`) dentro de su "
+    "validez, con su motivo: `REJECTED`. No es `…/reject/`, que es quien aprueba diciendo que no a "
+    "una solicitud. Con la validez pasada, 409 `QUOTE_EXPIRED`.",
+    ANSWERED, floor=False,
+)  # fmt: skip
+QuoteReviseView = action(
+    "revise", lifecycle.revise_quote, inputs.QuoteVersionSerializer,
+    ("quotes.view", "quotes.create", "quotes.update", "quotes.cancel"),
+    "Revisa una cotización `APPROVED`, `SENT` o `VIEWED` sin editarla: queda `CANCELLED` (el "
+    "cliente ya no puede aceptarla) y responde la revisión siguiente del mismo número, en `DRAFT`, "
+    "con los precios de ahora y sin descuentos, precios manuales ni aprobación. Un borrador se "
+    "devuelve tal cual. Si ya salió, también `quotes.send` en su alcance (si no, 403 después del "
+    "alcance). Quien revisa ha de ver el contacto y la oportunidad (si no, el 400 de crear); 400 "
+    "en `variant_id` si una línea ya no tiene precio vigente.",
+    ("NOT_REVISABLE", "QUOTE_REFUSED"), floor=False,
 )  # fmt: skip
 
 

@@ -7405,6 +7405,75 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/accept/:
+    post:
+      operationId: quotes_accept
+      description: 'Registra que el cliente aceptó una cotización emitida (`SENT`
+        o `VIEWED`) dentro de su validez: `ACCEPTED`. Lleva su oportunidad a la etapa
+        `pago-pendiente` si quien acepta la ve y la puede cambiar y el pipeline la
+        tiene; si no, la cotización se acepta igual. Con la validez pasada, 409 `QUOTE_EXPIRED`
+        aunque aún no esté marcada como vencida. Con `quotes.view`, `quotes.send`;
+        fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_ANSWERABLE`,
+        `QUOTE_EXPIRED`, `QUOTE_REFUSED`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/approve/:
     post:
       operationId: quotes_approve
@@ -7414,7 +7483,7 @@ paths:
         siempre igual). Con `quotes.view`, `quotes.approve`; fuera del alcance o inexistente:
         404. 409: `STALE_VERSION`, `NOT_PENDING`, `SELF_APPROVAL_FORBIDDEN`, `BEYOND_LIMIT`.
         429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
-        persona, se cuenta antes de buscarla.'
+        persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).'
       parameters:
       - in: path
         name: org_slug
@@ -7553,6 +7622,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/decline/:
+    post:
+      operationId: quotes_decline
+      description: 'Registra que el cliente rechazó una cotización emitida (`SENT`
+        o `VIEWED`) dentro de su validez, con su motivo: `REJECTED`. No es `…/reject/`,
+        que es quien aprueba diciendo que no a una solicitud. Con la validez pasada,
+        409 `QUOTE_EXPIRED`. Con `quotes.view`, `quotes.send`; fuera del alcance o
+        inexistente: 404. 409: `STALE_VERSION`, `NOT_ANSWERABLE`, `QUOTE_EXPIRED`,
+        `QUOTE_REFUSED`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteDeclineRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/issue/:
     post:
       operationId: quotes_issue
@@ -7564,7 +7701,7 @@ paths:
         siempre igual). Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente:
         404. 409: `STALE_VERSION`, `NOT_ISSUABLE`, `NEEDS_APPROVAL`, `QUOTE_REFUSED`.
         429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
-        persona, se cuenta antes de buscarla.'
+        persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).'
       parameters:
       - in: path
         name: org_slug
@@ -7717,7 +7854,7 @@ paths:
         igual, si no se admite. Con `quotes.view`, `quotes.update`, `quotes.override_price`;
         fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`.
         429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
-        persona, se cuenta antes de buscarla.'
+        persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).'
       parameters:
       - in: path
         name: line_id
@@ -7869,7 +8006,7 @@ paths:
         (422 `PRICE_NOT_ALLOWED`). Con `quotes.view`, `quotes.update`; fuera del alcance
         o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED`
         (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta
-        antes de buscarla.'
+        antes de buscarla y de leer el cuerpo (uno inválido cuenta).'
       parameters:
       - in: path
         name: org_slug
@@ -7936,6 +8073,77 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/revise/:
+    post:
+      operationId: quotes_revise
+      description: 'Revisa una cotización `APPROVED`, `SENT` o `VIEWED` sin editarla:
+        queda `CANCELLED` (el cliente ya no puede aceptarla) y responde la revisión
+        siguiente del mismo número, en `DRAFT`, con los precios de ahora y sin descuentos,
+        precios manuales ni aprobación. Un borrador se devuelve tal cual. Si ya salió,
+        también `quotes.send` en su alcance (si no, 403 después del alcance). Quien
+        revisa ha de ver el contacto y la oportunidad (si no, el 400 de crear); 400
+        en `variant_id` si una línea ya no tiene precio vigente. Con `quotes.view`,
+        `quotes.create`, `quotes.update`, `quotes.cancel`; fuera del alcance o inexistente:
+        404. 409: `STALE_VERSION`, `NOT_REVISABLE`, `QUOTE_REFUSED`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteVersionRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
           content:
             application/json:
               schema:
@@ -14613,6 +14821,22 @@ components:
       - display_name
       - document_number
       - document_type
+    QuoteDeclineRequest:
+      type: object
+      description: El motivo que dio el cliente al rechazar la cotización emitida.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        reason:
+          type: string
+          minLength: 1
+          description: Obligatorio, hasta 500 caracteres.
+      required:
+      - reason
+      - version
     QuoteDetail:
       type: object
       description: |-
