@@ -163,7 +163,7 @@ describe("PromotionForm", () => {
     fireEvent.change(screen.getByLabelText("Tipo del objetivo 2"), {
       target: { value: "variant_id" },
     });
-    await pick("cama", "Cama · Cama M (CAM-1)");
+    await pick("cama", "Cama M (CAM-1)");
     fireEvent.change(screen.getAllByLabelText(/Descuento propio/)[0]!, { target: { value: "15" } });
     submit();
     expect(await screen.findByText("Elige un objetivo que exista, sin repetir.")).toBeVisible();

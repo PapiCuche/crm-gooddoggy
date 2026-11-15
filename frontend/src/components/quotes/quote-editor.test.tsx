@@ -62,10 +62,13 @@ describe("Cotizaciones: editor (F5-09g)", () => {
       sku: "COL",
       product_name: "Collar reflectivo",
     };
-    api({ "GET /api/v1/o/acme/variants/": page(only, ...variants.body.results) });
+    const sized = { ...only, id: "v4", name: "Collar reflectivo Talla M", sku: "COL-M" };
+    api({ "GET /api/v1/o/acme/variants/": page(only, sized, ...variants.body.results) });
     withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
     type("Variante 1", "coll");
     expect(await screen.findByRole("button", { name: "Correa · Roja (COR-R)" })).toBeVisible();
+    // Con varias variantes, la que empieza por el nombre del producto tampoco lo repite.
+    expect(screen.getByRole("button", { name: "Collar reflectivo Talla M (COL-M)" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Collar reflectivo (COL)" }));
     expect(screen.getByText("Variante 1: Collar reflectivo (COL)")).toBeVisible();
     cleanup();

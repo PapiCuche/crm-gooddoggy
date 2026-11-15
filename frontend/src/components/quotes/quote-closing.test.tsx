@@ -315,6 +315,9 @@ describe("Cotizaciones: seguimientos de la aprobación (F5-09h)", () => {
     const form = await open("Rechazar la solicitud", "Rechazar la solicitud de COT-000001");
     const reason = within(form).getByLabelText("Motivo del rechazo");
     expect(reason).toHaveAttribute("maxLength", "200");
+    expect(reason).toHaveAccessibleDescription(
+      /Lo ve quien pidió .*no escribas costos ni márgenes/,
+    );
     write(form, "Motivo del rechazo", "Margen");
     confirm(form, "Confirmar el rechazo");
     expect(await within(form).findByText(/Otra persona cambió/)).toBeVisible();

@@ -108,9 +108,10 @@ export const focusHome = (from: Element | null = document.activeElement) => {
 };
 
 // Al abrir un formulario, el foco pasa a su primer control o, si no tiene (una confirmación), al
-// formulario (`tabIndex={-1}`), que se anuncia con su nombre y su texto: nunca al botón de confirmar,
-// que un Enter repetido pulsaría. Al cerrarlo, vuelve a donde estaba al abrirlo, leído al dibujarlo: antes de que el formulario al que sustituye devuelva el suyo. Si ese
-// botón ya no está (la acción ya no se ofrece), va al título.
+// formulario (`tabIndex={-1}`), que se anuncia con su nombre y su texto: nunca al botón de
+// confirmar, que un Enter repetido pulsaría. Al cerrarlo, vuelve a donde estaba al abrirlo, leído
+// al dibujarlo: antes de que el formulario al que sustituye devuelva el suyo. Si ese botón ya no
+// está (la acción ya no se ofrece), va al título.
 export function useFocusTrip() {
   const form = useRef<HTMLFormElement>(null);
   const [back] = useState(() =>
