@@ -8,7 +8,7 @@ from django.db import migrations
 
 from core.db.member_fk import MemberFKs
 
-FKS = MemberFKs("files 0004", (("files", "created_by_user_id"),))
+FKS = MemberFKs("files 0004", (("files", "created_by_user_id", "files_created_by_fk"),))
 
 
 class Migration(migrations.Migration):

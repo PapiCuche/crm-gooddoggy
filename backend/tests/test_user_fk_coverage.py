@@ -4,6 +4,7 @@ faltaban (`files` y `credentials`), sus migraciones (`files/0004` y `conversatio
 `catalog/0005`) y que, tras un fallo por `lock_timeout`, la sesión del migrador vuelve a no tener
 ninguno (también `catalog/0005`, F3-37). PostgreSQL real; el runtime es `crm_app`."""
 
+import time
 from importlib import import_module
 from typing import Any
 from uuid import UUID, uuid4
@@ -54,9 +55,10 @@ TEST_ONLY = sorted(
     if config.name not in base.INSTALLED_APPS
     for model in config.get_models()
 )
+# La definición exacta solo acepta una FK validada: la de una `NOT VALID` termina en ` NOT VALID`.
 COLUMNS = r"""
 SELECT c.relname, a.attname, EXISTS (
-  SELECT 1 FROM pg_constraint f WHERE f.conrelid = c.oid AND f.contype = 'f' AND f.convalidated
+  SELECT 1 FROM pg_constraint f WHERE f.conrelid = c.oid AND f.contype = 'f'
   AND pg_get_constraintdef(f.oid) = format('FOREIGN KEY (organization_id, %%s) REFERENCES'
     ' organization_memberships(organization_id, user_id)', a.attname))
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
@@ -72,11 +74,24 @@ def test_every_tenant_user_column_has_its_member_fk_or_a_documented_exception(
     migrator: DB,
 ) -> None:
     assert TEST_ONLY == ["tenancy_app_widget", "tenancy_app_widgetpart"]
-    found = {(table, column): fk for table, column, fk in migrator.execute(COLUMNS, [TEST_ONLY])}
+    found = coverage(migrator)
     assert {where for where, fk in found.items() if not fk} == set(EXCEPTIONS)
     assert all(EXCEPTIONS.values())
     assert found[("files", "created_by_user_id")] and found[("credentials", "created_by_user_id")]
     assert sum(found.values()) >= 60  # la consulta ve las columnas del producto, no una tabla vacía
+    with migrator.transaction(force_rollback=True):  # una FK sin validar no cuenta
+        migrator.execute("ALTER TABLE files DROP CONSTRAINT files_created_by_fk")
+        migrator.execute(
+            "ALTER TABLE files ADD CONSTRAINT files_created_by_fk FOREIGN KEY"
+            " (organization_id, created_by_user_id) REFERENCES organization_memberships"
+            " (organization_id, user_id) NOT VALID"
+        )
+        assert not coverage(migrator)[("files", "created_by_user_id")]
+
+
+def coverage(migrator: DB) -> dict[tuple[str, str], bool]:
+    """Por columna `*_user_id` de tenant: si tiene la FK compuesta a las membresías, validada."""
+    return {(table, column): fk for table, column, fk in migrator.execute(COLUMNS, [TEST_ONLY])}
 
 
 def as_user(org: UUID, user_id: UUID) -> TenantContext:
@@ -202,8 +217,10 @@ def test_a_lock_timeout_leaves_the_session_without_one(add: Any, table: str) -> 
     with psycopg.connect(migrator_conninfo()) as holder:  # una transacción larga en la tabla
         holder.execute(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
         with as_migrator(), connection.schema_editor(atomic=False) as editor:
+            started = time.monotonic()
             with pytest.raises(OperationalError, match="lock timeout"):
                 add(None, editor)
+            assert time.monotonic() - started < 30  # `lock_timeout`: falla en vez de esperar
             with connection.cursor() as cursor:  # la misma sesión que falló
                 cursor.execute("SHOW lock_timeout")
                 assert cursor.fetchone() == ("0",)

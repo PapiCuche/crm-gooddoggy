@@ -8,7 +8,9 @@ from django.db import migrations
 
 from core.db.member_fk import MemberFKs
 
-FKS = MemberFKs("conversations 0034", (("credentials", "created_by_user_id"),))
+FKS = MemberFKs(
+    "conversations 0034", (("credentials", "created_by_user_id", "credentials_created_by_fk"),)
+)
 
 
 class Migration(migrations.Migration):

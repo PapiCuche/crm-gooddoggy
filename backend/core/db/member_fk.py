@@ -15,7 +15,12 @@ organization_memberships (organization_id, user_id)` de cada columna `*_user_id`
 - Hacia atrás quita las FKs; ningún dato cambia.
 
 La migración que lo usa es `atomic = False`. Sin índice nuevo: las membresías no se borran (cambian
-de estado), así que la FK no recorre la tabla al borrar una."""
+de estado), así que la FK no recorre la tabla al borrar una.
+
+**Lo usan migraciones ya aplicadas:** su SQL y su comportamiento no cambian nunca (cambiarlos
+cambiaría lo que hace una migración aplicada, también al volver atrás). Otro comportamiento es otro
+ayudante, o una versión nueva junto a esta. El nombre de cada FK lo fija la migración, no el
+ayudante."""
 
 from collections.abc import Callable
 from typing import Any
@@ -36,22 +41,18 @@ def _scalar(cursor: Any, sql: str, params: list[Any] | None = None) -> Any:
 
 
 class MemberFKs:
-    """Las FKs de unas columnas `(tabla, columna)`; `label` encabeza los errores
+    """Las FKs de unas columnas `(tabla, columna, nombre de la FK)`; `label` encabeza los errores
     (p. ej., `files 0004`). `add` y `drop` son el `RunPython` de la migración."""
 
-    def __init__(self, label: str, columns: tuple[tuple[str, str], ...]) -> None:
+    def __init__(self, label: str, columns: tuple[tuple[str, str, str], ...]) -> None:
         self.label, self.columns = label, columns
-
-    @staticmethod
-    def name(table: str, column: str) -> str:
-        return f"{table}_{column.removesuffix('_user_id')}_fk"
 
     def refuse_orphans(self, cursor: Any) -> None:
         if not _scalar(cursor, "SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user"):
             raise RuntimeError(f"{self.label}: run as crm_migrator with BYPASSRLS (RLS hides rows)")
         found = {
             f"{table}.{column}": _scalar(cursor, ORPHANS.format(table=table, column=column))
-            for table, column in self.columns
+            for table, column, _ in self.columns
         }
         if orphans := {where: count for where, count in found.items() if count}:
             detail = ", ".join(f"{where}: {count}" for where, count in orphans.items())
@@ -63,8 +64,7 @@ class MemberFKs:
     def add(self, apps: Any, schema_editor: Any) -> None:
         def step(cursor: Any) -> None:
             self.refuse_orphans(cursor)
-            for table, column in self.columns:
-                fk = self.name(table, column)
+            for table, column, fk in self.columns:
                 if not _scalar(cursor, EXISTS, [fk, f"public.{table}"]):
                     cursor.execute(
                         f"ALTER TABLE public.{table} ADD CONSTRAINT {fk} FOREIGN KEY"
@@ -76,8 +76,7 @@ class MemberFKs:
 
     def drop(self, apps: Any, schema_editor: Any) -> None:
         def step(cursor: Any) -> None:
-            for table, column in self.columns:
-                fk = self.name(table, column)
+            for table, _, fk in self.columns:
                 cursor.execute(f"ALTER TABLE public.{table} DROP CONSTRAINT IF EXISTS {fk}")
 
         _limited(schema_editor, step)
