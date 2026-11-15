@@ -245,6 +245,7 @@ export * from "./quoteCancelRequest";
 export * from "./quoteContactRef";
 export * from "./quoteCreateRequest";
 export * from "./quoteDetail";
+export * from "./quoteDiscountRequest";
 export * from "./quoteDiscountTypeEnum";
 export * from "./quoteItem";
 export * from "./quoteLineInputRequest";

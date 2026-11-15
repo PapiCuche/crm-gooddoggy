@@ -245,9 +245,10 @@ def test_the_purge_keeps_a_counter_inside_its_window_and_nobody_anonymous_counts
     assert price(Client(), quote, line).status_code == 401  # sin sesión: no cuenta
     keys = "SELECT key FROM login_throttles WHERE key LIKE 'qfl:%' ORDER BY key"
     assert len(migrator.execute(keys).fetchall()) == 2  # bea: ella misma; el anónimo, nada
-    migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '20 minutes'")
-    purge_login_throttles()
-    assert len(migrator.execute(keys).fetchall()) == 2  # la purga del acceso no lo borra
+    for quiet in ("20 minutes", "2 hours"):  # ni la ventana del acceso ni la de la cotización
+        migrator.execute("UPDATE login_throttles SET updated_at = now() - %s::interval", [quiet])
+        purge_login_throttles()
+        assert len(migrator.execute(keys).fetchall()) == 2  # la de la persona, 24 h
     migrator.execute("UPDATE login_throttles SET updated_at = now() - interval '25 hours'")
     purge_login_throttles()
     assert migrator.execute(keys).fetchall() == []
@@ -287,7 +288,8 @@ Helper: Any = type("Helper", (views.APIView,), {"post": lambda self, request: _g
 
 def test_every_quote_route_that_reaches_the_cost_floor_is_counted() -> None:
     found, unlimited = floor_paths(urls.urlpatterns)
-    assert len(found) == 3 and unlimited == []  # el precio, pedir aprobación y aprobar
+    assert len(found) == 3 and unlimited == []  # el precio, pedir aprobación y aprobar (no el
+    assert any("discount" in str(p.pattern) for p in urls.urlpatterns)  # descuento: sin suelo)
     fake = [path(f"quotes/<uuid:quote_id>/{v.__name__}/", v.as_view()) for v in (Direct, Helper)]
     assert len(floor_paths(fake, pathlib.Path(__file__))[1]) == 2  # sin contar: la prueba falla
 

@@ -14,8 +14,9 @@ ambos.
 **Aprobar** exige que quien aprueba no sea quien pidió (`SelfApproval`), que no supere **su propio**
 límite (`BeyondLimit`, el cálculo de `submit_quote`) y que cada precio manual **vuelva a cubrir el
 costo de hoy** (`PriceRefused`, sin cifras). La solicitud de la IA nunca se aprueba sola: decide una
-persona. **Retirar** lo hace quien pidió (con el alcance de `quotes.update`) o quien puede aprobar;
-la de la IA, solo quien puede aprobar. **Rechazar** lleva su motivo."""
+persona. **Retirar** lo hace quien pidió (con el alcance de `quotes.view` y `quotes.update`) o quien
+puede aprobar; la de la IA, solo quien puede aprobar. La ruta exige además `quotes.view` y
+`quotes.update`: quien aprueba sin ellos rechaza. **Rechazar** lleva su motivo."""
 
 from collections.abc import Callable
 from typing import Any

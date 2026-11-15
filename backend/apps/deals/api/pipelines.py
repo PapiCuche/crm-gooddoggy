@@ -31,6 +31,7 @@ from apps.deals.models import LostReason, Pipeline, StageType
 from apps.deals.seed import lock_pipelines
 from core.api.errors import ApiError
 from core.api.schema import errors
+from core.api.strict import sentence
 from core.tenancy import context
 from core.tenancy.scope import require_scope
 
@@ -73,7 +74,7 @@ def _domain(stages: str = "") -> Iterator[None]:
         raise ApiError("STAGE_IN_USE", 409, STAGE_IN_USE) from None
     except commands.Invalid as error:
         field = stages if stages and error.field in commands.NEW_STAGE else error.field
-        raise serializers.ValidationError({field: [inputs.sentence(error)]}) from None
+        raise serializers.ValidationError({field: [sentence(error)]}) from None
     except ValueError:  # un comando rechazó algo que el serializador dejó pasar
         raise serializers.ValidationError(GENERIC) from None
 

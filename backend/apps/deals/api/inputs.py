@@ -8,15 +8,13 @@ para que un dato inválido sea un 400 en su campo."""
 import json
 import math
 import re
-from collections.abc import Callable
 from typing import Any
 
-from drf_spectacular.extensions import OpenApiSerializerExtension
 from rest_framework import serializers
 
 from apps.deals.commands import CODE_MAX, DAYS_MAX, NAME_MAX, _code
 from apps.deals.models import CODE, COLOR, REASON_CODE, Kind, StageType
-from core.api.strict import Choice, Closed, Flag, Id, Text, Whole
+from core.api.strict import Checked, Choice, Closed, Flag, Id, Whole, version_required
 from core.text import name as clean_name
 
 STAGES_MAX, PIPELINES_MAX, REASONS_MAX = 30, 50, 100
@@ -29,26 +27,6 @@ NEW_STAGE_REQUIRED = ("name", "code", "stage_type", "default_probability", "colo
 
 def _name(value: str) -> str:
     return clean_name(value, NAME_MAX)
-
-
-def sentence(error: Exception) -> str:
-    text = f"{error}."
-    return text[:1].upper() + text[1:]
-
-
-class Checked(Text):
-    """Un texto que además cumple la regla del comando; su `ValueError` es un 400 de este campo,
-    con el texto de la regla (que no repite lo recibido)."""
-
-    def __init__(self, clean: Callable[[str], Any], **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.clean = clean
-
-    def to_internal_value(self, data: Any) -> Any:
-        try:
-            return self.clean(super().to_internal_value(data))
-        except ValueError as error:
-            raise serializers.ValidationError(sentence(error)) from None
 
 
 def _color(value: str) -> str:
@@ -143,19 +121,6 @@ class PipelineCreateSerializer(Closed, serializers.Serializer[Any]):
         max_length=STAGES_MAX,
         help_text="En el orden en que se numeran: una WON, al menos una LOST y una OPEN.",
     )
-
-
-def version_required(serializer: type[serializers.Serializer[Any]]) -> Any:
-    """drf-spectacular trata todo `PATCH` como parcial; aquí la `version` sigue obligatoria."""
-
-    class Schema(OpenApiSerializerExtension):
-        target_class = serializer
-
-        def map_serializer(self, auto_schema: Any, direction: Any) -> Any:
-            schema = auto_schema._map_serializer(self.target, direction, bypass_extensions=True)
-            return {**schema, "required": ["version"]}
-
-    return serializer
 
 
 class LostReasonCreateSerializer(Closed, serializers.Serializer[Any]):

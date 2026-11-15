@@ -163,7 +163,7 @@ class QuotesQuery:
         operation_id="quotes_create",
         tags=["quotes"],
         request=inputs.QuoteCreateSerializer,
-        responses={201: QuoteDetailSerializer, **errors(400, 401, 403, 409)},
+        responses={201: QuoteDetailSerializer, **errors(400, 401, 403, 404, 409)},
         description="Crea un borrador de quien lo crea, con `quotes.create` y `quotes.view`, de "
         "un contacto o de una oportunidad que ve (`contacts.view`, `opportunities.view`); si no, "
         "o no existen, un único 400 general. 400 en `price_list_id` o `variant_id` si la lista no "
@@ -269,6 +269,14 @@ QuotePriceView = action(
     "Precio final a mano de una línea de esa cotización, menor que el vigente y con motivo; pide "
     "aprobación. 422 `PRICE_NOT_ALLOWED`, siempre igual, si no se admite.",
 )  # fmt: skip
+QuoteDiscountView = action(
+    "discount", discounts.set_line_discount, inputs.QuoteDiscountSerializer,
+    ("quotes.view", "quotes.update", "quotes.discount"),
+    "Descuento de una línea de esa cotización: `PERCENT`, `AMOUNT` por unidad o `NONE` (quita "
+    "también un precio manual). Pasar del límite de quien descuenta deja `PENDING_APPROVAL`. 400 "
+    "si deja el precio en cero o menos.",
+    floor=False,
+)  # fmt: skip
 QuoteRequestApprovalView = action(
     "request-approval", discounts.submit_quote, inputs.QuoteVersionSerializer,
     ("quotes.view", "quotes.update"),
@@ -296,7 +304,8 @@ QuoteWithdrawRequestView = action(
     "withdraw-request", decisions.withdraw_approval_request, inputs.QuoteVersionSerializer,
     ("quotes.view", "quotes.update"),
     "Retira la solicitud abierta: vuelve a `DRAFT`. Solo quien la pidió o quien puede aprobar "
-    "(la de la IA, solo este); si no, 403 después del alcance.",
+    "(la de la IA, solo este), y siempre con los permisos de la ruta (quien aprueba sin "
+    "`quotes.update` usa `…/reject/`); si no, 403 después del alcance.",
     DECIDED, floor=False,
 )  # fmt: skip
 QuoteCancelView = action(
@@ -304,8 +313,8 @@ QuoteCancelView = action(
     ("quotes.view", "quotes.cancel"),
     "Cancela una cotización que no terminó, con motivo opcional. Si espera aprobación, cierra su "
     "solicitud, y solo lo hace quien la pidió o quien puede aprobar (si no, 403 después del "
-    "alcance).",
-    ("QUOTE_TERMINAL",), floor=False,
+    "alcance). 400 si la base rechaza una referencia.",
+    ("QUOTE_TERMINAL", "QUOTE_REFUSED"), floor=False,
 )  # fmt: skip
 
 

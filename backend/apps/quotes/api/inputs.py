@@ -10,10 +10,9 @@ from typing import Any
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.deals.api.inputs import Checked, sentence, version_required
 from apps.quotes import commands, decisions, discounts
-from apps.quotes.models import QUANTITY_MAX
-from core.api.strict import Closed, Id, Whole
+from apps.quotes.models import QUANTITY_MAX, DiscountType
+from core.api.strict import Checked, Choice, Closed, Id, Whole, sentence, version_required
 from core.money import parse_amount
 
 INSTANT = "ISO 8601 con zona horaria, como 2026-11-20T23:59:00-05:00."
@@ -101,6 +100,25 @@ class QuotePriceSerializer(QuoteVersionSerializer):
 
     price = Checked(parse_amount, help_text=f"Final por unidad, con IGV. {AMOUNT}")
     reason = Checked(_reason, help_text=f"Obligatorio, hasta {discounts.REASON_MAX} caracteres.")
+
+
+class QuoteDiscountSerializer(QuoteVersionSerializer):
+    """El descuento de una línea: el tipo y su valor como texto (nunca un número JSON)."""
+
+    discount_type = Choice(choices=DiscountType.choices, help_text="`NONE` lo quita.")
+    discount_value = Checked(
+        parse_amount, required=False,
+        help_text=f"`PERCENT` hasta 100, o `AMOUNT` por unidad con IGV; no con `NONE`. {AMOUNT}",
+    )  # fmt: skip
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        kind, value = attrs["discount_type"], attrs.get("discount_value")
+        if (kind == DiscountType.NONE) != (value is None):
+            wrong = "Sin valor con NONE." if value is not None else "Obligatorio salvo con NONE."
+            raise serializers.ValidationError({"discount_value": [wrong]})
+        if kind == DiscountType.PERCENT and value is not None and value > discounts.HUNDRED:
+            raise serializers.ValidationError({"discount_value": ["Hasta 100."]})
+        return attrs
 
 
 class QuoteApproveSerializer(QuoteVersionSerializer):

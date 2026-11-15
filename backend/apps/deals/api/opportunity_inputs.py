@@ -12,7 +12,6 @@ from typing import Any
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
 
-from apps.deals.api.inputs import Checked, sentence, version_required
 from apps.deals.models import Opportunity
 from apps.deals.opportunities import (
     ACTION_MAX,
@@ -25,7 +24,7 @@ from apps.deals.opportunities import (
     _line,
     _moment,
 )
-from core.api.strict import Choice, Closed, Id, Whole
+from core.api.strict import Checked, Choice, Closed, Id, Whole, sentence, version_required
 from core.text import name as clean_name
 
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
