@@ -1,8 +1,9 @@
 """Frontera de alta de `organizations` (F2-06): la organización nace con su primera membresía.
 
 Solo la importa `apps.provisioning` (contrato de import-linter). La gestión de membresías llega
-con E01-06 y E01-07, con sus propios servicios. La única membresía sin invitación, aparte de la
-del Owner inicial, es la de las cuentas de prueba (ADR-026 §4).
+con E01-06 y E01-07, con sus propios servicios. Las únicas membresías sin invitación, aparte de
+la del Owner inicial, son las de las cuentas de prueba (ADR-026 §4) y las que añade un operador
+con `add_member` (F2-127).
 """
 
 import re
@@ -84,6 +85,24 @@ def add_test_membership(ctx: TenantContext, *, user_id: UUID) -> tuple[UUID, boo
         if existing is not None:
             return existing, False
         created = memberships.create(user_id=user_id, status=OrganizationMembership.Status.ACTIVE)
+    return created.pk, True
+
+
+def add_operator_membership(ctx: TenantContext, *, user_id: UUID) -> tuple[UUID, bool]:
+    """La membresía que añade un operador con `add_member` (F2-127, D-F2-14 opción B), como
+    `(id, creada)`, en la organización del contexto y en nombre del sistema.
+
+    Si esa cuenta ya tiene una, con el estado que sea, se devuelve tal cual: el comando no
+    reactiva a un miembro suspendido ni desactivado. La nueva nace ACTIVE.
+    """
+    alias = require_scope(ctx)
+    if (ctx.actor_type, ctx.user_id, ctx.actor_id) != (ActorType.SYSTEM, None, None):
+        raise PermissionDenied("Un operador no añade miembros en nombre de un actor")
+    memberships = OrganizationMembership.objects.using(alias)
+    existing = memberships.filter(user_id=user_id).values_list("pk", flat=True).first()
+    if existing is not None:
+        return existing, False
+    created = memberships.create(user_id=user_id, status=OrganizationMembership.Status.ACTIVE)
     return created.pk, True
 
 

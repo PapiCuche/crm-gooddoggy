@@ -128,6 +128,7 @@
         "created": "Organización creada"
       },
       "membership": {
+        "created": "Miembro añadido por un operador",
         "role_assigned": "Rol asignado a un miembro",
         "role_removed": "Rol quitado a un miembro",
         "suspended": "Miembro suspendido",
@@ -203,6 +204,7 @@
       "NETWORK_ERROR": "No hay conexión con el servidor. Revisa tu red e inténtalo de nuevo.",
       "NOT_AUTHENTICATED": "Tu sesión terminó. Vuelve a entrar para continuar.",
       "INVALID_CREDENTIALS": "El correo o la contraseña no son correctos.",
+      "PASSWORD_CHANGE_REQUIRED": "Tu contraseña es temporal. Elige la tuya en «¿Olvidaste tu contraseña?» con tu correo y vuelve a entrar.",
       "PERMISSION_DENIED": "No tienes permiso para hacer esto.",
       "NOT_FOUND": "No encontramos lo que buscas.",
       "VALIDATION_ERROR": "Revisa los campos marcados.",

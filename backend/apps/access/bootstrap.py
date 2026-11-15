@@ -59,7 +59,8 @@ def holds_owner_role(ctx: TenantContext, *, user_id: UUID) -> bool:
 def grant_template_role(ctx: TenantContext, *, membership_id: UUID, template: str) -> bool:
     """Da a una membresía el rol clonado de la plantilla `template` (ADR-026 §4); `True` si lo
     añadió. Solo el rol de plantilla (`is_system`) con ese código: nunca uno propio que se llame
-    igual, y nunca por el nombre. No quita nada. Lo usan las cuentas de prueba, en nombre del
+    igual, y nunca por el nombre. Nunca el rol Owner (F2-127): el único Owner que da una frontera
+    es el inicial. No quita nada. Lo usan las cuentas de prueba y `add_member`, en nombre del
     sistema.
     """
     alias = require_scope(ctx)
@@ -67,6 +68,8 @@ def grant_template_role(ctx: TenantContext, *, membership_id: UUID, template: st
         raise AccessDenied(Denied.MEMBERSHIP)
     with transaction.atomic(using=alias):
         role: Role = Role.objects.using(alias).get(is_system=True, code=template)
+        if role.is_owner_role:  # por el flag, nunca por el código (ADR-018)
+            raise AccessDenied(Denied.OWNER_ROLE)
         assignments = MembershipRole.objects.using(alias)
         if assignments.filter(membership_id=membership_id, role=role).exists():
             return False

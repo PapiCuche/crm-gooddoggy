@@ -29,6 +29,7 @@ from core.observability import reporting
 logger = logging.getLogger(__name__)
 INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
 RATE_LIMITED = "RATE_LIMITED"
+PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED"  # noqa: S105 — un código de error
 AUTH_AT = "auth_at"  # cuándo se inició la sesión: límite absoluto (ADR-003 §2)
 SEEN_AT = "seen_at"  # última renovación de la caducidad por inactividad
 EPOCH = "epoch"  # época de sesión del usuario al iniciarla: revocar la deja atrás (D-F2-11)
@@ -107,6 +108,24 @@ def audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) -
         unaudited(error, "auth.login.throttled")
 
 
+def _refuse_operator_password(user: User, client: dict[str, Any]) -> None:
+    """La contraseña era la correcta, pero la escribió un operador (`add_member`, F2-127): no abre
+    sesión ni empieza el segundo paso. La cuenta elige la suya con el enlace de recuperación
+    (ADR-021). Lo contado en el límite no se devuelve. Un fallo de auditoría no cambia el 403."""
+    try:
+        platform.record(
+            "auth.login.password_change_required",
+            actor_type=platform.Actor.ANONYMOUS,  # sin sesión, como `auth.login.mfa_required`
+            identifier=user.email,
+            entity=Entity("user", user.pk),
+            result=Result.DENIED,
+            **client,
+        )
+    except Exception as error:
+        unaudited(error, "auth.login.password_change_required")
+    raise ApiError(PASSWORD_CHANGE_REQUIRED, 403)
+
+
 def login(request: HttpRequest, *, email: str, password: str) -> User | None:
     """Autentica y abre la sesión. La misma respuesta para un email desconocido, una contraseña
     incorrecta y un usuario desactivado. Si el acceso no se puede auditar, no hay sesión.
@@ -114,6 +133,7 @@ def login(request: HttpRequest, *, email: str, password: str) -> User | None:
     Si la cuenta tiene un dispositivo confirmado, la contraseña correcta **no abre sesión**
     (ADR-023 §5): deja la marca de acceso a medias (`second_step.begin`) y devuelve `None`. La
     sesión la abre el segundo paso, y lo contado aquí en el límite de intentos lo devuelve él.
+    Antes, una contraseña que escribió un operador se rechaza con 403 (F2-127).
     """
     client = client_of(request)
     if client["ip"] is None:  # todos compartirían un contador: lo delata el proxy de confianza
@@ -131,6 +151,8 @@ def login(request: HttpRequest, *, email: str, password: str) -> User | None:
             audit_block(email, client, blocked)
         raise ApiError(INVALID_CREDENTIALS, 401)
     assert isinstance(user, User)  # noqa: S101 — el único backend es ModelBackend
+    if user.password_change_required:
+        _refuse_operator_password(user, client)
     if MfaDevice.objects.filter(user=user, confirmed_at__isnull=False).exists():
         from apps.accounts import second_step  # noqa: PLC0415 — ciclo de imports
 
