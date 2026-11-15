@@ -13,6 +13,8 @@ from rest_framework import serializers
 
 UNKNOWN = "Campo desconocido."
 KEY_MAX = 64  # lo que se repite del nombre de una clave desconocida
+SHOWN_MAX = 10  # cuántas claves desconocidas nombra un 400; las demás, solo contadas
+MORE_UNKNOWN = "{} campos desconocidos; se nombran los {} primeros."
 
 
 class Strict:
@@ -82,13 +84,17 @@ def shown_key(key: Any) -> str:
 
 class Closed:
     # Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-    # pierde en silencio). Comentario y no docstring: drf-spectacular la pondría como
-    # descripción de cada serializador que no tiene la suya.
+    # pierde en silencio): los `SHOWN_MAX` primeros, y en `_` cuántos son si hay más (50 000
+    # claves cortas no dan una respuesta de megas). Comentario y no docstring: drf-spectacular
+    # la pondría como descripción de cada serializador que no tiene la suya.
 
     def to_internal_value(self, data: Any) -> Any:
         if isinstance(data, Mapping):
             fields = self.fields  # type: ignore[attr-defined]
-            extra = {shown_key(key): [UNKNOWN] for key in data if key not in fields}
+            unknown = [key for key in data if key not in fields]
+            extra = {shown_key(key): [UNKNOWN] for key in unknown[:SHOWN_MAX]}
+            if len(unknown) > SHOWN_MAX:
+                extra.setdefault("_", []).append(MORE_UNKNOWN.format(len(unknown), SHOWN_MAX))
             if extra:
                 raise serializers.ValidationError(extra)
         return super().to_internal_value(data)  # type: ignore[misc]

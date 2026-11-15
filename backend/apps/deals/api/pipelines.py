@@ -206,7 +206,8 @@ class StagesView(APIView):
         responses={201: PipelineSerializer, **errors(400, 401, 403, 404, 409)},
         description=f"Añade una etapa (hasta {inputs.STAGES_MAX} por pipeline, también las "
         "inactivas: 400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda "
-        "WON), `CODE_TAKEN` (en el pipeline).",
+        "WON, también inactiva), `CODE_TAKEN` (en el pipeline). No cambia la `version` del "
+        "pipeline.",
     )
     def post(self, request: Request, pipeline_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.AddStageSerializer(data=request.data)
@@ -226,7 +227,7 @@ class StageOrderView(APIView):
         responses={200: PipelineSerializer, **errors(400, 401, 403, 404)},
         description="Deja las etapas en el orden de `stage_ids`, que las lleva todas (también las "
         "inactivas) una vez cada una; si falta, sobra, se repite o es de otro pipeline, 400 en "
-        "`stage_ids`. Con `pipelines.manage`.",
+        "`stage_ids`. Con `pipelines.manage`. No cambia la `version` del pipeline.",
     )
     def put(self, request: Request, pipeline_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.StageOrderSerializer(data=request.data)
@@ -247,18 +248,18 @@ class StageView(APIView):
         request=inputs.StageUpdateSerializer,
         responses={200: PipelineSerializer, **errors(400, 401, 403, 404, 409)},
         description="Cambia lo enviado de una etapa, sin `version`: se apoya en el bloqueo del "
-        "pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`. El código y "
-        "el orden no cambian aquí. Con `pipelines.manage`.",
+        "pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`: la WON no "
+        "cambia de tipo. El código y el orden no cambian aquí, ni la `version` del pipeline. Con "
+        "`pipelines.manage`.",
     )
     def patch(self, request: Request, pipeline_id: UUID, stage_id: UUID, **kwargs: Any) -> Response:
         wanted = inputs.StageUpdateSerializer(data=request.data)
         wanted.is_valid(raise_exception=True)
-        with _domain():
-            pipeline = selectors.locked_pipeline(pipeline_id)  # la etapa es de este pipeline
-            if not selectors.has_stage(pipeline.pk, stage_id):
-                raise NotFound
-            commands.update_stage(_tenant(), stage_id=stage_id, **wanted.validated_data)
-        return _reply(pipeline.pk)
+        with _domain():  # el comando busca la etapa en este pipeline: si no es suya, 404
+            commands.update_stage(
+                _tenant(), pipeline_id=pipeline_id, stage_id=stage_id, **wanted.validated_data
+            )
+        return _reply(pipeline_id)
 
 
 @extend_schema_view(

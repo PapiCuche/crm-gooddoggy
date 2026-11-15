@@ -90,7 +90,7 @@ def test_every_stage_command_applies_the_cap_and_writes_nothing(
     world: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
     made = new(world)
-    nuevo = stage(made, "nuevo").pk
+    here = {"pipeline_id": made.pk, "stage_id": stage(made, "nuevo").pk}
     before = (count(migrator, "pipelines"), count(migrator, "pipeline_stages"), audit(migrator))
     for value in [*TOO_BIG, *WRONG_SHAPE[:3], SURROGATE, HUGE_INT]:
         attempts: list[tuple[Any, dict[str, Any]]] = [
@@ -99,7 +99,7 @@ def test_every_stage_command_applies_the_cap_and_writes_nothing(
                 "stages": [spec("a", requires_fields=value), *basic()],
             }),
             (commands.add_stage, {"pipeline_id": made.pk, **spec("x", requires_fields=value)}),
-            (commands.update_stage, {"stage_id": nuevo, "requires_fields": value}),
+            (commands.update_stage, {**here, "requires_fields": value}),
         ]  # fmt: skip
         for command, fields in attempts:
             with pytest.raises(commands.Invalid) as caught:
@@ -108,9 +108,10 @@ def test_every_stage_command_applies_the_cap_and_writes_nothing(
     after = (count(migrator, "pipelines"), count(migrator, "pipeline_stages"), audit(migrator))
     assert after == before
     edge = {"k": "x" * 4088}
-    run(world, commands.update_stage, stage_id=nuevo, requires_fields=edge)
+    run(world, commands.update_stage, **here, requires_fields=edge)
     assert stage(made, "nuevo").requires_fields == edge
-    assert audit(migrator)[-1][2]["requires_fields"] == [{}, edge]
+    hidden = audit(migrator)[-1][2]["requires_fields"]  # la huella, no los 4 KB (F5-02g)
+    assert hidden == [commands.fingerprint({}), commands.fingerprint(edge)]
 
 
 @pytest.mark.timeout(10)

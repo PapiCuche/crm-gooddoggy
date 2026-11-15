@@ -5526,7 +5526,8 @@ paths:
       operationId: pipeline_stages_create
       description: 'Añade una etapa (hasta 30 por pipeline, también las inactivas:
         400). Con `pipelines.manage`. 409: `PIPELINE_INVARIANT` (p. ej., una segunda
-        WON), `CODE_TAKEN` (en el pipeline).'
+        WON, también inactiva), `CODE_TAKEN` (en el pipeline). No cambia la `version`
+        del pipeline.'
       parameters:
       - in: path
         name: org_slug
@@ -5590,8 +5591,9 @@ paths:
     patch:
       operationId: pipeline_stages_update
       description: 'Cambia lo enviado de una etapa, sin `version`: se apoya en el
-        bloqueo del pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`.
-        El código y el orden no cambian aquí. Con `pipelines.manage`.'
+        bloqueo del pipeline. 404 si la etapa no es de este pipeline. 409 `PIPELINE_INVARIANT`:
+        la WON no cambia de tipo. El código y el orden no cambian aquí, ni la `version`
+        del pipeline. Con `pipelines.manage`.'
       parameters:
       - in: path
         name: org_slug
@@ -5661,7 +5663,8 @@ paths:
       operationId: pipeline_stages_reorder
       description: Deja las etapas en el orden de `stage_ids`, que las lleva todas
         (también las inactivas) una vez cada una; si falta, sobra, se repite o es
-        de otro pipeline, 400 en `stage_ids`. Con `pipelines.manage`.
+        de otro pipeline, 400 en `stage_ids`. Con `pipelines.manage`. No cambia la
+        `version` del pipeline.
       parameters:
       - in: path
         name: org_slug

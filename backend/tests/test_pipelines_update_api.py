@@ -12,6 +12,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+from apps.deals.commands import fingerprint
 from tests import test_contacts_api, test_opportunities_tables, test_self_context
 from tests.test_authorization import give
 from tests.test_member_branch import DENIED
@@ -184,6 +185,7 @@ def test_a_stage_is_renamed_and_the_answer_is_the_pipeline(
     assert renamed["requires_fields"] == rules and renamed["sort_order"] == 1
     assert read(ana, PIPELINES)["results"] == [got]
     [(action, actor, changes)] = logged(migrator, "stage")
+    assert changes["requires_fields"] == [fingerprint({}), fingerprint(rules)]  # sin sus valores
     assert (action, actor, changes["name"]) == (
         "stage.updated",
         crm.ana.pk,
@@ -276,6 +278,18 @@ def test_a_bad_stage_value_is_a_400_on_its_field_and_writes_nothing(
     assert snapshot(migrator) == before
     for echoed in ("\x00", "\u202e"):  # el texto del error no repite lo recibido
         assert echoed not in response.content.decode()
+
+
+def test_an_infinite_number_in_requires_fields_is_a_400_on_its_field(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    made, ana = pipeline(crm), signed(crm.ana)
+    before = snapshot(migrator)
+    for number in ("1e999", "-1e999"):  # JSON válido que Python lee como infinito
+        raw = '{"requires_fields":{"a":[' + number + "]}}"
+        sent = send(ana, "patch", at(made.pk, stage(made, "nuevo").pk), raw)
+        assert fail(sent) == (400, "VALIDATION_ERROR", ["requires_fields"]), number
+    assert snapshot(migrator) == before
 
 
 HOSTILE = [  # cuerpos que ningún serializador espera: 400 o 415, nunca un 500

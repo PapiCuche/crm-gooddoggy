@@ -106,8 +106,10 @@ def test_the_invariants_the_code_and_the_position_come_back_as_stable_errors(
 ) -> None:
     ana, made, other = signed(crm.ana), pipeline(crm), pipeline(crm, code="otro", is_default=False)
     before = snapshot(migrator)
-    second_won = add(ana, made.pk, code="otra-won", stage_type="WON", default_probability=100)
-    assert (second_won.status_code, second_won.json()["code"]) == (409, "PIPELINE_INVARIANT")
+    won = {"stage_type": "WON", "default_probability": 100}
+    for active in (True, False):  # también inactiva: sin esa regla, el índice único daba un 500
+        second_won = add(ana, made.pk, code="otra-won", is_active=active, **won)
+        assert (second_won.status_code, second_won.json()["code"]) == (409, "PIPELINE_INVARIANT")
     for code in ("nuevo", "NUEVO"):
         taken = add(ana, made.pk, code=code)
         assert (taken.status_code, taken.json()["code"]) == (409, "CODE_TAKEN"), code
@@ -188,7 +190,7 @@ def test_the_order_is_a_full_list_of_this_pipelines_stages(
     assert done.status_code == 200, done.content
     got = done.json()
     assert set(got) == PIPELINE_FIELDS and codes(got) == ["cotizado", "nuevo", "perdido", "ganado"]
-    assert [s["sort_order"] for s in got["stages"]] == [0, 1, 2, 3]
+    assert [s["sort_order"] for s in got["stages"]] == [0, 1, 2, 3] and got["version"] == 1
     assert read(ana, PIPELINES)["results"][0] == got
     [(action, actor, changes)] = logged(migrator, "pipeline")[-1:]
     assert (action, actor) == ("stage.reordered", crm.ana.pk)
@@ -236,3 +238,67 @@ def test_two_additions_at_once_never_pass_the_cap_or_repeat_a_code(
     gap = pipeline(crm, code="otro", is_default=False)
     same = http_race(monkeypatch, [spec("igual")] * 2, "post", [at(gap.pk)] * 2)
     assert same == [(201, "otro"), (409, "CODE_TAKEN")]
+
+
+def test_the_owner_gets_a_403_for_the_methods_the_routes_do_not_declare(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    ana, made = signed(crm.ana), pipeline(crm)  # `ana` es Owner: tiene todos los permisos
+    before = snapshot(migrator)
+    for tail, declared in (("stages/", "post"), ("stages/order/", "put")):
+        path = at(made.pk, tail)
+        assert reply(ana.get(path)) == DENIED, tail  # ni 405 ni 200: denegado por omisión
+        for method in sorted({"patch", "delete", "post", "put"} - {declared}):
+            assert reply(send(ana, method, path, {})) == DENIED, (tail, method)
+    assert snapshot(migrator) == before
+
+
+def test_a_body_over_the_django_limit_is_a_400_before_any_field(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    """El tope del cuerpo es el de Django (`DATA_UPLOAD_MAX_MEMORY_SIZE`, 2,5 MB): DRF lo aplica a
+    JSON porque lo analiza desde `request.body` (OBS-F2-03A-3)."""
+    ana, made = signed(crm.ana), pipeline(crm)
+    before = snapshot(migrator)
+    for size, expected in ((2_621_440, "VALIDATION_ERROR"), (2_621_441, "BAD_REQUEST")):
+        raw = '{"name":"' + "x" * (size - 11) + '"}'  # `size` bytes en total
+        for method, tail in (("post", "stages/"), ("put", "stages/order/")):
+            got = send(ana, method, at(made.pk, tail), raw)
+            assert (got.status_code, got.json()["code"]) == (400, expected), (size, method)
+    assert snapshot(migrator) == before
+
+
+def sort_orders(migrator: psycopg.Connection[Any], pipeline_id: Any) -> list[tuple[str, int]]:
+    found = migrator.execute(
+        "SELECT code, sort_order FROM pipeline_stages WHERE pipeline_id = %s ORDER BY sort_order",
+        [pipeline_id],
+    )
+    return found.fetchall()
+
+
+def test_an_order_and_an_addition_at_once_leave_a_contiguous_order(
+    crm: SimpleNamespace, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    made, other = pipeline(crm), pipeline(crm, code="otro", is_default=False)
+
+    def ids(where: Any, *in_order: str) -> dict[str, list[str]]:
+        return {"stage_ids": [str(stage(where, c).pk) for c in in_order]}
+
+    def contiguous(where: Any, *in_order: str) -> bool:
+        return sort_orders(migrator, where.pk) == [(c, i) for i, c in enumerate(in_order)]
+
+    turned = ids(made, "perdido", "ganado", "cotizado", "nuevo")
+    paths = [at(made.pk, "stages/order/"), at(made.pk)]
+    first = http_race(monkeypatch, [turned, spec("propuesta")], ["put", "post"], paths)
+    assert first == [(200, "retail"), (201, "retail")]  # la etapa entra en el orden nuevo
+    assert contiguous(made, "perdido", "ganado", "cotizado", "nuevo", "propuesta")
+    old = ids(other, "perdido", "ganado", "nuevo", "cotizado")
+    paths = [at(other.pk), at(other.pk, "stages/order/")]
+    second = http_race(monkeypatch, [spec("propuesta"), old], ["post", "put"], paths)
+    assert second == [(201, "otro"), (400, "VALIDATION_ERROR")]  # su lista ya no es la de todas
+    assert contiguous(other, "nuevo", "cotizado", "propuesta", "ganado", "perdido")
+    one = ids(made, "nuevo", "cotizado", "propuesta", "ganado", "perdido")
+    two = ids(made, "propuesta", "nuevo", "cotizado", "ganado", "perdido")
+    third = http_race(monkeypatch, [one, two], "put", at(made.pk, "stages/order/"))
+    assert third == [(200, "retail"), (200, "retail")]  # el segundo espera y queda el suyo
+    assert contiguous(made, "propuesta", "nuevo", "cotizado", "ganado", "perdido")

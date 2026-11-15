@@ -3,9 +3,9 @@ Puras: no dependen de ningún módulo."""
 
 import unicodedata
 
-# Rellenos hangul: letras para Unicode (`isalnum`), pero no se ven; un nombre solo de ellos
-# parece vacío.
-FILLERS = frozenset("\u115f\u1160\u3164\uffa0")
+# Rellenos hangul y los blancos jeroglíficos (U+13441 y U+13442, Unicode 15): letras para Unicode
+# (`isalnum`), pero no se ven; un nombre solo de ellos parece vacío.
+FILLERS = frozenset("\u115f\u1160\u3164\uffa0\U00013441\U00013442")
 
 
 def line(value: str, limit: int) -> str:
@@ -23,8 +23,8 @@ def line(value: str, limit: int) -> str:
 
 
 def name(value: str, limit: int) -> str:
-    """Un nombre: una línea que además lleva alguna letra o cifra que se vea (un relleno hangul
-    no cuenta)."""
+    """Un nombre: una línea que además lleva alguna letra o cifra que se vea (un relleno de
+    `FILLERS` no cuenta)."""
     text = line(value, limit)
     if not any(char.isalnum() and char not in FILLERS for char in text):
         raise ValueError("nombre obligatorio, con alguna letra o cifra")
