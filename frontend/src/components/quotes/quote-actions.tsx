@@ -237,14 +237,18 @@ function Decision({
         ? "badDay"
         : null;
   const shown = checked && missing ? t("needReason") : checked && wrongDay ? t(wrongDay) : problem;
+  const intro = t.has(`intros.${verb}`);
+  const bare = !dated && fields.length === 0; // solo confirma: el foco va al formulario
 
   return (
     <form
       ref={form}
       noValidate
       aria-label={title}
+      aria-describedby={bare && intro ? `${id}-intro` : undefined}
       aria-busy={busy}
-      className="border-border bg-surface flex max-w-xl flex-col gap-3 rounded-lg border p-4"
+      tabIndex={bare ? -1 : undefined}
+      className="border-border bg-surface focus-visible:border-foreground flex max-w-xl flex-col gap-3 rounded-lg border p-4 focus-visible:outline-none"
       onSubmit={(event) => {
         event.preventDefault();
         setChecked(true);
@@ -257,8 +261,10 @@ function Decision({
       }}
     >
       <h2 className="font-semibold">{title}</h2>
-      {t.has(`intros.${verb}`) ? (
-        <p className="text-muted text-sm">{t(`intros.${verb}`, words)}</p>
+      {intro ? (
+        <p id={`${id}-intro`} className="text-muted text-sm">
+          {t(`intros.${verb}`, words)}
+        </p>
       ) : null}
       {dated ? (
         <Field id={`${id}-until`} label={t("fields.valid_until")}>

@@ -15,7 +15,7 @@ congelaron al cotizar. Nunca salen costos ni márgenes: la cotización no los gu
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Exists, OuterRef, Prefetch, Q, QuerySet, Subquery
+from django.db.models import Case, Exists, F, OuterRef, Prefetch, Q, QuerySet, Subquery, When
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers, views
@@ -91,9 +91,9 @@ class QuoteCustomerSnapshotSerializer(serializers.Serializer[Any]):
 
 
 class QuoteDetailSerializer(QuoteSerializer):
-    """Más las notas (texto libre), los motivos de cancelación y del rechazo del cliente, lo que se
-    congeló al emitir (el cliente, las condiciones y la garantía), las fechas de la emisión y de la
-    respuesta, y las líneas en orden."""
+    """Más las notas (texto libre), los motivos de cancelación, del rechazo del cliente y del de la
+    última solicitud de aprobación, lo que se congeló al emitir (el cliente, las condiciones y la
+    garantía), las fechas de la emisión y de la respuesta, y las líneas en orden."""
 
     customer_snapshot = serializers.SerializerMethodField(
         help_text="Desde que se emitió; `null` antes, o si quien consulta no puede ver el contacto "
@@ -107,6 +107,12 @@ class QuoteDetailSerializer(QuoteSerializer):
         help_text="Si la solicitud abierta la pidió quien consulta (la de la IA no la pidió "
         "nadie): entonces la puede retirar. Sin solicitud abierta, `false`."
     )
+    approval_rejection_reason = serializers.CharField(
+        allow_null=True,
+        read_only=True,
+        help_text="El motivo de quien rechazó la última solicitud de aprobación, como "
+        "`cancel_reason`: lo ve quien ve la cotización. `null` si la última no se rechazó.",
+    )
     items = QuoteItemSerializer(many=True)
 
     class Meta:
@@ -114,7 +120,7 @@ class QuoteDetailSerializer(QuoteSerializer):
         fields = (*LIST_FIELDS, "notes_to_customer", "internal_notes", "cancel_reason",
                   "sent_at", "terms_snapshot", "warranty_snapshot", "accepted_at", "rejected_at",
                   "rejection_reason", "customer_snapshot", "approval_asked_by_me",
-                  "approval_requested_by_me", "items")  # fmt: skip
+                  "approval_requested_by_me", "approval_rejection_reason", "items")  # fmt: skip
 
     def get_approval_asked_by_me(self, quote: Quote) -> bool:
         return bool(getattr(quote, "asked_by_me", False))
@@ -395,11 +401,16 @@ QuoteReviseView = action(
 
 
 def detail(found: QuerySet[Quote], request: Request | None) -> QuerySet[Quote]:
-    """Con las líneas, en una consulta más, y `asked_by_me` (la solicitud abierta la pidió o la
-    envió quien consulta) y `requested_by_me` (la pidió), en la misma. Sin persona (el esquema
-    OpenAPI), solo las líneas."""
+    """Con las líneas, en una consulta más; el motivo del rechazo de la última solicitud
+    (`approval_rejection_reason`), y `asked_by_me` (la solicitud abierta la pidió o la envió quien
+    consulta) y `requested_by_me` (la pidió), en la misma. Sin persona (el esquema OpenAPI), sin
+    estos dos."""
     lines = QuoteItem.objects.order_by("sort_order")
-    found = found.prefetch_related(Prefetch("items", queryset=lines))
+    latest = QuoteApproval.objects.filter(quote_id=OuterRef("pk")).order_by("-created_at", "-pk")
+    said = Case(When(status=ApprovalStatus.REJECTED, then=F("comment")))  # si no, `NULL`
+    found = found.prefetch_related(Prefetch("items", queryset=lines)).annotate(
+        approval_rejection_reason=Subquery(latest.annotate(said=said).values("said")[:1])
+    )
     ectx = request_context(request)
     me = None if ectx is None else ectx.tenant.user_id
     if me is None:  # nunca `IS NULL`: la solicitud de la IA no tiene a nadie

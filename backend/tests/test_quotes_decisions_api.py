@@ -279,6 +279,29 @@ def test_the_detail_says_whether_the_open_request_is_of_whoever_reads(lab: Simpl
     assert signed(lab.vera).get(f"{QUOTES}{quote}/").json()["approval_asked_by_me"] is False
 
 
+def test_who_asked_reads_why_the_last_request_was_rejected_like_the_cancel_reason(
+    lab: SimpleNamespace,
+) -> None:
+    """F5-09j: el motivo del rechazo lo ve quien ve la cotización (como `cancel_reason`), solo
+    mientras la última solicitud sea la rechazada."""
+    quote = pending(lab)
+
+    def seen(who: str) -> Any:
+        return signed(getattr(lab, who)).get(f"{QUOTES}{quote}/").json()
+
+    assert seen("vera")["approval_rejection_reason"] is None  # abierta: aún no se decide
+    done = act(signed(lab.sam), quote, "reject", reason=" Margen muy bajo ")
+    assert done.json()["approval_rejection_reason"] == "Margen muy bajo"
+    assert {who: seen(who)["approval_rejection_reason"] for who in ("vera", "ana")} == {
+        "vera": "Margen muy bajo", "ana": "Margen muy bajo"}  # fmt: skip
+    assert reply(signed(lab.bea).get(f"{QUOTES}{quote}/")) == DENIED  # sin `quotes.view`
+    again = submit(signed(lab.vera), quote, version=3)
+    assert (again.json()["status"], again.json()["approval_rejection_reason"]) == (
+        "PENDING_APPROVAL", None)  # fmt: skip
+    assert act(signed(lab.vera), quote, "withdraw-request", version=4).json()[
+        "approval_rejection_reason"] is None  # la última se retiró: no se rechazó  # fmt: skip
+
+
 def test_who_only_submitted_the_request_of_the_ai_does_not_see_it_as_requested(
     lab: SimpleNamespace, migrator: DB
 ) -> None:

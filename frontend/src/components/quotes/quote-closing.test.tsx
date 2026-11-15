@@ -41,6 +41,12 @@ const confirm = (form: HTMLElement, name: string) =>
 const write = (form: HTMLElement, label: string, value: string) =>
   fireEvent.change(within(form).getByLabelText(label), { target: { value } });
 const [NOON, PAST] = ["2026-11-11T15:00:00Z", "2026-11-01T05:00:00Z"];
+const TONIGHT = "2026-11-12T04:59:00Z"; // 11 nov, 23:59 en Lima
+// Una confirmación sin campo: el foco va al formulario, que se anuncia; nunca a confirmar.
+const announced = (form: HTMLElement, text: RegExp) => {
+  expect(document.activeElement).toBe(form);
+  expect(form).toHaveAccessibleDescription(text);
+};
 
 describe("Cotizaciones: emitir, respuesta del cliente, revisar y cancelar (F5-09i)", () => {
   it("una vendedora emite una aprobada con validez, condiciones y garantía; se ven congeladas", async () => {
@@ -56,6 +62,9 @@ describe("Cotizaciones: emitir, respuesta del cliente, revisar y cancelar (F5-09
     expect(day).toHaveAttribute("min", "2026-11-11");
     expect(day).toHaveAttribute("max", "2099-12-30");
     expect(document.activeElement).toBe(day);
+    const terms = within(form).getByLabelText("Condiciones (opcional)");
+    expect(terms).toHaveAttribute("maxLength", "2000"); // el tope de la API
+    expect(terms).toHaveAccessibleDescription("Hasta 2000 caracteres. Las ve el cliente.");
     write(form, "Válida hasta", "2026-12-15");
     write(form, "Condiciones (opcional)", " Pago contra entrega ");
     write(form, "Garantía (opcional)", "12 meses");
@@ -94,6 +103,16 @@ describe("Cotizaciones: emitir, respuesta del cliente, revisar y cancelar (F5-09
     expect(calls.map((c) => c.body)).toEqual([until]);
   });
 
+  it("a las 23:30 de Lima «hoy» sigue siendo el día de Lima, no el de UTC (F5-09j)", async () => {
+    vi.setSystemTime(Date.parse("2026-11-12T04:30:00Z")); // 11 nov, 23:30 en Lima
+    api({ [`GET ${BASE}1/`]: { status: 200, body: at("APPROVED", { valid_until: TONIGHT }) } });
+    show(...SELLER);
+    const form = await open("Emitir", "Emitir COT-000001");
+    const day = within(form).getByLabelText("Válida hasta");
+    expect(day).toHaveValue("2026-11-11"); // vence hoy a las 23:59: aún vale
+    expect(day).toHaveAttribute("min", "2026-11-11");
+  });
+
   it("el cliente acepta con una confirmación, o rechaza con su motivo, que se ve después", async () => {
     const said = { rejected_at: NOON, rejection_reason: "Compró en otra tienda" };
     const calls = api({
@@ -102,7 +121,7 @@ describe("Cotizaciones: emitir, respuesta del cliente, revisar y cancelar (F5-09
     });
     show("quotes.send");
     let form = await open("El cliente aceptó", "El cliente aceptó COT-000001");
-    expect(form).toHaveTextContent("pasa a «Pago pendiente»");
+    announced(form, /pasa a «Pago pendiente»/);
     confirm(form, "Confirmar la aceptación");
     expect(await screen.findByText("Aceptación del cliente registrada.")).toBeVisible();
     expect(screen.getByText("Aceptada por el cliente")).toBeVisible();
@@ -130,8 +149,9 @@ describe("Cotizaciones: emitir, respuesta del cliente, revisar y cancelar (F5-09
   });
 
   it("revisar confirma y lleva a la revisión nueva; sin `quotes.send`, una emitida no", async () => {
+    let reads = 0;
     const calls = api({
-      [`GET ${BASE}1/`]: { status: 200, body: at("SENT") },
+      [`GET ${BASE}1/`]: () => ({ status: 200, body: at(reads++ ? "CANCELLED" : "SENT") }),
       [`POST ${BASE}1/revise/`]: {
         status: 200,
         body: { ...at("DRAFT", { version: 1, revision: 2 }), id: "2" },
@@ -139,16 +159,44 @@ describe("Cotizaciones: emitir, respuesta del cliente, revisar y cancelar (F5-09
     });
     show(...SELLER);
     const form = await open("Nueva revisión", "Nueva revisión de COT-000001");
-    expect(form).toHaveTextContent("COT-000001 queda cancelada");
-    expect(form).toHaveTextContent("se abre la revisión 2 como borrador");
+    announced(form, /COT-000001 queda cancelada.*se abre la revisión 2 como borrador/);
     confirm(form, "Abrir la revisión 2");
     await waitFor(() => expect(push).toHaveBeenCalledWith("/o/acme/cotizaciones/2"));
     expect(calls.map((c) => [c.path, c.body])).toEqual([[`${BASE}1/revise/`, { version: 3 }]]);
+    await waitFor(() => expect(reads).toBe(2)); // la revisada se vuelve a leer: ya está cancelada
     cleanup();
     api({ [`GET ${BASE}1/`]: { status: 200, body: at("SENT") } });
     show("quotes.create", "quotes.update", "quotes.cancel");
     expect(await screen.findByRole("button", { name: "Cancelar la cotización" })).toBeVisible();
     expect(button("Nueva revisión")).toBeNull();
+    cleanup(); // revisar cancela la anterior: sin `quotes.cancel`, tampoco
+    api({ [`GET ${BASE}1/`]: { status: 200, body: at("APPROVED") } });
+    show("quotes.create", "quotes.update", "quotes.send");
+    expect(await screen.findByRole("button", { name: "Emitir" })).toBeVisible();
+    expect(button("Nueva revisión")).toBeNull();
+  });
+
+  it("quien pidió la aprobación lee por qué se rechazó; después queda en las notas", async () => {
+    const reason = "Margen muy bajo <b>DNI</b>";
+    api({
+      [`GET ${BASE}1/`]: { status: 200, body: at("DRAFT", { approval_rejection_reason: reason }) },
+    });
+    show("quotes.update");
+    const notice = await screen.findByRole("complementary", {
+      name: "Rechazaron la solicitud de aprobación",
+    });
+    expect(notice).toHaveTextContent(`${reason}Corrige el borrador y vuelve a validarlo.`);
+    expect(
+      screen.queryByRole("region", { name: "Motivo del rechazo de la aprobación" }),
+    ).toBeNull();
+    cleanup();
+    api({
+      [`GET ${BASE}1/`]: { status: 200, body: at("SENT", { approval_rejection_reason: reason }) },
+    });
+    show();
+    const note = await screen.findByRole("region", { name: "Motivo del rechazo de la aprobación" });
+    expect(note).toHaveTextContent(reason);
+    expect(screen.queryByRole("complementary")).toBeNull();
   });
 
   it("cancelar pide confirmación; Volver no escribe; el motivo es opcional", async () => {

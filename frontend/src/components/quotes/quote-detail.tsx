@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Clock } from "lucide-react";
+import { Clock, MessageSquareX } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -31,8 +31,9 @@ const COLUMNS = ["product", "quantity", "list", "promotion", "discount", "final"
 // importes solo se formatean; ningún costo ni margen: la API no los da. Un borrador se edita y se
 // descuenta por línea (F5-09g) y se pide, decide o retira su aprobación (F5-09h); se emite, se
 // registra la respuesta del cliente, se revisa o se cancela (F5-09i), según los permisos de la
-// sesión (la API los vuelve a comprobar); mientras espera aprobación, un aviso fijo lo dice. Lo
-// congelado al emitir y el motivo del rechazo del cliente se muestran como el de la cancelación.
+// sesión (la API los vuelve a comprobar); mientras espera aprobación, un aviso fijo lo dice, y en un
+// borrador cuya última solicitud se rechazó, otro da el motivo de quien la rechazó (F5-09j). Lo
+// congelado al emitir y los motivos de los rechazos se muestran como el de la cancelación.
 export function QuoteDetail({ quoteId }: { quoteId: string }) {
   const t = useTranslations("quotes.detail");
   const slug = useTenant().organization.slug;
@@ -160,12 +161,15 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
     [t("totals.discount"), quote.discount_total, false],
     [t("totals.total"), quote.total, true],
   ];
+  const refused = quote.approval_rejection_reason;
+  const draft = quote.status === "DRAFT";
   const notes = [
     ["customer", quote.notes_to_customer],
     ["internal", quote.internal_notes],
     ["terms", quote.terms_snapshot],
     ["warranty", quote.warranty_snapshot],
     ["rejection", quote.rejection_reason],
+    ["refused", draft ? null : refused], // en un borrador, arriba
     ["cancel", quote.cancel_reason],
   ] as const;
   return (
@@ -212,6 +216,21 @@ export function QuoteDetail({ quoteId }: { quoteId: string }) {
             <p className="text-muted text-sm">
               {t(quote.approval_asked_by_me ? "waiting.mine" : "waiting.other")}
             </p>
+          </div>
+        </aside>
+      ) : null}
+      {draft && refused ? (
+        <aside
+          aria-label={t("refused.title")}
+          className="border-border bg-surface-raised flex gap-3 rounded-lg border p-4"
+        >
+          <MessageSquareX aria-hidden className="text-muted mt-0.5 size-5 shrink-0" />
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="font-medium">{t("refused.title")}</p>
+            <p className="wrap-anywhere">
+              <Plain>{refused}</Plain>
+            </p>
+            <p className="text-muted text-sm">{t("refused.next")}</p>
           </div>
         </aside>
       ) : null}

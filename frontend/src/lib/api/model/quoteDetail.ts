@@ -12,9 +12,9 @@ import type { QuoteStatusEnum } from "./quoteStatusEnum";
 import type { TaxModeEnum } from "./taxModeEnum";
 
 /**
- * Más las notas (texto libre), los motivos de cancelación y del rechazo del cliente, lo que se
- * congeló al emitir (el cliente, las condiciones y la garantía), las fechas de la emisión y de la
- * respuesta, y las líneas en orden.
+ * Más las notas (texto libre), los motivos de cancelación, del rechazo del cliente y del de la
+ * última solicitud de aprobación, lo que se congeló al emitir (el cliente, las condiciones y la
+ * garantía), las fechas de la emisión y de la respuesta, y las líneas en orden.
  */
 export interface QuoteDetail {
   readonly id: string;
@@ -92,5 +92,10 @@ export interface QuoteDetail {
   readonly approval_asked_by_me: boolean;
   /** Si la solicitud abierta la pidió quien consulta (la de la IA no la pidió nadie): entonces la puede retirar. Sin solicitud abierta, `false`. */
   readonly approval_requested_by_me: boolean;
+  /**
+   * El motivo de quien rechazó la última solicitud de aprobación, como `cancel_reason`: lo ve quien ve la cotización. `null` si la última no se rechazó.
+   * @nullable
+   */
+  readonly approval_rejection_reason: string | null;
   items: QuoteItem[];
 }

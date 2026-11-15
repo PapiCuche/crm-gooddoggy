@@ -5,7 +5,7 @@ import { useTimeZone, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { type Target, TargetPicker } from "@/components/pricing/target-picker";
+import { type Target, TargetPicker, variantLabel } from "@/components/pricing/target-picker";
 import { localValue, ZONE, zonedInstant } from "@/components/pricing/zoned";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,7 +58,8 @@ export function useQuoteProblem() {
 }
 
 // Una escritura sobre una cotización: su respuesta pasa a ser el detalle y las listas se vuelven a
-// pedir. Un 404 o un 409 vuelve a leer el detalle: lo que se mostraba ya no vale.
+// pedir. Si responde con otra (una revisión), la de antes también: ya cambió de estado. Un 404 o un
+// 409 vuelve a leer el detalle: lo que se mostraba ya no vale.
 export function useQuoteWrite(
   quoteId: string | undefined,
   call: () => Promise<QuoteDetail>,
@@ -76,6 +77,8 @@ export function useQuoteWrite(
     },
     onSuccess: async (saved) => {
       client.setQueryData(getQuotesRetrieveQueryKey(slug, saved.id), saved);
+      if (quoteId && saved.id !== quoteId)
+        void client.invalidateQueries({ queryKey: getQuotesRetrieveQueryKey(slug, quoteId) });
       await client.invalidateQueries({ queryKey: getQuotesListQueryKey(slug) });
       done(saved);
     },
@@ -104,8 +107,9 @@ export const focusHome = (from: Element | null = document.activeElement) => {
     document.querySelector<HTMLElement>("[data-focus-home]")?.focus();
 };
 
-// Al abrir un formulario, el foco pasa a su primer control; al cerrarlo, vuelve a donde estaba al
-// abrirlo, leído al dibujarlo: antes de que el formulario al que sustituye devuelva el suyo. Si ese
+// Al abrir un formulario, el foco pasa a su primer control o, si no tiene (una confirmación), al
+// formulario (`tabIndex={-1}`), que se anuncia con su nombre y su texto: nunca al botón de confirmar,
+// que un Enter repetido pulsaría. Al cerrarlo, vuelve a donde estaba al abrirlo, leído al dibujarlo: antes de que el formulario al que sustituye devuelva el suyo. Si ese
 // botón ya no está (la acción ya no se ofrece), va al título.
 export function useFocusTrip() {
   const form = useRef<HTMLFormElement>(null);
@@ -113,14 +117,15 @@ export function useFocusTrip() {
     typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
   );
   useEffect(() => {
-    form.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
+    const first = form.current?.querySelector<HTMLElement>("input, select, textarea");
+    (first ?? form.current)?.focus();
     return () => (back?.isConnected ? back.focus() : focusHome(back));
   }, [back]);
   return form;
 }
 
 const label = (line: QuoteDetail["items"][number]) =>
-  `${line.product_name} · ${line.variant_name} (${line.sku})`;
+  variantLabel(line.product_name, line.variant_name, line.sku);
 
 // Crear un borrador desde un cliente o una oportunidad (`link`), o cambiar uno (`quote`) (F5-09g):
 // variantes con su cantidad, la validez y las notas. El precio no se envía: lo pone el motor de

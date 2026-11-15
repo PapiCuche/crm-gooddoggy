@@ -2679,7 +2679,8 @@
         "cancelledAt": "Cancelada el {date}",
         "terms": "Condiciones",
         "warranty": "Garantía",
-        "rejection": "Motivo del rechazo del cliente"
+        "rejection": "Motivo del rechazo del cliente",
+        "refused": "Motivo del rechazo de la aprobación"
       },
       "revision": "Revisión {number}",
       "late": "Vencida",
@@ -2694,7 +2695,11 @@
       },
       "sent": "Emitida",
       "accepted": "Aceptada por el cliente",
-      "rejected": "Rechazada por el cliente"
+      "rejected": "Rechazada por el cliente",
+      "refused": {
+        "title": "Rechazaron la solicitud de aprobación",
+        "next": "Corrige el borrador y vuelve a validarlo."
+      }
     },
     "emptyAll": "Todavía no hay cotizaciones.",
     "linked": {
