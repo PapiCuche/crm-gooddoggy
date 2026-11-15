@@ -7,10 +7,6 @@
  */
 import type { AssignActionEnum } from "./assignActionEnum";
 
-/**
- * Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
- * pierde en silencio).
- */
 export interface AssignRequest {
   /**
    * `TAKE`: la toma quien llama. `TRANSFER`: pasa a `user_id`. `RELEASE`: sin responsable.

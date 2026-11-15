@@ -9,7 +9,7 @@ import type { NewStageRequestRequiresFields } from "./newStageRequestRequiresFie
 import type { StageTypeEnum } from "./stageTypeEnum";
 
 /**
- * Los datos de una etapa, todos opcionales; el código y el orden no se cambian.
+ * Una etapa nueva: pide `name`, `code`, `stage_type`, `default_probability` y `color`.
  */
 export interface NewStageRequest {
   /**

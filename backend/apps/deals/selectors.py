@@ -50,10 +50,6 @@ def has_stage(pipeline_id: UUID, stage_id: UUID) -> bool:
     return PipelineStage.objects.filter(pipeline_id=pipeline_id, pk=stage_id).exists()
 
 
-def stage_count(pipeline_id: UUID) -> int:
-    return PipelineStage.objects.filter(pipeline_id=pipeline_id).count()
-
-
 def opportunities() -> QuerySet[Opportunity]:
     """Las oportunidades no borradas, con su etapa y su motivo de pérdida en la misma consulta.
     El orden lo pone la paginación (ADR-016): por `id`, no por número (`OPP-1000000` va después

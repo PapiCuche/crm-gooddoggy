@@ -19,7 +19,7 @@ from tests.test_inventory_stock import race
 from tests.test_lost_reasons import audit, count, run
 from tests.test_pipeline_commands import basic, new, order, spec, stage
 from tests.test_pipelines_api import pipeline
-from tests.test_pipelines_stages_api import add, at
+from tests.test_pipelines_stages_api import at
 from tests.test_pipelines_update_api import snapshot
 from tests.test_products import send
 from tests.test_self_context import signed
@@ -118,6 +118,9 @@ def test_a_list_repeated_by_reference_is_refused_without_walking_it() -> None:
     row = [0] * 1000
     shared = {"a": [[row] * 1000] * 1000}  # mil millones de elementos, pocos objetos
     assert refused(shared) == "hasta 4096 bytes serializado"
+    leaf = {str(i): 0 for i in range(1000)}
+    mid = {str(i): leaf for i in range(1000)}  # también con objetos: un solo presupuesto
+    assert refused({"a": {str(i): mid for i in range(1000)}}) == "hasta 4096 bytes serializado"
 
 
 def thirty(world: SimpleNamespace, code: str = "treinta", inactive: int = 0) -> Any:
@@ -182,28 +185,6 @@ def test_a_reorder_takes_at_most_thirty_ids_and_its_audit_stays_bounded(
     (_, _, changes) = audit(migrator)[-1]
     assert [len(codes) for codes in changes["order"]] == [30, 30]
     assert len(json.dumps(changes)) < 30 * 2 * (commands.CODE_MAX + 4) + 20
-
-
-def test_the_command_cap_answers_like_the_route_cap(
-    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, migrator: psycopg.Connection[Any]
-) -> None:
-    ana = signed(crm.ana)
-    many = [spec(f"s{i}") for i in range(26)]
-    full = pipeline(crm, stages=[*many, *basic()])
-    by_route = add(ana, full.pk, code="extra")
-    before = snapshot(migrator)
-    monkeypatch.setattr(inputs, "STAGES_MAX", 31)  # sin el tope de la ruta, el del comando
-    by_command = add(ana, full.pk, code="extra")
-    assert (by_route.status_code, by_command.status_code) == (400, 400)
-    assert (
-        by_command.json()
-        == by_route.json()
-        == {
-            "code": "VALIDATION_ERROR",
-            "fields": {"_": [{"code": "invalid", "message": "El pipeline ya tiene 30 etapas."}]},
-        }
-    )
-    assert snapshot(migrator) == before
 
 
 def test_the_route_words_a_bad_requires_fields_as_the_command_does(

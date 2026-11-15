@@ -276,8 +276,8 @@ def test_the_lost_reasons_page_by_creation_and_cost_the_same_queries(
     crm: SimpleNamespace,
 ) -> None:
     ana = signed(crm.ana)
-    for code in ("A1", "A2", "A3"):
-        reason(crm, code, sort_order=9 - len(code))
+    for index, code in enumerate(("A1", "A2", "A3")):
+        reason(crm, code, sort_order=9 - index)  # `sort_order` al revés que la creación
     first = read(ana, REASONS, limit=2)
     assert [row["code"] for row in first["results"]] == ["A1", "A2"] and first["next"]
     second = read(ana, REASONS, limit=2, cursor=first["next"])

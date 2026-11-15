@@ -4171,8 +4171,8 @@ paths:
           description: ''
     post:
       operationId: lost_reasons_create
-      description: Crea un motivo, activo. Con `pipelines.manage`. Hasta 100 por organización
-        (400). 409 `CODE_TAKEN`.
+      description: Crea un motivo, activo. Con `pipelines.manage`. Hasta 100 por organización,
+        también los inactivos (400). 409 `CODE_TAKEN`.
       parameters:
       - in: path
         name: org_slug
@@ -5399,8 +5399,9 @@ paths:
     post:
       operationId: pipelines_create
       description: 'Crea un pipeline con sus etapas, de una vez. Con `pipelines.manage`.
-        Hasta 50 pipelines por organización y 30 etapas por pipeline (400). 409: `PIPELINE_INVARIANT`
-        (sin una WON, una LOST o una OPEN), `CODE_TAKEN`.'
+        Hasta 50 pipelines por organización, también los inactivos, y 30 etapas por
+        pipeline (400). 409: `PIPELINE_INVARIANT` (sin una WON, una LOST o una OPEN),
+        `CODE_TAKEN`.'
       parameters:
       - in: path
         name: org_slug
@@ -10176,8 +10177,8 @@ components:
         * `SUSPENDED` - SUSPENDED
     AddStageRequest:
       type: object
-      description: Los datos de una etapa, todos opcionales; el código y el orden
-        no se cambian.
+      description: 'Una etapa nueva: pide `name`, `code`, `stage_type`, `default_probability`
+        y `color`.'
       properties:
         name:
           type: string
@@ -10236,9 +10237,6 @@ components:
         * `RELEASE` - RELEASE
     AssignRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         action:
           allOf:
@@ -10650,9 +10648,6 @@ components:
         * `USED` - Used
     ConnectRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         access_token:
           type: string
@@ -11117,9 +11112,6 @@ components:
       - results
     CostSetRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         amount:
           type: string
@@ -11230,9 +11222,6 @@ components:
       - updated_at
     DiscountPolicySetRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         role_id:
           type: string
@@ -11481,9 +11470,6 @@ components:
       - variant_id
     ItemInputRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         variant_id:
           type: string
@@ -11679,9 +11665,6 @@ components:
       - version
     LostReasonCreateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         name:
           type: string
@@ -12419,8 +12402,8 @@ components:
         * `SALE` - Sale
     NewStageRequest:
       type: object
-      description: Los datos de una etapa, todos opcionales; el código y el orden
-        no se cambian.
+      description: 'Una etapa nueva: pide `name`, `code`, `stage_type`, `default_probability`
+        y `color`.'
       properties:
         name:
           type: string
@@ -12517,9 +12500,6 @@ components:
       - version
     NoteRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         client_message_id:
           type: string
@@ -12695,6 +12675,7 @@ components:
             $ref: '#/components/schemas/ItemInputRequest'
           description: Hasta 50, una por variante; al cambiar, reemplazan todas las
             líneas.
+          maxItems: 50
         contact_id:
           type: string
           format: uuid
@@ -12851,9 +12832,6 @@ components:
       - won_at
     OpportunityLoseRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         lost_reason_id:
           type: string
@@ -12874,9 +12852,6 @@ components:
       - version
     OpportunityMoveRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         stage_id:
           type: string
@@ -12893,9 +12868,6 @@ components:
       - version
     OpportunityWinRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         amount:
           type: string
@@ -13515,9 +13487,6 @@ components:
       - version
     PatchedLostReasonUpdateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         name:
           type: string
@@ -13589,6 +13558,7 @@ components:
             $ref: '#/components/schemas/ItemInputRequest'
           description: Hasta 50, una por variante; al cambiar, reemplazan todas las
             líneas.
+          maxItems: 50
         title:
           type: string
           minLength: 1
@@ -13607,9 +13577,6 @@ components:
       - version
     PatchedPipelineUpdateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         name:
           type: string
@@ -13935,9 +13902,6 @@ components:
       - version
     PipelineCreateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         name:
           type: string
@@ -13972,6 +13936,8 @@ components:
             $ref: '#/components/schemas/NewStageRequest'
           description: 'En el orden en que se numeran: una WON, al menos una LOST
             y una OPEN.'
+          minItems: 1
+          maxItems: 30
       required:
       - code
       - kind
@@ -14466,9 +14432,6 @@ components:
       - version
     PromotionCreateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         name:
           type: string
@@ -14518,6 +14481,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PromotionItemRequest'
+          minItems: 1
+          maxItems: 100
       required:
       - discount_type
       - ends_at
@@ -14528,9 +14493,6 @@ components:
       - value
     PromotionItem:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         variant_id:
           type: string
@@ -14554,9 +14516,6 @@ components:
           nullable: true
     PromotionItemRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         variant_id:
           type: string
@@ -15289,9 +15248,6 @@ components:
       - warehouse_id
     ReservationCreateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         reason:
           type: string
@@ -15325,9 +15281,6 @@ components:
       - warehouse_id
     ReservationReleaseRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         reason:
           type: string
@@ -15433,9 +15386,6 @@ components:
       - name
     SandboxInboundRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         contact_id:
           type: string
@@ -15527,9 +15477,6 @@ components:
       - user
     SendMediaFormRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         client_message_id:
           type: string
@@ -15550,9 +15497,6 @@ components:
       - file
     SendMessageRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         client_message_id:
           type: string
@@ -15615,9 +15559,6 @@ components:
       - stale_after_days
     StageOrderRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         stage_ids:
           type: array
@@ -15972,9 +15913,6 @@ components:
       - version
     TaskAssignRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         version:
           type: integer
@@ -15990,9 +15928,6 @@ components:
       - version
     TaskCancelRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         version:
           type: integer
@@ -16115,9 +16050,6 @@ components:
         * `IN_PROGRESS` - IN_PROGRESS
     TaskVersionRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         version:
           type: integer
@@ -16276,9 +16208,6 @@ components:
       - accounts
     TokenRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         access_token:
           type: string
@@ -16304,9 +16233,6 @@ components:
       - transfer_group_id
     TransferCreateRequest:
       type: object
-      description: |-
-        Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-        pierde en silencio).
       properties:
         variant_id:
           type: string

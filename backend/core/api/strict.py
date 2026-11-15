@@ -8,10 +8,11 @@ viven en el núcleo porque `pricing` y `deals` no se importan. `Checked`, `sente
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from drf_spectacular.extensions import OpenApiSerializerExtension
+from drf_spectacular.extensions import OpenApiSerializerExtension, OpenApiSerializerFieldExtension
 from rest_framework import serializers
 
 UNKNOWN = "Campo desconocido."
+KEY_MAX = 64  # lo que se repite del nombre de una clave desconocida
 
 
 class Strict:
@@ -70,13 +71,24 @@ class Choice(Strict, serializers.ChoiceField):
     }
 
 
+def shown_key(key: Any) -> str:
+    """El nombre de una clave desconocida como se responde: sus `KEY_MAX` primeros caracteres,
+    con `?` en lugar de lo que no es ASCII imprimible (una clave de 100 KB con NUL o bidi no
+    vuelve en la respuesta)."""
+    text = str(key)
+    shown = "".join(c if c.isascii() and c.isprintable() else "?" for c in text[:KEY_MAX])
+    return shown + "..." if len(text) > KEY_MAX else shown
+
+
 class Closed:
-    """Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
-    pierde en silencio)."""
+    # Un campo que el serializador no declara es 400 con su nombre (un `overide_value` no se
+    # pierde en silencio). Comentario y no docstring: drf-spectacular la pondría como
+    # descripción de cada serializador que no tiene la suya.
 
     def to_internal_value(self, data: Any) -> Any:
         if isinstance(data, Mapping):
-            extra = {str(key): [UNKNOWN] for key in data if key not in self.fields}  # type: ignore[attr-defined]
+            fields = self.fields  # type: ignore[attr-defined]
+            extra = {shown_key(key): [UNKNOWN] for key in data if key not in fields}
             if extra:
                 raise serializers.ValidationError(extra)
         return super().to_internal_value(data)  # type: ignore[misc]
@@ -93,3 +105,16 @@ def version_required(serializer: type[serializers.Serializer[Any]]) -> Any:
             return {**schema, "required": ["version"]}
 
     return serializer
+
+
+class BoundedList(OpenApiSerializerFieldExtension):
+    """`many=True` con `min_length` o `max_length`: DRF los comprueba, pero drf-spectacular no
+    los lleva al esquema (no son validadores). Aquí van como `minItems` y `maxItems`."""
+
+    target_class = serializers.ListSerializer
+    match_subclasses = True
+
+    def map_serializer_field(self, auto_schema: Any, direction: Any) -> Any:
+        schema = auto_schema._map_serializer_field(self.target, direction, bypass_extensions=True)
+        bounds = {"minItems": self.target.min_length, "maxItems": self.target.max_length}
+        return schema and {**schema, **{k: v for k, v in bounds.items() if v is not None}}
