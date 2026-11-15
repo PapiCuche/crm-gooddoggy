@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.pricing.api import costs, margins, prices, promotions, views
+from apps.pricing.api import batches, costs, margins, prices, promotions, views
 
 urlpatterns = [
     path("pricing/price-lists/", views.PriceListsView.as_view(), name="price-lists"),
@@ -29,6 +29,8 @@ urlpatterns = [
         costs.CostsView.as_view(),
         name="variant-costs",
     ),
+    path("pricing/batches/", batches.BatchesView.as_view(), name="price-batches"),
+    path("pricing/batches/<uuid:batch_id>/", batches.BatchView.as_view(), name="price-batch"),
     path("pricing/promotions/", promotions.PromotionsView.as_view(), name="promotions"),
     path(
         "pricing/promotions/<uuid:promotion_id>/",

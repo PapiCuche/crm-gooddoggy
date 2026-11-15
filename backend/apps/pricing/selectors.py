@@ -10,6 +10,7 @@ from django.db.models import Exists, OuterRef, Q, QuerySet
 from apps.access.selectors import ExecutionContext, has_permission
 from apps.pricing.models import (
     READ_PERMISSIONS,
+    PriceChangeBatch,
     PriceList,
     ProductPrice,
     Promotion,
@@ -29,6 +30,14 @@ def visible_price_lists(ectx: ExecutionContext) -> QuerySet[PriceList]:
         return lists
     held = [code for code in READ_PERMISSIONS if has_permission(ectx, code)]
     return lists.filter(required_permission__in=held)
+
+
+def visible_batches(ectx: ExecutionContext) -> QuerySet[PriceChangeBatch]:
+    """Los lotes de edición masiva de las listas que el actor ve, activas o no (como el historial):
+    uno de una lista oculta no se distingue de uno que no existe, porque sus líneas enseñan precios
+    (F3-49b). El permiso de la ruta lo pide quien lo sirve."""
+    lists = visible_price_lists(ectx).values("id")
+    return PriceChangeBatch.objects.filter(price_list_id__in=lists)
 
 
 def _pair(variant_id: UUID, price_list_id: UUID) -> QuerySet[ProductPrice]:

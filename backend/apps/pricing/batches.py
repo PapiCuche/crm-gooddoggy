@@ -3,8 +3,8 @@
 Crear un lote no cambia ningún precio: elige las variantes vivas de la selección, lee el precio que
 rige en la lista en `effective_at` (sin él, ahora) y guarda el lote (`PREVIEWED`) con una línea por
 variante: el precio de antes, el de después con su redondeo y la variación. Todo en la petición,
-con un tope de `LINES_MAX` líneas: uno mayor se rechaza antes de escribir. Cancelar y las rutas son
-F3-49b; aplicar (`set_price` por línea, `STALE` y step-up), el siguiente work item de la serie.
+con un tope de `LINES_MAX` líneas: uno mayor se rechaza antes de escribir. Las rutas son F3-49b y
+F3-49c (cancelar y las líneas); aplicar (`set_price` por línea, `STALE` y step-up), lo que sigue.
 
 No comprueba permisos: los declarará la API (`prices.bulk_update`), la única que lo importa
 (import-linter). Sí la lista: la que el actor no ve, como la que no existe o está inactiva, es «no
@@ -79,7 +79,7 @@ class ActorRefused(Exception):
         self.actor_type = actor_type
 
 
-def _person(ctx: TenantContext) -> None:
+def require_person(ctx: TenantContext) -> None:
     if ctx.actor_type != ActorType.USER or ctx.user_id is None or ctx.actor_id != ctx.user_id:
         raise ActorRefused(ctx.actor_type)
 
@@ -187,7 +187,7 @@ def create_batch(
     (`price.bulk_previewed`, con los recuentos y sin las líneas). No cambia ningún precio.
     `ActorRefused` antes de la primera consulta; `Invalid` (400, con su campo) o `TooManyLines`,
     siempre sin escribir nada."""
-    _person(ctx)
+    require_person(ctx)
     alias = require_scope(ctx)
     if operation not in OPERATIONS:
         raise Invalid("operation", ", ".join(OPERATIONS))
