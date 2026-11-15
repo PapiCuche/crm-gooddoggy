@@ -357,6 +357,7 @@ Decisiones del propietario de la serie (detalle y recomendaciones en ADR-032 §1
 
   Sigue siendo una cota inferior (los 200 `IGNORED` más recientes); el total sale de los registros.
 - **F7-14b ([#787](https://github.com/PapiCuche/crm-gooddoggy/issues/787)):** [ADR-037](../adr/ADR-037-whatsapp-bsuid-identity.md) (`Proposed`) propone la identidad por BSUID: el id solo en `contact_identities` por cuenta, enlace automático solo cuando Meta afirma la pareja teléfono–BSUID, sin fusión, contacto sin teléfono, envío por `to` o por `recipient`, y las decisiones D-BSUID-01 a D-BSUID-13. Los arreglos de código de la revisión de #784 (`user_id_seen` en todo ítem de mensaje, la prueba con `1e999` y la de las claves que añade `parse`) pasan a F7-14b2 ([#799](https://github.com/PapiCuche/crm-gooddoggy/issues/799)).
+- **Hecho en F7-14b2 ([#799](https://github.com/PapiCuche/crm-gooddoggy/issues/799)):** sin migraciones. `meta_webhook.parse` escribe `user_id_seen` en **todo** ítem de mensaje (cierto solo sin `from` y con algún BSUID), así que la marca del cuerpo nunca sobrevive; con teléfono queda `false`. Un `from` infinito (`1e999` en el cuerpo crudo), que `ingress.clean` guardaría como `null` y `inbound` contaría como `NO_PHONE`, se guarda como texto y queda `BAD_PHONE` (un `from` presente y mal formado), con la marca sobrescrita. Una prueba fija que `parse` solo añade `user_id_seen` a un ítem sin teléfono y no cambia ninguna otra clave: el BSUID nunca se copia.
 
 ## Qué necesita el propietario (sin ningún valor real)
 
