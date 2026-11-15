@@ -222,8 +222,12 @@ describe("AuditList", () => {
       await screen.findByRole("list", { name: "Auditoría" });
       const options = (name: string) =>
         [...select(name).options].map((option) => [option.value, option.text]);
-      expect(options("Acción")).toHaveLength(41); // con catálogo, almacenes, stock y contactos (F4-04)
+      expect(options("Acción")).toHaveLength(42); // y las transferencias de stock (F3-32)
       expect(options("Acción")).toContainEqual(["contact.created", "Contacto creado"]);
+      expect(options("Acción")).toContainEqual([
+        "inventory.transferred",
+        "Stock transferido entre almacenes",
+      ]);
       expect(options("Acción")).toContainEqual(["inventory.issued", "Salida de stock registrada"]);
       expect(options("Acción")).toContainEqual(["warehouse.updated", "Almacén editado"]);
       expect(options("Acción")).toContainEqual(["membership.invited", "Persona invitada"]);
@@ -251,6 +255,7 @@ describe("AuditList", () => {
         ["product", "Producto"],
         ["warehouse", "Almacén"],
         ["inventory_movement", "Movimiento de inventario"],
+        ["inventory_transfer", "Transferencia de inventario"],
         ["contact", "Contacto"],
       ]);
       expect(options("Quién")).toEqual([

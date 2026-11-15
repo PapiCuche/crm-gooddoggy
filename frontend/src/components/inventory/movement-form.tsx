@@ -22,7 +22,7 @@ type Kind = keyof typeof Kinds;
 const KINDS = Object.values(Kinds);
 // Una clave por movimiento (`[A-Za-z0-9._:-]{8,100}` en la API): 32 cifras hexadecimales al
 // azar. `getRandomValues` existe también fuera de HTTPS, a diferencia de `randomUUID`.
-const freshKey = () =>
+export const freshKey = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");

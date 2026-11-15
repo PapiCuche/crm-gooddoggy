@@ -1,11 +1,12 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { CursorList } from "@/components/lists/cursor-list";
 import { getInventoryMovementsListQueryKey, inventoryMovementsList } from "@/lib/api/client";
-import type { Movement } from "@/lib/api/model";
+import type { Movement, Warehouse } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { placed, useCellPicker } from "./cell-picker";
@@ -14,7 +15,7 @@ import { placed, useCellPicker } from "./cell-picker";
 // …/inventory/movements/`, F3-11), página a página con `CursorList`: de toda la organización, de
 // un almacén, de una variante o de los dos. Cada fila nombra su variante con el SKU que trae la
 // API (F3-19), también si ya se borró del catálogo. Quién lo ve lo decide la API
-// (`inventory.view`).
+// (`inventory.view`). Las dos patas de una transferencia dicen las dos su ruta (F3-32).
 export function MovementsHistory() {
   const t = useTranslations("ledger");
   const format = useFormatter();
@@ -41,7 +42,7 @@ export function MovementsHistory() {
       empty={<p className="text-muted">{t("empty")}</p>}
       rowClassName="grid gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start"
     >
-      {(movement) => {
+      {(movement, rows) => {
         const where = named.get(movement.warehouse_id);
         const change = movement.quantity;
         return (
@@ -57,7 +58,13 @@ export function MovementsHistory() {
               </span>
               <span className="text-muted text-sm wrap-anywhere">{movement.reason}</span>
               <span className="text-muted text-sm wrap-anywhere">
-                {where ? t("warehouse", placed(where)) : t("unknownWarehouse")}
+                {movement.transfer_group_id ? (
+                  <TransferRoute leg={movement} rows={rows} named={named} slug={slug} />
+                ) : where ? (
+                  t("warehouse", placed(where))
+                ) : (
+                  t("unknownWarehouse")
+                )}
               </span>
             </p>
             <p className="flex flex-wrap gap-x-3 text-sm sm:flex-col sm:items-end sm:text-right">
@@ -82,4 +89,40 @@ export function MovementsHistory() {
       }}
     </CursorList>
   );
+}
+
+// «Origen → destino» de una pata de transferencia. La otra pata suele estar en la lista (se
+// registraron juntas); si un filtro o la paginación la dejan fuera, se pide su transferencia
+// (`?transfer_group_id=`, F3-31). Mientras tanto, o si no llega, el otro lado no se nombra.
+function TransferRoute({
+  leg,
+  rows,
+  named,
+  slug,
+}: {
+  leg: Movement;
+  rows: readonly Movement[];
+  named: Map<string, Warehouse>;
+  slug: string;
+}) {
+  const t = useTranslations("ledger");
+  const group = leg.transfer_group_id!;
+  const pair = (list: readonly Movement[]) =>
+    list.find((row) => row.transfer_group_id === group && row.id !== leg.id);
+  const loaded = pair(rows);
+  const params = { transfer_group_id: group };
+  const legs = useQuery({
+    queryKey: getInventoryMovementsListQueryKey(slug, params),
+    queryFn: ({ signal }) => inventoryMovementsList(slug, params, { signal }),
+    enabled: !loaded,
+    staleTime: Infinity, // las patas no cambian
+  });
+  const other = loaded ?? pair(legs.data?.results ?? []);
+  const name = (id: string | undefined) => {
+    const where = id ? named.get(id) : undefined;
+    return where ? t("warehouse", placed(where)) : id ? t("unknownWarehouse") : "…";
+  };
+  const out = leg.movement_type === "TRANSFER_OUT";
+  const [from, to] = out ? [leg, other] : [other, leg];
+  return t("route", { from: name(from?.warehouse_id), to: name(to?.warehouse_id) });
 }
