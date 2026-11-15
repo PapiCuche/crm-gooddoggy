@@ -117,9 +117,14 @@ def _uuid(value: Any, what: str) -> UUID:
         raise ValueError(f"{what}: un identificador") from None
 
 
-def _plain(value: Any, depth: int) -> bool:
+def _plain(value: Any, depth: int, left: list[int]) -> bool:
     """JSON de verdad y acotado: sin NaN ni infinitos, sin NUL (PostgreSQL no lo guarda), con
-    claves de texto y a lo más `FIELDS_DEPTH` niveles de objeto o lista (el primero es 1)."""
+    claves de texto y a lo más `FIELDS_DEPTH` niveles de objeto o lista (el primero es 1). Recorre
+    a lo más `FIELDS_BYTES` elementos (`left`): cada uno ocupa al menos un byte serializado, así
+    que más ya no cabe, y una lista que se repite por referencia no hace lento el recorrido."""
+    left[0] -= 1
+    if left[0] < 0:
+        raise Invalid("requires_fields", f"hasta {FIELDS_BYTES} bytes serializado")
     kind = type(value)
     if kind is str:
         return "\x00" not in value
@@ -130,24 +135,26 @@ def _plain(value: Any, depth: int) -> bool:
     if depth > FIELDS_DEPTH or kind not in (dict, list):
         return False
     if kind is list:
-        return all(_plain(item, depth + 1) for item in value)
+        return all(_plain(item, depth + 1, left) for item in value)
     return all(
-        type(key) is str and "\x00" not in key and _plain(item, depth + 1)
+        type(key) is str and "\x00" not in key and _plain(item, depth + 1, left)
         for key, item in value.items()
     )
 
 
 def requires_fields(value: Any) -> dict[str, Any]:
     """Qué datos pide una etapa: un objeto JSON acotado (`_plain`) de hasta `FIELDS_BYTES` bytes
-    en UTF-8, compacto. La profundidad se mira antes de serializar, así que ni un objeto
-    circular ni uno muy anidado llegan a `json.dumps`. `Invalid` en `requires_fields`."""
-    if type(value) is not dict or not _plain(value, 1):
+    en UTF-8, compacto. La profundidad y el número de elementos se miran antes de serializar, así
+    que ni un objeto circular ni uno muy anidado o enorme llegan a `json.dumps`. Lo que este no
+    convierte (un sustituto suelto, un entero de más de 4300 cifras) también es `Invalid` en
+    `requires_fields`."""
+    if type(value) is not dict or not _plain(value, 1, [FIELDS_BYTES]):
         shape = f"un objeto JSON de hasta {FIELDS_DEPTH} niveles, sin NaN, infinitos ni NUL"
         raise Invalid("requires_fields", shape)
     try:
         size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
-    except UnicodeEncodeError:  # un sustituto suelto: ni UTF-8 ni `jsonb` lo admiten
-        raise Invalid("requires_fields", "un texto UTF-8 válido") from None
+    except ValueError:  # `UnicodeEncodeError` o el límite de cifras de `int` a texto
+        raise Invalid("requires_fields", "un objeto JSON que se pueda escribir en UTF-8") from None
     if size > FIELDS_BYTES:
         raise Invalid("requires_fields", f"hasta {FIELDS_BYTES} bytes serializado")
     found: dict[str, Any] = value

@@ -13,7 +13,9 @@ import pytest
 
 from apps.deals import commands
 from apps.deals.api import inputs
+from apps.deals.models import PipelineStage
 from tests import test_contacts_api, test_lost_reasons, test_self_context
+from tests.test_inventory_stock import race
 from tests.test_lost_reasons import audit, count, run
 from tests.test_pipeline_commands import basic, new, order, spec, stage
 from tests.test_pipelines_api import pipeline
@@ -56,6 +58,7 @@ WRONG_SHAPE = [
     [], None, "{}", 5, (),
 ]  # fmt: skip
 SURROGATE = {"a": "\ud800"}  # ni UTF-8 ni `jsonb` lo admiten
+HUGE_INT = {"a": 10**4300}  # `json.dumps` no escribe un entero de más de 4300 cifras
 
 
 def refused(value: Any) -> str:
@@ -75,7 +78,10 @@ def test_requires_fields_is_bounded_in_bytes_depth_and_shape() -> None:
         assert refused(value) == "hasta 4096 bytes serializado"
     for value in WRONG_SHAPE:
         assert refused(value) == "un objeto JSON de hasta 4 niveles, sin NaN, infinitos ni NUL"
-    assert refused(SURROGATE) == "un texto UTF-8 válido"
+    for value in (SURROGATE, HUGE_INT):
+        assert refused(value) == "un objeto JSON que se pueda escribir en UTF-8"
+    assert refused({"a": [0] * 4095}) == "hasta 4096 bytes serializado"  # 4097 elementos
+    assert commands.requires_fields({"a": [0] * 2044}) == {"a": [0] * 2044}  # 4095 bytes
     assert (commands.FIELDS_BYTES, commands.FIELDS_DEPTH, commands.STAGES_MAX) == (4096, 4, 30)
     assert (inputs.FIELDS_BYTES, inputs.FIELDS_DEPTH, inputs.STAGES_MAX) == (4096, 4, 30)
 
@@ -86,7 +92,7 @@ def test_every_stage_command_applies_the_cap_and_writes_nothing(
     made = new(world)
     nuevo = stage(made, "nuevo").pk
     before = (count(migrator, "pipelines"), count(migrator, "pipeline_stages"), audit(migrator))
-    for value in [*TOO_BIG, *WRONG_SHAPE[:3], SURROGATE]:
+    for value in [*TOO_BIG, *WRONG_SHAPE[:3], SURROGATE, HUGE_INT]:
         attempts: list[tuple[Any, dict[str, Any]]] = [
             (commands.create_pipeline, {
                 "name": "Otro", "code": "otro", "kind": "RETAIL",
@@ -105,6 +111,13 @@ def test_every_stage_command_applies_the_cap_and_writes_nothing(
     run(world, commands.update_stage, stage_id=nuevo, requires_fields=edge)
     assert stage(made, "nuevo").requires_fields == edge
     assert audit(migrator)[-1][2]["requires_fields"] == [{}, edge]
+
+
+@pytest.mark.timeout(10)
+def test_a_list_repeated_by_reference_is_refused_without_walking_it() -> None:
+    row = [0] * 1000
+    shared = {"a": [[row] * 1000] * 1000}  # mil millones de elementos, pocos objetos
+    assert refused(shared) == "hasta 4096 bytes serializado"
 
 
 def thirty(world: SimpleNamespace, code: str = "treinta", inactive: int = 0) -> Any:
@@ -209,3 +222,15 @@ def test_the_route_words_a_bad_requires_fields_as_the_command_does(
             "requires_fields": [{"code": "invalid", "message": message}]
         }
     assert snapshot(migrator) == before
+
+
+def test_two_additions_at_once_never_pass_the_command_cap(world: SimpleNamespace) -> None:
+    made = new(world, "holgado", stages=[*[spec(f"s{i}") for i in range(27)], *basic()[2:]])
+    assert len(order(made)) == 29
+
+    def adding(code: str) -> Any:
+        return lambda tenant: commands.add_stage(tenant, pipeline_id=made.pk, **spec(code))
+
+    first, second = race(world.a, world.ana, [adding("a"), adding("b")])
+    assert isinstance(first, PipelineStage) and second == "Invalid"
+    assert len(order(made)) == 30
