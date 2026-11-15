@@ -173,6 +173,7 @@ import type {
   QuoteApproveRequest,
   QuoteCancelRequest,
   QuoteCreateRequest,
+  QuoteDeclineRequest,
   QuoteDetail,
   QuoteDiscountRequest,
   QuoteIssueRequest,
@@ -14604,12 +14605,119 @@ export const useQuotesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
   return useMutation(getQuotesUpdateMutationOptions(options), queryClient);
 };
 
+export const getQuotesAcceptUrl = (orgSlug: string, quoteId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/accept/`;
+};
+
+/**
+ * Registra que el cliente aceptó una cotización emitida (`SENT` o `VIEWED`) dentro de su validez: `ACCEPTED`. Lleva su oportunidad a la etapa `pago-pendiente` si quien acepta la ve y la puede cambiar y el pipeline la tiene; si no, la cotización se acepta igual. Con la validez pasada, 409 `QUOTE_EXPIRED` aunque aún no esté marcada como vencida. Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_ANSWERABLE`, `QUOTE_EXPIRED`, `QUOTE_REFUSED`.
+ */
+export const quotesAccept = async (
+  orgSlug: string,
+  quoteId: string,
+  quoteVersionRequest: QuoteVersionRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesAcceptUrl(orgSlug, quoteId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quoteVersionRequest),
+  });
+};
+
+export const getQuotesAcceptMutationKey = () => ["quotesAccept"] as const;
+
+export const getQuotesAcceptMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesAccept>>,
+    TError,
+    QuotesAcceptMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesAccept>>,
+  TError,
+  QuotesAcceptMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesAcceptMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesAccept>>,
+    QuotesAcceptMutationVariables
+  > = (props) => {
+    const { orgSlug, quoteId, data } = props ?? {};
+
+    return quotesAccept(orgSlug, quoteId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesAcceptMutationResult = NonNullable<Awaited<ReturnType<typeof quotesAccept>>>;
+export type QuotesAcceptMutationBody = QuoteVersionRequest;
+export type QuotesAcceptMutationError = ErrorType<Error>;
+export type QuotesAcceptMutationVariables = {
+  orgSlug: string;
+  quoteId: string;
+  data: QuoteVersionRequest;
+};
+
+export const useQuotesAccept = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesAccept>>,
+      TError,
+      QuotesAcceptMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesAccept>>,
+  TError,
+  QuotesAcceptMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesAcceptMutationOptions(options), queryClient);
+};
+
 export const getQuotesApproveUrl = (orgSlug: string, quoteId: string) => {
   return `/api/v1/o/${orgSlug}/quotes/${quoteId}/approve/`;
 };
 
 /**
- * Aprueba la solicitud abierta: `APPROVED`. Nunca quien la pidió o la envió (también en una organización de una persona), dentro de su propio límite, y cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`, siempre igual). Con `quotes.view`, `quotes.approve`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_PENDING`, `SELF_APPROVAL_FORBIDDEN`, `BEYOND_LIMIT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla.
+ * Aprueba la solicitud abierta: `APPROVED`. Nunca quien la pidió o la envió (también en una organización de una persona), dentro de su propio límite, y cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`, siempre igual). Con `quotes.view`, `quotes.approve`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_PENDING`, `SELF_APPROVAL_FORBIDDEN`, `BEYOND_LIMIT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).
  */
 export const quotesApprove = async (
   orgSlug: string,
@@ -14818,12 +14926,119 @@ export const useQuotesCancel = <TError = ErrorType<Error>, TContext = unknown>(
   return useMutation(getQuotesCancelMutationOptions(options), queryClient);
 };
 
+export const getQuotesDeclineUrl = (orgSlug: string, quoteId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/decline/`;
+};
+
+/**
+ * Registra que el cliente rechazó una cotización emitida (`SENT` o `VIEWED`) dentro de su validez, con su motivo: `REJECTED`. No es `…/reject/`, que es quien aprueba diciendo que no a una solicitud. Con la validez pasada, 409 `QUOTE_EXPIRED`. Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_ANSWERABLE`, `QUOTE_EXPIRED`, `QUOTE_REFUSED`.
+ */
+export const quotesDecline = async (
+  orgSlug: string,
+  quoteId: string,
+  quoteDeclineRequest: QuoteDeclineRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesDeclineUrl(orgSlug, quoteId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quoteDeclineRequest),
+  });
+};
+
+export const getQuotesDeclineMutationKey = () => ["quotesDecline"] as const;
+
+export const getQuotesDeclineMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesDecline>>,
+    TError,
+    QuotesDeclineMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesDecline>>,
+  TError,
+  QuotesDeclineMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesDeclineMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesDecline>>,
+    QuotesDeclineMutationVariables
+  > = (props) => {
+    const { orgSlug, quoteId, data } = props ?? {};
+
+    return quotesDecline(orgSlug, quoteId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesDeclineMutationResult = NonNullable<Awaited<ReturnType<typeof quotesDecline>>>;
+export type QuotesDeclineMutationBody = QuoteDeclineRequest;
+export type QuotesDeclineMutationError = ErrorType<Error>;
+export type QuotesDeclineMutationVariables = {
+  orgSlug: string;
+  quoteId: string;
+  data: QuoteDeclineRequest;
+};
+
+export const useQuotesDecline = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesDecline>>,
+      TError,
+      QuotesDeclineMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesDecline>>,
+  TError,
+  QuotesDeclineMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesDeclineMutationOptions(options), queryClient);
+};
+
 export const getQuotesIssueUrl = (orgSlug: string, quoteId: string) => {
   return `/api/v1/o/${orgSlug}/quotes/${quoteId}/issue/`;
 };
 
 /**
- * Emite (`SENT`) una cotización aprobada, o un borrador que cabe en el límite de quien emite (se vuelve a medir), y congela el cliente, la empresa, las condiciones y la validez (la dada o la que tiene; futura, o 400). Quien emite ha de ver el contacto (si no, el 400 de crear). La de la IA, solo aprobada. Cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`, siempre igual). Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_ISSUABLE`, `NEEDS_APPROVAL`, `QUOTE_REFUSED`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla.
+ * Emite (`SENT`) una cotización aprobada, o un borrador que cabe en el límite de quien emite (se vuelve a medir), y congela el cliente, la empresa, las condiciones y la validez (la dada o la que tiene; futura, o 400). Quien emite ha de ver el contacto (si no, el 400 de crear). La de la IA, solo aprobada. Cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`, siempre igual). Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_ISSUABLE`, `NEEDS_APPROVAL`, `QUOTE_REFUSED`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).
  */
 export const quotesIssue = async (
   orgSlug: string,
@@ -15039,7 +15254,7 @@ export const getQuotesPriceUrl = (orgSlug: string, quoteId: string, lineId: stri
 };
 
 /**
- * Precio final a mano de una línea de esa cotización, menor que el vigente y con motivo; pide aprobación. 422 `PRICE_NOT_ALLOWED`, siempre igual, si no se admite. Con `quotes.view`, `quotes.update`, `quotes.override_price`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla.
+ * Precio final a mano de una línea de esa cotización, menor que el vigente y con motivo; pide aprobación. 422 `PRICE_NOT_ALLOWED`, siempre igual, si no se admite. Con `quotes.view`, `quotes.update`, `quotes.override_price`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).
  */
 export const quotesPrice = async (
   orgSlug: string,
@@ -15255,7 +15470,7 @@ export const getQuotesRequestApprovalUrl = (orgSlug: string, quoteId: string) =>
 };
 
 /**
- * Envía un borrador: `APPROVED` si cabe en el límite de quien envía, o `PENDING_APPROVAL`. Un precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`). Con `quotes.view`, `quotes.update`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla.
+ * Envía un borrador: `APPROVED` si cabe en el límite de quien envía, o `PENDING_APPROVAL`. Un precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`). Con `quotes.view`, `quotes.update`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `QUOTE_NOT_DRAFT`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla y de leer el cuerpo (uno inválido cuenta).
  */
 export const quotesRequestApproval = async (
   orgSlug: string,
@@ -15357,6 +15572,113 @@ export const useQuotesRequestApproval = <TError = ErrorType<Error>, TContext = u
   TContext
 > => {
   return useMutation(getQuotesRequestApprovalMutationOptions(options), queryClient);
+};
+
+export const getQuotesReviseUrl = (orgSlug: string, quoteId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/revise/`;
+};
+
+/**
+ * Revisa una cotización `APPROVED`, `SENT` o `VIEWED` sin editarla: queda `CANCELLED` (el cliente ya no puede aceptarla) y responde la revisión siguiente del mismo número, en `DRAFT`, con los precios de ahora y sin descuentos, precios manuales ni aprobación. Un borrador se devuelve tal cual. Si ya salió, también `quotes.send` en su alcance (si no, 403 después del alcance). Quien revisa ha de ver el contacto y la oportunidad (si no, el 400 de crear); 400 en `variant_id` si una línea ya no tiene precio vigente. Con `quotes.view`, `quotes.create`, `quotes.update`, `quotes.cancel`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_REVISABLE`, `QUOTE_REFUSED`.
+ */
+export const quotesRevise = async (
+  orgSlug: string,
+  quoteId: string,
+  quoteVersionRequest: QuoteVersionRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesReviseUrl(orgSlug, quoteId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quoteVersionRequest),
+  });
+};
+
+export const getQuotesReviseMutationKey = () => ["quotesRevise"] as const;
+
+export const getQuotesReviseMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesRevise>>,
+    TError,
+    QuotesReviseMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesRevise>>,
+  TError,
+  QuotesReviseMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesReviseMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesRevise>>,
+    QuotesReviseMutationVariables
+  > = (props) => {
+    const { orgSlug, quoteId, data } = props ?? {};
+
+    return quotesRevise(orgSlug, quoteId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesReviseMutationResult = NonNullable<Awaited<ReturnType<typeof quotesRevise>>>;
+export type QuotesReviseMutationBody = QuoteVersionRequest;
+export type QuotesReviseMutationError = ErrorType<Error>;
+export type QuotesReviseMutationVariables = {
+  orgSlug: string;
+  quoteId: string;
+  data: QuoteVersionRequest;
+};
+
+export const useQuotesRevise = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesRevise>>,
+      TError,
+      QuotesReviseMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesRevise>>,
+  TError,
+  QuotesReviseMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesReviseMutationOptions(options), queryClient);
 };
 
 export const getQuotesWithdrawRequestUrl = (orgSlug: string, quoteId: string) => {

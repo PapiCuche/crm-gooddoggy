@@ -6,17 +6,18 @@ misma `DoesNotExist`), la versión (`StaleVersion`), el estado (`NotIssuable`) y
 **Emitir** pasa `APPROVED`, o un `DRAFT` que quien emite puede enviar sin aprobación, a `SENT`.
 Antes de tocar el costo, quien emite ha de ver al contacto (`contacts.view` con su alcance): si no
 existe, está borrado o no lo ve es el mismo `BadReference("contact_id")`, y solo se bloquea si lo
-ve. Los precios manuales vuelven a pasar por el suelo de costo (`PriceRefused`, sin cifras). Desde
-`DRAFT` se vuelve a medir con quien emite: un autor humano, sin precio manual y dentro de **su**
-límite; si no, `NeedsApproval` sin escribir nada. Lo de la IA (sin autor) solo sale de `APPROVED`
-con la última solicitud aprobada. Congela la fotografía de la empresa (nombre), la del cliente
-(nombre y documento, nada más), las condiciones y la garantía (texto de quien emite) y la validez,
-que ha de ser futura. Audita `quote.issued` y emite el evento `quote.issued` (solo ids), en la
-misma transacción.
+ve. Desde `DRAFT` se vuelve a medir con quien emite: un autor humano, sin precio manual y dentro
+de **su** límite; si no, `NeedsApproval` sin escribir nada. Lo de la IA (sin autor) solo sale de
+`APPROVED` con la última solicitud aprobada. Solo después los precios manuales vuelven a pasar por
+el suelo de costo (`PriceRefused`, sin cifras): lo que necesita aprobación no lo mide. Congela la
+fotografía de la empresa (nombre), la del cliente (nombre y documento, nada más), las condiciones y
+la garantía (texto de quien emite) y la validez, que ha de ser futura. Audita `quote.issued` y
+emite el evento `quote.issued` (solo ids), en la misma transacción.
 
 **Revisar** (F5-09c4) nunca edita lo emitido: con `quotes.create`, `quotes.update` y `quotes.cancel`
-(y, si ya salió, `quotes.send`) sobre la cotización bloqueada, una `APPROVED`, `SENT` o `VIEWED`
-pasa a `CANCELLED` y nace la revisión siguiente del mismo número, en `DRAFT`, revalorada por el
+(y, si ya salió, `quotes.send`) sobre la cotización bloqueada, y viendo su contacto y su oportunidad
+como al crear (si no, el mismo `BadReference`), una `APPROVED`, `SENT` o `VIEWED` pasa a
+`CANCELLED` y nace la revisión siguiente del mismo número, en `DRAFT`, revalorada por el
 `PricingService` en su lista a la hora de ahora, sin descuentos, precios manuales, aprobaciones,
 fotografías ni validez: para salir vuelve a pasar por enviar o emitir (que miden con quien actúa;
 la de la IA, que sigue sin autor, pide aprobación). Un borrador no se revisa: se sigue editando."""
@@ -119,12 +120,12 @@ def issue_quote(
                 raise ValueError("validez: una fecha futura")
             contact = _contact(alias, ectx, quote.contact_id)
             lines = _lines(alias, quote)
-            _floor(ctx, quote, lines)
             if quote.status == QuoteStatus.DRAFT:  # se vuelve a medir, con quien emite
                 if _verdict(alias, ectx, quote, lines)[3] is not None:
-                    raise NeedsApproval(quote_id)
+                    raise NeedsApproval(quote_id)  # antes del suelo: un precio manual no se mide
             elif quote.created_by_user_id is None and not _approved(alias, quote):
                 raise NeedsApproval(quote_id)
+            _floor(ctx, quote, lines)
             company = Organization.objects.using(alias).get(pk=ctx.organization_id)
             before, was = quote.status, quote.valid_until
             _stamp(ctx, alias, quote, {
@@ -173,7 +174,7 @@ def revise_quote(ctx: TenantContext, *, quote_id: UUID, version: int) -> Quote:
                 raise NotAllowed("quotes.send")  # ya la tiene el cliente
             if not can(ectx, "quotes.cancel", old):  # revisar cancela la anterior
                 raise NotAllowed("quotes.cancel")
-            _links(alias, old.contact_id, old.opportunity_id, ectx=None)  # sin alcance hasta #729
+            _links(alias, old.contact_id, old.opportunity_id, ectx=ectx)  # como al crear
             rows, price = _priced(alias, ctx, wanted, old.price_list_id)
             totals = _totals(rows, TAX_RATE)
             with connections[alias].cursor() as cursor:  # el reloj de la transacción: la base

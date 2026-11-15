@@ -23,7 +23,10 @@ AMOUNT = "Texto decimal sin signo ni exponente, hasta 12 cifras enteras y 2 deci
 
 
 def _instant(value: str) -> dt.datetime:
-    moment = parse_datetime(value)
+    try:
+        moment = parse_datetime(value)
+    except ValueError:  # bien formada pero imposible (30 de febrero): su texto repite lo recibido
+        moment = None
     if moment is None:
         raise ValueError(f"fecha y hora {INSTANT[:-1]}")
     return commands._moment(moment)
@@ -96,8 +99,8 @@ class QuoteVersionSerializer(Closed, serializers.Serializer[Any]):
     version = Whole(min_value=1, max_value=2**31 - 1, help_text=VERSION)
 
 
-def _reason(value: str) -> str:
-    if not (why := commands._text(value, "motivo", discounts.REASON_MAX)):
+def _reason(value: str, top: int = discounts.REASON_MAX) -> str:
+    if not (why := commands._text(value, "motivo", top)):
         raise ValueError("motivo: obligatorio")
     return why
 
@@ -160,3 +163,12 @@ class QuoteIssueSerializer(QuoteVersionSerializer):
         lambda v: commands._text(v, "garantía", lifecycle.WARRANTY_MAX), required=False,
         allow_blank=True, help_text=f"Garantía, hasta {lifecycle.WARRANTY_MAX} caracteres.",
     )  # fmt: skip
+
+
+class QuoteDeclineSerializer(QuoteVersionSerializer):
+    """El motivo que dio el cliente al rechazar la cotización emitida."""
+
+    reason = Checked(
+        lambda v: _reason(v, commands.REASON_MAX),
+        help_text=f"Obligatorio, hasta {commands.REASON_MAX} caracteres.",
+    )

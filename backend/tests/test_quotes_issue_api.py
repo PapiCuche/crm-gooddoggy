@@ -229,3 +229,45 @@ def test_two_issues_or_an_issue_and_a_cancel_at_once_leave_one(
     assert sorted(got, key=str) == [(200, None, []), (409, "STALE_VERSION", [])]
     for found in (DONE.format("audit_logs", "action"), DONE.format("outbox_events", "event_type")):
         assert migrator.execute(found).fetchone() == (1,), found  # una auditoría y un evento
+
+
+def test_a_draft_that_kept_a_manual_price_needs_approval_before_the_floor_is_measured(
+    lab: SimpleNamespace, migrator: DB
+) -> None:
+    quote, [line] = draft(lab)
+    vera = signed(lab.vera)
+    assert price(vera, quote, line, "4200.00").json()["status"] == "PENDING_APPROVAL"
+    assert act(vera, quote, "withdraw-request").json()["status"] == "DRAFT"  # con el precio
+    asked = len(lab.asked)
+    for who in (lab.vera, lab.ana):  # ni la Owner: el precio manual pide aprobación, sin medirlo
+        assert fail(issue(signed(who), quote, version=3))[:2] == (409, "NEEDS_APPROVAL")
+    assert len(lab.asked) == asked and refusals(migrator) == []
+    assert migrator.execute(STATE, [quote]).fetchone() == ("DRAFT", 3)
+
+
+def test_who_cannot_see_the_contact_gets_the_400_before_the_floor_is_measured(
+    lab: SimpleNamespace, migrator: DB
+) -> None:
+    later = timezone.now() + timedelta(days=3)
+    cost(lab, lab.case, "80", ends_at=later)
+    quote, [_, line] = draft(lab, "vera", lab.phone, lab.case)
+    assert price(signed(lab.vera), quote, line, "95.00").status_code == 200
+    assert act(signed(lab.ana), quote, "approve").json()["status"] == "APPROVED"
+    cost(lab, lab.case, "99", starts_at=later)  # el precio ya no lo cubre
+    blind = member(lab, {"quotes.view": "ORGANIZATION", "quotes.send": "ORGANIZATION"})
+    asked = len(lab.asked)
+    assert fail(issue(signed(blind), quote, version=3)) == (400, "VALIDATION_ERROR", ["_"])
+    assert len(lab.asked) == asked and refusals(migrator) == []  # ni medido ni auditado
+    assert migrator.execute(STATE, [quote]).fetchone() == ("APPROVED", 3)
+
+
+@pytest.mark.parametrize(
+    "value", ["2030-02-30T10:00:00-05:00", "2030-01-01T25:00:00Z", "2030-01-01T10:00:00+25:00"]
+)
+def test_an_impossible_validity_has_the_fixed_message_never_the_parsers(
+    lab: SimpleNamespace, value: str
+) -> None:
+    sent = issue(signed(lab.vera), draft(lab)[0], valid_until=value)
+    assert fail(sent) == (400, "VALIDATION_ERROR", ["valid_until"])
+    fixed = "Fecha y hora ISO 8601 con zona horaria, como 2026-11-20T23:59:00-05:00."
+    assert sent.json()["fields"]["valid_until"] == [{"code": "invalid", "message": fixed}]

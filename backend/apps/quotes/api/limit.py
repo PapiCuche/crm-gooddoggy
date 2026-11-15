@@ -3,7 +3,9 @@
 `Retry-After` (al minuto), igual exista o no la cotización. Ventana fija en `login_throttles` (en un
 cambio de ventana caben dos topes). Va antes de `TenantResolutionMiddleware`, que deshace los
 errores: el contador queda, y la negativa marcada (`refusal`) se audita luego en su transacción
-(`quote.price_refused`, `DENIED`, ruta e ids). Aprobar (F5-09e3) y emitir (F5-09e4) cuentan."""
+(`quote.price_refused`, `DENIED`, ruta e ids). Aprobar (F5-09e3) y emitir (F5-09e4) cuentan;
+aceptar, declinar y revisar (F5-09e5) no miden el suelo y no cuentan. Por diseño, un cuerpo inválido
+(un 400) también cuenta: se cuenta antes de leerlo (decisión del dueño sobre los topes)."""
 
 import logging
 import re
