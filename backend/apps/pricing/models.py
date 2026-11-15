@@ -432,3 +432,123 @@ class PromotionPriceList(TenantModel):
                 fields=["organization_id", "promotion", "price_list"], name="promo_lists_pair_uq"
             ),
         ]
+
+
+class BatchKind(models.TextChoices):
+    BULK_ADJUST = "BULK_ADJUST"
+    IMPORT = "IMPORT"  # reservados (§E.8): hoy solo se escribe BULK_ADJUST
+    MANUAL_MULTI = "MANUAL_MULTI"
+
+
+class BatchStatus(models.TextChoices):
+    DRAFT = "DRAFT"
+    PREVIEWED = "PREVIEWED"
+    APPLYING = "APPLYING"
+    APPLIED = "APPLIED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+
+
+class BatchItemStatus(models.TextChoices):
+    PENDING = "PENDING"
+    APPLIED = "APPLIED"
+    SKIPPED = "SKIPPED"
+    ERROR = "ERROR"
+    STALE = "STALE"
+
+
+class PriceChangeBatch(TenantModel):
+    """Un lote de cambio de precios en una lista (§E.8, ADR-006 §3, 04 §K.5): la selección, la
+    operación y el redondeo en `params`, con sus líneas calculadas (la previsualización) en
+    `PriceChangeBatchItem`. `effective_at` NULL: rige cuando se aplique. Sin borrado."""
+
+    Kind = BatchKind
+    Status = BatchStatus
+
+    id = uuid7_primary_key()
+    kind = models.CharField(max_length=16, choices=BatchKind.choices)
+    status = models.CharField(max_length=10, choices=BatchStatus.choices)
+    price_list = models.ForeignKey(  # misma organización: FK compuesta en la migración
+        PriceList, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    params = models.JSONField()
+    reason = models.CharField(max_length=500)
+    effective_at = models.DateTimeField(null=True, blank=True)
+    summary = models.JSONField(default=dict)
+    created_by_user_id = models.UUIDField(null=True, blank=True)  # FKs compuestas a membresías
+    applied_by_user_id = models.UUIDField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    version = models.IntegerField(default=1)  # [V]
+
+    class Meta:
+        db_table = "price_change_batches"
+        constraints = [
+            models.UniqueConstraint(  # destino de la FK compuesta de sus líneas: la misma lista
+                fields=["organization_id", "id", "price_list"], name="price_batches_list_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(kind__in=BatchKind.values), name="price_batches_kind_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=BatchStatus.values), name="price_batches_status_ck"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind} {self.status}"
+
+
+class PriceChangeBatchItem(TenantModel):
+    """Una línea del lote: el precio de antes (el que rige en la fecha del lote) y el de después.
+    `SKIPPED` y `ERROR` dicen su motivo en `error`; solo una `PENDING` se aplicará. Lo calculado
+    no cambia: el runtime solo puede actualizar `status` y `error`."""
+
+    Status = BatchItemStatus
+
+    id = uuid7_primary_key()
+    batch = models.ForeignKey(
+        PriceChangeBatch, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    variant = models.ForeignKey(
+        "catalog.ProductVariant",
+        models.PROTECT,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    price_list = models.ForeignKey(  # la del lote: la FK compuesta pasa por él
+        PriceList, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    current_price = models.ForeignKey(
+        ProductPrice,
+        models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        db_constraint=False,
+        db_index=False,
+    )
+    old_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    new_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    delta_percent = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=BatchItemStatus.choices)
+    error = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        db_table = "price_change_batch_items"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "batch", "variant"], name="price_batch_items_pair_uq"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=BatchItemStatus.values),
+                name="price_batch_items_status_ck",
+            ),
+            models.CheckConstraint(  # una que se aplicará lleva el precio de antes y uno válido
+                condition=~models.Q(status="PENDING")
+                | models.Q(current_price__isnull=False, old_amount__gt=0, new_amount__gt=0),
+                name="price_batch_items_pending_ck",
+            ),
+        ]
