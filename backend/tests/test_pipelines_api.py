@@ -206,7 +206,7 @@ def test_the_list_costs_the_same_queries_however_many_stages_and_pipelines(
         return len(captured)
 
     one = queries()
-    many = [spec(f"etapa-{i}") for i in range(30)]
+    many = [spec(f"etapa-{i}") for i in range(28)]  # con las dos de cierre, el tope de 30
     for i in range(5):
         pipeline(crm, code=f"p{i}", is_default=False, stages=[*many, *basic()[2:]])
     assert queries() == one

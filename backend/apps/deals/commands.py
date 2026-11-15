@@ -2,12 +2,17 @@
 
 No comprueban permisos: los declarará la API (`pipelines.manage`, F5-02), la única que los importa
 (contrato de import-linter). Validan lo que guardan y auditan cada cambio (sin datos personales).
+Ponen sus propios topes de tamaño, antes de escribir (F5-01d): `requires_fields` hasta
+`FIELDS_BYTES` serializado y `FIELDS_DEPTH` niveles, y hasta `STAGES_MAX` etapas por pipeline (así
+el audit de un reordenamiento tampoco crece sin límite).
 
 Invariantes tras cada comando: una etapa WON activa, al menos una LOST y una OPEN activas, y un
 pipeline predeterminado vivo y activo por organización. Los pipelines toman un bloqueo consultivo
 por organización; las etapas, la fila del pipeline (`FOR NO KEY UPDATE`).
 """
 
+import json
+import math
 import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
@@ -33,6 +38,7 @@ from core.tenancy.scope import require_scope
 from core.text import name as clean_name
 
 NAME_MAX, CODE_MAX, DAYS_MAX, ORDER_MAX = 100, 30, 32767, 32767
+STAGES_MAX, FIELDS_BYTES, FIELDS_DEPTH = 30, 4096, 4  # etapas por pipeline; `requires_fields`
 CURRENCIES = ("PEN",)  # D-PRC-2: solo PEN en el MVP; la columna ya admite otras
 CLOSED = {StageType.WON: 100, StageType.LOST: 0}  # la probabilidad de lo cerrado
 STAGE_FIELDS = frozenset(
@@ -111,6 +117,50 @@ def _uuid(value: Any, what: str) -> UUID:
         raise ValueError(f"{what}: un identificador") from None
 
 
+def _plain(value: Any, depth: int, left: list[int]) -> bool:
+    """JSON de verdad y acotado: sin NaN ni infinitos, sin NUL (PostgreSQL no lo guarda), con
+    claves de texto y a lo más `FIELDS_DEPTH` niveles de objeto o lista (el primero es 1). Recorre
+    a lo más `FIELDS_BYTES` elementos (`left`): cada uno ocupa al menos un byte serializado, así
+    que más ya no cabe, y una lista que se repite por referencia no hace lento el recorrido."""
+    left[0] -= 1
+    if left[0] < 0:
+        raise Invalid("requires_fields", f"hasta {FIELDS_BYTES} bytes serializado")
+    kind = type(value)
+    if kind is str:
+        return "\x00" not in value
+    if kind is float:
+        return math.isfinite(value)
+    if kind in (int, bool) or value is None:
+        return True
+    if depth > FIELDS_DEPTH or kind not in (dict, list):
+        return False
+    if kind is list:
+        return all(_plain(item, depth + 1, left) for item in value)
+    return all(
+        type(key) is str and "\x00" not in key and _plain(item, depth + 1, left)
+        for key, item in value.items()
+    )
+
+
+def requires_fields(value: Any) -> dict[str, Any]:
+    """Qué datos pide una etapa: un objeto JSON acotado (`_plain`) de hasta `FIELDS_BYTES` bytes
+    en UTF-8, compacto. La profundidad y el número de elementos se miran antes de serializar, así
+    que ni un objeto circular ni uno muy anidado o enorme llegan a `json.dumps`. Lo que este no
+    convierte (un sustituto suelto, un entero de más de 4300 cifras) también es `Invalid` en
+    `requires_fields`."""
+    if type(value) is not dict or not _plain(value, 1, [FIELDS_BYTES]):
+        shape = f"un objeto JSON de hasta {FIELDS_DEPTH} niveles, sin NaN, infinitos ni NUL"
+        raise Invalid("requires_fields", shape)
+    try:
+        size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
+    except ValueError:  # `UnicodeEncodeError` o el límite de cifras de `int` a texto
+        raise Invalid("requires_fields", "un objeto JSON que se pueda escribir en UTF-8") from None
+    if size > FIELDS_BYTES:
+        raise Invalid("requires_fields", f"hasta {FIELDS_BYTES} bytes serializado")
+    found: dict[str, Any] = value
+    return found
+
+
 def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
     """Lo que se envía de una etapa, limpio y validado (solo esos campos)."""
     values = dict(fields)
@@ -128,8 +178,8 @@ def _stage_values(fields: dict[str, Any]) -> dict[str, Any]:
         values["color"] = _text(values["color"], "color").strip().lower()
         if not re.fullmatch(COLOR, values["color"]):
             raise ValueError("un color #RRGGBB, como #1f9d55")
-    if "requires_fields" in values and not isinstance(values["requires_fields"], dict):
-        raise ValueError("requires_fields: un objeto")
+    if "requires_fields" in values:
+        values["requires_fields"] = requires_fields(values["requires_fields"])
     if "is_active" in values:
         _flag(values["is_active"], "is_active")
     return values
@@ -269,7 +319,7 @@ def create_pipeline(
     orden recibido. Es el predeterminado si se pide o si la organización no tiene
     otro, aunque se diga que no; pedirlo quita la marca al anterior. `ValueError` si algo no vale,
     `StageInvariant` si las etapas no cumplen las invariantes (una WON, una LOST, una OPEN),
-    `CodeTaken`; sin escribir nada."""
+    `CodeTaken`; sin escribir nada. Hasta `STAGES_MAX` etapas (`Invalid` en `stages`)."""
     alias = require_scope(ctx)
     if currency not in CURRENCIES:
         raise ValueError(f"solo {', '.join(CURRENCIES)}")
@@ -281,6 +331,8 @@ def create_pipeline(
     values.pop("is_default", None)
     if not isinstance(stages, list | tuple):
         raise ValueError("las etapas son una lista de objetos")
+    if len(stages) > STAGES_MAX:  # antes de mirar cada una
+        raise Invalid("stages", f"hasta {STAGES_MAX} etapas por pipeline")
     rows = [_new_stage(spec) for spec in stages]
     if len({row["code"] for row in rows}) != len(rows):
         raise Invalid("stages", "códigos de etapa repetidos")
@@ -352,7 +404,8 @@ def add_stage(
     """Añade una etapa al pipeline y lo audita (`stage.added`). `position` es su lugar entre las
     demás (empezando en 0); sin él, una OPEN va tras la última OPEN y otra, al final. Las demás se
     renumeran. `StageInvariant` si el pipeline dejaría de cumplir sus invariantes (p. ej., una
-    segunda WON), `CodeTaken` si su código ya está en el pipeline, `ValueError`, `DoesNotExist`."""
+    segunda WON), `CodeTaken` si su código ya está en el pipeline, `ValueError`, `DoesNotExist`.
+    Con `STAGES_MAX` etapas ya (contado con el pipeline bloqueado), `Invalid` sin campo (`_`)."""
     alias = require_scope(ctx)
     values = _new_stage(fields)
     pipeline_id = _uuid(pipeline_id, "pipeline")
@@ -362,6 +415,8 @@ def add_stage(
         with transaction.atomic(using=alias):
             pipeline = _locked(alias, pipeline_id)
             stages = _stages(alias, pipeline.pk)
+            if len(stages) >= STAGES_MAX:  # también las inactivas; sin campo, como la API
+                raise Invalid("_", f"el pipeline ya tiene {STAGES_MAX} etapas")
             _check(
                 [
                     *((s.stage_type, s.is_active) for s in stages),
@@ -424,10 +479,13 @@ def reorder_stages(
 ) -> list[PipelineStage]:
     """Deja las etapas del pipeline en el orden de `stage_ids`, que las lleva todas (también las
     inactivas) una vez cada una, y lo audita (`stage.reordered`, con los códigos antes y después);
-    si ya están en ese orden, no escribe. `ValueError` si la lista no es esa; `DoesNotExist`."""
+    si ya están en ese orden, no escribe. `ValueError` si la lista no es esa o pasa de `STAGES_MAX`
+    (antes de leer nada); `DoesNotExist`."""
     alias = require_scope(ctx)
     if not isinstance(stage_ids, list | tuple):
         raise ValueError("las etapas, una lista de identificadores")
+    if len(stage_ids) > STAGES_MAX:  # un pipeline no tiene más: tampoco su audit
+        raise Invalid("stage_ids", f"hasta {STAGES_MAX} etapas")
     wanted = [_uuid(i, "etapa") for i in stage_ids]
     pipeline_id = _uuid(pipeline_id, "pipeline")
     with transaction.atomic(using=alias):
