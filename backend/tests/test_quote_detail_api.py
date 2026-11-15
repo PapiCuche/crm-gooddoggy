@@ -30,7 +30,7 @@ LINE = {
     "discount_value", "discount_amount", "final_unit_price", "line_total", "currency",
 }  # fmt: skip
 _skus = iter(range(10_000))
-TEXT = {"notes_to_customer", "internal_notes", "cancel_reason", "items"}
+TEXT = {"notes_to_customer", "internal_notes", "cancel_reason", "customer_snapshot", "items"}
 
 
 def add_line(org: UUID, quote: UUID, order: int, **over: Any) -> UUID:

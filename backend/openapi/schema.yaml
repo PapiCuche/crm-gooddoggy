@@ -7553,6 +7553,89 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quotes/{quote_id}/issue/:
+    post:
+      operationId: quotes_issue
+      description: 'Emite (`SENT`) una cotización aprobada, o un borrador que cabe
+        en el límite de quien emite (se vuelve a medir), y congela el cliente, la
+        empresa, las condiciones y la validez (la dada o la que tiene; futura, o 400).
+        Quien emite ha de ver el contacto (si no, el 400 de crear). La de la IA, solo
+        aprobada. Cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`,
+        siempre igual). Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente:
+        404. 409: `STALE_VERSION`, `NOT_ISSUABLE`, `NEEDS_APPROVAL`, `QUOTE_REFUSED`.
+        429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por
+        persona, se cuenta antes de buscarla.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quote_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - quotes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteIssueRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteDetail'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/{quote_id}/items/{line_id}/discount/:
     post:
       operationId: quotes_discount
@@ -14514,10 +14597,27 @@ components:
           description: Sin ella, la lista predeterminada.
       required:
       - items
+    QuoteCustomerSnapshot:
+      type: object
+      description: El cliente como se congeló al emitir (nombre y documento).
+      properties:
+        display_name:
+          type: string
+        document_type:
+          type: string
+          nullable: true
+        document_number:
+          type: string
+          nullable: true
+      required:
+      - display_name
+      - document_number
+      - document_type
     QuoteDetail:
       type: object
-      description: Más las notas (texto libre), el motivo de cancelación y las líneas
-        en orden.
+      description: |-
+        Más las notas (texto libre), el motivo de cancelación, el cliente congelado y las líneas en
+        orden.
       properties:
         id:
           type: string
@@ -14602,6 +14702,13 @@ components:
           type: string
           nullable: true
           maxLength: 500
+        customer_snapshot:
+          allOf:
+          - $ref: '#/components/schemas/QuoteCustomerSnapshot'
+          nullable: true
+          readOnly: true
+          description: 'Desde que se emitió; `null` antes, o si quien consulta no
+            puede ver el contacto (`contacts.view`): lleva su documento.'
         items:
           type: array
           items:
@@ -14610,6 +14717,7 @@ components:
       - contact
       - created_at
       - currency
+      - customer_snapshot
       - id
       - items
       - number
@@ -14657,6 +14765,28 @@ components:
         * `NONE` - None
         * `PERCENT` - Percent
         * `AMOUNT` - Amount
+    QuoteIssueRequest:
+      type: object
+      description: Lo que congela la emisión además de lo que ya tiene la cotización.
+      properties:
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+        valid_until:
+          type: string
+          minLength: 1
+          description: Sin ella, la que tiene. Futura; ISO 8601 con zona horaria,
+            como 2026-11-20T23:59:00-05:00.
+        terms:
+          type: string
+          description: Condiciones, hasta 2000 caracteres.
+        warranty:
+          type: string
+          description: Garantía, hasta 500 caracteres.
+      required:
+      - version
     QuoteItem:
       type: object
       description: Una línea con lo que se congeló al cotizar.

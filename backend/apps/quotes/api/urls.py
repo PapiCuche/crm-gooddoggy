@@ -31,6 +31,11 @@ urlpatterns = [
         name="quote-cancel",
     ),
     path(
+        "quotes/<uuid:quote_id>/issue/",
+        quotes.QuoteIssueView.as_view(),
+        name="quote-issue",
+    ),
+    path(
         "quotes/<uuid:quote_id>/items/<uuid:line_id>/price/",
         quotes.QuotePriceView.as_view(),
         name="quote-price",

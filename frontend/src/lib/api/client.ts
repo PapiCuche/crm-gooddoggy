@@ -175,6 +175,7 @@ import type {
   QuoteCreateRequest,
   QuoteDetail,
   QuoteDiscountRequest,
+  QuoteIssueRequest,
   QuotePriceRequest,
   QuoteRejectRequest,
   QuoteVersionRequest,
@@ -14815,6 +14816,113 @@ export const useQuotesCancel = <TError = ErrorType<Error>, TContext = unknown>(
   TContext
 > => {
   return useMutation(getQuotesCancelMutationOptions(options), queryClient);
+};
+
+export const getQuotesIssueUrl = (orgSlug: string, quoteId: string) => {
+  return `/api/v1/o/${orgSlug}/quotes/${quoteId}/issue/`;
+};
+
+/**
+ * Emite (`SENT`) una cotización aprobada, o un borrador que cabe en el límite de quien emite (se vuelve a medir), y congela el cliente, la empresa, las condiciones y la validez (la dada o la que tiene; futura, o 400). Quien emite ha de ver el contacto (si no, el 400 de crear). La de la IA, solo aprobada. Cada precio manual vuelve a medirse con el costo de hoy (422 `PRICE_NOT_ALLOWED`, siempre igual). Con `quotes.view`, `quotes.send`; fuera del alcance o inexistente: 404. 409: `STALE_VERSION`, `NOT_ISSUABLE`, `NEEDS_APPROVAL`, `QUOTE_REFUSED`. 429 `RATE_LIMITED` (+`Retry-After`): el tope, por persona y cotización y por persona, se cuenta antes de buscarla.
+ */
+export const quotesIssue = async (
+  orgSlug: string,
+  quoteId: string,
+  quoteIssueRequest: QuoteIssueRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuoteDetail> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuoteDetail>(getQuotesIssueUrl(orgSlug, quoteId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quoteIssueRequest),
+  });
+};
+
+export const getQuotesIssueMutationKey = () => ["quotesIssue"] as const;
+
+export const getQuotesIssueMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quotesIssue>>,
+    TError,
+    QuotesIssueMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quotesIssue>>,
+  TError,
+  QuotesIssueMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuotesIssueMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quotesIssue>>,
+    QuotesIssueMutationVariables
+  > = (props) => {
+    const { orgSlug, quoteId, data } = props ?? {};
+
+    return quotesIssue(orgSlug, quoteId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuotesIssueMutationResult = NonNullable<Awaited<ReturnType<typeof quotesIssue>>>;
+export type QuotesIssueMutationBody = QuoteIssueRequest;
+export type QuotesIssueMutationError = ErrorType<Error>;
+export type QuotesIssueMutationVariables = {
+  orgSlug: string;
+  quoteId: string;
+  data: QuoteIssueRequest;
+};
+
+export const useQuotesIssue = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quotesIssue>>,
+      TError,
+      QuotesIssueMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quotesIssue>>,
+  TError,
+  QuotesIssueMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuotesIssueMutationOptions(options), queryClient);
 };
 
 export const getQuotesDiscountUrl = (orgSlug: string, quoteId: string, lineId: string) => {

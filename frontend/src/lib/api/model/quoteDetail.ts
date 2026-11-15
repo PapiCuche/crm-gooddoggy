@@ -6,12 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { QuoteContactRef } from "./quoteContactRef";
+import type { QuoteCustomerSnapshot } from "./quoteCustomerSnapshot";
 import type { QuoteItem } from "./quoteItem";
 import type { QuoteStatusEnum } from "./quoteStatusEnum";
 import type { TaxModeEnum } from "./taxModeEnum";
 
 /**
- * Más las notas (texto libre), el motivo de cancelación y las líneas en orden.
+ * Más las notas (texto libre), el motivo de cancelación, el cliente congelado y las líneas en
+ * orden.
  */
 export interface QuoteDetail {
   readonly id: string;
@@ -62,5 +64,7 @@ export interface QuoteDetail {
    * @nullable
    */
   cancel_reason?: string | null;
+  /** Desde que se emitió; `null` antes, o si quien consulta no puede ver el contacto (`contacts.view`): lleva su documento. */
+  readonly customer_snapshot: QuoteCustomerSnapshot | null;
   items: QuoteItem[];
 }
