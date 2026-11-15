@@ -389,5 +389,5 @@ def test_the_import_contracts_keep_costs_away_from_the_engine() -> None:
         c for c in contracts.values() if "apps.pricing.costs" in c.get("forbidden_modules", [])
     ]
     assert [(c["type"], sorted(c["source_modules"])) for c in engine] == [
-        ("forbidden", ["apps.pricing.selectors", "apps.pricing.services"])
-    ]
+        ("forbidden", ["apps.pricing.batches", "apps.pricing.selectors", "apps.pricing.services"])
+    ]  # F3-49: la edición masiva tampoco lee costos
