@@ -65,9 +65,52 @@ def test_a_number_in_what_the_event_says_is_still_in_the_log(
     assert PORT in log_text(caplog) and (PORT in json_lines(caplog)) is in_stdout
 
 
-def test_the_text_of_an_exception_is_still_in_the_log(caplog: pytest.LogCaptureFixture) -> None:
+CODE = "246813"  # como un código TOTP
+
+
+def _raise_chained() -> None:
     try:
-        raise ConnectionError(f"Error 111 connecting to broker.internal:{PORT}")
-    except ConnectionError:
-        logging.getLogger("tests").exception("readiness")
-    assert PORT in log_text(caplog)  # el texto de la excepción no es un sello
+        raise ConnectionError(f"Error 111 connecting to broker.internal:{PORT}, código {CODE}")
+    except ConnectionError as cause:
+        raise RuntimeError("readiness") from cause  # el dato, solo en la causa
+
+
+@pytest.mark.parametrize(
+    "log",
+    [lambda: logging.getLogger("tests").exception("readiness"),
+     lambda: structlog.get_logger("tests").exception("readiness")],
+    ids=["stdlib", "structlog"],
+)  # fmt: skip
+def test_the_text_of_an_exception_and_its_cause_is_still_in_the_log(
+    caplog: pytest.LogCaptureFixture, log: Any
+) -> None:
+    try:
+        _raise_chained()
+    except RuntimeError:
+        log()
+    (record,) = caplog.records
+    assert CODE not in str(record.msg) + str(record.exc_info)  # solo en la traza (`exc_text`)
+    assert PORT in log_text(caplog) and CODE in log_text(caplog)
+    (line,) = [json.loads(line) for line in json_lines(caplog).splitlines()]
+    assert CODE in line["exception"] and "RuntimeError" in line["exception"]
+
+
+def test_a_structlog_exception_with_a_code_in_its_message_is_still_in_the_json_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    try:
+        raise ValueError(f"no vale {CODE}")
+    except ValueError:
+        structlog.get_logger("tests").exception("mfa.fallo")
+    assert CODE in json_lines(caplog) and CODE in log_text(caplog)
+
+
+def _stack_from_frame_9182() -> None:  # el nombre solo llega a la pila (`funcName` es lugar)
+    logging.getLogger("tests").warning("aviso", stack_info=True)
+
+
+def test_the_stack_of_a_record_is_still_in_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    _stack_from_frame_9182()
+    (record,) = caplog.records
+    assert record.funcName == "_stack_from_frame_9182" and record.stack_info
+    assert "_stack_from_frame_9182" in log_text(caplog)
