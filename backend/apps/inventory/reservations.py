@@ -83,14 +83,6 @@ def _check_expiry(expires: datetime) -> None:
         raise ValueError(f"expires_at: en el futuro y dentro de {EXPIRES_MAX.days} días")
 
 
-def _actor(ctx: TenantContext) -> tuple[str, UUID | None]:
-    if ctx.actor_type != ActorType.USER:
-        return ctx.actor_type, None
-    if ctx.user_id is None or ctx.actor_id != ctx.user_id:  # la auditoría lee `actor_id`
-        raise ValueError("un contexto de persona necesita user_id igual a actor_id")
-    return ctx.actor_type, ctx.user_id
-
-
 def _same(found: InventoryReservation, wanted: Wanted, actor: tuple[str, UUID | None]) -> bool:
     """Si la reserva guardada con la clave es la que se pide ahora: la misma petición de la misma
     persona (otra no recibe la reserva ajena; F3-35)."""
@@ -212,11 +204,12 @@ def _audit(
 def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, bool]:
     """Aparta unidades disponibles con su `RESERVE` y su auditoría. Devuelve la reserva y si es
     nueva (la misma clave con lo mismo y de la misma persona devuelve la de entonces).
-    `BadReference`, `VariantInactive`, `ValueError` o, de `stock`, `WarehouseInactive`,
-    `InsufficientStock`, `KeyReused`; `TooManyReservations`."""
+    `BadReference`, `VariantInactive`, `ValueError` o, de `stock`, `ActorRefused` (un agente de
+    IA o una integración, como en las transferencias), `WarehouseInactive`, `InsufficientStock`,
+    `KeyReused`; `TooManyReservations`."""
     alias = require_scope(ctx)
+    actor = stock.actor(ctx)  # antes de bloquear nada
     _check(wanted)
-    actor = _actor(ctx)
     try:
         with transaction.atomic(using=alias):
             variant, warehouse, level = stock.lock_cell(
@@ -265,8 +258,10 @@ def reserve(ctx: TenantContext, wanted: Wanted) -> tuple[InventoryReservation, b
 def release(ctx: TenantContext, pk: UUID, why: str) -> tuple[InventoryReservation, bool]:
     """Libera una reserva ACTIVE con su `RELEASE` y su auditoría, también en un almacén desactivado.
     Devuelve la reserva y si se liberó ahora (una ya liberada, sin escribir). `ReservationNotActive`
-    si venció o se consumió; `InventoryReservation.DoesNotExist` si no es de la organización."""
+    si venció o se consumió; `InventoryReservation.DoesNotExist` si no es de la organización;
+    `stock.ActorRefused` para un agente de IA o una integración."""
     alias = require_scope(ctx)
+    actor = stock.actor(ctx)
     text = stock.reason(why)
     with transaction.atomic(using=alias):
         rows = InventoryReservation.objects.using(alias)
@@ -279,7 +274,7 @@ def release(ctx: TenantContext, pk: UUID, why: str) -> tuple[InventoryReservatio
             return _ended(seen)
         if _due(seen):  # venció: la cierra el job (o la próxima reserva de la celda), no se libera
             raise ReservationNotActive(Status.EXPIRED)
-        _close(alias, seen, level, Status.RELEASED, text, _actor(ctx))
+        _close(alias, seen, level, Status.RELEASED, text, actor)
         _audit(ctx, "reservation_released", seen, f"{variant.sku} @ {warehouse[1]}", level)
     return seen, True
 

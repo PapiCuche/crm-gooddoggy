@@ -16,12 +16,30 @@ from apps.inventory.models import InventoryLevel, InventoryMovement
 from apps.inventory.selectors import levels, movements
 from core.api.errors import ApiError
 from core.api.schema import errors
-from core.api.strict import Id
+from core.api.strict import Checked, Id
 
 NOT_ENOUGH = "No hay stock suficiente: no puede quedar en negativo ni por debajo de lo reservado."
 INACTIVE = "El almacén está desactivado."
 REUSED = "Esa clave de idempotencia ya se usó para otro movimiento."
 LIMIT = f"El saldo no puede pasar de {stock.ON_HAND_MAX} unidades."
+REFUSED = "Un agente de IA o una integración no reserva ni transfiere stock."
+
+
+def refused() -> ApiError:
+    """`stock.ActorRefused` como lo responden reservas y transferencias (F3-39): 403, nunca 500."""
+    return ApiError("ACTOR_NOT_ALLOWED", 403, REFUSED)
+
+
+def key_field() -> Checked:
+    """La `idempotency_key` de movimientos, transferencias y reservas, con una sola regla (F3-39):
+    texto tal cual, sin recortar (una clave con espacios alrededor es otra clave, y no vale)."""
+    return Checked(
+        stock.idempotency_key,
+        max_length=100,
+        trim_whitespace=False,
+        help_text="De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`. Va "
+        "tal cual: con espacios alrededor es 400, no se recorta. Repetirla no duplica la petición.",
+    )
 
 
 class CellFilterSerializer(serializers.Serializer[Any]):
@@ -134,9 +152,7 @@ class MovementCreateSerializer(serializers.Serializer[Any]):
         help_text="Lo que entra o sale (desde 1) o, en un ajuste, lo contado.",
     )
     reason = serializers.CharField(max_length=stock.REASON_MAX)
-    idempotency_key = serializers.CharField(
-        max_length=100, help_text="Única por movimiento: repetir la petición no lo duplica."
-    )
+    idempotency_key = key_field()
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if attrs["quantity"] == 0 and attrs["movement_type"] != stock.Type.ADJUSTMENT:
@@ -145,9 +161,6 @@ class MovementCreateSerializer(serializers.Serializer[Any]):
 
     def validate_reason(self, value: str) -> str:
         return str(_checked(stock.reason, value))
-
-    def validate_idempotency_key(self, value: str) -> str:
-        return str(_checked(stock.idempotency_key, value))
 
 
 @extend_schema_view(

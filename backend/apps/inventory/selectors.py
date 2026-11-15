@@ -30,6 +30,10 @@ def movements() -> QuerySet[InventoryMovement]:
     si está borrada: el ledger la conserva. Cada pata de una transferencia trae el almacén de la
     otra (`other_warehouse_id`, F3-32b) en la misma consulta, por el índice de su grupo; la busca
     en la misma organización (`TenantManager` y RLS), así que nunca nombra un almacén ajeno."""
+    # Ojo si el ledger llega a tener alcance por almacén (quien solo ve unos almacenes): esta
+    # subconsulta no lo tiene, y daría el almacén de la otra pata aunque quede fuera de ese
+    # alcance. Entonces `other_warehouse_id` debe ir en `null` o filtrarse por el mismo alcance
+    # (F3-39). Lo mismo en la respuesta de `POST …/transfers/`, que lo copia de la otra pata.
     other = (
         InventoryMovement.objects.filter(transfer_group_id=OuterRef("transfer_group_id"))
         .exclude(pk=OuterRef("pk"))

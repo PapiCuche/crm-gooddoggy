@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.inventory import stock, transfers
-from apps.inventory.api.stock import LIMIT, NOT_ENOUGH, MovementSerializer
+from apps.inventory.api.stock import LIMIT, NOT_ENOUGH, MovementSerializer, key_field, refused
 from apps.inventory.api.views import _checked, _tenant
 from core.api.errors import ApiError
 from core.api.schema import errors
@@ -32,17 +32,10 @@ class TransferCreateSerializer(Closed, serializers.Serializer[Any]):
     to_warehouse_id = Id()
     quantity = Whole(min_value=1, max_value=stock.QUANTITY_MAX)
     reason = Text(max_length=stock.REASON_MAX)
-    idempotency_key = Text(
-        max_length=100,
-        trim_whitespace=False,  # tal cual: una clave con espacios es otra clave, y no vale
-        help_text="De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`.",
-    )
+    idempotency_key = key_field()
 
     def validate_reason(self, value: str) -> str:
         return str(_checked(stock.reason, value))
-
-    def validate_idempotency_key(self, value: str) -> str:
-        return str(_checked(stock.idempotency_key, value))
 
     def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
         if attrs["from_warehouse_id"] == attrs["to_warehouse_id"]:
@@ -73,7 +66,8 @@ class TransfersView(APIView):
         "otro, en una sola operación con dos movimientos del mismo `transfer_group_id`. 200: la "
         "misma petición, de la misma persona y con esa `idempotency_key`, ya registrada; se "
         "devuelve sin repetirla. 400 por campo (variante o almacén que no existen, un servicio, "
-        "el mismo almacén). 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` (el texto dice cuál), "
+        "el mismo almacén). 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no "
+        "transfiere. 409 `INSUFFICIENT_STOCK`, `WAREHOUSE_INACTIVE` (el texto dice cuál), "
         "`STOCK_LIMIT` o `IDEMPOTENCY_KEY_REUSED` (otra petición, o de otra persona).",
     )
     def post(self, request: Request, **kwargs: Any) -> Response:
@@ -81,6 +75,8 @@ class TransfersView(APIView):
         wanted.is_valid(raise_exception=True)
         try:
             legs, new = transfers.transfer(_tenant(), transfers.Wanted(**wanted.validated_data))
+        except stock.ActorRefused:
+            raise refused() from None
         except stock.BadReference as error:
             raise serializers.ValidationError({error.field: [str(error)]}) from None
         except transfers.WarehouseInactive as error:
@@ -91,7 +87,8 @@ class TransfersView(APIView):
             raise ApiError("STOCK_LIMIT", 409, LIMIT) from None
         except stock.KeyReused:
             raise ApiError("IDEMPOTENCY_KEY_REUSED", 409, REUSED) from None
-        for leg, other in zip(legs, reversed(legs), strict=True):  # como en el ledger (F3-32b)
+        # como en el ledger (F3-32b); su nota sobre un alcance por almacén vale aquí (F3-39)
+        for leg, other in zip(legs, reversed(legs), strict=True):
             leg.other_warehouse_id = other.warehouse_id  # type: ignore[attr-defined]
         made = {"transfer_group_id": legs[0].transfer_group_id, "legs": legs}
         return Response(TransferSerializer(made).data, status=201 if new else 200)

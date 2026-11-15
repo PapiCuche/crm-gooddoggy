@@ -21,7 +21,7 @@ export interface TransferCreateRequest {
    */
   reason: string;
   /**
-   * De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`.
+   * De 8 a 100 letras ASCII, cifras y `. _ : -`, sin empezar por `import:`. Va tal cual: con espacios alrededor es 400, no se recorta. Repetirla no duplica la petición.
    * @minLength 1
    * @maxLength 100
    */

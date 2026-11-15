@@ -67,6 +67,32 @@ class KeyReused(Exception):
     """La clave de idempotencia ya se usó para otro movimiento."""
 
 
+class ActorRefused(Exception):
+    """Un agente de IA o una integración: no reservan ni transfieren stock (ADR-034 §11: la IA no
+    toca el stock en el primer corte; F3-39). Tampoco tienen `user_id` y el ledger no guarda su
+    `actor_id`: dos de la misma organización repetirían lo del otro con su clave."""
+
+    def __init__(self, actor_type: str) -> None:
+        super().__init__(f"actor {actor_type}: no reserva ni transfiere stock")
+        self.actor_type = actor_type
+
+
+REFUSED_ACTORS = (ActorType.AI_AGENT, ActorType.INTEGRATION)
+
+
+def actor(ctx: TenantContext) -> tuple[str, UUID | None]:
+    """Quién reserva o transfiere, como lo guarda el ledger: una persona (con `user_id`, que es su
+    `actor_id`: la auditoría lee este) o el sistema. `ActorRefused` para un agente de IA o una
+    integración; `ValueError` si un contexto de persona no trae a la persona."""
+    if ctx.actor_type in REFUSED_ACTORS:
+        raise ActorRefused(ctx.actor_type)
+    if ctx.actor_type != ActorType.USER:
+        return ctx.actor_type, None
+    if ctx.user_id is None or ctx.actor_id != ctx.user_id:
+        raise ValueError("un contexto de persona necesita user_id igual a actor_id")
+    return ctx.actor_type, ctx.user_id
+
+
 class Stale(Exception):
     """El saldo de la celda, ya bloqueada, no es `Wanted.expected_on_hand` (F3-21), o su
     `version` no es `Wanted.expected_version` (F3-24): alguien la escribió después."""
