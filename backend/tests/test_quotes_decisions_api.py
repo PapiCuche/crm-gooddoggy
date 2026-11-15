@@ -261,3 +261,18 @@ def test_an_approver_within_a_policy_approves_the_team_quote(lab: SimpleNamespac
     with tenant_scope(ctx(lab.a)):
         DiscountPolicy.objects.create(role_id=role.pk, max_discount_percent=Decimal(5))
     assert act(signed(lab.sam), quote, "approve").json()["status"] == "APPROVED"
+
+
+def test_the_detail_says_whether_the_open_request_is_of_whoever_reads(lab: SimpleNamespace) -> None:
+    """F5-09h: la pantalla no ofrece «Aprobar» a quien pidió. Sin solicitud abierta, `false`."""
+    quote, [line] = draft(lab)
+    asked = price(signed(lab.vera), quote, line, "4200.00")
+    assert asked.json()["approval_asked_by_me"] is True  # la respuesta de la escritura también
+    mine = {
+        who: signed(getattr(lab, who)).get(f"{QUOTES}{quote}/").json()["approval_asked_by_me"]
+        for who in ("vera", "sam", "ana")
+    }
+    assert mine == {"vera": True, "sam": False, "ana": False}
+    back = act(signed(lab.vera), quote, "withdraw-request")
+    assert (back.json()["status"], back.json()["approval_asked_by_me"]) == ("DRAFT", False)
+    assert signed(lab.vera).get(f"{QUOTES}{quote}/").json()["approval_asked_by_me"] is False

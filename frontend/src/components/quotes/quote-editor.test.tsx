@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
 
 import { QuoteDetail } from "./quote-detail";
 import { QuoteEditor } from "./quote-editor";
-import { BASE, detail, line, page, withTenant } from "./test-support";
+import { api, BASE, detail, line, page, withTenant } from "./test-support";
 
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 15_000 });
@@ -21,25 +21,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-type Reply = { status: number; body?: unknown };
-type Call = { method: string; path: string; body: unknown };
-// El servidor de la prueba por «MÉTODO ruta» (sin la consulta); guarda las escrituras.
-function api(routes: Record<string, Reply | ((body: unknown) => Reply)>) {
-  const calls: Call[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = new URL(String(input), "http://x");
-      const method = (init?.method ?? "GET").toUpperCase();
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      if (method !== "GET") calls.push({ method, path: url.pathname, body });
-      const route = routes[`${method} ${url.pathname}`] ?? { status: 404, body: { code: "X" } };
-      const { status, body: out } = typeof route === "function" ? route(body) : route;
-      return new Response(out === undefined ? null : JSON.stringify(out), { status });
-    }),
-  );
-  return calls;
-}
 const variants = page({ id: "v2", name: "Roja", sku: "COR-R", product_name: "Correa" });
 const field = (name: string) => screen.getByLabelText(name) as HTMLInputElement;
 const type = (name: string, value: string) => fireEvent.change(field(name), { target: { value } });
@@ -86,7 +67,7 @@ describe("Cotizaciones: editor (F5-09g)", () => {
 
   it.each([
     [{ code: "VALIDATION_ERROR", fields: { variant_id: ["x"] } }, 400, "no tiene precio vigente"],
-    [{ code: "VALIDATION_ERROR", fields: { _: ["x"] } }, 400, "El cliente o la oportunidad"],
+    [{ code: "VALIDATION_ERROR", fields: { _: ["x"] } }, 400, "Algún dato no se admite"],
     [{ code: "QUOTE_REFUSED" }, 409, "no admite ese cambio"],
   ])("un error de la API se explica por su código: %j", async (body, status, text) => {
     api({ "GET /api/v1/o/acme/variants/": variants, [`POST ${BASE}`]: { status, body } });
@@ -208,5 +189,100 @@ describe("Cotizaciones: borrador en el detalle (F5-09g)", () => {
       { version: 2, discount_type: "AMOUNT", discount_value: "130" },
       { version: 2, discount_type: "NONE" },
     ]);
+  });
+});
+
+describe("Cotizaciones: seguimientos del editor (F5-09h)", () => {
+  const two = detail({
+    status: "DRAFT",
+    version: 2,
+    items: [line("l1"), line("l2", { product_name: "Correa" })],
+  });
+  const show = (...codes: string[]) =>
+    withTenant(<QuoteDetail quoteId="1" />, "quotes.view", ...codes);
+
+  it.each([
+    ["Editar", "PATCH", "", "Editar el borrador"],
+    ["Descuento de Collar", "POST", "items/l1/discount/", "Descuento de Collar"],
+  ])(
+    "un 409 QUOTE_NOT_DRAFT tras «%s» deja su formulario y su texto",
+    async (open, verb, to, name) => {
+      let gone = false;
+      api({
+        [`GET ${BASE}1/`]: () => ({
+          status: 200,
+          body: gone ? { ...two, status: "APPROVED" } : two,
+        }),
+        [`${verb} ${BASE}1/${to}`]: () => {
+          gone = true;
+          return { status: 409, body: { code: "QUOTE_NOT_DRAFT" } };
+        },
+      });
+      show("quotes.update", "quotes.discount");
+      fireEvent.click(await screen.findByRole("button", { name: open }));
+      if (to) type("Porcentaje (%)", "5");
+      fireEvent.submit(screen.getByRole("form", { name }));
+      expect(await screen.findByText(/ya no es un borrador/)).toHaveAttribute("role", "alert");
+      await waitFor(() => expect(screen.getByText("Aprobada")).toBeVisible());
+      expect(screen.getByRole("form", { name })).toBeVisible();
+      expect(screen.getByText(/ya no es un borrador/)).toBeVisible();
+    },
+  );
+
+  it("el descuento dice su línea; al cambiar de línea el foco vuelve al último botón", async () => {
+    api({ [`GET ${BASE}1/`]: { status: 200, body: two } });
+    show("quotes.update", "quotes.discount");
+    const first = await screen.findByRole("button", { name: "Descuento de Collar" });
+    const second = screen.getByRole("button", { name: "Descuento de Correa" });
+    first.focus();
+    fireEvent.click(first);
+    second.focus();
+    fireEvent.click(second);
+    const form = screen.getByRole("form", { name: "Descuento de Correa" });
+    expect(form).toHaveTextContent("Línea: Correa · Talla M");
+    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(document.activeElement).toBe(second));
+  });
+
+  it("un descuento que deja la cotización por aprobar lleva el foco al título", async () => {
+    api({
+      [`GET ${BASE}1/`]: { status: 200, body: two },
+      [`POST ${BASE}1/items/l1/discount/`]: {
+        status: 200,
+        body: { ...two, status: "PENDING_APPROVAL", approval_asked_by_me: true },
+      },
+    });
+    show("quotes.update", "quotes.discount");
+    const open = await screen.findByRole("button", { name: "Descuento de Collar" });
+    open.focus();
+    fireEvent.click(open);
+    fireEvent.change(screen.getByLabelText("Porcentaje (%)"), { target: { value: "30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar" }));
+    expect(await screen.findByText("Espera aprobación")).toBeVisible();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 })),
+    );
+  });
+
+  it("hasta 50 líneas, y una fecha fuera de 2000-2999 no se envía", async () => {
+    const calls = api({});
+    withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
+    const add = screen.getByRole("button", { name: "Añadir línea" });
+    for (let n = 0; n < 50; n++) fireEvent.click(add);
+    expect(screen.getAllByLabelText("Cantidad")).toHaveLength(50);
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Hasta 50 líneas por cotización.")).toBeVisible();
+    cleanup();
+    const sent = api({ "GET /api/v1/o/acme/variants/": variants });
+    withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
+    type("Variante 1", "corr");
+    fireEvent.click(await screen.findByRole("button", { name: "Correa · Roja (COR-R)" }));
+    type("Válida hasta (opcional)", "3000-01-01");
+    fireEvent.click(screen.getByRole("button", { name: "Crear borrador" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("entre los años 2000 y 2999");
+    expect(field("Válida hasta (opcional)")).toHaveAttribute("aria-invalid", "true");
+    expect(field("Válida hasta (opcional)")).toHaveAttribute("min", "2000-01-01");
+    await new Promise((done) => setTimeout(done, 100)); // un envío sería asíncrono
+    expect([...calls, ...sent]).toEqual([]);
   });
 });

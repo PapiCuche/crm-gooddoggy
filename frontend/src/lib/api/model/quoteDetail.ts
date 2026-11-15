@@ -66,5 +66,7 @@ export interface QuoteDetail {
   cancel_reason?: string | null;
   /** Desde que se emitió; `null` antes, o si quien consulta no puede ver el contacto (`contacts.view`): lleva su documento. */
   readonly customer_snapshot: QuoteCustomerSnapshot | null;
+  /** Si la solicitud de aprobación abierta la pidió o la envió quien consulta, que entonces no la aprueba (409 `SELF_APPROVAL_FORBIDDEN`). Sin solicitud abierta, `false`. */
+  readonly approval_asked_by_me: boolean;
   items: QuoteItem[];
 }

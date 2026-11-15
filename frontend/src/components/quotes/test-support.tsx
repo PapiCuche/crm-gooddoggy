@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
-import type { Quote, QuoteDetail, SelfContext } from "@/lib/api/model";
+import type { Quote, QuoteDetail, ScopesEnum, SelfContext } from "@/lib/api/model";
 import { renderApp } from "@/test-utils";
 
 export const NOW = Date.parse("2026-11-11T15:00:00Z");
@@ -53,10 +53,37 @@ export function serve(handler: (url: URL) => Reply) {
   );
   return urls;
 }
+type Call = { method: string; path: string; body: unknown };
+// El servidor de la prueba por «MÉTODO ruta» (sin la consulta); guarda las escrituras.
+export function api(routes: Record<string, Reply | ((body: unknown) => Reply)>) {
+  const calls: Call[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://x");
+      const method = (init?.method ?? "GET").toUpperCase();
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (method !== "GET") calls.push({ method, path: url.pathname, body });
+      const route = routes[`${method} ${url.pathname}`] ?? { status: 404, body: { code: "X" } };
+      const { status, body: out } = typeof route === "function" ? route(body) : route;
+      return new Response(out === undefined ? null : JSON.stringify(out), { status });
+    }),
+  );
+  return calls;
+}
 export const page = (...results: unknown[]) => ({ status: 200, body: { results, next: null } });
+// Cada permiso sin alcance; «código:OWN» lo concede solo sobre lo propio.
 export const withTenant = (node: React.ReactNode, ...codes: string[]) =>
   renderApp(
-    <TenantProvider value={{ ...tenant, permissions: codes.map((code) => ({ code, scopes: [] })) }}>
+    <TenantProvider
+      value={{
+        ...tenant,
+        permissions: codes.map((grant) => {
+          const [code = "", scope] = grant.split(":");
+          return { code, scopes: scope ? [scope as ScopesEnum] : [] };
+        }),
+      }}
+    >
       {node}
     </TenantProvider>,
   );

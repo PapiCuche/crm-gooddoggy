@@ -22,8 +22,14 @@ type Line = { key: number; variant: Target | null; quantity: string };
 export const FIELD =
   "bg-surface border-foreground/50 focus-visible:border-foreground aria-invalid:border-danger rounded-[10px] border px-3 text-[16px]";
 // Lo que un 400 dice por campo, con su texto; uno sin texto propio es el general.
-const FIELDS = ["items", "variant_id", "valid_until", "_"] as const;
-const CODES = ["STALE_VERSION", "QUOTE_NOT_DRAFT", "QUOTE_REFUSED"];
+const FIELDS = ["items", "variant_id", "valid_until", "reason", "comment", "_"] as const;
+const CODES = [
+  ...["STALE_VERSION", "QUOTE_NOT_DRAFT", "QUOTE_REFUSED", "NOT_PENDING"],
+  ...["SELF_APPROVAL_FORBIDDEN", "BEYOND_LIMIT", "PRICE_NOT_ALLOWED"],
+];
+const MAX_LINES = 50; // como la API
+// Lo que admite el campo de fecha: fuera de ahí no se convierte (un año de 3 cifras rompe la zona).
+const DAYS = { min: "2000-01-01", max: "2999-12-31" };
 
 // El texto de un error de escritura de cotizaciones, por su `code` (nunca el de la respuesta).
 // Un 401 no se explica aquí: la sesión lo atiende.
@@ -81,14 +87,24 @@ export function Field(props: {
   );
 }
 
-// Al abrir un formulario, el foco pasa a su primer control; al cerrarlo, vuelve a donde estaba.
+// Si el control que tenía el foco ya no está, el foco va al título del detalle (no se pierde).
+export const focusHome = (from: Element | null = document.activeElement) => {
+  if (!from || from === document.body || !from.isConnected)
+    document.querySelector<HTMLElement>("[data-focus-home]")?.focus();
+};
+
+// Al abrir un formulario, el foco pasa a su primer control; al cerrarlo, vuelve a donde estaba al
+// abrirlo, leído al dibujarlo: antes de que el formulario al que sustituye devuelva el suyo. Si ese
+// botón ya no está (la acción ya no se ofrece), va al título.
 export function useFocusTrip() {
   const form = useRef<HTMLFormElement>(null);
+  const [back] = useState(() =>
+    typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null),
+  );
   useEffect(() => {
-    const back = document.activeElement as HTMLElement | null;
     form.current?.querySelector<HTMLElement>("input, select, textarea")?.focus();
-    return () => back?.focus();
-  }, []);
+    return () => (back?.isConnected ? back.focus() : focusHome(back));
+  }, [back]);
   return form;
 }
 
@@ -163,7 +179,9 @@ export function QuoteEditor({
   const busy = save.isPending;
   const whole = (text: string) => /^\d{1,7}$/.test(text) && +text >= 1 && +text <= 1_000_000;
   const incomplete = lines.some((x) => !x.variant || !whole(x.quantity));
-  const problem = checked && incomplete ? t("incomplete") : problemOf(save.error);
+  const late = day !== "" && !(day >= DAYS.min && day <= DAYS.max);
+  const problem =
+    checked && incomplete ? t("incomplete") : checked && late ? t("badDay") : problemOf(save.error);
   const taken = new Set(lines.flatMap((x) => (x.variant ? [x.variant.id] : [])));
   const change = (key: number, patch: Partial<Line>) =>
     setLines((all) => all.map((x) => (x.key === key ? { ...x, ...patch } : x)));
@@ -191,7 +209,7 @@ export function QuoteEditor({
       onSubmit={(event) => {
         event.preventDefault();
         setChecked(true);
-        if (!incomplete && !busy) save.mutate();
+        if (!incomplete && !late && !busy) save.mutate();
       }}
     >
       <h2 className="text-lg font-semibold">{t(quote ? "editTitle" : "newTitle")}</h2>
@@ -241,7 +259,10 @@ export function QuoteEditor({
           type="button"
           variant="ghost"
           className="border-border min-h-11 self-start border sm:min-h-9"
+          aria-disabled={lines.length >= MAX_LINES}
+          aria-describedby={lines.length >= MAX_LINES ? `${id}-cap` : undefined}
           onClick={() =>
+            lines.length < MAX_LINES &&
             setLines((all) => [
               ...all,
               { key: Math.max(-1, ...all.map((x) => x.key)) + 1, variant: null, quantity: "1" },
@@ -250,13 +271,20 @@ export function QuoteEditor({
         >
           {t("add")}
         </Button>
+        {lines.length >= MAX_LINES ? (
+          <p id={`${id}-cap`} className="text-muted text-sm">
+            {t("cap", { max: MAX_LINES })}
+          </p>
+        ) : null}
       </fieldset>
       <Field id={`${id}-until`} label={t("validUntil")}>
         <input
           id={`${id}-until`}
           type="date"
+          {...DAYS}
           value={day}
           readOnly={busy}
+          aria-invalid={checked && late ? true : undefined}
           aria-describedby={`${id}-until-hint`}
           className={`${FIELD} h-11 sm:w-56`}
           onChange={(event) => setDay(event.target.value)}

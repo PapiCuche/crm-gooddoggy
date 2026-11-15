@@ -1,6 +1,7 @@
 import { CalendarX, Check, Clock, Eye, Pencil, Send, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 
+import { useTenant } from "@/components/app-shell/tenant-context";
 import { moneyText } from "@/components/pricing/margins";
 import type { QuoteStatusEnum } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
@@ -64,4 +65,19 @@ export function useDay() {
   const format = useFormatter();
   return (at: string) =>
     format.dateTime(new Date(at), { day: "numeric", month: "short", year: "numeric" });
+}
+
+// ¿Se ofrece una acción con ese permiso sobre esta cotización? Es comodidad, no seguridad: la API
+// decide. Con alcance solo `OWN`, ha de ser de quien la mira; con equipo o sucursal no se sabe desde
+// aquí y se ofrece (si la API dice que no, se explica).
+export function useHeld() {
+  const { permissions, user } = useTenant();
+  return (code: string, quote: { created_by_user_id?: string | null }) =>
+    permissions.some(
+      ({ code: held, scopes }) =>
+        held === code &&
+        (scopes.length === 0 ||
+          scopes.some((scope) => scope !== "OWN") ||
+          quote.created_by_user_id === user.id),
+    );
 }

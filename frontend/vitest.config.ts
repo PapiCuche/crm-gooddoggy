@@ -10,5 +10,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // La zona del proceso es fija: las fechas no dependen de la máquina que corre las pruebas.
+    env: { TZ: "UTC" },
   },
 });
