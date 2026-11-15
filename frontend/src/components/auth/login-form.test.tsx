@@ -65,6 +65,20 @@ describe("LoginForm", () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
+  it("una contraseña temporal (F2-127) explica cómo elegir la propia y no entra", async () => {
+    mockApi({
+      [SESSION]: anonymous,
+      [LOGIN]: { status: 403, body: { code: "PASSWORD_CHANGE_REQUIRED" } },
+    });
+    renderApp(<LoginForm next="/o" />);
+    fill("luis@acme.pe", "temporal");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Tu contraseña es temporal. Elige la tuya en «¿Olvidaste tu contraseña?» con tu correo y vuelve a entrar.",
+    );
+    expect(screen.getByRole("button", { name: /Entrar/ })).toBeEnabled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("pide lo que falta sin llamar a la API y lleva el foco al primer campo vacío", async () => {
     const api = mockApi({ [SESSION]: anonymous });
     renderApp(<LoginForm next="/o" />);

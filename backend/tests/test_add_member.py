@@ -12,13 +12,16 @@ from django.contrib.auth import authenticate
 from django.core.exceptions import PermissionDenied
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import OperationalError, connections
 from django.test import Client
 
 from apps.access.bootstrap import grant_template_role
 from apps.access.selectors import AccessDenied, Denied
 from apps.accounts.models import User
 from apps.accounts.tasks import send_password_changed
+from apps.audit.services import record
 from apps.organizations.bootstrap import add_operator_membership
+from apps.provisioning import members
 from config.settings import base
 from core.tenancy.context import TenantContext
 from core.tenancy.resolution import resolve_tenant
@@ -259,3 +262,77 @@ def test_the_temporary_password_opens_no_session_until_the_account_picks_its_own
     )
     assert not User.objects.get(email=EMAIL).password_change_required
     assert login(browser, EMAIL, mine).status_code == 200
+
+
+def test_a_lockout_started_by_the_temporary_password_is_audited(
+    real_orgs: dict[str, UUID],
+    migrator: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Any,
+) -> None:
+    settings.ROOT_URLCONF, settings.MIDDLEWARE = "config.urls", base.MIDDLEWARE
+    settings.LOGIN_THROTTLE = base.LOGIN_THROTTLE  # 5 intentos por cuenta y dirección
+    monkeypatch.setattr("sys.stdin", stdin(TEMPORARY + "\n"))
+    add("--org", "acme", "--email", EMAIL, "--role", "seller", "--password-stdin")
+    browser = Client(enforce_csrf_checks=True)
+    browser.get(CSRF)
+    for _ in range(4):
+        assert login(browser, EMAIL, "otra-cosa-larga-12").status_code == 401
+    assert login(browser, EMAIL, TEMPORARY).status_code == 403  # el quinto empieza el bloqueo
+    throttled = [row for row in platform_rows(migrator) if row[0] == "auth.login.throttled"]
+    assert len(throttled) == 1 and json.loads(throttled[0][4])["scope"] == "pair"
+    assert login(browser, EMAIL, TEMPORARY).status_code == 429
+
+
+def test_the_command_warns_when_no_email_can_reach_the_new_account(
+    real_orgs: dict[str, UUID], monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    def run(email: str) -> str:
+        monkeypatch.setattr("sys.stdin", stdin(TEMPORARY + "\n"))
+        err = io.StringIO()
+        call_command(
+            "add_member", "--org", "acme", "--email", email, "--role", "seller",
+            "--password-stdin", *REASON, stdout=io.StringIO(), stderr=err,
+        )  # fmt: skip
+        return err.getvalue()
+
+    settings.EMAIL_HOST = ""
+    assert "EMAIL_HOST" in run(EMAIL)
+    assert run(EMAIL) == ""  # ya es miembro: no se creó ninguna cuenta
+    settings.EMAIL_HOST = "smtp.example.com"
+    assert run("otra@acme.pe") == ""
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_a_commit_error_is_recorded_by_what_the_database_kept(
+    real_orgs: dict[str, UUID],
+    migrator: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    committed: bool,
+) -> None:
+    wrapper = connections["default"]
+
+    def lost_answer() -> None:
+        monkeypatch.undo()
+        if committed:
+            wrapper.commit()  # el servidor confirma, pero la respuesta no llega
+        raise OperationalError("server closed the connection unexpectedly")
+
+    def arm(*args: Any, **kwargs: Any) -> Any:
+        written = record(*args, **kwargs)
+        monkeypatch.setattr(wrapper, "commit", lost_answer)  # el siguiente COMMIT es el del alta
+        return written
+
+    monkeypatch.setattr(members, "record", arm)
+    fields = {"slug": "acme", "email": EMAIL, "role": "seller", "password": TEMPORARY}
+    if committed:
+        assert members.add_member(**fields, operator="deploy", reason="alta").added
+        assert memberships(migrator) == [(real_orgs["acme"], "seller")]
+    else:
+        with pytest.raises(OperationalError):
+            members.add_member(**fields, operator="deploy", reason="alta")
+        assert memberships(migrator) == []
+    done = platform_rows(migrator)[-1]
+    expected = ("SUCCESS", "commit_error") if committed else ("FAILED", "error")
+    assert (done[0], done[1]) == ("membership.added", expected[0])
+    assert json.loads(done[4])[expected[1]] == "OperationalError"

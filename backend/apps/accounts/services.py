@@ -108,10 +108,13 @@ def audit_block(email: str, client: dict[str, Any], blocked: throttle.Blocked) -
         unaudited(error, "auth.login.throttled")
 
 
-def _refuse_operator_password(user: User, client: dict[str, Any]) -> None:
+def _refuse_operator_password(
+    user: User, email: str, client: dict[str, Any], started: list[throttle.Blocked]
+) -> None:
     """La contraseña era la correcta, pero la escribió un operador (`add_member`, F2-127): no abre
     sesión ni empieza el segundo paso. La cuenta elige la suya con el enlace de recuperación
-    (ADR-021). Lo contado en el límite no se devuelve. Un fallo de auditoría no cambia el 403."""
+    (ADR-021). Lo contado en el límite no se devuelve, y el bloqueo que empiece con este intento
+    se audita como el de un fallo. Un fallo de auditoría no cambia el 403."""
     try:
         platform.record(
             "auth.login.password_change_required",
@@ -123,6 +126,8 @@ def _refuse_operator_password(user: User, client: dict[str, Any]) -> None:
         )
     except Exception as error:
         unaudited(error, "auth.login.password_change_required")
+    for blocked in started:
+        audit_block(email, client, blocked)
     raise ApiError(PASSWORD_CHANGE_REQUIRED, 403)
 
 
@@ -152,7 +157,7 @@ def login(request: HttpRequest, *, email: str, password: str) -> User | None:
         raise ApiError(INVALID_CREDENTIALS, 401)
     assert isinstance(user, User)  # noqa: S101 — el único backend es ModelBackend
     if user.password_change_required:
-        _refuse_operator_password(user, client)
+        _refuse_operator_password(user, email, client, started)
     if MfaDevice.objects.filter(user=user, confirmed_at__isnull=False).exists():
         from apps.accounts import second_step  # noqa: PLC0415 — ciclo de imports
 

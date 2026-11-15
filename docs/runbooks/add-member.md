@@ -29,11 +29,12 @@ docker compose exec -T backend python manage.py add_member \
   --password-stdin < /ruta/segura/temporal.txt
 ```
 
-- La contraseña temporal cumple la política (`AUTH_PASSWORD_VALIDATORS`). Pásasela a la persona por un canal distinto del correo, y dile que entre con ella y siga «¿Olvidaste tu contraseña?».
+- La contraseña temporal cumple la política (`AUTH_PASSWORD_VALIDATORS`). **No se la des a nadie**: no abre sesión y la persona no la necesita. Dile solo que entre a la pantalla de acceso, pulse «¿Olvidaste tu contraseña?» y elija la suya con el enlace que le llega al correo. Si el entorno no tiene `EMAIL_HOST`, el comando lo avisa al crear la cuenta.
 - Para varias personas, una ejecución por persona.
 
 ## Qué esperar
 
 - `Miembro añadido a <slug>: membresía <id>, rol <rol>, cuenta nueva <id>.` y el recordatorio de la contraseña temporal.
 - `Esa cuenta ya es miembro de <slug> (membresía <id>): no se cambió nada.` al repetirlo.
+- Si el `COMMIT` falla después de confirmarse (respuesta perdida), `membership.added` queda como `SUCCESS` con `commit_error`, como en el alta de una organización (OBS-F2-06-5).
 - Errores, sin escribir nada: `Organización no encontrada`, `El rol Owner no se da con este comando`, `Rol desconocido: …`, `La organización no tiene ese rol de plantilla` (la borró o la sustituyó por un rol propio), una cuenta desactivada o de plataforma, o una contraseña que la política rechaza. Con cualquiera de ellos, la auditoría de plataforma deja `membership.added` con `FAILED` si ya había empezado.

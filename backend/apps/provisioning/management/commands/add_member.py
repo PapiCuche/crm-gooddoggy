@@ -14,6 +14,7 @@ import getpass
 from argparse import ArgumentParser
 from typing import Any
 
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.management.base import CommandError
 
@@ -84,3 +85,8 @@ class Command(PlatformCommand):
                 "La contraseña es temporal: no abre sesión. La persona elige la suya en"
                 " «¿Olvidaste tu contraseña?» con su correo."
             )
+            if not settings.EMAIL_HOST:  # sin correo no le llega el enlace (ADR-019 §6)
+                self.stderr.write(
+                    "Aviso: este entorno no tiene correo (EMAIL_HOST vacío): la persona no podrá"
+                    " recibir el enlace para elegir su contraseña ni entrar."
+                )

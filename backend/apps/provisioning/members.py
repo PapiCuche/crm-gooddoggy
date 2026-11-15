@@ -20,7 +20,7 @@ from apps.accounts.bootstrap import account_exists, member_account
 from apps.accounts.emails import canonical_email
 from apps.audit import platform
 from apps.audit.services import Entity, Result, record
-from apps.organizations.bootstrap import add_operator_membership
+from apps.organizations.bootstrap import active_membership_id, add_operator_membership
 from apps.provisioning.services import checked_trail
 from core.tenancy.context import TenantContext, TenantContextError
 from core.tenancy.resolution import organization_by_slug
@@ -66,6 +66,12 @@ def needs_password(email: str) -> bool:
     return not account_exists(email)
 
 
+def _stored(ctx: TenantContext, user_id: UUID, membership_id: UUID) -> bool:
+    """¿Quedó confirmada la membresía? En una transacción nueva del mismo tenant."""
+    with tenant_scope(ctx):
+        return active_membership_id(ctx, user_id=user_id) == membership_id
+
+
 def add_member(
     *, slug: str, email: str, role: str, password: str | None, operator: str, reason: str
 ) -> Added:
@@ -97,6 +103,8 @@ def add_member(
 
     platform.record(STARTED, actor_type=platform.Actor.SYSTEM, entity=entity, metadata=trail)
     ctx = TenantContext(found.id, "command")  # actor SYSTEM, sin usuario
+    done: dict[str, Any] | None = None
+    late: dict[str, Any] = {}
     try:
         with tenant_scope(ctx):
             user_id, created = member_account(email, password)
@@ -109,12 +117,21 @@ def add_member(
                     metadata={**trail, "user_id": user_id, "user_created": created},
                 )
                 grant_template_role(ctx, membership_id=membership_id, template=role)
+            done = {"user_id": user_id, "membership_id": membership_id, "user_created": created}
     except Exception as error:
+        # Como el alta de una organización (OBS-F2-06-5): un error al cerrar la transacción puede
+        # llegar con el COMMIT hecho. Si el cuerpo terminó, decide lo que quedó en la base.
+        kind = type(error).__name__
         try:
-            audit({"error": type(error).__name__}, Result.FAILED)
+            committed = done is not None and (not added or _stored(ctx, user_id, membership_id))
+            if not committed:
+                audit({"error": kind}, Result.FAILED)
         except Exception:  # sin fila de resultado (ADR-013 §5): manda el error original
             logger.exception("alta de un miembro: no se pudo registrar el resultado")
-        raise
-    done = {"user_id": user_id, "membership_id": membership_id, "user_created": created}
-    audit({**done, "added": added})
+            raise error from None
+        if done is None or not committed:
+            raise
+        logger.warning("alta de un miembro confirmada pese a un error al cerrar", exc_info=True)
+        late = {"commit_error": kind}
+    audit({**done, "added": added, **late})
     return Added(found.id, membership_id, user_id, created, added)
