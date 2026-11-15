@@ -71,12 +71,13 @@ async function cell(who = tenant, reply?: () => Reply) {
   fireEvent.change(screen.getByLabelText("Almacén"), { target: { value: "w1" } });
   fireEvent.change(screen.getByLabelText("Producto"), { target: { value: "p1" } });
   await screen.findByRole("heading", { name: "Collar en Central" });
-  if (reply) {
-    press("Reservar");
-    type("Unidades que se reservan", "2");
-    type("Motivo", "Cliente");
-  }
+  if (reply) await openWith("2", "Cliente");
   return api;
+}
+async function openWith(quantity: string, reason: string) {
+  await waitFor(() => press("Reservar"));
+  type("Unidades que se reservan", quantity);
+  type("Motivo", reason);
 }
 let routes: Record<string, Reply | (() => Reply)> = {};
 const figures = () =>
@@ -199,7 +200,7 @@ describe("Reservas de la celda", () => {
     expect(within(form()).getByLabelText("Día del vencimiento")).toHaveAccessibleDescription(
       "Elige un día desde hoy hasta el 2026-12-14.",
     );
-    type("Día del vencimiento", "2026-11-20");
+    fireEvent.change(within(form()).getByLabelText("Vence"), { target: { value: "3" } });
     onlineManager.setOnline(false);
     api.mockRejectedValueOnce(new TypeError("Failed to fetch")); // sin respuesta: ¿llegó?
     press("Reservar", form());
@@ -210,14 +211,17 @@ describe("Reservas de la celda", () => {
     await waitFor(() => expect(within(form()).getByRole("alert")).toHaveTextContent("Algo salió"));
     reply = { status: 200, body: reservation("r1", 2, "2026-11-21T04:59:00.000Z", "u1") };
     press("Reservar", form());
-    expect(
-      await screen.findByText(
-        /Reservadas 2 unidades de Collar en Central \(vence el 20 nov. 2026, 11:59 p. m.\)/,
-      ),
-    ).toBeVisible();
+    expect(await screen.findByText(/Reservadas 2 unidades de Collar en Central/)).toBeVisible();
     const sent = posts(api).map(({ idempotency_key, expires_at }) => [idempotency_key, expires_at]);
-    expect(sent).toEqual([sent[0], sent[0], sent[0]]);
-    expect(sent[0]![1]).toBe("2026-11-21T04:59:00.000Z"); // al terminar ese día en Lima
+    expect(sent).toEqual([sent[0], sent[0], sent[0]]); // a 3 días de la primera, no de cada envío
+    expect(sent[0]![1]).toBe(new Date(NOW + 3 * 86_400_000).toISOString());
+    await openWith("2", "Otro"); // tras el éxito, otra reserva: clave nueva; el día, a las 23:59
+    fireEvent.change(within(form()).getByLabelText("Vence"), { target: { value: "day" } });
+    type("Día del vencimiento", "2026-11-20");
+    press("Reservar", form());
+    await waitFor(() => expect(posts(api)).toHaveLength(4));
+    expect(posts(api)[3]).toMatchObject({ expires_at: "2026-11-21T04:59:00.000Z" });
+    expect(posts(api)[3].idempotency_key).not.toBe(sent[0]![0]);
   });
 
   it("los errores se dicen por `code`", async () => {
@@ -247,7 +251,10 @@ describe("Reservas de la celda", () => {
   });
 
   it("liberar una que ya venció lo dice y vuelve a pedir las reservas", async () => {
-    let list = [reservation("r1", 2, "2026-11-16T15:00:00Z", "u1")];
+    let list = [
+      reservation("r1", 2, "2026-11-16T15:00:00Z", "u1"),
+      reservation("r9", 1, "2026-11-15T14:00:00Z", "u1"), // vencida: sin «Liberar» (c1)
+    ];
     routes = {
       [LEVELS]: level(5, 2),
       [LIST]: () => page(list),
@@ -255,6 +262,7 @@ describe("Reservas de la celda", () => {
     };
     const api = await cell();
     await screen.findByRole("button", { name: /^Liberar/ });
+    expect(screen.getAllByRole("button", { name: /^Liberar/ })).toHaveLength(1);
     press(/^Liberar/);
     type("Motivo de la liberación", "Ya no", "Liberar reserva");
     press("Liberar", form("Liberar reserva"));

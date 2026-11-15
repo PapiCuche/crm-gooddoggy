@@ -69,6 +69,7 @@ export function ReservationForm({
       },
       onError: (error) => {
         if (error.code === "IDEMPOTENCY_KEY_REUSED") keyRef.current = null;
+        if (error.fields?.expires_at && keyRef.current) keyRef.current.picked = ""; // otro instante
         if (["IDEMPOTENCY_KEY_REUSED", "INSUFFICIENT_STOCK"].includes(error.code))
           void refetchCell(queryClient, slug, {
             variant_id: variant.id,
