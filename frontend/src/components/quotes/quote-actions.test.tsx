@@ -22,7 +22,10 @@ afterEach(() => {
 
 const draft = detail({ status: "DRAFT", version: 2, created_by_user_id: "u1" });
 const waiting = (mine: boolean, version = 3) =>
-  detail({ status: "PENDING_APPROVAL", version, approval_asked_by_me: mine });
+  detail({
+    ...{ status: "PENDING_APPROVAL", version },
+    ...{ approval_asked_by_me: mine, approval_requested_by_me: mine },
+  });
 const show = (...codes: string[]) =>
   withTenant(<QuoteDetail quoteId="1" />, "quotes.view", ...codes);
 const button = (name: string) => screen.queryByRole("button", { name });
@@ -35,7 +38,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
       [`POST ${BASE}1/request-approval/`]: { status: 200, body: waiting(true) },
     });
     show("quotes.update", "quotes.approve");
-    const send = await screen.findByRole("button", { name: "Enviar a aprobación" });
+    const send = await screen.findByRole("button", { name: "Validar la cotización" });
     expect(screen.queryByText("Espera aprobación")).toBeNull();
     send.focus();
     fireEvent.click(send);
@@ -62,7 +65,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Retirar la solicitud" }));
     expect(await screen.findByText(/Solicitud retirada/)).toBeVisible();
     expect(screen.queryByText("Espera aprobación")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Enviar a aprobación" }));
+    fireEvent.click(screen.getByRole("button", { name: "Validar la cotización" }));
     expect(await screen.findByText("Aprobada: el descuento cabe en tu límite.")).toBeVisible();
     expect(calls.map((c) => [c.path, c.body])).toEqual([
       [`${BASE}1/withdraw-request/`, { version: 3 }],
@@ -78,7 +81,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
     show("quotes.approve");
     expect(await screen.findByText(/que no la haya pedido/)).toBeVisible();
     expect(button("Retirar la solicitud")).toBeNull();
-    expect(button("Enviar a aprobación")).toBeNull();
+    expect(button("Validar la cotización")).toBeNull();
     const open = screen.getByRole("button", { name: "Aprobar" });
     open.focus();
     fireEvent.click(open);
@@ -93,7 +96,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
     expect(calls.map((c) => c.body)).toEqual([{ version: 3 }]); // sin comentario, no viaja
   });
 
-  it("rechazar pide su motivo; con él vuelve a borrador; Cancelar devuelve el foco", async () => {
+  it("rechazar pide su motivo; con él vuelve a borrador; Volver devuelve el foco", async () => {
     const calls = api({
       [`GET ${BASE}1/`]: { status: 200, body: waiting(false) },
       [`POST ${BASE}1/reject/`]: { status: 200, body: { ...draft, version: 4 } },
@@ -104,7 +107,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
     open.focus();
     fireEvent.click(open);
     let form = screen.getByRole("form", { name: "Rechazar la solicitud de COT-000001" });
-    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Volver" }));
     await waitFor(() => expect(document.activeElement).toBe(open));
     fireEvent.click(open);
     form = screen.getByRole("form", { name: "Rechazar la solicitud de COT-000001" });
@@ -167,7 +170,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
     expect(await within(form).findByText(/ya no espera una decisión/)).toBeVisible();
     await waitFor(() => expect(button("Rechazar la solicitud")).toBeNull());
     expect(screen.getByText("Aprobada")).toBeVisible();
-    fireEvent.click(within(form).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(within(form).getByRole("button", { name: "Volver" }));
     expect(screen.queryByRole("form")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(heading()));
   });
@@ -185,7 +188,7 @@ describe("Cotizaciones: aprobación en el detalle (F5-09h)", () => {
     cleanup();
     api({ [`GET ${BASE}1/`]: { status: 200, body: draft } });
     show("quotes.update:OWN", "quotes.approve"); // suyo; aprobar no aplica a un borrador
-    expect(await screen.findByRole("button", { name: "Enviar a aprobación" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Validar la cotización" })).toBeVisible();
     expect(button("Editar")).toBeVisible();
     expect(button("Aprobar")).toBeNull();
     cleanup();

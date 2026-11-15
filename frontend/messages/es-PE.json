@@ -2676,7 +2676,10 @@
         "customer": "Notas para el cliente",
         "internal": "Notas internas (no las ve el cliente)",
         "cancel": "Motivo de la cancelación",
-        "cancelledAt": "Cancelada el {date}"
+        "cancelledAt": "Cancelada el {date}",
+        "terms": "Condiciones",
+        "warranty": "Garantía",
+        "rejection": "Motivo del rechazo del cliente"
       },
       "revision": "Revisión {number}",
       "late": "Vencida",
@@ -2688,7 +2691,10 @@
         "title": "Espera aprobación",
         "mine": "La pediste tú: la decide otra persona con permiso para aprobar. Mientras tanto no se edita.",
         "other": "La decide una persona con permiso para aprobar que no la haya pedido. Mientras tanto no se edita."
-      }
+      },
+      "sent": "Emitida",
+      "accepted": "Aceptada por el cliente",
+      "rejected": "Rechazada por el cliente"
     },
     "emptyAll": "Todavía no hay cotizaciones.",
     "linked": {
@@ -2721,7 +2727,7 @@
       "create": "Crear borrador",
       "save": "Guardar cambios",
       "cancel": "Cancelar",
-      "badDay": "Elige una fecha de validez entre los años 2000 y 2999.",
+      "badDay": "Elige una fecha de validez entre los años 2000 y 2099.",
       "cap": "Hasta {max} líneas por cotización."
     },
     "discount": {
@@ -2748,48 +2754,95 @@
       "fields": {
         "items": "Revisa las líneas: una variante por línea, hasta 50, con cantidad de 1 a 1000000.",
         "variant_id": "Una variante no existe o no tiene precio vigente en la lista de precios.",
-        "valid_until": "La fecha de validez no se admite.",
-        "reason": "Escribe un motivo de hasta 200 caracteres.",
+        "valid_until": "La fecha de validez no se admite: ha de ser futura.",
+        "reason": "Revisa el motivo: no puede quedar vacío ni pasar del límite.",
         "comment": "El comentario admite hasta 500 caracteres.",
         "_": "Algún dato no se admite, o el cliente o la oportunidad ya no se pueden usar. Revísalo y vuelve a intentarlo.",
-        "other": "Algún dato no se admite. Revísalo y vuelve a intentarlo."
+        "other": "Algún dato no se admite. Revísalo y vuelve a intentarlo.",
+        "terms": "Las condiciones admiten hasta 2000 caracteres.",
+        "warranty": "La garantía admite hasta 500 caracteres."
       },
       "NOT_PENDING": "La cotización ya no espera una decisión: otra persona la decidió o la retiró.",
       "SELF_APPROVAL_FORBIDDEN": "La solicitud la pediste tú: la decide otra persona.",
       "BEYOND_LIMIT": "El descuento de la cotización pasa de tu límite: la aprueba alguien con un límite mayor.",
-      "PRICE_NOT_ALLOWED": "Un precio puesto a mano ya no se admite. Quítalo o cámbialo y vuelve a enviarla."
+      "PRICE_NOT_ALLOWED": "Un precio puesto a mano ya no se admite. Quítalo o cámbialo y vuelve a enviarla.",
+      "NOT_ISSUABLE": "La cotización ya no se puede emitir: solo se emite una aprobada o un borrador.",
+      "NEEDS_APPROVAL": "Antes de emitirla necesita una aprobación: valídala y espera la decisión.",
+      "NOT_REVISABLE": "Solo se revisa una cotización aprobada o emitida que sigue abierta.",
+      "NOT_ANSWERABLE": "La cotización ya no espera la respuesta del cliente.",
+      "QUOTE_EXPIRED": "La validez de la cotización ya pasó: abre una revisión para enviarle otra.",
+      "QUOTE_TERMINAL": "La cotización ya terminó: no se puede cancelar."
     },
     "actions": {
       "verbs": {
-        "request": "Enviar a aprobación",
-        "withdraw": "Retirar la solicitud",
+        "request": "Validar la cotización",
+        "issue": "Emitir",
+        "accept": "El cliente aceptó",
+        "decline": "El cliente rechazó",
         "approve": "Aprobar",
-        "reject": "Rechazar la solicitud"
+        "reject": "Rechazar la solicitud",
+        "withdraw": "Retirar la solicitud",
+        "revise": "Nueva revisión",
+        "cancel": "Cancelar la cotización"
       },
       "titles": {
         "approve": "Aprobar {number}",
-        "reject": "Rechazar la solicitud de {number}"
+        "reject": "Rechazar la solicitud de {number}",
+        "issue": "Emitir {number}",
+        "accept": "El cliente aceptó {number}",
+        "decline": "El cliente rechazó {number}",
+        "revise": "Nueva revisión de {number}",
+        "cancel": "Cancelar {number}"
+      },
+      "intros": {
+        "issue": "Pasa a «Enviada» y congela el cliente, la validez, las condiciones y la garantía. Después ya no se edita: para cambiarla se abre una revisión.",
+        "accept": "Registra la respuesta del cliente; la cotización termina. Si tiene oportunidad y puedes cambiarla, pasa a «Pago pendiente».",
+        "decline": "Registra la respuesta del cliente; la cotización termina.",
+        "revise": "{number} queda cancelada (el cliente ya no puede aceptarla) y se abre la revisión {next} como borrador, con los precios de hoy y sin descuentos.",
+        "cancel": "La cotización termina y no se puede deshacer. Si espera aprobación, su solicitud también se cierra."
       },
       "fields": {
         "approve": "Comentario (opcional)",
-        "reject": "Motivo del rechazo"
+        "reject": "Motivo del rechazo",
+        "valid_until": "Válida hasta",
+        "terms": "Condiciones (opcional)",
+        "warranty": "Garantía (opcional)",
+        "decline": "Motivo que dio el cliente",
+        "cancel": "Motivo (opcional)"
       },
       "hints": {
         "approve": "Hasta {max} caracteres. No lo ve el cliente.",
-        "reject": "Hasta {max} caracteres. La cotización vuelve a ser un borrador."
+        "reject": "Hasta {max} caracteres. La cotización vuelve a ser un borrador.",
+        "valid_until": "Hasta el final de ese día, hora de la organización (zona {zone}).",
+        "terms": "Hasta {max} caracteres. Las ve el cliente.",
+        "warranty": "Hasta {max} caracteres. La ve el cliente.",
+        "decline": "Hasta {max} caracteres.",
+        "cancel": "Hasta {max} caracteres."
       },
       "confirm": {
         "approve": "Confirmar la aprobación",
-        "reject": "Confirmar el rechazo"
+        "reject": "Confirmar el rechazo",
+        "issue": "Emitir la cotización",
+        "accept": "Confirmar la aceptación",
+        "decline": "Confirmar el rechazo del cliente",
+        "revise": "Abrir la revisión {next}",
+        "cancel": "Confirmar la cancelación"
       },
-      "cancel": "Cancelar",
+      "back": "Volver",
       "needReason": "Escribe el motivo del rechazo.",
+      "needDay": "Elige hasta qué día es válida.",
+      "badDay": "Elige una fecha desde hoy hasta el año 2099.",
       "done": {
         "request": "Enviada a aprobación: espera la decisión de otra persona.",
         "approvedNow": "Aprobada: el descuento cabe en tu límite.",
         "withdraw": "Solicitud retirada: la cotización vuelve a ser un borrador.",
         "approve": "Cotización aprobada.",
-        "reject": "Solicitud rechazada: la cotización vuelve a ser un borrador."
+        "reject": "Solicitud rechazada: la cotización vuelve a ser un borrador.",
+        "issue": "Cotización emitida: ya no se edita.",
+        "accept": "Aceptación del cliente registrada.",
+        "decline": "Rechazo del cliente registrado.",
+        "revise": "Revisión {number} abierta como borrador.",
+        "cancel": "Cotización cancelada."
       }
     }
   }
