@@ -146,7 +146,8 @@ class TemplateView(APIView):
         "cada fila contra el stock de ahora y no lo cambia. Hasta 1 MiB y 1000 filas. CSV en "
         "UTF-8 (o el de Excel en Windows), separador `,`, `;` o tabulador; XLSX (por su firma, "
         "no por el nombre): la primera hoja, sin fórmulas. 400 en `content` si el archivo "
-        "entero no se puede leer.",
+        "entero no se puede leer. 403 `ACTOR_NOT_ALLOWED`: un agente de IA o una integración no "
+        "previsualiza.",
     )
 )
 class StockImportsView(APIView):
@@ -163,6 +164,8 @@ class StockImportsView(APIView):
             job = imports.preview(_tenant(), file_name=data["file_name"], data=data["content"])
         except csvfile.Unreadable as error:
             raise serializers.ValidationError({"content": [str(error)]}) from None
+        except stock.ActorRefused:
+            raise refused() from None
         return Response(StockImportSerializer(job).data, status=201)
 
 

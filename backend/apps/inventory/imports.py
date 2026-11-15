@@ -137,8 +137,10 @@ def _summary(job: DataImport, sheet: csvfile.Sheet, rows: list[DataImportRow]) -
 
 def preview(ctx: TenantContext, *, file_name: str, data: bytes) -> DataImport:
     """Valida el archivo y guarda la importación (`VALIDATED`) con una fila por línea con texto.
-    `csvfile.Unreadable` si el archivo entero no se puede leer: no guarda nada."""
+    `csvfile.Unreadable` si el archivo entero no se puede leer: no guarda nada. `stock.ActorRefused`
+    (como `apply` y `revert`, F3-39c) antes de la primera consulta."""
     alias = require_scope(ctx)
+    stock.actor(ctx)
     assert ctx.user_id is not None  # noqa: S101 — la sube una persona (la API)
     sheet = (xlsxfile.read if xlsxfile.is_zip(data) else csvfile.read)(data, COLUMNS)
     if not sheet.rows:
