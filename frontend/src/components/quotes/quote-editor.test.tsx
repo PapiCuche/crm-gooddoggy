@@ -201,24 +201,33 @@ describe("Cotizaciones: seguimientos del editor (F5-09h)", () => {
   const show = (...codes: string[]) =>
     withTenant(<QuoteDetail quoteId="1" />, "quotes.view", ...codes);
 
-  it("un 409 QUOTE_NOT_DRAFT deja el editor y su texto aunque ya no se pueda editar", async () => {
-    let gone = false;
-    api({
-      [`GET ${BASE}1/`]: () => ({ status: 200, body: gone ? { ...two, status: "APPROVED" } : two }),
-      [`PATCH ${BASE}1/`]: () => {
-        gone = true;
-        return { status: 409, body: { code: "QUOTE_NOT_DRAFT" } };
-      },
-    });
-    show("quotes.update", "quotes.discount");
-    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
-    type("Notas internas (opcional; no las ve el cliente)", "b");
-    fireEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    expect(await screen.findByText(/ya no es un borrador/)).toHaveAttribute("role", "alert");
-    await waitFor(() => expect(screen.getByText("Aprobada")).toBeVisible());
-    expect(screen.getByRole("form", { name: "Editar el borrador" })).toBeVisible();
-    expect(screen.getByText(/ya no es un borrador/)).toBeVisible();
-  });
+  it.each([
+    ["Editar", "PATCH", "", "Editar el borrador"],
+    ["Descuento de Collar", "POST", "items/l1/discount/", "Descuento de Collar"],
+  ])(
+    "un 409 QUOTE_NOT_DRAFT tras «%s» deja su formulario y su texto",
+    async (open, verb, to, name) => {
+      let gone = false;
+      api({
+        [`GET ${BASE}1/`]: () => ({
+          status: 200,
+          body: gone ? { ...two, status: "APPROVED" } : two,
+        }),
+        [`${verb} ${BASE}1/${to}`]: () => {
+          gone = true;
+          return { status: 409, body: { code: "QUOTE_NOT_DRAFT" } };
+        },
+      });
+      show("quotes.update", "quotes.discount");
+      fireEvent.click(await screen.findByRole("button", { name: open }));
+      if (to) type("Porcentaje (%)", "5");
+      fireEvent.submit(screen.getByRole("form", { name }));
+      expect(await screen.findByText(/ya no es un borrador/)).toHaveAttribute("role", "alert");
+      await waitFor(() => expect(screen.getByText("Aprobada")).toBeVisible());
+      expect(screen.getByRole("form", { name })).toBeVisible();
+      expect(screen.getByText(/ya no es un borrador/)).toBeVisible();
+    },
+  );
 
   it("el descuento dice su línea; al cambiar de línea el foco vuelve al último botón", async () => {
     api({ [`GET ${BASE}1/`]: { status: 200, body: two } });
@@ -255,7 +264,7 @@ describe("Cotizaciones: seguimientos del editor (F5-09h)", () => {
     );
   });
 
-  it("hasta 50 líneas, y una fecha fuera de 2000–2999 no se envía", async () => {
+  it("hasta 50 líneas, y una fecha fuera de 2000-2999 no se envía", async () => {
     const calls = api({});
     withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
     const add = screen.getByRole("button", { name: "Añadir línea" });
@@ -264,15 +273,16 @@ describe("Cotizaciones: seguimientos del editor (F5-09h)", () => {
     expect(add).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Hasta 50 líneas por cotización.")).toBeVisible();
     cleanup();
-    api({ "GET /api/v1/o/acme/variants/": variants });
+    const sent = api({ "GET /api/v1/o/acme/variants/": variants });
     withTenant(<QuoteEditor link={{ contact_id: "c1" }} onCancel={() => {}} onSaved={() => {}} />);
     type("Variante 1", "corr");
     fireEvent.click(await screen.findByRole("button", { name: "Correa · Roja (COR-R)" }));
-    type("Válida hasta (opcional)", "0999-12-31");
+    type("Válida hasta (opcional)", "3000-01-01");
     fireEvent.click(screen.getByRole("button", { name: "Crear borrador" }));
     expect(screen.getByRole("alert")).toHaveTextContent("entre los años 2000 y 2999");
     expect(field("Válida hasta (opcional)")).toHaveAttribute("aria-invalid", "true");
     expect(field("Válida hasta (opcional)")).toHaveAttribute("min", "2000-01-01");
-    expect(calls).toEqual([]);
+    await new Promise((done) => setTimeout(done, 100)); // un envío sería asíncrono
+    expect([...calls, ...sent]).toEqual([]);
   });
 });
