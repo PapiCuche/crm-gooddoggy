@@ -14,7 +14,9 @@ import type { Level } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
 import { placed, statusOf, useCellPicker, useReads } from "./cell-picker";
+import { CellReservations } from "./cell-reservations";
 import { MovementForm } from "./movement-form";
+import { type PendingReservation, ReservationForm } from "./reservation-form";
 import { TransferForm } from "./transfer-form";
 
 const ZERO = { on_hand: 0, reserved: 0, available: 0 }; // una celda sin movimientos
@@ -23,7 +25,8 @@ const ZERO = { on_hand: 0, reserved: 0, available: 0 }; // una celda sin movimie
 // F3-11) en ese almacén y en cada almacén con movimientos. Con el almacén elegido, debajo, su
 // stock entero página a página, con el SKU y el nombre de cada variante (F3-19): elegir una fila
 // abre su celda. Quién ve qué lo decide la API (`inventory.view`, y `products.view` para elegir
-// el producto). Registrar movimientos: F3-15; transferir a otro almacén: F3-32.
+// el producto). Registrar movimientos: F3-15; transferir a otro almacén: F3-32; las reservas de la
+// celda, y reservar y liberar: F3-36.
 export function StockPanel() {
   const t = useTranslations("stock");
   const { organization, permissions } = useTenant();
@@ -31,9 +34,11 @@ export function StockPanel() {
   // Comodidad: registrar se ofrece a quien la API dijo que tiene `inventory.adjust` (F3-15).
   const canAdjust = permissions.some((grant) => grant.code === "inventory.adjust");
   const canTransfer = permissions.some((grant) => grant.code === "inventory.transfer"); // F3-32
+  const canManage = permissions.some((grant) => grant.code === "inventory.manage"); // F3-36
   const [done, setDone] = useState<string | null>(null);
   const keyRef = useRef<string | null>(null); // la de `MovementForm`, hasta un registro
   const transferKey = useRef<string | null>(null); // la de `TransferForm`, hasta una transferencia
+  const reserveKey = useRef<PendingReservation | null>(null); // la de `ReservationForm`
   const [zeros, setZeros] = useState(false);
   const cellBox = useRef<HTMLDivElement>(null);
   const { failed, retry } = useReads();
@@ -119,6 +124,13 @@ export function StockPanel() {
           </h2>
           {figures(here)}
         </section>
+        <CellReservations
+          slug={slug}
+          warehouse={warehouse}
+          variant={variant}
+          canManage={canManage}
+          onDone={setDone}
+        />
         <section className="flex flex-col gap-2">
           <h2 className="font-medium">{t("everywhere")}</h2>
           {levels.data.length === 0 ? (
@@ -151,7 +163,7 @@ export function StockPanel() {
       <div ref={cellBox} tabIndex={-1} className="flex flex-col gap-6 focus-visible:outline-none">
         {cell}
       </div>
-      {canAdjust || canTransfer ? (
+      {canAdjust || canTransfer || canManage ? (
         <>
           {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
           <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
@@ -177,6 +189,16 @@ export function StockPanel() {
                   available={here.available}
                   warehouses={warehouses.data ?? []}
                   keyRef={transferKey}
+                  onDone={setDone}
+                />
+              ) : null}
+              {canManage && here ? (
+                <ReservationForm
+                  slug={slug}
+                  warehouse={warehouse}
+                  variant={variant}
+                  available={here.available}
+                  keyRef={reserveKey}
                   onDone={setDone}
                 />
               ) : null}
