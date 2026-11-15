@@ -1,6 +1,6 @@
 # ADR-020: Invitaciones a una organización
 
-- **Status:** Accepted, salvo la excepción a ADR-014 §4 de las rutas de aceptación (§4), que es *Proposed* y espera al mantenedor (D-F2-14; ADR-015 §3)
+- **Status:** Accepted, incluida la excepción a ADR-014 §4 de las rutas de aceptación (§4): la aceptó el propietario el 2026-11-15 (D-F2-14, #759, #843)
 - **Date:** 2026-10-07
 - **Deciders:** programa autónomo (ADR-015 §5). El mantenedor puede reemplazarlo.
 - **Related:** ADR-001, ADR-002, ADR-003, ADR-013, ADR-017, ADR-019, E01-06 en [05-backlog-y-roadmap.md](../fase-0/05-backlog-y-roadmap.md), `user_invitations` en [02-modelo-de-datos.md](../fase-0/02-modelo-de-datos.md) §E.2
@@ -47,7 +47,7 @@ Caduca a los 7 días. Renovar una invitación o reenviarla genera un enlace nuev
 
 Las rutas de aceptación son de plataforma (sin sesión de la organización): quien acepta todavía no es miembro.
 
-**Excepción a ADR-014 §4, pendiente del mantenedor.** ADR-014 §4 dice que una ruta de plataforma no abre `tenant_scope`, no usa modelos tenant-owned y no devuelve datos de una organización a quien no es miembro. Aceptar necesita las tres cosas: leer la invitación, crear la membresía (ADR-002 §3.2 lo sitúa en el `tenant_scope` de la organización que invita, «tras validar el token») y enseñar el nombre de la organización (§5). ADR-002 ya prevé este caso, pero ADR-014 es posterior y no lo exceptúa, y este ADR no puede relajarlo por su cuenta (ADR-015 §3): **las rutas de aceptación, y con ellas el envío del correo, no se implementan hasta que el mantenedor confirme la excepción** (D-F2-14 en [phase-2.md](../phases/phase-2.md)). Lo que este ADR fija para cuando se confirme: el scope lo abre solo esa ruta, con actor `SYSTEM`, después de que la búsqueda por hash (§3) devuelva una invitación; no se escribe ni se responde nada de la organización hasta entonces; y ante un enlace que la búsqueda no devuelve, el trabajo y la respuesta son los mismos sea cual sea la razón. Un enlace que la búsqueda devuelve pero que ya no se puede aceptar (§2) recibe la misma respuesta aunque cueste más trabajo: esa diferencia solo la ve quien tiene el secreto.
+**Excepción a ADR-014 §4, aceptada por el propietario el 2026-11-15 (D-F2-14).** ADR-014 §4 dice que una ruta de plataforma no abre `tenant_scope`, no usa modelos tenant-owned y no devuelve datos de una organización a quien no es miembro. Aceptar necesita las tres cosas: leer la invitación, crear la membresía (ADR-002 §3.2 lo sitúa en el `tenant_scope` de la organización que invita, «tras validar el token») y enseñar el nombre de la organización (§5). ADR-002 ya prevé este caso, pero ADR-014 es posterior y no lo exceptúa, y este ADR no puede relajarlo por su cuenta (ADR-015 §3): **las rutas de aceptación, y con ellas el envío del correo, no se implementan hasta que el mantenedor confirme la excepción** (D-F2-14 en [phase-2.md](../phases/phase-2.md)). Lo que este ADR fija para cuando se confirme: el scope lo abre solo esa ruta, con actor `SYSTEM`, después de que la búsqueda por hash (§3) devuelva una invitación; no se escribe ni se responde nada de la organización hasta entonces; y ante un enlace que la búsqueda no devuelve, el trabajo y la respuesta son los mismos sea cual sea la razón. Un enlace que la búsqueda devuelve pero que ya no se puede aceptar (§2) recibe la misma respuesta aunque cueste más trabajo: esa diferencia solo la ve quien tiene el secreto.
 
 Ante un enlace que no vale, sea por la razón que sea (no existe, caducó, se revocó, ya se usó, secreto incorrecto), la respuesta es la misma. Los intentos se limitan por dirección, como el acceso (ADR-003 §2).
 
@@ -82,7 +82,7 @@ La tabla está en `apps.organizations`, con las membresías. Invitar y aceptar c
 
 ### 8. Lo que queda del mantenedor
 
-Una sola cosa de este ADR no la puede decidir el programa: **la excepción a ADR-014 §4** para las rutas de aceptación (§4, D-F2-14). Hasta que se confirme se construye lo que no depende de ella: la tabla, invitar, listar y revocar. No se envía ningún correo de invitación mientras su enlace no se pueda aceptar.
+Una sola cosa de este ADR no la podía decidir el programa: **la excepción a ADR-014 §4** para las rutas de aceptación (§4, D-F2-14). El propietario la aceptó el 2026-11-15; el envío del correo y la aceptación son F2-130 (#844). Hasta que se fusionen, no se envía ningún correo de invitación.
 
 Dos preguntas que la revisión de este ADR dejó abiertas quedaron decididas aquí, por la opción más restrictiva: la invitación se encuentra por el hash del secreto con una función `SECURITY DEFINER` (§3), no por identificadores que viajen en el enlace; y el envío tiene tope por invitación y por organización (§2, §3).
 
