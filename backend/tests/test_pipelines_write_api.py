@@ -414,10 +414,10 @@ def test_an_unexpected_value_error_is_a_generic_400_that_echoes_nothing(
 def test_an_unknown_key_comes_back_short_and_printable(crm: SimpleNamespace) -> None:
     ana = signed(crm.ana)
     huge = "x" * 100_000 + "\x00\u202e"
-    response = send(ana, "post", PIPELINES, {**body(), huge: 1, "Ñu\u202e": 2})
+    response = send(ana, "post", PIPELINES, {**body(), huge: 1, "Ñu\u202e": 2, "a\x00\x1b": 3})
     assert response.status_code == 400 and len(response.content) < 400, len(response.content)
-    assert set(response.json()["fields"]) == {"x" * 64 + "...", "?u?"}
-    for echoed in ("\x00", "\u202e", "Ñ", "\\u0000", "\\u202e", "\\u00d1", "x" * 65):
+    assert set(response.json()["fields"]) == {"x" * 64 + "...", "?u?", "a??"}
+    for echoed in ("\x00", "\u202e", "Ñ", "\\u0000", "\\u202e", "\\u00d1", "\\u001b", "x" * 65):
         assert echoed not in response.content.decode()
 
 
