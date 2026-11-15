@@ -13,9 +13,9 @@ from django.test import Client
 from apps.accounts import backup_codes, second_factor
 from apps.accounts.models import MfaBackupCode, MfaCodeAttempt, MfaDevice
 from apps.audit import platform
-from core.observability.logging import json_formatter
 from tests import test_auth_api, test_mfa_second_factor
 from tests.factories import TEST_PASSWORD, make_user
+from tests.logs import json_lines
 from tests.test_auth_api import CSRF, EMAIL, SESSION, audit, login, reply, send
 from tests.test_login_second_step import STEP_TWO, counters
 from tests.test_mfa_disable import inside, refused
@@ -74,7 +74,7 @@ def test_with_the_password_and_a_totp_code_ten_new_codes_replace_the_old_ones(
     third.get(CSRF)
     assert login(third).status_code == 202  # y uno de los nuevos sí
     assert send(third, "POST", STEP_TWO, {"code": fresh[0].lower()}).status_code == 200
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     stored = str(audit(migrator))
     for text in (typed, TEST_PASSWORD, *fresh, *new):
         assert text not in logged and text not in stored

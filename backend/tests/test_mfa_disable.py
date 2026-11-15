@@ -16,9 +16,9 @@ from apps.accounts import code_limit, mfa, mfa_disable, throttle
 from apps.accounts.models import MfaBackupCode, MfaCodeAttempt, MfaDevice, User
 from apps.accounts.tasks import send_mfa_code_limit, send_mfa_disabled
 from apps.audit import platform
-from core.observability.logging import json_formatter
 from tests import test_auth_api, test_mfa_second_factor
 from tests.factories import TEST_PASSWORD, make_user
+from tests.logs import json_lines
 from tests.test_auth_api import CSRF, EMAIL, SESSION, audit, login, reply, send
 from tests.test_login_second_step import STEP_TWO, counters
 from tests.test_mfa_second_factor import SECRET, code_at, enrolled
@@ -99,7 +99,7 @@ def test_with_the_password_and_a_code_the_factor_goes_and_the_other_sessions_end
     assert "par" not in counters(migrator)  # el acierto devuelve lo que contó
     assert login(other).status_code == 200  # el acceso vuelve a pedir solo la contraseña
     assert reply(off(browser, code)) == (409, b'{"code":"MFA_NOT_ENABLED"}')
-    logged = "\n".join(json_formatter().format(record) for record in caplog.records)
+    logged = json_lines(caplog)
     kept = str(audit(migrator))
     for text in (code, TEST_PASSWORD, SECRET.hex()):
         assert text not in logged and text not in kept

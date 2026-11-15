@@ -24,6 +24,7 @@ from apps.conversations.models import ChannelAccount, Conversation, Message
 from core.outbox.publisher import publish_outbox
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
+from tests.logs import log_text
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
 from tests.test_contacts_api import crm, real_stack
@@ -793,7 +794,8 @@ def test_past_the_new_contacts_per_minute_cap_the_message_waits_and_is_never_los
     assert ingress.process() == {"PROCESSED": 1}
     found = snap(crm.a)
     assert (len(found.contacts), len(found.messages)) == (3, 4)
-    assert "12345" not in caplog.text and not any(s in caplog.text for s in senders)
+    logged = log_text(caplog)  # sin la hora ni la petición, que pueden contener `12345`
+    assert "12345" not in logged and not any(s in logged for s in senders)
 
 
 def test_a_sustained_spike_never_kills_a_rate_limited_item(

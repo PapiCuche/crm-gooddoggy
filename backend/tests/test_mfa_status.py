@@ -18,7 +18,7 @@ from apps.accounts.models import ENROLLMENT_FAILURES, MfaBackupCode, MfaDevice
 from tests import test_auth_api, test_mfa_second_factor
 from tests.factories import make_user
 from tests.test_auth_api import EMAIL, NO_SESSION, login, reply, send
-from tests.test_mfa_enrollment_confirm import CONFIRM, OLDER, now_code
+from tests.test_mfa_enrollment_confirm import CONFIRM, now_code, started_ago
 from tests.test_mfa_enrollment_start import start
 from tests.test_mfa_second_factor import enrolled
 
@@ -60,9 +60,9 @@ def test_it_follows_the_account_from_nothing_to_an_enrolment_to_a_confirmed_devi
         "backup_codes_left": 0,
         "step_up_expires_in": None,
     }
-    migrator.execute(OLDER, ["9 minutes 30 seconds"])
+    started_ago(migrator, "9 minutes 30 seconds")
     assert 25 <= state(browser)["enrollment_expires_in"] <= 30
-    migrator.execute(OLDER, ["10 minutes"])
+    started_ago(migrator, "10 minutes")
     assert state(browser) == NONE  # caducada: ya no se puede confirmar
     secret = base64.b32decode(start(browser).json()["secret"])
     for _ in range(ENROLLMENT_FAILURES):
@@ -88,8 +88,10 @@ def test_it_follows_the_account_from_nothing_to_an_enrolment_to_a_confirmed_devi
     hashes = MfaBackupCode.objects.values_list("code_hash", flat=True)
     for hidden in (base64.b32encode(secret).decode(), secret.hex(), *shown, *hashes):
         assert hidden not in whole
+    # Gastados con el reloj de `created_at` (Python, `auto_now_add`), no con el `now()` de la
+    # base: unos milisegundos atrasado, daba `used_at < created_at` (F3-38b, #823).
     migrator.execute(
-        "UPDATE user_mfa_backup_codes SET used_at = now() WHERE id IN"
+        "UPDATE user_mfa_backup_codes SET used_at = created_at WHERE id IN"
         " (SELECT id FROM user_mfa_backup_codes LIMIT 3)"
     )
     assert state(browser)["backup_codes_left"] == 7  # los gastados no cuentan
