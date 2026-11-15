@@ -235,7 +235,7 @@ class Credential(TenantModel):
     expires_at = models.DateTimeField(null=True, blank=True)
     rotated_at = models.DateTimeField(null=True, blank=True)  # cuándo sustituyó a la anterior
     revoked_at = models.DateTimeField(null=True, blank=True)
-    created_by_user_id = models.UUIDField(null=True, blank=True)
+    created_by_user_id = models.UUIDField(null=True, blank=True)  # FK a membresías (0034, F2-128)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

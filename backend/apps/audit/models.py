@@ -12,6 +12,11 @@ from core.db.models import TenantManager, TenantModel, uuid7_primary_key
 # Los que admite el `CHECK` de la tabla: los de `core.tenancy.ActorType` y `PLATFORM_STAFF`, que
 # hoy nada escribe.
 ACTOR_TYPES = ("USER", "AI_AGENT", "SYSTEM", "INTEGRATION", "PLATFORM_STAFF")
+# F2-128: la tabla tiene además `impersonated_by_user_id` (nada la escribe aún: la suplantación de
+# docs/fase-0/02 §impersonation_sessions no existe), y es la excepción a la FK compuesta de ADR-001
+# §3: quien suplanta es personal de plataforma, sin membresía en la organización (ADR-001 §3). Sin
+# FK a `users` tampoco: la auditoría sobrevive a la cuenta, como `actor_id` y `platform_audit_logs`.
+# La lista de excepciones vive en `tests/test_user_fk_coverage.py`.
 
 
 def _refuse(*args: Any, **kwargs: Any) -> NoReturn:
