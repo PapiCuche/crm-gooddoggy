@@ -187,6 +187,11 @@ def test_the_table_keeps_each_branch_in_one_organization(
         " WHERE conrelid = 'categories'::regclass AND contype IN ('f', 'u')"
     ).fetchall()
     assert sorted(keys) == [
+        (
+            "categories_deleted_by_fk",  # F3-37: quien la borró es miembro
+            "FOREIGN KEY (organization_id, deleted_by_user_id)"
+            " REFERENCES organization_memberships(organization_id, user_id)",
+        ),
         ("categories_org_id_uq", "UNIQUE (organization_id, id)"),
         (
             "categories_organization_fk",
