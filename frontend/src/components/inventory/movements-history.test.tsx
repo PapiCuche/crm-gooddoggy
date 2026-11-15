@@ -111,6 +111,40 @@ describe("MovementsHistory", () => {
     );
   });
 
+  it("las dos patas de una transferencia dicen su ruta, también si la otra no está", async () => {
+    const out = { ...movement("m7", "TRANSFER_OUT", -3, 7), transfer_group_id: "g1" };
+    const entry = {
+      ...movement("m8", "TRANSFER_IN", 3, 3),
+      warehouse_id: "w2",
+      transfer_group_id: "g1",
+    };
+    const group = `GET ${API}/inventory/movements/?transfer_group_id=g1`;
+    const api = mockApi({
+      ...CATALOG,
+      [EVERYTHING]: page([entry, out]),
+      [`GET ${API}/inventory/movements/?warehouse_id=w2`]: page([entry]),
+      [group]: page([entry, out]),
+    });
+    screenOf();
+    const route = "Central (CEN) → Surco (SUR), inactivo";
+    const list = await screen.findByRole("list", { name: "Movimientos" });
+    const [received, sent] = within(list).getAllByRole("listitem");
+    expect(within(received!).getByText("Transferencia recibida")).toBeVisible();
+    expect(within(sent!).getByText("Transferencia enviada")).toBeVisible();
+    await waitFor(() => expect(within(received!).getByText(route)).toBeVisible());
+    expect(within(sent!).getByText(route)).toBeVisible();
+    expect(ledgerCalls(api)).toEqual([`${API}/inventory/movements/`]); // la otra ya estaba
+    await waitFor(() => expect(screen.getByLabelText("Almacén")).toHaveLength(3));
+    choose("Almacén", "w2"); // solo la pata de entrada: el origen se pide por su grupo
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("list", { name: "Movimientos" })).getAllByRole("listitem"),
+      ).toHaveLength(1),
+    );
+    expect(await screen.findByText(route)).toBeVisible();
+    expect(ledgerCalls(api)).toContain(`${API}/inventory/movements/?transfer_group_id=g1`);
+  });
+
   it("sin permiso, la API decide y la pantalla lo explica", async () => {
     mockApi({ ...CATALOG, [EVERYTHING]: { status: 403, body: { code: "PERMISSION_DENIED" } } });
     screenOf();

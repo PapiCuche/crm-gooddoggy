@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 import { placed, statusOf, useCellPicker, useReads } from "./cell-picker";
 import { MovementForm } from "./movement-form";
+import { TransferForm } from "./transfer-form";
 
 const ZERO = { on_hand: 0, reserved: 0, available: 0 }; // una celda sin movimientos
 
@@ -22,15 +23,17 @@ const ZERO = { on_hand: 0, reserved: 0, available: 0 }; // una celda sin movimie
 // F3-11) en ese almacén y en cada almacén con movimientos. Con el almacén elegido, debajo, su
 // stock entero página a página, con el SKU y el nombre de cada variante (F3-19): elegir una fila
 // abre su celda. Quién ve qué lo decide la API (`inventory.view`, y `products.view` para elegir
-// el producto). Registrar movimientos: F3-15.
+// el producto). Registrar movimientos: F3-15; transferir a otro almacén: F3-32.
 export function StockPanel() {
   const t = useTranslations("stock");
   const { organization, permissions } = useTenant();
   const slug = organization.slug;
   // Comodidad: registrar se ofrece a quien la API dijo que tiene `inventory.adjust` (F3-15).
   const canAdjust = permissions.some((grant) => grant.code === "inventory.adjust");
+  const canTransfer = permissions.some((grant) => grant.code === "inventory.transfer"); // F3-32
   const [done, setDone] = useState<string | null>(null);
   const keyRef = useRef<string | null>(null); // la de `MovementForm`, hasta un registro
+  const transferKey = useRef<string | null>(null); // la de `TransferForm`, hasta una transferencia
   const [zeros, setZeros] = useState(false);
   const cellBox = useRef<HTMLDivElement>(null);
   const { failed, retry } = useReads();
@@ -88,6 +91,7 @@ export function StockPanel() {
   }
 
   let cell;
+  let here: typeof ZERO | undefined; // el saldo de la celda, cuando llegó
   if (!variant || !warehouse) {
     cell = <p className="text-muted">{t(warehouse ? "pickRow" : "pick")}</p>;
   } else if (levels.isPending) {
@@ -106,7 +110,7 @@ export function StockPanel() {
       </div>
     );
   } else {
-    const here = levels.data.find((row) => row.warehouse_id === warehouse.id) ?? ZERO;
+    here = levels.data.find((row) => row.warehouse_id === warehouse.id) ?? ZERO;
     cell = (
       <>
         <section className="border-border bg-surface flex flex-col gap-3 rounded-lg border p-4">
@@ -147,20 +151,36 @@ export function StockPanel() {
       <div ref={cellBox} tabIndex={-1} className="flex flex-col gap-6 focus-visible:outline-none">
         {cell}
       </div>
-      {canAdjust ? (
+      {canAdjust || canTransfer ? (
         <>
           {/* Montado desde el principio: un lector de pantalla lo anuncia cuando cambia. */}
           <p role="status" className={done ? "text-sm wrap-anywhere" : "sr-only"}>
             {done ?? ""}
           </p>
           {variant && warehouse ? (
-            <MovementForm
-              slug={slug}
-              warehouse={warehouse}
-              variant={variant}
-              keyRef={keyRef}
-              onDone={setDone}
-            />
+            <div className="flex flex-col gap-3">
+              {canAdjust ? (
+                <MovementForm
+                  slug={slug}
+                  warehouse={warehouse}
+                  variant={variant}
+                  keyRef={keyRef}
+                  onDone={setDone}
+                />
+              ) : null}
+              {/* Desde la celda elegida, con su saldo ya en pantalla. */}
+              {canTransfer && here ? (
+                <TransferForm
+                  slug={slug}
+                  warehouse={warehouse}
+                  variant={variant}
+                  available={here.available}
+                  warehouses={warehouses.data ?? []}
+                  keyRef={transferKey}
+                  onDone={setDone}
+                />
+              ) : null}
+            </div>
           ) : null}
         </>
       ) : null}

@@ -119,6 +119,7 @@
       "product": "Producto",
       "warehouse": "Almacén",
       "inventory_movement": "Movimiento de inventario",
+      "inventory_transfer": "Transferencia de inventario",
       "contact": "Contacto"
     },
     "actions": {
@@ -177,7 +178,8 @@
       "inventory": {
         "received": "Entrada de stock registrada",
         "issued": "Salida de stock registrada",
-        "adjusted": "Stock ajustado tras un conteo"
+        "adjusted": "Stock ajustado tras un conteo",
+        "transferred": "Stock transferido entre almacenes"
       },
       "contact": {
         "created": "Contacto creado",
@@ -1438,10 +1440,39 @@
       }
     }
   },
+  "transfers": {
+    "open": "Transferir a otro almacén",
+    "nothing": "No hay unidades disponibles para transferir desde este almacén: lo reservado no se mueve.",
+    "noTargets": "No hay otro almacén activo al que transferir. Crea o reactiva uno en «Almacenes».",
+    "title": "Transferir stock",
+    "heading": "Transferir {variant} desde {from}",
+    "quantity": "Unidades que se transfieren",
+    "quantityHint": "Un número entero desde 1 hasta {available}, lo disponible: lo reservado no se mueve.",
+    "quantityInvalid": "Escribe un número entero desde 1 hasta {available}.",
+    "quantityRequired": "Escribe la cantidad.",
+    "reason": "Motivo",
+    "reasonHint": "Por qué: queda en el historial de los dos almacenes y en la auditoría.",
+    "reasonRequired": "Escribe el motivo.",
+    "reasonInvalid": "El motivo no es válido: una línea de hasta 255 caracteres.",
+    "to": "Almacén de destino",
+    "chooseTo": "Elige el almacén de destino",
+    "toRequired": "Elige a qué almacén van las unidades.",
+    "option": "{name} ({code})",
+    "insufficient": "Ya no hay tantas unidades disponibles en el origen: las existencias se actualizaron. Revísalas y escribe una cantidad menor.",
+    "limit": "El almacén de destino no puede guardar tantas unidades de esta variante.",
+    "inactive": "Uno de los dos almacenes está desactivado y no recibe transferencias. Reactívalo en «Almacenes» o elige otro destino.",
+    "reused": "Un envío anterior que se quedó sin respuesta sí se registró, con otros datos, y las existencias ya lo incluyen. Revísalas; si aun así vuelves a pulsar, esto se registra como una transferencia nueva.",
+    "gone": "La variante o uno de los almacenes ya no existen en la organización. Vuelve a elegirlos.",
+    "denied": "No tienes permiso para transferir stock entre almacenes.",
+    "submit": "Transferir",
+    "busy": "Transfiriendo…",
+    "cancel": "Cancelar",
+    "done": "{quantity, plural, one {Transferida # unidad} other {Transferidas # unidades}} de {variant}: ahora hay {from_on_hand} en {from} y {to_on_hand} en {to}."
+  },
   "ledger": {
     "eyebrow": "Good Doggy / Inventario",
     "title": "Movimientos",
-    "intro": "Lo que entró, salió o se ajustó en {organization}, del más reciente al más antiguo. Filtra por almacén o por variante.",
+    "intro": "Lo que entró, salió, se ajustó o se transfirió en {organization}, del más reciente al más antiguo. Filtra por almacén o por variante.",
     "loading": "Cargando movimientos…",
     "denied": "No tienes permiso para ver el inventario de esta organización.",
     "count": "{count, plural, =0 {Sin movimientos en la lista} one {# movimiento en la lista} other {# movimientos en la lista}}",
@@ -1461,6 +1492,7 @@
     "change": "Cambio en existencias: {change}",
     "after": "Quedan {on_hand}",
     "warehouse": "{name} ({code}){active, select, false {, inactivo} other {}}",
+    "route": "{from} → {to}",
     "unknownWarehouse": "Un almacén que ya no existe",
     "variantLabel": "{name} · {sku}{deleted, select, true {, borrada del catálogo} other {}}"
   },
