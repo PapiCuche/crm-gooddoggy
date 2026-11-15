@@ -27,8 +27,8 @@ Cada afirmación lleva una marca y una fuente de la [lista final](#10-fuentes):
 - Existe la **Business Messaging API**, parte de **TikTok API for Business**. TikTok la describe como la forma de «integrate direct messaging capabilities to connect directly with TikTok users», con envío y recepción en tiempo real y respuestas automáticas. **CONFIRMADO** [T1]
 - Es «a suite of interfaces enabling authorized Business Accounts to exchange direct messages with TikTok users through API-integrated platforms». **OFICIAL-ÍNDICE** [T3]
 - La referencia incluye enviar un mensaje a una conversación (`/business/message/send/`), listar conversaciones y mensajes, subir imágenes y activar el «Comment-to-Message». **OFICIAL-ÍNDICE** [T4]
-- **Está en beta.** El blog oficial de Messaging Ads (2025-06-03) dice: «TikTok Business Messaging API and Messaging Events API are currently in beta testing, with global availability coming soon». **CONFIRMADO** [T7]. Un socio la llama «Open Beta» en una página modificada el 2026-09-06. **TERCEROS** [P1]. No se encontró un anuncio oficial de disponibilidad general. **SIN VERIFICAR**
-- Hay una segunda API, la **Messaging Events API**, que envía a TikTok señales de las conversaciones (id de seguimiento de la campaña, palabras clave como «pago») para medir los anuncios de mensajería; el contenido de los mensajes «remains private and is not shared with TikTok». **CONFIRMADO** [T7] [T8]. Solo importa si el negocio pauta Messaging Ads.
+- **Está en beta.** El blog oficial de Messaging Ads (2025-06-03) dice: «TikTok Business Messaging API and Messaging Events API are currently in beta testing, with global availability coming soon». **CONFIRMADO** [T7]. La página de la API dice que está «now in Open Beta in APAC, LATAM, METAP, and North America». **OFICIAL-ÍNDICE** [T13]. Un socio también la llama «Open Beta» en una página modificada el 2026-09-06. **TERCEROS** [P1]. No se encontró un anuncio oficial de disponibilidad general. **SIN VERIFICAR**
+- Hay una segunda API, la **Messaging Events API**, también en beta. **CONFIRMADO** [T7]. Envía a TikTok señales de las conversaciones (id de seguimiento de la campaña, palabras clave como «pago») para medir los anuncios de mensajería; el contenido de los mensajes «remains private and is not shared with TikTok». **CONFIRMADO** [T8]. Solo importa si el negocio pauta Messaging Ads.
 
 ## 2. Cuentas y regiones (incluido Perú)
 
@@ -37,20 +37,22 @@ Cada afirmación lleva una marca y una fuente de la [lista final](#10-fuentes):
   - **Verified Business Account (VBA):** se obtiene completando la verificación del negocio en Business Suite o en un Business Center verificado. **CONFIRMADO** [T10]
   - Un socio informa que desde abril de 2026 las cuentas no vinculadas a TikTok for Business o a un Business Center pasaron a «General» y perdieron el acceso a la API. **TERCEROS** (extracto del buscador) [P4]
 - **Regiones excluidas por TikTok:** «The Business Messaging API is not yet available in the European Economic Area, Switzerland or the UK market». **OFICIAL-ÍNDICE** [T2]
-- **Estados Unidos:** para gestionar cuentas registradas en EE. UU. hay que pasar la «US data security review». **OFICIAL-ÍNDICE** [T2]. Varios socios no la ofrecen en EE. UU. **TERCEROS** [P1] [P3]
+- **Estados Unidos:** para cuentas registradas en EE. UU. el desarrollador tiene que pasar la Data security & privacy review, la «US data security review» (unos 7-10 días hábiles) y aceptar el USDS Addendum; si no gestiona cuentas de EE. UU., TikTok recomienda excluir ese país de la solicitud para acelerar la aprobación. **OFICIAL-ÍNDICE** [T2] [T15]. Un socio (Infobip) no la ofrece en EE. UU. **TERCEROS** [P3]
 - **Las regiones dependen de la revisión del desarrollador:** «Your approved reviews determine which regions your Business Messaging API integration can support». **OFICIAL-ÍNDICE** [T2]
 - **Perú:**
   - Perú no aparece en ninguna exclusión oficial ni de socios. **OFICIAL-ÍNDICE** [T2] y **TERCEROS** [P1] [P3]
   - Un socio dice que está disponible en Asia-Pacífico, Oriente Medio, África y **Latinoamérica**. **TERCEROS** (extracto del buscador, Whautomate)
+  - TikTok dice que la API está «now in Open Beta in APAC, LATAM, METAP, and North America». **OFICIAL-ÍNDICE** [T13]
   - La verificación del negocio (VBA) está disponible en Perú («PE — Peru» en la tabla de mercados). **CONFIRMADO** [T11]
   - El envío de imágenes por la API no está disponible en una lista de países donde Perú no figura (sí Colombia, EE. UU., la UE…). **TERCEROS** [P1]
-  - **SUPUESTO:** una cuenta de empresa registrada en Perú es elegible, **siempre que la revisión aprobada del desarrollador cubra Perú**. Ninguna fuente oficial nombra a Perú para esta API: **SIN VERIFICAR**.
+  - Para las cuentas registradas fuera de EE. UU., el EEE, Suiza y el Reino Unido («Rest of World») basta con que el desarrollador pase la Data security & privacy review; la región la decide el país de registro de la cuenta. **OFICIAL-ÍNDICE** [T2]. **SUPUESTO:** Perú entra en ese grupo. Que una página oficial lo nombre: **SIN VERIFICAR**.
 
 ## 3. ¿Hace falta ser socio o una aprobación?
 
 - **Aprobación: sí.** «Business Messaging API developers are required to complete necessary reviews as a prerequisite for Business Messaging API access». **OFICIAL-ÍNDICE** [T2]. Un integrador (Chatwoot) lo confirma: hay que solicitar el producto en el portal del desarrollador y «You cannot proceed with the integration until your application is approved»; dice que suele tardar «a few days». **TERCEROS** [P2]
+- La revisión es la **Data security & privacy review (DSPR)**: normalmente 2-4 semanas (TikTok la inicia en hasta 10 días hábiles tras el envío), sin excepciones para obtener el permiso de Business Messaging; TikTok recomienda adjuntar un certificado ISO 27001, un informe SOC 2 y el último escaneo de vulnerabilidades o pentest; los desarrolladores «self-serve» no pueden seguir el estado en el portal y reciben la aprobación por correo. **OFICIAL-ÍNDICE** [T14]. Choca con los «a few days» de Chatwoot [P2]: se toma el plazo oficial.
 - **Ser socio (Marketing Partner): no consta como requisito.** Ninguna fuente lo exige para la API. Pero toda la comunicación oficial presenta la API como herramienta de los **Messaging Partners** («allows TikTok direct messages to be managed through messaging partners» [T7]; lista de socios con guía de conexión [T8]), y el distintivo «Messaging Partner» del programa de socios se lanzó en el sudeste asiático [T9]. **CONFIRMADO** en cuanto a ese enfoque.
-- **SIN VERIFICAR (el punto decisivo):** si TikTok aprueba el acceso para un **CRM propio que gestiona una sola cuenta** (la de la tienda), o si en la práctica solo lo concede a plataformas que dan servicio a muchos negocios. Los criterios de la revisión no son públicos. Es la primera pregunta del [checklist](#8-qué-tendría-que-solicitar-el-propietario).
+- **SIN VERIFICAR (el punto decisivo):** si TikTok aprueba el acceso para un **CRM propio que gestiona una sola cuenta** (la de la tienda), o si en la práctica solo lo concede a plataformas que dan servicio a muchos negocios. La DSPR publica sus controles [T14], pero no dice si aprueba a un desarrollador que gestiona una sola cuenta propia (menciona desarrolladores «self-serve»): **SIN VERIFICAR**. Es la primera pregunta del [checklist](#8-qué-tendría-que-solicitar-el-propietario).
 - **Autorización de la cuenta:** el negocio conecta su cuenta aprobando una solicitud de permisos del integrador, entre ellos «access and manage conversations» y suscribirse y «receive webhooks»; puede desconectarse en cualquier momento. **CONFIRMADO** [T8]
 
 ## 4. Ventana de mensajería y reglas
@@ -69,7 +71,7 @@ Ninguna regla de esta sección se pudo leer en una página oficial completa. Dos
 
 - **Existe un webhook de la Business Messaging API** con el tipo de evento `DIRECT_MESSAGE`. Se configura por app con `/business/webhook/update/`, se lee con `/business/webhook/list/` (con el id y el secreto de la app) y se borra con `/business/webhook/delete/`. **OFICIAL-ÍNDICE** [T5]
 - **Firma:** la plataforma TikTok for Developers firma sus webhooks con la cabecera `TikTok-Signature` (`t=<timestamp>,s=<firma>`), HMAC-SHA256 de `timestamp.cuerpo` con el secreto del cliente; el margen de tiempo lo decide el receptor. **CONFIRMADO** [T12], pero esa página **no menciona** TikTok API for Business: que la Business Messaging API use el mismo esquema es **SIN VERIFICAR**. Chatwoot verifica con el secreto de la app y exige relojes sincronizados («timestamps within 5 seconds»). **TERCEROS** [P2]
-- **Entrega y reintentos:** la documentación general de webhooks de TikTok for Developers pide HTTPS y responder 200 enseguida, y reintenta hasta 72 horas con duplicados posibles (extracto del buscador). Aplicarlo a la Business Messaging API: **SIN VERIFICAR**.
+- **Entrega y reintentos:** la documentación general de webhooks de TikTok for Developers pide HTTPS y responder 200 enseguida, y reintenta «for up to 72 hours using exponential backoff», con duplicados posibles. **CONFIRMADO** [T17], pero esa página tampoco menciona TikTok API for Business. Aplicarlo a la Business Messaging API: **SIN VERIFICAR**.
 - **SUPUESTO:** si se construye, entra por `webhook_ingress` como WhatsApp (verificación de la firma, idempotencia por id de mensaje, enrutado por la cuenta).
 
 ## 6. Costos
@@ -95,13 +97,14 @@ Nada de esto lleva valores en el repositorio. Primero las **preguntas a TikTok**
 **Preguntas a TikTok** (por el soporte del portal del desarrollador o el representante comercial):
 
 - [ ] ¿Aprueban el acceso a la Business Messaging API para un **CRM propio de una sola empresa** que gestiona solo su propia cuenta, o solo para plataformas o socios?
-- [ ] ¿La revisión aprobada cubre **Perú**? ¿Qué revisiones hacen falta para Latinoamérica?
+- [ ] ¿Confirman que una cuenta registrada en **Perú** entra en «Rest of World» y solo necesita la DSPR?
+- [ ] ¿Se aprueba la DSPR sin ISO 27001 ni SOC 2, para una pyme con un CRM propio?
 - [ ] ¿La API sigue en beta? ¿Hay fecha de disponibilidad general, acuerdo de servicio o aviso de cambios?
 - [ ] La ventana exacta (¿48 h?), el tope de mensajes (¿10?, ¿3 adicionales?) y si existe una excepción para respuestas de una persona.
 - [ ] Los eventos del webhook, el esquema de la firma (cabecera, secreto, margen de tiempo) y la política de reintentos.
 - [ ] El costo por uso de la API, si lo hay.
 - [ ] Si la API entrega teléfono o correo del cliente (se supone que no).
-- [ ] Si hay cuentas de prueba o un entorno sandbox.
+- [ ] Si hay cuentas de prueba o un entorno sandbox para la mensajería. Existen las sandbox accounts de TikTok API for Business, pero su lista de endpoints admitidos no incluye los de mensajería: cobertura poco clara. **OFICIAL-ÍNDICE** [T16]
 - [ ] Las condiciones de datos que debe firmar el desarrollador (retención, borrado, privacidad).
 
 **Lo que habría que tramitar** (solo si las respuestas lo justifican):
@@ -109,6 +112,7 @@ Nada de esto lleva valores en el repositorio. Primero las **preguntas a TikTok**
 - [ ] Una cuenta de empresa de TikTok para la tienda, vinculada a TikTok for Business o a un Business Center (**Advanced Access**) o, mejor, verificada (**VBA**, disponible en Perú [T11]).
 - [ ] Registro como desarrollador en TikTok API for Business y una app de desarrollador a nombre del negocio.
 - [ ] Solicitar el producto **Business Messaging API** para esa app y pasar sus revisiones, pidiendo expresamente Perú.
+- [ ] Preparar la DSPR: cuestionario de seguridad y privacidad, documentos de apoyo (ISO 27001, SOC 2, último escaneo de vulnerabilidades o pentest) y 2-4 semanas de espera; excluir EE. UU. de la solicitud.
 - [ ] La URL HTTPS del webhook del despliegue y la URL de la política de privacidad (las mismas obligaciones que con Meta).
 - [ ] En la cuenta de TikTok: aceptar mensajes de todos.
 
@@ -118,16 +122,16 @@ Nada de esto lleva valores en el repositorio. Primero las **preguntas a TikTok**
 
 Por qué no construir ahora:
 
-1. **La aprobación no depende del negocio.** El acceso exige una revisión de TikTok cuyos criterios no son públicos [T2], y la comunicación oficial orienta la API a socios de mensajería [T7] [T8]. No se sabe si un CRM propio de una sola cuenta la obtendría (§3).
-2. **Perú no está confirmado.** No está excluido, pero ninguna fuente oficial lo nombra, y las regiones dependen de la revisión aprobada [T2].
+1. **La aprobación no depende del negocio.** La aprobación es una revisión de seguridad manual (DSPR, 2-4 semanas) que pide pruebas que la tienda hoy no tiene [T14], y no se sabe si TikTok aprueba un CRM propio de una sola cuenta (§3). La comunicación oficial, además, orienta la API a socios de mensajería [T7] [T8].
+2. **Perú no se nombra.** LATAM está en beta abierta y «Rest of World» solo pide la DSPR [T13] [T2], pero falta confirmarlo con TikTok.
 3. **Es beta** [T7] [P1], y las reglas que harían falta para diseñar (ventana, tope, firma del webhook) solo se conocen por socios (§4, §5).
-4. **El orden ya decidido** pone a TikTok último, detrás de Instagram y Messenger (R3) y del resto de canales ([phase-7.md](../phases/phase-7.md), D-F7-09). Construir antes no adelanta nada para el negocio.
+4. **El orden que pidió el propietario** (Instagram, Messenger, correo, chat web y TikTok; D-F7-09 pendiente en F7b-02, [phase-7.md](../phases/phase-7.md)) pone a TikTok último. Construir antes no adelanta nada para el negocio.
 
 Por qué no descartar: la API es oficial, cubre cuentas de empresa fuera de la UE, Suiza, el Reino Unido y (con revisión) EE. UU., Perú no figura entre las exclusiones, la verificación del negocio existe en Perú y el patrón técnico ya existe en el repositorio (ADR-035).
 
 **Pasa a «construir»** (con su propio ADR) solo si se cumplen las tres:
 
-1. TikTok confirma por escrito que aprueba el acceso para el CRM propio de la tienda y que cubre Perú.
+1. TikTok aprueba la DSPR de la app del negocio y confirma por escrito que cubre cuentas registradas en Perú.
 2. Alguien con navegador relee las páginas oficiales marcadas **OFICIAL-ÍNDICE** y confirma la ventana, el tope, los eventos y la firma del webhook.
 3. La serie R3 (Instagram y Messenger) está cerrada.
 
@@ -151,6 +155,11 @@ Todas leídas el **2026-11-15**. Las fechas entre paréntesis son las que muestr
 - [T10] About TikTok account entitlements (actualizada en mayo de 2026): <https://ads.tiktok.com/resources/help/article/about-tiktok-account-entitlements>
 - [T11] About business verification for TikTok accounts (actualizada en junio de 2026): <https://ads.tiktok.com/resources/help/article/about-business-registration?lang=en>
 - [T12] TikTok for Developers, Webhooks: Verification: <https://developers.tiktok.com/docs/en/webhooks-verification>
+- [T13] Business Messaging API: <https://business-api.tiktok.com/portal/docs/business-messaging-api/v1.3> (no carga sin navegador; texto del índice del buscador)
+- [T14] TikTok Business Messaging API data security & privacy review: <https://business-api.tiktok.com/portal/docs/data-security-and-privacy-review/v1.3> (ídem)
+- [T15] US data security review for TikTok Business Messaging API: <https://business-api.tiktok.com/portal/docs/us-data-security-review/v1.3> (ídem)
+- [T16] Sandbox accounts: <https://business-api.tiktok.com/portal/docs/sandbox-accounts/v1.3> (ídem)
+- [T17] TikTok for Developers, Webhooks: Overview: <https://developers.tiktok.com/docs/en/webhooks-overview>
 
 **Socios e integradores (no oficiales para las reglas de TikTok)**
 
