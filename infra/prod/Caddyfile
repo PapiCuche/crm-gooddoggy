@@ -14,6 +14,9 @@
 	admin off
 	servers {
 		protocols h1 h2 # sin HTTP/3: solo 80/tcp y 443/tcp abiertos
+		timeouts {
+			read_header 10s
+		}
 	}
 	order rate_limit before basic_auth
 	log default {
@@ -38,6 +41,12 @@ crm.{$CRM_DOMAIN} {
 		}
 	}
 	encode zstd gzip
+	# Cabeceras de IP que mandaría un cliente: ningún upstream las recibe (X-Forwarded-For, Caddy la sustituye).
+	request_header -Forwarded
+	request_header -X-Real-IP
+	request_header -Client-IP
+	request_header -True-Client-IP
+	request_header -CF-Connecting-IP
 	header {
 		defer
 		-Server
@@ -60,19 +69,25 @@ crm.{$CRM_DOMAIN} {
 		rate_limit {
 			zone webhooks_per_ip {
 				key {remote_host}
-				events 300
-				window 1m
+				events 50
+				window 10s
 			}
 		}
 		reverse_proxy backend:8000
 	}
 	handle /ws/* {
+		request_body {
+			max_size 1MB # el upgrade no lleva cuerpo; sin tope, Django lo leería entero
+		}
 		reverse_proxy ws:8000
 	}
 	handle /health/* {
 		respond 404 # sondas internas: /health/ready dice qué dependencia falla
 	}
 	handle {
+		request_body {
+			max_size 1MB # Next tampoco limita: 40 POST chunked de 30 MB lo mataban (#845)
+		}
 		reverse_proxy frontend:3000
 	}
 }

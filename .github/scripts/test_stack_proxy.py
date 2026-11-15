@@ -78,7 +78,7 @@ class StackProxy(unittest.TestCase):
                 routes = dict(re.findall(r"handle (\S+) \{.*?\n\t\t(?:respond|reverse_proxy) (\S+)", caddyfile, re.S))
                 self.assertEqual(routes, {"/api/*": "backend:8000", "/webhooks/*": "backend:8000",
                                           "/ws/*": "ws:8000", "/health/*": "404"})
-                self.assertRegex(caddyfile, r"\n\thandle \{\n\t\treverse_proxy frontend:3000\n")
+                self.assertRegex(caddyfile, r"\n\thandle \{\n(?:\t\t.*\n)*?\t\treverse_proxy frontend:3000\n")
 
 
 class ProdStack(unittest.TestCase):
@@ -96,7 +96,7 @@ class ProdStack(unittest.TestCase):
     def test_only_the_proxy_publishes_ports_and_nothing_is_built(self):
         self.assertEqual(PROD.count("ports:"), 1)
         proxy = PROD[PROD.index("\n  proxy:") : PROD.index("\nnetworks:")]
-        self.assertEqual(re.findall(r'^\s+- "(.+)"$', proxy, re.M), ["80:80", "443:443"])
+        self.assertEqual(re.findall(r'^\s+- "(.+?)"', proxy, re.M), ["0.0.0.0:80:80", "0.0.0.0:443:443"])
         text = PROD + (ROOT / "infra/prod/Caddyfile").read_text()
         code = "\n".join(line for line in text.lower().splitlines() if not line.lstrip().startswith("#"))
         for word in ("build:", "garage", "mailpit", "auto_https"):
@@ -104,10 +104,23 @@ class ProdStack(unittest.TestCase):
         images = re.findall(r"^\s+image: (.+)$", PROD, re.M)
         self.assertTrue(images and all(re.fullmatch(r"\$\{[A-Z]+_IMAGE:\?.+\}", i) for i in images))
 
-    def test_postgres_logs_no_customer_values(self):
+    def test_postgres_logs_no_customer_values_and_the_superuser_stays_local(self):
         for setting in ("log_min_error_statement=panic", "log_statement=none",
-                        "log_parameter_max_length_on_error=0"):
+                        "log_parameter_max_length_on_error=0", "log_error_verbosity=terse",
+                        "log_min_messages=log", "hba_file=/etc/postgresql/pg_hba.conf"):
             self.assertRegex(PROD, r"\n\s+- -c\n\s+- %s\n" % setting)
+        self.assertIn("./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro", PROD)
+        hba = (ROOT / "infra/prod/postgres/pg_hba.conf").read_text()
+        rules = [line.split() for line in hba.splitlines() if line and not line.startswith("#")]
+        self.assertEqual(rules, [["local", "all", "all", "trust"], ["host", "all", "postgres", "all", "reject"],
+                                 ["host", "all", "all", "all", "scram-sha-256"]])  # el primero que casa gana
+
+    def test_the_rest_of_the_routes_cap_the_body_too(self):
+        caddyfile = (ROOT / "infra/prod/Caddyfile").read_text()
+        for route in ("/ws/* ", ""):
+            block = re.search(r"\n\thandle %s\{(.*?)\n\t\}" % re.escape(route), caddyfile, re.S).group(1)
+            self.assertRegex(block, r"^\s+request_body \{\s+max_size 1MB\b")
+            self.assertLess(block.index("request_body"), block.index("reverse_proxy"))
 
     def test_webhooks_are_rate_limited_per_ip_and_queries_never_logged(self):
         caddyfile = (ROOT / "infra/prod/Caddyfile").read_text()
