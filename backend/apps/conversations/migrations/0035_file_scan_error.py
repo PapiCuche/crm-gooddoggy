@@ -22,8 +22,9 @@ def values_ck(statuses: str) -> str:
 
 class Migration(migrations.Migration):
     dependencies = [
+        # Sin depender de `files.0005` (solo estado): rehacer `conversations` no arrastra las
+        # migraciones de `files` (`test_user_fk_coverage` deshace `files` a la `0003`).
         ("conversations", "0034_credentials_created_by_member_fk"),
-        ("files", "0005_scan_error"),
     ]
 
     operations = [
