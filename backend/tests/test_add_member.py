@@ -336,3 +336,36 @@ def test_a_commit_error_is_recorded_by_what_the_database_kept(
     expected = ("SUCCESS", "commit_error") if committed else ("FAILED", "error")
     assert (done[0], done[1]) == ("membership.added", expected[0])
     assert json.loads(done[4])[expected[1]] == "OperationalError"
+
+
+@pytest.mark.parametrize("committed", [True, False])
+def test_a_recheck_that_fails_after_a_commit_error_writes_no_result_row(
+    real_orgs: dict[str, UUID],
+    migrator: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    committed: bool,
+) -> None:
+    """ADR-013 §5: si no se sabe qué quedó en la base, no hay fila de resultado, ni `SUCCESS` ni
+    `FAILED`, y manda el error original."""
+    wrapper = connections["default"]
+
+    def unknown(*args: Any) -> bool:
+        raise RuntimeError("la comprobación tampoco llega")
+
+    def lost_answer() -> None:
+        monkeypatch.undo()
+        monkeypatch.setattr(members, "_stored", unknown)
+        if committed:
+            wrapper.commit()
+        raise OperationalError("server closed the connection unexpectedly")
+
+    def arm(*args: Any, **kwargs: Any) -> Any:
+        written = record(*args, **kwargs)
+        monkeypatch.setattr(wrapper, "commit", lost_answer)
+        return written
+
+    monkeypatch.setattr(members, "record", arm)
+    fields = {"slug": "acme", "email": EMAIL, "role": "seller", "password": TEMPORARY}
+    with pytest.raises(OperationalError):
+        members.add_member(**fields, operator="deploy", reason="alta")
+    assert platform_rows(migrator)[-1][0] == "membership.add.started"
