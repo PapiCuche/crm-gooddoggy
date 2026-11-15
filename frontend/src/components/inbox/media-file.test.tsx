@@ -20,7 +20,7 @@ const SIGNED = "http://localhost:3900/crm-local/org/o1/message-media/x?X-Amz-Sig
 const file = (changes: Partial<MessageAttachment> = {}) =>
   ({
     ...{ id: "a1", kind: "IMAGE", status: "DONE", mime_type: "image/jpeg" },
-    ...{ size_bytes: 1_258_291, available: true, ...changes },
+    ...{ size_bytes: 1_258_291, scan_status: "CLEAN", available: true, ...changes },
   }) as MessageAttachment;
 
 let replies: Array<() => Promise<Response>>;
@@ -75,6 +75,28 @@ describe("MediaFile (F7-09a3)", () => {
     expect(screen.queryByRole("button")).toBeNull();
     expect(container.querySelector(none)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["PENDING", "primero tiene que pasar la revisión de seguridad."],
+    ["INFECTED", "El antivirus encontró un virus en este archivo."],
+    ["ERROR", "No se pudo revisar este archivo con el antivirus"],
+    [null, "primero tiene que pasar la revisión de seguridad."],
+  ])(
+    "DONE con antivirus %s sin `available` lo explica y nunca pide la URL (F7-15)",
+    (scan, text) => {
+      const { container } = show(file({ scan_status: scan as never, available: false }));
+      expect(container).toHaveTextContent(text);
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("un veredicto en un estado que no es DONE no cambia el texto del estado", () => {
+    const { container } = show(
+      file({ status: "FAILED", scan_status: "INFECTED", available: false }),
+    );
+    expect(container).toHaveTextContent("No se pudo recibir el archivo.");
   });
 
   it("disponible: un GET al pulsar, un enlace temporal sin Referer y la URL en ningún sitio", async () => {

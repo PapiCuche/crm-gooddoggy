@@ -97,6 +97,18 @@ jobs:
           STORAGE_ACCESS_KEY_ID: ci-config-only
           STORAGE_SECRET_ACCESS_KEY: ci-config-only
         run: docker compose -f ../infra/docker/compose.yaml --env-file ../infra/env/.env.example config -q
+      # F7-15 (ADR-008): el antivirus contra un clamd real (la imagen del compose, con sus firmas y
+      # sin freshclam): EICAR sale INFECTED y un archivo limpio, CLEAN. Sin base de datos.
+      - name: Antivirus contra clamd real (ClamAV 1.5.4)
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+          CLAMD_TEST_ADDRESS: 127.0.0.1:3310
+        run: |
+          set -euo pipefail
+          docker run -d --name clamd -p 127.0.0.1:3310:3310 -e CLAMAV_NO_FRESHCLAMD=true clamav/clamav:1.5.4-debian
+          for _ in $(seq 1 120); do [ "$(docker inspect -f '{{.State.Health.Status}}' clamd)" = healthy ] && break; sleep 2; done
+          uv run pytest -p no:cacheprovider -rs tests/test_antivirus.py | tee "$RUNNER_TEMP/clamd.txt"
+          ! grep -q SKIPPED "$RUNNER_TEMP/clamd.txt"  # la prueba real no puede saltarse aquí
       - name: Contrato OpenAPI sin drift (backend/openapi/schema.yaml)
         env:
           DJANGO_SETTINGS_MODULE: config.settings.local

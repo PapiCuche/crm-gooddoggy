@@ -1,6 +1,6 @@
 """Medios entrantes de WhatsApp (F7-09a1b, F7-09a1c; ADR-029 §7): el adjunto que deja
 `inbound.receive` y la descarga que hace `tasks.fetch_media` al almacén privado (`files`,
-`message-media`, sin antivirus: `scan_status = PENDING`, no se sirve a nadie).
+`message-media`, `scan_status = PENDING` hasta que `scan` le dé veredicto: no se sirve antes).
 
 Un intento: **reclamar** en una transacción (tope por organización, cuenta `CONNECTED` con
 credencial viva, `attempt_id` nuevo, plazo de 300 s; la espera y el plazo con el reloj de la
@@ -391,6 +391,7 @@ def store(ctx: TenantContext, got: Claim, sink: Sink, mime: str) -> tuple[str, i
                     scan_status="PENDING",
                 )  # fmt: skip
                 _close(alias, got.attachment_id, "DONE", file_id=got.attempt_id)
+                emit(ctx, "file.stored", aggregate_type="file", aggregate_id=got.attempt_id)
                 # Antes del COMMIT: si el COMMIT falla, el blob se queda (borrarlo podría dejar
                 # una fila `DONE` ya confirmada sin su blob); huérfano, a la conciliación (ADR-008).
                 kept = True

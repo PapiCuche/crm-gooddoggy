@@ -49,6 +49,9 @@ x-runtime: &runtime
     # Enviar imágenes y PDF sin antivirus (D-F7-04): apagado por omisión. La ruta de subida y el
     # despachador (worker) lo leen; sin pasarlo aquí, el valor de infra/env/.env no llegaba.
     MEDIA_SEND_UNSCANNED: ${MEDIA_SEND_UNSCANNED:-false}
+    # F7-15 (ADR-008): el antivirus de los medios. Sin él, nada se abre (los reintentos acaban en
+    # `ERROR`); no se espera a que esté sano para arrancar: el escaneo reintenta.
+    CLAMD_ADDRESS: clamd:3310
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -183,6 +186,22 @@ services:
       ws:
         condition: service_healthy
 
+  # F7-15 (ADR-008): ClamAV. `clamd` en 3310 solo dentro de la red del stack (sin `ports:`) y
+  # `freshclam` actualiza las firmas en el volumen. La imagen trae firmas: arranca sin red, aunque
+  # cargarlas tarda ~1 min y ocupa ~1 GiB de memoria.
+  clamd:
+    image: clamav/clamav:1.5.4-debian # multiarquitectura (amd64 y arm64)
+    restart: unless-stopped
+    volumes:
+      - clamavdata:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+      start_interval: 5s
+
   mailpit:
     image: axllent/mailpit:v1.31.3
     ports:
@@ -201,3 +220,4 @@ volumes:
   pgdata:
   redisdata:
   garagedata:
+  clamavdata:

@@ -104,17 +104,22 @@ def test_the_message_list_shows_kind_state_real_type_and_size_and_nothing_else(
     assert sorted(rows.values(), key=str)[0] is None  # el texto, sin adjunto
     assert rows[str(ready.message)] == {
         "id": str(ready.pk), "kind": "IMAGE", "status": "DONE", "mime_type": "image/jpeg",
-        "size_bytes": 1234, "available": True,
+        "size_bytes": 1234, "scan_status": "CLEAN", "available": True,
     }  # fmt: skip
     assert rows[str(waiting.message)] == {
         "id": str(waiting.pk), "kind": "AUDIO", "status": "PENDING", "mime_type": None,
-        "size_bytes": None, "available": False,
+        "size_bytes": None, "scan_status": None, "available": False,
     }  # fmt: skip
     assert rows[str(unscanned.message)]["mime_type"] == "video/mp4"
     assert rows[str(unscanned.message)]["available"] is False  # antivirus `PENDING`: no
+    for verdict in ("PENDING", "INFECTED", "ERROR"):  # F7-15: dice por qué, y no se ofrece
+        made = attach(migrator, inbox.a, convo, scan=verdict)
+        shown = signed(inbox.ana).get(f"{BASE}{convo}/messages/").json()["results"]
+        (row,) = [r["attachment"] for r in shown if r["id"] == str(made.message)]
+        assert (row["scan_status"], row["available"]) == (verdict, False), verdict
     assert rows[str(smuggled.message)] | {"id": None} == {
         "id": None, "kind": "IMAGE", "status": "DONE", "mime_type": None, "size_bytes": None,
-        "available": False,
+        "scan_status": None, "available": False,
     }  # fmt: skip  # el archivo de otro propósito ni se describe
     text = response.content.decode()
     for hidden in ("900000000000009", "org/", "evil.html", str(ready.attempt), "quote-pdf"):
@@ -213,6 +218,7 @@ def test_every_other_case_is_the_same_404_and_the_permission_comes_first(
         cases[status] = url_of(mine, attach(migrator, a, mine, status).pk)
     cases["antivirus PENDING"] = url_of(mine, attach(migrator, a, mine, scan="PENDING").pk)
     cases["antivirus INFECTED"] = url_of(mine, attach(migrator, a, mine, scan="INFECTED").pk)
+    cases["antivirus ERROR"] = url_of(mine, attach(migrator, a, mine, scan="ERROR").pk)  # F7-15
     cases["otro propósito"] = url_of(mine, attach(migrator, a, mine, purpose="quote-pdf").pk)
     cases["tipo fuera del mapa"] = url_of(mine, attach(migrator, a, mine, mime="text/html").pk)
     for case, made in not_inbound(migrator, inbox, mine).items():

@@ -12034,15 +12034,28 @@ components:
           type: integer
           nullable: true
           description: Solo con `DONE`.
+        scan_status:
+          nullable: true
+          description: |-
+            El antivirus, solo con `DONE`: `PENDING` (aún se analiza), `CLEAN`, `INFECTED` (nunca se sirve) o `ERROR` (no se pudo analizar; nunca se sirve).
+
+            * `PENDING` - Pending
+            * `CLEAN` - Clean
+            * `INFECTED` - Infected
+            * `ERROR` - Error
+          oneOf:
+          - $ref: '#/components/schemas/ScanStatusEnum'
+          - $ref: '#/components/schemas/NullEnum'
         available:
           type: boolean
-          description: Si `…/attachments/{id}/url/` lo sirve ahora; `false` no dice
-            por qué.
+          description: Si `…/attachments/{id}/url/` lo sirve ahora (solo con antivirus
+            `CLEAN`).
       required:
       - available
       - id
       - kind
       - mime_type
+      - scan_status
       - size_bytes
       - status
     MessageAttachmentKindEnum:
@@ -15473,6 +15486,18 @@ components:
       - conversation_id
       - created
       - message
+    ScanStatusEnum:
+      enum:
+      - PENDING
+      - CLEAN
+      - INFECTED
+      - ERROR
+      type: string
+      description: |-
+        * `PENDING` - Pending
+        * `CLEAN` - Clean
+        * `INFECTED` - Infected
+        * `ERROR` - Error
     ScopesEnum:
       enum:
       - OWN
