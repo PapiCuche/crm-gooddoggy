@@ -14,6 +14,7 @@ id=${DRILL_ID:-crm-drill}
 port=${DRILL_S3_PORT:-39470}
 s3="http://127.0.0.1:$port"
 : "${BACKEND_IMAGE:?imagen del backend construida del repo}"
+umask 077 # los archivos de configuración, 0600 como en el servidor (check_file)
 work=$(mktemp -d)
 # shellcheck source=infra/prod/backup/lib.sh
 . "$here/lib.sh"
@@ -126,13 +127,32 @@ object=$(rclone lsf READER:backups/db/daily/)
 [ "$(rclone lsf -R --files-only READER:backups/media | grep -c '\.age$')" = 3 ] || fail "faltan archivos en el destino"
 if stack src env BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> /dev/null; then :; else fail "check.sh tras un backup"; fi
 
+echo "== Fallos: en el volcado, con la configuración legible por otros, y la lista de objetos desordenada"
+last=$(cat "$work/state-src/last-success")
+echo not-a-key > "$work/bad-recipients.txt"
+sed "s|^BACKUP_RECIPIENTS=.*|BACKUP_RECIPIENTS=$work/bad-recipients.txt|" "$work/backup.env" > "$work/bad.env"
+if stack src env BACKUP_ENV="$work/bad.env" bash "$here/backup.sh" 2> "$work/failed.log"; then fail "un volcado fallido no falló"; fi
+grep -q 'stage=dump' "$work/failed.log" || fail "el fallo del volcado no dice su etapa"
+[ "$(cat "$work/state-src/last-success")" = "$last" ] || fail "un backup fallido movió last-success"
+cp "$work/backup.env" "$work/open.env" && chmod 644 "$work/open.env"
+if stack src env BACKUP_ENV="$work/open.env" bash "$here/backup.sh" 2> "$work/failed.log"; then fail "aceptó un backup.env 0644"; fi
+grep -q 'tiene modo' "$work/failed.log" || fail "el rechazo de backup.env no se explica"
+mkdir "$work/state-bad" && echo garbage > "$work/state-bad/last-success"
+if BACKUP_STATE_DIR="$work/state-bad" BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/failed.log"; then
+  fail "check.sh aceptó una marca no numérica"
+fi
+grep -q '"event":"backup.missing"' "$work/failed.log" || fail "sin backup.missing con una marca no numérica"
+LC_ALL=C sort -r -o "$work/state-src/media-copied.txt" "$work/state-src/media-copied.txt"
+echo org/0-not-in-the-bucket >> "$work/state-src/media-copied.txt"
+stack src env BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2>&1 | grep -q '"media_copied":"0"' ||
+  fail "una lista desordenada rompió la copia de objetos"
+
 echo "== Servidor nuevo: postgres vacío y restauración"
 started=$(date +%s)
 stack dst compose up -d --wait --quiet-pull postgres
 restore() {
-  stack dst env BACKUP_ENV="$work/restore.env" CRM_MIGRATOR_PASSWORD="$(sed -n 's/^CRM_MIGRATOR_PASSWORD=//p' "$work/dst/postgres.env")" \
-    CRM_APP_PASSWORD="$(sed -n 's/^CRM_APP_PASSWORD=//p' "$work/dst/postgres.env")" bash "$here/restore.sh" \
-    --identity "$work/identity.txt" --latest --expect-counts "$work/state-src/last-counts.tsv" "$@"
+  stack dst env BACKUP_ENV="$work/restore.env" bash "$here/restore.sh" --identity "$work/identity.txt" --latest \
+    --roles-env "$work/dst/postgres.env" --expect-counts "$work/state-src/last-counts.tsv" "$@"
 }
 restore --media 2>&1 | tee "$work/restore.log"
 rto=$(($(date +%s) - started))
@@ -147,6 +167,17 @@ if restore > /dev/null 2> "$work/refused.log"; then fail "restauró encima de un
 grep -q 'no se restaura encima' "$work/refused.log" || fail "la negativa no se explica"
 age-keygen -o "$work/wrong.txt" 2> /dev/null
 if restore --replace-existing-data --identity "$work/wrong.txt" > /dev/null 2>&1; then fail "restauró con otra clave"; fi
-stack dst table_counts | diff -q - "$work/state-src/last-counts.tsv" > /dev/null || fail "una clave equivocada tocó la base"
+cp "$work/dst/postgres.env" "$work/roles-open.env" && chmod 644 "$work/roles-open.env"
+if restore --replace-existing-data --roles-env "$work/roles-open.env" > /dev/null 2> "$work/refused.log"; then
+  fail "aceptó contraseñas en un archivo 0644"
+fi
+grep -q 'tiene modo' "$work/refused.log" || fail "el rechazo de --roles-env no se explica"
+stack dst table_counts | diff -q - "$work/state-src/last-counts.tsv" > /dev/null || fail "un intento rechazado tocó la base"
 restore --replace-existing-data 2>&1 | grep -q '"event":"restore.ok"' || fail "--replace-existing-data no restauró"
+
+echo "== Objetos: una clave equivocada no pisa nada y lo que ya está no se vuelve a subir"
+if restore --media-only --overwrite-media --identity "$work/wrong.txt" > /dev/null 2>&1; then fail "restauró objetos con otra clave"; fi
+rclone check --download APP:prod-media APP:restored-media || fail "una clave equivocada cambió los objetos"
+[ "$(rclone lsf -R --files-only APP:restored-media | grep -c '\.partial$')" = 0 ] || fail "quedó un .partial"
+restore --media-only 2>&1 | grep -q '"media_restored":"0","media_skipped":"3"' || fail "volvió a subir objetos que ya estaban"
 echo "drill OK: restauración en ${rto}s (RTO de ADR-033: 14400 s), $(wc -l < "$work/state-dst/restored-counts.tsv" | tr -d ' ') tablas idénticas, 3 archivos idénticos"

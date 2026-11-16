@@ -7,10 +7,17 @@ set -euo pipefail
 # shellcheck source=infra/prod/backup/lib.sh
 . "$(dirname "$0")/lib.sh"
 
-load_env "${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
+config="${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
+check_file "$config" secret
+load_env "$config"
 marker="${BACKUP_STATE_DIR:-/var/lib/crm-backup}/last-success"
 max=$((${BACKUP_MAX_AGE_HOURS:-26} * 3600))
 last=$(cat "$marker" 2> /dev/null || echo 0)
+case $last in '' | *[!0-9]*)
+  alert backup.missing "last_success=invalid"
+  exit 1
+  ;;
+esac
 age=$(($(date -u +%s) - last))
 if [ "$age" -gt "$max" ]; then
   alert backup.missing "last_success_age_seconds=$age"

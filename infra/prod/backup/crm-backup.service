@@ -9,6 +9,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/opt/crm/infra/prod/backup/backup.sh nightly
+# Un backup colgado (destino que no responde) se corta y deja backup.failed; check.sh avisa después.
+TimeoutStartSec=4h
 Nice=10
 IOSchedulingClass=idle
 PrivateTmp=true

@@ -48,6 +48,17 @@ load_env() { # <archivo>: KEY=valor literal, sin evaluar (como EnvironmentFile d
 
 env_value() { sed -n "s/^$2=//p" "$1" | tail -n 1; } # <archivo> <clave>
 
+# Un archivo que los scripts leen: de root (o de quien ejecuta, para el simulacro sin root) y sin
+# escritura de grupo ni otros; con `secret`, además sin lectura (0600 o más estricto).
+check_file() { # <archivo> [secret]
+  local info uid mode mask=022
+  info=$(stat -c '%u %a' "$1" 2> /dev/null || stat -f '%u %Lp' "$1" 2> /dev/null) || { echo "no existe $1" >&2; return 1; }
+  uid=${info% *} mode=${info#* }
+  [ "${2:-}" != secret ] || mask=077
+  if [ "$uid" != 0 ] && [ "$uid" != "$(id -u)" ]; then echo "$1 no es de root" >&2; return 1; fi
+  if (((8#$mode & 8#$mask) != 0)); then echo "$1 tiene modo $mode: se espera 0600 o sin escritura ajena" >&2; return 1; fi
+}
+
 # Un remoto de rclone por variables de entorno: ninguna credencial en argumentos ni en disco.
 # Sin HEAD tras subir ni comprobación del bucket: la credencial del servidor solo escribe.
 s3_remote() { # <NOMBRE> <endpoint (vacío = AWS)> <región> <access key> <secret>
@@ -61,8 +72,10 @@ s3_remote() { # <NOMBRE> <endpoint (vacío = AWS)> <región> <access key> <secre
 
 # DEST: el destino de los backups (backup.env). SRC: el bucket de la aplicación (runtime.env).
 configure() {
-  local runtime="${CRM_ENV_DIR:-/etc/crm}/runtime.env"
-  load_env "${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
+  local runtime="${CRM_ENV_DIR:-/etc/crm}/runtime.env" config="${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
+  check_file "$config" secret
+  check_file "$runtime" secret
+  load_env "$config"
   : "${BACKUP_S3_BUCKET:?falta BACKUP_S3_BUCKET}" "${BACKUP_S3_ACCESS_KEY_ID:?falta BACKUP_S3_ACCESS_KEY_ID}"
   : "${BACKUP_S3_SECRET_ACCESS_KEY:?falta BACKUP_S3_SECRET_ACCESS_KEY}"
   s3_remote DEST "${BACKUP_S3_ENDPOINT:-}" "${BACKUP_S3_REGION:-us-east-1}" \

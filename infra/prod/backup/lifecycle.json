@@ -8,7 +8,7 @@
       "ID": "db-versions",
       "Status": "Enabled",
       "Filter": { "Prefix": "db/" },
-      "NoncurrentVersionExpiration": { "NoncurrentDays": 1 },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
       "Expiration": { "ExpiredObjectDeleteMarker": true },
       "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 2 }
     },

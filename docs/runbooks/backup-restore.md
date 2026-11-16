@@ -42,7 +42,7 @@ Si la clave privada se pierde, sus backups no se pueden leer. Por eso hay dos pe
 
 El propietario elige el proveedor (ADR-033 §11): otro proveedor u otra cuenta que la del servidor, compatible con S3. Lo que el destino tiene que cumplir:
 
-1. **Bucket privado** con **versionado** (o Object Lock). Sin él, subir un objeto con el mismo nombre equivale a borrar el anterior.
+1. **Bucket privado con Object Lock en modo _compliance_ (recomendado) o, como mínimo, con versionado.** Sin ninguno de los dos, subir un objeto con el mismo nombre equivale a borrar el anterior. Ver el punto 4 y «Qué protege cada opción».
 2. Las reglas de [`lifecycle.json`](../../infra/prod/backup/lifecycle.json) aplicadas con una credencial de administración del propietario (nunca la del servidor). Con la CLI de AWS, que funciona con la mayoría de proveedores compatibles:
 
    ```bash
@@ -68,7 +68,13 @@ El propietario elige el proveedor (ADR-033 §11): otro proveedor u otra cuenta q
    ```
 
    Otros proveedores lo llaman «clave de aplicación» con la capacidad de escribir archivos y sin las de leer, listar o borrar. Si un proveedor no permite una credencial así, ese proveedor no sirve para este destino.
-4. **Object Lock, si se prefiere al versionado:** retención por omisión en modo *governance* o *compliance* de 7 días, que es el plazo más corto de las reglas. Las reglas de ciclo de vida borran cuando vence.
+4. **Object Lock en modo _compliance_ (recomendado).** La retención tiene que durar al menos lo que el nivel más largo que guarda cada copia: 7 días (`daily`, `predeploy`), 28 (`weekly`) y 184 (`monthly`). Con un solo bucket, que es lo que usa `backup.sh`, eso significa una retención por omisión de **184 días**. Si el proveedor admite retención por prefijo, basta con 7, 28 y 184 en cada uno. Una retención de 7 días en todo el bucket **no** protege los semanales ni los mensuales. Con *compliance* nadie, ni el propietario, borra una versión antes de que venza; las reglas de ciclo de vida borran después.
+   - **Alternativa, si el proveedor la admite:** una política del bucket que niegue sobrescribir un objeto que ya existe (escrituras condicionales). Hoy `rclone` no envía esa condición, así que exige probarla antes.
+
+   **Qué protege cada opción frente a un servidor comprometido.** La credencial del servidor puede escribir, y los nombres de los volcados salen en el journal (`backup.ok`) y se adivinan. Un atacante con root puede subir objetos vacíos con esos nombres:
+   - **Con Object Lock (compliance):** las versiones buenas siguen bloqueadas hasta que vence su retención. No hay pérdida.
+   - **Solo con versionado:** la versión buena pasa a «no actual», y la regla `db-versions` la borra a los **30 días** (`media-versions`, igual). El riesgo que queda es un atacante que pase **más de 30 días sin ser detectado**: por eso el simulacro trimestral y la revisión de las alertas.
+   - **Coste:** cada volcado vive 30 días más como versión no actual cuando caduca. Son unas 37 copias diarias, 8 semanales y 7 mensuales: unas 52 copias del volcado en lugar de 17, unas tres veces el espacio. Con Object Lock de 184 días en un solo bucket, cada diario vive 184 días: unas 220 copias. Con el volumen de R0 son pocos GB. Si el coste pesa, la opción es un bucket por nivel, que exige un cambio en `backup.sh` (deuda declarada en F1-16).
 5. Una credencial de **lectura** (`s3:GetObject` y `s3:ListBucket`) para el propietario y su suplente, guardada fuera del servidor.
 
 ## 4. Instalación en el servidor
@@ -100,25 +106,28 @@ Qué hacer ante un aviso: leer `journalctl -u crm-backup.service -n 50`, corregi
 
 Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar localizables en la primera hora: traen la clave privada, la credencial de lectura y la copia de los secretos (ADR-033 §8.3).
 
-1. Aprovisionar el servidor con el runbook de primer arranque (F1-17): Docker, el repositorio y los archivos de `/etc/crm` restaurados de la copia del propietario, con **las mismas `SECRETS_KEKS`**. Para los roles, contraseñas nuevas en `migrate.env` y `runtime.env`.
+1. Aprovisionar el servidor con el runbook de primer arranque (F1-17): Docker, el repositorio y los archivos de `/etc/crm` restaurados de la copia del propietario, con **las mismas `SECRETS_KEKS`**. Para los roles, contraseñas nuevas en `postgres.env` (root, `0600`), las mismas en `migrate.env` y `runtime.env`.
 2. Arrancar solo PostgreSQL: `docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait postgres`.
 3. Traer al servidor, solo para la restauración, la clave privada y un archivo `restore.env`, que es `backup.env` con la credencial de **lectura**. Ambos en `/dev/shm` (memoria), con modo `0600`.
 4. Restaurar:
 
    ```bash
-   sudo BACKUP_ENV=/dev/shm/restore.env CRM_MIGRATOR_PASSWORD=… CRM_APP_PASSWORD=… \
-     /opt/crm/infra/prod/backup/restore.sh --identity /dev/shm/backup-key.txt --latest --media
+   sudo BACKUP_ENV=/dev/shm/restore.env /opt/crm/infra/prod/backup/restore.sh \
+     --identity /dev/shm/backup-key.txt --roles-env /etc/crm/postgres.env --latest --media
    ```
 
    - `--latest` toma el último volcado de `db/daily/`. Para otro, `--object db/monthly/crm-….dump.age`.
-   - `--media` devuelve los objetos al bucket de `runtime.env`. Sin él, solo la base. Úsalo si se perdió el bucket de producción. Si solo se perdió el servidor, el bucket sigue intacto (ADR-033 §8.3).
-   - Las contraseñas de los roles las pasa a `bootstrap-roles.sh`. Si los roles ya existen, se pueden omitir.
+   - `--media` devuelve los objetos al bucket de `runtime.env`. Sin él, solo la base. Úsalo si se perdió el bucket de producción. Si solo se perdió el servidor, el bucket sigue intacto (ADR-033 §8.3). Para recuperar solo el bucket, sin tocar la base, usa `--media-only`.
+     - Cada objeto se escribe primero como `<clave>.partial` y solo pasa a su nombre si se descargó y descifró entero. Una clave equivocada o un objeto dañado no pisan nada.
+     - Los objetos que ya están en el bucket no se tocan. Para sobrescribirlos, `--overwrite-media`.
+   - `--roles-env` es un archivo `KEY=valor` con `CRM_MIGRATOR_PASSWORD` y `CRM_APP_PASSWORD`, de root y `0600` (si no, el script se niega). Las contraseñas pasan a `bootstrap-roles.sh` por el entorno, **nunca por la línea de órdenes**: ni en `sudo`, ni en el historial, ni en `ps`. Si los roles ya existen, se puede omitir.
+   - `backup.env`, `restore.env`, `runtime.env` y la clave privada tienen que ser de root y `0600`. `backup-recipients.txt`, de root y sin escritura para otros. Si no, los scripts no arrancan.
    - **No restaura encima de una base con tablas.** Para sustituirla, `--replace-existing-data`: para el runtime, borra la base `crm` y la vuelve a crear con `bootstrap-roles.sh` (exige las contraseñas).
 5. El script descifra el volcado en memoria y lo pasa a `pg_restore` en una sola transacción. Después deja las filas por tabla en `/var/lib/crm-backup/restored-counts.tsv`, registra si las migraciones estaban al día (`migrations_at_head`), levanta el backend (el job `migrate` corre antes) y exige `/health/ready` con 200. Termina con `"event":"restore.ok"` y los segundos que tardó.
-6. **Borrar la clave privada y `restore.env`**: `shred -u /dev/shm/backup-key.txt /dev/shm/restore.env`.
+6. **Borrar la clave privada y `restore.env`**: `shred -u /dev/shm/backup-key.txt /dev/shm/restore.env`. Borrar también `postgres.env` y recrear `postgres` (infra/prod/README.md, «Secretos»).
 7. Desplegar el resto (`deploy.sh`, F1-15), apuntar el registro A y pasar la puerta de salud.
 
-**Volver atrás tras un despliegue con migraciones** (ADR-033 §7.7): es el mismo procedimiento con `--object db/predeploy/crm-….dump.age --replace-existing-data` y la clave de despliegue o la de backup.
+**Volver atrás tras un despliegue con migraciones** (ADR-033 §7.7): es el mismo procedimiento con `--object db/predeploy/crm-….dump.age --replace-existing-data`, `--roles-env` y la clave de despliegue o la de backup. El orden exacto respecto de los digests de la versión anterior lo fija el runbook de despliegue (F1-15).
 
 ## 7. El simulacro
 
@@ -127,7 +136,11 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
 - las filas por tabla, idénticas a las del origen;
 - las migraciones al día y `/health/ready`;
 - los archivos, idénticos byte a byte;
-- que no restaura encima de una base con datos sin `--replace-existing-data`, y que con esa opción sí.
+- que no restaura encima de una base con datos sin `--replace-existing-data`, y que con esa opción sí;
+- que una clave equivocada, unas contraseñas en un archivo `0644` o un `backup.env` `0644` se rechazan sin tocar la base;
+- que un fallo dentro del volcado deja `backup.failed stage=dump` y no mueve `last-success`, y que una marca no numérica da `backup.missing`;
+- que una lista de objetos copiados desordenada (una noche que falló a medias) no rompe la siguiente copia;
+- que `--media-only --overwrite-media` con otra clave deja los objetos idénticos y ningún `.partial`, y que sin `--overwrite-media` no vuelve a subir lo que ya está.
 
 En local, con Docker, `age` y `rclone`: `BACKEND_IMAGE=<imagen del backend del repo> bash infra/prod/backup/drill.sh`. Borra al salir, por nombre, todo lo que crea.
 

@@ -24,6 +24,7 @@ finish() {
   [ "$status" = 0 ] || alert backup.failed "kind=$kind stage=$stage"
 }
 trap finish EXIT
+trap 'exit 143' TERM # TimeoutStartSec de systemd: también deja backup.failed
 
 need docker age rclone curl
 umask 077
@@ -32,6 +33,7 @@ mkdir -p "$state_dir"
 recipients=(-R "${BACKUP_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-recipients.txt}")
 deploy=${BACKUP_DEPLOY_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-deploy-recipients.txt}
 [ "$kind" = nightly ] || [ ! -s "$deploy" ] || recipients+=(-R "$deploy")
+for file in "${recipients[@]}"; do [ "$file" = -R ] || check_file "$file"; done
 tmp=$(mktemp "$state_dir/.backup.XXXXXX")
 
 stage=counts
@@ -54,6 +56,7 @@ if [ "$kind" = nightly ]; then
   stage=media
   list="$state_dir/media-copied.txt"
   touch "$list"
+  LC_ALL=C sort -u -o "$list" "$list" # una noche que falló a medias lo dejó sin ordenar: comm lo exige
   rclone lsf -R --files-only "SRC:$storage_bucket" | LC_ALL=C sort > "$tmp.list"
   LC_ALL=C comm -13 "$list" "$tmp.list" > "$tmp.new"
   while IFS= read -r key <&3; do
@@ -62,7 +65,7 @@ if [ "$kind" = nightly ]; then
     printf '%s\n' "$key" >> "$list"
     copied=$((copied + 1))
   done 3< "$tmp.new"
-  LC_ALL=C sort -o "$list" "$list"
+  LC_ALL=C sort -u -o "$list" "$list"
 fi
 
 stage=finished
