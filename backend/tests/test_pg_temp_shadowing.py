@@ -35,6 +35,10 @@ FUNCTIONS = (
     "public.webhook_ingress_purge(integer, integer)",
     "public.webhook_ingress_refuse(text, text, text, text, text, jsonb, text)",  # F7-11b
     "public.resolve_channel_account(text, text)",
+    "public.webhook_ingress_insert_social(text, text, text, text, text, jsonb)",  # F7b-04a
+    "public.webhook_ingress_refuse_social(text, text, text, text, text, jsonb, text)",
+    "public.resolve_social_account(text, text)",
+    "public.conversations_identity_required()",  # INVOKER
     "public.meta_ingest_counts(timestamptz, timestamptz)",  # F7-11a, SECURITY DEFINER
     "public.quotes_guard()",  # F5-09b: guardas de la cotización, INVOKER
     "public.quote_items_guard()",

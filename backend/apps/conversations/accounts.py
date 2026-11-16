@@ -1,4 +1,5 @@
-"""Cuentas de WhatsApp: conectar, rotar el token y desconectar (F7-02c; ADR-029 §2, ADR-022).
+"""Cuentas de WhatsApp: conectar, rotar el token y desconectar (F7-02c; ADR-029 §2, ADR-022). Y
+conectar una página de Messenger o una cuenta de Instagram (F7b-04a, ADR-035 §3), igual.
 
 Los únicos escritores de la conexión de una cuenta real; solo la API y las tareas los importan. El
 token de acceso lo guarda `apps.conversations.credentials` (cifrado, atado a la cuenta); aquí se
@@ -28,6 +29,7 @@ from core.tenancy.scope import require_scope
 
 NAME_MAX = 100
 NUMBER_REFUSED = "No se puede registrar ese número."  # el mismo texto, sea cual sea el motivo
+ACCOUNT_REFUSED = "No se puede registrar esa cuenta."  # lo mismo para una página o una cuenta
 ACCOUNT_FIELDS = ["credential_id", "last_healthcheck_at", "quality_rating", "messaging_limit_tier"]
 
 
@@ -45,6 +47,14 @@ def _allowed(ctx: TenantContext) -> None:
 def _id(value: Any, what: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(META_ID, value):
         raise BadNumber(NUMBER_REFUSED) if what == "número" else ValueError(f"{what}: no válido")
+    return value
+
+
+def _name(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > NAME_MAX:
+        raise ValueError("nombre: de 1 a 100 caracteres de una línea")
+    if not value.isprintable():  # una sola línea, sin controles
+        raise ValueError("nombre: de 1 a 100 caracteres de una línea")
     return value
 
 
@@ -68,7 +78,7 @@ def _announce(
     """Auditoría y outbox del hecho: solo ids y estados, nunca el token ni su cifrado."""
     ids = {"credential_id": credential_id} if credential_id else {}
     entity = Entity("channel_account", account.pk, account.name)
-    record(ctx, action, entity, changes, {"platform": "WHATSAPP", **ids})
+    record(ctx, action, entity, changes, {"platform": account.platform, **ids})
     emit(ctx, action, aggregate_type="channel_account", aggregate_id=account.pk, payload=ids)
 
 
@@ -81,13 +91,7 @@ def connect_whatsapp(
     `graph.GraphRejected`, `graph.GraphUnavailable`, `graph.ChannelNotEnabled`, `AccessDenied`."""
     alias = require_scope(ctx)
     number, waba, token = _id(phone_number_id, "número"), _id(waba_id, "WABA"), _token(access_token)
-    if (
-        not isinstance(name, str)
-        or not name.strip()
-        or len(name) > NAME_MAX
-        or not name.isprintable()
-    ):
-        raise ValueError("nombre: de 1 a 100 caracteres de una línea")
+    _name(name)
     _allowed(ctx)
     seen = graph.phone_number(token, waba, number)  # sin tocar la base: antes de guardar nada
     account_id, now = new_id(), timezone.now()
@@ -108,6 +112,52 @@ def connect_whatsapp(
         ):
             raise
         raise BadNumber(NUMBER_REFUSED) from None  # sin el nombre del índice ni el valor
+    return account, credential
+
+
+def connect_social(
+    ctx: TenantContext, *, platform: str, name: str, page_id: str, access_token: str,
+    instagram_account_id: str | None = None,
+) -> tuple[ChannelAccount, Credential]:  # fmt: skip
+    """Registra una página de Messenger o la cuenta de Instagram vinculada a una página (ADR-035
+    §3), en un paso: valida los formatos, comprueba con Meta que el token gestiona la página (y que
+    su cuenta de Instagram es la dada), suscribe la app a la página y guarda la cuenta `PENDING` con
+    su credencial cifrada. La cuenta registrada (la página o la de Instagram) mal formada o ya
+    registrada en cualquier organización es el mismo `BadNumber`; el resto, como `connect_whatsapp`.
+    """
+    alias = require_scope(ctx)
+    if platform not in (Platform.MESSENGER, Platform.INSTAGRAM):
+        raise ValueError("plataforma: MESSENGER o INSTAGRAM")
+    instagram = platform == Platform.INSTAGRAM
+    if instagram != (instagram_account_id is not None):
+        raise ValueError("la cuenta de Instagram va solo con INSTAGRAM")
+    external = instagram_account_id if instagram else page_id
+    if not isinstance(external, str) or not re.fullmatch(META_ID, external):
+        raise BadNumber(ACCOUNT_REFUSED)
+    page, token = _id(page_id, "página"), _token(access_token)
+    _name(name)
+    _allowed(ctx)
+    seen = graph.page(token, page, instagram_account_id)  # antes de guardar nada
+    graph.subscribe(token, page)
+    account_id = new_id()
+    try:
+        with transaction.atomic(using=alias):
+            credential = credentials.store(ctx, account_id, token)
+            account = ChannelAccount.objects.using(alias).create(
+                id=account_id, platform=platform, name=name, external_account_id=external,
+                external_parent_id=page if instagram else None,
+                display_identifier="" if instagram else seen["name"],  # el @usuario: F7b-04c
+                status="PENDING", status_detail="WEBHOOK_NOT_SEEN",
+                last_healthcheck_at=timezone.now(), credential_id=credential.pk,
+                created_by_user_id=ctx.user_id,
+            )  # fmt: skip
+            _announce(ctx, "channel_account.connected", account, None, str(credential.pk))
+    except IntegrityError as error:
+        if getattr(getattr(error.__cause__, "diag", None), "constraint_name", "") != (
+            "channel_accounts_external_uq"
+        ):
+            raise
+        raise BadNumber(ACCOUNT_REFUSED) from None
     return account, credential
 
 
