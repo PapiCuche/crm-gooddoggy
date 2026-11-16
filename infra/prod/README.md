@@ -39,6 +39,17 @@ Cada sección de la plantilla es un archivo en `CRM_ENV_DIR` (`/etc/crm` por omi
 - PostgreSQL arranca con `log_min_error_statement=panic`, `log_statement=none`, `log_parameter_max_length_on_error=0`, `log_error_verbosity=terse` y `log_min_messages=log`: ni la sentencia, ni sus parámetros, ni el `DETAIL` ni el texto de un error llegan a su log; el cliente sigue recibiendo el error. `smoke.sh` los lee con `SHOW` como `crm_app`. Su log va a la salida estándar, con la rotación de Docker (5 × 10 MB por contenedor). No está en el volumen de datos, así que no entra en `pg_dump`.
 - **Binding en el servidor** (`OPTIONS = {"server_side_binding": True}`): no se activa aquí. Es un cambio del backend que exige la suite completa, y con `log_min_error_statement=panic` el log ya no recibe las sentencias. Queda como mejora opcional.
 
+## Tiempo real del Inbox
+
+La imagen del frontend se construye con `NEXT_PUBLIC_INBOX_WS=on` (F6-09): el Inbox abre `wss://crm.<DOMINIO>/ws/o/<slug>/inbox/` y los mensajes nuevos llegan sin recargar. Lo que lo sostiene:
+
+- **Ruta.** Caddy lleva `/ws/*` a `ws` (uvicorn, `--ws-max-size 16384`), con el upgrade de HTTP/1.1 y tope de 1 MB al cuerpo. `ws` va en las redes `edge` y `data` y entra en la puerta de salud.
+- **Origen y sesión.** `ws` solo acepta el `Origin` de `APP_ORIGIN` y `DJANGO_CSRF_TRUSTED_ORIGINS` (`runtime.env`); sin ellos rechaza todo. La sesión sale de la cookie; el permiso y el alcance de `conversations.view` se vuelven a mirar cada minuto y en cada evento. Los eventos solo llevan ids.
+- **Límites.** 8 conexiones por persona y proceso, 30 tramas por minuto, 1 KB por trama, cierre a los 90 s sin latido (el cliente manda uno cada 25 s). La capa de canales usa Redis: `CHANNEL_LAYER_REDIS_URL` o, si falta, la URL del broker (`CELERY_BROKER_URL`).
+- **Reconexión.** Un despliegue o una recarga de Caddy cortan las conexiones. El cliente vuelve con espera de 1 a 30 s y relee el Inbox una vez. Mientras tanto, el Inbox se sigue leyendo al enfocar la pestaña.
+- **Pruebas.** `test_inbox_realtime.py` (servidor), `inbox-socket` y `use-inbox-realtime` (cliente) y el E2E del stack local de F6-07e y F6-09. Ninguna prueba automática cruza el Caddy de producción: tras desplegar, en el Inbox, la petición `/ws/…` debe responder 101.
+- **Apagarlo.** Construir la imagen con `--build-arg NEXT_PUBLIC_INBOX_WS=off` y desplegarla. El Inbox funciona igual, pero sin tiempo real.
+
 ## Imágenes
 
 `.github/workflows/images.yml` corre en cada push a `main` (ADR-033 §7). Construye el backend, el frontend y el proxy para `linux/amd64`, los arranca, revisa con gitleaks su configuración y su historial de capas, y los publica como `ghcr.io/<owner>/<repo>/{backend,frontend,proxy}:<SHA>` con procedencia y SBOM. El resumen del job trae el `release.env` de ese SHA: las tres imágenes y las de PostgreSQL y Redis, todas por digest. Es el único workflow con `packages: write`, y no tiene más secreto que `GITHUB_TOKEN`.
