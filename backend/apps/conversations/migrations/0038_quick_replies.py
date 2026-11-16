@@ -44,7 +44,7 @@ def _restore(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0036_validate_file_scan_error"),
+        ("conversations", "0037_conversations_unanswered_index"),
         ("organizations", "0010_invitations_are_not_deleted"),
     ]
 

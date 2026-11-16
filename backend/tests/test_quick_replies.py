@@ -273,7 +273,7 @@ def test_the_data_migration_seeds_the_organizations_that_already_existed(
     )
     for _ in range(2):  # dos veces: sin duplicar
         with as_migrator():
-            call_command("migrate", "conversations", "0037", verbosity=0)
+            call_command("migrate", "conversations", "0038", verbosity=0)
             call_command("migrate", "conversations", verbosity=0)
         assert seeded(migrator, orgs["A"]) == [("Vieja", 0, False)]  # no se toca
         assert seeded(migrator, orgs["B"]) == EXPECTED

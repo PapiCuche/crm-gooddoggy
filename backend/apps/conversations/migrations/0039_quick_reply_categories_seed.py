@@ -5,7 +5,7 @@ Corre como `crm_migrator` (BYPASSRLS, ADR-002 §1.1), pero no depende de ello: f
 cada organización, así que también valdría con FORCE RLS sin BYPASSRLS. Es autónoma: lleva su
 propia copia de los nombres, para que un cambio posterior de la semilla no cambie `migrate` en una
 base nueva. Idempotente: no toca a quien ya tuvo alguna categoría (también borrada). Sin auditoría
-(no hay actor). Al revertir no borra nada: la tabla se retira con la `0037`.
+(no hay actor). Al revertir no borra nada: la tabla se retira con la `0038`.
 """
 
 from typing import Any
@@ -31,5 +31,5 @@ def seed_existing(apps: Any, schema_editor: Any) -> None:
 
 
 class Migration(migrations.Migration):
-    dependencies = [("conversations", "0037_quick_replies")]
+    dependencies = [("conversations", "0038_quick_replies")]
     operations = [migrations.RunPython(seed_existing, migrations.RunPython.noop)]

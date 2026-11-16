@@ -1,7 +1,7 @@
 """Las categorías de respuestas rápidas con las que nace toda organización (F6-08a1, 02 §E.6).
 
 La llama el alta (`apps.provisioning.seeds`) para las organizaciones nuevas; las que ya existían
-las siembra la migración `0038`, con su propia copia de los nombres. No audita: el alta ya lo
+las siembra la migración `0039`, con su propia copia de los nombres. No audita: el alta ya lo
 hace. No pisa lo que la organización cambió: solo siembra si nunca tuvo ninguna (ni borrada).
 """
 
