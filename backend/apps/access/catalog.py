@@ -103,6 +103,9 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("messages.send", "conversations", supports_scope=True),
     PermissionDef("messages.note", "conversations", supports_scope=True),
     PermissionDef("channels.manage", "conversations"),
+    # F8-03a (ADR-034 §10): la clave del proveedor de IA y, después, el modelo, los presupuestos
+    # y el encendido. Sensible: solo el Owner al nacer (ADR-018); sus rutas piden segundo factor.
+    PermissionDef("ai.manage", "ai", is_sensitive=True),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
