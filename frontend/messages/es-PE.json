@@ -2296,6 +2296,8 @@
     "file": {
       "receiving": "Recibiendo el archivo del canal…",
       "waiting": "Archivo recibido. Todavía no se puede abrir: primero tiene que pasar la revisión de seguridad.",
+      "infected": "El antivirus encontró un virus en este archivo. Por seguridad no se puede abrir ni descargar.",
+      "scanFailed": "No se pudo revisar este archivo con el antivirus, así que no se puede abrir. Pide al cliente que lo vuelva a enviar.",
       "failed": "No se pudo recibir el archivo. Pide al cliente que lo vuelva a enviar.",
       "expired": "El archivo caducó en el canal antes de recibirlo. Pide al cliente que lo vuelva a enviar.",
       "unknown": "Archivo no disponible.",

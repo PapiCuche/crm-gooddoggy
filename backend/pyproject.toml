@@ -207,9 +207,14 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "El motor de precios no lee costos: ni services ni selectors importan costs; tampoco la edición masiva (F3-46, F3-49, ADR-006 §2)"
+name = "El motor de precios no lee costos: ni services ni selectors importan costs; tampoco la edición masiva ni sus rutas (F3-46, F3-49, F3-49b, ADR-006 §2)"
 type = "forbidden"
-source_modules = ["apps.pricing.services", "apps.pricing.selectors", "apps.pricing.batches"]
+source_modules = [
+    "apps.pricing.services",
+    "apps.pricing.selectors",
+    "apps.pricing.batches",
+    "apps.pricing.api.batches",
+]
 forbidden_modules = ["apps.pricing.costs"]
 
 [[tool.importlinter.contracts]]

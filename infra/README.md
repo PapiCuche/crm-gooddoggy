@@ -1,6 +1,6 @@
 # infra/
 
-Infraestructura local y (más adelante) de despliegue.
+Infraestructura local y de producción. Producción (ADR-033): [`prod/`](prod/README.md).
 
 ## Entorno local (Fase 0.5: servicios base)
 

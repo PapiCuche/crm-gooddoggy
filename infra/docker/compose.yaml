@@ -49,6 +49,9 @@ x-runtime: &runtime
     # Enviar imágenes y PDF sin antivirus (D-F7-04): apagado por omisión. La ruta de subida y el
     # despachador (worker) lo leen; sin pasarlo aquí, el valor de infra/env/.env no llegaba.
     MEDIA_SEND_UNSCANNED: ${MEDIA_SEND_UNSCANNED:-false}
+    # F7-15 (ADR-008): el antivirus de los medios. Sin él, nada se abre (los reintentos acaban en
+    # `ERROR`); no se espera a que esté sano para arrancar: el escaneo reintenta.
+    CLAMD_ADDRESS: clamd:3310
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -140,11 +143,13 @@ services:
       disable: true
 
   # F7-09a1c: la cola `media` (descargas de medios entrantes, hasta 120 s cada una), un proceso.
+  # F7-15: también el antivirus; es el único proceso del stack en la red `av` (interna) de clamd.
   worker-media:
     <<: *runtime
     command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--queues", "media", "--concurrency", "1"]
     healthcheck:
       disable: true
+    networks: [default, av]
 
   beat:
     <<: *runtime
@@ -183,6 +188,33 @@ services:
       ws:
         condition: service_healthy
 
+  # F7-15 (ADR-008): ClamAV. `clamd` en 3310, sin `ports:`, solo en `av`, que es interna: sin
+  # salida, ni a los puertos publicados de postgres o redis por IP. Las firmas las baja `freshclam`
+  # (otro contenedor, con salida) al mismo volumen y clamd las recarga (`SelfCheck`). La imagen trae
+  # firmas: arranca sin red, aunque cargarlas tarda ~1 min y ocupa ~1 GiB.
+  clamd:
+    image: clamav/clamav:1.5.4-debian # multiarquitectura (amd64 y arm64)
+    restart: unless-stopped
+    environment: { CLAMAV_NO_FRESHCLAMD: "true" }
+    networks: [av]
+    volumes:
+      - clamavdata:/var/lib/clamav
+      - ./clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5m
+      start_interval: 5s
+
+  freshclam: # solo descarga firmas oficiales (no lee archivos de clientes); su única red, la salida
+    image: clamav/clamav:1.5.4-debian
+    restart: unless-stopped
+    environment: { CLAMAV_NO_CLAMD: "true" }
+    networks: [av-egress]
+    volumes: [clamavdata:/var/lib/clamav]
+
   mailpit:
     image: axllent/mailpit:v1.31.3
     ports:
@@ -196,8 +228,12 @@ networks:
       config:
         - subnet: ${STACK_SUBNET:-172.31.250.0/24}
           ip_range: ${STACK_IP_RANGE:-172.31.250.128/25}
+  # F7-15: clamd y worker-media (backend también, cuando escanee los envíos: F7-15b, #838).
+  av: { internal: true }
+  av-egress: {} # solo freshclam
 
 volumes:
   pgdata:
   redisdata:
   garagedata:
+  clamavdata:

@@ -199,7 +199,13 @@ describe("Inbox, lista (F6-03)", () => {
   });
 
   it("un medio muestra su clase, la frase fija como texto y su archivo sin pintarlo", async () => {
-    const file = { id: "a1", status: "DONE", mime_type: "image/jpeg", size_bytes: 9 } as const;
+    const file = {
+      id: "a1",
+      status: "DONE",
+      mime_type: "image/jpeg",
+      size_bytes: 9,
+      scan_status: "CLEAN",
+    } as const;
     const media = (id: string, type: string, changes: Partial<Message> = {}) =>
       message(id, { message_type: type, ...changes });
     serve({

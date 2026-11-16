@@ -26,6 +26,8 @@ import type {
   AssignRequest,
   Assignment,
   AuditListParams,
+  Batch,
+  BatchCreateRequest,
   Branch,
   BranchCreateRequest,
   BranchesListParams,
@@ -100,6 +102,7 @@ import type {
   OpportunityWinRequest,
   OrganizationSummary,
   PaginatedAuditEntryList,
+  PaginatedBatchLineList,
   PaginatedBranchList,
   PaginatedBrandList,
   PaginatedCategoryList,
@@ -158,6 +161,7 @@ import type {
   PipelineCreateRequest,
   PipelinesListParams,
   Price,
+  PriceBatchItemsListParams,
   PriceList,
   PriceListCreateRequest,
   PriceListMarginsListParams,
@@ -11319,6 +11323,501 @@ export const usePipelineStagesReorder = <TError = ErrorType<Error>, TContext = u
 > => {
   return useMutation(getPipelineStagesReorderMutationOptions(options), queryClient);
 };
+
+export const getPriceBatchesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/batches/`;
+};
+
+/**
+ * Crea el lote (`PREVIEWED`) con una línea por variante: el precio de antes y el de después. No cambia ningún precio. 400 en su campo (los de la selección, dentro de `filters`); más de 2000 variantes, 400 en `filters` con el recuento. 403 `ACTOR_NOT_ALLOWED`: no es una persona.
+ */
+export const priceBatchesCreate = async (
+  orgSlug: string,
+  batchCreateRequest: BatchCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Batch> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<Batch>(getPriceBatchesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(batchCreateRequest),
+  });
+};
+
+export const getPriceBatchesCreateMutationKey = () => ["priceBatchesCreate"] as const;
+
+export const getPriceBatchesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof priceBatchesCreate>>,
+    TError,
+    PriceBatchesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof priceBatchesCreate>>,
+  TError,
+  PriceBatchesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPriceBatchesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof priceBatchesCreate>>,
+    PriceBatchesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return priceBatchesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PriceBatchesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof priceBatchesCreate>>
+>;
+export type PriceBatchesCreateMutationBody = BatchCreateRequest;
+export type PriceBatchesCreateMutationError = ErrorType<Error>;
+export type PriceBatchesCreateMutationVariables = { orgSlug: string; data: BatchCreateRequest };
+
+export const usePriceBatchesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof priceBatchesCreate>>,
+      TError,
+      PriceBatchesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof priceBatchesCreate>>,
+  TError,
+  PriceBatchesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getPriceBatchesCreateMutationOptions(options), queryClient);
+};
+
+export const getPriceBatchesRetrieveUrl = (orgSlug: string, batchId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/batches/${batchId}/`;
+};
+
+/**
+ * Un lote con sus recuentos. 404: no existe, es de otra organización o de una lista que el actor no ve.
+ */
+export const priceBatchesRetrieve = async (
+  orgSlug: string,
+  batchId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Batch> => {
+  return apiFetch<Batch>(getPriceBatchesRetrieveUrl(orgSlug, batchId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPriceBatchesRetrieveQueryKey = (orgSlug: string, batchId: string) => {
+  return [`/api/v1/o/${orgSlug}/pricing/batches/${batchId}/`] as const;
+};
+
+export const getPriceBatchesRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchesRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getPriceBatchesRetrieveQueryKey(orgSlug, batchId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof priceBatchesRetrieve>>> = ({ signal }) =>
+    priceBatchesRetrieve(orgSlug, batchId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined && batchId !== null && batchId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof priceBatchesRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PriceBatchesRetrieveQueryResult = NonNullable<
+  Awaited<ReturnType<typeof priceBatchesRetrieve>>
+>;
+export type PriceBatchesRetrieveQueryError = ErrorType<Error>;
+
+export function usePriceBatchesRetrieve<
+  TData = Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchesRetrieve>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof priceBatchesRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceBatchesRetrieve<
+  TData = Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchesRetrieve>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof priceBatchesRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceBatchesRetrieve<
+  TData = Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchesRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePriceBatchesRetrieve<
+  TData = Awaited<ReturnType<typeof priceBatchesRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchesRetrieve>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPriceBatchesRetrieveQueryOptions(orgSlug, batchId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getPriceBatchesCancelUrl = (orgSlug: string, batchId: string) => {
+  return `/api/v1/o/${orgSlug}/pricing/batches/${batchId}/cancel/`;
+};
+
+/**
+ * Cancela un lote en borrador o previsualizado sin cambiar ningún precio; uno ya cancelado vuelve tal cual. 409 `BATCH_STATE_CONFLICT`: ya se aplicó o falló. 403 `ACTOR_NOT_ALLOWED`: no es una persona.
+ */
+export const priceBatchesCancel = async (
+  orgSlug: string,
+  batchId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Batch> => {
+  return apiFetch<Batch>(getPriceBatchesCancelUrl(orgSlug, batchId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getPriceBatchesCancelMutationKey = () => ["priceBatchesCancel"] as const;
+
+export const getPriceBatchesCancelMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof priceBatchesCancel>>,
+    TError,
+    PriceBatchesCancelMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof priceBatchesCancel>>,
+  TError,
+  PriceBatchesCancelMutationVariables,
+  TContext
+> => {
+  const mutationKey = getPriceBatchesCancelMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof priceBatchesCancel>>,
+    PriceBatchesCancelMutationVariables
+  > = (props) => {
+    const { orgSlug, batchId } = props ?? {};
+
+    return priceBatchesCancel(orgSlug, batchId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PriceBatchesCancelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof priceBatchesCancel>>
+>;
+
+export type PriceBatchesCancelMutationError = ErrorType<Error>;
+export type PriceBatchesCancelMutationVariables = { orgSlug: string; batchId: string };
+
+export const usePriceBatchesCancel = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof priceBatchesCancel>>,
+      TError,
+      PriceBatchesCancelMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof priceBatchesCancel>>,
+  TError,
+  PriceBatchesCancelMutationVariables,
+  TContext
+> => {
+  return useMutation(getPriceBatchesCancelMutationOptions(options), queryClient);
+};
+
+export const getPriceBatchItemsListUrl = (
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/pricing/batches/${batchId}/items/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/pricing/batches/${batchId}/items/`;
+};
+
+/**
+ * Las líneas del lote por creación (ADR-016), con el SKU y el nombre de la variante y el precio de antes y el de después. 404: el lote no existe, es de otra organización o de una lista que el actor no ve o que está desactivada.
+ */
+export const priceBatchItemsList = async (
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedBatchLineList> => {
+  return apiFetch<PaginatedBatchLineList>(getPriceBatchItemsListUrl(orgSlug, batchId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getPriceBatchItemsListQueryKey = (
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/pricing/batches/${batchId}/items/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getPriceBatchItemsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof priceBatchItemsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchItemsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getPriceBatchItemsListQueryKey(orgSlug, batchId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof priceBatchItemsList>>> = ({ signal }) =>
+    priceBatchItemsList(orgSlug, batchId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined && batchId !== null && batchId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof priceBatchItemsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type PriceBatchItemsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof priceBatchItemsList>>
+>;
+export type PriceBatchItemsListQueryError = ErrorType<Error>;
+
+export function usePriceBatchItemsList<
+  TData = Awaited<ReturnType<typeof priceBatchItemsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  params: undefined | PriceBatchItemsListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchItemsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceBatchItemsList>>,
+          TError,
+          Awaited<ReturnType<typeof priceBatchItemsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceBatchItemsList<
+  TData = Awaited<ReturnType<typeof priceBatchItemsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchItemsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof priceBatchItemsList>>,
+          TError,
+          Awaited<ReturnType<typeof priceBatchItemsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function usePriceBatchItemsList<
+  TData = Awaited<ReturnType<typeof priceBatchItemsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchItemsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function usePriceBatchItemsList<
+  TData = Awaited<ReturnType<typeof priceBatchItemsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  batchId: string,
+  params?: PriceBatchItemsListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof priceBatchItemsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getPriceBatchItemsListQueryOptions(orgSlug, batchId, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getPriceListsListUrl = (orgSlug: string, params?: PriceListsListParams) => {
   const normalizedParams = new URLSearchParams();

@@ -1165,7 +1165,7 @@ def test_the_sweeper_requeues_stranded_attachments_once_per_window_and_only_thos
     assert {q["kwargs"]["organization_id"] for q in queued} == {str(world.a)}
     assert all(q["countdown"] == media.BUSY_WAIT for q in queued)
     logged = [r.msg for r in caplog.records if "media.swept" in str(r.msg)]
-    counters = {"organizations", "requeued", "failed"}
+    counters = {"organizations", "requeued", "scans", "failed"}
     assert logged and set(logged[0]) <= LOGGED | counters
     assert tasks.sweep_media()["requeued"] == 0  # marcados: no otra vez antes de `SWEEP_AFTER`
     for pk in (lost, dead):

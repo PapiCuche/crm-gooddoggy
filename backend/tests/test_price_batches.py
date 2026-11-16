@@ -328,6 +328,8 @@ def test_the_tables_refuse_foreign_rows_and_the_runtime_cannot_rewrite_a_line(
     for sql in (
         "DELETE FROM price_change_batches",
         "DELETE FROM price_change_batch_items",
+        "TRUNCATE price_change_batches",
+        "TRUNCATE price_change_batch_items",
         "UPDATE price_change_batch_items SET new_amount = 1",
         "UPDATE price_change_batch_items SET old_amount = 1",
     ):

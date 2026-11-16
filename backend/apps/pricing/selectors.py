@@ -9,7 +9,10 @@ from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from apps.access.selectors import ExecutionContext, has_permission
 from apps.pricing.models import (
+    ALERTING,
     READ_PERMISSIONS,
+    PriceChangeBatch,
+    PriceChangeBatchItem,
     PriceList,
     ProductPrice,
     Promotion,
@@ -29,6 +32,34 @@ def visible_price_lists(ectx: ExecutionContext) -> QuerySet[PriceList]:
         return lists
     held = [code for code in READ_PERMISSIONS if has_permission(ectx, code)]
     return lists.filter(required_permission__in=held)
+
+
+def visible_batches(ectx: ExecutionContext) -> QuerySet[PriceChangeBatch]:
+    """Los lotes de edición masiva de las listas que el actor ve, activas o no (como el historial):
+    uno de una lista oculta no se distingue de uno que no existe, porque sus líneas enseñan precios
+    (F3-49b). El permiso de la ruta lo pide quien lo sirve."""
+    lists = visible_price_lists(ectx).values("id")
+    return PriceChangeBatch.objects.filter(price_list_id__in=lists)
+
+
+def lined_batches(ectx: ExecutionContext) -> QuerySet[PriceChangeBatch]:
+    """Los lotes cuyas líneas se enseñan: los visibles de una lista que sigue activa. Las de una
+    lista desactivada no, como sus precios en `…/price-lists/{id}/prices/` (F3-49c)."""
+    return visible_batches(ectx).filter(price_list__is_active=True)
+
+
+def batch_lines(
+    ectx: ExecutionContext, batch_id: UUID, *, status: str | None = None, alert: bool | None = None
+) -> QuerySet[PriceChangeBatchItem]:
+    """Las líneas de un lote de `lined_batches`, con su variante; `alert` con la regla de
+    `summary.alerts` (`ALERTING`). Ninguna si el lote no se enseña: el 404 lo decide quien sirve."""
+    shown = lined_batches(ectx).filter(pk=batch_id).values("id")
+    rows = PriceChangeBatchItem.objects.filter(batch_id__in=shown).select_related("variant")
+    if status is not None:
+        rows = rows.filter(status=status)
+    if alert is not None:
+        rows = rows.filter(ALERTING) if alert else rows.exclude(ALERTING)
+    return rows
 
 
 def _pair(variant_id: UUID, price_list_id: UUID) -> QuerySet[ProductPrice]:
