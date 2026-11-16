@@ -165,6 +165,24 @@ El mantenedor autorizó leer XLSX en la importación de stock con `openpyxl` en 
 - **Por qué no la más reciente:** se elige el cambio mínimo que corrige los avisos, como en §4.2. 16.4.6 (2026-11-09) no trae arreglos de seguridad, solo backports: la compresión automática de las respuestas de route handlers, el GC de Turbopack en desarrollo y un pin de Tailwind en `create-next-app`. Ninguna de las dos necesita excepción de `minimumReleaseAge`.
 - **React** sigue en 19.2.8 (peer `^19`); la subida a 19.3 sigue en F3-18 (#337).
 
+### 4.5 Dependencias de desarrollo del frontend (SEC-DEV-01, 2026-11-16, #890)
+
+`pnpm audit` listaba 30 avisos (10 altos, 17 moderados, 3 bajos), todos en herramientas de desarrollo y de CI; `pnpm audit --prod` ya estaba limpio. Se elige la versión parcheada más baja de cada paquete, sin subir de versión mayor. Sustituye a las versiones de vite, vitest, eslint y undici de §4.1:
+
+| Paquete | Antes | Después | Cómo | Avisos que cierra |
+|---|---|---|---|---|
+| vite | 8.3.1 | **8.3.3** (2026-10-06) | directa | GHSA-587h-7wmj-h5pm (alto), 4 moderados y 1 bajo (afectan a 8.3.0–8.3.2) |
+| vitest y `@vitest/*` | 4.1.11 | **4.1.12** (2026-10-15) | directa | GHSA-qxg6-89mg-rqv8 y GHSA-xp26-3454-mjgp en `@vitest/mocker` (moderados). Vitest 5 sigue diferido (§4.1) |
+| eslint | 10.11.0 | **10.15.0** (2026-11-13) | directa | Es la primera 10.x que pide `minimatch ^11.0.5` (con `@eslint/config-array` 0.23.6): ESLint deja de usar minimatch 10.2.6, afectado por GHSA-g3hv-75wg-m249 (moderado), que solo se corrige en minimatch 11.0.1 |
+| undici 7 (orval > `@scalar/json-magic`) | 7.29.1 | **7.30.1** | override existente | GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm (altos) y 4 moderados. `@scalar/json-magic` fija undici exacto |
+| undici 8 (jsdom) | 8.11.2 | **8.12.2** | override nuevo | Los mismos avisos. jsdom 30.x pide `^8.10.2` o `^8.12.1`; solo jsdom 31 (mayor) exige una versión corregida |
+| zod (orval, eslint-plugin-react-hooks) | 4.6.5 | **4.6.6** | override nuevo | GHSA-mrhx-c7xc-m3w5 (alto). Ningún padre exige aún 4.6.6 |
+| fast-uri (orval > ajv) | 3.1.8 | **3.1.9** | override nuevo | 2 moderados y 2 bajos. ajv pide `^3.0.1` |
+
+- Los overrides están en `frontend/pnpm-workspace.yaml`, cada uno con su comentario. Se retiran cuando el paquete padre pida una versión corregida.
+- **Queda un aviso moderado:** GHSA-g3hv-75wg-m249 en minimatch 10.2.6, vía `eslint-config-next > typescript-eslint` 8.71.0 (`@typescript-eslint/typescript-estree` pide `^10.2.2`). La primera versión que pide minimatch 11 es typescript-eslint 8.73.0, publicada el 2026-11-16 a las 17:06 UTC: aún no cumple `minimumReleaseAge`. Forzar minimatch 11 con un override cruzaría una versión mayor. El aviso exige que un atacante controle el patrón glob; aquí los patrones salen de la configuración del repositorio.
+- El cliente orval regenerado no cambia. `@eslint/compat` 2.1.1, `@vitejs/plugin-react` 6.1.1, jsdom 30.1.1 y orval 8.38.0 siguen igual. Ninguna versión nueva necesita excepción de `minimumReleaseAge`.
+
 ### 5. Gestores de paquetes y herramientas
 
 - **pnpm 12.8.1** (F1-09; antes 12.6.0): dist-tag `latest` desde el 2026-09-30. Se fija con `"packageManager": "pnpm@12.8.1"` en `frontend/package.json`; en CI, `pnpm/action-setup` lee ese campo. En local, se instala con el método oficial vigente (standalone o `npm`). **No se depende de Corepack:** la documentación oficial de pnpm ya no lo presenta como método de instalación.
