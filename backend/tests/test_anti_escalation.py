@@ -89,6 +89,7 @@ ADMIN_REST = (
     "pipelines.manage",  # F5-02
     "conversations.assign",  # F6-01: el Inbox
     "channels.manage",
+    "quick_replies.manage",  # F6-08a1
 )
 SCOPED_REST = (
     "contacts.view",
