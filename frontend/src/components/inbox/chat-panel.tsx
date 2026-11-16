@@ -38,6 +38,7 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { Assignee, AssignmentActions } from "./assignment";
+import { ChannelMark } from "./attention";
 import { Composer, messagesKey, writableModes } from "./composer";
 import { MediaFile } from "./media-file";
 import { Plain } from "./plain";
@@ -213,7 +214,10 @@ export function ChatPanel({
           )}
           <p className="text-muted order-5 flex basis-full flex-wrap items-center gap-x-2 text-xs lg:text-sm">
             <span className="font-mono">{conversation.number}</span>
-            <Plain>{conversation.channel.name}</Plain>
+            <span className="inline-flex items-center gap-1">
+              <ChannelMark platform={conversation.channel.platform} />
+              <Plain>{conversation.channel.name}</Plain>
+            </span>
             <span>{t(`status.${conversation.status}`)}</span>
           </p>
           {name === null ? (

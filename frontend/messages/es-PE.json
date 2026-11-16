@@ -2450,6 +2450,29 @@
       "tags": "Etiquetas",
       "card": "Ver ficha del cliente",
       "noDeals": "No tienes permiso para ver las oportunidades."
+    },
+    "unanswered": {
+      "filter": "Sin responder",
+      "count": "{count, plural, one {# conversación sin responder} other {# conversaciones sin responder}}"
+    },
+    "network": {
+      "WHATSAPP": "WhatsApp",
+      "SANDBOX": "Sandbox",
+      "INSTAGRAM": "Instagram",
+      "MESSENGER": "Messenger",
+      "UNKNOWN": "Otra red"
+    },
+    "notify": {
+      "toggle": "Avisarme de mensajes nuevos",
+      "blocked": "El navegador bloqueó los avisos de esta página.",
+      "title": "Nuevo mensaje"
+    },
+    "channelAlert": {
+      "label": "Cuentas de canal con problemas",
+      "down": "está desconectada y no recibe ni envía mensajes.",
+      "token": "el token venció o ya no es válido; no se pueden enviar mensajes.",
+      "pending": "falta terminar la conexión o aprobar permisos.",
+      "link": "Revisar en Canales"
     }
   },
   "channels": {

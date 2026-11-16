@@ -357,6 +357,12 @@ class Conversation(TenantModel):
                 fields=["organization_id", "-last_message_at", "-id"],
                 name="conversations_org_recent_idx",
             ),
+            models.Index(  # «Sin responder» (F6-09): CONCURRENTLY en la migración 0037
+                fields=["organization_id", "-last_message_at", "-id"],
+                condition=models.Q(last_message_direction="INBOUND")
+                & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
+                name="conversations_unanswered_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
