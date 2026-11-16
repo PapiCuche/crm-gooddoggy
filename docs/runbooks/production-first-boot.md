@@ -109,9 +109,10 @@ sudo ls -l /etc/crm   # todos -rw------- root root
 
 ### 2.3 Lo que da el propietario
 
-Abre `runtime.env` con `sudoedit` (edita una copia y la devuelve con el mismo dueño y modo) y añade, con los nombres de la sección `runtime.env` de [`.env.production.example`](../../infra/prod/.env.production.example):
+Abre `runtime.env` con `sudoedit` (edita una copia temporal y la devuelve con el mismo dueño y modo) y añade, con los nombres de la sección `runtime.env` de [`.env.production.example`](../../infra/prod/.env.production.example). El editor no debe dejar copias del archivo con los secretos: con vim, `-n` (sin archivo de intercambio), `-i NONE` (sin viminfo, que guardaría en tu `$HOME` lo copiado) y `-u NONE` (sin un vimrc que active `backup`); nano no deja copias por omisión (`SUDO_EDITOR=nano`, sin `-B`).
 
 ```bash
+export SUDO_EDITOR='vim -u NONE -n -i NONE'
 sudoedit /etc/crm/runtime.env
 ```
 
@@ -187,7 +188,7 @@ Se prepara antes del primer despliegue y se activa en el paso 5.3. Todo está en
 
 1. Las claves de backup del propietario y del suplente (§2): ya están en `backup-recipients.txt` desde el paso 2.4. La clave de despliegue, si el propietario decide que exista, en `/etc/crm/backup-deploy-recipients.txt`.
 2. El destino (§3): bucket privado con versionado, las reglas de `lifecycle.json`, una credencial del servidor que solo escribe y la opción de protección que elija el propietario.
-3. `backup.env` (§4, las dos primeras órdenes): `sudo install -m 0600 /dev/null /etc/crm/backup.env` y `sudoedit /etc/crm/backup.env` con la sección `backup.env` de la plantilla. Opcional, `BACKUP_HEARTBEAT_URL` (§5).
+3. `backup.env` (§4, las dos primeras órdenes): `sudo install -m 0600 /dev/null /etc/crm/backup.env` y `sudoedit /etc/crm/backup.env` (con el mismo `SUDO_EDITOR` del paso 2.3) con la sección `backup.env` de la plantilla. Opcional, `BACKUP_HEARTBEAT_URL` (§5).
 4. Repetir la copia del paso 2.4, que ahora incluye `backup.env`.
 
 Desde el segundo despliegue, `deploy.sh` no arranca sin esto: su volcado previo es `backup.sh predeploy`.
@@ -196,19 +197,22 @@ Desde el segundo despliegue, `deploy.sh` no arranca sin esto: su volcado previo 
 
 ### 5.1 `deploy.sh`
 
-Dentro de `tmux`, para que una sesión SSH perdida no corte el despliegue:
+Dentro de `tmux`, para que una sesión SSH perdida no corte el despliegue. La primera orden comprueba que `crm.<DOMINIO>` ya resuelve a la IP de este servidor: si no, Caddy no obtiene el certificado:
 
 ```bash
 tmux new -s deploy
+getent ahostsv4 crm.<DOMINIO>
 cd /opt/crm
 sudo infra/prod/deploy.sh /root/release-<SHA>.env
 ```
 
-`deploy.sh` ([infra/prod/README.md](../../infra/prod/README.md), «Desplegar») valida el release, descarga los cinco digests, se salta el volcado previo (en el primer despliegue no hay nada que volcar), arranca PostgreSQL y Redis, ejecuta el job `migrate` como `crm_migrator`, levanta el stack y pasa la puerta de salud: `/health/ready` 200 desde dentro del backend, [`smoke.sh`](../../infra/prod/smoke.sh) y `https://crm.<DOMINIO>/login` 200. Termina con `DESPLIEGUE OK: /etc/crm/release.env`.
+`deploy.sh` ([infra/prod/README.md](../../infra/prod/README.md), «Desplegar») valida el release, descarga los cinco digests, se salta el volcado previo (en el primer despliegue no hay nada que volcar), arranca PostgreSQL y Redis, ejecuta el job `migrate` como `crm_migrator`, levanta el stack y pasa la puerta de salud: `/health/ready` 200 desde dentro del backend, [`smoke.sh`](../../infra/prod/smoke.sh) y `https://crm.<DOMINIO>/login` 200. En el primer arranque Caddy pide el certificado en segundo plano, después de que `up --wait` termine: `smoke.sh` lo espera hasta 120 s (`CRM_SMOKE_TLS_TIMEOUT`) y, si tarda, lo dice (`smoke: certificado válido tras 15s`). Termina con `DESPLIEGUE OK: /etc/crm/release.env`.
 
 Si la puerta falla en el primer despliegue no hay versión a la que volver: sale con `ROLLBACK IMPOSIBLE` y el stack queda como está. Mira `sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env ps` y `… logs backend proxy`, corrige y repite la misma orden. Lo habitual:
 
-- **El certificado** (`smoke FAIL: el certificado de … no es válido`): el registro A aún no resuelve a este servidor, o el 80 o el 443 están cerrados. Los logs de `proxy` dicen qué respondió la autoridad.
+- **El certificado:**
+  - `smoke FAIL: el certificado de … no es válido tras 120s (curl sale con 35 …)` (o 7, o 28): Caddy no lo obtuvo en ese tiempo. Los logs de `proxy` dicen qué respondió la autoridad. Si el registro A no resuelve aquí (`getent`) o el 80 o el 443 están cerrados, corrígelo. Si la autoridad solo va lenta, repite con más margen: `sudo CRM_SMOKE_TLS_TIMEOUT=300 infra/prod/deploy.sh /root/release-<SHA>.env`.
+  - `… (curl sale con 60 …)`: hay certificado, pero no vale para `crm.<DOMINIO>` (otro nombre, caducado o de una autoridad de pruebas).
 - **El backend no arranca:** `production` se niega a arrancar si falta o no vale una variable, y el error del log nombra la variable, nunca su valor.
 - **`/health/ready` no da 200:** su respuesta dice qué falla (`database`, `redis` o `storage`). `storage`, casi siempre, es la credencial sin `s3:ListBucket`.
 
@@ -225,11 +229,26 @@ sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env e
   sh -c 'test -z "$POSTGRES_PASSWORD$CRM_MIGRATOR_PASSWORD$CRM_APP_PASSWORD" && echo limpio'
 ```
 
-La última orden tiene que responder `limpio`. Las contraseñas de los roles siguen en `migrate.env` y `runtime.env`. Para restaurar en otro servidor no hacen falta: `restore.sh` crea los roles con contraseñas nuevas ([backup-restore.md](backup-restore.md) §6).
+La última orden tiene que responder `limpio`. Las contraseñas de los roles siguen en `migrate.env` y `runtime.env`.
+
+- **En un servidor nuevo** no hacen falta: `restore.sh` crea los roles con contraseñas nuevas, que se ponen también en `migrate.env` y `runtime.env` ([backup-restore.md](backup-restore.md) §6).
+- **En este mismo servidor** (restaurar el volcado previo de un despliegue con `--replace-existing-data`), `--roles-env` tiene que llevar las contraseñas **actuales**: unas nuevas dejarían de coincidir con `migrate.env` y `runtime.env`. Se sacan de las URL de esos archivos, sin mostrarlas, a un archivo en memoria:
+
+  ```bash
+  sudo sh -eu <<'EOF'
+  umask 077
+  m=$(sed -n 's|^DATABASE_MIGRATOR_URL=postgres://crm_migrator:\([^@]*\)@.*|\1|p' /etc/crm/migrate.env)
+  a=$(sed -n 's|^DATABASE_URL=postgres://crm_app:\([^@]*\)@.*|\1|p' /etc/crm/runtime.env)
+  [ -n "$m" ] && [ -n "$a" ] || { echo "no encuentro las contraseñas actuales" >&2; exit 1; }
+  printf 'CRM_MIGRATOR_PASSWORD=%s\nCRM_APP_PASSWORD=%s\n' "$m" "$a" > /dev/shm/roles.env
+  EOF
+  ```
+
+  Después, `restore.sh … --roles-env /dev/shm/roles.env`, en el orden de [infra/prod/README.md](../../infra/prod/README.md), «Volver atrás», y al terminar `sudo shred -u /dev/shm/roles.env`.
 
 ### 5.3 Activar los backups
 
-[backup-restore.md](backup-restore.md) §4, desde la copia de las unidades de systemd hasta la primera copia (`systemctl start crm-backup.service`). El journal tiene que terminar en `"event":"backup.ok"`.
+[backup-restore.md](backup-restore.md) §4, desde la copia de las unidades de systemd hasta la primera copia (`systemctl start crm-backup.service`). **Sáltate sus dos órdenes `install … /dev/null`**: vaciarían `backup.env` (paso 4) y `backup-recipients.txt` (paso 2.4), que ya están rellenos. El journal tiene que terminar en `"event":"backup.ok"`.
 
 ## 6. La organización y su Owner
 
@@ -305,4 +324,4 @@ Y el navegador no avisa de nada al abrir `https://crm.<DOMINIO>/`: el certificad
 - **El equipo del Owner:** [add-member.md](add-member.md), una ejecución por persona.
 - **El simulacro de restauración** en un servidor nuevo, obligatorio antes de salir a producción (F1-18): [backup-restore.md](backup-restore.md) §7.
 - **Una comprobación externa** de `https://crm.<DOMINIO>/` con un servicio de monitorización de disponibilidad, más las alertas de disco y de backup (ADR-033 §9).
-- **Los siguientes despliegues y la vuelta atrás:** [infra/prod/README.md](../../infra/prod/README.md), «Desplegar» y «Volver atrás». Desde el segundo despliegue, `deploy.sh` hace antes de migrar el volcado previo cifrado (`backup.sh predeploy`, a `db/predeploy/`, 7 días). Restaurarlo es la única vuelta atrás de una versión con migraciones que no siguen expandir y contraer, y **el orden depende de cómo terminó `deploy.sh`**: tras `DESPLIEGUE OK`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous` y después `deploy.sh --rollback`; tras `ROLLBACK OK` o `ROLLBACK FALLIDO`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env` y después `deploy.sh /etc/crm/release.env`, nunca `--rollback`. Los pasos completos están en ese README.
+- **Los siguientes despliegues y la vuelta atrás:** [infra/prod/README.md](../../infra/prod/README.md), «Desplegar» y «Volver atrás». Desde el segundo despliegue, `deploy.sh` hace antes de migrar el volcado previo cifrado (`backup.sh predeploy`, a `db/predeploy/`, 7 días). Restaurarlo es la única vuelta atrás de una versión con migraciones que no siguen expandir y contraer, y **el orden depende de cómo terminó `deploy.sh`**: tras `DESPLIEGUE OK`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous` y después `deploy.sh --rollback`; tras `ROLLBACK OK` o `ROLLBACK FALLIDO`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env` y después `deploy.sh /etc/crm/release.env`, nunca `--rollback`. `--roles-env`, con las contraseñas actuales (paso 5.2). Los pasos completos están en ese README.

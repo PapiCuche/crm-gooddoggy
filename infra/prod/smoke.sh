@@ -1,7 +1,9 @@
 #!/bin/sh
 # Prueba de humo de producción tras `up --wait` (F1-13; deploy.sh de F1-15 la llama). Comprueba lo
 # que ninguna prueba estática ve en el servidor real, sin credenciales de la aplicación:
-#   0. el certificado de crm.<DOMINIO> es válido: cadena, fechas y nombre (F1-17);
+#   0. el certificado de crm.<DOMINIO> es válido: cadena, fechas y nombre (F1-17). Espera hasta
+#      CRM_SMOKE_TLS_TIMEOUT s (120) a que Caddy lo obtenga: en el primer arranque lo pide en segundo
+#      plano y `up --wait` no lo espera;
 #   1. PostgreSQL, leído con SHOW como crm_app, no copia valores de clientes en su log, y rechaza
 #      al superusuario por red (solo por el socket local);
 #   2. el proxy corta cuerpos de más de 11 MB en /api/*, 4 MB en /webhooks/* y 1 MB en el resto,
@@ -9,7 +11,9 @@
 #   3. /health/* y /demo no se publican (404), HTTP redirige a HTTPS y la query de /webhooks no llega
 #      a los logs.
 # Uso: sudo CRM_RELEASE_ENV=/etc/crm/release.env sh infra/prod/smoke.sh https://crm.<DOMINIO> [opciones de curl]
-# Con una CA propia (Caddy en local), --cacert <raíz>: con -k la comprobación 0 falla igual.
+# La comprobación 0 quita -k y --insecure y no lee ~/.curlrc (-q): con una CA propia (Caddy en
+# local), --cacert <raíz>; para otra IP, --resolve crm.<DOMINIO>:443:<IP>, y el nombre se verifica.
+# Un -k dentro de un grupo (-sk) no se quita: ssl_verify_result sigue exigiendo la cadena, no el nombre.
 # Prueba sin servidor: test-smoke.sh (CI: infra-prod.yml).
 set -eu
 origin=${1:?uso: smoke.sh https://crm.<DOMINIO> [opciones de curl]}
@@ -19,10 +23,25 @@ compose() { docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
 code() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
 
-# curl verifica la cadena, las fechas y el nombre; ssl_verify_result exige la cadena también con -k.
-verify=$(curl -sS -o /dev/null -w '%{ssl_verify_result}' "$@" "$origin/") ||
-  fail "el certificado de $origin no es válido (curl no completa la conexión TLS)"
-[ "$verify" = 0 ] || fail "el certificado de $origin no es válido (verificación $verify)"
+# curl verifica la cadena, las fechas y el nombre; sin -k, y ssl_verify_result por si un -k se cuela.
+tls() {
+  for arg do
+    shift
+    case $arg in -k | --insecure) ;; *) set -- "$@" "$arg" ;; esac
+  done
+  curl -q -sS -o /dev/null -w '%{ssl_verify_result}' "$@" "$origin/"
+}
+tls_timeout=${CRM_SMOKE_TLS_TIMEOUT:-120} tls_every=${CRM_SMOKE_TLS_INTERVAL:-5} waited=0
+while :; do
+  rc=0
+  verify=$(tls "$@" 2> /dev/null) || rc=$?
+  [ "$rc" != 0 ] || [ "$verify" != 0 ] || break
+  [ "$waited" -lt "$tls_timeout" ] ||
+    fail "el certificado de $origin no es válido tras ${waited}s (curl sale con $rc, verificación ${verify:-?})"
+  sleep "$tls_every"
+  waited=$((waited + tls_every))
+done
+[ "$waited" = 0 ] || echo "smoke: certificado válido tras ${waited}s"
 
 got=$(compose exec -T backend python -c '
 import os, psycopg
