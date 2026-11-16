@@ -1,12 +1,16 @@
 #!/bin/sh
 # Prueba de humo de producción tras `up --wait` (F1-13; deploy.sh de F1-15 la llama). Comprueba lo
-# que ninguna prueba estática ve en el servidor real:
+# que ninguna prueba estática ve en el servidor real, sin credenciales de la aplicación:
+#   0. el certificado de crm.<DOMINIO> es válido: cadena, fechas y nombre (F1-17);
 #   1. PostgreSQL, leído con SHOW como crm_app, no copia valores de clientes en su log, y rechaza
 #      al superusuario por red (solo por el socket local);
 #   2. el proxy corta cuerpos de más de 11 MB en /api/*, 4 MB en /webhooks/* y 1 MB en el resto,
 #      también sin Content-Length (chunked): Django (ASGI) y Next leerían el cuerpo entero;
-#   3. /health/* no se publica, HTTP redirige a HTTPS y la query de /webhooks no llega a los logs.
+#   3. /health/* y /demo no se publican (404), HTTP redirige a HTTPS y la query de /webhooks no llega
+#      a los logs.
 # Uso: sudo CRM_RELEASE_ENV=/etc/crm/release.env sh infra/prod/smoke.sh https://crm.<DOMINIO> [opciones de curl]
+# Con una CA propia (Caddy en local), --cacert <raíz>: con -k la comprobación 0 falla igual.
+# Prueba sin servidor: test-smoke.sh (CI: infra-prod.yml).
 set -eu
 origin=${1:?uso: smoke.sh https://crm.<DOMINIO> [opciones de curl]}
 shift
@@ -14,6 +18,11 @@ here=$(cd "$(dirname "$0")" && pwd)
 compose() { docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"; }
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
 code() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
+
+# curl verifica la cadena, las fechas y el nombre; ssl_verify_result exige la cadena también con -k.
+verify=$(curl -sS -o /dev/null -w '%{ssl_verify_result}' "$@" "$origin/") ||
+  fail "el certificado de $origin no es válido (curl no completa la conexión TLS)"
+[ "$verify" = 0 ] || fail "el certificado de $origin no es válido (verificación $verify)"
 
 got=$(compose exec -T backend python -c '
 import os, psycopg
@@ -39,7 +48,7 @@ for route in "api 11000001" "webhooks 4000001" "ws 1000001" "app 1000001"; do
   done
 done
 
-for path in /health/live /health/ready; do
+for path in /health/live /health/ready /demo; do
   [ "$(code "$@" "$origin$path")" = 404 ] || fail "$path se publica"
 done
 [ "$(code "$@" "http://${origin#https://}/")" = 308 ] || fail "HTTP no redirige a HTTPS"

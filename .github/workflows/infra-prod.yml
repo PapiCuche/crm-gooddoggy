@@ -3,6 +3,7 @@ name: infra-prod
 # F1-13: valida infra/prod (ADR-033) sin servidor ni secretos: shellcheck, `docker compose config`
 # con valores ficticios (solo el proxy publica 80 y 443) y `caddy validate` con la imagen del borde.
 # F1-16: la retención de los backups y el simulacro de backup y restauración con un Garage local.
+# F1-17: smoke.sh con docker y curl falsos (certificado, /demo y /health/* desde fuera).
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -35,6 +36,8 @@ jobs:
       - name: Retención de los backups (lifecycle.json y prefijos)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_backup_retention
+      - name: Prueba de humo sin servidor (test-smoke.sh)
+        run: bash infra/prod/test-smoke.sh
       - name: Compose y Caddyfile (validate.sh --caddy)
         run: sh infra/prod/validate.sh --caddy
 

@@ -1,6 +1,6 @@
 # infra/prod
 
-Producción en un servidor Linux con Docker Compose, según [ADR-033](../../docs/adr/ADR-033-production-hosting.md). El primer arranque, el despliegue y los backups tienen sus runbooks: F1-17 (#758), F1-15 (#756) y F1-16 (#757). Aquí solo está lo que esos runbooks usan.
+Producción en un servidor Linux con Docker Compose, según [ADR-033](../../docs/adr/ADR-033-production-hosting.md). El primer arranque, el despliegue y los backups tienen sus runbooks: [production-first-boot.md](../../docs/runbooks/production-first-boot.md) (F1-17), F1-15 (#756) y F1-16 (#757). Aquí solo está lo que esos runbooks usan.
 
 | Archivo | Qué es |
 | --- | --- |
@@ -39,6 +39,7 @@ Cada sección de la plantilla es un archivo en `CRM_ENV_DIR` (`/etc/crm` por omi
 
 ```bash
 sh infra/prod/validate.sh --caddy
+bash infra/prod/test-smoke.sh   # smoke.sh con docker y curl falsos: certificado, /demo y /health/*
 ```
 
 Para levantarlo entero en local, usa archivos de entorno desechables en un directorio temporal y `CRM_DOMAIN=localhost`. Caddy emite entonces `crm.localhost` con su CA interna. Añade un override que publique el proxy en `127.0.0.1` con otros puertos y un `-p` propio. Al terminar, `down -v`.
