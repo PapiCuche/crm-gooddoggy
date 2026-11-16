@@ -2,7 +2,8 @@
 # Despliegue de producción por digest (F1-15, ADR-033 §7). Procedimiento y vuelta atrás: README.md.
 #   1. valida el release nuevo: las cinco imágenes, cada una fijada por @sha256 (nada más);
 #   2. `pull` de esos digests;
-#   3. volcado previo de la base (pg_dump cifrado con age, ADR-033 §8.2), guardado 7 días;
+#   3. volcado previo de la base con `backup/backup.sh predeploy` (F1-16): cifrado con age y subido
+#      al destino de los backups, db/predeploy/, 7 días (ADR-033 §7.2 y §8.2);
 #   4. job `migrate` (solo crm_migrator) contra postgres y redis de la versión en marcha; si
 #      falla, para: el runtime anterior sigue en marcha;
 #   5. `up -d --wait` del stack y puerta de salud: /health/ready desde dentro, smoke.sh y la página
@@ -96,24 +97,18 @@ pg_major() {
   sed -n 's|^POSTGRES_IMAGE=.*postgres:\([0-9][0-9]*\)[^/@]*@sha256:.*|\1|p' "$1"
 }
 
-# Volcado previo, cifrado al vuelo para las claves públicas de backup-recipients.txt (la privada no
-# está en el servidor): el volcado nunca queda en claro en el disco. Solo si hay una versión en marcha.
+# Volcado previo de la versión en marcha, con el backup de F1-16: pg_dump cifrado al vuelo para las
+# claves de backup y de despliegue y subido a db/predeploy/ del destino. Nunca queda en claro en el disco.
 predeploy_dump() {
-  local out running
+  local running
   running=$(compose "$current" ps -q --status running postgres)
   if [ -z "$running" ]; then
     log "postgres no está en marcha: sin volcado previo"
     return
   fi
-  mkdir -p "$state/predeploy"
-  # El PID evita pisar (y borrar al fallar) el volcado de otro despliegue en el mismo segundo.
-  out="$state/predeploy/predeploy-$(date -u +%Y%m%dT%H%M%SZ)-$$.dump.age"
-  if ! compose "$current" exec -T postgres pg_dump -U postgres -d crm -Fc | age -R "$env_dir/backup-recipients.txt" > "$out"; then
-    rm -f "$out"
-    die "falló el volcado previo: no se ha tocado nada"
-  fi
-  log "volcado previo cifrado: $out ($(wc -c < "$out" | tr -d ' ') bytes)"
-  find "$state/predeploy" -name 'predeploy-*.dump.age' -type f -mtime +7 -delete
+  CRM_RELEASE_ENV="$current" "$here/backup/backup.sh" predeploy ||
+    die "falló el volcado previo (backup.sh predeploy): no se ha tocado nada"
+  log "volcado previo en el destino de los backups (db/predeploy/)"
 }
 
 # /health/ready desde dentro de la red del stack (desde Internet es 404), smoke.sh y la página de
@@ -164,8 +159,6 @@ main() {
   shift
   [ "$(id -u)" = 0 ] || die "ejecútalo con sudo: los archivos de entorno son de root (ADR-033 §6)"
   command -v docker > /dev/null || die "falta docker"
-  command -v age > /dev/null || die "falta age (cifra el volcado previo)"
-  [ -s "$env_dir/backup-recipients.txt" ] || die "falta $env_dir/backup-recipients.txt (claves públicas de age)"
   domain=$(sed -n 's/^CRM_DOMAIN=//p' "$env_dir/proxy.env" 2> /dev/null | tail -n 1)
   [[ $domain =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$ ]] ||
     die "CRM_DOMAIN de $env_dir/proxy.env falta o no es un nombre de dominio (sin comillas ni esquema)"

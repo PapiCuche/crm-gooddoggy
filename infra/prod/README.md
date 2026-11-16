@@ -53,7 +53,7 @@ sudo install -m 0600 /dev/stdin /root/release-<SHA>.env   # pega el release.env 
 sudo infra/prod/deploy.sh /root/release-<SHA>.env
 ```
 
-`deploy.sh` necesita, en `CRM_ENV_DIR` (`/etc/crm`): los archivos de entorno, `CRM_DOMAIN` en `proxy.env` y `backup-recipients.txt` con las claves **públicas** de `age` de backup y de despliegue (ADR-033 §8.2). Necesita también `age` instalado. Se niega a correr, antes de tocar nada:
+`deploy.sh` necesita, en `CRM_ENV_DIR` (`/etc/crm`), los archivos de entorno y `CRM_DOMAIN` en `proxy.env`. Desde el segundo despliegue necesita también el backup de F1-16 configurado, porque el volcado previo lo hace `backup.sh predeploy` (paso 2): `backup.env`, `backup-recipients.txt`, la opcional `backup-deploy-recipients.txt` y `age` y `rclone` instalados ([backup-restore.md](../../docs/runbooks/backup-restore.md)). Se niega a correr, antes de tocar nada:
 
 - sin `root`;
 - con cambios sin commit en `infra/prod`;
@@ -65,20 +65,22 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 | Paso | Si falla |
 | --- | --- |
 | 1. Valida el release y hace `pull` de los cinco digests | Sale. No se ha tocado nada |
-| 2. Volcado previo: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age`, en `/var/lib/crm-deploy/predeploy/`. Se borra a los 7 días | Sale. No se ha tocado nada |
+| 2. Volcado previo de la versión en marcha con `backup/backup.sh predeploy`: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age` para las claves de backup y de despliegue, y subido a `db/predeploy/` del destino de los backups, donde caduca a los 7 días. No queda en el servidor. En el primer despliegue no hay nada que volcar | Sale. No se ha tocado nada |
 | 3. Job `migrate` como `crm_migrator`, contra `postgres` y `redis` con los digests **en marcha** (solo el primer despliegue los arranca con los nuevos) | Sale. El runtime anterior sigue en marcha y `release.env` no cambia |
 | 4. `up -d --wait` del stack: aquí cambian todos los digests, también los de `postgres` y `redis` | Vuelta atrás automática |
 | 5. Puerta de salud: `/health/ready` 200 desde dentro del backend (hasta `CRM_HEALTH_TIMEOUT`, 180 s), `smoke.sh https://crm.<DOMINIO>` y `https://crm.<DOMINIO>/login` 200 a través de Caddy | Vuelta atrás automática |
 
 Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como `release.env`. Repetir el mismo release es seguro: no pierde la versión anterior. El registro está en `/var/lib/crm-deploy/deploy.log`: fechas, pasos, digests y el commit de `infra/prod`, nunca valores de los archivos de entorno.
 
-Subir el volcado previo al destino de los backups es de F1-16 (#757). Hasta entonces se queda solo en el servidor, cifrado.
-
 ## Volver atrás
 
 - **Automática.** Si fallan los pasos 4 o 5, `deploy.sh` vuelve a levantar los digests de `release.env`, es decir, la versión que estaba en marcha, y pasa la puerta otra vez. Entonces imprime `DESPLIEGUE FALLIDO. ROLLBACK OK` y sale con 1. Si la vuelta atrás tampoco pasa la puerta, imprime `ROLLBACK FALLIDO` y sale con 2: mira `docker compose ps` y los logs, y sigue con la manual.
 - **Manual** (una versión desplegada da problemas después): `sudo infra/prod/deploy.sh --rollback` despliega `release.env.previous` con los mismos pasos e intercambia los dos archivos. Para ir más atrás, despliega el `release.env` de ese SHA (el resumen de su job de `images.yml`).
-- **Nunca se deshacen migraciones.** Volver atrás es seguro solo si las migraciones siguen la regla de expandir y después contraer (ADR-033 §7). Una versión que no la cumple se despliega en una ventana. Su vuelta atrás es restaurar el volcado previo, con la clave de despliegue o la de backup, y se pierde lo escrito desde entonces (runbook de F1-16).
+- **Nunca se deshacen migraciones.** Volver atrás es seguro solo si las migraciones siguen la regla de expandir y después contraer (ADR-033 §7). Una versión que no la cumple se despliega en una ventana. Su vuelta atrás es restaurar el volcado previo de `db/predeploy/`, con la clave de despliegue o la de backup, y se pierde lo escrito desde entonces ([backup-restore.md](../../docs/runbooks/backup-restore.md), «Volver atrás tras un despliegue con migraciones»).
+
+  El orden importa, porque la imagen nueva volvería a migrar la base restaurada:
+  1. `restore.sh --object db/predeploy/crm-….dump.age --replace-existing-data --roles-env …` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous`. Así levanta el backend y `migrate` de la versión anterior.
+  2. Después, `sudo infra/prod/deploy.sh --rollback`, que lleva todo el stack a esos digests, pasa la puerta e intercambia los dos archivos.
 - **Un despliegue cortado** (Ctrl-C, `kill`, un reinicio o un error inesperado) no vuelve atrás. Deja `/var/lib/crm-deploy/lock` y `release.env.next`, y lo anota como `INTERRUMPIDO` en `deploy.log`. Mientras estén, ningún despliegue arranca. Mira `deploy.log` y `docker compose ps`, borra los dos y repite el despliegue o haz `--rollback`: los dos son idempotentes. `deploy.sh` ignora `SIGHUP`, pero una terminal cerrada puede cortar igualmente la salida de `docker compose`: por eso, `tmux`.
 
 ## Probar en local

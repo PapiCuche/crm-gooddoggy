@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Prueba de deploy.sh sin servidor (F1-15, CI: infra-prod.yml): copia el script a un directorio
-# temporal con un smoke.sh falso y pone delante en el PATH `docker`, `age`, `curl` e `id` falsos
+# temporal con un smoke.sh y un backup/backup.sh falsos y pone delante en el PATH `docker`, `curl` e `id` falsos
 # que anotan cada llamada y fallan a demanda (FAIL_* con las letras de los releases que fallan).
 # Comprueba el orden de los pasos, la vuelta atrás automática ante cada fallo de la puerta (ready,
 # smoke.sh, la página de entrada), que migrate y el volcado no tocan el runtime al fallar, que una
@@ -30,7 +30,6 @@ echo "$release ${args[*]}" >> "$CALLS"
 fails() { [ -n "$release" ] && case $1 in *"$release"*) true ;; *) false ;; esac; }
 case "${args[*]}" in
   "ps -q --status running postgres") echo pg-container ;;
-  "exec -T postgres pg_dump"*) echo dump-bytes; if fails "$FAIL_DUMP"; then exit 1; fi ;;
   "run --rm --no-deps migrate") if fails "$FAIL_RUN"; then exit 1; fi ;;
   "exec -T backend python"*) if fails "$FAIL_READY"; then exit 1; fi ;;
   "pull --quiet") if [ -n "$KILL_ON_PULL" ]; then kill -"$KILL_ON_PULL" "$PPID"; fi ;;
@@ -50,22 +49,19 @@ echo "curl $*" >> "$CALLS"
 n=$(grep -c '^curl ' "$CALLS")
 [ "$n" -gt "$FAIL_ENTRY" ] || exit 22
 EOF
-cat > "$work/bin/age" <<'EOF'
+# backup.sh falso (F1-16): anota «backup <tipo> <letra del release que vuelca>».
+mkdir -p "$work/infra/prod/backup"
+cat > "$work/infra/prod/backup/backup.sh" <<'EOF'
 #!/bin/sh
-echo "age $*" >> "$CALLS"
-cat
+l=$(sed -n 's/^BACKEND_IMAGE=.*@sha256:\(.\).*/\1/p' "$CRM_RELEASE_ENV")
+echo "backup $1 $l" >> "$CALLS"
+case $FAIL_DUMP in *"$l"*) exit 1 ;; esac
 EOF
 cat > "$work/bin/id" <<'EOF'
 #!/bin/sh
 echo "${FAKE_UID:-0}"
 EOF
-# date falso: siempre el mismo segundo, para que dos volcados seguidos choquen si el nombre no es único.
-cat > "$work/bin/date" <<'EOF'
-#!/bin/sh
-case $* in *%Y%m%dT*) echo 20260101T000000Z ;; *) echo 2026-01-01T00:00:00Z ;; esac
-EOF
-chmod +x "$work/bin/"* "$work/infra/prod/"*.sh
-echo "age1example" > "$work/etc/backup-recipients.txt"
+chmod +x "$work/bin/"* "$work/infra/prod/"*.sh "$work/infra/prod/backup/backup.sh"
 echo "CRM_DOMAIN=example.invalid" > "$work/etc/proxy.env"
 
 release() { # release <letra> [mayor de postgres]: las cinco imágenes con un digest de esa letra
@@ -151,22 +147,19 @@ fi
 deploy "$work/a.env"
 [ "$rc" = 0 ] || fail "primer despliegue"
 state a "" "tras a"
-if grep -q pg_dump "$CALLS"; then fail "volcado sin versión previa"; fi
+if grep -q '^backup' "$CALLS"; then fail "volcado sin versión previa"; fi
 events=$(grep -oE '^a (pull --quiet|up -d --wait postgres redis|run --rm --no-deps migrate|up -d --wait --wait-timeout|exec -T backend)|^smoke|^curl .*/login$' "$CALLS" |
   sed 's/^curl .*/curl/' | tr '\n' '|')
 [ "$events" = "a pull --quiet|a up -d --wait postgres redis|a run --rm --no-deps migrate|a up -d --wait --wait-timeout|a exec -T backend|smoke|curl|" ] ||
   fail "orden: $events"
 
-# Segundo despliegue: volcado cifrado de a antes de migrar; postgres y redis siguen en a hasta `up`.
+# Segundo despliegue: backup.sh predeploy de a antes de migrar; postgres y redis siguen en a hasta `up`.
 deploy "$work/b.env"
 [ "$rc" = 0 ] || fail "despliegue de b"
-grep -q '^a exec -T postgres pg_dump -U postgres -d crm -Fc' "$CALLS" || fail "sin volcado previo"
-grep -q '^age -R .*/backup-recipients.txt' "$CALLS" || fail "volcado sin cifrar"
-[ "$(sed -n '/pg_dump/=' "$CALLS")" -lt "$(sed -n '/run --rm --no-deps migrate/=' "$CALLS")" ] || fail "volcado tras migrar"
+grep -qx 'backup predeploy a' "$CALLS" || fail "sin volcado previo de la versión en marcha"
+[ "$(sed -n '/^backup /=' "$CALLS")" -lt "$(sed -n '/run --rm --no-deps migrate/=' "$CALLS")" ] || fail "volcado tras migrar"
 grep -q '^a up -d --wait postgres redis' "$CALLS" || fail "postgres y redis no siguen en a"
 if grep -q '^b up -d --wait postgres redis' "$CALLS"; then fail "postgres y redis cambian antes de migrar"; fi
-[ "$(find "$work/state/predeploy" -type f -name 'predeploy-*.dump.age' -perm 600 | wc -l)" -eq 1 ] || fail "volcado .age 0600"
-if grep -rl dump-bytes "$work/state" | grep -v '\.dump\.age$'; then fail "copia del volcado en claro"; fi
 state b a "rotación"
 
 # Versión mayor distinta de PostgreSQL, y una versión en marcha manipulada: se niega.
@@ -177,12 +170,11 @@ echo "EXTRA=1" >> "$work/etc/release.env"
 refused "$work/c.env" "release.env: variable no permitida: EXTRA"
 cp "$work/keep.env" "$work/etc/release.env"
 
-# Falla el volcado (pipefail): sale sin migrar ni dejar un .age a medias.
+# Falla el volcado: sale sin migrar ni arrancar nada.
 FAIL_DUMP=b deploy "$work/c.env"
 [ "$rc" = 1 ] || fail "el volcado roto sigue (exit $rc)"
 expect "falló el volcado previo"
 if grep -q -e 'run --rm' -e '^c up' "$CALLS"; then fail "migró o arrancó tras un volcado roto"; fi
-[ "$(find "$work/state/predeploy" -type f | wc -l)" -eq 1 ] || fail "quedó un volcado a medias"
 state b a "volcado roto"
 
 # Cada fallo de la puerta con c vuelve solo a b, que vuelve a pasar la puerta entera.
