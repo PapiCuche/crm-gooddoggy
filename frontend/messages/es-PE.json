@@ -134,7 +134,8 @@
         "reactivated": "Miembro reactivado",
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
-        "invitation_revoked": "Invitación revocada"
+        "invitation_revoked": "Invitación revocada",
+        "created": "Miembro añadido por un operador"
       },
       "role": {
         "created": "Rol creado",
@@ -203,6 +204,7 @@
       "NETWORK_ERROR": "No hay conexión con el servidor. Revisa tu red e inténtalo de nuevo.",
       "NOT_AUTHENTICATED": "Tu sesión terminó. Vuelve a entrar para continuar.",
       "INVALID_CREDENTIALS": "El correo o la contraseña no son correctos.",
+      "PASSWORD_CHANGE_REQUIRED": "Tu contraseña es temporal. Elige la tuya en «¿Olvidaste tu contraseña?» con tu correo y vuelve a entrar.",
       "PERMISSION_DENIED": "No tienes permiso para hacer esto.",
       "NOT_FOUND": "No encontramos lo que buscas.",
       "VALIDATION_ERROR": "Revisa los campos marcados.",
