@@ -4,9 +4,27 @@
 # proxy publica puertos (80 y 443), que no hay build, Garage ni Mailpit, que cada imagen va por
 # digest y cada contenedor tiene límite de memoria y rotación de logs, y que cada archivo de
 # entorno llega solo a su destinatario. Con --caddy además construye la imagen de infra/prod/caddy
-# y pasa `caddy validate` al Caddyfile. Uso: sh infra/prod/validate.sh [--caddy]
+# y pasa `caddy validate` al Caddyfile. F1-15b: cada Dockerfile del repositorio fija sus bases (FROM)
+# y su frontend (`# syntax=`) por digest; `--dockerfiles [raíz]` hace solo eso (test_workflow_security.py).
+# Uso: sh infra/prod/validate.sh [--caddy | --dockerfiles [raíz]]
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+
+pinned() { # <raíz>: falla con cada FROM o `# syntax=` sin @sha256:<64 hex>, o si no hay ningún Dockerfile
+  found=$(find "$1" \( -name node_modules -o -name .git \) -prune -o -type f -name 'Dockerfile*' -print)
+  [ -n "$found" ] || { echo "$1: ningún Dockerfile" >&2; return 1; }
+  bad=$(echo "$found" | while IFS= read -r f; do
+    grep -inE '^[[:space:]]*(FROM[[:space:]]|#[[:space:]]*syntax[[:space:]]*=)' "$f" |
+      grep -vE '@sha256:[0-9a-f]{64}([[:space:]]|$)' | sed "s|^|$f:|"
+  done)
+  [ -z "$bad" ] || { printf '%s\n' "$bad" "FROM o # syntax= sin @sha256:<digest>" >&2; return 1; }
+}
+if [ "${1:-}" = --dockerfiles ]; then
+  pinned "${2:-$root}"
+  exit
+fi
+pinned "$root"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -45,17 +63,15 @@ for name in runtime:
     assert not forbidden & set(env), f"{name}: recibe {forbidden & set(env)}"
     assert env["DJANGO_SETTINGS_MODULE"] == "config.settings.production"
     assert env["DATABASE_URL"] and "data" in services[name]["networks"]
+    # deploy.sh migra antes con `run`; `up` lo repite sin nada que aplicar (F1-15b). Sin esto, un `up`
+    # a mano arrancaría el runtime sin migrar.
+    dep = services[name]["depends_on"].get("migrate", {}).get("condition")
+    assert dep == "service_completed_successfully", f"{name}: no espera a migrate"
 assert set(services["migrate"]["environment"]) == {"DATABASE_MIGRATOR_URL", "DJANGO_SETTINGS_MODULE"}
 for name in ("proxy", "frontend"):
     assert "data" not in services[name]["networks"], f"{name}: en la red de datos"
 print("infra/prod: compose válido; solo el proxy publica 80 y 443")
 PY
-
-# F1-15: las bases de la imagen del proxy, también por digest (revisión de #845).
-if grep -E '^FROM ' "$here/caddy/Dockerfile" | grep -v '@sha256:[0-9a-f]\{64\}'; then
-  echo "infra/prod/caddy/Dockerfile: FROM sin @sha256" >&2
-  exit 1
-fi
 
 if [ "${1:-}" = "--caddy" ]; then
   docker build -q -t crm-proxy:validate "$here/caddy" > /dev/null

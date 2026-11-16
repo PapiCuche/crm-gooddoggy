@@ -125,4 +125,24 @@ counts_sql="SELECT c.relname || E'\\t' || (xpath('/row/n/text()', query_to_xml(
   WHERE s.nspname = 'public' AND c.relkind IN ('r', 'p') ORDER BY 1"
 table_counts() { psql_su -d crm -c "$counts_sql"; }
 
+# El backup nocturno y deploy.sh no se pisan (F1-15b): los dos toman /var/lib/crm-deploy/lock, un
+# directorio (mkdir es atómico). Si está puesto, el nocturno espera hasta BACKUP_LOCK_WAIT s (3600)
+# a que el despliegue termine; si sigue (un despliegue cortado lo deja), falla y avisa. `predeploy`
+# no lo toma: lo lanza deploy.sh, que ya lo tiene.
+deploy_lock() {
+  local dir=${CRM_DEPLOY_DIR:-/var/lib/crm-deploy} waited=0
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+  until mkdir "$dir/lock" 2> /dev/null; do
+    if [ "$waited" -ge "${BACKUP_LOCK_WAIT:-3600}" ]; then
+      echo "$dir/lock sigue puesto tras ${waited}s: un despliegue en curso o cortado ($dir/deploy.log)" >&2
+      return 1
+    fi
+    sleep 30
+    waited=$((waited + 30))
+  done
+  # shellcheck disable=SC2034 # lo lee el trap de salida de backup.sh, que lo suelta
+  held_lock=$dir/lock
+}
+
 need() { local c; for c in "$@"; do command -v "$c" > /dev/null || { echo "falta el comando $c" >&2; return 1; }; done; }

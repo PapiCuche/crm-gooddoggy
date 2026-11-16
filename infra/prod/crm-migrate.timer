@@ -1,0 +1,11 @@
+# El día 15 de cada mes a las 12:00 UTC, lejos del backup nocturno (03:15). Persistent: si el
+# servidor estaba apagado, corre al arrancar.
+[Unit]
+Description=Good Doggy CRM: migrate mensual
+
+[Timer]
+OnCalendar=*-*-15 12:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
