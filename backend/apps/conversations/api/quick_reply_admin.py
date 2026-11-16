@@ -102,12 +102,12 @@ def _domain() -> Iterator[None]:
         "organización. 409 `SHORTCUT_TAKEN`: otra activa ya usa el atajo.",
     ),
 )
-class QuickRepliesView(generics.ListAPIView):
+class ManagedRepliesView(generics.ListAPIView):
     required_permissions = {"GET": "quick_replies.manage", "POST": "quick_replies.manage"}
     serializer_class = QuickReplySerializer
 
     def get_queryset(self) -> QuerySet[QuickReply]:
-        return selectors.quick_replies()
+        return selectors.managed_quick_replies()
 
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = QuickReplyCreateSerializer(data=request.data)
@@ -117,7 +117,7 @@ class QuickRepliesView(generics.ListAPIView):
         return Response(QuickReplySerializer(made).data, status=201)
 
 
-class QuickReplyView(APIView):
+class ManagedReplyView(APIView):
     required_permissions = {"PATCH": "quick_replies.manage", "DELETE": "quick_replies.manage"}
 
     @extend_schema(

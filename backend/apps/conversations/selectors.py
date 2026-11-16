@@ -90,7 +90,7 @@ def channel_accounts() -> QuerySet[ChannelAccount]:
     return found.annotate(token_last_four=Subquery(live.values("last_four")[:1]))
 
 
-def quick_replies() -> QuerySet[QuickReply]:
+def managed_quick_replies() -> QuerySet[QuickReply]:
     """Las respuestas rápidas no borradas, activas o no (F6-08a3). El orden, la paginación."""
     return QuickReply.objects.filter(deleted_at__isnull=True)
 
