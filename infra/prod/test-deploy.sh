@@ -319,9 +319,10 @@ nightly() { # nightly <tipo> <espera máxima> [PATH extra]: backup.sh real; sale
   fi
 }
 mkdir "$work/state/lock" # un despliegue en curso (o cortado) que no termina en el plazo: falla con aviso
-nightly nightly 0
+alerted=1 nightly nightly 0 # un `alerted` heredado no silencia el aviso (F1-16b)
 [ "$rc" != 0 ] || fail "el nocturno corrió con el lock de un despliegue"
-expect "stage=deploy_lock"
+expect '"event":"backup.failed","level":"error","reason":"kind=nightly stage=deploy_lock"'
+[ ! -e "$work/backup-state/last-period" ] || fail "un nocturno sin lock marcó su periodo como copiado"
 [ ! -s "$work/probe" ] || fail "el nocturno siguió con el lock ajeno"
 [ -d "$work/state/lock" ] || fail "el nocturno quitó el lock de un despliegue"
 nightly nightly 30 "$work/sleep-bin:" # el despliegue termina: el nocturno espera, lo toma y lo suelta

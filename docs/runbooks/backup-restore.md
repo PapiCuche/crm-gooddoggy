@@ -104,7 +104,7 @@ El backup nocturno comparte con `deploy.sh` el lock `/var/lib/crm-deploy/lock` (
 
 ## 5. Alertas
 
-- **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`dump`, `upload` o `media`) y, si `SENTRY_DSN` está en `backup.env`, también como evento en Sentry. El log nunca lleva datos, claves de objetos ni credenciales.
+- **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`deploy_lock`, `dump`, `upload` o `media`; `deploy_lock`: el lock de un despliegue sigue puesto tras una hora) y, si `SENTRY_DSN` está en `backup.env`, también como evento en Sentry. El log nunca lleva datos, claves de objetos ni credenciales.
 - **`backup.missing`**: `check.sh` comprueba cada hora que el último backup nocturno correcto tenga menos de 26 h (ADR-033 §8.4). Avisa por el mismo camino.
 - **Permisos de `backup.env`:** si no es de root y `0600`, `backup.sh` y `check.sh` no lo cargan y avisan con `backup.failed` y `backup.missing` (`reason: config_permissions`). Ese aviso va a Sentry solo si el archivo es de root y nadie más puede escribirlo (p. ej., `0644`): su `SENTRY_DSN` es entonces de fiar. Si otros pueden escribirlo, el aviso queda solo en el journal.
 - **Si el servidor entero cae**, esos dos avisos caen con él. Para eso, `BACKUP_HEARTBEAT_URL`: un servicio externo de monitorización que recibe un ping tras cada backup nocturno correcto y avisa si en 26 h no llega ninguno. Lo elige el propietario. Su URL lleva el token del servicio: `backup.sh` se la pasa a `curl` por la entrada estándar (`--config -`), nunca en los argumentos, que cualquier usuario ve con `ps`.
