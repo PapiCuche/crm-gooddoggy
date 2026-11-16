@@ -138,6 +138,22 @@ def test_a_slow_dns_lookup_is_inside_the_deadline(
     assert time.monotonic() - started < 1.0 and clamd.bodies == []
 
 
+def test_every_address_is_tried_in_order_within_the_deadline(
+    clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    with socket.create_server(("127.0.0.1", 0)) as free:
+        closed = free.getsockname()[1]  # nadie escucha aquí
+    port = int(clamd.address.rpartition(":")[2])
+    stream = (socket.AF_INET, socket.SOCK_STREAM, 6, "")
+    two = [(*stream, ("127.0.0.1", closed)), (*stream, ("127.0.0.1", port))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **kw: two)
+    settings.CLAMD_ADDRESS = "clamd.invalid:3310"
+    assert scan(b"hola") == antivirus.Verdict("CLEAN")  # la primera falla, la segunda contesta
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **kw: two[:1])
+    with pytest.raises(antivirus.Unavailable, match="ConnectionRefusedError"):
+        scan(b"hola")  # ninguna: sin veredicto
+
+
 def test_the_size_cap_stops_before_sending_more_and_gives_no_verdict(clamd: FakeClamd) -> None:
     with pytest.raises(antivirus.Unavailable, match="tope"):
         scan(bytes(antivirus.CHUNK * 2), max_bytes=antivirus.CHUNK)

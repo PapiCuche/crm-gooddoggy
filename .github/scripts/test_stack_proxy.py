@@ -174,29 +174,52 @@ class ProdStack(unittest.TestCase):
         self.assertIn("WHERE NOT EXISTS", script)  # repetible
 
 
-if __name__ == "__main__":
-    unittest.main()
+NAME = r"[A-Za-z0-9_][A-Za-z0-9_.-]*"  # un nombre de servicio o de ancla de compose
+
+
+def networks_of(block):
+    """Las redes de un bloque con sangría de 4: `networks: [a, b]` o `networks:` y una por línea."""
+    listed = re.search(r"^    networks: \[([^\]]*)\]", block, re.M)
+    if listed:
+        return {n.strip() for n in listed.group(1).split(",") if n.strip()}
+    nested = re.search(r"^    networks:\n((?:      .*\n)+)", block, re.M)
+    return set(re.findall(rf"^      ({NAME}):", nested.group(1), re.M)) if nested else None
 
 
 def services(compose=COMPOSE):
-    """Cada servicio con sus redes (sin `networks:`, `default`), del bloque `services:`."""
-    body = compose[compose.index("\nservices:") : compose.index("\nnetworks:")]
+    """Cada servicio con sus redes, del bloque `services:`. Sin `PyYAML` (estas pruebas corren con
+    el Python del runner, solo con la stdlib): sin `networks:` propio, las de su ancla
+    (`<<: *ancla`, `x-…: &ancla` arriba) y, sin ninguna, `default`."""
+    head = compose[: compose.index("\nservices:")]
+    anchors = {
+        name: block
+        for name, block in re.findall(rf"^x-{NAME}: &({NAME})\n((?:(?:  .*|\s*)\n)*)", head, re.M)
+    }
+    body = compose[compose.index("\nservices:") : compose.index("\nnetworks:")] + "\n"
     found = {}
-    for name, block in re.findall(r"^  ([a-z][a-z-]*):[^\n]*\n((?:(?:    .*|\s*)\n)*)", body, re.M):
-        listed = re.search(r"^    networks: \[([^\]]*)\]", block, re.M)
-        nested = re.search(r"^    networks:\n((?:      .*\n)+)", block, re.M)
-        if listed:
-            found[name] = {n.strip() for n in listed.group(1).split(",")}
-        elif nested:
-            found[name] = set(re.findall(r"^      ([a-z-]+):", nested.group(1), re.M))
-        else:
-            found[name] = {"default"}
+    for name, block in re.findall(rf"^  ({NAME}):[^\n]*\n((?:(?:    .*|\s*)\n)*)", body, re.M):
+        own = networks_of(block)
+        if own is None:
+            for anchor in re.findall(rf"^    <<: \*({NAME})", block, re.M):
+                inherited = "\n".join("  " + line for line in anchors[anchor].splitlines()) + "\n"
+                own = own or networks_of(inherited)
+        found[name] = own or {"default"}
     return found
 
 
 class StackAntivirus(unittest.TestCase):
     """F7-15c: clamd analiza archivos no confiables; si lo comprometen, no alcanza ningún listener
     HTTP (`backend:8000` se saltaría el tope del cuerpo de Caddy). Solo comparte red con su relay."""
+
+    def test_the_parser_follows_anchors_and_takes_any_service_name(self):
+        compose = (
+            "x-run: &run\n  image: x\n  networks: [av]\nx-plain: &plain\n  image: y\n"
+            "services:\n  worker_2:\n    <<: *run\n  web.1:\n    <<: *plain\n"
+            "  edge:\n    networks:\n      default:\n        ipv4_address: 1.2.3.4\n      av:\n"
+            "  own:\n    <<: *run\n    networks: [default]\nnetworks:\n  av: {}\n"
+        )
+        self.assertEqual(services(compose), {"worker_2": {"av"}, "web.1": {"default"},
+                                             "edge": {"default", "av"}, "own": {"default"}})
 
     def test_clamd_shares_its_networks_only_with_its_relay(self):
         found = services()
@@ -215,3 +238,7 @@ class StackAntivirus(unittest.TestCase):
         (command,) = re.findall(r"command: (\[.*\])", relay)
         self.assertRegex(command, r'"TCP-LISTEN:3310,[^"]*", "TCP:clamd:3310"\]$')  # solo a clamd
         self.assertNotIn("ports:", relay)
+
+
+if __name__ == "__main__":
+    unittest.main()

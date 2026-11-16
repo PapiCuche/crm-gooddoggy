@@ -48,20 +48,28 @@ def _left(sock: socket.socket, deadline: float) -> None:
 
 
 def _connect(host: str, port: int, deadline: float) -> socket.socket:
-    """La conexión a `clamd`, con la búsqueda DNS y el `connect` dentro del plazo."""
+    """La conexión a `clamd`: la búsqueda DNS y cada dirección que devuelve, en orden (como
+    `socket.create_connection`), todo dentro del plazo. Si ninguna conecta, el último error."""
     found = _RESOLVER.submit(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
     try:
-        family, kind, proto, _, address = found.result(max(deadline - time.monotonic(), 0))[0]
+        addresses = found.result(max(deadline - time.monotonic(), 0))
     except TimeoutError:
         raise Unavailable("plazo") from None
-    sock = socket.socket(family, kind, proto)
-    try:
-        _left(sock, deadline)
-        sock.connect(address)
-    except BaseException:
-        sock.close()
-        raise
-    return sock
+    error: OSError = OSError("sin direcciones")
+    for family, kind, proto, _, address in addresses:
+        sock = socket.socket(family, kind, proto)
+        try:
+            _left(sock, deadline)
+            sock.connect(address)
+        except OSError as failed:  # la siguiente, si queda plazo
+            sock.close()
+            error = failed
+            continue
+        except BaseException:
+            sock.close()
+            raise
+        return sock
+    raise error
 
 
 def _reply(sock: socket.socket, deadline: float) -> bytes:

@@ -5,7 +5,6 @@ from collections.abc import Callable
 
 from django.db import transaction
 from django.http import HttpRequest, HttpResponseBase, JsonResponse
-from django.urls import Resolver404, resolve
 
 from core.api import AUTH_SCHEME
 from core.api.errors import NOT_AUTHENTICATED, NOT_FOUND, error_response
@@ -22,17 +21,6 @@ TENANT_PATH = re.compile(r"^/api/v1/o/(?P<slug>[-a-zA-Z0-9_]+)/")
 def not_found() -> JsonResponse:
     """404 idéntico para organización inexistente, sin membresía o recurso de otro tenant."""
     return error_response(NOT_FOUND, 404)
-
-
-def scopes_itself(path: str) -> bool:
-    """¿La vista abre sus propios `tenant_scope` (`scopes_itself = True`)? Solo la subida de un
-    medio (F7-15c: el antivirus, fuera de toda transacción). Cualquier acceso a la base fuera de
-    un scope no tiene los GUC del tenant: RLS no deja ver ni escribir nada."""
-    try:
-        view = getattr(resolve(path).func, "view_class", None)
-    except Resolver404:
-        return False
-    return getattr(view, "scopes_itself", False) is True
 
 
 class TenantResolutionMiddleware:
@@ -60,11 +48,6 @@ class TenantResolutionMiddleware:
         except SecondFactorRequired:  # ADR-023 §9 con `enforce`: ninguna ruta de tenant se abre
             return error_response(MFA_REQUIRED, 403, MESSAGE)
         request.tenant = ctx  # type: ignore[attr-defined]
-        if scopes_itself(request.path_info):  # cada scope suyo se deshace al salir con error
-            response = self.get_response(request)
-            if response.streaming:
-                raise TenantContextError("Streaming prohibido en rutas de tenant (usar Celery)")
-            return response
         with tenant_scope(ctx):  # toda la vista y su serialización en una transacción
             response = self.get_response(request)
             if response.streaming:

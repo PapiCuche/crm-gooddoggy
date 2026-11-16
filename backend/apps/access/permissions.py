@@ -34,7 +34,6 @@ from apps.access.selectors import (
 from core.api.errors import ApiError
 from core.api.step_up import require_recent_mfa, seconds_left
 from core.tenancy import context
-from core.tenancy.scope import scope_token, tenant_scope
 
 
 def required_codes(request: Any, view: Any) -> tuple[str, ...]:
@@ -73,7 +72,7 @@ def request_context(request: Any) -> ExecutionContext | None:
         return None
     holder = getattr(request, "_request", request)  # DRF clona su Request (OPTIONS): una foto
     cached: ExecutionContext | None = getattr(holder, "_access_context", None)
-    if cached is None or cached.scope is not scope_token(tenant):  # otro scope (F7-15c): se relee
+    if cached is None:
         try:
             cached = execution_context(tenant)
         except AccessDenied:
@@ -84,15 +83,6 @@ def request_context(request: Any) -> ExecutionContext | None:
 
 class HasPermission(BasePermission):
     def has_permission(self, request: Any, view: Any) -> bool:
-        tenant = getattr(request, "tenant", None)
-        if getattr(view, "scopes_itself", False) is True and context.current() is None:
-            if tenant is None:  # F7-15c: sin el middleware de tenant, nada
-                return False
-            with tenant_scope(tenant):  # la vista abre sus propios scopes: este, el del permiso
-                return self._granted(request, view)
-        return self._granted(request, view)
-
-    def _granted(self, request: Any, view: Any) -> bool:
         ectx, codes = request_context(request), required_codes(request, view)
         if ectx is None or not codes:
             return False

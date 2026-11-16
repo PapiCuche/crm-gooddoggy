@@ -17,14 +17,13 @@ from django.db import connection
 from django.http import HttpRequest, HttpResponse
 from django.test import Client
 from django.test.client import RequestFactory, encode_multipart
-from django.urls import get_resolver
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.conversations import outbound_media, scan
 from apps.conversations.api import media as route
 from apps.conversations.throttle import ChannelThrottleMiddleware
-from core import antivirus, storage
+from core import storage
 from core.observability import reporting
 from core.storage.memory import InMemoryStorage
 from tests.factories import make_user
@@ -312,63 +311,23 @@ def test_each_person_has_an_upload_limit_counted_before_the_body(
     assert found.fetchall() == sorted([(f"med:usr:{inbox.ana.pk}",), (f"med:usr:{inbox.sam.pk}",)])
 
 
-IDLE = (
-    "SELECT count(*) FROM pg_stat_activity WHERE state LIKE 'idle in transaction%%' AND pid <> %s"
-)
-
-
-def test_the_scan_runs_with_no_transaction_open_and_a_change_meanwhile_is_checked_again(
-    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F7-15c: ninguna conexión queda *idle in transaction* durante el antivirus; lo que cambió
-    mientras tanto se vuelve a comprobar, y el blob limpio sobra."""
-    convo, seen, real = inbox.convs["nobody"], list[Any](), antivirus.scan
-    me = migrator.execute("SELECT pg_backend_pid()").fetchone()[0]  # type: ignore[index]
-
-    def scanned(stream: Any, **kwargs: Any) -> antivirus.Verdict:
-        seen.append((connection.in_atomic_block, migrator.execute(IDLE, [me]).fetchone()))
-        return real(stream, **kwargs)
-
-    monkeypatch.setattr(antivirus, "scan", scanned)
-    assert upload(signed(inbox.ana), convo).status_code == 202
-    assert seen == [(False, (0,))]
-    closing = outbound_media.prepare
-
-    def closed(*args: Any) -> Any:  # la conversación se cierra mientras se escanea
-        made = closing(*args)
-        set_state(inbox.a, convo, status="CLOSED", closed_at=timezone.now())
-        return made
-
-    monkeypatch.setattr(outbound_media, "prepare", closed)
-    refused = upload(signed(inbox.ana), convo)
-    assert (refused.status_code, refused.json()["code"]) == (409, "CONVERSATION_CLOSED")
-    assert len(blobs.objects) == 1 and migrator.execute(COUNT).fetchone() == (1, 1)
-
-
-def test_only_the_upload_opens_its_own_tenant_scopes() -> None:
-    def views(patterns: Any) -> Any:
-        for pattern in patterns:
-            if hasattr(pattern, "url_patterns"):
-                yield from views(pattern.url_patterns)
-            else:
-                yield getattr(pattern.callback, "view_class", None)
-
-    own = {view for view in views(get_resolver().url_patterns) if getattr(view, "scopes_itself", 0)}
-    assert own == {route.SendMediaView}
-
-
-def test_a_file_over_the_scanner_limits_is_too_complex_not_a_virus_and_still_audited(
-    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, clamd: FakeClamd
-) -> None:
+def test_a_file_over_the_scanner_limits_is_too_complex_not_a_virus_with_its_own_audit(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, clamd: FakeClamd,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    seen: list[Any] = []
+    capture = lambda *a, **kw: seen.append((a, kw))  # noqa: E731
+    monkeypatch.setattr(reporting, "reporter", lambda: type("R", (), {"capture_message": capture}))
     clamd.answer = lambda body: b"stream: Heuristics.Limits.Exceeded.MaxRecursion FOUND\0"
     convo = inbox.convs["nobody"]
     sent = form(PDF, file=named(PDF, "a.pdf", "application/pdf"))
     refused = upload(signed(inbox.ana), convo, sent)
     assert (refused.status_code, refused.json()["code"]) == (422, "MEDIA_TOO_COMPLEX")
     assert blobs.objects == {} and migrator.execute(COUNT).fetchone() == (0, 0)
-    found = migrator.execute(INFECTED, [convo]).fetchall()
-    assert found == [("message.media_infected", "DENIED", inbox.ana.pk,
+    found = migrator.execute(INFECTED + " AND action LIKE 'message.media%%'", [convo]).fetchall()
+    assert found == [("message.media_too_complex", "DENIED", inbox.ana.pk,
                       {"signature": "Heuristics.Limits.Exceeded.MaxRecursion"})]  # fmt: skip
+    assert [kw["fingerprint"] for _, kw in seen] == [["media.alert.too_complex"]]  # no es virus
 
 
 def test_a_failing_audit_keeps_the_422_and_a_client_header_never_sets_the_mark(
