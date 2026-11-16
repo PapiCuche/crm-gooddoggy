@@ -212,6 +212,8 @@ Si la puerta falla en el primer despliegue no hay versión a la que volver: sale
 - **El backend no arranca:** `production` se niega a arrancar si falta o no vale una variable, y el error del log nombra la variable, nunca su valor.
 - **`/health/ready` no da 200:** su respuesta dice qué falla (`database`, `redis` o `storage`). `storage`, casi siempre, es la credencial sin `s3:ListBucket`.
 
+Un despliegue cortado (Ctrl-C, un reinicio, un error inesperado) no vuelve atrás: deja `/var/lib/crm-deploy/lock` y `/etc/crm/release.env.next`, y ningún despliegue arranca mientras estén. Qué hacer: [infra/prod/README.md](../../infra/prod/README.md), «Volver atrás», «Un despliegue cortado».
+
 ### 5.2 Retirar `postgres.env`
 
 Con `migrate` ya hecho, la contraseña de `crm_migrator` no puede quedar en el entorno del contenedor de PostgreSQL (ADR-002 §1.1, ADR-033 §6.1). Se borra el archivo y se recrea el contenedor; los datos siguen en el volumen:
@@ -303,4 +305,4 @@ Y el navegador no avisa de nada al abrir `https://crm.<DOMINIO>/`: el certificad
 - **El equipo del Owner:** [add-member.md](add-member.md), una ejecución por persona.
 - **El simulacro de restauración** en un servidor nuevo, obligatorio antes de salir a producción (F1-18): [backup-restore.md](backup-restore.md) §7.
 - **Una comprobación externa** de `https://crm.<DOMINIO>/` con un servicio de monitorización de disponibilidad, más las alertas de disco y de backup (ADR-033 §9).
-- **Los siguientes despliegues y la vuelta atrás:** [infra/prod/README.md](../../infra/prod/README.md), «Desplegar» y «Volver atrás».
+- **Los siguientes despliegues y la vuelta atrás:** [infra/prod/README.md](../../infra/prod/README.md), «Desplegar» y «Volver atrás». Desde el segundo despliegue, `deploy.sh` hace antes de migrar el volcado previo cifrado (`backup.sh predeploy`, a `db/predeploy/`, 7 días). Restaurarlo es la única vuelta atrás de una versión con migraciones que no siguen expandir y contraer, y **el orden depende de cómo terminó `deploy.sh`**: tras `DESPLIEGUE OK`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous` y después `deploy.sh --rollback`; tras `ROLLBACK OK` o `ROLLBACK FALLIDO`, `restore.sh` con `CRM_RELEASE_ENV=/etc/crm/release.env` y después `deploy.sh /etc/crm/release.env`, nunca `--rollback`. Los pasos completos están en ese README.
