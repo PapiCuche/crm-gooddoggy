@@ -20,9 +20,19 @@ set -eu
 origin=${1:?uso: smoke.sh https://crm.<DOMINIO> [opciones de curl]}
 shift
 here=$(cd "$(dirname "$0")" && pwd)
-compose() { docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"; }
+# Cada llamada con su plazo (F1-15b): un docker o un proxy colgado no cuelga la puerta de deploy.sh.
+# `timeout` deja la orden en otro grupo de procesos: con la entrada en la terminal (tmux), `exec -T`
+# la leería y se pararía (SIGTTIN). Por eso </dev/null; -k 10 mata lo que no salga con TERM.
+compose() {
+  timeout -k 10 60 docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" \
+    "$@" < /dev/null
+}
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
-code() { curl -sS --connect-timeout 5 --max-time 60 -o /dev/null -w '%{http_code}' "$@"; }
+# Un curl que falla (o agota el plazo) dice por qué, también dentro de $(…), donde set -e sale sin más.
+code() {
+  for url do :; done # la URL, el último argumento: las opciones de curl del operador no se imprimen
+  curl -sS --connect-timeout 5 --max-time 60 -o /dev/null -w '%{http_code}' "$@" || fail "curl sale con $? en $url"
+}
 
 # curl verifica la cadena, las fechas y el nombre; sin -k, y ssl_verify_result por si un -k se cuela.
 tls() {
@@ -63,7 +73,7 @@ try:
     print("superuser-accepted")
 except psycopg.OperationalError as error:
     print("superuser-rejected" if "pg_hba.conf rejects" in str(error) else "superuser-other")
-')
+') || fail "PostgreSQL como crm_app: docker compose exec sale con $?"
 [ "$got" = "crm_app panic none 0 terse log superuser-rejected" ] || fail "PostgreSQL como crm_app: $got"
 
 for route in "api 11000001" "webhooks 4000001" "ws 1000001" "app 1000001"; do
@@ -77,13 +87,16 @@ for route in "api 11000001" "webhooks 4000001" "ws 1000001" "app 1000001"; do
 done
 
 for path in /health/live /health/ready /demo; do
-  [ "$(code "$@" "$origin$path")" = 404 ] || fail "$path se publica"
+  status=$(code "$@" "$origin$path")
+  [ "$status" = 404 ] || fail "$path se publica"
 done
-[ "$(code "$@" "http://${origin#https://}/")" = 308 ] || fail "HTTP no redirige a HTTPS"
+status=$(code "$@" "http://${origin#https://}/")
+[ "$status" = 308 ] || fail "HTTP no redirige a HTTPS"
 
 token="smoke-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
 code "$@" "$origin/webhooks/meta/?hub.mode=subscribe&hub.challenge=1&hub.verify_token=$token" > /dev/null
-if compose logs --since 5m proxy backend 2>&1 | grep -q "$token"; then
+logs=$(compose logs --since 5m proxy backend 2>&1) || fail "docker compose logs sale con $?"
+if printf '%s\n' "$logs" | grep -q "$token"; then
   fail "la query de /webhooks aparece en los logs"
 fi
 echo "smoke OK: $origin"

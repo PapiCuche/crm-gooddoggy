@@ -103,6 +103,8 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     PermissionDef("messages.send", "conversations", supports_scope=True),
     PermissionDef("messages.note", "conversations", supports_scope=True),
     PermissionDef("channels.manage", "conversations"),
+    # F6-08a1: gestiona respuestas rápidas y categorías; usarlas solo pide `messages.send`
+    PermissionDef("quick_replies.manage", "conversations"),
     # F8-03a (ADR-034 §10): la clave del proveedor de IA y, después, el modelo, los presupuestos
     # y el encendido. Sensible: solo el Owner al nacer (ADR-018); sus rutas piden segundo factor.
     PermissionDef("ai.manage", "ai", is_sensitive=True),
@@ -192,6 +194,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "pipelines.manage",  # F5-02: la matriz de 03 §H no lo lista; a confirmar
             "conversations.assign",  # F6-01: «conversations.* ✅» para el Administrador en 03 §H
             "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar
+            "quick_replies.manage",  # F6-08a1; las ya clonadas no lo reciben (ADR-018 §3)
         )
         | dict.fromkeys(
             (

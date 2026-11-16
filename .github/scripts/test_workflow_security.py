@@ -7,9 +7,13 @@ más allá de los permitidos.
 
 import pathlib
 import re
+import subprocess
+import tempfile
 import unittest
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[1] / "workflows"
+ROOT = WORKFLOWS.parents[1]
+BUILD = "bash infra/prod/build-images.sh \"$RUNNER_TEMP/tested\" \"$RUNNER_TEMP/gitleaks\""
 ALLOWED_WRITES = {"work-item-state.yml": {"issues"}, "work-item-dependencies.yml": {"issues"}}
 TRUSTED_REFS = ("github.event.repository.default_branch", "github.event.pull_request.base.sha")
 FORBIDDEN_IN_RUN = re.compile(r"\b(pip3? install|npm (ci|install)|pnpm install|uv sync|eval)\b")
@@ -158,10 +162,90 @@ class ImagesWorkflowTest(unittest.TestCase):
         self.assertIn('--sbom="generator=$SBOM_GENERATOR"', self.text)
 
     def test_every_build_targets_the_pinned_builder(self):
-        builds = re.findall(r"docker buildx build ([^\n]*)", self.text)
-        self.assertEqual(len(builds), 2)
+        script = (ROOT / "infra/prod/build-images.sh").read_text()
+        builds = re.findall(r"docker buildx build ([^\n]*)", self.text + script)
+        self.assertEqual(len(builds), 2)  # la de prueba (build-images.sh, --load) y la de publicar (--push)
         for args in builds:
             self.assertIn("--builder crm-images", args)
+        self.assertNotRegex(script, r"--push|docker login|GITHUB_TOKEN")
+
+    def test_publishes_only_the_tested_config(self):
+        # F1-15b: build-images.sh anota la configuración de cada imagen probada; publish compara con la
+        # del registro antes de escribir su línea de release.env, que además lleva REVISION.
+        script = (ROOT / "infra/prod/build-images.sh").read_text()
+        self.assertIn('> "$out/$name.config"', script)
+        self.assertIn(BUILD, self.text)
+        self.assertLess(self.text.index(BUILD), self.text.index("--push"))
+        check = self.text.index('[ "$pushed" = "$tested" ] || {')
+        self.assertLess(self.text.index('tested=$(cat "$RUNNER_TEMP/tested/$name.config")'), check)
+        self.assertLess(check, self.text.index('_IMAGE=$repo/$name@$digest" >> "$release"'))
+        self.assertIn('echo "REVISION=$GITHUB_SHA" >> "$release"', self.text)
+
+
+class ImagesPullRequestTest(unittest.TestCase):
+    """F1-15b: los PR construyen y prueban las imágenes como images.yml, sin credenciales ni publicar."""
+
+    text = (WORKFLOWS / "images-pr.yml").read_text()
+    publish = (WORKFLOWS / "images.yml").read_text()
+
+    def test_only_pull_request(self):
+        self.assertEqual(triggers(self.text), {"pull_request"})
+        self.assertNotIn("pull_request_target", self.text)
+
+    def test_read_only_without_secrets(self):
+        self.assertEqual(permissions(self.text), {"contents": "read"})
+        self.assertEqual(set(jobs(self.text)), {"build"})
+        self.assertEqual(job_permissions(jobs(self.text)["build"]), {})
+        self.assertNotRegex(self.text, r"secrets\.|packages|id-token|attestations:|docker login|--push|GITHUB_TOKEN")
+        for block in run_blocks(self.text):
+            self.assertNotIn("${{", block)
+        self.assertEqual(self.text.count("actions/checkout@"), self.text.count("persist-credentials: false"))
+
+    def test_same_build_as_publish(self):
+        self.assertIn(BUILD, self.text)
+        for var in ("BUILDKIT_IMAGE", "GITLEAKS_VERSION", "GITLEAKS_SHA256"):
+            line = re.search(rf"(?m)^  {var}: .+$", self.publish).group(0)
+            self.assertIn(line, self.text, var)
+        builder = re.search(r"docker buildx create [^\n]+", self.publish).group(0)
+        self.assertIn(builder, self.text)
+
+    def test_runs_when_an_image_input_changes(self):
+        for path in ("backend/**", "frontend/**", "infra/docker/**", "infra/prod/caddy/**", "infra/prod/build-images.sh"):
+            self.assertIn(f'      - "{path}"', self.text)
+
+
+class BaseImagePinningTest(unittest.TestCase):
+    """F1-15b: validate.sh rechaza un FROM o un `# syntax=` sin digest en cualquier Dockerfile."""
+
+    def validate(self, root=None):
+        args = ["sh", str(ROOT / "infra/prod/validate.sh"), "--dockerfiles"] + ([str(root)] if root else [])
+        return subprocess.run(args, capture_output=True, text=True)
+
+    def test_repository_dockerfiles_are_pinned(self):
+        result = self.validate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unpinned_bases_are_rejected(self):
+        pin = "@sha256:" + "a" * 64
+        good = f"# syntax=docker/dockerfile:1.27.1{pin}\nFROM python:3.14{pin} AS build\nFROM node:24{pin}\n"
+        cases = {
+            "ok": (good, 0),
+            "from": (good + "FROM python:3.14-slim\n", 1),
+            "lowercase": (good + "from python:3.14-slim\n", 1),
+            "platform": (good + "FROM --platform=linux/amd64 node:24 AS x\n", 1),
+            "short digest": (good + f"FROM node:24{pin[:-1]}\n", 1),
+            "syntax": (good.replace(pin, "", 1), 1),
+        }
+        for name, (content, code) in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                (pathlib.Path(tmp) / "sub").mkdir()
+                (pathlib.Path(tmp) / "sub/Dockerfile.dev").write_text(content)
+                result = self.validate(tmp)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn("sin @sha256:<digest>", result.stderr)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.validate(tmp).returncode, 1)  # ningún Dockerfile: raíz equivocada
 
 
 if __name__ == "__main__":

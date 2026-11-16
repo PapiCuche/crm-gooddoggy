@@ -1,0 +1,53 @@
+name: images-pr
+
+# F1-15b (ADR-033 §7): cada PR que toca una imagen la construye y la prueba como images.yml antes de
+# publicar (infra/prod/build-images.sh, el mismo builder fijado), sin publicar nada. Así un fallo de
+# construcción o de la prueba de humo se ve en el PR y no después del merge.
+# Frontera (test_workflow_security.py): solo el evento `pull_request` (nunca su variante trusted),
+# solo lectura, sin secretos y sin sesión en ningún registro ni publicación. No es un check requerido.
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "infra/docker/**"
+      - "infra/prod/caddy/**"
+      - "infra/prod/Caddyfile"
+      - "infra/prod/build-images.sh"
+      - ".gitleaks.toml"
+      - ".github/workflows/images.yml"
+      - ".github/workflows/images-pr.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+jobs:
+  build:
+    name: images build (PR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: BuildKit fijado por digest
+        run: docker buildx create --name crm-images --driver docker-container --driver-opt "image=$BUILDKIT_IMAGE" --bootstrap
+      - name: Instalar gitleaks (versión fijada y verificada)
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+      - name: Construir, probar y revisar los metadatos (lo mismo que images.yml antes de publicar)
+        run: bash infra/prod/build-images.sh "$RUNNER_TEMP/tested" "$RUNNER_TEMP/gitleaks"

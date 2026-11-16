@@ -10,6 +10,7 @@ from rest_framework import serializers
 from apps.conversations import commands, outbound_media
 from apps.conversations.accounts import NUMBER_REFUSED
 from apps.conversations.models import BODY_MAX, META_ID, TOKEN_FORMAT
+from apps.conversations.text import clean_body
 from core.api.strict import Choice, Closed, Id, Text, Whole
 
 
@@ -37,7 +38,7 @@ class SandboxInboundSerializer(Closed, serializers.Serializer[Any]):
         help_text="La clave de idempotencia: el mismo id es el mismo mensaje.",
     )
     text = Checked(
-        commands._body,
+        clean_body,
         trim_whitespace=False,
         max_length=BODY_MAX,
         help_text=f"Hasta {BODY_MAX} caracteres, con algo visible.",
@@ -47,7 +48,7 @@ class SandboxInboundSerializer(Closed, serializers.Serializer[Any]):
 class SendMessageSerializer(Closed, serializers.Serializer[Any]):
     client_message_id = Id(help_text="La clave de idempotencia: el mismo id es el mismo mensaje.")
     body = Checked(
-        commands._body,
+        clean_body,
         trim_whitespace=False,
         max_length=BODY_MAX,
         help_text=f"Hasta {BODY_MAX} caracteres, con algo visible.",
@@ -55,7 +56,7 @@ class SendMessageSerializer(Closed, serializers.Serializer[Any]):
 
 
 def _caption(value: Any) -> str:
-    text = commands._body(value)
+    text = clean_body(value)
     if outbound_media.units(text) > outbound_media.CAPTION_MAX:  # como cuenta WhatsApp
         raise ValueError(f"pie de foto: hasta {outbound_media.CAPTION_MAX} unidades UTF-16")
     return text
@@ -80,7 +81,7 @@ class SendMediaFormSerializer(SendMediaSerializer):  # solo para el contrato
 class NoteSerializer(Closed, serializers.Serializer[Any]):
     client_message_id = Id(help_text="La clave de idempotencia: el mismo id es la misma nota.")
     body = Checked(
-        commands._body,
+        clean_body,
         trim_whitespace=False,
         max_length=BODY_MAX,
         help_text=f"Hasta {BODY_MAX} caracteres, con algo visible. Nunca sale por un canal.",
