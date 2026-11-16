@@ -194,7 +194,7 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     show();
     await openChat();
     await type("/delivery");
-    await waitFor(() => expect(options().length).toBeGreaterThan(0));
+    await waitFor(() => expect(options()).toHaveLength(2));
     await key("Enter");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Esa respuesta ya no está disponible",
@@ -204,6 +204,23 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(await box()).toHaveValue("/delivery");
     await settle();
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("Enter no elige de la lista anterior mientras la búsqueda no alcanza lo escrito", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/");
+    await waitFor(() => expect(options()).toHaveLength(3));
+    await type("/delivery-l");
+    await key("Enter"); // aún se ve la lista de «/», con «/precio» primero
+    await settle();
+    expect(s.renders()).toBe(0);
+    await waitFor(() => expect(options()).toHaveLength(1));
+    await key("Enter");
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    expect(s.renders()).toBe(1);
     expect(s.sends()).toEqual([]);
   });
 

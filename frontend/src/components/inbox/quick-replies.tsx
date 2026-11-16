@@ -90,6 +90,8 @@ export function useQuickReplies({
     placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
+  // Mientras la búsqueda no alcanza lo escrito, la lista es la anterior: Enter no elige de ella.
+  const current = q === (typed ?? "") && !found.isPlaceholderData;
   const groups = useMemo(() => byCategory(found.data?.results ?? []), [found.data]);
   const options = groups.flatMap((group) => group.replies);
   const active = options.find(({ id }) => id === activeId) ?? options[0];
@@ -125,7 +127,7 @@ export function useQuickReplies({
       const next = options[(at + step + options.length) % options.length];
       if (next) setActiveId(next.id);
     } else if (event.key === "Enter" && !event.shiftKey) {
-      choose(active);
+      if (current) choose(active); // un clic elige lo que se ve; Enter, solo de una lista al día
     } else {
       return false;
     }
@@ -156,6 +158,7 @@ export function useQuickReplies({
         role="listbox"
         id={list}
         aria-label={t("label")}
+        aria-busy={!current}
         className="min-h-0 overflow-y-auto overscroll-contain py-1"
       >
         {groups.map((group) => (
