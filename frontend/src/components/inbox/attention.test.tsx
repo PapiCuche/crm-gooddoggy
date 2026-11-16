@@ -163,7 +163,7 @@ describe("Inbox para atender rápido (F6-09)", () => {
 
   it("el aviso del navegador se pide con un clic y solo dice «Nuevo mensaje»", async () => {
     const sent: unknown[][] = [];
-    const Fake = vi.fn(function (this: unknown, ...args: unknown[]) {
+    const Fake = vi.fn(function (...args: unknown[]) {
       sent.push(args);
     }) as unknown as typeof Notification & { permission: string };
     Object.assign(Fake, {
@@ -182,7 +182,11 @@ describe("Inbox para atender rápido (F6-09)", () => {
     await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
     expect(Fake.requestPermission).toHaveBeenCalledTimes(1);
     notifyNewMessage("Nuevo mensaje");
-    expect(sent).toEqual([["Nuevo mensaje", { tag: "inbox.notify" }]]); // sin nada del cliente
+    expect(sent).toEqual([["Nuevo mensaje", { tag: "inbox.notify", renotify: true }]]); // sin nada del cliente
+    const focus = vi.spyOn(window, "focus").mockImplementation(() => {});
+    const [shown] = vi.mocked(Fake).mock.instances as unknown as { onclick?: () => void }[];
+    shown!.onclick?.();
+    expect(focus).toHaveBeenCalledOnce(); // al pulsarlo se vuelve a la pestaña
     hidden.mockReturnValue("visible");
     notifyNewMessage("Nuevo mensaje");
     expect(sent).toHaveLength(1); // con la pestaña a la vista no hace falta

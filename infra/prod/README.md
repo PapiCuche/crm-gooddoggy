@@ -43,7 +43,7 @@ La imagen del frontend se construye con `NEXT_PUBLIC_INBOX_WS=on` (F6-09): el In
 
 - **Ruta.** Caddy lleva `/ws/*` a `ws` (uvicorn, `--ws-max-size 16384`), con el upgrade de HTTP/1.1 y tope de 1 MB al cuerpo. `ws` va en las redes `edge` y `data` y entra en la puerta de salud.
 - **Origen y sesión.** `ws` solo acepta el `Origin` de `APP_ORIGIN` y `DJANGO_CSRF_TRUSTED_ORIGINS` (`runtime.env`); sin ellos rechaza todo. La sesión sale de la cookie; el permiso y el alcance de `conversations.view` se vuelven a mirar cada minuto y en cada evento. Los eventos solo llevan ids.
-- **Límites.** 8 conexiones por persona y proceso, 30 tramas por minuto, 1 KB por trama, cierre a los 90 s sin latido (el cliente manda uno cada 25 s). Necesita `CHANNEL_LAYER_REDIS_URL`.
+- **Límites.** 8 conexiones por persona y proceso, 30 tramas por minuto, 1 KB por trama, cierre a los 90 s sin latido (el cliente manda uno cada 25 s). La capa de canales usa Redis: `CHANNEL_LAYER_REDIS_URL` o, si falta, la URL del broker (`CELERY_BROKER_URL`).
 - **Reconexión.** Un despliegue o una recarga de Caddy cortan las conexiones. El cliente vuelve con espera de 1 a 30 s y relee el Inbox una vez. Mientras tanto, el Inbox se sigue leyendo al enfocar la pestaña.
 - **Pruebas.** `test_inbox_realtime.py` (servidor), `inbox-socket` y `use-inbox-realtime` (cliente) y el E2E del stack local de F6-07e y F6-09. Ninguna prueba automática cruza el Caddy de producción: tras desplegar, en el Inbox, la petición `/ws/…` debe responder 101.
 - **Apagarlo.** Construir la imagen con `--build-arg NEXT_PUBLIC_INBOX_WS=off` y desplegarla. El Inbox funciona igual, pero sin tiempo real.

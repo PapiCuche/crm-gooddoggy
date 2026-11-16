@@ -34,12 +34,12 @@ export function useInboxRealtime() {
     const mine = `/api/v1/o/${slug}/conversations/`;
     const reread = (event: InboxEvent) => {
       const id = event.conversation_id;
-      if (event.type === "message.received") notifyNewMessage(title);
       void client.invalidateQueries({ queryKey: getConversationsListQueryKey(slug) });
       void client.invalidateQueries({ queryKey: getConversationsRetrieveQueryKey(slug, id) });
       if (event.type !== "conversation.updated") {
         void client.invalidateQueries({ queryKey: getConversationMessagesListQueryKey(slug, id) });
       }
+      if (event.type === "message.received") notifyNewMessage(title); // después: un aviso no frena la relectura
     };
     return connectInbox({
       url: `${proto}//${window.location.host}/ws/o/${encodeURIComponent(slug)}/inbox/`,

@@ -86,7 +86,11 @@ function wanted(): boolean {
 export function notifyNewMessage(title: string) {
   if (!supported() || Notification.permission !== "granted" || !wanted()) return;
   if (document.visibilityState !== "hidden") return;
-  new Notification(title, { tag: NOTIFY });
+  try {
+    // `renotify`: cada mensaje vuelve a avisar aunque el anterior siga en pantalla (mismo `tag`).
+    const shown = new Notification(title, { tag: NOTIFY, renotify: true } as NotificationOptions);
+    shown.onclick = () => window.focus();
+  } catch {} // Chrome en Android no deja construirla (`Illegal constructor`): sin aviso, nada más
 }
 export function NotifyToggle() {
   const t = useTranslations("inbox.notify");
