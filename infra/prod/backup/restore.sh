@@ -3,12 +3,15 @@
 # nuevo, con `postgres` arriba y el runtime parado:
 #   sudo BACKUP_ENV=/dev/shm/restore.env restore.sh --identity /dev/shm/<clave privada age> \
 #     (--latest | --object db/<prefijo>/crm-….dump.age | --media-only) [--roles-env /etc/crm/postgres.env] \
-#     [--media] [--overwrite-media] [--expect-counts <tsv>] [--replace-existing-data]
-#   1. Nunca restaura encima de una base con tablas sin --replace-existing-data (borra la base `crm`).
+#     [--media] [--overwrite-media] [--expect-counts] [--replace-existing-data]
+#   1. Nunca restaura encima de una base con tablas sin --replace-existing-data. Con él, la base `crm`
+#      pasa a llamarse crm_replaced_<fecha> y solo se borra tras restore.ok: si algo falla, sigue ahí.
 #   2. Crea los roles con bootstrap-roles.sh si recibe --roles-env (CRM_MIGRATOR_PASSWORD y
-#      CRM_APP_PASSWORD, root y 0600); si no, exige que ya existan. Ninguna contraseña en argumentos.
+#      CRM_APP_PASSWORD, root y 0600); si no, exige que ya existan (y crea la base si falta). Ninguna
+#      contraseña en argumentos.
 #   3. Baja el volcado, lo descifra y lo pasa a pg_restore en una transacción: nada en claro en disco.
-#   4. Filas por tabla en $state_dir/restored-counts.tsv; con --expect-counts, deben coincidir.
+#   4. Filas por tabla en $state_dir/restored-counts.tsv; con --expect-counts, deben coincidir con las
+#      que backup.sh contó en la instantánea del volcado (<volcado>.counts.age).
 #   5. Informa si las migraciones están al día (`migrate --check`), levanta el backend (el job migrate
 #      corre antes) y exige /health/ready 200.
 #   6. --media (o solo eso, --media-only): devuelve al bucket de runtime.env los objetos que no estén
@@ -28,7 +31,7 @@ while [ $# -gt 0 ]; do
     --media) media=1 ;;
     --media-only) media=1 media_only=1 ;;
     --overwrite-media) overwrite=1 ;;
-    --expect-counts) expect=${2:?}; shift ;;
+    --expect-counts) expect=1 ;;
     --replace-existing-data) replace=1 ;;
     --roles-env) roles_env=${2:?}; shift ;;
     *) usage ;;
@@ -36,8 +39,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ ! -r "$identity" ] || [ -z "$object$latest$media_only" ]; then usage; fi
-stage=config
-trap '[ $? = 0 ] || [ -n "${alerted:-}" ] || alert restore.failed "stage=$stage"' EXIT
+stage=config alerted='' replaced='' # alerted: un valor heredado del entorno silenciaría el aviso
+trap '[ $? = 0 ] || [ -n "$alerted" ] || alert restore.failed "stage=$stage${replaced:+ kept=$replaced}"' EXIT
 need docker age rclone
 umask 077
 configure restore.failed
@@ -53,11 +56,13 @@ bootstrap() { # las contraseñas, del archivo al entorno de `docker compose exec
 
 at_head='' tables=0
 if [ -z "$media_only" ]; then
-  [ -z "$latest" ] || object="db/daily/$(rclone lsf --files-only "DEST:$BACKUP_S3_BUCKET/db/daily/" | LC_ALL=C sort | tail -n 1)"
+  [ -z "$latest" ] || object="db/daily/$(rclone lsf --files-only --include '*.dump.age' "DEST:$BACKUP_S3_BUCKET/db/daily/" |
+    LC_ALL=C sort | tail -n 1)"
   [ "$object" != db/daily/ ] || { echo "no hay volcados en db/daily/" >&2; exit 1; }
 
   stage=empty # antes de tocar los roles: una base con datos no se toca sin --replace-existing-data
-  if [ "$(psql_su -d postgres -c "SELECT count(*) FROM pg_database WHERE datname = 'crm'")" = 1 ]; then
+  db=$(psql_su -d postgres -c "SELECT count(*) FROM pg_database WHERE datname = 'crm'")
+  if [ "$db" = 1 ]; then
     tables=$(psql_su -d crm -c "SELECT count(*) FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
       WHERE s.nspname = 'public' AND c.relkind IN ('r', 'p')")
   fi
@@ -72,13 +77,20 @@ if [ -z "$media_only" ]; then
     # entero (age comprueba cada bloque y el final), así una clave equivocada no deja la base vacía.
     [ -n "$roles_env" ] || bootstrap
     rclone cat "DEST:$BACKUP_S3_BUCKET/$object" | age -d -i "$identity" > /dev/null
-    log restore.replacing "tables=$tables"
+    replaced=crm_replaced_$(date -u +%Y%m%d%H%M%S)
+    log restore.replacing "tables=$tables" "kept_as=$replaced"
     compose stop backend ws worker worker-media beat
-    psql_su -d postgres -c "DROP DATABASE crm WITH (FORCE)"
+    psql_su -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'crm'" \
+      -c "ALTER DATABASE crm RENAME TO $replaced" > /dev/null
     bootstrap
   else
     roles=$(psql_su -d postgres -c "SELECT count(*) FROM pg_roles WHERE rolname IN ('crm_migrator', 'crm_app')")
-    if [ "$roles" != 2 ] || [ -n "$roles_env" ]; then bootstrap; fi
+    if [ "$roles" != 2 ] || [ -n "$roles_env" ]; then
+      bootstrap
+    elif [ "$db" != 1 ]; then # roles sin contraseñas nuevas y sin base: la base de bootstrap-roles.sh
+      psql_su -d postgres -c "CREATE DATABASE crm OWNER crm_migrator" -c "REVOKE ALL ON DATABASE crm FROM PUBLIC" \
+        -c "GRANT CONNECT, TEMPORARY ON DATABASE crm TO crm_app"
+    fi
   fi
 
   stage=restore
@@ -88,8 +100,11 @@ if [ -z "$media_only" ]; then
   stage=counts
   table_counts > "$state_dir/restored-counts.tsv"
   tables=$(wc -l < "$state_dir/restored-counts.tsv" | tr -d ' ')
-  [ -z "$expect" ] || diff "$expect" "$state_dir/restored-counts.tsv" > /dev/null ||
-    { echo "las filas por tabla no coinciden con $expect" >&2; exit 1; }
+  if [ -n "$expect" ]; then
+    rclone cat "DEST:$BACKUP_S3_BUCKET/${object%.dump.age}.counts.age" | age -d -i "$identity" |
+      diff - "$state_dir/restored-counts.tsv" > /dev/null ||
+      { echo "las filas por tabla no coinciden con las del volcado (o falta ${object%.dump.age}.counts.age)" >&2; exit 1; }
+  fi
 
   stage=migrate
   at_head=yes
@@ -131,3 +146,8 @@ fi
 stage=finished
 log restore.ok "object=${object:-none}" "tables=$tables" "migrations_at_head=${at_head:-skipped}" \
   "media_restored=$restored" "media_skipped=$skipped" "seconds=$(($(date +%s) - started))"
+if [ -n "$replaced" ]; then # la base anterior, solo ahora que la restauración terminó bien
+  stage=drop_replaced
+  psql_su -d postgres -c "DROP DATABASE $replaced WITH (FORCE)"
+  log restore.replaced_dropped "database=$replaced"
+fi
