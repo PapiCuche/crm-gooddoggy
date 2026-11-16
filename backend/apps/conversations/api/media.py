@@ -14,8 +14,9 @@ La URL dura `EXPIRES` segundos, siempre `attachment` con un nombre generado, el 
 alcance (404), política y `Content-Length` (411, 413) **antes** de analizar o guardar el cuerpo.
 Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope del proxy
 (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped` corta al
-pasarse; luego el tipo real (415), el antivirus (F7-15b: 422 `MEDIA_INFECTED`, 503
-`MEDIA_SCAN_UNAVAILABLE` sin veredicto; en los dos, nada se guarda), el blob y el comando. Ante
+pasarse; luego el tipo real (415), el antivirus (F7-15b: 422 `MEDIA_INFECTED`, o
+`MEDIA_TOO_COMPLEX` si pasa sus topes, F7-15c; 503 `MEDIA_SCAN_UNAVAILABLE` sin veredicto; en
+todos, nada se guarda), el blob y el comando. Ante
 cualquier error, o en un reintento, el blob nuevo se borra (la vista es una transacción; el guardado
 tiene otra clave). Un 422 deshace la transacción: su auditoría y su alerta las deja
 `ChannelThrottleMiddleware` después (`outbound_media.infected`).
@@ -57,6 +58,7 @@ REFUSED = {
     "MEDIA_TYPE_NOT_ALLOWED": (415, "Solo imágenes JPEG o PNG y documentos PDF."),
     "LENGTH_REQUIRED": (411, "Falta la longitud del cuerpo (Content-Length)."),
     "MEDIA_INFECTED": (422, "El antivirus encontró un virus en el archivo: no se envió."),
+    "MEDIA_TOO_COMPLEX": (422, "El archivo es demasiado complejo para revisarlo: no se envió."),
     "MEDIA_SCAN_UNAVAILABLE": (503, "El antivirus no respondió: no se envió nada. Reinténtalo."),
 }
 FORM = "Un formulario multipart/form-data con un solo archivo, en `file`."
@@ -150,7 +152,8 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
         "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
         "`messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de "
         "guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
-        "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED`; 429 "
+        "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o "
+        "`MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 "
         "`RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).",
     ),
 )

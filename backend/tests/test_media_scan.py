@@ -143,6 +143,34 @@ def test_the_sweeper_queues_only_stale_pending_scans_once_per_window(
     assert status(migrator, fresh) == "PENDING"  # el reciente sigue esperando su evento
 
 
+def test_the_sweeper_scans_a_recent_error_again_a_bounded_number_of_times(
+    world: Any, migrator: DB, clamd: FakeClamd, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F7-15c: clamd volvió; un `ERROR` reciente vuelve a `PENDING`, auditado, y queda con
+    veredicto. Uno revisado hace poco o antiguo no: una ronda cada `RESCAN_AFTER` dentro de
+    `RESCAN_WINDOW`."""
+    queued: list[Any] = []
+    monkeypatch.setattr(tasks.scan_media, "apply_async", lambda **kw: queued.append(kw))
+    settings.CLAMD_ADDRESS = "127.0.0.1:9"  # caído
+    retry, recent, ancient = (stored(world, migrator, wamid=f"wamid.E{i}") for i in range(3))
+    for file_id in (retry, recent, ancient):
+        assert scan.scan(world.a, file_id, scan.MAX_ATTEMPTS) == ("ERROR", None)
+    age = "UPDATE files SET created_at = now() - %s::interval"
+    age += ", scan_checked_at = now() - %s::interval"
+    migrator.execute(age + " WHERE id = %s", ["3 hours", "2 hours 1 minute", retry])
+    migrator.execute(age + " WHERE id = %s", ["3 hours", "1 hour", recent])
+    migrator.execute(age + " WHERE id = %s", ["7 hours", "3 hours", ancient])
+    settings.CLAMD_ADDRESS = clamd.address  # volvió
+    assert tasks.sweep_media()["scans"] == 1 and tasks.sweep_media()["scans"] == 0
+    assert queued == [{"kwargs": {"file_id": str(retry), "organization_id": str(world.a)}}]
+    assert [status(migrator, f) for f in (retry, recent, ancient)] == ["PENDING", "ERROR", "ERROR"]
+    actions = [row[0] for row in migrator.execute(AUDIT + " ORDER BY id", [retry])]
+    assert actions == ["file.scan_error", "file.scan_retried"]
+    tasks.scan_media(**queued[0]["kwargs"])
+    assert status(migrator, retry) == "CLEAN"
+    assert (scan.RESCAN_WINDOW / scan.RESCAN_AFTER) <= 3  # rondas como mucho
+
+
 class Broken(io.BytesIO):
     def read(self, *args: Any) -> bytes:
         raise RuntimeError("se cortó el almacén a mitad")  # no es un OSError

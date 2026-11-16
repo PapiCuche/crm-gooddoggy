@@ -488,7 +488,7 @@ def record_outbound(
                 id=media.file_id, storage_key=media.key, original_name=media.name,
                 mime_type=media.mime, size_bytes=media.size, sha256=media.sha256,
                 purpose=outbound_media.PURPOSE, created_by_user_id=ctx.user_id,
-                scan_status="CLEAN",  # `prepare` lo pasó por el antivirus (F7-15b)
+                scan_status="CLEAN", scan_checked_at=timezone.now(),  # `prepare` lo escaneó
             )  # fmt: skip
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",

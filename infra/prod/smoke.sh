@@ -1,19 +1,56 @@
 #!/bin/sh
 # Prueba de humo de producción tras `up --wait` (F1-13; deploy.sh de F1-15 la llama). Comprueba lo
-# que ninguna prueba estática ve en el servidor real:
+# que ninguna prueba estática ve en el servidor real, sin credenciales de la aplicación:
+#   0. el certificado de crm.<DOMINIO> es válido: cadena, fechas y nombre (F1-17). Espera hasta
+#      CRM_SMOKE_TLS_TIMEOUT s de reloj (120; cada intento corta a los 15 s, uno cada
+#      CRM_SMOKE_TLS_INTERVAL s, 5) a que Caddy lo obtenga: en el primer arranque lo pide en segundo
+#      plano y `up --wait` no lo espera;
 #   1. PostgreSQL, leído con SHOW como crm_app, no copia valores de clientes en su log, y rechaza
 #      al superusuario por red (solo por el socket local);
 #   2. el proxy corta cuerpos de más de 11 MB en /api/*, 4 MB en /webhooks/* y 1 MB en el resto,
 #      también sin Content-Length (chunked): Django (ASGI) y Next leerían el cuerpo entero;
-#   3. /health/* no se publica, HTTP redirige a HTTPS y la query de /webhooks no llega a los logs.
+#   3. /health/* y /demo no se publican (404), HTTP redirige a HTTPS y la query de /webhooks no llega
+#      a los logs.
 # Uso: sudo CRM_RELEASE_ENV=/etc/crm/release.env sh infra/prod/smoke.sh https://crm.<DOMINIO> [opciones de curl]
+# La comprobación 0 quita -k y --insecure y no lee ~/.curlrc (-q): con una CA propia (Caddy en
+# local), --cacert <raíz>; para otra IP, --resolve crm.<DOMINIO>:443:<IP>, y el nombre se verifica.
+# Un -k dentro de un grupo (-sk) no se quita: ssl_verify_result sigue exigiendo la cadena, no el nombre.
+# Prueba sin servidor: test-smoke.sh (CI: infra-prod.yml).
 set -eu
 origin=${1:?uso: smoke.sh https://crm.<DOMINIO> [opciones de curl]}
 shift
 here=$(cd "$(dirname "$0")" && pwd)
 compose() { docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"; }
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
-code() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
+code() { curl -sS --connect-timeout 5 --max-time 60 -o /dev/null -w '%{http_code}' "$@"; }
+
+# curl verifica la cadena, las fechas y el nombre; sin -k, y ssl_verify_result por si un -k se cuela.
+tls() {
+  for arg do
+    shift
+    case $arg in -k | --insecure) ;; *) set -- "$@" "$arg" ;; esac
+  done
+  # -q, el primero: solo ahí deja de leer ~/.curlrc.
+  curl -q --connect-timeout 5 --max-time 15 -sS -o /dev/null -w '%{ssl_verify_result}' "$@" "$origin/"
+}
+seconds() { # <variable> <valor>: un entero mayor que 0
+  case $2 in '' | *[!0-9]*) fail "$1 debe ser un número entero de segundos mayor que 0" ;; esac
+  [ "$2" -gt 0 ] || fail "$1 debe ser un número entero de segundos mayor que 0"
+}
+tls_timeout=${CRM_SMOKE_TLS_TIMEOUT:-120} tls_every=${CRM_SMOKE_TLS_INTERVAL:-5}
+seconds CRM_SMOKE_TLS_TIMEOUT "$tls_timeout"
+seconds CRM_SMOKE_TLS_INTERVAL "$tls_every"
+start=$(date +%s)
+while :; do
+  rc=0
+  verify=$(tls "$@" 2> /dev/null) || rc=$?
+  waited=$(($(date +%s) - start))
+  [ "$rc" != 0 ] || [ "$verify" != 0 ] || break
+  [ "$waited" -lt "$tls_timeout" ] ||
+    fail "el certificado de $origin no es válido tras ${waited}s (curl sale con $rc, verificación ${verify:-?})"
+  sleep "$tls_every"
+done
+[ "$waited" = 0 ] || echo "smoke: certificado válido tras ${waited}s"
 
 got=$(compose exec -T backend python -c '
 import os, psycopg
@@ -39,7 +76,7 @@ for route in "api 11000001" "webhooks 4000001" "ws 1000001" "app 1000001"; do
   done
 done
 
-for path in /health/live /health/ready; do
+for path in /health/live /health/ready /demo; do
   [ "$(code "$@" "$origin$path")" = 404 ] || fail "$path se publica"
 done
 [ "$(code "$@" "http://${origin#https://}/")" = 308 ] || fail "HTTP no redirige a HTTPS"

@@ -48,8 +48,9 @@ x-runtime: &runtime
     META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
     # F7-15 (ADR-008): el antivirus de los medios. Sin él, nada se abre (los reintentos acaban en
     # `ERROR`) y ningún archivo se envía (F7-15b: la subida responde 503); no se espera a que esté
-    # sano para arrancar: el escaneo reintenta y la persona reintenta el envío.
-    CLAMD_ADDRESS: clamd:3310
+    # sano para arrancar: el escaneo reintenta y la persona reintenta el envío. F7-15c: por el
+    # relay, nunca directo: clamd no ve a nadie que escuche HTTP.
+    CLAMD_ADDRESS: clamd-relay:3310
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -129,7 +130,7 @@ services:
   backend:
     <<: *runtime
     healthcheck: *probe
-    networks: [default, av] # F7-15b: escanea en clamd lo que sube una persona antes de guardarlo
+    networks: [default, av-client] # F7-15b: escanea lo que sube una persona antes de guardarlo
 
   ws:
     <<: *runtime
@@ -142,13 +143,13 @@ services:
       disable: true
 
   # F7-09a1c: la cola `media` (descargas de medios entrantes, hasta 120 s cada una), un proceso.
-  # F7-15: también el antivirus de lo recibido; con backend, los únicos en la red `av` de clamd.
+  # F7-15: también el antivirus de lo recibido; con backend, los únicos que ven el relay de clamd.
   worker-media:
     <<: *runtime
     command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--queues", "media", "--concurrency", "1"]
     healthcheck:
       disable: true
-    networks: [default, av]
+    networks: [default, av-client]
 
   beat:
     <<: *runtime
@@ -188,9 +189,11 @@ services:
         condition: service_healthy
 
   # F7-15 (ADR-008): ClamAV. `clamd` en 3310, sin `ports:`, solo en `av`, que es interna: sin
-  # salida, ni a los puertos publicados de postgres o redis por IP. Las firmas las baja `freshclam`
-  # (otro contenedor, con salida) al mismo volumen y clamd las recarga (`SelfCheck`). La imagen trae
-  # firmas: arranca sin red, aunque cargarlas tarda ~1 min y ocupa ~1 GiB.
+  # salida, ni a los puertos publicados de postgres o redis por IP. F7-15c: en `av` solo está
+  # además `clamd-relay`, así que un clamd comprometido por un archivo no alcanza ningún listener
+  # HTTP (ni `backend:8000`, que se saltaría el tope del cuerpo de Caddy). Las firmas las baja
+  # `freshclam` (otro contenedor, con salida) al mismo volumen y clamd las recarga (`SelfCheck`).
+  # La imagen trae firmas: arranca sin red, aunque cargarlas tarda ~1 min y ocupa ~1 GiB.
   clamd:
     image: clamav/clamav:1.5.4-debian # multiarquitectura (amd64 y arm64)
     restart: unless-stopped
@@ -206,6 +209,17 @@ services:
       retries: 3
       start_period: 5m
       start_interval: 5s
+
+  # F7-15c: el único puente hacia clamd. Reenvía bytes a `clamd:3310` y nada más (no los lee);
+  # escucha solo en 3310, sin privilegios, con el sistema de archivos de solo lectura.
+  clamd-relay:
+    image: alpine/socat:1.8.0.3
+    restart: unless-stopped
+    command: ["-T", "120", "TCP-LISTEN:3310,fork,reuseaddr,max-children=32", "TCP:clamd:3310"]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    networks: [av, av-client]
 
   freshclam: # solo descarga firmas oficiales (no lee archivos de clientes); su única red, la salida
     image: clamav/clamav:1.5.4-debian
@@ -227,8 +241,9 @@ networks:
       config:
         - subnet: ${STACK_SUBNET:-172.31.250.0/24}
           ip_range: ${STACK_IP_RANGE:-172.31.250.128/25}
-  # F7-15: clamd, worker-media y backend (F7-15b: escanea los envíos).
+  # F7-15c: `av`, solo clamd y su relay; `av-client`, el relay, worker-media y backend.
   av: { internal: true }
+  av-client: { internal: true }
   av-egress: {} # solo freshclam
 
 volumes:

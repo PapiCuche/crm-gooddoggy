@@ -232,6 +232,7 @@
       "MEDIA_TYPE_NOT_ALLOWED": "Solo se pueden enviar imágenes JPEG o PNG y documentos PDF.",
       "LENGTH_REQUIRED": "El archivo no llegó completo al servidor. Vuelve a intentarlo.",
       "MEDIA_INFECTED": "El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.",
+      "MEDIA_TOO_COMPLEX": "Este archivo es demasiado complejo para que el antivirus lo revise, así que no se envió. Elige otro archivo.",
       "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos."
     }
   },

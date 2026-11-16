@@ -8,9 +8,16 @@ CLEAN`) y el mensaje; si el comando falla, o era un reintento, quien llama lo bo
 Infectado es `Infected` (con la firma) y sin veredicto, `antivirus.Unavailable`: nada se guarda.
 Un archivo saliente nunca se sirve al navegador (`selectors.SERVED` pide un mensaje entrante).
 Propósito `message-media-out` (F7-09b2), que el reclamo exige: un saliente nunca
-lleva un blob entrante. La ruta lo lee con `Capped`. Registros: ids y la clase de un error."""
+lleva un blob entrante. La ruta lo lee con `Capped`. Registros: ids y la clase de un error.
+
+F7-15c: como mucho `SCAN_SLOTS` escaneos de subida a la vez por proceso. La ruta escanea dentro de
+la transacción de la vista, así que el tope acota también las conexiones que pueden quedar *idle in
+transaction* mientras tanto; y `clamd` atiende `MaxThreads` (10) a la vez para la entrada y la
+salida: una ráfaga de subidas no deja sin hilos al escaneo de lo recibido. Sin hueco en
+`SLOT_WAIT` segundos es «sin veredicto» (503), y nada se escanea ni se guarda."""
 
 import re
+import threading
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -33,6 +40,9 @@ NAME_MAX = 100
 CAPTION_MAX = 1024  # el pie de foto que admite WhatsApp, en unidades UTF-16
 PURPOSE = "message-media-out"
 SCAN_SECONDS = 15.0  # el plazo del antivirus: la persona espera la respuesta de la subida
+SCAN_SLOTS, SLOT_WAIT = 4, 5.0  # escaneos de subida a la vez por proceso; espera por un hueco
+_slots = threading.BoundedSemaphore(SCAN_SLOTS)
+LIMITS = "Heuristics.Limits.Exceeded"  # clamd no pudo revisarlo entero (`AlertExceedsMax`)
 
 
 class Refused(Exception):  # noqa: N818 — un motivo cerrado, no un fallo
@@ -42,8 +52,12 @@ class Refused(Exception):  # noqa: N818 — un motivo cerrado, no un fallo
 
 
 class Infected(Refused):
+    """Un veredicto `FOUND`: un virus (`MEDIA_INFECTED`) o un archivo que pasa los topes de
+    clamd (`MEDIA_TOO_COMPLEX`: no es un virus, pero tampoco se pudo revisar entero). Los dos dan
+    422 y se auditan, cada uno con su acción y su alerta (`infected`)."""
+
     def __init__(self, signature: str | None) -> None:
-        super().__init__("MEDIA_INFECTED")
+        super().__init__("MEDIA_TOO_COMPLEX" if too_complex(signature) else "MEDIA_INFECTED")
         self.signature = signature  # el nombre de la firma de ClamAV, nunca el contenido
 
 
@@ -122,7 +136,12 @@ def prepare(ctx: TenantContext, sink: media.Sink, name: str | None) -> Prepared:
     if sink.size > CAPS[kind]:
         raise Refused("MEDIA_TOO_LARGE")
     sink.file.seek(0)
-    verdict = antivirus.scan(sink.file, max_bytes=CAPS[kind], seconds=SCAN_SECONDS)
+    if not _slots.acquire(timeout=SLOT_WAIT):
+        raise antivirus.Unavailable("ocupado")
+    try:
+        verdict = antivirus.scan(sink.file, max_bytes=CAPS[kind], seconds=SCAN_SECONDS)
+    finally:
+        _slots.release()
     if verdict.status != antivirus.CLEAN:
         raise Infected(verdict.signature)
     file_id = new_id()
@@ -158,13 +177,22 @@ def discard(prepared: Prepared) -> None:
                      error=type(error).__name__)  # fmt: skip
 
 
+def too_complex(signature: str | None) -> bool:
+    """¿Pasó los topes de clamd (`MEDIA_TOO_COMPLEX`) en vez de llevar un virus?"""
+    return (signature or "").startswith(LIMITS)
+
+
 def infected(ctx: TenantContext, conversation_id: UUID, signature: str | None) -> None:
-    """Tras el 422 `MEDIA_INFECTED` (su transacción ya se deshizo): la alerta y la auditoría en
-    otra, con la conversación y la firma, sin bytes, nombre ni clave."""
-    scan.alert(ctx, scan.ALERT, signature, conversation_id=conversation_id)
+    """Tras el 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (su transacción ya se deshizo): la alerta
+    y la auditoría en otra, con la conversación y la firma, sin bytes, nombre ni clave. Uno
+    demasiado complejo no es un virus: su acción y su alerta son otras (F7-15c)."""
+    complex_ = too_complex(signature)
+    name = "media.alert.too_complex" if complex_ else scan.ALERT
+    action = "message.media_too_complex" if complex_ else "message.media_infected"
+    scan.alert(ctx, name, signature, conversation_id=conversation_id)
     try:
         with tenant_scope(ctx):
-            record(ctx, "message.media_infected", Entity("conversation", conversation_id),
+            record(ctx, action, Entity("conversation", conversation_id),
                    metadata={"signature": signature}, result=Result.DENIED)  # fmt: skip
     except Exception as error:  # la negativa se responde igual; la alerta ya salió
         logger.error("media.infected_not_audited", conversation_id=str(conversation_id),

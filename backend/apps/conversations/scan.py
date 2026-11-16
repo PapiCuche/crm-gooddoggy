@@ -6,7 +6,9 @@ flujo y lo pasa a `clamd` (`core.antivirus`, INSTREAM con tope y plazo). Un vere
 y, agotados los intentos, queda `ERROR`. Solo un `PENDING` cambia: nada pisa un veredicto.
 `INFECTED` y `ERROR` dejan auditoría y una alerta (`media.alert.infected`, `media.alert.scan_error`)
 con ids y la firma, nunca bytes, nombre ni clave. El barredor (`stale`) vuelve a encolar un
-`PENDING` sin tarea viva."""
+`PENDING` sin tarea viva y (F7-15c) un `ERROR` reciente, que vuelve a `PENDING`: si clamd volvió,
+queda con veredicto sin pedir que reenvíen el archivo. Como mucho una ronda cada `RESCAN_AFTER`
+mientras el archivo es más reciente que `RESCAN_WINDOW`: no más de tres rondas, con sus alertas."""
 
 import datetime as dt
 from uuid import UUID
@@ -30,6 +32,8 @@ BACKOFF = (30, 120, 600)  # segundos de espera tras el intento 1, 2 y 3 (menos q
 SECONDS = 60.0  # plazo de un escaneo (envío y respuesta)
 CAP = max(media.CAPS.values())  # ningún medio entrante pasa de aquí (`media.CAPS`)
 STALE = dt.timedelta(minutes=15)  # un `PENDING` sin intento desde hace esto: sin tarea viva
+RESCAN_AFTER = dt.timedelta(hours=2)  # un `ERROR` sin intento desde hace esto vuelve a escanearse
+RESCAN_WINDOW = dt.timedelta(hours=6)  # ...solo si el archivo es más reciente que esto
 ALERT = "media.alert.infected"
 ALERTS = {"INFECTED": ALERT, "ERROR": "media.alert.scan_error"}
 
@@ -113,16 +117,31 @@ def scan(organization_id: UUID, file_id: UUID, attempt: int) -> tuple[str, int |
 
 
 def stale(ctx: TenantContext, limit: int) -> list[UUID]:
-    """Hasta `limit` archivos `PENDING` de medios entrantes sin intento (ni barrido) desde hace
-    `STALE`, y creados antes: su tarea se perdió o nunca hubo (los de antes de F7-15). Los marca en
-    la misma transacción, para no volver a barrerlos antes de `STALE`."""
+    """Hasta `limit` archivos de medios entrantes que escanear otra vez: un `PENDING` sin intento
+    (ni barrido) desde hace `STALE`, y creado antes (su tarea se perdió o nunca hubo: los de antes
+    de F7-15), o un `ERROR` sin intento desde hace `RESCAN_AFTER` y creado hace menos de
+    `RESCAN_WINDOW` (F7-15c), que vuelve a `PENDING` con su auditoría. Los marca en la misma
+    transacción, para no volver a barrerlos antes de tiempo."""
     alias = require_scope(ctx)
     old = Now() - STALE
     idle = Q(scan_checked_at__isnull=True) | Q(scan_checked_at__lte=old)
+    lost = Q(idle, scan_status="PENDING", created_at__lte=old)
+    failed = Q(
+        scan_status="ERROR", created_at__gte=Now() - RESCAN_WINDOW,
+        scan_checked_at__lte=Now() - RESCAN_AFTER,
+    )  # fmt: skip
     rows = File.objects.using(alias).select_for_update(skip_locked=True)
     found = list(
-        rows.filter(idle, purpose=PURPOSE, scan_status="PENDING", created_at__lte=old)
-        .order_by("created_at", "pk").values_list("pk", flat=True)[:limit]
+        rows.filter(lost | failed, purpose=PURPOSE)
+        .order_by("created_at", "pk").values_list("pk", "scan_status")[:limit]
     )  # fmt: skip
-    File.objects.using(alias).filter(pk__in=found).update(scan_checked_at=Now())
-    return found
+    marked = [pk for pk, _ in found]
+    File.objects.using(alias).filter(pk__in=marked).update(
+        scan_status="PENDING", scan_checked_at=Now()
+    )
+    retried = {"scan_status": ["ERROR", "PENDING"]}
+    for pk, was in found:
+        if was == "ERROR":
+            record(ctx, "file.scan_retried", Entity("file", pk), retried,
+                   actor=(ActorType.SYSTEM, None))  # fmt: skip
+    return marked

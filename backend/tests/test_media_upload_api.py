@@ -11,16 +11,18 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.contrib.auth.models import AnonymousUser
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse
 from django.test import Client
-from django.test.client import encode_multipart
+from django.test.client import RequestFactory, encode_multipart
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.conversations import outbound_media, scan
 from apps.conversations.api import media as route
+from apps.conversations.throttle import ChannelThrottleMiddleware
 from core import storage
 from core.observability import reporting
 from core.storage.memory import InMemoryStorage
@@ -307,3 +309,60 @@ def test_each_person_has_an_upload_limit_counted_before_the_body(
     assert upload(signed(inbox.sam), inbox.convs["both"]).status_code == 202  # el de otra persona
     found = migrator.execute("SELECT key FROM login_throttles WHERE key LIKE 'med:%' ORDER BY key")
     assert found.fetchall() == sorted([(f"med:usr:{inbox.ana.pk}",), (f"med:usr:{inbox.sam.pk}",)])
+
+
+def test_a_file_over_the_scanner_limits_is_too_complex_not_a_virus_with_its_own_audit(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, clamd: FakeClamd,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    seen: list[Any] = []
+    capture = lambda *a, **kw: seen.append((a, kw))  # noqa: E731
+    monkeypatch.setattr(reporting, "reporter", lambda: type("R", (), {"capture_message": capture}))
+    clamd.answer = lambda body: b"stream: Heuristics.Limits.Exceeded.MaxRecursion FOUND\0"
+    convo = inbox.convs["nobody"]
+    sent = form(PDF, file=named(PDF, "a.pdf", "application/pdf"))
+    refused = upload(signed(inbox.ana), convo, sent)
+    assert (refused.status_code, refused.json()["code"]) == (422, "MEDIA_TOO_COMPLEX")
+    assert blobs.objects == {} and migrator.execute(COUNT).fetchone() == (0, 0)
+    found = migrator.execute(INFECTED + " AND action LIKE 'message.media%%'", [convo]).fetchall()
+    assert found == [("message.media_too_complex", "DENIED", inbox.ana.pk,
+                      {"signature": "Heuristics.Limits.Exceeded.MaxRecursion"})]  # fmt: skip
+    assert [kw["fingerprint"] for _, kw in seen] == [["media.alert.too_complex"]]  # no es virus
+
+
+def test_a_failing_audit_keeps_the_422_and_a_client_header_never_sets_the_mark(
+    inbox: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    convo = inbox.convs["nobody"]
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("auditoría caída")
+
+    with monkeypatch.context() as patched, caplog.at_level(logging.INFO):
+        patched.setattr(outbound_media, "record", broken)
+        refused = upload(signed(inbox.ana), convo, form(EICAR_PDF, file=named(EICAR_PDF)))
+    assert (refused.status_code, refused.json()["code"]) == (422, "MEDIA_INFECTED")
+    assert "media.infected_not_audited" in log_text(caplog)
+    forged: dict[str, Any] = {"HTTP_MEDIA_INFECTED": f"{convo},F", "HTTP_X_MEDIA_INFECTED": "1"}
+    assert upload(signed(inbox.ana), convo, **forged).status_code == 202
+    assert upload(signed(inbox.ana), convo, CONTENT_LENGTH="", **forged).status_code == 411
+    infected = INFECTED + " AND action LIKE 'message.media%%'"
+    assert migrator.execute(infected, [convo]).fetchall() == []  # nada auditado
+
+
+@pytest.mark.parametrize(("status", "audited"), [(422, 1), (400, 0), (500, 0), (202, 0)])
+def test_the_late_audit_needs_the_mark_and_a_422(
+    monkeypatch: pytest.MonkeyPatch, status: int, audited: int
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(outbound_media, "infected", lambda *a: calls.append(a))
+
+    def view(request: Any) -> HttpResponse:
+        request.tenant, request.media_infected = "ctx", (uuid4(), "Firma")
+        return HttpResponse(status=status)
+
+    request = RequestFactory().post(f"{BASE}{uuid4()}/media/")
+    request.user = AnonymousUser()  # sin contador: no toca la base
+    ChannelThrottleMiddleware(view)(request)
+    assert len(calls) == audited
