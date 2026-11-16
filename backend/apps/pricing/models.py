@@ -1,5 +1,7 @@
 """Precios (Fase 3, E03; modelo de datos §E.8, ADR-006). Tablas tenant-owned con FORCE RLS."""
 
+from decimal import Decimal
+
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.contrib.postgres.fields import ArrayField, RangeOperators
 from django.db import models
@@ -16,6 +18,11 @@ VIEW, WHOLESALE, DISTRIBUTOR, INTERNAL = (
 READ_PERMISSIONS = (VIEW, WHOLESALE, DISTRIBUTOR, INTERNAL)
 OVERLAP = "product_prices_no_overlap_ex"  # la `EXCLUDE`: su violación es un 409, nunca un 500
 COST_OVERLAP = "variant_costs_no_overlap_ex"  # la de los costos (F3-46)
+# Una línea de un lote con una variación de más del 30 %, en un sentido u otro, es una alerta
+# (04 §K.5): la misma regla en Python (`PriceChangeBatchItem.alert`, `summary.alerts`) y en SQL
+# (`ALERTING`, el filtro `?alert=` de las líneas), así ambos cuentan las mismas.
+ALERT_PERCENT = Decimal(30)
+ALERTING = models.Q(delta_percent__gt=ALERT_PERCENT) | models.Q(delta_percent__lt=-ALERT_PERCENT)
 
 
 class Kind(models.TextChoices):
@@ -552,3 +559,7 @@ class PriceChangeBatchItem(TenantModel):
                 name="price_batch_items_pending_ck",
             ),
         ]
+
+    @property
+    def alert(self) -> bool:
+        return self.delta_percent is not None and abs(self.delta_percent) > ALERT_PERCENT
