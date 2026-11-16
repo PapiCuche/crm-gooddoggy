@@ -13,8 +13,9 @@ rechaza (429 con `Retry-After`) al pasar el tope. Las tres rutas comparten el co
 del acceso borra estas filas cuando su ventana ya pasó (la ventana es menor que su calma).
 
 La subida de un medio (F7-09b2) tiene su contador por persona (`med:usr:<id>`). Su 422
-`MEDIA_INFECTED` (F7-15b) deshace la transacción de la vista: la auditoría y la alerta se dejan
-aquí, después (`outbound_media.infected`).
+`MEDIA_INFECTED` (F7-15b) o `MEDIA_TOO_COMPLEX` (F7-15c) deshace la transacción de la vista: la
+auditoría y la alerta se dejan aquí, después (`outbound_media.infected`), solo con la marca que pone
+la vista (un atributo de la petición, nunca una cabecera) **y** un 422.
 """
 
 import re
@@ -73,6 +74,7 @@ class ChannelThrottleMiddleware:
             return limited
         response = self.get_response(request)
         mark, tenant = getattr(request, "media_infected", None), getattr(request, "tenant", None)
-        if prefix == "med" and mark is not None and tenant is not None:
+        refused = response.status_code == 422  # solo el 422 del antivirus (F7-15c)
+        if prefix == "med" and refused and mark is not None and tenant is not None:
             outbound_media.infected(tenant, *mark)
         return response

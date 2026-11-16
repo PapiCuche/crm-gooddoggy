@@ -50,8 +50,14 @@ const failure = (error: ApiError): ApiErrorKey => {
   return (key === "INTERNAL_ERROR" && BY_STATUS[error.status]) || key;
 };
 // Reenviar el mismo archivo daría lo mismo: se quita y se explica, sin «Reintentar». Sin veredicto
-// del antivirus (503 `MEDIA_SCAN_UNAVAILABLE`) no se guardó nada: ese sí se reintenta.
-const DROP_FILE_ON: ApiErrorKey[] = ["MEDIA_TOO_LARGE", "MEDIA_TYPE_NOT_ALLOWED", "MEDIA_INFECTED"];
+// del antivirus (503 `MEDIA_SCAN_UNAVAILABLE`) no se guardó nada: ese sí se reintenta. Un archivo que
+// pasa los topes del antivirus (422 `MEDIA_TOO_COMPLEX`) no se presenta como virus.
+const DROP_FILE_ON: ApiErrorKey[] = [
+  "MEDIA_TOO_LARGE",
+  "MEDIA_TYPE_NOT_ALLOWED",
+  "MEDIA_INFECTED",
+  "MEDIA_TOO_COMPLEX",
+];
 type Outgoing = SendMessageRequest & { file?: File };
 // Un 409 de la política de envío: lo que cambió puede estar también en la conversación.
 const REFRESH_ON = [
