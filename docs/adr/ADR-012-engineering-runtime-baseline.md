@@ -27,7 +27,7 @@ También hay que elegir el emulador S3 local (D-ENG-2): MinIO dejó de publicar 
 | PostgreSQL | **18.6** (imagen `postgres:18.6`) | minor vigente | Soportada hasta 2030-11-14 | postgresql.org/support/versioning · Docker Hub `library/postgres` |
 | Redis | **8.8.3** (imagen `redis:8.8.3-alpine`) | 2026-09-17 | Línea 8.8 recibiendo parches (8.8.3 publicada junto con 8.10.2) | github.com/redis/redis/releases · Docker Hub `library/redis` |
 | Node.js | **24.21.0** LTS (*Krypton*) | 2026-09-07 | Active LTS hasta 2026-10-20; Maintenance hasta **2028-04-30** | nodejs.org/dist/index.json · github.com/nodejs/Release (schedule.json) |
-| Next.js | **16.4.1** (Active LTS; fijada en F1-09, subida en F3-16, #331) | 2026-10-14 | Security release: corrige 2 críticas (RCE sin autenticación en `use cache` con arrays tipados, GHSA-673q-mjm6-r5xr; y en Image Optimization con SVG, GHSA-2464-fhr4-w9xw) y 1 alta (DoS con Server Actions, GHSA-p3m5-59mp-jv5r), que afectan a 16.0.0–16.4.0. 16.3.8 queda descartada | npm `next` · nextjs.org/blog · GitHub advisories vercel/next.js |
+| Next.js | **16.4.5** (Active LTS; fijada en F1-09, subida en F3-16, #331, y en SEC-NEXT-01, #888) | 2026-11-03 | Security release: corrige GHSA-mfr8-8qww-v76h (moderada; fuga de información entre root params cuando una función `use cache` se llama a través de `unstable_cache()`), que afecta a 16.3.0–16.4.4. Antes, 16.4.1 corrigió GHSA-673q-mjm6-r5xr, GHSA-2464-fhr4-w9xw y GHSA-p3m5-59mp-jv5r (§4.2) | npm `next` · nextjs.org/blog · GitHub advisories vercel/next.js |
 | React | **19.2.8** | 2026-07-21 | Versión que empareja `create-next-app` 16.3.8 (`nextjsReactPeerVersion`); incluye el fix de GHSA-wx67-qw84-cm4g; revalidada el 2026-09-30 | npm `react` · `packages/create-next-app/templates/index.ts@v16.3.6` · GitHub advisories facebook/react |
 | React DOM | **19.2.8** | 2026-07-21 | Igual que React | npm `react-dom` |
 | @types/react | **19.2.18** | 2026-07-30 | Versión usada por el propio monorepo de Next.js v16.3.8 (revalidada 2026-09-30) | npm `@types/react` · `package.json@v16.3.8` |
@@ -150,6 +150,12 @@ Tooling del frontend fijado en el mismo PR (npm, 2026-09-30):
 - **React** sigue en 19.2.8, que cumple el peer `^19` de Next 16.4.1; `create-next-app@16.4.1` ya empareja `19.3.0`, así que la subida que §4 dejó «para cuando Next.js la empareje» va en F3-18 (#337).
 - **pnpm:** las excepciones de `minimumReleaseAgeExclude` para 16.3.8 se retiran; 16.4.1 tiene más de 24 h y no necesita ninguna.
 
+### 4.4 Revalidación de SEC-NEXT-01 (2026-11-16, #888)
+
+- **Next.js 16.4.5** (2026-11-03) sustituye a 16.4.1, junto con `eslint-config-next` 16.4.5 (que trae `@next/eslint-plugin-next` 16.4.5). Corrige GHSA-mfr8-8qww-v76h (moderada, publicada el 2026-11-16), que afecta a 16.3.0–16.4.4. Desde ese día `next build` se detiene con `SecurityFatalError` en las versiones afectadas. El código no usa `use cache` ni `unstable_cache`, así que el aviso no nos afectaba en la práctica.
+- **Por qué no la más reciente:** ninguna versión parcheada tiene dos semanas. Se elige la parcheada más baja, que es el cambio mínimo de seguridad; 16.4.6 (2026-11-09) tiene una semana. Ninguna de las dos necesita excepción de `minimumReleaseAge`.
+- **React** sigue en 19.2.8 (peer `^19`); la subida a 19.3 sigue en F3-18 (#337).
+
 ### 4.3 Lector de XLSX (F3-23, 2026-10-23, #358)
 
 El mantenedor autorizó leer XLSX en la importación de stock con `openpyxl` en versión fijada, revisión de seguridad y límites estrictos (decisión 7 del 2026-10-23 en #358). Ninguna dependencia lo leía antes.
@@ -209,10 +215,10 @@ En CI se ejecuta contra Garage; contra S3 y R2 solo de forma manual o programada
 
 ## Compatibility matrix (resumen)
 
-| | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.4.1 | React 19.2.8 | TS 6.0.3 |
+| | Python 3.14.7 | Django 5.2.17 | PostgreSQL 18.6 | Node 24.21.0 | Next 16.4.5 | React 19.2.8 | TS 6.0.3 |
 |---|---|---|---|---|---|---|---|
 | Django 5.2.17 | ✅ (≥ 5.2.8) | — | ✅ (psycopg 3.3.6) | — | — | — | — |
-| Next 16.4.1 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; la pareja oficial pasa a 19.3.0, F3-18) | ✅ (instala `^6.0.0`) |
+| Next 16.4.5 | — | — | — | ✅ (`>=20.9.0`) | — | ✅ (peer `^19.0.0`; la pareja oficial pasa a 19.3.0, F3-18) | ✅ (instala `^6.0.0`) |
 | Celery 5.6 / Channels 4.3 | ✅ | ✅ | — | — | — | — | — |
 | django-stubs 5.2.9 + mypy 1.19.1 | ⚠️ probado hasta 3.13, instalable; verificar en F1-02 | ✅ | — | — | — | — | — |
 | Garage v2.4.1 | — | — | — | — | — | — | — |
