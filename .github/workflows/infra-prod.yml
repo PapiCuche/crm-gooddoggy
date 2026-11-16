@@ -5,6 +5,7 @@ name: infra-prod
 # F1-15: la prueba de deploy.sh con docker falso (fallo de la puerta → vuelta atrás) y la frontera
 # de images.yml (test_workflow_security.py), que el check trusted solo ejecuta desde main.
 # F1-16: la retención de los backups y el simulacro de backup y restauración con un Garage local.
+# F1-17: smoke.sh con docker y curl falsos (certificado, /demo y /health/* desde fuera).
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -44,6 +45,8 @@ jobs:
       - name: Retención de los backups (lifecycle.json y prefijos)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_backup_retention
+      - name: Prueba de humo sin servidor (test-smoke.sh)
+        run: bash infra/prod/test-smoke.sh
       - name: Compose y Caddyfile (validate.sh --caddy)
         run: sh infra/prod/validate.sh --caddy
 
