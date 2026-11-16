@@ -1,0 +1,91 @@
+"""Una API de Anthropic falsa para las pruebas de `apps.ai_gateway` (F8-03b), sin red: contesta
+`GET /v1/models` con las respuestas y los errores documentados (ADR-034 §3). `install` sustituye
+solo la capa de red de `core.http` (como `tests.meta_sim.transport`), así que su política real
+(https, allowlist, cabeceras) sigue aplicándose. Cada cuerpo de error lleva `BODY_MARK`: una prueba
+comprueba que ningún cuerpo del proveedor sale del CRM. Ninguna clave es real."""
+
+import io
+import json
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+import pytest
+import urllib3
+from urllib3.exceptions import ProtocolError, ReadTimeoutError
+
+from core import http
+
+HOST = "api.anthropic.com"
+TEST_KEY = "fake-anthropic-key-not-real-0001"  # ficticia
+BODY_MARK = "provider-body-must-not-leave"
+REQUEST_ID = "req_fake_0001"
+# nombre -> (estado HTTP, tipo de error, mensaje, `error.details.error_code`)
+ERRORS: dict[str, tuple[int, str, str, str | None]] = {
+    "unauthorized": (401, "authentication_error", "invalid x-api-key", None),
+    "forbidden": (403, "permission_error", "not allowed", None),
+    "billing": (402, "billing_error", "credit balance too low", None),
+    "spend_limit": (400, "invalid_request_error",
+                    "You have reached your specified API usage limits.", None),
+    "tier_limit": (429, "rate_limit_error", "spend limit", "enforced_spend_limit_reached"),
+    "rate_limit": (429, "rate_limit_error", "rate limited", None),
+    "server": (500, "api_error", "internal error", None),
+    "overloaded": (529, "overloaded_error", "overloaded", None),
+    "bad_request": (400, "invalid_request_error", "bad request", None),
+    "not_found": (404, "not_found_error", "not found", None),
+}  # fmt: skip
+OUTCOMES = ("ok", "garbage", "cut", "timeout", *ERRORS)
+
+
+@dataclass
+class FakeAnthropic:
+    """`outcome` fija la respuesta de las próximas llamadas; otra clave que `key` es un 401."""
+
+    key: str = TEST_KEY
+    outcome: str = "ok"
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def handle(self, method: str, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
+        parts = urlsplit(url)
+        self.calls.append(
+            {"method": method, "path": parts.path, "query": parse_qs(parts.query),
+             "headers": dict(headers)}
+        )  # fmt: skip
+        if self.outcome == "cut":
+            raise ProtocolError("Connection aborted.")
+        if self.outcome == "timeout":
+            raise ReadTimeoutError(None, url, "Read timed out.")  # type: ignore[arg-type]
+        name = "unauthorized" if headers.get("x-api-key") != self.key else self.outcome
+        if (method, parts.path) != ("GET", "/v1/models") and name == "ok":
+            name = "not_found"
+        if name == "ok":
+            data = [{"type": "model", "id": "claude-fake-model", "display_name": BODY_MARK}]
+            return 200, json.dumps({"data": data, "has_more": True}).encode()
+        if name == "garbage":
+            return 200, f"<html>{BODY_MARK}</html>".encode()
+        status, kind, message, code = ERRORS[name]
+        error: dict[str, Any] = {"type": kind, "message": f"{message} {BODY_MARK}"}
+        if code:
+            error["details"] = {"error_code": code}
+        return status, json.dumps({"type": "error", "error": error}).encode()
+
+
+class _Manager:
+    def __init__(self, fake: FakeAnthropic) -> None:
+        self.fake = fake
+
+    def request(
+        self, method: str, url: str, *, headers: dict[str, str] | None = None, **_: Any
+    ) -> urllib3.BaseHTTPResponse:
+        if urlsplit(url).hostname != HOST:  # nada fuera del simulador
+            raise AssertionError(f"el simulador no atiende {urlsplit(url).hostname}")
+        status, body = self.fake.handle(method, url, dict(headers or {}))
+        reply_headers = {"request-id": REQUEST_ID, "content-type": "application/json"}
+        return urllib3.HTTPResponse(
+            body=io.BytesIO(body), headers=reply_headers, status=status, preload_content=False
+        )
+
+
+def install(monkeypatch: pytest.MonkeyPatch, fake: FakeAnthropic) -> FakeAnthropic:
+    monkeypatch.setattr(http, "_manager", _Manager(fake))
+    return fake
