@@ -1,0 +1,12 @@
+# Cada noche a las 03:15 UTC (ADR-033 §8.1: RPO de 24 h). Persistent: si el servidor estaba apagado,
+# corre al arrancar.
+[Unit]
+Description=Good Doggy CRM: backup nocturno
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
