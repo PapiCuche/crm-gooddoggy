@@ -21,7 +21,8 @@ from apps.conversations.models import (
 from apps.files.models import File
 
 # El archivo de un adjunto `DONE` que se puede servir: el suyo (`message-media`), con el antivirus
-# en `CLEAN` (D-F7-04: sin antivirus, nada) y un tipo del mapa canónico (el de los magic bytes).
+# en `CLEAN` (D-F7-04; F7-15: ni `PENDING`, ni `INFECTED`, ni `ERROR`) y un tipo del mapa canónico
+# (el de los magic bytes).
 SERVABLE = Q(purpose="message-media", scan_status="CLEAN", mime_type__in=EXTENSIONS)
 # El adjunto que se puede servir: `DONE` y de un mensaje **entrante** (lo saliente y las notas no,
 # aunque alguien lo dejara en la base). La misma regla para la lista (`available`) y la URL.
@@ -42,14 +43,16 @@ def messages(conversation_id: object, *, notes: bool) -> QuerySet[Message]:
 
 def attachments(message_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
     """Los adjuntos de esos mensajes, por mensaje, en dos consultas: clase, estado y, solo con
-    `DONE` y un archivo `message-media`, su tipo (el de los magic bytes) y tamaño. Nunca la clave,
-    el id de Meta ni el intento. `available`: si la ruta de la URL lo serviría (`SERVED` y
+    `DONE` y un archivo `message-media`, su tipo (el de los magic bytes), tamaño y antivirus. Nunca
+    la clave, el id de Meta ni el intento. `available`: si la ruta de la URL lo serviría (`SERVED` y
     `SERVABLE`; sin mirar al contacto: eso lo añade quien lo muestra)."""
     found_rows = MessageAttachment.objects.filter(message_id__in=message_ids)
     rows = list(found_rows.annotate(served=SERVED))
     done = [row.file_id for row in rows if row.download_status == "DONE"]
     mine = File.objects.filter(pk__in=done, purpose="message-media")
-    shown = mine.annotate(ok=Q(SERVABLE)).values("id", "mime_type", "size_bytes", "ok")
+    shown = mine.annotate(ok=Q(SERVABLE)).values(
+        "id", "mime_type", "size_bytes", "scan_status", "ok"
+    )
     files = {f["id"]: f for f in shown}
     found = {}
     for row in rows:
@@ -57,6 +60,7 @@ def attachments(message_ids: list[UUID]) -> dict[UUID, dict[str, Any]]:
         found[row.message_id] = {
             "id": row.pk, "kind": row.kind, "status": row.download_status,
             "mime_type": file.get("mime_type"), "size_bytes": file.get("size_bytes"),
+            "scan_status": file.get("scan_status"),
             "available": bool(row.served and file.get("ok")),
         }  # fmt: skip
     return found

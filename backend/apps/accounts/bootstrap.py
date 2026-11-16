@@ -1,7 +1,7 @@
 """Frontera de alta de `accounts` (F2-06): la cuenta del Owner inicial de una organización.
 
 Solo la importa `apps.provisioning` (contrato de import-linter). El alta de usuarios por
-invitación llega con E01-06.
+invitación llega con E01-06; la de un operador, con `member_account` (F2-127).
 """
 
 from uuid import UUID
@@ -47,6 +47,34 @@ def test_account(email: str, password: str | None) -> tuple[UUID, bool]:
     if User.objects.filter(email=email).exists():
         return owner_account(email, None)
     return owner_account(email, password)
+
+
+def member_account(email: str, password: str | None) -> tuple[UUID, bool]:
+    """La cuenta de un miembro que añade un operador (`add_member`, F2-127), como `(id, creada)`.
+    `email` ya es canónico.
+
+    Si existe se usa tal cual, con su contraseña, si está activa y no es de personal de
+    plataforma (ADR-001: no es miembro de las organizaciones). Si no, se crea con `password`, que
+    la escribió el operador: la cuenta no abre sesión hasta elegir la suya (ADR-021).
+    """
+    existing = User.objects.filter(email=email).first()
+    if existing is not None:
+        if not existing.is_active:
+            raise ValidationError("El usuario está desactivado", code="inactive")
+        if existing.is_platform_staff:
+            raise ValidationError("Es una cuenta de personal de plataforma", code="staff")
+        return existing.pk, False
+    if password is None:
+        raise ValidationError("El usuario no existe: necesita contraseña", code="required")
+    validate_password(password, User(email=email))
+    try:
+        with transaction.atomic():  # savepoint: otra alta pudo crear la misma cuenta a la vez
+            user = User.objects.create_user(
+                email=email, password=password, password_change_required=True
+            )
+    except IntegrityError:
+        raise ValidationError("El usuario se creó a la vez: repite el comando") from None
+    return user.pk, True
 
 
 def account_exists(email: str) -> bool:

@@ -261,7 +261,8 @@ def change_password(request: HttpRequest, *, token: str, password: str) -> None:
             reason = ""
             validate_password(password, user)  # `ValidationError`: el enlace no se gasta
             user.set_password(password)
-            user.save(update_fields=["password", "updated_at"])
+            user.password_change_required = False  # la elige la cuenta: ya abre sesión (F2-127)
+            user.save(update_fields=["password", "password_change_required", "updated_at"])
             link.used_at = timezone.now()
             link.save(update_fields=["used_at"])
             revoke_sessions(user.pk)
