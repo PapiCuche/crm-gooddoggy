@@ -90,11 +90,11 @@ Pide la contraseña del Owner dos veces y no la muestra. Debe cumplir la políti
 - **`crm_test` no existe:** el volumen de PostgreSQL es anterior a F1-10. Reinicia en limpio (`down -v`).
 - **Garage `Invalid RPC secret key`:** `GARAGE_RPC_SECRET` debe tener 64 caracteres hex.
 
-## 6. Probar el envío de imágenes y PDF (F7-09b3)
+## 6. Probar el envío de imágenes y PDF (F7-15b)
 
-El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED` al instante. Necesitas una cuenta con `channels.manage`, `contacts.view`, `conversations.view` y `messages.send` (el Owner las tiene).
+Cada imagen o PDF que sube una persona pasa por el antivirus (**clamd**, §7) **antes** de guardarse: solo un archivo limpio queda en cola y sale; uno infectado se rechaza y uno que no se pudo revisar no se guarda. No hay ningún interruptor que encender. El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED` al instante. Necesitas una cuenta con `channels.manage`, `contacts.view`, `conversations.view` y `messages.send` (el Owner las tiene).
 
-1. **Apagado (por omisión).** `make up` con `MEDIA_SEND_UNSCANNED=false` en `infra/env/.env`.
+1. `make up` y espera a que `clamd` esté sano (`ps clamd`, §7; la primera vez tarda ~1 min).
 2. Entra en **http://localhost:8080** y abre un cliente en `/o/<slug>/clientes`: el id del contacto es el último tramo de la URL.
 3. Simula que ese cliente escribe (abre la conversación y su ventana de 24 h). En la consola del navegador, en la misma pestaña:
 
@@ -107,18 +107,26 @@ El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED`
    }).then((r) => r.json());
    ```
 
-4. Abre `/o/<slug>/inbox`, la conversación del cliente, y pulsa el clip («Adjuntar imagen o PDF»). Elige un JPEG, PNG o PDF: se ve su nombre y tamaño, y el cuadro pasa a decir «Pie de foto (opcional)». Pulsa «Enviar».
-   - **Esperado (apagado):** no aparece ningún mensaje nuevo; bajo el cuadro, «Por ahora no se pueden enviar archivos…», y el clip ya no abre el selector.
-5. **Encendido.** Pon `MEDIA_SEND_UNSCANNED=true` en `infra/env/.env`, `make up` (recrea backend y worker) y recarga la página.
-   - Envía una imagen con un pie de foto y un PDF sin él. **Esperado:** dos burbujas a la derecha, «Imagen» con el pie y «Documento», que pasan de «En cola» a «Entregado» (pulsa «Actualizar mensajes» si no cambia sola).
-   - Un GIF o una imagen de más de 5 MB (un PDF de más de 10 MB) no se adjunta y se explica; no se sube nada.
-6. Al terminar, vuelve a `MEDIA_SEND_UNSCANNED=false` y `make up`: sin antivirus (D-F7-04), ningún medio debe salir fuera de una prueba local.
+4. Abre `/o/<slug>/inbox`, la conversación del cliente, y pulsa el clip («Adjuntar imagen o PDF»). Elige un JPEG o PNG: se ve su nombre y tamaño, y el cuadro pasa a decir «Pie de foto (opcional)». Escribe un pie y pulsa «Enviar». Repite con un PDF, sin pie.
+   - **Esperado:** dos burbujas a la derecha, «Imagen» con el pie y «Documento», que pasan de «En cola» a «Entregado» (pulsa «Actualizar mensajes» si no cambia sola).
+5. **Un archivo infectado.** Crea un PDF de prueba con el archivo EICAR dentro (no es un virus real; todos los antivirus lo reconocen):
+
+   ```bash
+   printf '%%PDF-1.4\n1 0 obj\n<< /Length 68 >>\nstream\nX5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*\nendstream\nendobj\n%%%%EOF\n' > eicar-prueba.pdf
+   ```
+
+   Adjúntalo como en el paso 4 y pulsa «Enviar». Si tu antivirus del equipo lo borra al crearlo, créalo en una carpeta que no vigile.
+   - **Esperado:** no aparece ningún mensaje nuevo; bajo el cuadro, en rojo, «El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.», el adjunto se quita y no hay «Reintentar». Queda en la auditoría (`message.media_infected`, con la firma y sin el contenido) y en el registro del backend la alerta `media.alert.infected`. No se guarda ningún archivo.
+6. **Sin antivirus.** Para clamd (`docker compose -f infra/docker/compose.yaml --env-file infra/env/.env stop clamd`), adjunta una imagen y pulsa «Enviar».
+   - **Esperado:** «No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos.»; el adjunto se conserva y el botón dice «Reintentar». No se guarda nada.
+   - Arranca clamd otra vez (`… start clamd`), espera a que esté sano y pulsa «Reintentar»: ahora sale.
+7. Un GIF o una imagen de más de 5 MB (un PDF de más de 10 MB) no se adjunta y se explica; no se sube nada.
 
 ## 7. Abrir los medios entrantes: el antivirus (F7-15)
 
 Un medio que llega por WhatsApp (imagen, audio, video o sticker) se descarga y queda en espera hasta que el antivirus **ClamAV** lo revisa. Solo un archivo limpio se puede descargar desde el chat; uno infectado o que no se pudo revisar nunca se sirve.
 
-**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host y vive en su propia red `av`, interna (sin salida): solo lo ve **worker-media**, en `clamd:3310`. Su configuración es `infra/docker/clamav/clamd.conf`. Trae firmas en la imagen; el servicio **freshclam** (otro contenedor, el único con salida) las actualiza en el volumen `clamavdata` y clamd las recarga solo. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
+**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host y vive en su propia red `av`, interna (sin salida): solo lo ven **worker-media** (lo recibido) y **backend** (lo que se envía, §6), en `clamd:3310`. Su configuración es `infra/docker/clamav/clamd.conf`. Trae firmas en la imagen; el servicio **freshclam** (otro contenedor, el único con salida) las actualiza en el volumen `clamavdata` y clamd las recarga solo. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
 
 ```bash
 docker compose -f infra/docker/compose.yaml --env-file infra/env/.env ps clamd   # «healthy»

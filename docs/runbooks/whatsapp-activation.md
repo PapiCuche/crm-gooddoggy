@@ -118,7 +118,7 @@ Con el gestor de secretos de un proveedor, el equivalente que lea el valor de la
 
 **Topes de tasa.** `CHANNEL_CHECK_THROTTLE` (5 peticiones cada 10 minutos por persona en conectar, rotar y desconectar) y `CHANNEL_SEND_LIMIT` (20 envíos por segundo y cuenta, contados en Redis) están **fijados en el código**, no en el entorno. Con `META_ENABLED=true`, `web`, `worker`, `ws` y `beat` no arrancan si no son válidos o si falta `CELERY_BROKER_URL` (`env.check_meta`, llamado desde `production.py`). Nada que configurar; solo saber que un arranque fallido con un mensaje sobre `CHANNEL_CHECK_THROTTLE`, `CHANNEL_SEND_LIMIT` o `CELERY_BROKER_URL` viene de aquí.
 
-**Otras del canal (opcionales, con valor por omisión seguro):** `MEDIA_SEND_UNSCANNED=false` (D-F7-04: sin antivirus no sale ningún medio; no cambiarlo sin la decisión del propietario), `CHANNEL_HEALTH_INTERVAL_MINUTES=15`, `INBOX_SENDING_DEADLINE_MINUTES=15`, `INBOX_SWEEP_AFTER_MINUTES=5`, `INBOX_GIVE_UP_AFTER_MINUTES=120`.
+**Otras del canal (opcionales, con valor por omisión seguro):** `CLAMD_ADDRESS` (el antivirus, `host:puerto` de clamd; vacío: ningún medio recibido se abre y ningún archivo se envía), `CHANNEL_HEALTH_INTERVAL_MINUTES=15`, `INBOX_SENDING_DEADLINE_MINUTES=15`, `INBOX_SWEEP_AFTER_MINUTES=5`, `INBOX_GIVE_UP_AFTER_MINUTES=120`.
 
 **Qué procesos las reciben:** `web`, `worker`, `worker-media`, `ws` y `beat`. **El job de migraciones no** (ADR-002 §1.1).
 

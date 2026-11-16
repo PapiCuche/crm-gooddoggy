@@ -2,11 +2,12 @@
 
 Es dato no confiable. El tipo sale de los magic bytes (JPEG y PNG, imagen; PDF, documento), nunca
 del que declara el cliente; el tamaño, de los bytes leídos (`media.Sink`), con un tope por tipo (a
-confirmar). Sin antivirus (D-F7-04) no se guarda nada salvo con `MEDIA_SEND_UNSCANNED`. El blob va
-al almacén privado **antes** de la transacción del comando, que crea el archivo
-(`scan_status = PENDING`) y el mensaje; si el comando falla, o era un reintento, quien llama lo
-borra con `discard`. Un archivo saliente nunca se sirve al navegador (`selectors.SERVED` pide un
-mensaje entrante). Propósito `message-media-out` (F7-09b2), que el reclamo exige: un saliente nunca
+confirmar). Pasa por el antivirus (F7-15b, D-F7-04) **antes** de guardarse: solo uno limpio llega
+al almacén privado, antes de la transacción del comando, que crea el archivo (`scan_status =
+CLEAN`) y el mensaje; si el comando falla, o era un reintento, quien llama lo borra con `discard`.
+Infectado es `Infected` (con la firma) y sin veredicto, `antivirus.Unavailable`: nada se guarda.
+Un archivo saliente nunca se sirve al navegador (`selectors.SERVED` pide un mensaje entrante).
+Propósito `message-media-out` (F7-09b2), que el reclamo exige: un saliente nunca
 lleva un blob entrante. La ruta lo lee con `Capped`. Registros: ids y la clase de un error."""
 
 import re
@@ -14,14 +15,15 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from django.conf import settings
 from django.core.files.uploadhandler import FileUploadHandler, StopUpload
 
-from apps.conversations import media
-from core import storage
+from apps.audit.services import Entity, Result, record
+from apps.conversations import media, scan
+from core import antivirus, storage
 from core.ids import new_id
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
+from core.tenancy.scope import tenant_scope
 
 logger = get_logger(__name__)
 TYPES = {"image/jpeg": "IMAGE", "image/png": "IMAGE", "application/pdf": "DOCUMENT"}
@@ -30,6 +32,7 @@ LABELS = {"IMAGE": "Imagen", "DOCUMENT": "Documento"}  # el cuerpo de un medio s
 NAME_MAX = 100
 CAPTION_MAX = 1024  # el pie de foto que admite WhatsApp, en unidades UTF-16
 PURPOSE = "message-media-out"
+SCAN_SECONDS = 15.0  # el plazo del antivirus: la persona espera la respuesta de la subida
 
 
 class Refused(Exception):  # noqa: N818 — un motivo cerrado, no un fallo
@@ -38,9 +41,15 @@ class Refused(Exception):  # noqa: N818 — un motivo cerrado, no un fallo
         self.code = code
 
 
+class Infected(Refused):
+    def __init__(self, signature: str | None) -> None:
+        super().__init__("MEDIA_INFECTED")
+        self.signature = signature  # el nombre de la firma de ClamAV, nunca el contenido
+
+
 @dataclass(frozen=True, slots=True)
 class Prepared:
-    """El blob ya guardado y lo que el comando escribe de él en `files`."""
+    """El blob ya guardado (limpio: solo `prepare` lo crea) y lo que el comando escribe de él."""
 
     file_id: UUID
     key: str
@@ -102,10 +111,9 @@ def filename(name: str | None, kind: str, mime: str) -> str:
 
 
 def prepare(ctx: TenantContext, sink: media.Sink, name: str | None) -> Prepared:
-    """El tipo real y el tope de lo leído, y el blob en el almacén. `Refused`: sin antivirus
-    (`MEDIA_NOT_SCANNED`, antes de mirar nada), tipo no permitido o mayor que su tope."""
-    if not settings.MEDIA_SEND_UNSCANNED:
-        raise Refused("MEDIA_NOT_SCANNED")
+    """El tipo real y el tope de lo leído, el antivirus y el blob en el almacén. `Refused`: tipo no
+    permitido o mayor que su tope; `Infected`; `antivirus.Unavailable` sin veredicto. Solo un
+    archivo limpio se guarda; si guardarlo falla, nada queda."""
     sink.file.seek(0)
     mime = sniff(sink.file.read(8))
     if mime is None:
@@ -113,6 +121,10 @@ def prepare(ctx: TenantContext, sink: media.Sink, name: str | None) -> Prepared:
     kind = TYPES[mime]
     if sink.size > CAPS[kind]:
         raise Refused("MEDIA_TOO_LARGE")
+    sink.file.seek(0)
+    verdict = antivirus.scan(sink.file, max_bytes=CAPS[kind], seconds=SCAN_SECONDS)
+    if verdict.status != antivirus.CLEAN:
+        raise Infected(verdict.signature)
     file_id = new_id()
     key = storage.tenant_key(ctx.organization_id, PURPOSE, file_id)
     digest, shown = sink.digest.hexdigest(), filename(name, kind, mime)
@@ -143,4 +155,17 @@ def discard(prepared: Prepared) -> None:
         storage.storage().delete(prepared.key)
     except Exception as error:  # el blob queda huérfano (conciliación, ADR-008)
         logger.error("media.outbound_delete_failed", file_id=str(prepared.file_id),
+                     error=type(error).__name__)  # fmt: skip
+
+
+def infected(ctx: TenantContext, conversation_id: UUID, signature: str | None) -> None:
+    """Tras el 422 `MEDIA_INFECTED` (su transacción ya se deshizo): la alerta y la auditoría en
+    otra, con la conversación y la firma, sin bytes, nombre ni clave."""
+    scan.alert(ctx, scan.ALERT, signature, conversation_id=conversation_id)
+    try:
+        with tenant_scope(ctx):
+            record(ctx, "message.media_infected", Entity("conversation", conversation_id),
+                   metadata={"signature": signature}, result=Result.DENIED)  # fmt: skip
+    except Exception as error:  # la negativa se responde igual; la alerta ya salió
+        logger.error("media.infected_not_audited", conversation_id=str(conversation_id),
                      error=type(error).__name__)  # fmt: skip
