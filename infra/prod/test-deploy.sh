@@ -33,7 +33,7 @@ case "${args[*]}" in
   "exec -T postgres pg_dump"*) echo dump-bytes; if fails "$FAIL_DUMP"; then exit 1; fi ;;
   "run --rm --no-deps migrate") if fails "$FAIL_RUN"; then exit 1; fi ;;
   "exec -T backend python"*) if fails "$FAIL_READY"; then exit 1; fi ;;
-  "pull --quiet") if [ -n "$KILL_ON_PULL" ]; then kill -TERM "$PPID"; fi ;;
+  "pull --quiet") if [ -n "$KILL_ON_PULL" ]; then kill -"$KILL_ON_PULL" "$PPID"; fi ;;
 esac
 EOF
 cat > "$work/infra/prod/smoke.sh" <<'EOF'
@@ -57,6 +57,11 @@ EOF
 cat > "$work/bin/id" <<'EOF'
 #!/bin/sh
 echo "${FAKE_UID:-0}"
+EOF
+# date falso: siempre el mismo segundo, para que dos volcados seguidos choquen si el nombre no es único.
+cat > "$work/bin/date" <<'EOF'
+#!/bin/sh
+case $* in *%Y%m%dT*) echo 20260101T000000Z ;; *) echo 2026-01-01T00:00:00Z ;; esac
 EOF
 chmod +x "$work/bin/"* "$work/infra/prod/"*.sh
 echo "age1example" > "$work/etc/backup-recipients.txt"
@@ -203,8 +208,13 @@ deploy --rollback
 [ "$rc" = 0 ] || fail "--rollback"
 state a b "tras --rollback"
 
-# Una señal a mitad deja el lock y release.env.next; el siguiente despliegue se niega.
-KILL_ON_PULL=1 deploy "$work/c.env"
+# SIGHUP (sesión SSH perdida) no corta el despliegue.
+KILL_ON_PULL=HUP deploy "$work/c.env"
+[ "$rc" = 0 ] || fail "SIGHUP cortó el despliegue (exit $rc)"
+state c a "tras SIGHUP"
+
+# Otra señal a mitad deja el lock y release.env.next; el siguiente despliegue se niega.
+KILL_ON_PULL=TERM deploy "$work/b.env"
 [ "$rc" = 130 ] || fail "señal: exit $rc"
 [ -d "$work/state/lock" ] || fail "la señal quitó el lock"
 [ -f "$work/etc/release.env.next" ] || fail "la señal quitó release.env.next"
