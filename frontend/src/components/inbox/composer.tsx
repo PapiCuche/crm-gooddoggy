@@ -389,7 +389,7 @@ function ComposeBox({
         value={text}
         disabled={closed}
         readOnly={send.isPending}
-        placeholder={note ? undefined : t("placeholder")}
+        placeholder={note || closed ? undefined : t("placeholder")}
         {...quick.field}
         aria-describedby={`${field}-count ${field}-keys${note ? ` ${field}-hint` : ""}${file ? ` ${field}-file` : ""}${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
@@ -468,7 +468,7 @@ function ComposeBox({
             </span>
           ) : null}
           <span id={`${field}-keys`} className="max-lg:sr-only">
-            {t(note ? "hint.noteKeys" : "hint.reply")}
+            {t(note ? "hint.noteKeys" : quick.open ? "hint.pick" : "hint.reply")}
           </span>
           <span
             id={`${field}-count`}

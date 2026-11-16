@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 const TRIGGER = /^\/(\S{0,100})$/;
 const WAIT = 250; // ms sin teclear antes de buscar
 const LIMIT = 50;
+const SETTLE = 500; // ms tras insertar en que un Enter más no envía
 const VARIABLE = {
   "contact.first_name": "firstName",
   "contact.name": "name",
@@ -72,13 +73,20 @@ export function useQuickReplies({
   const list = useId();
   const typed = TRIGGER.exec(text)?.[1];
   const [dismissed, setDismissed] = useState(false); // Escape: cerrado hasta quitar la `/`
-  const [missing, setMissing] = useState<QuickReplyVariableEnum[]>([]);
+  // Lo que faltó en el último texto insertado; el aviso se va en cuanto el texto cambia.
+  const [missing, setMissing] = useState<{ text: string; names: QuickReplyVariableEnum[] }>();
+  const [away, setAway] = useState(false); // el foco salió del cuadro
   const [activeId, setActiveId] = useState<string | null>(null);
   const [failedAt, setFailedAt] = useState<string | null>(null); // el texto cuando falló `render`
   const pick = useRef<string | null>(null); // Enter antes de que llegue la búsqueda
+  // Lo último que se ve: un `render` que vuelve tarde solo inserta si nada cambió desde que se pidió.
+  const latest = useRef({ conversationId, text });
+  const settling = useRef(false); // recién insertado: un Enter más todavía no envía
+  useEffect(() => {
+    latest.current = { conversationId, text };
+  });
   if (typed === undefined && dismissed) setDismissed(false);
-  if (text === "" && missing.length > 0) setMissing([]); // enviado o borrado
-  const open = enabled && typed !== undefined && !dismissed;
+  const open = enabled && typed !== undefined && !dismissed && !away;
 
   const q = useSettled(typed ?? "", WAIT);
   const found = useQuery({
@@ -93,7 +101,7 @@ export function useQuickReplies({
   });
   // Mientras la búsqueda no alcanza lo escrito, la lista es la anterior: Enter no elige de ella,
   // espera a la buena y elige su primera opción (si se sigue escribiendo, se olvida).
-  const current = q === (typed ?? "") && !found.isPlaceholderData;
+  const current = q === (typed ?? "") && found.isSuccess && !found.isPlaceholderData;
   const groups = useMemo(() => byCategory(found.data?.results ?? []), [found.data]);
   const options = groups.flatMap((group) => group.replies);
   const active = options.find(({ id }) => id === activeId) ?? options[0];
@@ -101,14 +109,23 @@ export function useQuickReplies({
 
   const render = useMutation<Rendered, ApiError, QuickReplyUse>({
     mutationFn: (reply) => conversationQuickRepliesRender(slug, conversationId, reply.id),
-    onSuccess: (done) => {
-      setDismissed(true); // un texto que empiece con `/` no vuelve a abrir el selector
-      setMissing(done.missing);
-      insert(done.text);
-    },
   });
   const choose = (reply: QuickReplyUse | undefined) => {
-    if (reply && !render.isPending) render.mutate(reply, { onError: () => setFailedAt(text) });
+    if (!reply || render.isPending) return;
+    const asked = { conversationId, text };
+    render.mutate(reply, {
+      onSuccess: (done) => {
+        // Si se siguió escribiendo o se cambió de conversación, lo escrito manda: se descarta.
+        const now = latest.current;
+        if (now.conversationId !== asked.conversationId || now.text !== asked.text) return;
+        setDismissed(true); // un texto que empiece con `/` no vuelve a abrir el selector
+        setMissing({ text: done.text, names: done.missing });
+        settling.current = true;
+        setTimeout(() => (settling.current = false), SETTLE);
+        insert(done.text);
+      },
+      onError: () => setFailedAt(text),
+    });
   };
 
   useEffect(() => {
@@ -125,9 +142,19 @@ export function useQuickReplies({
 
   // Devuelve si la tecla era del selector; si lo era, el cuadro no hace nada más (Enter no envía).
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!open) return false;
+    const enter = event.key === "Enter" && !event.shiftKey;
+    if (!open) {
+      // El Enter que eligió, sostenido o repetido al instante, no envía el texto sin revisarlo.
+      if (!enabled || !enter || !(event.repeat || settling.current)) return false;
+      event.preventDefault();
+      return true;
+    }
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (composing) return false;
+    if (event.key === "Tab") {
+      setDismissed(true); // Tab sigue moviendo el foco
+      return false;
+    }
     if (event.key === "Escape") {
       setDismissed(true);
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -135,7 +162,7 @@ export function useQuickReplies({
       const step = event.key === "ArrowDown" ? 1 : -1;
       const next = options[(at + step + options.length) % options.length];
       if (next) setActiveId(next.id);
-    } else if (event.key === "Enter" && !event.shiftKey) {
+    } else if (enter) {
       if (current) choose(active);
       else pick.current = text; // un clic elige lo que se ve; Enter, de la lista de lo escrito
     } else {
@@ -162,7 +189,7 @@ export function useQuickReplies({
         ? t("empty")
         : null;
 
-  const picker = open ? (
+  const popup = open ? (
     <div className="border-border bg-surface absolute inset-x-0 bottom-full z-20 mb-2 flex max-h-[min(20rem,45vh)] flex-col overflow-hidden rounded-[10px] border shadow-lg">
       <div
         role="listbox"
@@ -197,8 +224,10 @@ export function useQuickReplies({
                 onClick={() => choose(reply)}
               >
                 <span className="flex min-w-0 items-baseline gap-2">
-                  <span className="shrink-0 font-mono font-medium">/{reply.shortcut}</span>
-                  <span className="truncate">
+                  <span className="max-w-[60%] min-w-0 truncate font-mono font-medium">
+                    /{reply.shortcut}
+                  </span>
+                  <span className="min-w-0 truncate">
                     <bdi>{reply.title}</bdi>
                   </span>
                 </span>
@@ -221,30 +250,38 @@ export function useQuickReplies({
       <p className="text-muted border-border border-t px-3 py-1.5 text-xs max-sm:hidden">
         {t("keys")}
       </p>
-      <p role="status" className="sr-only">
-        {found.isSuccess ? t("count", { count: options.length }) : ""}
-      </p>
     </div>
   ) : null;
+  // La región `status` está siempre montada: una que aparece con su texto no siempre se anuncia.
+  const picker = (
+    <>
+      <p role="status" className="sr-only">
+        {open && current ? t("count", { count: options.length }) : ""}
+      </p>
+      {popup}
+    </>
+  );
 
   const notice =
-    missing.length > 0 ? (
+    missing && missing.text === text && missing.names.length > 0 ? (
       <p role="status" className="text-sm max-sm:col-span-2">
         {t("missing", {
           fields: format.list(
-            missing.map((name) => t(`variable.${VARIABLE[name]}`)),
+            missing.names.map((name) => t(`variable.${VARIABLE[name]}`)),
             { type: "conjunction" },
           ),
         })}
       </p>
     ) : null;
 
-  const field = open
-    ? {
-        "aria-autocomplete": "list" as const,
-        "aria-controls": list,
-        "aria-activedescendant": active ? optionId(active) : undefined,
-      }
-    : {};
-  return { onKey, picker, notice, field };
+  const field = {
+    onFocus: () => setAway(false),
+    onBlur: () => setAway(true),
+    ...(open && {
+      "aria-autocomplete": "list" as const,
+      "aria-controls": list,
+      "aria-activedescendant": active ? optionId(active) : undefined,
+    }),
+  };
+  return { open, onKey, picker, notice, field };
 }

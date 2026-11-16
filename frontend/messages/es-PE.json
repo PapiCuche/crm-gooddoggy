@@ -2389,7 +2389,8 @@
       "hint": {
         "reply": "Enter envía; Mayús+Enter agrega una línea.",
         "note": "Solo tu equipo ve esto, el cliente no.",
-        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea."
+        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea.",
+        "pick": "Enter elige la respuesta rápida; Esc cierra la lista."
       },
       "count": "{count} de {max} caracteres",
       "over": "Te pasaste por {over, plural, one {# carácter} other {# caracteres}}.",
