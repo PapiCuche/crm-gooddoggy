@@ -54,6 +54,22 @@ bootstrap() { # las contraseñas, del archivo al entorno de `docker compose exec
     compose exec -T -e CRM_MIGRATOR_PASSWORD -e CRM_APP_PASSWORD postgres /docker-entrypoint-initdb.d/10-roles.sh
 }
 
+# La base crm pasa a llamarse $1: no admite conexiones nuevas, se cierran las abiertas (esperando
+# hasta 5 s a cada una) y se renombra, con 5 intentos. Si no se puede, crm queda como estaba.
+rename_crm() { # <nombre nuevo>
+  local try
+  psql_su -d postgres -c "ALTER DATABASE crm WITH ALLOW_CONNECTIONS false"
+  for try in 1 2 3 4 5; do
+    psql_su -d postgres -c "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE datname = 'crm'" \
+      -c "ALTER DATABASE crm RENAME TO $1" > /dev/null && return 0
+    echo "intento $try: no se pudo renombrar la base crm" >&2
+    sleep 1
+  done
+  psql_su -d postgres -c "ALTER DATABASE crm WITH ALLOW_CONNECTIONS true"
+  echo "la base crm sigue intacta, con su nombre" >&2
+  return 1
+}
+
 at_head='' tables=0
 if [ -z "$media_only" ]; then
   [ -z "$latest" ] || object="db/daily/$(rclone lsf --files-only --include '*.dump.age' "DEST:$BACKUP_S3_BUCKET/db/daily/" |
@@ -77,11 +93,12 @@ if [ -z "$media_only" ]; then
     # entero (age comprueba cada bloque y el final), así una clave equivocada no deja la base vacía.
     [ -n "$roles_env" ] || bootstrap
     rclone cat "DEST:$BACKUP_S3_BUCKET/$object" | age -d -i "$identity" > /dev/null
-    replaced=crm_replaced_$(date -u +%Y%m%d%H%M%S)
-    log restore.replacing "tables=$tables" "kept_as=$replaced"
     compose stop backend ws worker worker-media beat
-    psql_su -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'crm'" \
-      -c "ALTER DATABASE crm RENAME TO $replaced" > /dev/null
+    old=crm_replaced_$(date -u +%Y%m%d%H%M%S)
+    rename_crm "$old"
+    replaced=$old # solo ahora existe: el aviso de un fallo posterior dice kept=<esta base>
+    psql_su -d postgres -c "ALTER DATABASE $replaced WITH ALLOW_CONNECTIONS true"
+    log restore.replacing "tables=$tables" "kept_as=$replaced"
     bootstrap
   else
     roles=$(psql_su -d postgres -c "SELECT count(*) FROM pg_roles WHERE rolname IN ('crm_migrator', 'crm_app')")
@@ -147,7 +164,11 @@ stage=finished
 log restore.ok "object=${object:-none}" "tables=$tables" "migrations_at_head=${at_head:-skipped}" \
   "media_restored=$restored" "media_skipped=$skipped" "seconds=$(($(date +%s) - started))"
 if [ -n "$replaced" ]; then # la base anterior, solo ahora que la restauración terminó bien
-  stage=drop_replaced
-  psql_su -d postgres -c "DROP DATABASE $replaced WITH (FORCE)"
-  log restore.replaced_dropped "database=$replaced"
+  if psql_su -d postgres -c "DROP DATABASE $replaced WITH (FORCE)"; then
+    log restore.replaced_dropped "database=$replaced"
+  else # la restauración está bien: otro aviso, no restore.failed
+    alert restore.replaced_not_dropped "database=$replaced"
+  fi
 fi
+left=$(psql_su -d postgres -c "SELECT string_agg(datname, ' ') FROM pg_database WHERE datname LIKE 'crm\_replaced\_%'")
+[ -z "$left" ] || log restore.replaced_left level=warning "databases=$left" # de restauraciones anteriores (runbook §6)

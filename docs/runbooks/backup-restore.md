@@ -129,14 +129,17 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
      - Los objetos que ya están en el bucket no se tocan. Para sobrescribirlos, `--overwrite-media`.
    - `--roles-env` es un archivo `KEY=valor` con `CRM_MIGRATOR_PASSWORD` y `CRM_APP_PASSWORD`, de root y `0600` (si no, el script se niega). Las contraseñas pasan a `bootstrap-roles.sh` por el entorno, **nunca por la línea de órdenes**: ni en `sudo`, ni en el historial, ni en `ps`. Si los roles ya existen, se puede omitir. Entonces, si falta la base `crm`, `restore.sh` la crea con los mismos permisos que `bootstrap-roles.sh` (dueño `crm_migrator`, `CONNECT` y `TEMPORARY` para `crm_app`).
    - `backup.env`, `restore.env`, `runtime.env` y la clave privada tienen que ser de root y `0600`. `backup-recipients.txt`, de root y sin escritura para otros. Si no, los scripts no arrancan.
-   - **No restaura encima de una base con tablas.** Para sustituirla, `--replace-existing-data`: para el runtime, **renombra** la base `crm` a `crm_replaced_<AAAAMMDDHHMMSS>` (`restore.replacing`, `kept_as`) y crea otra con `bootstrap-roles.sh` (exige las contraseñas). La anterior solo se borra después de `restore.ok` (`restore.replaced_dropped`). Mientras tanto ocupa su espacio en disco: hay que tener sitio para las dos.
-   - `--expect-counts` compara las filas por tabla restauradas con las del volcado (`<volcado>.counts.age`). Si no coinciden, falla.
+   - **No restaura encima de una base con tablas.** Para sustituirla, `--replace-existing-data`: para el runtime, **renombra** la base `crm` a `crm_replaced_<AAAAMMDDHHMMSS>` y crea otra con `bootstrap-roles.sh` (exige las contraseñas). Para renombrarla, no admite conexiones nuevas, cierra las abiertas y lo intenta hasta 5 veces. Si no lo consigue, `crm` queda como estaba y el aviso no lleva `kept=`. Solo cuando el renombrado terminó, el log dice `restore.replacing kept_as=…`.
+     - La anterior solo se borra después de `restore.ok` (`restore.replaced_dropped`). Si ese borrado falla, la restauración está bien y el aviso es otro, `restore.replaced_not_dropped`: se borra a mano.
+     - `restore.replaced_left` (aviso) lista las `crm_replaced_*` que sigan ahí de restauraciones anteriores.
+     - Mientras tanto, la anterior ocupa su espacio en disco: hay que tener sitio para las dos.
+   - `--expect-counts` compara las filas por tabla restauradas con las del volcado (`<volcado>.counts.age`). Si no coinciden, falla. Los volcados anteriores a F1-16b (#857) no tienen ese archivo: con ellos, sin `--expect-counts`.
 5. El script descifra el volcado en memoria y lo pasa a `pg_restore` en una sola transacción. Después deja las filas por tabla en `/var/lib/crm-backup/restored-counts.tsv`, registra si las migraciones estaban al día (`migrations_at_head`), levanta el backend (el job `migrate` corre antes) y exige `/health/ready` con 200. Termina con `"event":"restore.ok"` y los segundos que tardó.
-   **Si falla con `--replace-existing-data`**, la base anterior sigue entera como `crm_replaced_<…>`: el aviso `restore.failed` lo dice (`kept=crm_replaced_<…>`). Para volver a ella, con el runtime parado:
+   **Si falla con `--replace-existing-data`** y el aviso `restore.failed` lleva `kept=crm_replaced_<…>`, la base anterior sigue entera con ese nombre. Sin `kept=`, el fallo fue antes de renombrarla y `crm` está intacta: no hay que volver a nada. Para volver a la base guardada, con el runtime parado, usa [`rollback-replaced.sql`](../../infra/prod/backup/rollback-replaced.sql). Solo borra `crm` si la base guardada existe; si no, falla sin tocar nada:
 
    ```bash
    docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env exec -T postgres \
-     psql -U postgres -d postgres -c 'DROP DATABASE IF EXISTS crm WITH (FORCE)' -c 'ALTER DATABASE crm_replaced_<…> RENAME TO crm'
+     psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -v kept=crm_replaced_<…> < /opt/crm/infra/prod/backup/rollback-replaced.sql
    docker compose -f /opt/crm/infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait backend
    ```
 
@@ -160,7 +163,8 @@ Objetivo: menos de 4 h (RTO). El propietario o su suplente tienen que estar loca
 - que una noche fallida no guarda su periodo y la siguiente noche buena hace el semanal y el mensual; y que otra noche del mismo periodo solo hace el diario;
 - que `BACKUP_HEARTBEAT_URL` no aparece en los argumentos de `curl` y que el ping llega;
 - que un `alerted=1` heredado del entorno no silencia `backup.failed` ni `restore.failed`;
-- que `--replace-existing-data` que falla después de `pg_restore` deja la base anterior como `crm_replaced_<…>`, que se puede volver a ella con los pasos de §6, y que tras `restore.ok` se borra;
+- que un renombrado que falla deja `crm` intacta y un aviso sin `kept=`;
+- que `--replace-existing-data` que falla después de `pg_restore` deja la base anterior como `crm_replaced_<…>`; que `rollback-replaced.sql` se niega con una base guardada que no existe y vuelve a la que sí; y que tras `restore.ok` se borra;
 - que con los roles ya creados, sin `--roles-env` y sin la base `crm`, la restauración crea la base;
 - que `--media-only --overwrite-media` con otra clave deja los objetos idénticos y ningún `.partial`, y que sin `--overwrite-media` no vuelve a subir lo que ya está.
 

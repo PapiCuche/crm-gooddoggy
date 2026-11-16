@@ -215,14 +215,26 @@ stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "un in
 
 echo "== --replace-existing-data guarda la base anterior hasta restore.ok, y se puede volver a ella"
 replaced() { stack dst psql_su -d postgres -c "SELECT datname FROM pg_database WHERE datname LIKE 'crm_replaced_%'"; }
-shim '*" up "*" backend "*' 'exit 1' # falla después de pg_restore: el backend no arranca
+rollback() { # el procedimiento del runbook, §6
+  stack dst compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -v kept="$1" \
+    < "$here/rollback-replaced.sql"
+}
 restore_path="$work/shim:$PATH"
+shim '*RENAME*' 'exit 1' # el renombrado falla: crm sigue intacta y el aviso no nombra una base que no existe
+if restore --replace-existing-data > /dev/null 2> "$work/replace.log"; then fail "un renombrado fallido no falló"; fi
+grep -q '"event":"restore.failed"' "$work/replace.log" || fail "un renombrado fallido no avisó"
+if grep -q 'kept=' "$work/replace.log"; then fail "el aviso dice kept= sin base guardada"; fi
+[ -z "$(replaced)" ] || fail "un renombrado fallido dejó una base guardada"
+stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "un renombrado fallido tocó crm"
+shim '*" up "*" backend "*' 'exit 1' # falla después de pg_restore: el backend no arranca
 if restore --replace-existing-data > /dev/null 2> "$work/replace.log"; then fail "un backend que no arranca no falló"; fi
 restore_path=$PATH
 kept=$(replaced)
 grep -q "\"event\":\"restore.failed\".*kept=$kept" "$work/replace.log" || fail "el aviso no dice qué base se guardó"
 stack dst psql_su -d "$kept" -c "$counts_sql" | diff -q - "$work/before.tsv" > /dev/null || fail "no se guardó la base anterior"
-stack dst psql_su -d postgres -c "DROP DATABASE crm WITH (FORCE)" -c "ALTER DATABASE $kept RENAME TO crm" # el runbook, §6
+if rollback crm_replaced_19700101000000 > /dev/null 2>&1; then fail "volvió atrás a una base que no existe"; fi
+stack dst table_counts > /dev/null || fail "una vuelta atrás sin base guardada borró crm"
+rollback "$kept"
 stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "no se pudo volver a la base anterior"
 restore --replace-existing-data 2>&1 | grep -q '"event":"restore.replaced_dropped"' || fail "--replace-existing-data no restauró"
 [ -z "$(replaced)" ] || fail "tras restore.ok quedó la base anterior"

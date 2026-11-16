@@ -63,14 +63,20 @@ def expiry(rules: list[dict], key: str) -> int | None:
     return min(days, default=None)
 
 
-def loses(uploads: dict[date, list[str]], tier: str, days: int) -> date | None:
-    """El primer día en que la política pierde una copia con ese plazo, o None si nunca la pierde."""
+def lost_days(uploads: dict[date, list[str]], tier: str, days: int) -> list[date]:
+    """Los días en que, con ese plazo, falta alguna de las últimas copias que la política guarda."""
+    lost = []
     for today in DAYS[200:]:  # justo antes de la noche `today`
         made = [d for d in DAYS if d < today and tier in uploads[d]]
         present = {d for d in made if today <= d + timedelta(days)}  # Days=N: hasta la medianoche de d+N+1
         if not set(made[-POLICY[tier] :]) <= present:
-            return today
-    return None
+            lost.append(today)
+    return lost
+
+
+def loses(uploads: dict[date, list[str]], tier: str, days: int) -> date | None:
+    """El primer día en que la política pierde una copia con ese plazo, o None si nunca la pierde."""
+    return next(iter(lost_days(uploads, tier, days)), None)
 
 
 class RetentionTest(unittest.TestCase):
@@ -100,6 +106,20 @@ class RetentionTest(unittest.TestCase):
             per = Counter(period(d, tier) for d in DAYS if tier in up[d])
             self.assertEqual(set(per.values()), {1}, tier)
             self.assertEqual(len(per), len({period(d, tier) for d in DAYS}), tier)
+
+    def test_with_failed_nights_the_policy_only_waits_for_the_late_copy(self) -> None:
+        # Cada domingo y cada día 1 del segundo año fallan, y algunos lunes y días 2 también: la copia
+        # llega uno o dos días tarde. Solo esos días (tras una noche fallida) puede faltar una copia.
+        second = [d for d in DAYS if d.year == 2027]
+        failed = {d for d in second if d.isoweekday() == 7 or d.day == 1}
+        failed |= {d for d in second if d.isoweekday() == 1 and d.month % 3 == 0}
+        failed |= {d for d in second if d.day == 2 and d.month % 2 == 0}
+        up = prefixes(failed=frozenset(failed))
+        for tier in ("weekly", "monthly"):
+            lost = lost_days(up, tier, expiry(self.rules, f"db/{tier}/crm-x.dump.age"))
+            self.assertTrue(lost, f"{tier}: la simulación no retrasó ninguna copia")
+            late = [d for d in lost if d - timedelta(1) not in failed]
+            self.assertEqual(late, [], f"{tier}: falta una copia sin que la noche anterior fallara")
 
     def test_keeps_the_policy_and_deletes_only_what_is_outside_it(self) -> None:
         for tier in POLICY:
