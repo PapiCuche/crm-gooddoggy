@@ -4,6 +4,7 @@ name: infra-prod
 # con valores ficticios (solo el proxy publica 80 y 443) y `caddy validate` con la imagen del borde.
 # F1-15: la prueba de deploy.sh con docker falso (fallo de la puerta → vuelta atrás) y la frontera
 # de images.yml (test_workflow_security.py), que el check trusted solo ejecuta desde main.
+# F1-16: la retención de los backups y el simulacro de backup y restauración con un Garage local.
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
 on:
   pull_request:
@@ -12,6 +13,7 @@ on:
       - ".github/workflows/infra-prod.yml"
       - ".github/workflows/images.yml"
       - ".github/scripts/test_workflow_security.py"
+      - ".github/scripts/test_backup_retention.py"
   push:
     branches: [main]
     paths: *paths
@@ -33,11 +35,31 @@ jobs:
         with:
           persist-credentials: false
       - name: shellcheck
-        run: shellcheck infra/prod/*.sh infra/prod/postgres/*.sh
+        run: shellcheck -x infra/prod/*.sh infra/prod/postgres/*.sh infra/prod/backup/*.sh
       - name: deploy.sh (test-deploy.sh, sin servidor)
         run: bash infra/prod/test-deploy.sh
       - name: Frontera de los workflows (images.yml incluido)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_workflow_security
+      - name: Retención de los backups (lifecycle.json y prefijos)
+        working-directory: .github/scripts
+        run: python3 -m unittest -q test_backup_retention
       - name: Compose y Caddyfile (validate.sh --caddy)
         run: sh infra/prod/validate.sh --caddy
+
+  drill:
+    name: infra-prod backup drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: age y rclone (paquetes de Ubuntu, como en el servidor)
+        run: sudo apt-get update -q && sudo apt-get install -y -q age rclone
+      - name: Imagen del backend
+        run: docker build -q -t crm-drill-backend:ci backend
+      - name: Simulacro (backup cifrado → servidor nuevo → restauración → comprobaciones)
+        env:
+          BACKEND_IMAGE: crm-drill-backend:ci
+        run: bash infra/prod/backup/drill.sh

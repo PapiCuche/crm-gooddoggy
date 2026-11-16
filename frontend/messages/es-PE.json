@@ -134,7 +134,8 @@
         "reactivated": "Miembro reactivado",
         "branch_changed": "Sucursal de un miembro cambiada",
         "invited": "Persona invitada",
-        "invitation_revoked": "Invitación revocada"
+        "invitation_revoked": "Invitación revocada",
+        "created": "Miembro añadido por un operador"
       },
       "role": {
         "created": "Rol creado",
@@ -203,6 +204,7 @@
       "NETWORK_ERROR": "No hay conexión con el servidor. Revisa tu red e inténtalo de nuevo.",
       "NOT_AUTHENTICATED": "Tu sesión terminó. Vuelve a entrar para continuar.",
       "INVALID_CREDENTIALS": "El correo o la contraseña no son correctos.",
+      "PASSWORD_CHANGE_REQUIRED": "Tu contraseña es temporal. Elige la tuya en «¿Olvidaste tu contraseña?» con tu correo y vuelve a entrar.",
       "PERMISSION_DENIED": "No tienes permiso para hacer esto.",
       "NOT_FOUND": "No encontramos lo que buscas.",
       "VALIDATION_ERROR": "Revisa los campos marcados.",
@@ -226,10 +228,11 @@
       "WINDOW_CLOSED": "Ya pasó la ventana de atención del canal desde el último mensaje del cliente. Podrás responder cuando el cliente vuelva a escribir.",
       "CONSENT_REVOKED": "El cliente se dio de baja de los mensajes por iniciativa nuestra en este canal. Podrás responderle cuando vuelva a escribir.",
       "CLIENT_MESSAGE_ID_TAKEN": "Ese id de mensaje ya se usó para otro envío. Vuelve a enviar el texto.",
-      "MEDIA_NOT_SCANNED": "Por ahora no se pueden enviar archivos: el CRM todavía no tiene antivirus y el envío sin revisar está apagado. Puedes seguir respondiendo con texto.",
       "MEDIA_TOO_LARGE": "El archivo es demasiado grande: hasta 5 MB una imagen y 10 MB un PDF.",
       "MEDIA_TYPE_NOT_ALLOWED": "Solo se pueden enviar imágenes JPEG o PNG y documentos PDF.",
-      "LENGTH_REQUIRED": "El archivo no llegó completo al servidor. Vuelve a intentarlo."
+      "LENGTH_REQUIRED": "El archivo no llegó completo al servidor. Vuelve a intentarlo.",
+      "MEDIA_INFECTED": "El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.",
+      "MEDIA_SCAN_UNAVAILABLE": "No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos."
     }
   },
   "auth": {

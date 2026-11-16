@@ -46,11 +46,9 @@ x-runtime: &runtime
     META_ENABLED: ${META_ENABLED:-false}
     META_APP_SECRETS: ${META_APP_SECRETS:-}
     META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
-    # Enviar imágenes y PDF sin antivirus (D-F7-04): apagado por omisión. La ruta de subida y el
-    # despachador (worker) lo leen; sin pasarlo aquí, el valor de infra/env/.env no llegaba.
-    MEDIA_SEND_UNSCANNED: ${MEDIA_SEND_UNSCANNED:-false}
     # F7-15 (ADR-008): el antivirus de los medios. Sin él, nada se abre (los reintentos acaban en
-    # `ERROR`); no se espera a que esté sano para arrancar: el escaneo reintenta.
+    # `ERROR`) y ningún archivo se envía (F7-15b: la subida responde 503); no se espera a que esté
+    # sano para arrancar: el escaneo reintenta y la persona reintenta el envío.
     CLAMD_ADDRESS: clamd:3310
   depends_on:
     migrate:
@@ -131,6 +129,7 @@ services:
   backend:
     <<: *runtime
     healthcheck: *probe
+    networks: [default, av] # F7-15b: escanea en clamd lo que sube una persona antes de guardarlo
 
   ws:
     <<: *runtime
@@ -143,7 +142,7 @@ services:
       disable: true
 
   # F7-09a1c: la cola `media` (descargas de medios entrantes, hasta 120 s cada una), un proceso.
-  # F7-15: también el antivirus; es el único proceso del stack en la red `av` (interna) de clamd.
+  # F7-15: también el antivirus de lo recibido; con backend, los únicos en la red `av` de clamd.
   worker-media:
     <<: *runtime
     command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--queues", "media", "--concurrency", "1"]
@@ -228,7 +227,7 @@ networks:
       config:
         - subnet: ${STACK_SUBNET:-172.31.250.0/24}
           ip_range: ${STACK_IP_RANGE:-172.31.250.128/25}
-  # F7-15: clamd y worker-media (backend también, cuando escanee los envíos: F7-15b, #838).
+  # F7-15: clamd, worker-media y backend (F7-15b: escanea los envíos).
   av: { internal: true }
   av-egress: {} # solo freshclam
 

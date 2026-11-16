@@ -20,7 +20,9 @@ paths:
         Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo. Si la cuenta
         tiene segundo factor, la contraseña correcta no inicia sesión: responde 202 con
         `mfa_required`, sin datos de la cuenta, y la sesión la inicia `POST /auth/login/mfa/`
-        con un código, en los 5 minutos siguientes.
+        con un código, en los 5 minutos siguientes. 403 `PASSWORD_CHANGE_REQUIRED`: la
+        contraseña correcta de una cuenta que creó un operador (`add_member`); no abre sesión ni
+        empieza el segundo paso. La cuenta elige la suya con un enlace de recuperación.
       tags:
       - auth
       requestBody:
@@ -2688,9 +2690,11 @@ paths:
       operationId: conversation_media_send
       description: 'Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente,
         con la política del texto; idempotente por `client_message_id` (202; 200 con
-        el mismo archivo). Pide `messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`,
-        la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`;
-        415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.'
+        el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo
+        pasa por el antivirus antes de guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`;
+        411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED`
+        (el tipo real); 422 `MEDIA_INFECTED`; 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE`
+        (sin veredicto: nada se guardó, reintentar).'
       parameters:
       - in: path
         name: conversation_id
@@ -2774,7 +2778,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
         '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
           content:
             application/json:
               schema:

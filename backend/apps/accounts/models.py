@@ -62,6 +62,9 @@ class User(AbstractBaseUser):
     # Época de sesión: cada sesión guarda la que había al iniciarla; revocar la incrementa y las
     # sesiones anteriores dejan de valer (ADR-003 §2, D-F2-11).
     session_epoch = models.PositiveIntegerField(default=0, db_default=0)
+    # La contraseña la escribió un operador (`add_member`, F2-127): no abre sesión hasta que la
+    # cuenta elija la suya con el enlace de recuperación (ADR-021), que la pone a `False`.
+    password_change_required = models.BooleanField(default=False, db_default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
