@@ -129,3 +129,18 @@ def messaging_decision(
         purpose=purpose,
         revoked=revoked,
     )
+
+
+def quick_replies(search: str = "") -> QuerySet[QuickReply]:
+    """Las respuestas rápidas que se usan (F6-08a2): activas y vivas, en una categoría activa y
+    viva, con su categoría. `search` (ya limpio, en minúsculas) busca en el atajo, el título y el
+    texto. El orden lo pone la paginación (ADR-016)."""
+    found = QuickReply.objects.filter(
+        is_active=True, deleted_at__isnull=True,
+        category__is_active=True, category__deleted_at__isnull=True,
+    ).select_related("category")  # fmt: skip
+    if search:
+        found = found.filter(
+            Q(shortcut__contains=search) | Q(title__icontains=search) | Q(body__icontains=search)
+        )
+    return found

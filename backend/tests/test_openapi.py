@@ -65,6 +65,8 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/attachments/{attachment_id}/url/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/media/",  # F7-09b2
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/assign/",
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/",  # F6-08a2
+        "/api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/{quick_reply_id}/render/",
         "/api/v1/o/{org_slug}/quick-replies/",  # F6-08a3
         "/api/v1/o/{org_slug}/quick-replies/{quick_reply_id}/",
         "/api/v1/o/{org_slug}/channels/",  # F7-07a

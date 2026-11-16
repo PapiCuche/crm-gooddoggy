@@ -47,6 +47,7 @@ import type {
   ContactsListParams,
   ConversationDetail,
   ConversationMessagesListParams,
+  ConversationQuickRepliesListParams,
   ConversationsListParams,
   ConversationsUnansweredCountParams,
   Cost,
@@ -127,6 +128,7 @@ import type {
   PaginatedProductList,
   PaginatedPromotionList,
   PaginatedQuickReplyList,
+  PaginatedQuickReplyUseList,
   PaginatedQuoteList,
   PaginatedReservationList,
   PaginatedRoleList,
@@ -191,6 +193,7 @@ import type {
   QuoteRejectRequest,
   QuoteVersionRequest,
   QuotesListParams,
+  Rendered,
   Reservation,
   ReservationCreateRequest,
   ReservationReleaseRequest,
@@ -6371,6 +6374,286 @@ export const useConversationNotesCreate = <TError = ErrorType<Error>, TContext =
   TContext
 > => {
   return useMutation(getConversationNotesCreateMutationOptions(options), queryClient);
+};
+
+export const getConversationQuickRepliesListUrl = (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/`;
+};
+
+/**
+ * Las respuestas rápidas que se pueden usar en la conversación: activas, en una categoría activa, por creación (ADR-016); cada una con su categoría para agruparlas. Pide `conversations.view` y `messages.send`; 404: la conversación no existe, es de otra organización o queda fuera del alcance.
+ */
+export const conversationQuickRepliesList = async (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedQuickReplyUseList> => {
+  return apiFetch<PaginatedQuickReplyUseList>(
+    getConversationQuickRepliesListUrl(orgSlug, conversationId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getConversationQuickRepliesListQueryKey = (
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+) => {
+  return [
+    `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getConversationQuickRepliesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getConversationQuickRepliesListQueryKey(orgSlug, conversationId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationQuickRepliesList>>> = ({
+    signal,
+  }) =>
+    conversationQuickRepliesList(orgSlug, conversationId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled:
+      orgSlug !== null &&
+      orgSlug !== undefined &&
+      conversationId !== null &&
+      conversationId !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationQuickRepliesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationQuickRepliesList>>
+>;
+export type ConversationQuickRepliesListQueryError = ErrorType<Error>;
+
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params: undefined | ConversationQuickRepliesListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof conversationQuickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationQuickRepliesList<
+  TData = Awaited<ReturnType<typeof conversationQuickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  conversationId: string,
+  params?: ConversationQuickRepliesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationQuickRepliesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationQuickRepliesListQueryOptions(
+    orgSlug,
+    conversationId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getConversationQuickRepliesRenderUrl = (
+  orgSlug: string,
+  conversationId: string,
+  quickReplyId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/conversations/${conversationId}/quick-replies/${quickReplyId}/render/`;
+};
+
+/**
+ * El texto de la respuesta con sus variables resueltas para esta conversación, y las que quedaron vacías. Suma un uso. **No envía nada**: el texto se envía, si se quiere, con `POST …/messages/`. Pide `conversations.view` y `messages.send`; 404: la conversación o la respuesta no existen, no se pueden usar o quedan fuera del alcance.
+ */
+export const conversationQuickRepliesRender = async (
+  orgSlug: string,
+  conversationId: string,
+  quickReplyId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<Rendered> => {
+  return apiFetch<Rendered>(
+    getConversationQuickRepliesRenderUrl(orgSlug, conversationId, quickReplyId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getConversationQuickRepliesRenderMutationKey = () =>
+  ["conversationQuickRepliesRender"] as const;
+
+export const getConversationQuickRepliesRenderMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+    TError,
+    ConversationQuickRepliesRenderMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+  TError,
+  ConversationQuickRepliesRenderMutationVariables,
+  TContext
+> => {
+  const mutationKey = getConversationQuickRepliesRenderMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+    ConversationQuickRepliesRenderMutationVariables
+  > = (props) => {
+    const { orgSlug, conversationId, quickReplyId } = props ?? {};
+
+    return conversationQuickRepliesRender(orgSlug, conversationId, quickReplyId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConversationQuickRepliesRenderMutationResult = NonNullable<
+  Awaited<ReturnType<typeof conversationQuickRepliesRender>>
+>;
+
+export type ConversationQuickRepliesRenderMutationError = ErrorType<Error>;
+export type ConversationQuickRepliesRenderMutationVariables = {
+  orgSlug: string;
+  conversationId: string;
+  quickReplyId: string;
+};
+
+export const useConversationQuickRepliesRender = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+      TError,
+      ConversationQuickRepliesRenderMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof conversationQuickRepliesRender>>,
+  TError,
+  ConversationQuickRepliesRenderMutationVariables,
+  TContext
+> => {
+  return useMutation(getConversationQuickRepliesRenderMutationOptions(options), queryClient);
 };
 
 export const getConversationsUnansweredCountUrl = (

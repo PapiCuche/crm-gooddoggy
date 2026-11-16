@@ -3070,6 +3070,136 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/:
+    get:
+      operationId: conversation_quick_replies_list
+      description: 'Las respuestas rápidas que se pueden usar en la conversación:
+        activas, en una categoría activa, por creación (ADR-016); cada una con su
+        categoría para agruparlas. Pide `conversations.view` y `messages.send`; 404:
+        la conversación no existe, es de otra organización o queda fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: q
+        schema:
+          type: string
+        description: Busca en el atajo (con o sin `/`), el título y el texto, sin
+          distinguir mayúsculas; hasta 100 caracteres.
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedQuickReplyUseList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/{conversation_id}/quick-replies/{quick_reply_id}/render/:
+    post:
+      operationId: conversation_quick_replies_render
+      description: 'El texto de la respuesta con sus variables resueltas para esta
+        conversación, y las que quedaron vacías. Suma un uso. **No envía nada**: el
+        texto se envía, si se quiere, con `POST …/messages/`. Pide `conversations.view`
+        y `messages.send`; 404: la conversación o la respuesta no existen, no se pueden
+        usar o quedan fuera del alcance.'
+      parameters:
+      - in: path
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quick_reply_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rendered'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/conversations/unanswered/:
     get:
       operationId: conversations_unanswered_count
@@ -14154,6 +14284,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedQuickReplyUseList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuickReplyUse'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedQuoteList:
       type: object
       required:
@@ -15599,6 +15743,21 @@ components:
       - updated_at
       - usage_count
       - version
+    QuickReplyCategoryRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sort_order:
+          type: integer
+          description: Para agrupar y ordenar por categoría.
+      required:
+      - id
+      - name
+      - sort_order
     QuickReplyCreateRequest:
       type: object
       properties:
@@ -15628,6 +15787,38 @@ components:
       - category_id
       - shortcut
       - title
+    QuickReplyUse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcut:
+          type: string
+          description: 'Sin la `/`: `delivery`.'
+        title:
+          type: string
+        body:
+          type: string
+          description: Con sus variables sin resolver, como `{{org.name}}`.
+        category:
+          $ref: '#/components/schemas/QuickReplyCategoryRef'
+      required:
+      - body
+      - category
+      - id
+      - shortcut
+      - title
+    QuickReplyVariableEnum:
+      enum:
+      - contact.first_name
+      - contact.name
+      - org.name
+      type: string
+      description: |-
+        * `contact.first_name` - contact.first_name
+        * `contact.name` - contact.name
+        * `org.name` - org.name
     Quote:
       type: object
       description: 'La cotización de la lista: sin líneas ni texto libre.'
@@ -16229,6 +16420,28 @@ components:
         * `TRANSFER` - Transfer
         * `IMPORT` - Import
         * `MANUAL` - Manual
+    Rendered:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcut:
+          type: string
+        text:
+          type: string
+          description: El texto resuelto, para el cuadro de redacción.
+        missing:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuickReplyVariableEnum'
+          description: 'Las variables que quedaron vacías: sin valor o sin `contacts.view`
+            sobre el contacto.'
+      required:
+      - id
+      - missing
+      - shortcut
+      - text
     Reservation:
       type: object
       properties:
