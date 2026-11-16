@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.conversations",
     "apps.tasks",
     "apps.quotes",
+    "apps.ai_gateway",  # F8-03a (ADR-034 §2): L1, no importa módulos de negocio
 ]
 
 MIDDLEWARE = [
@@ -241,6 +242,11 @@ CELERY_BEAT_SCHEDULE = {
     "conversations.reseal_credentials": {
         "task": "conversations.reseal_credentials",
         "schedule": crontab(hour=3, minute=57),
+    },
+    # F8-03a (ADR-022 §5): y las claves de los proveedores de IA, a otra hora.
+    "ai_gateway.reseal_provider_keys": {
+        "task": "ai_gateway.reseal_provider_keys",
+        "schedule": crontab(hour=4, minute=7),
     },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
