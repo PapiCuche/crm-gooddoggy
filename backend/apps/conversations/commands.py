@@ -42,7 +42,6 @@ from apps.contacts.models import Contact
 from apps.conversations import media, outbound_media
 from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
-    BODY_MAX,
     META_ID,
     PREVIEW_MAX,
     AttentionMode,
@@ -58,6 +57,7 @@ from apps.conversations.models import (
 )
 from apps.conversations.policy import PURPOSES, ConversationClosed, require_allowed
 from apps.conversations.selectors import messaging_decision
+from apps.conversations.text import clean_body as _body
 from apps.files.models import File
 from apps.organizations.selectors import lock_active_member
 from core.outbox import emit
@@ -70,7 +70,6 @@ WINDOW_HOURS = 24  # la ventana de WhatsApp: un entrante con más de 24 h no rea
 KEY = "CONV"
 ORDER = (Delivery.QUEUED, Delivery.SENDING, Delivery.SENT, Delivery.DELIVERED, Delivery.READ)
 ZWJ, JOINERS = "\u200d", "\u200c\u200d"
-BIDI = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 LAST = ("last_message_at", "last_message_preview", "last_message_direction")
 STAMPS = {
     "SENDING": "sending_at", "SENT": "sent_at", "DELIVERED": "delivered_at", "READ": "read_at",
@@ -116,26 +115,6 @@ def _uuid(value: Any, what: str) -> UUID:
         return UUID(value)
     except ValueError:
         raise ValueError(f"{what}: un identificador") from None
-
-
-def _body(value: Any) -> str:
-    """El texto de un mensaje: algo que se ve (no solo espacios ni caracteres de ancho cero), sin
-    controles salvo el salto de línea y el tabulador, ni sustitutos Unicode sueltos (UTF-8 y
-    PostgreSQL no los guardan), ni los controles que reordenan el texto (incrustaciones,
-    anulaciones y aislamientos de dirección; las marcas LRM, RLM y ALM sí valen)."""
-    if not isinstance(value, str) or len(value) > BODY_MAX:
-        raise ValueError(f"texto: un texto de 1 a {BODY_MAX} caracteres")
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        raise ValueError("texto: caracteres Unicode no válidos") from None
-    if any(unicodedata.category(c) == "Cc" and c not in "\n\r\t" for c in value):
-        raise ValueError("texto: sin caracteres de control")
-    if any(c in BIDI for c in value):  # reordenan lo que se ve (texto «trojan source»)
-        raise ValueError("texto: sin controles de dirección")
-    if all(unicodedata.category(c) in ("Cc", "Cf", "Zs", "Zl", "Zp") for c in value):
-        raise ValueError("texto: debe tener algo visible")
-    return value
 
 
 def _preview(text: str) -> str:

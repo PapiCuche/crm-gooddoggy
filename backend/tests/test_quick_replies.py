@@ -154,7 +154,8 @@ def test_the_database_refuses_what_the_commands_would_refuse(
     [
         "Hola {{contact.phone}}", "{{contact.first_name | upper}}", "Hola {{org.name}",
         "Hola }} y {{", "{{}}", "{{ contact.Name }}", "Total {{1+1}}", "x" * 4097, "\x00",
-        "{{contact name}}", "{{" + " " * 4000,
+        "{{contact name}}", "{{" + " " * 4000, "{{{contact.name}}}", "{{contact.name}}}",
+        "{{{contact.name}}",
     ],
 )  # fmt: skip
 def test_a_body_with_a_variable_outside_the_list_is_invalid(
@@ -215,9 +216,10 @@ def test_categories_are_written_audited_and_not_deleted_while_in_use(
     with pytest.raises(qr.Taken):  # sin distinguir mayúsculas, entre las vivas
         run(world, qr.create_category, name="DELIVERY")
     used = reply(world, category_id=mine.pk)
-    with pytest.raises(qr.CategoryInUse):
+    run(world, qr.update_reply, quick_reply_id=used.pk, version=1, is_active=False)
+    with pytest.raises(qr.CategoryInUse):  # también con solo respuestas inactivas
         run(world, qr.delete_category, category_id=mine.pk)
-    run(world, qr.update_reply, quick_reply_id=used.pk, version=1, category_id=category(world))
+    run(world, qr.update_reply, quick_reply_id=used.pk, version=2, category_id=category(world))
     with pytest.raises(qr.StaleVersion):
         run(world, qr.update_category, category_id=mine.pk, version=2, name="Pisado")
     with pytest.raises(ValueError, match="no admitidos"):  # nunca del cuerpo
@@ -225,7 +227,7 @@ def test_categories_are_written_audited_and_not_deleted_while_in_use(
     run(world, qr.update_category, category_id=mine.pk, version=1, is_active=False, sort_order=-1)
     run(world, qr.delete_category, category_id=mine.pk)
     with pytest.raises(qr.Invalid):  # una respuesta no va a una categoría borrada
-        run(world, qr.update_reply, quick_reply_id=used.pk, version=2, category_id=mine.pk)
+        run(world, qr.update_reply, quick_reply_id=used.pk, version=3, category_id=mine.pk)
     assert run(world, qr.create_category, name="Reclamos").pk != mine.pk  # el nombre queda libre
     assert [(a, label) for a, label, *_ in audit(migrator) if "category" in a] == [
         ("quick_reply_category.created", "Reclamos"),
@@ -261,19 +263,20 @@ def test_new_organizations_are_born_with_the_seven_categories(migrator: DB) -> N
 def test_the_data_migration_seeds_the_organizations_that_already_existed(
     orgs: dict[str, Any], migrator: DB
 ) -> None:
-    """`orgs` creó A y B sin categorías, como antes de F6-08a1; B ya tenía una, borrada."""
+    """`orgs` creó A y B sin categorías, como antes de F6-08a1; A, la primera, ya tenía una,
+    borrada: cada organización recibe las suyas, no las de la primera."""
     migrator.execute(
         "INSERT INTO quick_reply_categories (organization_id, name, sort_order, is_active, "
         "created_at, updated_at, deleted_at, version) "
         "VALUES (%s, 'Vieja', 0, false, now(), now(), now(), 1)",
-        [orgs["B"]],
+        [orgs["A"]],
     )
     for _ in range(2):  # dos veces: sin duplicar
         with as_migrator():
             call_command("migrate", "conversations", "0037", verbosity=0)
             call_command("migrate", "conversations", verbosity=0)
-        assert seeded(migrator, orgs["A"]) == EXPECTED
-        assert seeded(migrator, orgs["B"]) == [("Vieja", 0, False)]  # no se toca
+        assert seeded(migrator, orgs["A"]) == [("Vieja", 0, False)]  # no se toca
+        assert seeded(migrator, orgs["B"]) == EXPECTED
 
 
 def test_the_permission_is_in_the_catalog_and_only_the_owner_and_admin_templates() -> None:
@@ -283,3 +286,12 @@ def test_the_permission_is_in_the_catalog_and_only_the_owner_and_admin_templates
     )  # fmt: skip
     held = {t.code for t in ROLE_TEMPLATES if "quick_replies.manage" in t.grants}
     assert held == {"owner", "admin"}
+
+
+def test_the_runtime_role_never_deletes_nor_truncates(world: SimpleNamespace) -> None:
+    asked = "SELECT has_table_privilege(current_user, %s, %s)"
+    with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
+        for table in ("quick_reply_categories", "quick_replies"):
+            for privilege in ("DELETE", "TRUNCATE"):
+                cursor.execute(asked, [table, privilege])
+                assert cursor.fetchone() == (False,), (table, privilege)

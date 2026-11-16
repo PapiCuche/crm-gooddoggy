@@ -4,9 +4,9 @@ No comprueban permisos: los declarará la API (`quick_replies.manage` para gesti
 `conversations.view` y `messages.send`), la única que los importa (contrato de import-linter).
 Validan lo que guardan y auditan cada cambio sin el texto en claro: del cuerpo queda su huella.
 
-Variables: una lista cerrada (`VARIABLES`). Guardar un cuerpo con otra variable, o con `{{` o `}}`
-que no formen una permitida, es un `Invalid` en `body`. `render` sustituye en una sola pasada:
-lo que trae un valor (el nombre de un contacto, `{{org.name}}` incluido) nunca se interpreta.
+Variables: una lista cerrada (`VARIABLES`). Guardar un cuerpo con otra variable, con `{{` o `}}`
+que no formen una permitida o con llaves triples es un `Invalid` en `body`. `render` sustituye en
+una sola pasada: lo que trae un valor (un contacto llamado `{{org.name}}`) nunca se interpreta.
 Activar y desactivar es `update_*` con `is_active`; borrar es lógico y deja la fila inactiva.
 """
 
@@ -21,8 +21,8 @@ from django.db.models import F, Max
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
-from apps.conversations.commands import _body
 from apps.conversations.models import SHORTCUT, QuickReply, QuickReplyCategory
+from apps.conversations.text import clean_body
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 from core.text import name as clean_name
@@ -59,12 +59,13 @@ class Invalid(ValueError):
 
 def variables(body: str) -> list[str]:
     """Las variables del cuerpo, en orden; `Invalid` si una no es de la lista o si quedan llaves
-    dobles sueltas. El texto del error no repite lo recibido."""
+    dobles sueltas o triples. El texto del error no repite lo recibido."""
     found = [match[1] for match in TOKEN.finditer(body)]
     if any(key not in VARIABLES for key in found):
         raise Invalid("body", f"variables admitidas: {', '.join(VARIABLES)}")
     rest = TOKEN.sub("", body)
-    if "{{" in rest or "}}" in rest:
+    triple = "{{{" in body or "}}}" in body  # `{{{contact.name}}}` daría `{Ana}`
+    if triple or "{{" in rest or "}}" in rest:
         raise Invalid("body", "llaves dobles solo para una variable, como {{contact.name}}")
     return found
 
@@ -113,7 +114,7 @@ def _shortcut(value: Any) -> str:
 
 
 def _body_with_variables(value: Any) -> str:
-    text = _body(value)
+    text = clean_body(value)
     variables(text)
     return text
 

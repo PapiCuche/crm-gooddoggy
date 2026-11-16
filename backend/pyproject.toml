@@ -290,7 +290,6 @@ allowed_importers = [
     "apps.conversations.delivery",  # F7-06a: `advance_delivery` y el estado de la cuenta
     "apps.conversations.whatsapp",  # F7-05b: `credentials.open_token`
     "apps.conversations.media",  # F7-09a1c: `credentials.open_token`
-    "apps.conversations.quick_replies",  # F6-08a1: la regla del texto de `commands`
 ]
 
 [[tool.importlinter.contracts]]
