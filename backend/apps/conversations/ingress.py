@@ -188,6 +188,14 @@ def resolve(platform: str, number: str) -> tuple[UUID, UUID] | None:
     return (found[0][0], found[0][1]) if found else None
 
 
+def resolve_social(platform: str, external_id: str) -> tuple[UUID, UUID] | None:
+    """(organización, cuenta) de la cuenta viva de Instagram o Messenger de ese `entry.id` firmado
+    (ADR-035 §4), o `None`: la organización nunca sale del payload."""
+    sql = "SELECT * FROM public.resolve_social_account(%s, %s)"
+    found = _call(sql, [platform, external_id])
+    return (found[0][0], found[0][1]) if found else None
+
+
 def wake() -> None:
     """Avisa al procesador de que hay ítems nuevos, sin retener la ruta pública: una conexión propia
     al broker que no reintenta ni espera más de `BROKER_WAIT`. Si falla, el barrido de beat lo

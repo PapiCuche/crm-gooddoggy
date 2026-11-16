@@ -66,6 +66,7 @@ TENANT_TABLES = (
     "messages",
     "conversation_assignments",
     "conversations",
+    "contact_identities",  # F7b-04a: tras los hilos (la referencian), antes de cuentas y contactos
     "channel_accounts",
     "credentials",  # F7-02b: después de las cuentas, que la referencian
     "quick_replies",  # F6-08a1: delante de sus categorías
