@@ -59,6 +59,22 @@ Cómo reparte ADR-034 entre ellos:
 - **Hecho en F8-03a (#766):** `apps.ai_gateway` (INSTALLED_APPS) con `ai_provider_accounts` (una por organización y proveedor; `ANTHROPIC` por ahora; estado, `key_last_four`, quién y cuándo la configuró, `rotated_at`, `revoked_at`) y `ai_provider_keys` (la clave sellada con `core.sealed`, propósito `ai.provider_key`, dueño `ai_provider_account:<provider>:<account_id>`; una viva por cuenta; invalidada sin cifrado). FORCE RLS con la política única `tenant_isolation` para todos los comandos (ADR-002 §3.1: «una política por comando» del issue se lee como una sola política PERMISSIVE por tabla y comando), FK a la organización, FK compuesta de la clave a su cuenta **y** a su proveedor, FK de quien la configura a las membresías (ADR-001 §3), `crm_app` sin DELETE ni TRUNCATE y con UPDATE solo por columna (el proveedor y la cuenta de una clave no cambian). `apps.ai_gateway.keys`: `store` (crea o rota y reactiva), `revoke` (desactiva y borra el cifrado), `open_key` (solo en memoria) y `reseal`, con la tarea `ai_gateway.reseal_provider_keys` en beat (04:07 UTC) y la función SECURITY DEFINER `ai_provider_keys_stale_organizations` (solo ids). Permiso sensible `ai.manage` (solo el Owner al nacer, ADR-018). Contrato de import-linter: `apps.ai_gateway` no importa módulos de L3. Sin rutas, auditoría ni outbox: llegan con F8-03b y F8-03c.
 - **Para F8-05:** la columna del modelo elegido y `ai.account.model_changed`. Los contratos completos de `ai_*` (que L0–L3 no importen `apps.ai_*`) siguen en F8-05.
 
+### F8-03b · Comandos, prueba de conexión y simulador
+
+- **Hecho en F8-03b (#878):**
+  - **Comandos** (`apps.ai_gateway.accounts`): `create`, `rotate`, `disable` y `check`. Cada uno comprueba `ai.manage` antes de leer nada o de llamar al proveedor.
+  - **Auditoría:** `ai.account.created`, `ai.account.key_rotated`, `ai.account.disabled` y `ai.account.tested`. Solo llevan el proveedor, los estados y el código de la prueba, nunca la clave. Los comandos no emiten eventos al outbox.
+  - **Sonda** (`apps.ai_gateway.probe`): `GET /v1/models?limit=1` al host fijo de `AI_PROVIDER_HOSTS` (`api.anthropic.com`, añadido a `HTTP_ALLOWED_HOSTS`) por `core.http`, con la clave en `x-api-key`. Devuelve solo uno de estos códigos:
+    - `OK`;
+    - `CREDENTIALS_REJECTED` (401 y 403);
+    - `PROVIDER_BILLING` (402, el 400 del límite de gasto propio y el 429 `enforced_spend_limit_reached`);
+    - `PROVIDER_UNAVAILABLE` (los demás 429, 5xx, 529, fallos de red y respuestas inesperadas, que dejan en el log solo el estado y el `request-id`).
+  - **Sin reintentos:** quien prueba puede volver a hacerlo.
+  - **Carreras:** dos altas a la vez de la misma cuenta dan `keys.AccountConflict` (reintentable), no un `IntegrityError`.
+  - **Simulador sin red:** `tests/ai_sim.py`.
+- **Para F8-03c:** las rutas, con el segundo factor reciente detrás del permiso.
+- **Pendiente (opcional):** que las organizaciones con claves ilegibles no acaparen el descubrimiento del re-sellado.
+
 ## Qué necesita el propietario (sin ningún valor real)
 
 | #   | Qué                                                                                     | Dónde se guarda                                                                                   | Cuándo se necesita                  |
