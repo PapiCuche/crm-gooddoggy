@@ -78,9 +78,13 @@ Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como 
 - **Manual** (una versión desplegada da problemas después): `sudo infra/prod/deploy.sh --rollback` despliega `release.env.previous` con los mismos pasos e intercambia los dos archivos. Para ir más atrás, despliega el `release.env` de ese SHA (el resumen de su job de `images.yml`).
 - **Nunca se deshacen migraciones.** Volver atrás es seguro solo si las migraciones siguen la regla de expandir y después contraer (ADR-033 §7). Una versión que no la cumple se despliega en una ventana. Su vuelta atrás es restaurar el volcado previo de `db/predeploy/`, con la clave de despliegue o la de backup, y se pierde lo escrito desde entonces ([backup-restore.md](../../docs/runbooks/backup-restore.md), «Volver atrás tras un despliegue con migraciones»).
 
-  El orden importa, porque la imagen nueva volvería a migrar la base restaurada:
-  1. `restore.sh --object db/predeploy/crm-….dump.age --replace-existing-data --roles-env …` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous`. Así levanta el backend y `migrate` de la versión anterior.
-  2. Después, `sudo infra/prod/deploy.sh --rollback`, que lleva todo el stack a esos digests, pasa la puerta e intercambia los dos archivos.
+  El orden importa, porque la imagen nueva volvería a migrar la base restaurada. Y depende de cómo terminó `deploy.sh`, porque `release.env` solo rota tras `DESPLIEGUE OK`:
+  - **Tras `DESPLIEGUE OK`** (la versión nueva quedó en `release.env` y da problemas después):
+    1. `restore.sh --object db/predeploy/crm-….dump.age --replace-existing-data --roles-env …` con `CRM_RELEASE_ENV=/etc/crm/release.env.previous`. Así levanta el backend y `migrate` de la versión anterior.
+    2. Después, `sudo infra/prod/deploy.sh --rollback`, que lleva todo el stack a esos digests, pasa la puerta e intercambia los dos archivos. Si ese `--rollback` fallara su puerta, su vuelta atrás automática levanta la versión nueva, cuyo `migrate` vuelve a aplicar sus migraciones sobre la base restaurada: repite el paso 1.
+  - **Tras `ROLLBACK OK` o `ROLLBACK FALLIDO`** (`release.env` sigue siendo la versión que estaba en marcha, y `release.env.previous` es la anterior a esa):
+    1. `restore.sh --object db/predeploy/crm-….dump.age --replace-existing-data --roles-env …` con `CRM_RELEASE_ENV=/etc/crm/release.env`.
+    2. Después, `sudo infra/prod/deploy.sh /etc/crm/release.env`, que vuelve a desplegar esa misma versión, sin intercambiar archivos. No uses `--rollback` aquí: llevaría producción a una versión aún más vieja.
 - **Un despliegue cortado** (Ctrl-C, `kill`, un reinicio o un error inesperado) no vuelve atrás. Deja `/var/lib/crm-deploy/lock` y `release.env.next`, y lo anota como `INTERRUMPIDO` en `deploy.log`. Mientras estén, ningún despliegue arranca. Mira `deploy.log` y `docker compose ps`, borra los dos y repite el despliegue o haz `--rollback`: los dos son idempotentes. `deploy.sh` ignora `SIGHUP`, pero una terminal cerrada puede cortar igualmente la salida de `docker compose`: por eso, `tmux`.
 
 ## Probar en local
