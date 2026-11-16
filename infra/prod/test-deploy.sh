@@ -34,6 +34,7 @@ case "${args[*]}" in
   "run --rm --no-deps migrate") if fails "$FAIL_RUN"; then exit 1; fi ;;
   "exec -T backend python"*) if fails "$FAIL_READY"; then exit 1; fi ;;
   "pull --quiet") if [ -n "$KILL_ON_PULL" ]; then kill -"$KILL_ON_PULL" "$PPID"; fi ;;
+  "up -d --wait --wait-timeout"*) if fails "$KILL_ON_UP"; then kill -TERM "$PPID"; fi ;;
 esac
 EOF
 cat > "$work/infra/prod/smoke.sh" <<'EOF'
@@ -81,7 +82,7 @@ release b > "$work/b.env"
 release c > "$work/c.env"
 
 export CALLS="$work/calls" CRM_ENV_DIR="$work/etc" CRM_DEPLOY_DIR="$work/state" CRM_HEALTH_TIMEOUT=5
-export PATH="$work/bin:$PATH" FAIL_RUN="" FAIL_READY="" FAIL_DUMP="" FAIL_SMOKE="" FAIL_ENTRY=0 KILL_ON_PULL=""
+export PATH="$work/bin:$PATH" FAIL_RUN="" FAIL_READY="" FAIL_DUMP="" FAIL_SMOKE="" FAIL_ENTRY=0 KILL_ON_PULL="" KILL_ON_UP=""
 deploy() {
   : > "$CALLS"
   if "$work/infra/prod/deploy.sh" "$@" > "$work/out" 2>&1; then rc=0; else rc=$?; fi
@@ -138,6 +139,14 @@ echo 'CRM_DOMAIN="example.invalid"' > "$work/etc/proxy.env"
 refused "$work/a.env" "no es un nombre de dominio"
 echo "CRM_DOMAIN=example.invalid" > "$work/etc/proxy.env"
 
+# Primer despliegue con la puerta rota: no hay a qué volver; exit 2, sin release.env y sin lock.
+FAIL_READY=a deploy "$work/a.env"
+[ "$rc" = 2 ] || fail "primer despliegue roto: exit $rc, se esperaba 2"
+expect "ROLLBACK IMPOSIBLE"
+if [ -e "$work/etc/release.env" ] || [ -e "$work/etc/release.env.next" ] || [ -e "$work/state/lock" ]; then
+  fail "primer despliegue roto: quedan restos"
+fi
+
 # Primer despliegue: sin volcado; postgres y redis con el release nuevo; la puerta completa.
 deploy "$work/a.env"
 [ "$rc" = 0 ] || fail "primer despliegue"
@@ -193,6 +202,16 @@ FAIL_READY=cb deploy "$work/c.env"
 expect "ROLLBACK FALLIDO"
 state b a "rollback fallido"
 
+# Una señal mientras la vuelta atrás levanta b: el stack queda a medias, así que el lock se queda.
+FAIL_READY=c KILL_ON_UP=b deploy "$work/c.env"
+[ "$rc" = 143 ] || fail "TERM en el rollback: exit $rc, se esperaba 143"
+expect "INTERRUMPIDO"
+[ -d "$work/state/lock" ] || fail "TERM en el rollback quitó el lock"
+[ -f "$work/etc/release.env.next" ] || fail "TERM en el rollback quitó release.env.next"
+state b a "TERM en el rollback"
+rmdir "$work/state/lock"
+rm "$work/etc/release.env.next"
+
 # migrate falla con c: para antes del up; ni rollback ni cambio de release.env.
 FAIL_RUN=c deploy "$work/c.env"
 [ "$rc" = 1 ] || fail "migrate roto: exit $rc"
@@ -215,7 +234,7 @@ state c a "tras SIGHUP"
 
 # Otra señal a mitad deja el lock y release.env.next; el siguiente despliegue se niega.
 KILL_ON_PULL=TERM deploy "$work/b.env"
-[ "$rc" = 130 ] || fail "señal: exit $rc"
+[ "$rc" = 143 ] || fail "señal: exit $rc"
 [ -d "$work/state/lock" ] || fail "la señal quitó el lock"
 [ -f "$work/etc/release.env.next" ] || fail "la señal quitó release.env.next"
 grep -q "INTERRUMPIDO" "$work/state/deploy.log" || fail "el registro no cuenta la interrupción"

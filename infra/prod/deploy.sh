@@ -56,7 +56,8 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'exit 130' INT
+trap 'exit 143' TERM
 trap '' HUP
 
 # Copia KEY=valor del release a la salida estándar, solo si es una de las cinco imágenes y va por
@@ -139,18 +140,21 @@ start() {
   compose "$1" up -d --wait --wait-timeout "$health_timeout" --remove-orphans
 }
 
+# `finished` justo antes de cada salida: una señal durante la vuelta atrás deja el lock.
 rollback() {
-  finished=1
   if [ ! -f "$current" ]; then
     log "ROLLBACK IMPOSIBLE: no hay versión anterior (primer despliegue). El stack queda como está"
+    finished=1
     exit 2
   fi
   log "ROLLBACK: vuelvo a los digests de $current"
   if start "$current" && gate "$current" "$@"; then
     log "DESPLIEGUE FALLIDO. ROLLBACK OK: sigue en marcha la versión de $current"
+    finished=1
     exit 1
   fi
   log "ROLLBACK FALLIDO: el stack no pasa la puerta con $current. Sigue el runbook (README.md)"
+  finished=1
   exit 2
 }
 
