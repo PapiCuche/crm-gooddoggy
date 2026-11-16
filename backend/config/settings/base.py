@@ -334,6 +334,8 @@ SPECTACULAR_SETTINGS = {
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
+        "AiProviderEnum": "apps.ai_gateway.models.Provider",  # F8-03c
+        "AiProviderAccountStatusEnum": "apps.ai_gateway.models.AccountStatus",
         "QuickReplyVariableEnum": "apps.conversations.quick_replies.VARIABLES",  # F6-08a2
         "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
         "TaskTypeEnum": "apps.tasks.models.TaskType",  # F5-08b: `type` de una tarea

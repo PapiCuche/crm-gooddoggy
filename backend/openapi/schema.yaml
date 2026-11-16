@@ -589,6 +589,210 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/:
+    get:
+      operationId: ai_provider_accounts_list
+      description: 'Las cuentas de proveedor de IA de la organización, activas y desactivadas
+        (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo
+        `key_last_four`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: ai_provider_accounts_create
+      description: 'Guarda la clave de un proveedor (`ai.manage` y segundo factor
+        reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no
+        tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa
+        (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiProviderAccountCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/:
+    delete:
+      operationId: ai_provider_accounts_destroy
+      description: 'Desactiva la cuenta (`ai.manage` y segundo factor reciente): el
+        cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva.
+        404: no existe, es de otra organización o ya está desactivada.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/key/:
+    post:
+      operationId: ai_provider_accounts_rotate_key
+      description: 'Sustituye la clave de la cuenta (`ai.manage` y segundo factor
+        reciente): la anterior se invalida y su cifrado se borra. 404: no existe,
+        es de otra organización o está desactivada.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiProviderKeyRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/audit/:
     get:
       operationId: audit_list
@@ -10932,6 +11136,81 @@ components:
       - default_probability
       - name
       - stage_type
+    AiProviderAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          $ref: '#/components/schemas/AiProviderEnum'
+        status:
+          $ref: '#/components/schemas/AiProviderAccountStatusEnum'
+        key_last_four:
+          type: string
+          description: Lo único que se enseña de la clave.
+        configured_at:
+          type: string
+          format: date-time
+          description: Cuándo se guardó la clave vigente.
+        rotated_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - configured_at
+      - id
+      - key_last_four
+      - provider
+      - revoked_at
+      - rotated_at
+      - status
+      - updated_at
+    AiProviderAccountCreateRequest:
+      type: object
+      properties:
+        provider:
+          $ref: '#/components/schemas/AiProviderEnum'
+        api_key:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: 'Solo se escribe: ninguna respuesta la devuelve.'
+          maxLength: 256
+      required:
+      - api_key
+      - provider
+    AiProviderAccountStatusEnum:
+      enum:
+      - ACTIVE
+      - DISABLED
+      type: string
+      description: |-
+        * `ACTIVE` - Active
+        * `DISABLED` - Disabled
+    AiProviderEnum:
+      enum:
+      - ANTHROPIC
+      type: string
+      description: '* `ANTHROPIC` - Anthropic'
+    AiProviderKeyRequest:
+      type: object
+      properties:
+        api_key:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: 'Solo se escribe: ninguna respuesta la devuelve.'
+          maxLength: 256
+      required:
+      - api_key
     AssignActionEnum:
       enum:
       - TAKE
