@@ -63,12 +63,13 @@ def _classify(status: int, raw: bytes) -> Probe:
 
 
 def check(provider: str, key: str) -> Probe:
-    """Prueba `key` contra el proveedor: `OK` o el código de por qué no sirve. Sin reintentos: quien
-    prueba puede volver a hacerlo."""
+    """Prueba `key` contra el proveedor: `OK` o el código de por qué no sirve. Sin reintentos ni
+    esperas de `Retry-After` (`retry=False`): corre dentro de una transacción y, desde F8-03d, de
+    una petición web; quien prueba puede volver a hacerlo."""
     url = f"https://{settings.AI_PROVIDER_HOSTS[provider]}/v1/models?limit=1"
     headers = {"x-api-key": key, "anthropic-version": API_VERSION}
     try:
-        reply = http.request("GET", url, headers=headers)
+        reply = http.request("GET", url, headers=headers, retry=False)
     except http.BlockedDestination, http.HTTPError, OSError:
         logger.warning("ai.provider_probe_failed", provider=provider)  # sin el mensaje
         return Probe.PROVIDER_UNAVAILABLE

@@ -44,6 +44,7 @@ class FakeAnthropic:
     key: str = TEST_KEY
     outcome: str = "ok"
     calls: list[dict[str, Any]] = field(default_factory=list)
+    retries: list[Any] = field(default_factory=list)  # lo que pidió `core.http`, por llamada
 
     def handle(self, method: str, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
         parts = urlsplit(url)
@@ -75,12 +76,15 @@ class _Manager:
         self.fake = fake
 
     def request(
-        self, method: str, url: str, *, headers: dict[str, str] | None = None, **_: Any
+        self, method: str, url: str, *, headers: dict[str, str] | None = None, **options: Any
     ) -> urllib3.BaseHTTPResponse:
         if urlsplit(url).hostname != HOST:  # nada fuera del simulador
             raise AssertionError(f"el simulador no atiende {urlsplit(url).hostname}")
+        self.fake.retries.append(options.get("retries", "default"))  # el gestor real reintentaría
         status, body = self.fake.handle(method, url, dict(headers or {}))
         reply_headers = {"request-id": REQUEST_ID, "content-type": "application/json"}
+        if status == 429:  # como la API real: un 429 dice cuándo volver
+            reply_headers["retry-after"] = "2"
         return urllib3.HTTPResponse(
             body=io.BytesIO(body), headers=reply_headers, status=status, preload_content=False
         )

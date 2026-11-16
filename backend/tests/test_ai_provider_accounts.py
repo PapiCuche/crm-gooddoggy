@@ -71,6 +71,7 @@ def test_create_check_rotate_and_disable_are_audited_without_the_key(
             {"limit": ["1"]},
         )
         assert call["headers"] == {"x-api-key": TEST_KEY, "anthropic-version": "2026-10-21"}
+        assert (fake.retries[0].total, fake.retries[0].redirect) == (0, False)  # sin reintentos
         assert run(crm.a, crm.ana, accounts.rotate, api_key=OTHER_KEY).pk == made.pk
         assert run(crm.a, crm.ana, accounts.check) == Probe.CREDENTIALS_REJECTED  # la nueva
         fake.key = OTHER_KEY
@@ -137,6 +138,7 @@ def test_every_provider_answer_becomes_a_closed_code_and_its_body_never_leaves(
     monkeypatch.setattr(fake, "handle", noisy)
     with caplog.at_level(logging.DEBUG):
         assert run(crm.a, crm.ana, accounts.check) == expected
+    assert [retry.total for retry in fake.retries] == [0]  # una llamada, sin esperar `retry-after`
     assert audit(migrator)[-1][:2] == ("ai.account.tested", "FAILED")
     assert audit(migrator)[-1][3] == {"provider": ANTHROPIC, "result": str(expected)}
     seen = caplog.text + everything(migrator)
