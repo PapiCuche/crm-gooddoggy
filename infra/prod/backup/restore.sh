@@ -60,7 +60,7 @@ fi
 if [ "$tables" != 0 ]; then
   # Antes de borrar nada: hay contraseñas para recrear los roles y el volcado se baja y se descifra
   # entero (age comprueba cada bloque y el final), así una clave equivocada no deja la base vacía.
-  [ -n "${CRM_APP_PASSWORD:-}" ] && [ -n "${CRM_MIGRATOR_PASSWORD:-}" ] || bootstrap
+  if [ -z "${CRM_APP_PASSWORD:-}" ] || [ -z "${CRM_MIGRATOR_PASSWORD:-}" ]; then bootstrap; fi
   rclone cat "DEST:$BACKUP_S3_BUCKET/$object" | age -d -i "$identity" > /dev/null
   log restore.replacing "tables=$tables"
   compose stop backend ws worker worker-media beat
