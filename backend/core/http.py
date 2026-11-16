@@ -228,16 +228,23 @@ def _check_headers(headers: dict[str, str] | None) -> dict[str, str]:
     return named
 
 
+NO_RETRY = urllib3.Retry(total=0, redirect=False, raise_on_redirect=False)
+
+
 def request(
     method: str, url: str, *, headers: dict[str, str] | None = None, body: bytes | None = None,
-    json: Any = None,
+    json: Any = None, retry: bool = True,
 ) -> urllib3.BaseHTTPResponse:  # fmt: skip
-    """Sin `**kwargs`: no se pueden quitar timeouts, reintentos ni el bloqueo de redirects."""
+    """Sin `**kwargs`: no se pueden quitar timeouts ni el bloqueo de redirects. `retry=False` solo
+    **quita** los reintentos (y la espera de `Retry-After`): para quien no puede esperar, como una
+    prueba dentro de una petición web (F8-03b)."""
     check_url(url)
     _check_headers(headers)  # los nombres originales se envían tal cual: ya no hay prohibidos
+    extra: dict[str, Any] = {} if retry else {"retries": NO_RETRY}
     reply = _manager.request(
-        method, url, headers=headers, body=body, json=json, redirect=False, preload_content=False
-    )
+        method, url, headers=headers, body=body, json=json, redirect=False, preload_content=False,
+        **extra,
+    )  # fmt: skip
     data = reply.read(MAX_RESPONSE + 1)  # nunca más de `MAX_RESPONSE` + 1 bytes en memoria
     reply.release_conn()
     if len(data) > MAX_RESPONSE:

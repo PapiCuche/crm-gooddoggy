@@ -9,7 +9,7 @@ comandos con `ai.manage`, auditoría y segundo factor llegan con F8-03b y F8-03c
 import re
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from apps.ai_gateway.models import (
@@ -33,6 +33,10 @@ class MalformedKey(ValueError):  # noqa: N818 — nunca lleva la clave
     """La clave no tiene la forma de una clave de API."""
 
 
+class AccountConflict(Exception):  # noqa: N818 — una carrera, no un fallo
+    """Otra operación creó a la vez la cuenta de ese proveedor: se puede reintentar."""
+
+
 class UnreadableKeys(Exception):  # noqa: N818 — solo lleva cuántas
     """Hay claves guardadas que no se pueden abrir."""
 
@@ -52,10 +56,19 @@ def _wipe(alias: str, account_id: UUID) -> int:
     return live.update(ciphertext=None, revoked_at=timezone.now())
 
 
+def _locked(alias: str, provider: str) -> AIProviderAccount | None:
+    """La cuenta de `provider`, bloqueada hasta el final de la transacción, o `None`."""
+    found: AIProviderAccount | None = (
+        AIProviderAccount.objects.using(alias).select_for_update().filter(provider=provider).first()
+    )
+    return found
+
+
 def store(ctx: TenantContext, provider: str, key: str) -> AIProviderAccount:
     """Cifra y guarda la clave de la cuenta de `provider` de la organización del contexto, que se
     crea si no existe. Si ya tenía una viva, la invalida (rotación); si estaba desactivada, la
-    reactiva. Dos llamadas con la misma clave dan cifrados distintos."""
+    reactiva. Dos llamadas con la misma clave dan cifrados distintos. `AccountConflict` si otra
+    operación crea la misma cuenta a la vez."""
     if provider not in Provider.values:
         raise ValueError("proveedor desconocido")
     if not KEY_FORMAT.fullmatch(key):
@@ -64,12 +77,19 @@ def store(ctx: TenantContext, provider: str, key: str) -> AIProviderAccount:
     now = timezone.now()
     with transaction.atomic(using=alias):
         accounts = AIProviderAccount.objects.using(alias)
-        account = accounts.select_for_update().filter(provider=provider).first()
+        account = _locked(alias, provider)
         if account is None:
-            account = accounts.create(
-                provider=provider, key_last_four=key[-4:], configured_by_user_id=ctx.user_id,
-                configured_at=now,
-            )  # fmt: skip
+            try:
+                with transaction.atomic(using=alias):  # sin la carrera, la transacción sigue
+                    account = accounts.create(
+                        provider=provider, key_last_four=key[-4:],
+                        configured_by_user_id=ctx.user_id, configured_at=now,
+                    )  # fmt: skip
+            except IntegrityError as error:
+                constraint = getattr(getattr(error.__cause__, "diag", None), "constraint_name", "")
+                if constraint != "ai_provider_accounts_provider_uq":
+                    raise
+                raise AccountConflict from None
         else:
             rotated = _wipe(alias, account.pk) > 0
             accounts.filter(pk=account.pk).update(
@@ -91,7 +111,7 @@ def revoke(ctx: TenantContext, provider: str) -> bool:
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         accounts = AIProviderAccount.objects.using(alias)
-        account = accounts.select_for_update().filter(provider=provider).first()
+        account = _locked(alias, provider)
         if account is None or account.status != AccountStatus.ACTIVE:
             return False
         _wipe(alias, account.pk)

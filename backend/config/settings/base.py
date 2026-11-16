@@ -390,6 +390,10 @@ CHANNEL_SEND_LIMIT = (20, 1)
 META_MEDIA_HOSTS = ("lookaside.fbsbx.com",)
 if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
     HTTP_ALLOWED_HOSTS.append(META_GRAPH_HOST)
+# F8-03b (ADR-034 §3): el host fijo de cada proveedor de IA; nunca una URL que dé el usuario. Solo
+# `apps.ai_gateway` lo llama, con la clave sellada de la organización.
+AI_PROVIDER_HOSTS = {"ANTHROPIC": "api.anthropic.com"}
+HTTP_ALLOWED_HOSTS.extend(h for h in AI_PROVIDER_HOSTS.values() if h not in HTTP_ALLOWED_HOSTS)
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.
