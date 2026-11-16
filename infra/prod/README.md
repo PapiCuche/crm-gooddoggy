@@ -44,22 +44,30 @@ Los paquetes son **públicos** (ADR-033, decisión 8). GitHub crea cada paquete 
 
 ## Desplegar
 
-En el servidor, con el checkout de `infra/prod` en el mismo commit que las imágenes y sin cambios locales:
+En el servidor, con el checkout de `infra/prod` en el mismo commit que las imágenes y sin cambios locales. Siempre dentro de `tmux` (o `screen`), para que una sesión SSH perdida no corte el despliegue:
 
 ```bash
+tmux new -s deploy
 sudo install -m 0600 /dev/stdin /root/release-<SHA>.env   # pega el release.env del resumen del job
 sudo infra/prod/deploy.sh /root/release-<SHA>.env
 ```
 
-`deploy.sh` necesita, en `CRM_ENV_DIR` (`/etc/crm`): los archivos de entorno, `CRM_DOMAIN` en `proxy.env` y `backup-recipients.txt` con las claves **públicas** de `age` de backup y de despliegue (ADR-033 §8.2). Necesita también `age` instalado. Se niega a correr sin `root`, con cambios sin commit en `infra/prod`, con otro despliegue a medias (`/var/lib/crm-deploy/lock`) y con un release que tenga una imagen sin `@sha256:` o cualquier otra variable.
+`deploy.sh` necesita, en `CRM_ENV_DIR` (`/etc/crm`): los archivos de entorno, `CRM_DOMAIN` en `proxy.env` y `backup-recipients.txt` con las claves **públicas** de `age` de backup y de despliegue (ADR-033 §8.2). Necesita también `age` instalado. Se niega a correr, antes de tocar nada:
+
+- sin `root`;
+- con cambios sin commit en `infra/prod`;
+- con otro despliegue a medias (`/var/lib/crm-deploy/lock`);
+- con un `CRM_DOMAIN` que no sea un nombre de dominio;
+- con un release (el nuevo o el que está en marcha) que tenga otra variable, una imagen sin `@sha256:<64 hex>`, o un backend, frontend o proxy que no salga de `ghcr.io/papicuche/crm-gooddoggy/`;
+- con un cambio de versión mayor de PostgreSQL: eso exige `pg_upgrade` en una ventana.
 
 | Paso | Si falla |
 | --- | --- |
 | 1. Valida el release y hace `pull` de los cinco digests | Sale. No se ha tocado nada |
 | 2. Volcado previo: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age`, en `/var/lib/crm-deploy/predeploy/`. Se borra a los 7 días | Sale. No se ha tocado nada |
-| 3. `postgres` y `redis` con su digest; job `migrate` como `crm_migrator` | Sale. El runtime anterior sigue en marcha y `release.env` no cambia |
-| 4. `up -d --wait` del stack | Vuelta atrás automática |
-| 5. Puerta de salud: `/health/ready` 200 desde dentro del backend (hasta `CRM_HEALTH_TIMEOUT`, 180 s), después `smoke.sh https://crm.<DOMINIO>` | Vuelta atrás automática |
+| 3. Job `migrate` como `crm_migrator`, contra `postgres` y `redis` con los digests **en marcha** (solo el primer despliegue los arranca con los nuevos) | Sale. El runtime anterior sigue en marcha y `release.env` no cambia |
+| 4. `up -d --wait` del stack: aquí cambian todos los digests, también los de `postgres` y `redis` | Vuelta atrás automática |
+| 5. Puerta de salud: `/health/ready` 200 desde dentro del backend (hasta `CRM_HEALTH_TIMEOUT`, 180 s), `smoke.sh https://crm.<DOMINIO>` y `https://crm.<DOMINIO>/login` 200 a través de Caddy | Vuelta atrás automática |
 
 Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como `release.env`. Repetir el mismo release es seguro: no pierde la versión anterior. El registro está en `/var/lib/crm-deploy/deploy.log`: fechas, pasos, digests y el commit de `infra/prod`, nunca valores de los archivos de entorno.
 
@@ -70,7 +78,7 @@ Subir el volcado previo al destino de los backups es de F1-16 (#757). Hasta ento
 - **Automática.** Si fallan los pasos 4 o 5, `deploy.sh` vuelve a levantar los digests de `release.env`, es decir, la versión que estaba en marcha, y pasa la puerta otra vez. Entonces imprime `DESPLIEGUE FALLIDO. ROLLBACK OK` y sale con 1. Si la vuelta atrás tampoco pasa la puerta, imprime `ROLLBACK FALLIDO` y sale con 2: mira `docker compose ps` y los logs, y sigue con la manual.
 - **Manual** (una versión desplegada da problemas después): `sudo infra/prod/deploy.sh --rollback` despliega `release.env.previous` con los mismos pasos e intercambia los dos archivos. Para ir más atrás, despliega el `release.env` de ese SHA (el resumen de su job de `images.yml`).
 - **Nunca se deshacen migraciones.** Volver atrás es seguro solo si las migraciones siguen la regla de expandir y después contraer (ADR-033 §7). Una versión que no la cumple se despliega en una ventana. Su vuelta atrás es restaurar el volcado previo, con la clave de despliegue o la de backup, y se pierde lo escrito desde entonces (runbook de F1-16).
-- **Un despliegue cortado** (sesión SSH perdida, reinicio) deja `/var/lib/crm-deploy/lock` y quizá `release.env.next`. Mira `deploy.log` y `docker compose ps`, borra los dos y repite el despliegue: es idempotente.
+- **Un despliegue cortado** (Ctrl-C, `kill`, un reinicio o un error inesperado) no vuelve atrás. Deja `/var/lib/crm-deploy/lock` y `release.env.next`, y lo anota como `INTERRUMPIDO` en `deploy.log`. Mientras estén, ningún despliegue arranca. Mira `deploy.log` y `docker compose ps`, borra los dos y repite el despliegue o haz `--rollback`: los dos son idempotentes. `deploy.sh` ignora `SIGHUP`, pero una terminal cerrada puede cortar igualmente la salida de `docker compose`: por eso, `tmux`.
 
 ## Probar en local
 
