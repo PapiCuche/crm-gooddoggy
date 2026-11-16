@@ -1,6 +1,6 @@
 # Fase 8 — Infraestructura de IA y tools de lectura: el copiloto del Inbox
 
-- **Estado:** diseño propuesto el 2026-11-13 (F8-01). [ADR-034](../adr/ADR-034-ai-copilot-first.md) está `Proposed`: hasta que el propietario lo acepte, lo cambie o lo rechace (F8-02, #765), este documento es un plan y no un compromiso. Ningún work item con código empieza antes.
+- **Estado:** diseño propuesto el 2026-11-13 (F8-01). [ADR-034](../adr/ADR-034-ai-copilot-first.md) **aceptado el 2026-11-16** (F8-02, #765) con todas las recomendaciones de D-F8-01…D-F8-09: la serie F8-03…F8-10 queda desbloqueada. El copiloto nunca envía solo y no bloquea el Inbox humano.
 - **Objetivo (release R2):** que quien atiende el Inbox pida a Claude una **sugerencia de respuesta** o un **resumen** de la conversación, y decida qué hacer con ella: insertarla en el compositor, editarla o descartarla. **Nada se envía solo.**
 - **Origen:** [ADR-005](../adr/ADR-005-ai-provider-abstraction.md) (Accepted), que ADR-034 acota; historias E08 y E11-07, E11-12 y E11-13 del [backlog §R](../fase-0/05-backlog-y-roadmap.md) y la estrategia de despliegue de la IA ([05 §S.4](../fase-0/05-backlog-y-roadmap.md)); [03 §J](../fase-0/03-tenancy-rbac-inbox-ia.md); ADR-006, ADR-010, ADR-011, ADR-022 y ADR-029.
 
@@ -25,7 +25,7 @@ No hay nada de IA en el código: ni `apps.ai_gateway`, ni `apps.ai_agents`, ni t
 | ID    | Título                                                                                                                               | Rama                                        | Depende de          | Tipo               |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | ------------------- | ------------------ |
 | F8-01 | [#764](https://github.com/PapiCuche/crm-gooddoggy/issues/764) ADR-034 copiloto con aprobación humana                                 | `docs/f8-adr-034-copilot`                   | —                   | documentación      |
-| F8-02 | [#765](https://github.com/PapiCuche/crm-gooddoggy/issues/765) Decisión del propietario: aceptar ADR-034                              | — (`docs/f8-adr-034-accepted` si se acepta) | F8-01               | decisión           |
+| F8-02 | [#765](https://github.com/PapiCuche/crm-gooddoggy/issues/765) Decisión del propietario: aceptar ADR-034                              | `docs/f8-adr-034-accepted` | F8-01               | decisión           |
 | F8-03 | [#766](https://github.com/PapiCuche/crm-gooddoggy/issues/766) Claves de proveedor: tabla sellada, API protegida y prueba de conexión | `feature/f8-ai-provider-keys`               | F8-02               | backend            |
 | F8-04 | [#767](https://github.com/PapiCuche/crm-gooddoggy/issues/767) Pantalla de claves y prueba de conexión                                | `feature/f8-ai-provider-keys-screen`        | F8-03               | frontend           |
 | F8-05 | [#768](https://github.com/PapiCuche/crm-gooddoggy/issues/768) `ai_gateway` con Anthropic: presupuesto, corte duro y registro de uso  | `feature/f8-ai-gateway-anthropic`           | F8-03               | backend            |
@@ -55,7 +55,7 @@ Cómo reparte ADR-034 entre ellos:
 
 | #   | Qué                                                                                     | Dónde se guarda                                                                                   | Cuándo se necesita                  |
 | --- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| 1   | Aceptar, cambiar o rechazar ADR-034 y responder sus decisiones                          | En el ADR o en un comentario de #765                                                              | Antes de F8-03                      |
+| 1   | **Hecho el 2026-11-16 (#765):** ADR-034 aceptado con todas sus recomendaciones | En el ADR o en un comentario de #765                                                              | Antes de F8-03                      |
 | 2   | Cuenta de **Anthropic** (Claude Console) de la organización, con método de pago y saldo | Anthropic. No se guarda en el CRM                                                                 | Antes de usarlo en vivo             |
 | 3   | **Clave de API** de esa cuenta                                                          | Solo en la pantalla del CRM (F8-04), cifrada; nunca en el repositorio, un issue, un PR ni un chat | Con F8-04, contra el proveedor real |
 | 4   | **Límite de gasto** en la consola del proveedor (segunda barrera, D-F8-09)              | Anthropic                                                                                         | Antes de usarlo con clientes        |
@@ -63,9 +63,9 @@ Cómo reparte ADR-034 entre ellos:
 | 6   | Qué listas de precios puede citar la IA (`ai_exposable`, D-F8-06)                       | La configuración de precios del CRM                                                               | Para que haya precios               |
 | 7   | Cuenta de **OpenAI** y su clave, si se usa (D-F8-02)                                    | Igual que las filas 2 y 3                                                                         | F8-10                               |
 
-## Decisiones abiertas para el propietario
+## Decisiones del propietario
 
-Las preguntas y las recomendaciones están en [ADR-034 §13](../adr/ADR-034-ai-copilot-first.md#13-decisiones-del-propietario): D-F8-01 presupuesto mensual y diario; D-F8-02 proveedores; D-F8-03 modelos de la lista permitida; D-F8-04 aviso de tratamiento de datos; D-F8-05 retención de los registros de IA y de los borradores; D-F8-06 listas que puede citar la IA; D-F8-07 stock como número o franja; D-F8-08 roles con `ai.use`; D-F8-09 límite de gasto en el proveedor. No se programa nada que dependa de una de ellas antes de la respuesta.
+Las preguntas, las recomendaciones y lo decidido están en [ADR-034 §13](../adr/ADR-034-ai-copilot-first.md#13-decisiones-del-propietario): D-F8-01 presupuesto mensual y diario; D-F8-02 proveedores; D-F8-03 modelos de la lista permitida; D-F8-04 aviso de tratamiento de datos; D-F8-05 retención de los registros de IA y de los borradores; D-F8-06 listas que puede citar la IA; D-F8-07 stock como número o franja; D-F8-08 roles con `ai.use`; D-F8-09 límite de gasto en el proveedor. **Todas decididas el 2026-11-16 en #765, tal como recomienda el ADR**: la serie F8-03…F8-10 puede programarse. El aviso de tratamiento de datos (D-F8-04) debe publicarse antes de encender F8-09 en producción.
 
 ## Después de esta fase
 
