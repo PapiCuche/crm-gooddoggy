@@ -128,7 +128,15 @@ def test_conflicts_and_bad_bodies_never_echo_the_key(
         refused = create(ana, wrong)
         assert refused.status_code == 400 and set(refused.json()["fields"]) == {"api_key"}
         assert wrong.strip() not in refused.content.decode()
-    assert create(ana, provider="OPENAI").status_code == 400
+    for provider in ("OPENAI", TEST_KEY):  # un campo cambiado de sitio: la clave no se repite
+        swapped = create(ana, "x", provider=provider)
+        assert swapped.status_code == 400 and set(swapped.json()["fields"]) == {
+            "provider",
+            "api_key",
+        }
+        assert TEST_KEY not in swapped.content.decode()
+    unknown = rotate(ana, uuid4(), key=bad)  # la forma de la clave, antes del 404
+    assert unknown.status_code == 400 and bad not in unknown.content.decode()
     assert create(ana).status_code == 201
     exists = create(ana, OTHER_KEY)
     assert (exists.status_code, exists.json()["code"]) == (409, "AI_ACCOUNT_EXISTS")

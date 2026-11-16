@@ -8,11 +8,11 @@
 import type { AiProviderEnum } from "./aiProviderEnum";
 
 export interface AiProviderAccountCreateRequest {
-  provider: AiProviderEnum;
   /**
    * Solo se escribe: ninguna respuesta la devuelve.
    * @minLength 1
    * @maxLength 256
    */
   api_key: string;
+  provider: AiProviderEnum;
 }

@@ -30,6 +30,7 @@ STEP_UP = {"GET", "POST", "DELETE"}  # todas: la cuenta de un tercero con costo 
 EXISTS = "La organización ya tiene una cuenta de ese proveedor: rota su clave."
 CONFLICT = "Otra persona está guardando la misma cuenta. Vuelve a intentarlo."
 MALFORMED = "La clave no tiene el formato de una clave de API."
+UNKNOWN = "Proveedor no admitido."
 KEY_HELP = "Solo se escribe: ninguna respuesta la devuelve."
 
 
@@ -44,16 +45,23 @@ class AiProviderAccountSerializer(serializers.Serializer[Any]):
     updated_at = serializers.DateTimeField()
 
 
-class AiProviderAccountCreateSerializer(serializers.Serializer[Any]):
-    provider = serializers.ChoiceField(choices=Provider.choices)
+# La clave se valida aquí, antes de buscar la cuenta (el cuerpo, antes del 404). Ningún mensaje de
+# error repite lo que se envió.
+class AiProviderKeySerializer(serializers.Serializer[Any]):
     api_key = serializers.CharField(
         write_only=True, max_length=256, trim_whitespace=False, help_text=KEY_HELP
     )
 
+    def validate_api_key(self, value: str) -> str:
+        if not keys.KEY_FORMAT.fullmatch(value):
+            raise serializers.ValidationError(MALFORMED)
+        return value
 
-class AiProviderKeySerializer(serializers.Serializer[Any]):
-    api_key = serializers.CharField(
-        write_only=True, max_length=256, trim_whitespace=False, help_text=KEY_HELP
+
+class AiProviderAccountCreateSerializer(AiProviderKeySerializer):
+    # Sin `{input}`: un campo cambiado de sitio pondría la clave en el mensaje (ADR-034 §4).
+    provider = serializers.ChoiceField(
+        choices=Provider.choices, error_messages={"invalid_choice": UNKNOWN}
     )
 
 

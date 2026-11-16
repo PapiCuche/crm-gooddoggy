@@ -11176,14 +11176,14 @@ components:
     AiProviderAccountCreateRequest:
       type: object
       properties:
-        provider:
-          $ref: '#/components/schemas/AiProviderEnum'
         api_key:
           type: string
           writeOnly: true
           minLength: 1
           description: 'Solo se escribe: ninguna respuesta la devuelve.'
           maxLength: 256
+        provider:
+          $ref: '#/components/schemas/AiProviderEnum'
       required:
       - api_key
       - provider
