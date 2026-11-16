@@ -5,6 +5,7 @@ from django.urls import ResolverMatch, URLPattern, path
 from django.urls.resolvers import RoutePattern
 
 from apps.conversations.api import assignment, channels, conversations, media, messages
+from apps.conversations.api.quick_replies import QuickRepliesView, QuickReplyView
 
 
 class SandboxOnly(URLPattern):
@@ -64,6 +65,8 @@ urlpatterns = [
         assignment.AssignView.as_view(),
         name="conversation-assign",
     ),
+    path("quick-replies/", QuickRepliesView.as_view(), name="quick-replies"),
+    path("quick-replies/<uuid:quick_reply_id>/", QuickReplyView.as_view(), name="quick-reply"),
     path("channels/", channels.ChannelsView.as_view(), name="channels"),
     path("channels/<uuid:account_id>/", channels.ChannelView.as_view(), name="channel"),
     path("channels/whatsapp/", channels.ConnectView.as_view(), name="whatsapp-connect"),

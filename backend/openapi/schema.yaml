@@ -7454,6 +7454,233 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quick-replies/:
+    get:
+      operationId: quick_replies_list
+      description: Las respuestas rápidas no borradas, activas o no, por creación
+        (ADR-016). Con `quick_replies.manage`.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedQuickReplyList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: quick_replies_create
+      description: 'Crea una respuesta activa (`quick_replies.manage`), auditada sin
+        el texto (solo su huella). 400 en `category_id`: no es una categoría viva
+        y activa de la organización. 409 `SHORTCUT_TAKEN`: otra activa ya usa el atajo.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuickReplyCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuickReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quick-replies/{quick_reply_id}/:
+    patch:
+      operationId: quick_replies_update
+      description: 'Cambia lo enviado, también `is_active` (activar o desactivar),
+        si `version` sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no
+        se escribe ni se audita. 409 `SHORTCUT_TAKEN`. 400 en `category_id` o en `is_active`:
+        la respuesta quedaría activa en una categoría desactivada. Con `quick_replies.manage`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quick_reply_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedQuickReplyUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuickReply'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    delete:
+      operationId: quick_replies_delete
+      description: 'Borra la respuesta (borrado lógico, sin `version`): deja de listarse
+        y su atajo queda libre. 404: no es de la organización o ya está borrada. Con
+        `quick_replies.manage`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: quick_reply_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/:
     get:
       operationId: quotes_list
@@ -13913,6 +14140,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedQuickReplyList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuickReply'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedQuoteList:
       type: object
       required:
@@ -14346,6 +14587,34 @@ components:
           maxLength: 5000
         ai_visible:
           type: boolean
+    PatchedQuickReplyUpdateRequest:
+      type: object
+      properties:
+        shortcut:
+          type: string
+          minLength: 1
+          maxLength: 64
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category_id:
+          type: string
+          format: uuid
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        is_active:
+          type: boolean
+          description: '`false` la desactiva y libera el atajo.'
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
     PatchedQuoteUpdateRequest:
       type: object
       description: Lo que se envía de una cotización al crearla o cambiarla.
@@ -15291,6 +15560,74 @@ components:
         * `YELLOW` - YELLOW
         * `RED` - RED
         * `UNKNOWN` - UNKNOWN
+    QuickReply:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        shortcut:
+          type: string
+          description: Único entre las activas de la organización.
+        title:
+          type: string
+        category_id:
+          type: string
+          format: uuid
+        body:
+          type: string
+        is_active:
+          type: boolean
+        usage_count:
+          type: integer
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - body
+      - category_id
+      - created_at
+      - id
+      - is_active
+      - shortcut
+      - title
+      - updated_at
+      - usage_count
+      - version
+    QuickReplyCreateRequest:
+      type: object
+      properties:
+        shortcut:
+          type: string
+          minLength: 1
+          description: 'Sin la `/`: hasta 32 letras sin acento, cifras, `_` o `-`;
+            en minúsculas.'
+          maxLength: 64
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category_id:
+          type: string
+          format: uuid
+          description: Una categoría viva y activa de la organización.
+        body:
+          type: string
+          minLength: 1
+          description: 'Hasta 4096 caracteres, con algo visible. Variables: `{{contact.first_name}}`,
+            `{{contact.name}}`, `{{org.name}}`; otras llaves dobles o triples son
+            un 400.'
+          maxLength: 4096
+      required:
+      - body
+      - category_id
+      - shortcut
+      - title
     Quote:
       type: object
       description: 'La cotización de la lista: sin líneas ni texto libre.'

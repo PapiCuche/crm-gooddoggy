@@ -165,15 +165,29 @@ def _audit(ctx: TenantContext, action: str, obj: Row, changes: dict[str, list[An
     record(ctx, f"{entity.type}.{action}", entity, changes)
 
 
-def _category(alias: str, category_id: UUID) -> QuickReplyCategory:
-    """La categoría viva, bloqueada contra un borrado a la vez (`FOR NO KEY UPDATE`)."""
+def _category(alias: str, category_id: UUID, active: str = "") -> QuickReplyCategory:
+    """La categoría viva, bloqueada contra un borrado o una desactivación a la vez (`FOR NO KEY
+    UPDATE`). Con `active` (el campo del error) además debe estar activa: una respuesta activa no
+    nace, no vuelve ni se mueve a una categoría desactivada (F6-08a3)."""
     live = QuickReplyCategory.objects.using(alias).filter(deleted_at__isnull=True)
     found: QuickReplyCategory | None = (
         live.select_for_update(no_key=True).filter(pk=category_id).first()
     )
     if found is None:  # de otra organización (RLS), inexistente o borrada
         raise Invalid("category_id", "una categoría viva de la organización")
+    if active and not found.is_active:
+        raise Invalid(active, "la categoría está desactivada: actívala o elige otra")
     return found
+
+
+def _check_category(alias: str, obj: QuickReply, values: dict[str, Any]) -> None:
+    """Lo que pide la categoría de una respuesta que cambia: viva si se mueve, y activa si la
+    respuesta queda activa y se mueve o se reactiva. Editar sin más una respuesta de una categoría
+    ya desactivada no la comprueba."""
+    target = values.get("category_id", obj.category_id)
+    moved, active = target != obj.category_id, values.get("is_active", obj.is_active)
+    if moved or (active and not obj.is_active):
+        _category(alias, target, ("category_id" if moved else "is_active") if active else "")
 
 
 def _create(ctx: TenantContext, model: Kind, values: dict[str, Any]) -> Any:
@@ -181,7 +195,7 @@ def _create(ctx: TenantContext, model: Kind, values: dict[str, Any]) -> Any:
     try:
         with transaction.atomic(using=alias):
             if model is QuickReply:
-                _category(alias, values["category_id"])
+                _category(alias, values["category_id"], "category_id")
             elif "sort_order" not in values:
                 last = model.objects.using(alias).aggregate(last=Max("sort_order"))["last"]
                 values["sort_order"] = 0 if last is None else min(last + 1, ORDER_MAX)
@@ -204,9 +218,8 @@ def _write(ctx: TenantContext, model: Kind, pk: UUID, version: int | None,
             obj = live.select_for_update(no_key=True).get(pk=pk)
             if version is not None and obj.version != version:
                 raise StaleVersion(pk)
-            moved = values.get("category_id")
-            if moved is not None and moved != getattr(obj, "category_id", None):
-                _category(alias, moved)
+            if model is QuickReply:
+                _check_category(alias, obj, values)
             if model is QuickReplyCategory and action == "deleted":
                 in_use = QuickReply.objects.using(alias).filter(category_id=pk)
                 if in_use.filter(deleted_at__isnull=True).exists():
@@ -267,15 +280,16 @@ def delete_category(ctx: TenantContext, *, category_id: UUID) -> Any:
 
 def create_reply(ctx: TenantContext, *, shortcut: str, title: str, category_id: UUID,
                  body: str) -> Any:  # fmt: skip
-    """Crea una respuesta activa en una categoría viva. `Taken` si el atajo ya es de una activa;
-    `Invalid` con su campo (una variable fuera de la lista, en `body`)."""
+    """Crea una respuesta activa en una categoría viva y activa. `Taken` si el atajo ya es de una
+    activa; `Invalid` con su campo (una variable fuera de la lista, en `body`)."""
     wanted = {"shortcut": shortcut, "title": title, "category_id": category_id, "body": body}
     return _create(ctx, QuickReply, _clean(wanted))
 
 
 def update_reply(ctx: TenantContext, *, quick_reply_id: UUID, version: int, **fields: Any) -> Any:
     """Cambia atajo, título, categoría, cuerpo o si está activa (activar y desactivar). Activarla
-    con un atajo que ya es de otra activa es `Taken`. `StaleVersion`, `DoesNotExist`."""
+    con un atajo que ya es de otra activa es `Taken`; activa, en una categoría desactivada, un
+    `Invalid`. `StaleVersion`, `DoesNotExist`."""
     values = _fields(fields, _REPLY_FIELDS)
     return _write(ctx, QuickReply, quick_reply_id, _version(version), values)
 
