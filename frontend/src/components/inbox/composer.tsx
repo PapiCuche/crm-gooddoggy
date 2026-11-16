@@ -27,6 +27,7 @@ import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 import { fileSize } from "./media-file";
+import { useQuickReplies } from "./quick-replies";
 
 // El tope de la API (`BODY_MAX`, 4096 caracteres; se cuentan puntos de código, como ella).
 export const BODY_MAX = 4096;
@@ -198,6 +199,18 @@ function ComposeBox({
   const over = count > max;
   const empty = text.trim() === "" && !file;
   const kind = (chosen: File) => FILES[chosen.type]?.kind ?? "IMAGE"; // solo se adjunta uno de `FILES`
+  // `/atajo` al inicio abre las respuestas rápidas (F6-08b): elegir solo cambia el texto del cuadro.
+  const quick = useQuickReplies({
+    enabled: !note && !closed,
+    conversationId: conversation.id,
+    text,
+    insert: (value) => {
+      setText(value);
+      setProblem(null);
+      box.current?.focus();
+      requestAnimationFrame(() => box.current?.setSelectionRange(value.length, value.length));
+    },
+  });
 
   const send = useMutation<Message, ApiError, Outgoing>({
     mutationFn: ({ file: attached, ...request }) =>
@@ -306,6 +319,7 @@ function ComposeBox({
     box.current?.focus();
   };
   const keys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (quick.onKey(event)) return; // con el selector abierto, Enter elige y no envía
     // Enter envía; Mayús+Enter agrega una línea. Durante una composición (IME) Enter es del IME;
     // Safari lo entrega ya sin `isComposing`, pero con `keyCode` 229.
     const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
@@ -348,7 +362,7 @@ function ComposeBox({
     <form
       hidden={!active}
       className={cn(
-        "flex min-w-0 flex-col gap-2 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-2 max-sm:gap-y-1",
+        "relative flex min-w-0 flex-col gap-2 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-2 max-sm:gap-y-1",
         note &&
           "bg-surface-raised border-foreground/40 rounded-[10px] border border-dashed p-2 lg:p-3",
       )}
@@ -366,6 +380,7 @@ function ComposeBox({
       >
         {t(file ? "label.caption" : `label.${mode}`)}
       </label>
+      {quick.picker}
       {/* 16 px: por debajo, Safari en iOS amplía la página al enfocar. */}
       <textarea
         id={field}
@@ -374,6 +389,8 @@ function ComposeBox({
         value={text}
         disabled={closed}
         readOnly={send.isPending}
+        placeholder={note ? undefined : t("placeholder")}
+        {...quick.field}
         aria-describedby={`${field}-count ${field}-keys${note ? ` ${field}-hint` : ""}${file ? ` ${field}-file` : ""}${closed ? ` ${field}-closed` : ""}`}
         aria-invalid={over || problem ? true : undefined}
         className={cn(
@@ -501,6 +518,7 @@ function ComposeBox({
           {errors("api.CONVERSATION_CLOSED")}
         </p>
       ) : null}
+      {quick.notice}
       {saved ? (
         <p role="status" className="text-sm max-sm:col-span-2">
           {saved}
