@@ -16,8 +16,7 @@ on:
       - ".github/workflows/infra-prod.yml"
       - ".github/workflows/images.yml"
       - ".github/workflows/images-pr.yml"
-      - "backend/Dockerfile"
-      - "frontend/Dockerfile"
+      - "**/Dockerfile*"
       - ".github/scripts/test_workflow_security.py"
       - ".github/scripts/test_backup_retention.py"
       - "backend/**/migrations/**" # el simulacro restaura y comprueba migrations_at_head

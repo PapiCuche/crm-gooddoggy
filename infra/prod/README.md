@@ -64,7 +64,7 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 
 - sin `root`;
 - con cambios sin commit en `infra/prod`;
-- con un `REVISION` que no es el commit del checkout de `infra/prod`. `compose.yaml`, `smoke.sh` y `backup/` tienen que ser los de las imágenes: `git checkout <REVISION>`. `--allow-revision-mismatch`, el primer argumento, lo permite y lo anota en `deploy.log` como `AVISO`. Sin checkout de git, solo con ese flag;
+- con un `REVISION` que no es el commit del checkout de `infra/prod`. `compose.yaml`, `smoke.sh` y `backup/` tienen que ser los de las imágenes: `git checkout <REVISION>`. `--allow-revision-mismatch`, solo como primer argumento, lo permite y lo anota en `deploy.log` como `AVISO`; cualquier otro `--allow…`, en cualquier sitio, se rechaza. Sin checkout de git, solo con ese flag;
 - con otro despliegue a medias o el backup nocturno en curso (`/var/lib/crm-deploy/lock`);
 - con un `CRM_DOMAIN` que no sea un nombre de dominio;
 - con un release (el nuevo o el que está en marcha) que tenga otra variable, una imagen sin `@sha256:<64 hex>`, o un backend, frontend o proxy que no salga de `ghcr.io/papicuche/crm-gooddoggy/`;
@@ -73,7 +73,7 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 | Paso | Si falla |
 | --- | --- |
 | 1. Valida el release y hace `pull` de los cinco digests | Sale. No se ha tocado nada |
-| 2. Arranca `postgres` y `redis` con los digests **en marcha**, también si estaban parados. Después, el volcado previo de la versión en marcha con `backup/backup.sh predeploy`: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age` para las claves de backup y de despliegue, y subido a `db/predeploy/` del destino de los backups, donde caduca a los 7 días. No queda en el servidor. En el primer despliegue no hay nada que volcar. Nunca se migra sin volcado | Sale. El runtime no se ha tocado |
+| 2. Arranca `postgres` y `redis` con los digests **en marcha**, también si estaban parados, sin recrearlos (`--no-recreate`: un cambio de `compose.yaml` no reinicia la base antes del volcado). Después, el volcado previo de la versión en marcha con `backup/backup.sh predeploy`: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age` para las claves de backup y de despliegue, y subido a `db/predeploy/` del destino de los backups, donde caduca a los 7 días. No queda en el servidor. En el primer despliegue no hay nada que volcar. Nunca se migra sin volcado | Sale. El runtime no se ha tocado |
 | 3. Job `migrate` como `crm_migrator`, contra `postgres` y `redis` con los digests **en marcha** (solo el primer despliegue los arranca con los nuevos) | Sale. El runtime anterior sigue en marcha y `release.env` no cambia |
 | 4. `up -d --wait` del stack: aquí cambian todos los digests, también los de `postgres` y `redis`. `up` vuelve a lanzar `migrate`, porque el runtime depende de él en `compose.yaml` (así un `up` a mano nunca arranca sin migrar). Ya no queda nada que aplicar: termina en segundos | Vuelta atrás automática |
 | 5. Puerta de salud: `/health/ready` 200 desde dentro del backend (hasta `CRM_HEALTH_TIMEOUT`, 180 s), `smoke.sh https://crm.<DOMINIO>` y `https://crm.<DOMINIO>/login` 200 a través de Caddy | Vuelta atrás automática |
@@ -97,7 +97,7 @@ Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como 
 
 ## Migrate mensual
 
-Las particiones de auditoría se crean al migrar, para el mes en curso y los 12 siguientes (ADR-033 §7). Sin despliegues en un año, se acabarían. `crm-migrate.timer` lanza `deploy.sh --migrate` el día 15 de cada mes a las 12:00 UTC: solo el job `migrate` de la versión en marcha (`release.env`), con el lock de los despliegues. Si hay un despliegue o el backup nocturno en curso, falla y se repite el mes siguiente. Instalación, con el repositorio en `/opt/crm`:
+Las particiones de auditoría se crean al migrar, para el mes en curso y los 12 siguientes (ADR-033 §7). Sin despliegues en un año, se acabarían. `crm-migrate.timer` lanza `deploy.sh --migrate` el día 15 de cada mes a las 12:00 UTC: solo el job `migrate` de la versión en marcha (`release.env`). Toma antes que nada el lock de los despliegues: si hay un despliegue o el backup nocturno en curso, falla y se repite el mes siguiente. Un fallo avisa: `ExecStopPost` llama a `backup/alert.sh migrate.failed`, que lo deja en el journal y, con `SENTRY_DSN` en `backup.env`, en Sentry. Instalación, con el repositorio en `/opt/crm`:
 
 ```bash
 sudo install -m 0644 infra/prod/crm-migrate.service infra/prod/crm-migrate.timer /etc/systemd/system/

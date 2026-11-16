@@ -31,7 +31,7 @@ done
 echo "$release ${args[*]}" >> "$CALLS"
 fails() { [ -n "$release" ] && case $1 in *"$release"*) true ;; *) false ;; esac; }
 case "${args[*]}" in
-  "up -d --wait postgres redis") if fails "$FAIL_STORES"; then exit 1; fi ;;
+  "up -d --no-recreate --wait --wait-timeout 5 postgres redis") if fails "$FAIL_STORES"; then exit 1; fi ;;
   "run --rm --no-deps migrate") if fails "$FAIL_RUN"; then exit 1; fi ;;
   "exec -T backend python"*) if fails "$FAIL_READY"; then exit 1; fi ;;
   "pull --quiet") if [ -n "$KILL_ON_PULL" ]; then kill -"$KILL_ON_PULL" "$PPID"; fi ;;
@@ -105,6 +105,14 @@ refused() { # refused <release> <mensaje>: sale con 1 sin llamar a docker
   expect "$2"
   if grep -q '^[a-z]* ' "$CALLS"; then fail "una negativa llamó a docker: $1"; fi
 }
+refused_args() { # refused_args <mensaje> <argumentos…>: sale con 1 sin llamar a docker
+  local want=$1
+  shift
+  deploy "$@"
+  [ "$rc" = 1 ] || fail "acepta $* (exit $rc)"
+  expect "$want"
+  if grep -q '^[a-z]* ' "$CALLS"; then fail "una negativa llamó a docker: $*"; fi
+}
 rolled_back() { # rolled_back <contexto>: el release nuevo (c) falló y se volvió a b, con la puerta
   [ "$rc" = 1 ] || fail "$1: exit $rc, se esperaba 1"
   expect "ROLLBACK OK"
@@ -150,6 +158,9 @@ other=$(printf 'f%.0s' $(seq 40))
 release a 18 "$other" > "$work/v.env"
 refused "$work/v.env" "el release es de $other e infra/prod está en $head: git checkout $other"
 refused --migrate "no hay $work/etc/release.env"
+# --allow-revision-mismatch solo como primer argumento; cualquier otro --allow… se rechaza.
+refused_args "opción desconocida o fuera de sitio: --allow-revision-mismatch" "$work/a.env" --allow-revision-mismatch
+refused --allow-revison-mismatch "opción desconocida o fuera de sitio: --allow-revison-mismatch"
 echo 'CRM_DOMAIN="example.invalid"' > "$work/etc/proxy.env"
 refused "$work/a.env" "no es un nombre de dominio"
 echo "CRM_DOMAIN=example.invalid" > "$work/etc/proxy.env"
@@ -167,19 +178,19 @@ deploy "$work/a.env"
 [ "$rc" = 0 ] || fail "primer despliegue"
 state a "" "tras a"
 if grep -q '^backup' "$CALLS"; then fail "volcado sin versión previa"; fi
-events=$(grep -oE '^a (pull --quiet|up -d --wait postgres redis|run --rm --no-deps migrate|up -d --wait --wait-timeout|exec -T backend)|^smoke|^curl .*/login$' "$CALLS" |
+events=$(grep -oE '^a (pull --quiet|up -d --no-recreate --wait --wait-timeout 5 postgres redis|run --rm --no-deps migrate|up -d --wait --wait-timeout|exec -T backend)|^smoke|^curl .*/login$' "$CALLS" |
   sed 's/^curl .*/curl/' | tr '\n' '|')
-[ "$events" = "a pull --quiet|a up -d --wait postgres redis|a run --rm --no-deps migrate|a up -d --wait --wait-timeout|a exec -T backend|smoke|curl|" ] ||
+[ "$events" = "a pull --quiet|a up -d --no-recreate --wait --wait-timeout 5 postgres redis|a run --rm --no-deps migrate|a up -d --wait --wait-timeout|a exec -T backend|smoke|curl|" ] ||
   fail "orden: $events"
 
 # Segundo despliegue (postgres parado: el docker falso no lo da por arrancado): postgres y redis de a,
 # después backup.sh predeploy de a y después migrate. Siguen en a hasta `up`.
 deploy "$work/b.env"
 [ "$rc" = 0 ] || fail "despliegue de b"
-events=$(grep -oE '^a up -d --wait postgres redis|^backup predeploy a$|^b run --rm --no-deps migrate' "$CALLS" | tr '\n' '|')
-[ "$events" = "a up -d --wait postgres redis|backup predeploy a|b run --rm --no-deps migrate|" ] ||
+events=$(grep -oE '^a up -d --no-recreate --wait --wait-timeout 5 postgres redis|^backup predeploy a$|^b run --rm --no-deps migrate' "$CALLS" | tr '\n' '|')
+[ "$events" = "a up -d --no-recreate --wait --wait-timeout 5 postgres redis|backup predeploy a|b run --rm --no-deps migrate|" ] ||
   fail "postgres y redis de a, volcado y migrate: $events"
-if grep -q '^b up -d --wait postgres redis' "$CALLS"; then fail "postgres y redis cambian antes de migrar"; fi
+if grep -q '^b up -d --no-recreate --wait --wait-timeout 5 postgres redis' "$CALLS"; then fail "postgres y redis cambian antes de migrar"; fi
 state b a "rotación"
 
 # postgres o redis no arrancan: sale sin volcar ni migrar ni tocar el runtime.
@@ -198,6 +209,14 @@ FAIL_RUN=b deploy --migrate
 expect "falló migrate de la versión en marcha"
 [ ! -e "$work/state/lock" ] || fail "--migrate dejó el lock"
 grep -qx 'ExecStart=/opt/crm/infra/prod/deploy.sh --migrate' "$src/crm-migrate.service" || fail "crm-migrate.service"
+# --migrate toma el lock antes que nada: con un despliegue o el nocturno en curso, se niega y no lo toca.
+mkdir "$work/state/lock"
+refused --migrate "hay otro despliegue o el backup nocturno en curso"
+[ -d "$work/state/lock" ] || fail "--migrate quitó un lock ajeno"
+rmdir "$work/state/lock"
+# Un fallo del servicio avisa: ExecStopPost llama a backup/alert.sh (journal y Sentry).
+grep -qE '^ExecStopPost=/bin/sh -c .* \|\| exec /opt/crm/infra/prod/backup/alert\.sh migrate\.failed ' "$src/crm-migrate.service" ||
+  fail "crm-migrate.service no avisa de un fallo"
 grep -qx 'OnCalendar=\*-\*-15 12:00:00 UTC' "$src/crm-migrate.timer" || fail "crm-migrate.timer no es mensual"
 
 # Con --allow-revision-mismatch, un release de otro commit se despliega y queda anotado.
@@ -334,6 +353,15 @@ nightly predeploy 0
 if grep -q 'deploy_lock' "$work/out"; then fail "predeploy esperó al lock de deploy.sh"; fi
 grep -qx 'lock held' "$work/probe" || fail "predeploy no siguió hasta el volcado"
 rmdir "$work/state/lock"
+
+# backup/alert.sh (ExecStopPost de crm-migrate.service): el aviso va al journal y a Sentry.
+{ cat "$work/etc/backup.env"; echo "SENTRY_DSN=https://k@sentry.example.invalid/7"; } > "$work/etc/alert.env"
+chmod 600 "$work/etc/alert.env"
+: > "$CALLS"
+FAKE_UID="$(command -p id -u)" BACKUP_ENV="$work/etc/alert.env" \
+  bash "$src/backup/alert.sh" migrate.failed "result=exit-code status=1" > "$work/out" 2>&1 || fail "alert.sh"
+expect '"event":"migrate.failed","level":"error","reason":"result=exit-code status=1"'
+grep -q '^curl .*https://sentry.example.invalid/api/7/envelope/$' "$CALLS" || fail "alert.sh no llamó a Sentry"
 
 # Un checkout con cambios sin commit en infra/prod no despliega; uno que no es de git, tampoco sin
 # --allow-revision-mismatch (no se puede comprobar REVISION).

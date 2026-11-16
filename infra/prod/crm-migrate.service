@@ -10,6 +10,8 @@ After=docker.service
 [Service]
 Type=oneshot
 ExecStart=/opt/crm/infra/prod/deploy.sh --migrate
+# Un fallo no se queda en el journal: migrate.failed al journal y, con SENTRY_DSN en backup.env, a Sentry.
+ExecStopPost=/bin/sh -c '[ "$$SERVICE_RESULT" = success ] || exec /opt/crm/infra/prod/backup/alert.sh migrate.failed "result=$$SERVICE_RESULT status=$$EXIT_STATUS"'
 TimeoutStartSec=30min
 NoNewPrivileges=true
 ProtectHome=true

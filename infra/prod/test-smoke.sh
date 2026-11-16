@@ -6,7 +6,8 @@
 # no llega en el tiempo de reloj, o malo aunque se pase -k), los límites de espera, PostgreSQL, los
 # topes de cuerpo, /demo y /health/*, la redirección de HTTP y la query de /webhooks en los logs.
 # F1-15b: cada llamada a docker pasa por `timeout 60` y cada curl lleva sus plazos; uno que falla o
-# agota el plazo sale con `smoke FAIL` y el motivo.
+# agota el plazo sale con `smoke FAIL` y el motivo. smoke.sh recibe datos por su entrada (como en tmux,
+# una terminal) y ninguna llamada a docker puede leerlos: bajo `timeout`, leerla la pararía (SIGTTIN).
 # Cada ejecución tiene un límite real de 10 s: un bucle sin fin falla, no cuelga la prueba.
 # Uso: bash infra/prod/test-smoke.sh
 set -euo pipefail
@@ -16,11 +17,11 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
 touch "$work/release.env"
 
-# timeout falso: solo `timeout 60 <orden>`; la orden sabe que va con plazo (UNDER_TIMEOUT).
+# timeout falso: solo `timeout -k 10 60 <orden>`; la orden sabe que va con plazo (UNDER_TIMEOUT).
 cat > "$work/bin/timeout" <<'EOF'
 #!/bin/sh
-[ "$1" = 60 ] || { echo "timeout inesperado: $*" >&2; exit 125; }
-shift
+[ "$1 $2 $3" = "-k 10 60" ] || { echo "timeout inesperado: $*" >&2; exit 125; }
+shift 3
 UNDER_TIMEOUT=1 exec "$@"
 EOF
 # docker falso: la lectura de PostgreSQL (PG_OUT la cambia) y unos logs; con LEAK, las URL pedidas.
@@ -28,6 +29,7 @@ EOF
 cat > "$work/bin/docker" <<'EOF'
 #!/bin/sh
 [ -n "${UNDER_TIMEOUT:-}" ] || { echo "docker sin timeout: $*" >&2; exit 1; }
+if IFS= read -r _; then echo "docker lee la entrada de smoke.sh: $*" >&2; exit 1; fi
 case "$*" in *" ${DOCKER_TIMEOUT:-none} "*) exit 124 ;; esac
 case "$*" in
   *" exec -T backend python -c "*) echo "${PG_OUT:-crm_app panic none 0 terse log superuser-rejected}" ;;
@@ -91,6 +93,7 @@ cat > "$work/bin/date" <<'EOF'
 cat "$CLOCK"
 EOF
 chmod +x "$work/bin/"*
+echo "lo que haya en la terminal del operador" > "$work/stdin"
 
 failures=0
 # <nombre> <texto esperado en la salida, u OK[texto]> [VAR=valor …] [-- opciones de curl]
@@ -108,7 +111,7 @@ check() {
   echo 1000 > "$work/clock"
   env ${vars[@]+"${vars[@]}"} PATH="$work/bin:$PATH" CALLS="$work/calls" TLS_ARGS="$work/tls-args" CODE_ARGS="$work/code-args" \
     CLOCK="$work/clock" CRM_RELEASE_ENV="$work/release.env" \
-    sh "$here/smoke.sh" https://crm.example.invalid "$@" > "$work/out" 2>&1 &
+    sh "$here/smoke.sh" https://crm.example.invalid "$@" < "$work/stdin" > "$work/out" 2>&1 &
   pid=$!
   # Vigía con el sleep real: mata smoke.sh a los 10 s y, si termina antes, sale solo enseguida.
   (

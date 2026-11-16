@@ -21,7 +21,12 @@ origin=${1:?uso: smoke.sh https://crm.<DOMINIO> [opciones de curl]}
 shift
 here=$(cd "$(dirname "$0")" && pwd)
 # Cada llamada con su plazo (F1-15b): un docker o un proxy colgado no cuelga la puerta de deploy.sh.
-compose() { timeout 60 docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"; }
+# `timeout` deja la orden en otro grupo de procesos: con la entrada en la terminal (tmux), `exec -T`
+# la leería y se pararía (SIGTTIN). Por eso </dev/null; -k 10 mata lo que no salga con TERM.
+compose() {
+  timeout -k 10 60 docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" \
+    "$@" < /dev/null
+}
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
 # Un curl que falla (o agota el plazo) dice por qué, también dentro de $(…), donde set -e sale sin más.
 code() {

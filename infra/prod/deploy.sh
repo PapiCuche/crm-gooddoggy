@@ -18,6 +18,7 @@
 # Uso: sudo infra/prod/deploy.sh [--allow-revision-mismatch] <release.env nuevo> [opciones de curl para smoke.sh]
 #      sudo infra/prod/deploy.sh [--allow-revision-mismatch] --rollback [opciones de curl]   (a release.env.previous)
 #      sudo infra/prod/deploy.sh --migrate   (solo `migrate` de la versión en marcha: crm-migrate.timer)
+# --allow-revision-mismatch solo vale como primer argumento; otro --allow… en cualquier sitio se rechaza.
 set -euo pipefail
 umask 077
 
@@ -165,6 +166,10 @@ main() {
     shift
   fi
   [ $# -ge 1 ] || die "uso: deploy.sh [--allow-revision-mismatch] <release.env nuevo> | --rollback | --migrate [opciones de curl]"
+  local arg
+  for arg do
+    case $arg in --allow*) die "opción desconocida o fuera de sitio: $arg (--allow-revision-mismatch va el primero)" ;; esac
+  done
   local candidate=$1 domain rev stores revision
   shift
   [ "$(id -u)" = 0 ] || die "ejecútalo con sudo: los archivos de entorno son de root (ADR-033 §6)"
@@ -228,7 +233,8 @@ main() {
   # atrás. Solo el primer despliegue los arranca con el release nuevo, y no tiene nada que volcar.
   stores=$next
   if [ -f "$current" ]; then stores=$current; fi
-  compose "$stores" up -d --wait postgres redis || die "postgres o redis no arrancan: el runtime no se ha tocado"
+  # --no-recreate: un cambio de compose.yaml no reinicia la base antes del volcado.
+  compose "$stores" up -d --no-recreate --wait --wait-timeout "$health_timeout" postgres redis || die "postgres o redis no arrancan: el runtime no se ha tocado"
   if [ -f "$current" ]; then predeploy_dump; fi
   compose "$next" run --rm --no-deps migrate ||
     die "fallaron las migraciones: el runtime anterior sigue en marcha y release.env no cambia"
