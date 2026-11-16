@@ -206,12 +206,12 @@ cd /opt/crm
 sudo infra/prod/deploy.sh /root/release-<SHA>.env
 ```
 
-`deploy.sh` ([infra/prod/README.md](../../infra/prod/README.md), «Desplegar») valida el release, descarga los cinco digests, se salta el volcado previo (en el primer despliegue no hay nada que volcar), arranca PostgreSQL y Redis, ejecuta el job `migrate` como `crm_migrator`, levanta el stack y pasa la puerta de salud: `/health/ready` 200 desde dentro del backend, [`smoke.sh`](../../infra/prod/smoke.sh) y `https://crm.<DOMINIO>/login` 200. En el primer arranque Caddy pide el certificado en segundo plano, después de que `up --wait` termine: `smoke.sh` lo espera hasta 120 s (`CRM_SMOKE_TLS_TIMEOUT`) y, si tarda, lo dice (`smoke: certificado válido tras 15s`). Termina con `DESPLIEGUE OK: /etc/crm/release.env`.
+`deploy.sh` ([infra/prod/README.md](../../infra/prod/README.md), «Desplegar») valida el release, descarga los cinco digests, se salta el volcado previo (en el primer despliegue no hay nada que volcar), arranca PostgreSQL y Redis, ejecuta el job `migrate` como `crm_migrator`, levanta el stack y pasa la puerta de salud: `/health/ready` 200 desde dentro del backend, [`smoke.sh`](../../infra/prod/smoke.sh) y `https://crm.<DOMINIO>/login` 200. En el primer arranque Caddy pide el certificado en segundo plano, después de que `up --wait` termine: `smoke.sh` lo espera hasta 120 s de reloj (`CRM_SMOKE_TLS_TIMEOUT`; un intento cada 5 s, y cada uno corta a los 15 s) y, si tarda, dice cuánto (`smoke: certificado válido tras 15s`). Termina con `DESPLIEGUE OK: /etc/crm/release.env`.
 
 Si la puerta falla en el primer despliegue no hay versión a la que volver: sale con `ROLLBACK IMPOSIBLE` y el stack queda como está. Mira `sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env ps` y `… logs backend proxy`, corrige y repite la misma orden. Lo habitual:
 
 - **El certificado:**
-  - `smoke FAIL: el certificado de … no es válido tras 120s (curl sale con 35 …)` (o 7, o 28): Caddy no lo obtuvo en ese tiempo. Los logs de `proxy` dicen qué respondió la autoridad. Si el registro A no resuelve aquí (`getent`) o el 80 o el 443 están cerrados, corrígelo. Si la autoridad solo va lenta, repite con más margen: `sudo CRM_SMOKE_TLS_TIMEOUT=300 infra/prod/deploy.sh /root/release-<SHA>.env`.
+  - `smoke FAIL: el certificado de … no es válido tras 125s (curl sale con 35 …)` (o 7, o 28; los segundos son los reales, algo más de 120): Caddy no lo obtuvo en ese tiempo. Los logs de `proxy` dicen qué respondió la autoridad. Si el registro A no resuelve aquí (`getent`) o el 80 o el 443 están cerrados, corrígelo. Si la autoridad solo va lenta, repite con más margen: `sudo CRM_SMOKE_TLS_TIMEOUT=300 infra/prod/deploy.sh /root/release-<SHA>.env`.
   - `… (curl sale con 60 …)`: hay certificado, pero no vale para `crm.<DOMINIO>` (otro nombre, caducado o de una autoridad de pruebas).
 - **El backend no arranca:** `production` se niega a arrancar si falta o no vale una variable, y el error del log nombra la variable, nunca su valor.
 - **`/health/ready` no da 200:** su respuesta dice qué falla (`database`, `redis` o `storage`). `storage`, casi siempre, es la credencial sin `s3:ListBucket`.
@@ -232,7 +232,7 @@ sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env e
 La última orden tiene que responder `limpio`. Las contraseñas de los roles siguen en `migrate.env` y `runtime.env`.
 
 - **En un servidor nuevo** no hacen falta: `restore.sh` crea los roles con contraseñas nuevas, que se ponen también en `migrate.env` y `runtime.env` ([backup-restore.md](backup-restore.md) §6).
-- **En este mismo servidor** (restaurar el volcado previo de un despliegue con `--replace-existing-data`), `--roles-env` tiene que llevar las contraseñas **actuales**: unas nuevas dejarían de coincidir con `migrate.env` y `runtime.env`. Se sacan de las URL de esos archivos, sin mostrarlas, a un archivo en memoria:
+- **En este mismo servidor** (restaurar el volcado previo de un despliegue con `--replace-existing-data`), `--roles-env` tiene que llevar las contraseñas **actuales**: unas nuevas dejarían de coincidir con `migrate.env` y `runtime.env`. Se sacan de las URL de esos archivos, sin mostrarlas, a un archivo en memoria. La orden supone las contraseñas hexadecimales del paso 2.2: sin `@` ni codificación con `%`.
 
   ```bash
   sudo sh -eu <<'EOF'

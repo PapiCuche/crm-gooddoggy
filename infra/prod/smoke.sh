@@ -2,7 +2,8 @@
 # Prueba de humo de producción tras `up --wait` (F1-13; deploy.sh de F1-15 la llama). Comprueba lo
 # que ninguna prueba estática ve en el servidor real, sin credenciales de la aplicación:
 #   0. el certificado de crm.<DOMINIO> es válido: cadena, fechas y nombre (F1-17). Espera hasta
-#      CRM_SMOKE_TLS_TIMEOUT s (120) a que Caddy lo obtenga: en el primer arranque lo pide en segundo
+#      CRM_SMOKE_TLS_TIMEOUT s de reloj (120; cada intento corta a los 15 s, uno cada
+#      CRM_SMOKE_TLS_INTERVAL s, 5) a que Caddy lo obtenga: en el primer arranque lo pide en segundo
 #      plano y `up --wait` no lo espera;
 #   1. PostgreSQL, leído con SHOW como crm_app, no copia valores de clientes en su log, y rechaza
 #      al superusuario por red (solo por el socket local);
@@ -21,7 +22,7 @@ shift
 here=$(cd "$(dirname "$0")" && pwd)
 compose() { docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"; }
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
-code() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
+code() { curl -sS --connect-timeout 5 --max-time 60 -o /dev/null -w '%{http_code}' "$@"; }
 
 # curl verifica la cadena, las fechas y el nombre; sin -k, y ssl_verify_result por si un -k se cuela.
 tls() {
@@ -29,17 +30,25 @@ tls() {
     shift
     case $arg in -k | --insecure) ;; *) set -- "$@" "$arg" ;; esac
   done
-  curl -q -sS -o /dev/null -w '%{ssl_verify_result}' "$@" "$origin/"
+  # -q, el primero: solo ahí deja de leer ~/.curlrc.
+  curl -q --connect-timeout 5 --max-time 15 -sS -o /dev/null -w '%{ssl_verify_result}' "$@" "$origin/"
 }
-tls_timeout=${CRM_SMOKE_TLS_TIMEOUT:-120} tls_every=${CRM_SMOKE_TLS_INTERVAL:-5} waited=0
+seconds() { # <variable> <valor>: un entero mayor que 0
+  case $2 in '' | *[!0-9]*) fail "$1 debe ser un número entero de segundos mayor que 0" ;; esac
+  [ "$2" -gt 0 ] || fail "$1 debe ser un número entero de segundos mayor que 0"
+}
+tls_timeout=${CRM_SMOKE_TLS_TIMEOUT:-120} tls_every=${CRM_SMOKE_TLS_INTERVAL:-5}
+seconds CRM_SMOKE_TLS_TIMEOUT "$tls_timeout"
+seconds CRM_SMOKE_TLS_INTERVAL "$tls_every"
+start=$(date +%s)
 while :; do
   rc=0
   verify=$(tls "$@" 2> /dev/null) || rc=$?
+  waited=$(($(date +%s) - start))
   [ "$rc" != 0 ] || [ "$verify" != 0 ] || break
   [ "$waited" -lt "$tls_timeout" ] ||
     fail "el certificado de $origin no es válido tras ${waited}s (curl sale con $rc, verificación ${verify:-?})"
   sleep "$tls_every"
-  waited=$((waited + tls_every))
 done
 [ "$waited" = 0 ] || echo "smoke: certificado válido tras ${waited}s"
 
