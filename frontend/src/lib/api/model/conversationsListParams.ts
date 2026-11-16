@@ -38,4 +38,8 @@ export type ConversationsListParams = {
    * @minLength 1
    */
   status?: ConversationsListStatus;
+  /**
+   * `true`: solo las abiertas cuyo último mensaje es del cliente (sin responder).
+   */
+  unanswered?: boolean;
 };
