@@ -274,12 +274,13 @@ protected_modules = ["apps.tasks.commands"]
 allowed_importers = ["apps.tasks.api"]
 
 [[tool.importlinter.contracts]]
-name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F7-02b, F7-02c, F7-04)"
+name = "Comandos del Inbox: solo su API y sus tareas los importan (F6-01c, F6-04b, F6-08a1, F7-02b, F7-02c, F7-04)"
 type = "protected"
 protected_modules = [
     "apps.conversations.commands",
     "apps.conversations.credentials",
     "apps.conversations.accounts",
+    "apps.conversations.quick_replies",
 ]
 allowed_importers = [
     "apps.conversations.api",
@@ -289,6 +290,7 @@ allowed_importers = [
     "apps.conversations.delivery",  # F7-06a: `advance_delivery` y el estado de la cuenta
     "apps.conversations.whatsapp",  # F7-05b: `credentials.open_token`
     "apps.conversations.media",  # F7-09a1c: `credentials.open_token`
+    "apps.conversations.quick_replies",  # F6-08a1: la regla del texto de `commands`
 ]
 
 [[tool.importlinter.contracts]]

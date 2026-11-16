@@ -68,6 +68,8 @@ TENANT_TABLES = (
     "conversations",
     "channel_accounts",
     "credentials",  # F7-02b: después de las cuentas, que la referencian
+    "quick_replies",  # F6-08a1: delante de sus categorías
+    "quick_reply_categories",
     *TENANT_TABLES,
 )
 # F5-03 y F6-06b: delante de todo lo que referencian (etapas, motivos, contactos, variantes,

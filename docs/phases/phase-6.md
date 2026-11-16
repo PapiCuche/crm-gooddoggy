@@ -43,6 +43,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F6-06   | [#541](https://github.com/PapiCuche/crm-gooddoggy/issues/541) Inbox: panel del cliente y oportunidades desde la conversación                                                                                                                              | `feature/f6-inbox-customer-panel` | #540                   | full-stack |
 | F6-07a  | [#629](https://github.com/PapiCuche/crm-gooddoggy/issues/629) Inbox: WebSocket autenticado y eventos del outbox (backend)                                                                                                                                 | `feature/f6-inbox-ws-backend`     | #539                   | backend    |
 | F6-07b  | [#672](https://github.com/PapiCuche/crm-gooddoggy/issues/672) Inbox: recuperación tras reconectar el WebSocket (conclusión)                                                                                                                               | `docs/f6-inbox-ws-recovery`       | #629, #542             | docs       |
+| F6-08a1 | [#860](https://github.com/PapiCuche/crm-gooddoggy/issues/860) Respuestas rápidas: tablas, permiso, siembra de categorías y comandos (sin rutas)                                                                                                           | `feature/f6-quick-replies-api`    | —                      | backend    |
 
 ## Historias
 

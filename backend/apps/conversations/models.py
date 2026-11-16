@@ -4,7 +4,7 @@ marca borrada, una conversación se cierra o se archiva, el historial de asignac
 y un mensaje no se reescribe salvo el estado de entrega, que solo avanza."""
 
 from django.db import models
-from django.db.models.functions import Length, Now
+from django.db.models.functions import Length, Lower, Now
 from django.db.models.lookups import LessThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
@@ -674,6 +674,96 @@ class ConversationAssignment(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+
+SHORTCUT = r"^[a-z0-9_-]{1,32}$"  # el atajo sin la `/`: `delivery`, `garantia_12m`
+
+
+def _soft(table: str) -> list[models.BaseConstraint]:
+    """Lo común de las dos tablas de respuestas rápidas: destino de FKs compuestas, una borrada
+    no está activa y la versión empieza en 1."""
+    return [
+        models.UniqueConstraint(fields=["organization_id", "id"], name=f"{table}_org_id_uq"),
+        models.CheckConstraint(
+            condition=models.Q(deleted_at__isnull=True) | models.Q(is_active=False),
+            name=f"{table}_deleted_ck",
+        ),
+        models.CheckConstraint(condition=models.Q(version__gte=1), name=f"{table}_version_ck"),
+    ]
+
+
+class QuickReplyCategory(TenantModel):
+    """Categoría de respuestas rápidas (02 §E.6): Ventas, Delivery… Se borra lógicamente. El
+    nombre es único, sin distinguir mayúsculas, entre las vivas."""
+
+    id = uuid7_primary_key()
+    name = models.CharField(max_length=100)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_user_id = models.UUIDField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "quick_reply_categories"
+        constraints = [
+            *_soft("qr_categories"),
+            models.UniqueConstraint(
+                "organization_id",
+                Lower("name"),
+                condition=models.Q(deleted_at__isnull=True),
+                name="qr_categories_name_uq",
+            ),  # fmt: skip
+        ]
+
+
+class QuickReply(TenantModel):
+    """Respuesta rápida de la organización (02 §E.6, §20), visible para toda ella (ORG): solo
+    texto, con las variables de la lista cerrada de `apps.conversations.quick_replies`. El atajo
+    es único entre las activas y vivas. Se borra lógicamente."""
+
+    id = uuid7_primary_key()
+    shortcut = models.CharField(max_length=32)
+    title = models.CharField(max_length=100)
+    category = models.ForeignKey(
+        QuickReplyCategory, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    body = models.TextField()
+    is_active = models.BooleanField(default=True)
+    usage_count = models.PositiveIntegerField(default=0)
+    created_by_user_id = models.UUIDField(null=True, blank=True)
+    updated_by_user_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by_user_id = models.UUIDField(null=True, blank=True)
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = "quick_replies"
+        indexes = [
+            models.Index(fields=["organization_id", "category"], name="quick_replies_category_idx")
+        ]
+        constraints = [
+            *_soft("quick_replies"),
+            models.UniqueConstraint(
+                fields=["organization_id", "shortcut"],
+                condition=models.Q(is_active=True, deleted_at__isnull=True),
+                name="quick_replies_shortcut_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(shortcut__regex=SHORTCUT), name="quick_replies_shortcut_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(body__regex=r"\S")
+                & models.Q(LessThanOrEqual(Length("body"), BODY_MAX)),
+                name="quick_replies_body_ck",
+            ),
+        ]
 
 
 INGRESS_STATUSES = ("RECEIVED", "PROCESSING", "PROCESSED", "IGNORED", "FAILED", "DEAD")
