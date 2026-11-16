@@ -1,0 +1,23 @@
+{
+  "Rules": [
+    { "ID": "db-daily-7", "Status": "Enabled", "Filter": { "Prefix": "db/daily/" }, "Expiration": { "Days": 7 } },
+    { "ID": "db-weekly-4", "Status": "Enabled", "Filter": { "Prefix": "db/weekly/" }, "Expiration": { "Days": 28 } },
+    { "ID": "db-monthly-6", "Status": "Enabled", "Filter": { "Prefix": "db/monthly/" }, "Expiration": { "Days": 184 } },
+    { "ID": "db-predeploy-7", "Status": "Enabled", "Filter": { "Prefix": "db/predeploy/" }, "Expiration": { "Days": 7 } },
+    {
+      "ID": "db-versions",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "db/" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "Expiration": { "ExpiredObjectDeleteMarker": true },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 2 }
+    },
+    {
+      "ID": "media-versions",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "media/" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 2 }
+    }
+  ]
+}
