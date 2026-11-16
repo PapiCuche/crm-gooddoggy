@@ -1,12 +1,15 @@
 """El veredicto del antivirus (ClamAV, ADR-008; F7-15): un flujo de bytes a `clamd` por INSTREAM,
 en TCP, con tope de bytes y un plazo total. Solo `stream: OK` es limpio y solo `<firma> FOUND` es
 infectado; cualquier otra cosa (sin `CLAMD_ADDRESS`, caído, plazo vencido, tope, `… ERROR` o una
-respuesta que no se entiende) es `Unavailable`, nunca un veredicto. Nada de esto registra bytes."""
+respuesta que no se entiende) es `Unavailable`, nunca un veredicto. La respuesta se compara cruda,
+sin el NUL final y sin recortar nada (F7-15c), y el plazo cubre también la búsqueda DNS. Nada de
+esto registra bytes."""
 
 import re
 import socket
 import struct
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import IO
 
@@ -15,7 +18,9 @@ from django.conf import settings
 CLEAN, INFECTED = "CLEAN", "INFECTED"
 CHUNK = 64 << 10  # bytes por trozo de INSTREAM
 REPLY_MAX = 1024  # una respuesta de `clamd` es una línea corta
-SIGNATURE = re.compile(r"stream: ([\x20-\x7e]{1,200}) FOUND")  # ASCII imprimible
+SIGNATURE = re.compile(rb"stream: ([\x20-\x7e]{1,200}) FOUND")  # ASCII imprimible
+# `getaddrinfo` no tiene plazo propio: se resuelve aquí y se espera como mucho lo que queda.
+_RESOLVER = ThreadPoolExecutor(max_workers=4, thread_name_prefix="clamd-dns")
 
 
 class Unavailable(Exception):  # noqa: N818 — sin veredicto; el texto es una clase cerrada, sin bytes
@@ -42,7 +47,24 @@ def _left(sock: socket.socket, deadline: float) -> None:
     sock.settimeout(remaining)
 
 
-def _reply(sock: socket.socket, deadline: float) -> str:
+def _connect(host: str, port: int, deadline: float) -> socket.socket:
+    """La conexión a `clamd`, con la búsqueda DNS y el `connect` dentro del plazo."""
+    found = _RESOLVER.submit(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
+    try:
+        family, kind, proto, _, address = found.result(max(deadline - time.monotonic(), 0))[0]
+    except TimeoutError:
+        raise Unavailable("plazo") from None
+    sock = socket.socket(family, kind, proto)
+    try:
+        _left(sock, deadline)
+        sock.connect(address)
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
+def _reply(sock: socket.socket, deadline: float) -> bytes:
     reply = b""
     while not reply.endswith(b"\0"):
         _left(sock, deadline)
@@ -50,7 +72,7 @@ def _reply(sock: socket.socket, deadline: float) -> str:
         if not chunk or len(reply) + len(chunk) > REPLY_MAX:
             raise Unavailable("respuesta")
         reply += chunk
-    return reply[:-1].decode("ascii", "replace").strip()
+    return reply[:-1]  # cruda: `stream: OK ` o `stream: OK\n` no son `stream: OK`
 
 
 def scan(stream: IO[bytes], *, max_bytes: int, seconds: float) -> Verdict:
@@ -58,8 +80,7 @@ def scan(stream: IO[bytes], *, max_bytes: int, seconds: float) -> Verdict:
     host, port = _address()
     deadline, sent = time.monotonic() + seconds, 0
     try:
-        with socket.create_connection((host, port), timeout=seconds) as sock:
-            _left(sock, deadline)
+        with _connect(host, port, deadline) as sock:
             sock.sendall(b"zINSTREAM\0")
             while chunk := stream.read(CHUNK):
                 sent += len(chunk)
@@ -72,8 +93,8 @@ def scan(stream: IO[bytes], *, max_bytes: int, seconds: float) -> Verdict:
             reply = _reply(sock, deadline)
     except OSError as error:  # caído, rechazado, plazo del socket o cortado por `clamd`
         raise Unavailable(type(error).__name__) from None
-    if reply == "stream: OK":
+    if reply == b"stream: OK":
         return Verdict(CLEAN)
     if found := SIGNATURE.fullmatch(reply):
-        return Verdict(INFECTED, found.group(1))
+        return Verdict(INFECTED, found.group(1).decode("ascii"))
     raise Unavailable("respuesta")

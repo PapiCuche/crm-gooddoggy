@@ -6,6 +6,7 @@ import os
 import socket
 import struct
 import threading
+import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -94,6 +95,10 @@ def test_eicar_is_infected_and_a_clean_file_is_clean_streamed_in_chunks(clamd: F
         (b"INSTREAM size limit exceeded. ERROR\0", "error de clamd"),
         (b"stream: Something ERROR\0", "error de clamd"),
         (b"stream: OK, maybe\0", "respuesta desconocida"),
+        (b"stream: OK \0", "F7-15c: sin recortar"),
+        (b" stream: OK\0", "F7-15c: sin recortar"),
+        (b"stream: OK\n\0", "F7-15c: sin recortar"),
+        (b"stream: Eicar-Test-Signature FOUND \0", "F7-15c: sin recortar"),
         (b"x" * 2000, "respuesta sin fin"),
         (None, "no contesta"),
     ],
@@ -115,6 +120,22 @@ def test_without_clamd_or_its_address_there_is_no_verdict(settings: Any) -> None
         settings.CLAMD_ADDRESS = address
         with pytest.raises(antivirus.Unavailable):
             scan(b"hola")
+
+
+def test_a_slow_dns_lookup_is_inside_the_deadline(
+    clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = socket.getaddrinfo
+
+    def slow(*args: Any, **kwargs: Any) -> Any:
+        time.sleep(2.0)  # un DNS que no contesta
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow)
+    started = time.monotonic()
+    with pytest.raises(antivirus.Unavailable, match="plazo"):
+        scan(b"hola", seconds=0.3)
+    assert time.monotonic() - started < 1.0 and clamd.bodies == []
 
 
 def test_the_size_cap_stops_before_sending_more_and_gives_no_verdict(clamd: FakeClamd) -> None:

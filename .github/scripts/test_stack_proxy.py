@@ -176,3 +176,42 @@ class ProdStack(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def services(compose=COMPOSE):
+    """Cada servicio con sus redes (sin `networks:`, `default`), del bloque `services:`."""
+    body = compose[compose.index("\nservices:") : compose.index("\nnetworks:")]
+    found = {}
+    for name, block in re.findall(r"^  ([a-z][a-z-]*):[^\n]*\n((?:(?:    .*|\s*)\n)*)", body, re.M):
+        listed = re.search(r"^    networks: \[([^\]]*)\]", block, re.M)
+        nested = re.search(r"^    networks:\n((?:      .*\n)+)", block, re.M)
+        if listed:
+            found[name] = {n.strip() for n in listed.group(1).split(",")}
+        elif nested:
+            found[name] = set(re.findall(r"^      ([a-z-]+):", nested.group(1), re.M))
+        else:
+            found[name] = {"default"}
+    return found
+
+
+class StackAntivirus(unittest.TestCase):
+    """F7-15c: clamd analiza archivos no confiables; si lo comprometen, no alcanza ningún listener
+    HTTP (`backend:8000` se saltaría el tope del cuerpo de Caddy). Solo comparte red con su relay."""
+
+    def test_clamd_shares_its_networks_only_with_its_relay(self):
+        found = services()
+        self.assertEqual(found["clamd"], {"av"})
+        self.assertEqual({name for name, nets in found.items() if nets & found["clamd"]},
+                         {"clamd", "clamd-relay"})
+        self.assertIn("av: { internal: true }", COMPOSE)
+        self.assertIn("av-client: { internal: true }", COMPOSE)
+
+    def test_the_scanners_reach_clamd_only_through_the_relay(self):
+        found = services()
+        clients = {name for name, nets in found.items() if "av-client" in nets}
+        self.assertEqual(clients, {"clamd-relay", "backend", "worker-media"})
+        self.assertEqual(re.findall(r"CLAMD_ADDRESS: (\S+)", COMPOSE), ["clamd-relay:3310"])
+        relay = COMPOSE[COMPOSE.index("  clamd-relay:") : COMPOSE.index("  freshclam:")]
+        (command,) = re.findall(r"command: (\[.*\])", relay)
+        self.assertRegex(command, r'"TCP-LISTEN:3310,[^"]*", "TCP:clamd:3310"\]$')  # solo a clamd
+        self.assertNotIn("ports:", relay)

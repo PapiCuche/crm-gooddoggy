@@ -117,6 +117,28 @@ def test_only_a_clean_file_is_stored_and_without_a_verdict_nothing_is(
     assert list(blobs.objects) == [made.key] and clamd.bodies[-1] == PDF
 
 
+def test_without_a_free_scan_slot_there_is_no_verdict_and_nothing_is_scanned(
+    world: SimpleNamespace, blobs: InMemoryStorage, clamd: FakeClamd,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    monkeypatch.setattr(outbound_media, "SLOT_WAIT", 0.05)
+    for _ in range(outbound_media.SCAN_SLOTS):  # F7-15c: los escaneos de subida a la vez
+        assert outbound_media._slots.acquire(timeout=1)
+    try:
+        with pytest.raises(antivirus.Unavailable, match="ocupado"):
+            prepare(world)
+    finally:
+        for _ in range(outbound_media.SCAN_SLOTS):
+            outbound_media._slots.release()
+    assert clamd.bodies == [] and blobs.objects == {}
+    clamd.answer = lambda body: b"stream: OK, maybe\0"  # sin veredicto: el hueco se devuelve
+    for _ in range(outbound_media.SCAN_SLOTS + 1):
+        with pytest.raises(antivirus.Unavailable):
+            prepare(world)
+    clamd.answer = lambda body: b"stream: OK\0"
+    assert prepare(world).kind == "IMAGE"
+
+
 def test_a_type_or_size_not_allowed_is_never_scanned_nor_stored(
     world: SimpleNamespace, blobs: InMemoryStorage, clamd: FakeClamd
 ) -> None:
@@ -190,6 +212,8 @@ def test_an_image_is_queued_with_its_file_once_and_a_replay_needs_the_same_file(
     row = migrator.execute(FILES + " WHERE id = %s", [message.file_id]).fetchone()
     assert row[1:] == ("image/jpeg", len(JPEG), hashlib.sha256(JPEG).hexdigest(),
                        "message-media-out", "CLEAN")  # fmt: skip
+    checked = "SELECT scan_checked_at IS NOT NULL FROM files WHERE id = %s"
+    assert migrator.execute(checked, [message.file_id]).fetchone() == (True,)  # F7-15c
     again, created = queue(world, convo, caption="Mira esto", client_message_id=key)
     assert (again.pk, created) == (message.pk, False)  # el mismo archivo: el mismo mensaje
     for other in ({"data": PNG, "caption": "Mira esto"}, {"caption": "Otra"}):

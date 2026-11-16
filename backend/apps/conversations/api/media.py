@@ -16,9 +16,15 @@ Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el top
 (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped` corta al
 pasarse; luego el tipo real (415), el antivirus (F7-15b: 422 `MEDIA_INFECTED`, 503
 `MEDIA_SCAN_UNAVAILABLE` sin veredicto; en los dos, nada se guarda), el blob y el comando. Ante
-cualquier error, o en un reintento, el blob nuevo se borra (la vista es una transacción; el guardado
-tiene otra clave). Un 422 deshace la transacción: su auditoría y su alerta las deja
-`ChannelThrottleMiddleware` después (`outbound_media.infected`).
+cualquier error, o en un reintento, el blob nuevo se borra (el guardado tiene otra clave). Su 422 no
+deja nada escrito: la auditoría y la alerta las deja `ChannelThrottleMiddleware` después
+(`outbound_media.infected`).
+
+F7-15c: la subida abre sus propios `tenant_scope` (`scopes_itself`; el middleware no abre el suyo),
+así que el antivirus (hasta `SCAN_SECONDS`) corre sin transacción ni conexión *idle in transaction*:
+uno para los permisos (`HasPermission`), otro para el alcance y la política antes de
+leer el cuerpo, y otro, tras el antivirus, que vuelve a comprobarlos y ejecuta el comando. Cada
+error de un scope sale como excepción y lo deshace; fuera de ellos nada toca la base.
 """
 
 import datetime as dt
@@ -46,7 +52,7 @@ from core import antivirus, storage
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.observability.logging import get_logger
-from core.tenancy import context
+from core.tenancy.scope import tenant_scope
 
 logger = get_logger(__name__)
 
@@ -57,6 +63,7 @@ REFUSED = {
     "MEDIA_TYPE_NOT_ALLOWED": (415, "Solo imágenes JPEG o PNG y documentos PDF."),
     "LENGTH_REQUIRED": (411, "Falta la longitud del cuerpo (Content-Length)."),
     "MEDIA_INFECTED": (422, "El antivirus encontró un virus en el archivo: no se envió."),
+    "MEDIA_TOO_COMPLEX": (422, "El archivo es demasiado complejo para revisarlo: no se envió."),
     "MEDIA_SCAN_UNAVAILABLE": (503, "El antivirus no respondió: no se envió nada. Reinténtalo."),
 }
 FORM = "Un formulario multipart/form-data con un solo archivo, en `file`."
@@ -136,6 +143,21 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
     return fields.dict()
 
 
+def _target(request: Request, conversation_id: Any) -> tuple[Any, Conversation]:
+    """La conversación en el alcance de quien envía, con `messages.send` y la política abierta;
+    si no, el 404 o el 409. Dentro del `tenant_scope` de quien llama."""
+    ectx = request_context(request)
+    assert ectx is not None  # noqa: S101 — `HasPermission` ya lo comprobó
+    mine = scoped(ectx, "conversations.view", Conversation.objects.all())
+    found = mine.filter(pk=conversation_id).first()
+    if found is None or not can(ectx, "messages.send", found):
+        raise NotFound
+    decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY)
+    if decision.reason is not None:  # el comando la repite
+        raise ApiError(decision.reason, 409, REASONS[decision.reason])
+    return ectx, found
+
+
 @extend_schema_view(
     post=extend_schema(
         operation_id="conversation_media_send",
@@ -150,51 +172,49 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
         "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
         "`messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de "
         "guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
-        "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED`; 429 "
+        "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o "
+        "`MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 "
         "`RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).",
     ),
 )
 class SendMediaView(APIView):
     required_permissions = {"POST": ("messages.send", "conversations.view")}
+    scopes_itself = True  # F7-15c: el antivirus, fuera de toda transacción (`HasPermission`)
 
     def post(self, request: Request, **kwargs: Any) -> Response:
-        ectx, tenant = request_context(request), context.current()
-        assert ectx is not None and tenant is not None  # noqa: S101 — `HasPermission` ya lo comprobó
-        mine = scoped(ectx, "conversations.view", Conversation.objects.all())
-        found = mine.filter(pk=kwargs["conversation_id"]).first()
-        if found is None or not can(ectx, "messages.send", found):  # antes de leer el cuerpo
-            raise NotFound
-        decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY)
-        if decision.reason is not None:  # antes de guardar nada; el comando la repite
-            raise ApiError(decision.reason, 409, REASONS[decision.reason])
+        tenant, convo = request.tenant, kwargs["conversation_id"]
+        with tenant_scope(tenant):  # antes de leer el cuerpo
+            _target(request, convo)
         handler = outbound_media.Capped(max(outbound_media.CAPS.values()))
-        try:
+        try:  # sin transacción: leer, el tipo, el tope, el antivirus y el blob no tocan la base
             wanted = inputs.SendMediaSerializer(data=_read(request, handler))
             wanted.is_valid(raise_exception=True)
             assert handler.sink is not None  # noqa: S101 — `_read` lo exige
             prepared = outbound_media.prepare(tenant, handler.sink, handler.file_name)
         except outbound_media.Refused as refused:
-            if isinstance(refused, outbound_media.Infected):  # para auditarlo tras deshacer
-                request._request.media_infected = (found.pk, refused.signature)
+            if isinstance(refused, outbound_media.Infected):  # para auditarlo tras responder
+                request._request.media_infected = (convo, refused.signature)
             raise _refuse(refused.code) from None
         except antivirus.Unavailable as error:  # sin veredicto: nada se guardó
-            logger.warning("media.outbound_scan_unavailable", conversation_id=str(found.pk),
+            logger.warning("media.outbound_scan_unavailable", conversation_id=str(convo),
                            error=str(error))  # fmt: skip
             raise _refuse("MEDIA_SCAN_UNAVAILABLE") from None
         finally:
             if handler.sink is not None:
                 handler.sink.file.close()
-        try:  # la vista es una transacción: cualquier error la deshace, y el blob sobra
-            caption = wanted.validated_data.get("caption")
-            message, created = queue(
-                found, body=caption or outbound_media.LABELS[prepared.kind], media=prepared,
-                client_message_id=wanted.validated_data["client_message_id"],
-            )  # fmt: skip
-            shown = MessageSerializer(message, context={"show_body": shows_body(ectx, found)})
-            response = Response(shown.data, status=202 if created else 200)
+        try:  # cualquier error deshace el scope, y el blob sobra
+            with tenant_scope(tenant):  # de nuevo: el acceso o la política pudo cambiar
+                ectx, found = _target(request, convo)
+                caption = wanted.validated_data.get("caption")
+                message, created = queue(
+                    found, body=caption or outbound_media.LABELS[prepared.kind], media=prepared,
+                    client_message_id=wanted.validated_data["client_message_id"],
+                )  # fmt: skip
+                shown = MessageSerializer(message, context={"show_body": shows_body(ectx, found)})
+                data = shown.data
         except BaseException:  # también cada 4xx tras el comando: aquí todos son excepciones
             outbound_media.discard(prepared)
             raise
         if not created:  # un reintento: el mensaje guardado tiene su propio archivo
             outbound_media.discard(prepared)
-        return response
+        return Response(data, status=202 if created else 200)

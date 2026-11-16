@@ -222,6 +222,7 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     [415, { code: "MEDIA_TYPE_NOT_ALLOWED" }, "Solo se pueden enviar"],
     [415, undefined, "Solo se pueden enviar"],
     [422, { code: "MEDIA_INFECTED" }, "El antivirus encontró un virus en este archivo"],
+    [422, { code: "MEDIA_TOO_COMPLEX" }, "demasiado complejo para que el antivirus lo revise"],
   ])("un %i quita el archivo y se explica, sin «Reintentar»", async (status, body, text) => {
     const s = server(() => ({ status, body }));
     show();

@@ -11,17 +11,20 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from django.contrib.auth.models import AnonymousUser
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse
 from django.test import Client
-from django.test.client import encode_multipart
+from django.test.client import RequestFactory, encode_multipart
+from django.urls import get_resolver
 from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.conversations import outbound_media, scan
 from apps.conversations.api import media as route
-from core import storage
+from apps.conversations.throttle import ChannelThrottleMiddleware
+from core import antivirus, storage
 from core.observability import reporting
 from core.storage.memory import InMemoryStorage
 from tests.factories import make_user
@@ -307,3 +310,100 @@ def test_each_person_has_an_upload_limit_counted_before_the_body(
     assert upload(signed(inbox.sam), inbox.convs["both"]).status_code == 202  # el de otra persona
     found = migrator.execute("SELECT key FROM login_throttles WHERE key LIKE 'med:%' ORDER BY key")
     assert found.fetchall() == sorted([(f"med:usr:{inbox.ana.pk}",), (f"med:usr:{inbox.sam.pk}",)])
+
+
+IDLE = (
+    "SELECT count(*) FROM pg_stat_activity WHERE state LIKE 'idle in transaction%%' AND pid <> %s"
+)
+
+
+def test_the_scan_runs_with_no_transaction_open_and_a_change_meanwhile_is_checked_again(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F7-15c: ninguna conexión queda *idle in transaction* durante el antivirus; lo que cambió
+    mientras tanto se vuelve a comprobar, y el blob limpio sobra."""
+    convo, seen, real = inbox.convs["nobody"], list[Any](), antivirus.scan
+    me = migrator.execute("SELECT pg_backend_pid()").fetchone()[0]  # type: ignore[index]
+
+    def scanned(stream: Any, **kwargs: Any) -> antivirus.Verdict:
+        seen.append((connection.in_atomic_block, migrator.execute(IDLE, [me]).fetchone()))
+        return real(stream, **kwargs)
+
+    monkeypatch.setattr(antivirus, "scan", scanned)
+    assert upload(signed(inbox.ana), convo).status_code == 202
+    assert seen == [(False, (0,))]
+    closing = outbound_media.prepare
+
+    def closed(*args: Any) -> Any:  # la conversación se cierra mientras se escanea
+        made = closing(*args)
+        set_state(inbox.a, convo, status="CLOSED", closed_at=timezone.now())
+        return made
+
+    monkeypatch.setattr(outbound_media, "prepare", closed)
+    refused = upload(signed(inbox.ana), convo)
+    assert (refused.status_code, refused.json()["code"]) == (409, "CONVERSATION_CLOSED")
+    assert len(blobs.objects) == 1 and migrator.execute(COUNT).fetchone() == (1, 1)
+
+
+def test_only_the_upload_opens_its_own_tenant_scopes() -> None:
+    def views(patterns: Any) -> Any:
+        for pattern in patterns:
+            if hasattr(pattern, "url_patterns"):
+                yield from views(pattern.url_patterns)
+            else:
+                yield getattr(pattern.callback, "view_class", None)
+
+    own = {view for view in views(get_resolver().url_patterns) if getattr(view, "scopes_itself", 0)}
+    assert own == {route.SendMediaView}
+
+
+def test_a_file_over_the_scanner_limits_is_too_complex_not_a_virus_and_still_audited(
+    inbox: SimpleNamespace, blobs: InMemoryStorage, migrator: DB, clamd: FakeClamd
+) -> None:
+    clamd.answer = lambda body: b"stream: Heuristics.Limits.Exceeded.MaxRecursion FOUND\0"
+    convo = inbox.convs["nobody"]
+    sent = form(PDF, file=named(PDF, "a.pdf", "application/pdf"))
+    refused = upload(signed(inbox.ana), convo, sent)
+    assert (refused.status_code, refused.json()["code"]) == (422, "MEDIA_TOO_COMPLEX")
+    assert blobs.objects == {} and migrator.execute(COUNT).fetchone() == (0, 0)
+    found = migrator.execute(INFECTED, [convo]).fetchall()
+    assert found == [("message.media_infected", "DENIED", inbox.ana.pk,
+                      {"signature": "Heuristics.Limits.Exceeded.MaxRecursion"})]  # fmt: skip
+
+
+def test_a_failing_audit_keeps_the_422_and_a_client_header_never_sets_the_mark(
+    inbox: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    convo = inbox.convs["nobody"]
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("auditoría caída")
+
+    with monkeypatch.context() as patched, caplog.at_level(logging.INFO):
+        patched.setattr(outbound_media, "record", broken)
+        refused = upload(signed(inbox.ana), convo, form(EICAR_PDF, file=named(EICAR_PDF)))
+    assert (refused.status_code, refused.json()["code"]) == (422, "MEDIA_INFECTED")
+    assert "media.infected_not_audited" in log_text(caplog)
+    forged: dict[str, Any] = {"HTTP_MEDIA_INFECTED": f"{convo},F", "HTTP_X_MEDIA_INFECTED": "1"}
+    assert upload(signed(inbox.ana), convo, **forged).status_code == 202
+    assert upload(signed(inbox.ana), convo, CONTENT_LENGTH="", **forged).status_code == 411
+    infected = INFECTED + " AND action LIKE 'message.media%%'"
+    assert migrator.execute(infected, [convo]).fetchall() == []  # nada auditado
+
+
+@pytest.mark.parametrize(("status", "audited"), [(422, 1), (400, 0), (500, 0), (202, 0)])
+def test_the_late_audit_needs_the_mark_and_a_422(
+    monkeypatch: pytest.MonkeyPatch, status: int, audited: int
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(outbound_media, "infected", lambda *a: calls.append(a))
+
+    def view(request: Any) -> HttpResponse:
+        request.tenant, request.media_infected = "ctx", (uuid4(), "Firma")
+        return HttpResponse(status=status)
+
+    request = RequestFactory().post(f"{BASE}{uuid4()}/media/")
+    request.user = AnonymousUser()  # sin contador: no toca la base
+    ChannelThrottleMiddleware(view)(request)
+    assert len(calls) == audited

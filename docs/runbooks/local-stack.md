@@ -117,6 +117,7 @@ Cada imagen o PDF que sube una persona pasa por el antivirus (**clamd**, §7) **
 
    Adjúntalo como en el paso 4 y pulsa «Enviar». Si tu antivirus del equipo lo borra al crearlo, créalo en una carpeta que no vigile.
    - **Esperado:** no aparece ningún mensaje nuevo; bajo el cuadro, en rojo, «El antivirus encontró un virus en este archivo, así que no se envió. Elige otro archivo.», el adjunto se quita y no hay «Reintentar». Queda en la auditoría (`message.media_infected`, con la firma y sin el contenido) y en el registro del backend la alerta `media.alert.infected`. No se guarda ningún archivo.
+   - Un archivo que pasa los topes del antivirus (por ejemplo, un PDF con demasiados niveles anidados) da en cambio «Este archivo es demasiado complejo para que el antivirus lo revise, así que no se envió. Elige otro archivo.» (`422 MEDIA_TOO_COMPLEX`, F7-15c): no es un virus, pero tampoco sale. Se audita igual, con la firma `Heuristics.Limits.Exceeded…`.
 6. **Sin antivirus.** Para clamd (`docker compose -f infra/docker/compose.yaml --env-file infra/env/.env stop clamd`), adjunta una imagen y pulsa «Enviar».
    - **Esperado:** «No se pudo revisar el archivo con el antivirus, así que no se envió. Vuelve a intentarlo en unos minutos.»; el adjunto se conserva y el botón dice «Reintentar». No se guarda nada.
    - Arranca clamd otra vez (`… start clamd`), espera a que esté sano y pulsa «Reintentar»: ahora sale.
@@ -126,10 +127,14 @@ Cada imagen o PDF que sube una persona pasa por el antivirus (**clamd**, §7) **
 
 Un medio que llega por WhatsApp (imagen, audio, video o sticker) se descarga y queda en espera hasta que el antivirus **ClamAV** lo revisa. Solo un archivo limpio se puede descargar desde el chat; uno infectado o que no se pudo revisar nunca se sirve.
 
-**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host y vive en su propia red `av`, interna (sin salida): solo lo ven **worker-media** (lo recibido) y **backend** (lo que se envía, §6), en `clamd:3310`. Su configuración es `infra/docker/clamav/clamd.conf`. Trae firmas en la imagen; el servicio **freshclam** (otro contenedor, el único con salida) las actualiza en el volumen `clamavdata` y clamd las recarga solo. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
+**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host y vive en su propia red `av`, interna (sin salida), donde solo está además **clamd-relay** (`alpine/socat`, F7-15c). **worker-media** (lo recibido) y **backend** (lo que se envía, §6) llegan a clamd solo por ese relay, en `clamd-relay:3310`, desde otra red interna, `av-client`. Así, un clamd comprometido por un archivo no alcanza ningún listener HTTP, tampoco `backend:8000`. Su configuración es `infra/docker/clamav/clamd.conf`. Trae firmas en la imagen; el servicio **freshclam** (otro contenedor, el único con salida) las actualiza en el volumen `clamavdata` y clamd las recarga solo. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
 
 ```bash
-docker compose -f infra/docker/compose.yaml --env-file infra/env/.env ps clamd   # «healthy»
+docker compose -f infra/docker/compose.yaml --env-file infra/env/.env ps clamd clamd-relay   # clamd «healthy»
+# F7-15c: desde clamd, el backend no responde (ni por nombre)
+docker compose -f infra/docker/compose.yaml --env-file infra/env/.env exec clamd \
+  bash -c 'timeout 3 bash -c "</dev/tcp/backend/8000" 2>/dev/null && echo ALCANZABLE || echo "sin respuesta"'
+# sin respuesta
 docker compose -f infra/docker/compose.yaml --env-file infra/env/.env logs -f worker-media | grep media.scan
 ```
 
@@ -147,7 +152,7 @@ docker compose -f infra/docker/compose.yaml --env-file infra/env/.env logs -f wo
 | Burbuja | Qué significa | Qué hacer |
 |---|---|---|
 | «El antivirus encontró un virus en este archivo…» | `INFECTED`: queda en la auditoría (`file.scan_infected`, con la firma y sin el contenido) y en el registro como alerta `media.alert.infected` | Nada que abrir. No pidas reenviarlo |
-| «No se pudo revisar este archivo con el antivirus…» | `ERROR`: clamd no respondió en 4 intentos (30 s, 2 min y 10 min de espera) | Comprueba `ps clamd`; pide al cliente que lo reenvíe |
+| «No se pudo revisar este archivo con el antivirus…» | `ERROR`: clamd no respondió en 4 intentos (30 s, 2 min y 10 min de espera) | Comprueba `ps clamd`. El barredor lo vuelve a escanear solo cada 2 h mientras el archivo tenga menos de 6 h (auditoría `file.scan_retried`): si clamd volvió, se abre sin hacer nada. Si sigue así pasadas 6 h, pide al cliente que lo reenvíe |
 | Se queda en «Todavía no se puede abrir…» | El antivirus aún no lo revisó (clamd arrancando o la cola `media` ocupada) | Espera; si pasa de 15 min, mira `logs worker-media` |
 
 **Comprobar que detecta un virus.** El archivo de prueba EICAR no es una imagen ni un audio, así que WhatsApp no lo entrega como medio. Para ver que clamd lo detecta (no guarda nada):
