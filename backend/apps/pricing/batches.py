@@ -3,8 +3,8 @@
 Crear un lote no cambia ningún precio: elige las variantes vivas de la selección, lee el precio que
 rige en la lista en `effective_at` (sin él, ahora) y guarda el lote (`PREVIEWED`) con una línea por
 variante: el precio de antes, el de después con su redondeo y la variación. Todo en la petición,
-con un tope de `LINES_MAX` líneas: uno mayor se rechaza antes de escribir. Cancelar y las rutas son
-F3-49b; aplicar (`set_price` por línea, `STALE` y step-up), el siguiente work item de la serie.
+con un tope de `LINES_MAX` líneas: uno mayor se rechaza antes de escribir. Las rutas son F3-49b y
+F3-49c (cancelar y las líneas); aplicar (`set_price` por línea, `STALE` y step-up), lo que sigue.
 
 No comprueba permisos: los declarará la API (`prices.bulk_update`), la única que lo importa
 (import-linter). Sí la lista: la que el actor no ve, como la que no existe o está inactiva, es «no
@@ -27,6 +27,7 @@ from apps.access.selectors import execution_context
 from apps.audit.services import Entity, record
 from apps.catalog.models import ProductVariant
 from apps.catalog.selectors import branch, brands, categories, live_variants, products
+from apps.pricing.models import ALERT_PERCENT as ALERT_PERCENT  # la regla vive en el modelo
 from apps.pricing.models import (
     BatchItemStatus,
     BatchKind,
@@ -35,14 +36,13 @@ from apps.pricing.models import (
     PriceChangeBatchItem,
     PriceList,
 )
-from apps.pricing.selectors import prices_at, visible_price_lists
+from apps.pricing.selectors import prices_at, visible_batches, visible_price_lists
 from apps.pricing.text import change_reason
 from core.money import CENT, Rounding, amount_text, parse_amount, round_amount
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
 
 LINES_MAX = 2000  # síncrono, como la importación de stock (F3-21)
-ALERT_PERCENT = Decimal(30)  # una variación de más del 30 %, en un sentido u otro (04 §K.5)
 AMOUNT_MAX = Decimal("999999999999.99")  # NUMERIC(14,2)
 PENDING, SKIPPED, ERROR = BatchItemStatus.PENDING, BatchItemStatus.SKIPPED, BatchItemStatus.ERROR
 NO_PRICE = "Sin precio en la lista en esa fecha."
@@ -69,6 +69,14 @@ class TooManyLines(Exception):
         self.count = count
 
 
+class BatchStateConflict(Exception):
+    """El estado del lote no admite el cambio (409); `status` es el que tiene."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__(status)
+        self.status = status
+
+
 class ActorRefused(Exception):
     """Solo una persona (con `user_id`, que es su `actor_id`) edita precios en lote: un agente de
     IA, una integración o el sistema, no (ADR-034). No es un `ValueError`: su respuesta es el
@@ -79,7 +87,7 @@ class ActorRefused(Exception):
         self.actor_type = actor_type
 
 
-def _person(ctx: TenantContext) -> None:
+def require_person(ctx: TenantContext) -> None:
     if ctx.actor_type != ActorType.USER or ctx.user_id is None or ctx.actor_id != ctx.user_id:
         raise ActorRefused(ctx.actor_type)
 
@@ -167,9 +175,9 @@ def _line(
 
 
 def alert(item: PriceChangeBatchItem) -> bool:
-    """Una variación de más del 30 % (04 §K.5), sobre la `delta_percent` guardada: así un filtro
-    de las líneas por `delta_percent` cuenta las mismas."""
-    return item.delta_percent is not None and abs(item.delta_percent) > ALERT_PERCENT
+    """Una variación de más del `ALERT_PERCENT` % (04 §K.5), sobre la `delta_percent` guardada: la
+    regla de `models.ALERTING`, el filtro `?alert=` de las líneas, así cuentan las mismas."""
+    return item.alert
 
 
 def create_batch(
@@ -187,7 +195,7 @@ def create_batch(
     (`price.bulk_previewed`, con los recuentos y sin las líneas). No cambia ningún precio.
     `ActorRefused` antes de la primera consulta; `Invalid` (400, con su campo) o `TooManyLines`,
     siempre sin escribir nada."""
-    _person(ctx)
+    require_person(ctx)
     alias = require_scope(ctx)
     if operation not in OPERATIONS:
         raise Invalid("operation", ", ".join(OPERATIONS))
@@ -257,4 +265,27 @@ def create_batch(
         metadata = {"price_list_id": str(price_list.pk), **params, **shown, **batch.summary}
         entity = Entity("price_change_batch", batch.pk, price_list.code)
         record(ctx, "price.bulk_previewed", entity, metadata=metadata)
+    return batch
+
+
+def cancel_batch(ctx: TenantContext, batch_id: UUID) -> PriceChangeBatch:
+    """`DRAFT` o `PREVIEWED` → `CANCELLED`, `version + 1` y `price.bulk_cancelled`; no cambia
+    ningún precio. Uno ya cancelado se devuelve tal cual, sin auditar. `ActorRefused` antes de la
+    primera consulta; `PriceChangeBatch.DoesNotExist` si el actor no ve su lista (activa o no);
+    `BatchStateConflict` desde otro estado. La fila, bloqueada hasta el final de la transacción."""
+    require_person(ctx)
+    alias = require_scope(ctx)
+    shown = visible_batches(execution_context(ctx)).using(alias).select_related("price_list")
+    with transaction.atomic(using=alias):
+        batch: PriceChangeBatch = shown.select_for_update(no_key=True, of=("self",)).get(
+            pk=batch_id
+        )
+        if batch.status == BatchStatus.CANCELLED:
+            return batch
+        if batch.status not in (BatchStatus.DRAFT, BatchStatus.PREVIEWED):
+            raise BatchStateConflict(batch.status)
+        before, batch.status, batch.version = batch.status, BatchStatus.CANCELLED, batch.version + 1
+        batch.save(using=alias, update_fields=["status", "version", "updated_at"])
+        entity = Entity("price_change_batch", batch.pk, batch.price_list.code)
+        record(ctx, "price.bulk_cancelled", entity, {"status": [before, batch.status]})
     return batch

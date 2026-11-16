@@ -66,7 +66,9 @@ class LoginView(APIView):
         """Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo. Si la cuenta
         tiene segundo factor, la contraseña correcta no inicia sesión: responde 202 con
         `mfa_required`, sin datos de la cuenta, y la sesión la inicia `POST /auth/login/mfa/`
-        con un código, en los 5 minutos siguientes."""
+        con un código, en los 5 minutos siguientes. 403 `PASSWORD_CHANGE_REQUIRED`: la
+        contraseña correcta de una cuenta que creó un operador (`add_member`); no abre sesión ni
+        empieza el segundo paso. La cuenta elige la suya con un enlace de recuperación."""
         credentials = LoginSerializer(data=request.data)
         credentials.is_valid(raise_exception=True)
         if services.login(request._request, **credentials.validated_data) is None:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { Download, Hourglass, ShieldEllipsis, TriangleAlert } from "lucide-react";
+import { Download, Hourglass, ShieldAlert, ShieldEllipsis, TriangleAlert } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 
@@ -12,11 +12,12 @@ import type { MessageAttachment } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
 // El archivo de un medio entrante (F7-09a3). Solo se pide la URL firmada al pulsar «Descargar» y solo
-// si la API dice `available` (DONE, entrante, antivirus CLEAN, tipo del mapa y contacto visible): sin
-// antivirus (D-F7-04) nada lo está y la burbuja lo explica. La URL nunca se guarda (ni en el estado ni
-// en la caché de TanStack: la mutación no devuelve nada) ni va a un `src`: el almacén la sirve siempre
-// como `attachment` y se abre una vez, con un enlace temporal, en otra pestaña: si el almacén responde
-// un error (firma caducada, objeto borrado, 5xx) sin `attachment`, el CRM y el borrador no se pierden.
+// si la API dice `available` (DONE, entrante, antivirus CLEAN, tipo del mapa y contacto visible); si
+// no, la burbuja lo explica, también un antivirus INFECTED o ERROR (F7-15), que nunca se abren. La URL
+// nunca se guarda (ni en el estado ni en la caché de TanStack: la mutación no devuelve nada) ni va a
+// un `src`: el almacén la sirve siempre como `attachment` y se abre una vez, con un enlace temporal, en
+// otra pestaña: si el almacén responde un error (firma caducada, objeto borrado, 5xx) sin
+// `attachment`, el CRM y el borrador no se pierden.
 const STATES: Record<string, { icon: ReactNode; text: string }> = {
   PENDING: { icon: <Hourglass aria-hidden />, text: "receiving" },
   DOWNLOADING: { icon: <Hourglass aria-hidden />, text: "receiving" },
@@ -25,6 +26,11 @@ const STATES: Record<string, { icon: ReactNode; text: string }> = {
   EXPIRED: { icon: <TriangleAlert aria-hidden />, text: "expired" },
 };
 const UNKNOWN = { icon: <TriangleAlert aria-hidden />, text: "unknown" };
+// F7-15: el veredicto del antivirus de un archivo DONE que no se ofrece (PENDING sigue en `waiting`).
+const SCANS: Record<string, { icon: ReactNode; text: string }> = {
+  INFECTED: { icon: <ShieldAlert aria-hidden />, text: "infected" },
+  ERROR: { icon: <TriangleAlert aria-hidden />, text: "scanFailed" },
+};
 
 // Un enlace que no está en el documento, a otra pestaña sin `opener` ni `Referer` (la URL del CRM no
 // llega al almacén) y solo a http(s): lo que devuelva la API no puede ser un `javascript:`.
@@ -69,8 +75,11 @@ export function MediaFile({
   });
   if (!attachment.available) {
     // `Object.hasOwn`: un estado que esta pantalla no conoce (o `constructor`) no llega a `t()`.
+    const scan = attachment.status === "DONE" ? (attachment.scan_status ?? "") : "";
     const state =
-      (Object.hasOwn(STATES, attachment.status) && STATES[attachment.status]) || UNKNOWN;
+      (Object.hasOwn(SCANS, scan) && SCANS[scan]) ||
+      (Object.hasOwn(STATES, attachment.status) && STATES[attachment.status]) ||
+      UNKNOWN;
     return (
       <p className="text-muted flex items-start gap-1.5 text-sm [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0">
         {state.icon}

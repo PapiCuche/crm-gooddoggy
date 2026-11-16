@@ -1,14 +1,14 @@
 """F7-09b: imagen y documento salientes por el adaptador de WhatsApp, contra la Graph API falsa
-(`tests/meta_sim`): el tipo real y el tope, sin antivirus nada, el archivo de la organización, la
-misma política que el texto al encolar y al enviar, la subida a Meta que se repite sin llegar al
-cliente y el envío que no se reenvía. PostgreSQL real con el rol `crm_app`."""
+(`tests/meta_sim`): el tipo real y el tope, el antivirus antes de guardar (un `clamd` falso), el
+archivo de la organización, la misma política que el texto al encolar y al enviar, la subida a Meta
+que se repite sin llegar al cliente y el envío que no se reenvía. PostgreSQL real con `crm_app`."""
 
 import dataclasses
 import datetime as dt
 import hashlib
 from importlib import import_module
 from types import SimpleNamespace
-from typing import Any
+from typing import IO, Any
 from uuid import uuid4
 
 import pytest
@@ -21,10 +21,11 @@ from apps.conversations import commands, media, outbound_media, tasks, whatsapp
 from apps.conversations.models import Conversation, Message
 from apps.conversations.policy import ConsentRevoked, WindowClosed
 from apps.files.models import File
-from core import http, storage
+from core import antivirus, http, storage
 from core.storage.memory import InMemoryStorage
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim.graph import TEST_TOKEN, FakeGraph
+from tests.test_antivirus import EICAR_PDF, FakeClamd, clamd
 from tests.test_conversation_commands import run
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_inventory_stock import race
@@ -33,16 +34,15 @@ from tests.test_message_media import a_file
 from tests.test_pipelines_tables import as_migrator
 from tests.test_whatsapp_outbound import graph, redis, talk, world, writer
 
-__all__ = ["graph", "redis", "world", "writer"]  # los fixtures, para pytest
-pytestmark = pytest.mark.usefixtures("tenant_db")
+__all__ = ["clamd", "graph", "redis", "world", "writer"]  # los fixtures, para pytest
+pytestmark = pytest.mark.usefixtures("tenant_db", "clamd")
 JPEG, PNG = b"\xff\xd8\xff\xe0" + b"j" * 40, b"\x89PNG\r\n\x1a\n" + b"p" * 40
 PDF = b"%PDF-1.7\n" + b"d" * 40
 FILES = "SELECT storage_key, mime_type, size_bytes, sha256, purpose, scan_status FROM files"
 
 
 @pytest.fixture(autouse=True)
-def blobs(monkeypatch: pytest.MonkeyPatch, settings: Any) -> InMemoryStorage:
-    settings.MEDIA_SEND_UNSCANNED = True  # sin antivirus aún; su prueba lo apaga
+def blobs(monkeypatch: pytest.MonkeyPatch) -> InMemoryStorage:
     kept = InMemoryStorage()
     monkeypatch.setattr(storage, "storage", lambda: kept)
     return kept
@@ -74,20 +74,81 @@ def deliver(world: SimpleNamespace, message: Any) -> Message:
     return state(world, message)
 
 
-def test_without_antivirus_nothing_is_stored_and_a_type_or_size_not_allowed_never_is(
-    world: SimpleNamespace, blobs: InMemoryStorage, settings: Any
-) -> None:
-    settings.MEDIA_SEND_UNSCANNED = False  # D-F7-04 por omisión: solo `CLEAN`, y no hay antivirus
-    with pytest.raises(outbound_media.Refused, match="MEDIA_NOT_SCANNED"):
+class Flaky(InMemoryStorage):
+    def put(self, key: str, stream: IO[bytes], **kwargs: Any) -> storage.ObjectInfo:
+        super().put(key, stream, **kwargs)  # guardado a medias
+        raise OSError("el almacén se cortó")
+
+
+def test_only_a_clean_file_is_stored_and_without_a_verdict_nothing_is(
+    world: SimpleNamespace, blobs: InMemoryStorage, clamd: FakeClamd, settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    with pytest.raises(outbound_media.Infected) as caught:
+        prepare(world, EICAR_PDF)
+    assert (caught.value.code, caught.value.signature) == ("MEDIA_INFECTED", "Eicar-Test-Signature")
+    assert clamd.bodies == [EICAR_PDF] and blobs.objects == {}  # escaneado entero, sin guardar
+    for address in ("", "127.0.0.1:9"):  # sin dirección o caído: sin veredicto
+        settings.CLAMD_ADDRESS = address
+        with pytest.raises(antivirus.Unavailable):
+            prepare(world)
+    settings.CLAMD_ADDRESS = clamd.address
+    clamd.answer = lambda body: b"stream: Something ERROR\0"  # un error de clamd tampoco
+    with pytest.raises(antivirus.Unavailable):
         prepare(world)
-    settings.MEDIA_SEND_UNSCANNED = True
+    assert blobs.objects == {}
+    clamd.answer, flaky, seen = (lambda body: b"stream: OK\0"), Flaky(), list[Any]()
+    monkeypatch.setattr(storage, "storage", lambda: flaky)
+    with pytest.raises(OSError, match="cortó"):  # limpio, pero guardarlo falla: nada queda
+        prepare(world)
+    assert flaky.objects == {}
+    real = antivirus.scan
+
+    def spied(stream: IO[bytes], **kwargs: Any) -> antivirus.Verdict:
+        seen.append(kwargs)
+        return real(stream, **kwargs)
+
+    monkeypatch.setattr(antivirus, "scan", spied)
+    monkeypatch.setattr(storage, "storage", lambda: blobs)
+    made = prepare(world, PDF)
+    assert seen == [
+        {"max_bytes": outbound_media.CAPS["DOCUMENT"], "seconds": 15.0}
+    ]  # un plazo corto
+    assert list(blobs.objects) == [made.key] and clamd.bodies[-1] == PDF
+
+
+def test_without_a_free_scan_slot_there_is_no_verdict_and_nothing_is_scanned(
+    world: SimpleNamespace, blobs: InMemoryStorage, clamd: FakeClamd,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    monkeypatch.setattr(outbound_media, "SLOT_WAIT", 0.05)
+    for _ in range(outbound_media.SCAN_SLOTS):  # F7-15c: los escaneos de subida a la vez
+        assert outbound_media._slots.acquire(timeout=1)
+    try:
+        with pytest.raises(antivirus.Unavailable, match="ocupado"):
+            prepare(world)
+    finally:
+        for _ in range(outbound_media.SCAN_SLOTS):
+            outbound_media._slots.release()
+    assert clamd.bodies == [] and blobs.objects == {}
+    clamd.answer = lambda body: b"stream: OK, maybe\0"  # sin veredicto: el hueco se devuelve
+    for _ in range(outbound_media.SCAN_SLOTS + 1):
+        with pytest.raises(antivirus.Unavailable):
+            prepare(world)
+    clamd.answer = lambda body: b"stream: OK\0"
+    assert prepare(world).kind == "IMAGE"
+
+
+def test_a_type_or_size_not_allowed_is_never_scanned_nor_stored(
+    world: SimpleNamespace, blobs: InMemoryStorage, clamd: FakeClamd
+) -> None:
     for data in (b"GIF89a" + b"g" * 40, b"<html>", b"", b"\xff\xd8", b"%PDF", PNG[:7] + b"x" * 40):
         with pytest.raises(outbound_media.Refused, match="MEDIA_TYPE_NOT_ALLOWED"):
             prepare(world, data)  # el tipo sale del contenido, nunca del nombre
     big = b"x" * (outbound_media.CAPS["IMAGE"] - len(JPEG) + 1)
     with pytest.raises(outbound_media.Refused, match="MEDIA_TOO_LARGE"):
         prepare(world, JPEG + big, "foto.pdf")
-    assert blobs.objects == {}
+    assert blobs.objects == {} and clamd.bodies == []
     made = prepare(world, PDF + big)  # el tope es del tipo: un documento admite más
     assert made.key.startswith(f"org/{world.a}/message-media-out/") and list(blobs.objects) == [
         made.key
@@ -150,7 +211,9 @@ def test_an_image_is_queued_with_its_file_once_and_a_replay_needs_the_same_file(
     assert message.body == "Mira esto" and message.file_id is not None
     row = migrator.execute(FILES + " WHERE id = %s", [message.file_id]).fetchone()
     assert row[1:] == ("image/jpeg", len(JPEG), hashlib.sha256(JPEG).hexdigest(),
-                       "message-media-out", "PENDING")  # fmt: skip
+                       "message-media-out", "CLEAN")  # fmt: skip
+    checked = "SELECT scan_checked_at IS NOT NULL FROM files WHERE id = %s"
+    assert migrator.execute(checked, [message.file_id]).fetchone() == (True,)  # F7-15c
     again, created = queue(world, convo, caption="Mira esto", client_message_id=key)
     assert (again.pk, created) == (message.pk, False)  # el mismo archivo: el mismo mensaje
     for other in ({"data": PNG, "caption": "Mira esto"}, {"caption": "Otra"}):
@@ -233,17 +296,14 @@ def test_an_image_and_a_document_go_out_through_the_adapter_after_their_upload(
 
 
 @pytest.mark.parametrize(
-    ("unscanned", "scan", "outcome"),
-    [(False, "PENDING", "FAILED"), (True, "INFECTED", "FAILED"), (False, "CLEAN", "SENT"),
-     (True, "PENDING", "SENT")],
-)  # fmt: skip
-def test_the_antivirus_is_checked_again_just_before_sending(
-    world: SimpleNamespace, graph: FakeGraph, migrator: Any, settings: Any, unscanned: bool,
-    scan: str, outcome: str,
-) -> None:  # fmt: skip
+    ("scan", "outcome"),
+    [("PENDING", "FAILED"), ("INFECTED", "FAILED"), ("ERROR", "FAILED"), ("CLEAN", "SENT")],
+)
+def test_only_a_clean_file_is_sent_checked_again_just_before_sending(
+    world: SimpleNamespace, graph: FakeGraph, migrator: Any, scan: str, outcome: str
+) -> None:
     message, _ = queue(world, talk(world))
     migrator.execute("UPDATE files SET scan_status = %s", [scan])
-    settings.MEDIA_SEND_UNSCANNED = unscanned
     saved = deliver(world, message)
     assert saved.delivery_status == outcome
     if outcome == "FAILED":

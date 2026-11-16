@@ -29,6 +29,7 @@ from apps.conversations.models import (
     Direction,
     Message,
 )
+from apps.files.models import File
 from core.api.errors import ApiError
 from core.api.pagination import CursorPagination
 from core.api.schema import errors
@@ -55,8 +56,13 @@ class MessageAttachmentSerializer(serializers.Serializer[Any]):
         "declaró el canal.",
     )  # fmt: skip
     size_bytes = serializers.IntegerField(allow_null=True, help_text="Solo con `DONE`.")
+    scan_status = serializers.ChoiceField(
+        choices=File.ScanStatus.choices, allow_null=True,
+        help_text="El antivirus, solo con `DONE`: `PENDING` (aún se analiza), `CLEAN`, `INFECTED` "
+        "(nunca se sirve) o `ERROR` (no se pudo analizar; nunca se sirve).",
+    )  # fmt: skip
     available = serializers.BooleanField(
-        help_text="Si `…/attachments/{id}/url/` lo sirve ahora; `false` no dice por qué."
+        help_text="Si `…/attachments/{id}/url/` lo sirve ahora (solo con antivirus `CLEAN`)."
     )
 
 

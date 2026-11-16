@@ -11,18 +11,21 @@ La URL dura `EXPIRES` segundos, siempre `attachment` con un nombre generado, el 
 `private, no-store` firmados; la respuesta no se guarda en caché y nunca se registra.
 
 `POST …/conversations/{id}/media/` (F7-09b2, `multipart/form-data`): tope por persona, permiso,
-alcance (404), antivirus (D-F7-04), política y `Content-Length` (411, 413) **antes** de analizar o
-guardar el cuerpo. Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope
-del proxy (`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped`
-corta al pasarse; luego el tipo real (415), el blob y el comando. Ante cualquier error, o en un
-reintento, el blob nuevo se borra (la vista es una transacción; el guardado tiene otra clave).
+alcance (404), política y `Content-Length` (411, 413) **antes** de analizar o guardar el cuerpo.
+Recibirlo no: el ASGI de Django lo lee entero antes de la vista, así que el tope del proxy
+(`request_body` en el Caddyfile) es un requisito del despliegue. `outbound_media.Capped` corta al
+pasarse; luego el tipo real (415), el antivirus (F7-15b: 422 `MEDIA_INFECTED`, o
+`MEDIA_TOO_COMPLEX` si pasa sus topes, F7-15c; 503 `MEDIA_SCAN_UNAVAILABLE` sin veredicto; en
+todos, nada se guarda), el blob y el comando. Ante
+cualquier error, o en un reintento, el blob nuevo se borra (la vista es una transacción; el guardado
+tiene otra clave). Un 422 deshace la transacción: su auditoría y su alerta las deja
+`ChannelThrottleMiddleware` después (`outbound_media.infected`).
 """
 
 import datetime as dt
 import re
 from typing import Any
 
-from django.conf import settings
 from django.core.exceptions import SuspiciousOperation
 from django.http.multipartparser import MultiPartParser, MultiPartParserError
 from django.utils import timezone
@@ -40,18 +43,23 @@ from apps.conversations.api import inputs
 from apps.conversations.api.messages import REASONS, MessageSerializer, queue, shows_body
 from apps.conversations.media import EXTENSIONS
 from apps.conversations.models import Conversation
-from core import storage
+from core import antivirus, storage
 from core.api.errors import ApiError
 from core.api.schema import errors
+from core.observability.logging import get_logger
 from core.tenancy import context
+
+logger = get_logger(__name__)
 
 EXPIRES = 60  # segundos (el almacén admite hasta `storage.MAX_PRESIGN_SECONDS`)
 SLACK = 64 << 10  # bytes del formulario además del archivo (separadores, cabeceras y campos)
 REFUSED = {
-    "MEDIA_NOT_SCANNED": (409, "Aún no se pueden enviar archivos: falta el antivirus."),
     "MEDIA_TOO_LARGE": (413, "El archivo pasa del tamaño permitido para su tipo."),
     "MEDIA_TYPE_NOT_ALLOWED": (415, "Solo imágenes JPEG o PNG y documentos PDF."),
     "LENGTH_REQUIRED": (411, "Falta la longitud del cuerpo (Content-Length)."),
+    "MEDIA_INFECTED": (422, "El antivirus encontró un virus en el archivo: no se envió."),
+    "MEDIA_TOO_COMPLEX": (422, "El archivo es demasiado complejo para revisarlo: no se envió."),
+    "MEDIA_SCAN_UNAVAILABLE": (503, "El antivirus no respondió: no se envió nada. Reinténtalo."),
 }
 FORM = "Un formulario multipart/form-data con un solo archivo, en `file`."
 
@@ -138,13 +146,15 @@ def _read(request: Request, handler: outbound_media.Capped) -> dict[str, Any]:
         responses={
             200: MessageSerializer,
             202: MessageSerializer,
-            **errors(400, 401, 403, 404, 409, 411, 413, 415, 429),
+            **errors(400, 401, 403, 404, 409, 411, 413, 415, 422, 429, 503),
         },
         description="Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente, con la política "
         "del texto; idempotente por `client_message_id` (202; 200 con el mismo archivo). Pide "
-        "`messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`, la política o "
-        "`CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 "
-        "`MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.",
+        "`messages.send` y `conversations.view`. El archivo pasa por el antivirus antes de "
+        "guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 "
+        "`MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 422 `MEDIA_INFECTED` o "
+        "`MEDIA_TOO_COMPLEX` (pasa los topes del antivirus: no se pudo revisar entero); 429 "
+        "`RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE` (sin veredicto: nada se guardó, reintentar).",
     ),
 )
 class SendMediaView(APIView):
@@ -157,8 +167,6 @@ class SendMediaView(APIView):
         found = mine.filter(pk=kwargs["conversation_id"]).first()
         if found is None or not can(ectx, "messages.send", found):  # antes de leer el cuerpo
             raise NotFound
-        if not settings.MEDIA_SEND_UNSCANNED:  # D-F7-04: nada sale sin antivirus
-            raise _refuse("MEDIA_NOT_SCANNED")
         decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY)
         if decision.reason is not None:  # antes de guardar nada; el comando la repite
             raise ApiError(decision.reason, 409, REASONS[decision.reason])
@@ -169,7 +177,13 @@ class SendMediaView(APIView):
             assert handler.sink is not None  # noqa: S101 — `_read` lo exige
             prepared = outbound_media.prepare(tenant, handler.sink, handler.file_name)
         except outbound_media.Refused as refused:
+            if isinstance(refused, outbound_media.Infected):  # para auditarlo tras deshacer
+                request._request.media_infected = (found.pk, refused.signature)
             raise _refuse(refused.code) from None
+        except antivirus.Unavailable as error:  # sin veredicto: nada se guardó
+            logger.warning("media.outbound_scan_unavailable", conversation_id=str(found.pk),
+                           error=str(error))  # fmt: skip
+            raise _refuse("MEDIA_SCAN_UNAVAILABLE") from None
         finally:
             if handler.sink is not None:
                 handler.sink.file.close()

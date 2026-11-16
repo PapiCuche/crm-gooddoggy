@@ -221,6 +221,8 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     [413, undefined, "demasiado grande"], // el tope del proxy responde sin el `code` de la API
     [415, { code: "MEDIA_TYPE_NOT_ALLOWED" }, "Solo se pueden enviar"],
     [415, undefined, "Solo se pueden enviar"],
+    [422, { code: "MEDIA_INFECTED" }, "El antivirus encontró un virus en este archivo"],
+    [422, { code: "MEDIA_TOO_COMPLEX" }, "demasiado complejo para que el antivirus lo revise"],
   ])("un %i quita el archivo y se explica, sin «Reintentar»", async (status, body, text) => {
     const s = server(() => ({ status, body }));
     show();
@@ -243,6 +245,7 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     [411, undefined, "no llegó completo"],
     [409, { code: "WINDOW_CLOSED" }, "Ya pasó la ventana de atención"],
     [429, { code: "RATE_LIMITED" }, "Demasiados intentos"],
+    [503, { code: "MEDIA_SCAN_UNAVAILABLE" }, "No se pudo revisar el archivo con el antivirus"],
   ])(
     "un %i se explica por su código y «Reintentar» reutiliza el id",
     async (status, body, text) => {
@@ -263,40 +266,16 @@ describe("adjuntar desde el cuadro de redacción (F7-09b3)", () => {
     },
   );
 
-  it("con el envío sin antivirus apagado (409 MEDIA_NOT_SCANNED) lo explica y no deja adjuntar", async () => {
-    const s = server(() => ({ status: 409, body: { code: "MEDIA_NOT_SCANNED" } }));
+  it("el clip siempre abre el selector: ya no hay un envío sin antivirus que lo apague", async () => {
+    server(() => ({ status: 202, body: outbound("s1", "DOCUMENT", "Documento") }));
     show();
     await openChat();
-    await attach(pdf());
-    const reads = () =>
-      s.api.mock.calls.filter(
-        ([url, init]) => String(url).endsWith("/1/messages/") && init?.method === "GET",
-      ).length;
-    const before = reads();
-    send();
-    // El envío canceló la lectura en curso: tras el fallo se vuelve a pedir (no queda «Cargando…»).
-    await waitFor(() => expect(reads()).toBeGreaterThan(before));
-    const [why] = await screen.findAllByText(/Por ahora no se pueden enviar archivos/, {
-      selector: "p:not([role])",
-    });
-    expect(why).toBeVisible();
-    // También lo anuncia la región viva que decía «Enviando…» (WCAG 4.1.3).
-    const regions = screen.getAllByRole("status").map((region) => region.textContent);
-    expect(regions).toContainEqual(expect.stringMatching(/Por ahora no se pueden enviar archivos/));
-    expect(screen.queryByRole("alert")).toBeNull(); // un aviso fijo, no un error del envío
-    expect(screen.getByRole("button", { name: "Adjuntar imagen o PDF" })).toHaveAttribute(
-      "title",
-      expect.stringMatching(/Por ahora no se pueden enviar archivos/),
-    );
-    expect(screen.queryByText("cotizacion.pdf")).toBeNull();
     const clip = screen.getByRole("button", { name: "Adjuntar imagen o PDF" });
-    expect(clip).toHaveAttribute("aria-disabled", "true");
-    expect(clip).toHaveAccessibleDescription(/Por ahora no se pueden enviar archivos/);
+    expect(clip).not.toHaveAttribute("aria-disabled", "true");
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     const opened = vi.spyOn(input, "click");
     fireEvent.click(clip);
-    expect(opened).not.toHaveBeenCalled();
-    expect(s.forms()).toHaveLength(1);
+    expect(opened).toHaveBeenCalledOnce();
   });
 
   it("la burbuja de un medio saliente muestra su clase y su estado de entrega", async () => {

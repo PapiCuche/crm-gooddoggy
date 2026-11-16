@@ -453,9 +453,9 @@ def record_outbound(
     `ClientMessageConflict`; `DoesNotExist` (también fuera del alcance de `messages.send`);
     `AccessDenied` sin el permiso. `purpose` (`policy.PURPOSES`; sin valor por omisión: quien llama
     dice para qué escribe): un seguimiento (`FOLLOW_UP`) a quien se dio de baja es `ConsentRevoked`,
-    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10. Con `media` (F7-09b, el blob ya guardado
-    por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo; un reintento es el
-    mismo solo con el mismo archivo (`sha256`)."""
+    la respuesta (`CUSTOMER_REPLY`) no. Plantillas: F7-10. Con `media` (F7-09b, el blob limpio ya
+    guardado por `outbound_media.prepare`) el mensaje es de su tipo y crea su archivo `CLEAN`; un
+    reintento es el mismo solo con el mismo archivo (`sha256`)."""
     alias = require_scope(ctx)
     if purpose not in PURPOSES:
         raise ValueError("propósito no admitido")
@@ -488,6 +488,7 @@ def record_outbound(
                 id=media.file_id, storage_key=media.key, original_name=media.name,
                 mime_type=media.mime, size_bytes=media.size, sha256=media.sha256,
                 purpose=outbound_media.PURPOSE, created_by_user_id=ctx.user_id,
+                scan_status="CLEAN", scan_checked_at=timezone.now(),  # `prepare` lo escaneó
             )  # fmt: skip
         message, created = _insert(
             ctx, alias, convo, client_id, text, direction="OUTBOUND", delivery_status="QUEUED",
@@ -822,7 +823,7 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
             )
             return None
         shown = None
-        if message.file_id is not None:  # D-F7-04: solo `CLEAN`, o `PENDING` si se decidió
+        if message.file_id is not None:  # D-F7-04: solo sale lo que el antivirus dio por limpio
             file = File.objects.using(alias).get(pk=message.file_id)
             kind = outbound_media.TYPES.get(file.mime_type)
             if file.purpose != outbound_media.PURPOSE or kind != message.message_type:
@@ -830,8 +831,7 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
                     ctx, message_id=message.pk, status=Delivery.FAILED, reason="ADAPTER_REJECTED"
                 )
                 return None
-            pending = file.scan_status == "PENDING" and settings.MEDIA_SEND_UNSCANNED
-            if file.scan_status != "CLEAN" and not pending:
+            if file.scan_status != "CLEAN":
                 advance_delivery(
                     ctx, message_id=message.pk, status=Delivery.FAILED, reason="MEDIA_NOT_SCANNED"
                 )

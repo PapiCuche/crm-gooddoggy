@@ -8,6 +8,8 @@
 .env
 .env.*
 !.env.example
+# La plantilla de producción, solo nombres sin valores (F1-13).
+!/infra/prod/.env.production.example
 *.pem
 *.key
 

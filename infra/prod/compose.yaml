@@ -1,0 +1,220 @@
+# Producción (ADR-033): un servidor Linux con Docker Compose detrás de Caddy con HTTPS automático.
+# Sin Garage ni Mailpit (almacenamiento S3 y SMTP externos) y sin `build:`: imágenes por digest.
+# Uso (F1-15 lo envuelve en deploy.sh), siempre con sudo (nadie en el grupo docker, ADR-033 §6.2):
+#   sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait
+# release.env lleva los digests; los secretos, archivos root:0600 en CRM_ENV_DIR (fuera del repo).
+# Plantilla de variables: infra/prod/.env.production.example. Validación: infra/prod/validate.sh.
+name: crm
+
+x-logging: &logging # ADR-033 §9: rotación por tamaño para no llenar el disco
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+# Sonda de la imagen (HEALTHCHECK), cada 1 s mientras arranca: `up --wait` no espera 30 s.
+x-probe: &probe
+  start_period: 30s
+  start_interval: 1s
+
+# Runtime (web, ws, worker, worker-media, beat): SOLO runtime.env, con DATABASE_URL → crm_app
+# (ADR-002 §1.1). Nunca DATABASE_MIGRATOR_URL ni CRM_MIGRATOR_PASSWORD: production no arranca.
+x-runtime: &runtime
+  image: ${BACKEND_IMAGE:?digest de la imagen del backend en release.env}
+  restart: unless-stopped
+  logging: *logging
+  env_file:
+    - path: ${CRM_ENV_DIR:-/etc/crm}/runtime.env
+  environment:
+    DJANGO_SETTINGS_MODULE: config.settings.production
+    # uvicorn solo acepta `X-Forwarded-For` de Caddy, fija en la red del borde (ADR-033 §4.4).
+    FORWARDED_ALLOW_IPS: ${STACK_PROXY_IP:-172.31.251.2}
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?digest de postgres:18.x en release.env}
+    restart: unless-stopped
+    logging: *logging
+    # Ningún valor de cliente en el log del servidor (revisión de #794 y #845): ni la sentencia
+    # fallida, ni sus parámetros, ni el DETAIL (`Key (…)=(…)`) ni el texto de un ERROR. El cliente
+    # sigue recibiendo sus errores. El superusuario solo entra por el socket local (pg_hba.conf).
+    command:
+      - postgres
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_statement=none
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - log_min_messages=log
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    # Solo el primer arranque del volumen: superusuario y contraseñas iniciales de los roles.
+    # Después se borra el archivo y se recrea el contenedor (ADR-033 §6.1).
+    env_file:
+      - path: ${CRM_ENV_DIR:-/etc/crm}/postgres.env
+        required: false
+    environment:
+      CRM_DB_NAME: crm
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/bootstrap-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks: [data]
+    mem_limit: 1g
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Broker de Celery y capa de canales. Con contraseña (redis.env), sin expulsión y con AOF. La
+  # contraseña va a un archivo 0600 del contenedor, no a los argumentos (visibles en `ps`).
+  redis:
+    image: ${REDIS_IMAGE:?digest de redis:8.x en release.env}
+    restart: unless-stopped
+    logging: *logging
+    user: redis
+    env_file:
+      - path: ${CRM_ENV_DIR:-/etc/crm}/redis.env
+    command:
+      - sh
+      - -ec
+      - |
+        umask 077
+        printf 'requirepass "%s"\n' "$$REDIS_PASSWORD" > /tmp/auth.conf
+        exec redis-server /tmp/auth.conf --appendonly yes --maxmemory-policy noeviction
+    volumes:
+      - redisdata:/data
+    networks: [data]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Job de migraciones por despliegue: SOLO migrate.env → crm_migrator (config.settings.migrate).
+  migrate:
+    image: ${BACKEND_IMAGE:?digest de la imagen del backend en release.env}
+    command: ["python", "manage.py", "migrate", "--no-input"]
+    logging: *logging
+    env_file:
+      - path: ${CRM_ENV_DIR:-/etc/crm}/migrate.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.migrate
+    networks: [data]
+    mem_limit: 512m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    <<: *runtime
+    networks:
+      edge: {}
+      data: {}
+    mem_limit: 768m
+    healthcheck: *probe
+
+  ws:
+    <<: *runtime
+    networks:
+      edge: {}
+      data: {}
+    mem_limit: 512m
+    healthcheck: *probe
+
+  worker:
+    <<: *runtime
+    command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--concurrency", "2"]
+    networks: [data, egress] # S3, SMTP, Meta y Sentry
+    mem_limit: 1g
+    healthcheck:
+      disable: true
+
+  # La cola `media` (descargas de medios entrantes, hasta 120 s cada una), un proceso.
+  worker-media:
+    <<: *runtime
+    command: ["celery", "-A", "config", "worker", "--loglevel", "INFO", "--queues", "media", "--concurrency", "1"]
+    networks: [data, egress]
+    mem_limit: 768m
+    healthcheck:
+      disable: true
+
+  beat:
+    <<: *runtime
+    command: ["celery", "-A", "config", "beat", "--loglevel", "INFO", "--schedule", "/tmp/celerybeat-schedule"]
+    networks: [data, egress] # solo publica en Redis; egress, para Sentry si se activa
+    mem_limit: 384m
+    healthcheck:
+      disable: true
+
+  # Sin secretos: BACKEND_ORIGIN y NEXT_PUBLIC_* se fijan al construir la imagen.
+  frontend:
+    image: ${FRONTEND_IMAGE:?digest de la imagen del frontend en release.env}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      BACKEND_ORIGIN: http://backend:8000
+    networks: [edge]
+    mem_limit: 512m
+    healthcheck: *probe
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Único servicio con puertos (ADR-033 §2): Docker se salta ufw con los puertos publicados.
+  proxy:
+    image: ${PROXY_IMAGE:?digest de la imagen de Caddy con caddy-ratelimit en release.env}
+    restart: unless-stopped
+    logging: *logging
+    env_file:
+      - path: ${CRM_ENV_DIR:-/etc/crm}/proxy.env
+    ports:
+      - "0.0.0.0:80:80" # solo IPv4 hasta verificar la IP del cliente por IPv6 (ADR-033 §4.4)
+      - "0.0.0.0:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificados: no se piden en cada reinicio
+      - caddy_config:/config
+    networks:
+      edge:
+        ipv4_address: ${STACK_PROXY_IP:-172.31.251.2}
+    mem_limit: 256m
+    depends_on:
+      frontend:
+        condition: service_healthy
+      ws:
+        condition: service_healthy
+
+networks:
+  # Borde: proxy, frontend, backend y ws. El proxy tiene una dirección fija fuera del rango dinámico.
+  edge:
+    ipam:
+      config:
+        - subnet: ${STACK_SUBNET:-172.31.251.0/24}
+          ip_range: ${STACK_IP_RANGE:-172.31.251.128/25}
+  # Datos: PostgreSQL y Redis, sin salida a Internet; ni el proxy ni el frontend entran.
+  data:
+    internal: true
+  # Salida a Internet de los workers, sin pasar por la red del borde.
+  egress: {}
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

@@ -1,6 +1,6 @@
 "use client";
 
-import { type InfiniteData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type InfiniteData, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileText, ImageIcon, Paperclip, RotateCw, Send, StickyNote, X } from "lucide-react";
 import { useFormatter, useTranslations } from "next-intl";
 import { type KeyboardEvent, useId, useRef, useState } from "react";
@@ -49,9 +49,15 @@ const failure = (error: ApiError): ApiErrorKey => {
   const key = apiErrorKey(error);
   return (key === "INTERNAL_ERROR" && BY_STATUS[error.status]) || key;
 };
-// La API no dice si `MEDIA_SEND_UNSCANNED` está encendido: lo dice su 409 `MEDIA_NOT_SCANNED`. Se
-// recuerda en la caché de la sesión (sin red) para explicarlo en cada chat sin volver a subir nada.
-const mediaOffKey = (slug: string) => ["media-send-off", slug] as const;
+// Reenviar el mismo archivo daría lo mismo: se quita y se explica, sin «Reintentar». Sin veredicto
+// del antivirus (503 `MEDIA_SCAN_UNAVAILABLE`) no se guardó nada: ese sí se reintenta. Un archivo que
+// pasa los topes del antivirus (422 `MEDIA_TOO_COMPLEX`) no se presenta como virus.
+const DROP_FILE_ON: ApiErrorKey[] = [
+  "MEDIA_TOO_LARGE",
+  "MEDIA_TYPE_NOT_ALLOWED",
+  "MEDIA_INFECTED",
+  "MEDIA_TOO_COMPLEX",
+];
 type Outgoing = SendMessageRequest & { file?: File };
 // Un 409 de la política de envío: lo que cambió puede estar también en la conversación.
 const REFRESH_ON = [
@@ -181,12 +187,6 @@ function ComposeBox({
   const picker = useRef<HTMLInputElement>(null);
   const format = useFormatter();
   const labels = useTranslations("inbox.media");
-  const off = useQuery({
-    queryKey: mediaOffKey(slug),
-    queryFn: () => false,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  }).data;
   const note = mode === "note";
   const key = messagesKey(slug, conversation.id);
   // Con un archivo, el texto es su pie de foto: otro tope, contado en unidades UTF-16.
@@ -262,16 +262,8 @@ function ComposeBox({
       void client.invalidateQueries({ queryKey: key });
       // Ese id ya es de otro envío: reintentar con él chocaría siempre.
       if (error.code === "CLIENT_MESSAGE_ID_TAKEN") attempt.current = null;
-      if (error.code === "MEDIA_NOT_SCANNED") {
-        // No es un fallo de este archivo: ninguno sale. Lo explica el aviso fijo, no un error.
-        client.setQueryData(mediaOffKey(slug), true);
-        setFile(null);
-        setProblem(null);
-        return;
-      }
       const reason = failure(error);
-      if (reason === "MEDIA_TOO_LARGE" || reason === "MEDIA_TYPE_NOT_ALLOWED") {
-        // Reenviar el mismo archivo daría lo mismo: se quita y se explica, sin «Reintentar».
+      if (DROP_FILE_ON.includes(reason)) {
         attempt.current = null;
         setFile(null);
         setRefusal(errors(`api.${reason}`));
@@ -434,11 +426,7 @@ function ComposeBox({
         </div>
       ) : null}
       <p role="status" className="sr-only">
-        {send.isPending
-          ? t(note ? "saving" : "sending")
-          : off && !note
-            ? errors("api.MEDIA_NOT_SCANNED")
-            : ""}
+        {send.isPending ? t(note ? "saving" : "sending") : ""}
       </p>
       {/* El tope se anuncia solo al cruzar el 90 % y el 100 %: el texto depende del nivel, no de la cuenta. */}
       <p aria-live="polite" className="sr-only">
@@ -497,11 +485,10 @@ function ComposeBox({
               variant="ghost"
               className="border-border size-10 rounded-[14px] border px-0 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 lg:size-11"
               aria-label={t("attach")}
-              title={off ? errors("api.MEDIA_NOT_SCANNED") : t("attach")}
-              aria-describedby={off ? `${field}-off` : undefined}
+              title={t("attach")}
               disabled={closed}
-              aria-disabled={send.isPending || off}
-              onClick={() => send.isPending || off || picker.current?.click()}
+              aria-disabled={send.isPending}
+              onClick={() => send.isPending || picker.current?.click()}
             >
               <Paperclip aria-hidden />
             </Button>
@@ -509,11 +496,6 @@ function ComposeBox({
           </div>
         )}
       </div>
-      {off && !note ? (
-        <p id={`${field}-off`} className="text-muted text-sm max-sm:col-span-2">
-          {errors("api.MEDIA_NOT_SCANNED")}
-        </p>
-      ) : null}
       {closed ? (
         <p id={`${field}-closed`} className="text-muted text-sm max-sm:col-span-2">
           {errors("api.CONVERSATION_CLOSED")}

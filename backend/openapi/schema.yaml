@@ -20,7 +20,9 @@ paths:
         Inicia sesión. `INVALID_CREDENTIALS` no distingue el motivo del rechazo. Si la cuenta
         tiene segundo factor, la contraseña correcta no inicia sesión: responde 202 con
         `mfa_required`, sin datos de la cuenta, y la sesión la inicia `POST /auth/login/mfa/`
-        con un código, en los 5 minutos siguientes.
+        con un código, en los 5 minutos siguientes. 403 `PASSWORD_CHANGE_REQUIRED`: la
+        contraseña correcta de una cuenta que creó un operador (`add_member`); no abre sesión ni
+        empieza el segundo paso. La cuenta elige la suya con un enlace de recuperación.
       tags:
       - auth
       requestBody:
@@ -2688,9 +2690,12 @@ paths:
       operationId: conversation_media_send
       description: 'Pone en cola una imagen (JPEG, PNG) o un PDF para el cliente,
         con la política del texto; idempotente por `client_message_id` (202; 200 con
-        el mismo archivo). Pide `messages.send` y `conversations.view`. 409: `MEDIA_NOT_SCANNED`,
-        la política o `CLIENT_MESSAGE_ID_TAKEN`; 411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`;
-        415 `MEDIA_TYPE_NOT_ALLOWED` (el tipo real); 429 `RATE_LIMITED`.'
+        el mismo archivo). Pide `messages.send` y `conversations.view`. El archivo
+        pasa por el antivirus antes de guardarse. 409: la política o `CLIENT_MESSAGE_ID_TAKEN`;
+        411 sin `Content-Length`; 413 `MEDIA_TOO_LARGE`; 415 `MEDIA_TYPE_NOT_ALLOWED`
+        (el tipo real); 422 `MEDIA_INFECTED` o `MEDIA_TOO_COMPLEX` (pasa los topes
+        del antivirus: no se pudo revisar entero); 429 `RATE_LIMITED`; 503 `MEDIA_SCAN_UNAVAILABLE`
+        (sin veredicto: nada se guardó, reintentar).'
       parameters:
       - in: path
         name: conversation_id
@@ -2774,7 +2779,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
         '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
           content:
             application/json:
               schema:
@@ -5699,6 +5716,251 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Pipeline'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/batches/:
+    post:
+      operationId: price_batches_create
+      description: 'Crea el lote (`PREVIEWED`) con una línea por variante: el precio
+        de antes y el de después. No cambia ningún precio. 400 en su campo (los de
+        la selección, dentro de `filters`); más de 2000 variantes, 400 en `filters`
+        con el recuento. 403 `ACTOR_NOT_ALLOWED`: no es una persona.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batch'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/batches/{batch_id}/:
+    get:
+      operationId: price_batches_retrieve
+      description: 'Un lote con sus recuentos. 404: no existe, es de otra organización
+        o de una lista que el actor no ve.'
+      parameters:
+      - in: path
+        name: batch_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/batches/{batch_id}/cancel/:
+    post:
+      operationId: price_batches_cancel
+      description: 'Cancela un lote en borrador o previsualizado sin cambiar ningún
+        precio; uno ya cancelado vuelve tal cual. 409 `BATCH_STATE_CONFLICT`: ya se
+        aplicó o falló. 403 `ACTOR_NOT_ALLOWED`: no es una persona.'
+      parameters:
+      - in: path
+        name: batch_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Batch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/pricing/batches/{batch_id}/items/:
+    get:
+      operationId: price_batch_items_list
+      description: 'Las líneas del lote por creación (ADR-016), con el SKU y el nombre
+        de la variante y el precio de antes y el de después. 404: el lote no existe,
+        es de otra organización o de una lista que el actor no ve o que está desactivada.'
+      parameters:
+      - in: query
+        name: alert
+        schema:
+          type: boolean
+        description: '`true`: solo las alertas; `false`: solo las demás.'
+      - in: path
+        name: batch_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: status
+        schema:
+          enum:
+          - PENDING
+          - APPLIED
+          - SKIPPED
+          - ERROR
+          - STALE
+          type: string
+          minLength: 1
+        description: |-
+          Solo las de ese estado.
+
+          * `PENDING` - Pending
+          * `APPLIED` - Applied
+          * `SKIPPED` - Skipped
+          * `ERROR` - Error
+          * `STALE` - Stale
+      tags:
+      - pricing
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedBatchLineList'
           description: ''
         '400':
           content:
@@ -10418,6 +10680,289 @@ components:
         * `SUCCESS` - SUCCESS
         * `DENIED` - DENIED
         * `FAILED` - FAILED
+    Batch:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/BatchKindEnum'
+        status:
+          $ref: '#/components/schemas/BatchStatusEnum'
+        price_list_id:
+          type: string
+          format: uuid
+        operation:
+          $ref: '#/components/schemas/OperationEnum'
+        value:
+          type: string
+          description: 'Como se guardó: `5.00`.'
+        rounding:
+          $ref: '#/components/schemas/RoundingEnum'
+        filters:
+          $ref: '#/components/schemas/BatchFilters'
+        reason:
+          type: string
+        effective_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: '`null`: al aplicar.'
+        summary:
+          $ref: '#/components/schemas/BatchSummary'
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        created_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Quién lo fijó; `null` si no fue una persona. El nombre lo resuelve
+            `users.view`.
+        applied_at:
+          type: string
+          format: date-time
+          nullable: true
+        applied_by_user_id:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+      - applied_at
+      - applied_by_user_id
+      - created_at
+      - created_by_user_id
+      - effective_at
+      - filters
+      - id
+      - kind
+      - operation
+      - price_list_id
+      - reason
+      - rounding
+      - status
+      - summary
+      - value
+      - version
+    BatchCreateRequest:
+      type: object
+      properties:
+        price_list_id:
+          type: string
+          format: uuid
+          description: Una lista activa que el actor ve.
+        operation:
+          $ref: '#/components/schemas/OperationEnum'
+        value:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          minLength: 1
+          description: Un importe, o un porcentaje hasta 100, con 2 decimales como
+            mucho.
+        rounding:
+          allOf:
+          - $ref: '#/components/schemas/RoundingEnum'
+          description: |-
+            Sin él, `CENTS`.
+
+            * `CENTS` - CENTS
+            * `INTEGER` - INTEGER
+        filters:
+          allOf:
+          - $ref: '#/components/schemas/BatchFiltersRequest'
+          description: Al menos uno; se combinan con «y». Solo las variantes vivas.
+        reason:
+          type: string
+          minLength: 1
+          description: Sin HTML.
+          maxLength: 500
+        effective_at:
+          type: string
+          format: date-time
+          description: 'Desde cuándo regirá: en el futuro. Sin él, al aplicar.'
+      required:
+      - filters
+      - operation
+      - price_list_id
+      - reason
+      - value
+    BatchFilters:
+      type: object
+      properties:
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Con sus subcategorías.
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        variant_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          maxItems: 2000
+          minItems: 1
+    BatchFiltersRequest:
+      type: object
+      properties:
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Con sus subcategorías.
+        brand_id:
+          type: string
+          format: uuid
+          nullable: true
+        product_id:
+          type: string
+          format: uuid
+          nullable: true
+        variant_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          nullable: true
+          maxItems: 2000
+          minItems: 1
+    BatchKindEnum:
+      enum:
+      - BULK_ADJUST
+      - IMPORT
+      - MANUAL_MULTI
+      type: string
+      description: |-
+        * `BULK_ADJUST` - Bulk Adjust
+        * `IMPORT` - Import
+        * `MANUAL_MULTI` - Manual Multi
+    BatchLine:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        variant:
+          $ref: '#/components/schemas/BatchLineVariant'
+        status:
+          $ref: '#/components/schemas/BatchLineStatusEnum'
+        old_amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          nullable: true
+          description: El que regía en la fecha del lote.
+        new_amount:
+          type: string
+          pattern: ^[0-9]{1,12}(\.[0-9]{1,2})?$
+          nullable: true
+          description: Con su redondeo; `null` sin precio de antes.
+        delta_percent:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,18}(?:\.\d{0,2})?$
+          nullable: true
+          description: La variación, en %.
+        alert:
+          type: boolean
+          description: Una variación de más del 30 %.
+        error:
+          type: string
+          description: Por qué es `SKIPPED` o `ERROR`; vacío en las demás.
+      required:
+      - alert
+      - delta_percent
+      - error
+      - id
+      - new_amount
+      - old_amount
+      - status
+      - variant
+    BatchLineStatusEnum:
+      enum:
+      - PENDING
+      - APPLIED
+      - SKIPPED
+      - ERROR
+      - STALE
+      type: string
+      description: |-
+        * `PENDING` - Pending
+        * `APPLIED` - Applied
+        * `SKIPPED` - Skipped
+        * `ERROR` - Error
+        * `STALE` - Stale
+    BatchLineVariant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+      required:
+      - id
+      - name
+      - sku
+    BatchStatusEnum:
+      enum:
+      - DRAFT
+      - PREVIEWED
+      - APPLYING
+      - APPLIED
+      - CANCELLED
+      - FAILED
+      type: string
+      description: |-
+        * `DRAFT` - Draft
+        * `PREVIEWED` - Previewed
+        * `APPLYING` - Applying
+        * `APPLIED` - Applied
+        * `CANCELLED` - Cancelled
+        * `FAILED` - Failed
+    BatchSummary:
+      type: object
+      properties:
+        lines:
+          type: integer
+          description: Una línea por variante de la selección.
+        changes:
+          type: integer
+          description: Las que cambiarán (`PENDING`).
+        no_price:
+          type: integer
+          description: Sin precio en la lista en esa fecha.
+        unchanged:
+          type: integer
+          description: Quedan igual con el redondeo.
+        errors:
+          type: integer
+          description: El resultado no es mayor que cero o pasa del tope.
+        alerts:
+          type: integer
+          description: Una variación de más del 30 %.
+        currency:
+          type: string
+      required:
+      - alerts
+      - changes
+      - currency
+      - errors
+      - lines
+      - no_price
+      - unchanged
     Branch:
       type: object
       properties:
@@ -12034,15 +12579,28 @@ components:
           type: integer
           nullable: true
           description: Solo con `DONE`.
+        scan_status:
+          nullable: true
+          description: |-
+            El antivirus, solo con `DONE`: `PENDING` (aún se analiza), `CLEAN`, `INFECTED` (nunca se sirve) o `ERROR` (no se pudo analizar; nunca se sirve).
+
+            * `PENDING` - Pending
+            * `CLEAN` - Clean
+            * `INFECTED` - Infected
+            * `ERROR` - Error
+          oneOf:
+          - $ref: '#/components/schemas/ScanStatusEnum'
+          - $ref: '#/components/schemas/NullEnum'
         available:
           type: boolean
-          description: Si `…/attachments/{id}/url/` lo sirve ahora; `false` no dice
-            por qué.
+          description: Si `…/attachments/{id}/url/` lo sirve ahora (solo con antivirus
+            `CLEAN`).
       required:
       - available
       - id
       - kind
       - mime_type
+      - scan_status
       - size_bytes
       - status
     MessageAttachmentKindEnum:
@@ -12573,6 +13131,18 @@ components:
     NullEnum:
       enum:
       - null
+    OperationEnum:
+      enum:
+      - PERCENT_INCREASE
+      - PERCENT_DECREASE
+      - AMOUNT_INCREASE
+      - AMOUNT_DECREASE
+      type: string
+      description: |-
+        * `PERCENT_INCREASE` - PERCENT_INCREASE
+        * `PERCENT_DECREASE` - PERCENT_DECREASE
+        * `AMOUNT_INCREASE` - AMOUNT_INCREASE
+        * `AMOUNT_DECREASE` - AMOUNT_DECREASE
     Opportunity:
       type: object
       properties:
@@ -12950,6 +13520,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
+    PaginatedBatchLineList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchLine'
         next:
           type: string
           nullable: true
@@ -15437,6 +16021,14 @@ components:
       required:
       - code
       - name
+    RoundingEnum:
+      enum:
+      - CENTS
+      - INTEGER
+      type: string
+      description: |-
+        * `CENTS` - CENTS
+        * `INTEGER` - INTEGER
     SandboxInboundRequest:
       type: object
       properties:
@@ -15473,6 +16065,18 @@ components:
       - conversation_id
       - created
       - message
+    ScanStatusEnum:
+      enum:
+      - PENDING
+      - CLEAN
+      - INFECTED
+      - ERROR
+      type: string
+      description: |-
+        * `PENDING` - Pending
+        * `CLEAN` - Clean
+        * `INFECTED` - Infected
+        * `ERROR` - Error
     ScopesEnum:
       enum:
       - OWN
