@@ -11,10 +11,11 @@ Producción en un servidor Linux con Docker Compose, según [ADR-033](../../docs
 | `postgres/bootstrap-roles.sh` | Crea `crm_migrator` y `crm_app` (ADR-002 §1), sin `CREATEDB` ni BD de tests. Se puede repetir |
 | `validate.sh` | `docker compose config` con valores ficticios. Comprueba que solo el proxy publica puertos. Con `--caddy`, también `caddy validate` (CI: `infra-prod.yml`) |
 | `smoke.sh` | La prueba de humo tras `up --wait`, que la llama `deploy.sh` (F1-15) |
+| `backup/` | Backups (F1-16): `backup.sh` (volcado cifrado con age y copia de los objetos a un destino que el servidor no puede leer ni borrar), `restore.sh`, `check.sh` (aviso a las 26 h), las unidades de systemd, `lifecycle.json` (retención 7/4/6 en el destino) y `drill.sh` (el simulacro de CI). Runbook: [backup-restore.md](../../docs/runbooks/backup-restore.md) |
 
 ## Secretos
 
-Cada sección de la plantilla es un archivo en `CRM_ENV_DIR` (`/etc/crm` por omisión), propiedad de `root` y con modo `0600`. Cada proceso recibe solo el suyo: el runtime, `runtime.env`; `migrate`, `migrate.env`; Redis, `redis.env`; el proxy, `proxy.env`. Los digests van en `release.env`, que se pasa con `--env-file` y no lleva secretos.
+Cada sección de la plantilla es un archivo en `CRM_ENV_DIR` (`/etc/crm` por omisión), propiedad de `root` y con modo `0600`. Cada proceso recibe solo el suyo: el runtime, `runtime.env`; `migrate`, `migrate.env`; Redis, `redis.env`; el proxy, `proxy.env`; el backup, `backup.env` (los temporizadores de root). Los digests van en `release.env`, que se pasa con `--env-file` y no lleva secretos.
 
 `postgres.env` solo sirve para el primer arranque del volumen. Cuando `migrate` termina bien, se **borra** el archivo y se recrea `postgres` (`up -d --force-recreate postgres`). Así la contraseña de `crm_migrator` no queda en el entorno del contenedor (ADR-002 §1.1). Para restaurar en un servidor nuevo, `bootstrap-roles.sh` vuelve a crear los roles con contraseñas nuevas (ADR-033 §8.1).
 

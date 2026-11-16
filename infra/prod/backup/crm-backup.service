@@ -1,0 +1,17 @@
+# Backup nocturno (F1-16, ADR-033 §8). Instalación: docs/runbooks/backup-restore.md.
+# /opt/crm es la copia del repositorio en el servidor (F1-17); si es otra ruta, cámbiala aquí.
+[Unit]
+Description=Good Doggy CRM: backup cifrado de PostgreSQL y del almacenamiento
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crm/infra/prod/backup/backup.sh nightly
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+UMask=0077

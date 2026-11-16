@@ -1,0 +1,9 @@
+# Aviso de backup que falta (F1-16, ADR-033 §8.4): más de 26 h sin un backup nocturno correcto.
+[Unit]
+Description=Good Doggy CRM: comprobación de que hay un backup reciente
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crm/infra/prod/backup/check.sh
+NoNewPrivileges=true
+ProtectHome=true
