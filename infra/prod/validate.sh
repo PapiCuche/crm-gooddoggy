@@ -51,6 +51,12 @@ for name in ("proxy", "frontend"):
 print("infra/prod: compose válido; solo el proxy publica 80 y 443")
 PY
 
+# F1-15: las bases de la imagen del proxy, también por digest (revisión de #845).
+if grep -E '^FROM ' "$here/caddy/Dockerfile" | grep -v '@sha256:[0-9a-f]\{64\}'; then
+  echo "infra/prod/caddy/Dockerfile: FROM sin @sha256" >&2
+  exit 1
+fi
+
 if [ "${1:-}" = "--caddy" ]; then
   docker build -q -t crm-proxy:validate "$here/caddy" > /dev/null
   docker run --rm -e CRM_DOMAIN=example.invalid -v "$here/Caddyfile:/etc/caddy/Caddyfile:ro" \
