@@ -14,6 +14,12 @@
   `webhook_ingress_refuse_social` son las versiones con plataforma, y `resolve_social_account` el
   enrutado mínimo (ADR-002 §3.3). Hasta F7b-04b el procesador cierra un ítem social `IGNORED`
   (`NO_NUMBER`): `webhook_ingress_claim` no devuelve número ni WABA para él.
+
+Toca `conversations`, `webhook_ingress` y `channel_accounts` con bloqueos exclusivos breves (solo
+de catálogo): `lock_timeout` de 5 s en los dos sentidos, para no encolar el Inbox y el webhook tras
+una transacción larga. `conversations_contact_identity_fk` y `webhook_ingress_route_ck` nacen
+`NOT VALID` (sin recorrer las tablas bajo ese bloqueo) y los valida la `0041`. Hacia atrás se niega
+si ya hay identidades (datos personales) y dice cuántas, en vez de borrarlas.
 """
 
 from typing import Any
@@ -56,16 +62,23 @@ CREATE TRIGGER conversations_identity_required
     BEFORE INSERT OR UPDATE OF contact_identity_id, channel_account_id ON public.conversations
     FOR EACH ROW EXECUTE FUNCTION public.conversations_identity_required();
 """
+LOCK = "SET LOCAL lock_timeout = '5s'"
+ROUTE_CK = (
+    "ALTER TABLE public.webhook_ingress ADD CONSTRAINT webhook_ingress_route_ck CHECK ("
+    "(platform = 'WHATSAPP' AND waba_id IS NOT NULL AND routing_id IS NULL) OR "
+    "(platform IN ('MESSENGER', 'INSTAGRAM') AND waba_id IS NULL AND phone_number_id IS NULL"
+    " AND routing_id IS NOT NULL)) NOT VALID"
+)
 DROP_IDENTITY_REQUIRED = """
 DROP TRIGGER IF EXISTS conversations_identity_required ON public.conversations;
 DROP FUNCTION IF EXISTS public.conversations_identity_required();
 """
 
 
-def fk(table: str, name: str, columns: str, target: str) -> migrations.RunSQL:
+def fk(table: str, name: str, columns: str, target: str, valid: str = "") -> migrations.RunSQL:
     return migrations.RunSQL(
         f"ALTER TABLE public.{table} ADD CONSTRAINT {name} FOREIGN KEY ({columns}) "
-        f"REFERENCES public.{target}",
+        f"REFERENCES public.{target}{valid}",
         f"ALTER TABLE public.{table} DROP CONSTRAINT IF EXISTS {name}",
     )
 
@@ -80,6 +93,22 @@ def _privileges(apps: Any, schema_editor: Any) -> None:
 def _restore(apps: Any, schema_editor: Any) -> None:
     role = schema_editor.quote_name(settings.DB_APP_ROLE)
     schema_editor.execute(f"GRANT UPDATE, DELETE ON public.contact_identities TO {role}")
+
+
+def refuse_identities(apps: Any, schema_editor: Any) -> None:
+    """Hacia atrás: borrar `contact_identities` perdería datos personales sin aviso; se niega."""
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
+        if not cursor.fetchone()[0]:
+            raise RuntimeError(
+                "conversations 0040: run as crm_migrator with BYPASSRLS (RLS hides rows)"
+            )
+        cursor.execute("SELECT count(*) FROM public.contact_identities")
+        count = cursor.fetchone()[0]
+    if count:
+        raise RuntimeError(
+            f"conversations 0040: {count} contact identities exist; going back would drop them"
+        )
 
 
 def function(name: str, extra: str, extra_types: str, body: str) -> SecurityDefinerFunction:
@@ -97,6 +126,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(LOCK, migrations.RunSQL.noop),
         migrations.CreateModel(
             name="ContactIdentity",
             fields=[
@@ -211,25 +241,35 @@ class Migration(migrations.Migration):
                 name="channel_accounts_org_platform_uq",
             ),
         ),
-        migrations.AddConstraint(
-            model_name="webhookingress",
-            constraint=models.CheckConstraint(
-                condition=models.Q(
-                    models.Q(
-                        ("platform", "WHATSAPP"),
-                        ("routing_id__isnull", True),
-                        ("waba_id__isnull", False),
+        migrations.SeparateDatabaseAndState(
+            state_operations=[
+                migrations.AddConstraint(
+                    model_name="webhookingress",
+                    constraint=models.CheckConstraint(
+                        condition=models.Q(
+                            models.Q(
+                                ("platform", "WHATSAPP"),
+                                ("routing_id__isnull", True),
+                                ("waba_id__isnull", False),
+                            ),
+                            models.Q(
+                                ("phone_number_id__isnull", True),
+                                ("platform__in", ("MESSENGER", "INSTAGRAM")),
+                                ("routing_id__isnull", False),
+                                ("waba_id__isnull", True),
+                            ),
+                            _connector="OR",
+                        ),
+                        name="webhook_ingress_route_ck",
                     ),
-                    models.Q(
-                        ("phone_number_id__isnull", True),
-                        ("platform__in", ("MESSENGER", "INSTAGRAM")),
-                        ("routing_id__isnull", False),
-                        ("waba_id__isnull", True),
-                    ),
-                    _connector="OR",
                 ),
-                name="webhook_ingress_route_ck",
-            ),
+            ],
+            database_operations=[
+                migrations.RunSQL(
+                    ROUTE_CK,
+                    "ALTER TABLE public.webhook_ingress DROP CONSTRAINT webhook_ingress_route_ck",
+                )
+            ],
         ),
         migrations.AddField(
             model_name="contactidentity",
@@ -333,6 +373,7 @@ class Migration(migrations.Migration):
             "conversations_contact_identity_fk",
             "organization_id, contact_identity_id, contact_id, channel_account_id",
             "contact_identities (organization_id, id, contact_id, channel_account_id)",
+            " NOT VALID",  # la valida la 0041
         ),
         migrations.RunSQL(IDENTITY_REQUIRED, DROP_IDENTITY_REQUIRED),
         # Guardar un ítem de Instagram o Messenger: como `webhook_ingress_insert` (0008, con el tope
@@ -380,14 +421,24 @@ END""",  # noqa: S608 — texto fijo, sin datos
         ),
         # El enrutado (ADR-035 §4): del `entry.id` firmado a la cuenta viva de Instagram o Messenger
         # que lo registró. A lo sumo una fila y solo los dos ids; nada de WhatsApp ni del Sandbox.
+        # Argumentos validados dentro (ADR-002 §3.3): otra plataforma o un id que no es de Meta es
+        # un error, no una búsqueda.
         SecurityDefinerFunction(
             "resolve_social_account",
             "p_platform text, p_external_id text",
             "text, text",
             "TABLE (organization_id uuid, channel_account_id uuid)",
-            "SELECT a.organization_id, a.id FROM public.channel_accounts a "
-            "WHERE p_platform IN ('MESSENGER', 'INSTAGRAM') AND a.platform = p_platform "
-            "AND a.external_account_id = p_external_id AND a.deleted_at IS NULL LIMIT 1",
+            f"""BEGIN
+  IF p_platform IS NULL OR p_platform NOT IN ('MESSENGER', 'INSTAGRAM')
+     OR p_external_id IS NULL OR p_external_id !~ '^[0-9]{{5,30}}$'
+  THEN {BAD}; END IF;
+  RETURN QUERY SELECT a.organization_id, a.id FROM public.channel_accounts a
+  WHERE a.platform = p_platform AND a.external_account_id = p_external_id
+    AND a.deleted_at IS NULL LIMIT 1;
+END""",  # noqa: S608 — texto fijo, sin datos
+            language="plpgsql STABLE",
             search_path=PG,
         ),
+        migrations.RunPython(migrations.RunPython.noop, refuse_identities),
+        migrations.RunSQL(migrations.RunSQL.noop, LOCK),  # hacia atrás corre primero
     ]

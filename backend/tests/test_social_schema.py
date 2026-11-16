@@ -2,6 +2,7 @@
 `contact_identities`, la identidad del hilo, la ingesta con plataforma y el enrutado por cuenta.
 PostgreSQL real con `crm_app`; el migrador solo para mirar el catálogo."""
 
+import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -9,13 +10,14 @@ from uuid import UUID
 import psycopg
 import pytest
 from django.core.management import call_command
-from django.db import DatabaseError, IntegrityError, connection
+from django.db import DatabaseError, IntegrityError, OperationalError, connection
 from django.utils import timezone
 from psycopg.types.json import Jsonb
 
 from apps.conversations import ingress
 from apps.conversations.models import ChannelAccount, ContactIdentity, Conversation
 from core.tenancy.scope import tenant_scope
+from tests.conftest import migrator_conninfo
 from tests.meta_sim.social import IG_ACCOUNT_ID, IGSID, PAGE_ID, PSID
 from tests.test_conversations_tables import conversation, refused, world
 from tests.test_memberships import ctx
@@ -185,13 +187,18 @@ def test_the_resolver_gives_only_a_live_social_account_and_nothing_else(
             platform="WHATSAPP", name="wa", status="PENDING", external_account_id=IG_ACCOUNT_ID,
             external_parent_id=PAGE_ID,
         )  # fmt: skip
-    for platform, external in (
-        ("INSTAGRAM", PAGE_ID), ("MESSENGER", IG_ACCOUNT_ID), ("WHATSAPP", IG_ACCOUNT_ID),
-        ("SANDBOX", f"fixture-{world.a}"), ("messenger", PAGE_ID), ("MESSENGER", "%"),
-        ("MESSENGER", "' OR 1=1 --"), ("MESSENGER", None), (None, PAGE_ID),
-    ):  # fmt: skip
-        found = ingress.resolve_social(platform, external)  # type: ignore[arg-type]
-        assert found is None, (platform, external)
+    for platform, external in (("INSTAGRAM", PAGE_ID), ("MESSENGER", IG_ACCOUNT_ID)):
+        assert ingress.resolve_social(platform, external) is None, (platform, external)
+    # Argumentos que no son de Meta: un error, nunca una búsqueda.
+    bad: list[tuple[Any, Any]] = [
+        ("WHATSAPP", IG_ACCOUNT_ID), ("SANDBOX", f"fixture-{world.a}"), ("messenger", PAGE_ID),
+        ("MESSENGER", "%"), ("MESSENGER", "' OR 1=1 --"), ("MESSENGER", None), (None, PAGE_ID),
+        ("MESSENGER", "1234"),
+    ]  # fmt: skip
+    for kind, external_id in bad:
+        with pytest.raises(DatabaseError, match="no válidos"):
+            ingress.resolve_social(kind, external_id)
+        connection.close()
     rows = run(None, "SELECT * FROM public.resolve_social_account('MESSENGER', %s)", [PAGE_ID])
     assert rows == [(world.a, page.pk)]  # una fila, y solo los dos ids
     with tenant_scope(ctx(world.a)):
@@ -252,16 +259,30 @@ def test_until_the_social_webhook_exists_the_processor_closes_a_social_item_unto
     assert run(world.a, "SELECT count(*) FROM messages", []) == [(0,)]
 
 
-def test_going_back_removes_the_social_schema_and_coming_back_restores_it(migrator: DB) -> None:
+def test_going_back_keeps_identities_waits_at_most_the_lock_timeout_and_comes_back(
+    world: SimpleNamespace, migrator: DB
+) -> None:
     names = (
         "SELECT count(*) FROM pg_proc WHERE proname LIKE %s OR proname = 'resolve_social_account'"
     )
     table = "SELECT to_regclass('public.contact_identities') IS NOT NULL"
-    with as_migrator():
+    identity(world.a, world.contact_a, account(world.a))
+    with as_migrator(), pytest.raises(RuntimeError, match="1 contact identities exist"):
         call_command("migrate", "conversations", "0039", verbosity=0)
-    assert migrator.execute(names, ["%_social"]).fetchone() == (0,)
-    assert migrator.execute(table).fetchone() == (False,)
-    with as_migrator():
-        call_command("migrate", "conversations", verbosity=0)
+    assert migrator.execute("SELECT count(*) FROM contact_identities").fetchone() == (1,)
+    migrator.execute("DELETE FROM contact_identities")
+    migrator.execute("DELETE FROM channel_accounts WHERE platform = 'MESSENGER'")
+    for target in ("0039", None):  # una transacción larga en el Inbox: falla en vez de encolarlo
+        with psycopg.connect(migrator_conninfo()) as holder:
+            holder.execute("LOCK TABLE conversations IN ACCESS EXCLUSIVE MODE")
+            started = time.monotonic()
+            with as_migrator(), pytest.raises(OperationalError, match="lock timeout"):
+                call_command("migrate", "conversations", *([target] if target else []), verbosity=0)
+            assert time.monotonic() - started < 30
+        with as_migrator():
+            call_command("migrate", "conversations", *([target] if target else []), verbosity=0)
+        if target:
+            assert migrator.execute(names, ["%_social"]).fetchone() == (0,)
+            assert migrator.execute(table).fetchone() == (False,)
     assert migrator.execute(names, ["%_social"]).fetchone() == (3,)
     assert migrator.execute(table).fetchone() == (True,)

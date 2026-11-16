@@ -138,6 +138,8 @@ def connect_social(
     _name(name)
     _allowed(ctx)
     seen = graph.page(token, page, instagram_account_id)  # antes de guardar nada
+    # Antes de la unicidad, que decide la base al guardar: suscribir la misma app a una página ya
+    # suscrita no cambia nada en Meta, así que una conexión rechazada después no deja nada nuevo.
     graph.subscribe(token, page)
     account_id = new_id()
     try:
