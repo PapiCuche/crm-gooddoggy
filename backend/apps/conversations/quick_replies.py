@@ -221,10 +221,10 @@ def _write(ctx: TenantContext, model: Kind, pk: UUID, version: int | None,
                 raise StaleVersion(pk)
             if model is QuickReply:
                 _check_category(alias, obj, values)
-            if model is QuickReplyCategory and action == "deleted":
-                in_use = QuickReply.objects.using(alias).filter(category_id=pk)
-                if in_use.filter(deleted_at__isnull=True).exists():
-                    raise CategoryInUse(pk)
+            deleted = action == "deleted"
+            off = deleted or (obj.is_active and values.get("is_active") is False)
+            if model is QuickReplyCategory and off:
+                _not_in_use(alias, pk, every=deleted)
             changes = {k: [getattr(obj, k), v] for k, v in values.items() if getattr(obj, k) != v}
             if changes:
                 for key, (_, value) in changes.items():
@@ -238,6 +238,15 @@ def _write(ctx: TenantContext, model: Kind, pk: UUID, version: int | None,
     except IntegrityError as error:
         raise _taken(error) from None
     return obj
+
+
+def _not_in_use(alias: str, category_id: UUID, every: bool) -> None:
+    """`CategoryInUse` si la categoría tiene respuestas vivas: activas para desactivarla (F6-08a4:
+    se mueven o se desactivan antes), activas o no para borrarla. Corre con la categoría bloqueada,
+    que crear, mover o reactivar una respuesta también bloquea: no hay carrera."""
+    found = QuickReply.objects.using(alias).filter(category_id=category_id, deleted_at__isnull=True)
+    if (found if every else found.filter(is_active=True)).exists():
+        raise CategoryInUse(category_id)
 
 
 def _taken(error: IntegrityError) -> Exception:
@@ -268,7 +277,8 @@ def create_category(ctx: TenantContext, *, name: str, sort_order: int | None = N
 
 
 def update_category(ctx: TenantContext, *, category_id: UUID, version: int, **fields: Any) -> Any:
-    """Cambia nombre, orden o si está activa. `StaleVersion`, `Taken`, `DoesNotExist`."""
+    """Cambia nombre, orden o si está activa. Desactivarla con respuestas activas es
+    `CategoryInUse`. `StaleVersion`, `Taken`, `DoesNotExist`."""
     values = _fields(fields, _CATEGORY_FIELDS)
     return _write(ctx, QuickReplyCategory, category_id, _version(version), values)
 

@@ -7811,6 +7811,191 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/quick-reply-categories/:
+    get:
+      operationId: quick_reply_categories_list
+      description: Las categorías no borradas, activas o no, por creación (ADR-016);
+        la pantalla las ordena por `sort_order`. Con `quick_replies.manage`.
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: El `next` de la página anterior. Sin él, la primera página.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Filas por página.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedManagedQuickReplyCategoryList'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    post:
+      operationId: quick_reply_categories_create
+      description: 'Crea una categoría activa, auditada (`quick_replies.manage`).
+        Sin `sort_order`, va al final. 409 `CATEGORY_NAME_TAKEN`: ya hay una con ese
+        nombre, sin distinguir mayúsculas.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedQuickReplyCategoryCreateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedQuickReplyCategory'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/quick-reply-categories/{category_id}/:
+    patch:
+      operationId: quick_reply_categories_update
+      description: 'Renombra, reordena (`sort_order`), activa o desactiva, si `version`
+        sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no se escribe
+        ni se audita. 409 `CATEGORY_NAME_TAKEN`; 409 `CATEGORY_IN_USE`: desactivarla
+        con respuestas activas (se mueven o se desactivan antes). Con `quick_replies.manage`.'
+      parameters:
+      - in: path
+        name: category_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedManagedQuickReplyCategoryUpdateRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedQuickReplyCategory'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/quotes/:
     get:
       operationId: quotes_list
@@ -12687,6 +12872,50 @@ components:
       required:
       - id
       - name
+    ManagedQuickReplyCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sort_order:
+          type: integer
+          description: El orden en que se muestran, de menor a mayor.
+        is_active:
+          type: boolean
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - id
+      - is_active
+      - name
+      - sort_order
+      - updated_at
+      - version
+    ManagedQuickReplyCategoryCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Hasta 100 caracteres; único sin distinguir mayúsculas.
+          maxLength: 100
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: -32768
+          description: Sin él, al final.
+      required:
+      - name
     MarginFigure:
       type: object
       properties:
@@ -14130,6 +14359,20 @@ components:
           type: string
           nullable: true
           description: Cursor de la página siguiente; `null` en la última.
+    PaginatedManagedQuickReplyCategoryList:
+      type: object
+      required:
+      - results
+      - next
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedQuickReplyCategory'
+        next:
+          type: string
+          nullable: true
+          description: Cursor de la página siguiente; `null` en la última.
     PaginatedMemberList:
       type: object
       required:
@@ -14581,6 +14824,29 @@ components:
         requires_note:
           type: boolean
           description: Perder con este motivo exige una nota.
+        version:
+          type: integer
+          maximum: 2147483647
+          minimum: 1
+          description: La que se leyó; si no, 409.
+      required:
+      - version
+    PatchedManagedQuickReplyCategoryUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Hasta 100 caracteres; único sin distinguir mayúsculas.
+          maxLength: 100
+        sort_order:
+          type: integer
+          maximum: 32767
+          minimum: -32768
+        is_active:
+          type: boolean
+          description: '`false` la desactiva si no tiene respuestas activas (si no,
+            409).'
         version:
           type: integer
           maximum: 2147483647

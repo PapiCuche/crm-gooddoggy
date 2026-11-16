@@ -73,6 +73,8 @@ import type {
   LostReason,
   LostReasonCreateRequest,
   LostReasonsListParams,
+  ManagedQuickReplyCategory,
+  ManagedQuickReplyCategoryCreateRequest,
   MemberBranch,
   MemberBranchChangeRequest,
   MemberStatus,
@@ -117,6 +119,7 @@ import type {
   PaginatedListMarginList,
   PaginatedListPriceList,
   PaginatedLostReasonList,
+  PaginatedManagedQuickReplyCategoryList,
   PaginatedMemberList,
   PaginatedMessageList,
   PaginatedMovementList,
@@ -147,6 +150,7 @@ import type {
   PatchedCategoryUpdateRequest,
   PatchedContactUpdateRequest,
   PatchedLostReasonUpdateRequest,
+  PatchedManagedQuickReplyCategoryUpdateRequest,
   PatchedNoteUpdateRequest,
   PatchedOpportunityUpdateRequest,
   PatchedPipelineUpdateRequest,
@@ -181,6 +185,7 @@ import type {
   PromotionsListParams,
   QuickRepliesListParams,
   QuickReply,
+  QuickReplyCategoriesListParams,
   QuickReplyCreateRequest,
   QuoteApproveRequest,
   QuoteCancelRequest,
@@ -15516,6 +15521,388 @@ export const useQuickRepliesDelete = <TError = ErrorType<Error>, TContext = unkn
   TContext
 > => {
   return useMutation(getQuickRepliesDeleteMutationOptions(options), queryClient);
+};
+
+export const getQuickReplyCategoriesListUrl = (
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/quick-reply-categories/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/quick-reply-categories/`;
+};
+
+/**
+ * Las categorías no borradas, activas o no, por creación (ADR-016); la pantalla las ordena por `sort_order`. Con `quick_replies.manage`.
+ */
+export const quickReplyCategoriesList = async (
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedManagedQuickReplyCategoryList> => {
+  return apiFetch<PaginatedManagedQuickReplyCategoryList>(
+    getQuickReplyCategoriesListUrl(orgSlug, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getQuickReplyCategoriesListQueryKey = (
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/quick-reply-categories/`, ...(params ? [params] : [])] as const;
+};
+
+export const getQuickReplyCategoriesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getQuickReplyCategoriesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof quickReplyCategoriesList>>> = ({
+    signal,
+  }) => quickReplyCategoriesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type QuickReplyCategoriesListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof quickReplyCategoriesList>>
+>;
+export type QuickReplyCategoriesListQueryError = ErrorType<Error>;
+
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | QuickReplyCategoriesListParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickReplyCategoriesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useQuickReplyCategoriesList<
+  TData = Awaited<ReturnType<typeof quickReplyCategoriesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickReplyCategoriesListParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof quickReplyCategoriesList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getQuickReplyCategoriesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getQuickReplyCategoriesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/quick-reply-categories/`;
+};
+
+/**
+ * Crea una categoría activa, auditada (`quick_replies.manage`). Sin `sort_order`, va al final. 409 `CATEGORY_NAME_TAKEN`: ya hay una con ese nombre, sin distinguir mayúsculas.
+ */
+export const quickReplyCategoriesCreate = async (
+  orgSlug: string,
+  managedQuickReplyCategoryCreateRequest: ManagedQuickReplyCategoryCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<ManagedQuickReplyCategory> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<ManagedQuickReplyCategory>(getQuickReplyCategoriesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(managedQuickReplyCategoryCreateRequest),
+  });
+};
+
+export const getQuickReplyCategoriesCreateMutationKey = () =>
+  ["quickReplyCategoriesCreate"] as const;
+
+export const getQuickReplyCategoriesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+    TError,
+    QuickReplyCategoriesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+  TError,
+  QuickReplyCategoriesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickReplyCategoriesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+    QuickReplyCategoriesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return quickReplyCategoriesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickReplyCategoriesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickReplyCategoriesCreate>>
+>;
+export type QuickReplyCategoriesCreateMutationBody = ManagedQuickReplyCategoryCreateRequest;
+export type QuickReplyCategoriesCreateMutationError = ErrorType<Error>;
+export type QuickReplyCategoriesCreateMutationVariables = {
+  orgSlug: string;
+  data: ManagedQuickReplyCategoryCreateRequest;
+};
+
+export const useQuickReplyCategoriesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+      TError,
+      QuickReplyCategoriesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickReplyCategoriesCreate>>,
+  TError,
+  QuickReplyCategoriesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickReplyCategoriesCreateMutationOptions(options), queryClient);
+};
+
+export const getQuickReplyCategoriesUpdateUrl = (orgSlug: string, categoryId: string) => {
+  return `/api/v1/o/${orgSlug}/quick-reply-categories/${categoryId}/`;
+};
+
+/**
+ * Renombra, reordena (`sort_order`), activa o desactiva, si `version` sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no se escribe ni se audita. 409 `CATEGORY_NAME_TAKEN`; 409 `CATEGORY_IN_USE`: desactivarla con respuestas activas (se mueven o se desactivan antes). Con `quick_replies.manage`.
+ */
+export const quickReplyCategoriesUpdate = async (
+  orgSlug: string,
+  categoryId: string,
+  patchedManagedQuickReplyCategoryUpdateRequest: PatchedManagedQuickReplyCategoryUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<ManagedQuickReplyCategory> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<ManagedQuickReplyCategory>(
+    getQuickReplyCategoriesUpdateUrl(orgSlug, categoryId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+      body: JSON.stringify(patchedManagedQuickReplyCategoryUpdateRequest),
+    },
+  );
+};
+
+export const getQuickReplyCategoriesUpdateMutationKey = () =>
+  ["quickReplyCategoriesUpdate"] as const;
+
+export const getQuickReplyCategoriesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+    TError,
+    QuickReplyCategoriesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+  TError,
+  QuickReplyCategoriesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickReplyCategoriesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+    QuickReplyCategoriesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, categoryId, data } = props ?? {};
+
+    return quickReplyCategoriesUpdate(orgSlug, categoryId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickReplyCategoriesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>
+>;
+export type QuickReplyCategoriesUpdateMutationBody = PatchedManagedQuickReplyCategoryUpdateRequest;
+export type QuickReplyCategoriesUpdateMutationError = ErrorType<Error>;
+export type QuickReplyCategoriesUpdateMutationVariables = {
+  orgSlug: string;
+  categoryId: string;
+  data: PatchedManagedQuickReplyCategoryUpdateRequest;
+};
+
+export const useQuickReplyCategoriesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+      TError,
+      QuickReplyCategoriesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickReplyCategoriesUpdate>>,
+  TError,
+  QuickReplyCategoriesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickReplyCategoriesUpdateMutationOptions(options), queryClient);
 };
 
 export const getQuotesListUrl = (orgSlug: string, params?: QuotesListParams) => {
