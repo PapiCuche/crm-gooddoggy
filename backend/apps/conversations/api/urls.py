@@ -25,6 +25,11 @@ def hide_sandbox(endpoints: list[Any], **kwargs: Any) -> list[Any]:
 urlpatterns = [
     path("conversations/", conversations.ConversationsView.as_view(), name="conversations"),
     path(
+        "conversations/unanswered/",
+        conversations.UnansweredCountView.as_view(),
+        name="conversations-unanswered",
+    ),
+    path(
         "conversations/<uuid:conversation_id>/",
         conversations.ConversationView.as_view(),
         name="conversation",

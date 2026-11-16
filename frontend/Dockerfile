@@ -10,8 +10,9 @@ COPY . .
 # Los rewrites de Next se fijan en el build; en el stack los enruta Caddy (same-origin).
 ARG BACKEND_ORIGIN=http://backend:8000
 # Variable pública y no secreta que Next incrusta en el bundle al construir (F6-07e): `on` abre el
-# WebSocket del Inbox; cualquier otro valor, ninguno.
-ARG NEXT_PUBLIC_INBOX_WS=off
+# WebSocket del Inbox; cualquier otro valor, ninguno. Encendida por omisión desde F6-09 (la imagen
+# de producción la lleva; infra/prod/README.md, «Tiempo real del Inbox»).
+ARG NEXT_PUBLIC_INBOX_WS=on
 # F1-14: `production` (por omisión) construye sin el prototipo /demo, que sigue en el repositorio
 # para desarrollo (AGENTS.md §11): se quita de la copia del build y se comprueba la salida. Solo
 # `development` lo conserva; cualquier otro valor (`prod`, `Production`, vacío) no construye.

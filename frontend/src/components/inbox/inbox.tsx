@@ -7,6 +7,7 @@ import { useTenant } from "@/components/app-shell/tenant-context";
 import type { Conversation, ConversationContact } from "@/lib/api/model";
 import { cn } from "@/lib/utils";
 
+import { ChannelAlert, NotifyToggle } from "./attention";
 import { ChatPanel } from "./chat-panel";
 import { ConversationList, type Filters } from "./conversation-list";
 import { CustomerPanel } from "./customer-panel";
@@ -22,7 +23,7 @@ export function Inbox() {
   const t = useTranslations("inbox");
   const { organization } = useTenant();
   useInboxRealtime(); // los cambios llegan sin recargar (si el servicio de tiempo real está encendido)
-  const [filters, setFilters] = useState<Filters>({ box: "all", status: "" });
+  const [filters, setFilters] = useState<Filters>({ box: "all", status: "", unanswered: false });
   const [selected, setSelected] = useState<Conversation | null>(null);
   // El cliente que se ve en el panel (el del detalle de la conversación, no el de la fila de la lista);
   // `null`: se ve el chat.
@@ -71,7 +72,11 @@ export function Inbox() {
         <p className={cn("text-muted", selected && "max-lg:hidden")}>
           {t("intro", { organization: organization.name })}
         </p>
+        <div className={cn(selected && "max-lg:hidden")}>
+          <NotifyToggle />
+        </div>
       </div>
+      <ChannelAlert />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] lg:items-start">
         <section
           aria-label={t("list.landmark")}

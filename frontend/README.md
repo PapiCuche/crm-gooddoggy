@@ -12,7 +12,7 @@ pnpm install --frozen-lockfile
 BACKEND_ORIGIN=http://127.0.0.1:8000 pnpm dev   # /api y /ws → Django (same-origin, ADR-003)
 ```
 
-**Tiempo real del Inbox (F6-07c):** `NEXT_PUBLIC_INBOX_WS=on` lo enciende (apagado por omisión; cualquier otro valor no abre ninguna conexión). Next la fija **al construir** (`NEXT_PUBLIC_*` se incrusta en el bundle), así que en una imagen hay que pasarla al `next build`: con compose, `INBOX_WS=on` en `infra/env/.env` (argumento de construcción del `Dockerfile`, por omisión `off`) y `docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d --build frontend`; en desarrollo basta `NEXT_PUBLIC_INBOX_WS=on pnpm dev`. No es un secreto. Solo tiene sentido con el servicio `ws` (F6-07a) desplegado: abre `/ws/o/{slug}/inbox/` en el mismo origen.
+**Tiempo real del Inbox (F6-07c):** `NEXT_PUBLIC_INBOX_WS=on` lo enciende (en las imágenes, encendido por omisión desde F6-09; cualquier otro valor no abre ninguna conexión). Next la fija **al construir** (`NEXT_PUBLIC_*` se incrusta en el bundle), así que en una imagen hay que pasarla al `next build`: con compose, `INBOX_WS=on` en `infra/env/.env` (argumento de construcción del `Dockerfile`, por omisión `on`; `INBOX_WS=off` lo apaga) y `docker compose -f infra/docker/compose.yaml --env-file infra/env/.env up -d --build frontend`; en desarrollo basta `NEXT_PUBLIC_INBOX_WS=on pnpm dev`. No es un secreto. Solo tiene sentido con el servicio `ws` (F6-07a) desplegado: abre `/ws/o/{slug}/inbox/` en el mismo origen.
 
 | Script                              | Qué hace                                                                       |
 | ----------------------------------- | ------------------------------------------------------------------------------ |

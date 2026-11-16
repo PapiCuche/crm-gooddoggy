@@ -48,6 +48,7 @@ import type {
   ConversationDetail,
   ConversationMessagesListParams,
   ConversationsListParams,
+  ConversationsUnansweredCountParams,
   Cost,
   CostHistoryListParams,
   CostPage,
@@ -220,6 +221,7 @@ import type {
   TokenRequest,
   Transfer,
   TransferCreateRequest,
+  UnansweredCount,
   Variant,
   VariantCreateRequest,
   VariantPriceHistoryListParams,
@@ -5139,7 +5141,7 @@ export const getConversationsListUrl = (orgSlug: string, params?: ConversationsL
 };
 
 /**
- * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box` y `status` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
+ * Las conversaciones dentro del alcance de `conversations.view`, la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos valores). `box`, `status` y `unanswered` se combinan y la página siguiente se pide con los mismos. 400: un filtro repetido o no válido.
  */
 export const conversationsList = async (
   orgSlug: string,
@@ -6365,6 +6367,165 @@ export const useConversationNotesCreate = <TError = ErrorType<Error>, TContext =
 > => {
   return useMutation(getConversationNotesCreateMutationOptions(options), queryClient);
 };
+
+export const getConversationsUnansweredCountUrl = (
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/conversations/unanswered/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/conversations/unanswered/`;
+};
+
+/**
+ * Cuántas conversaciones sin responder (`unanswered=true` de la lista) hay dentro del alcance de `conversations.view` y de `box`. Solo el número.
+ */
+export const conversationsUnansweredCount = async (
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<UnansweredCount> => {
+  return apiFetch<UnansweredCount>(getConversationsUnansweredCountUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getConversationsUnansweredCountQueryKey = (
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+) => {
+  return [`/api/v1/o/${orgSlug}/conversations/unanswered/`, ...(params ? [params] : [])] as const;
+};
+
+export const getConversationsUnansweredCountQueryOptions = <
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getConversationsUnansweredCountQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof conversationsUnansweredCount>>> = ({
+    signal,
+  }) => conversationsUnansweredCount(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type ConversationsUnansweredCountQueryResult = NonNullable<
+  Awaited<ReturnType<typeof conversationsUnansweredCount>>
+>;
+export type ConversationsUnansweredCountQueryError = ErrorType<Error>;
+
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | ConversationsUnansweredCountParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+          TError,
+          Awaited<ReturnType<typeof conversationsUnansweredCount>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useConversationsUnansweredCount<
+  TData = Awaited<ReturnType<typeof conversationsUnansweredCount>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: ConversationsUnansweredCountParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof conversationsUnansweredCount>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getConversationsUnansweredCountQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
 
 export const getInventoryImportsCreateUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/inventory/imports/`;

@@ -2422,8 +2422,8 @@ paths:
       operationId: conversations_list
       description: 'Las conversaciones dentro del alcance de `conversations.view`,
         la de mensaje más reciente primero (`last_message_at`, `id`; cursor de dos
-        valores). `box` y `status` se combinan y la página siguiente se pide con los
-        mismos. 400: un filtro repetido o no válido.'
+        valores). `box`, `status` y `unanswered` se combinan y la página siguiente
+        se pide con los mismos. 400: un filtro repetido o no válido.'
       parameters:
       - in: query
         name: box
@@ -2479,6 +2479,12 @@ paths:
           * `WAITING_INTERNAL` - Waiting Internal
           * `RESOLVED` - Resolved
           * `CLOSED` - Closed
+      - in: query
+        name: unanswered
+        schema:
+          type: boolean
+        description: '`true`: solo las abiertas cuyo último mensaje es del cliente
+          (sin responder).'
       tags:
       - conversations
       security:
@@ -3059,6 +3065,67 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: ''
         '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/conversations/unanswered/:
+    get:
+      operationId: conversations_unanswered_count
+      description: Cuántas conversaciones sin responder (`unanswered=true` de la lista)
+        hay dentro del alcance de `conversations.view` y de `box`. Solo el número.
+      parameters:
+      - in: query
+        name: box
+        schema:
+          enum:
+          - all
+          - mine
+          - unassigned
+          type: string
+          minLength: 1
+        description: |-
+          `all` (por omisión), `mine` (asignadas a quien consulta) o `unassigned`.
+
+          * `all` - all
+          * `mine` - mine
+          * `unassigned` - unassigned
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnansweredCount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
           content:
             application/json:
               schema:
@@ -16922,6 +16989,13 @@ components:
       - reason
       - to_warehouse_id
       - variant_id
+    UnansweredCount:
+      type: object
+      properties:
+        count:
+          type: integer
+      required:
+      - count
     User:
       type: object
       properties:

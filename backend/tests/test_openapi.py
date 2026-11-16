@@ -57,6 +57,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/opportunities/{opportunity_id}/win/",  # F5-04h
         "/api/v1/o/{org_slug}/opportunities/{opportunity_id}/lose/",
         "/api/v1/o/{org_slug}/conversations/",  # F6-02
+        "/api/v1/o/{org_slug}/conversations/unanswered/",  # F6-09
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/messages/",
         "/api/v1/o/{org_slug}/conversations/{conversation_id}/notes/",  # F6-05a2

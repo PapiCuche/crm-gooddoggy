@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect } from "react";
 
+import { UnansweredCount, useUnanswered } from "@/components/inbox/attention";
 import { OverdueCount } from "@/components/tasks/overdue-count";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +63,7 @@ function Sidebar({ label, current }: { label: string; current: string }) {
                   />
                   {t(`shell.nav.${item.key}`)}
                   {item.key === "tasks" ? <OverdueCount /> : null}
+                  {item.key === "inbox" ? <UnansweredCount /> : null}
                 </Link>
               </li>
             );
@@ -86,10 +88,13 @@ function Sidebar({ label, current }: { label: string; current: string }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const t = useTranslations();
   const pathname = usePathname().replace(/\/$/, ""); // `/o/acme/` es la misma página
-  const { organization } = useTenant();
+  const { organization, permissions } = useTenant();
+  // Las conversaciones que esperan respuesta, delante del título (F6-09): se ve desde otra pestaña.
+  const inbox = permissions.some((grant) => grant.code === "conversations.view");
+  const waiting = useUnanswered("all", inbox);
   const item = NAVIGATION.find((entry) => holds(entry, `/o/${organization.slug}`, pathname));
   const section = item && item.path ? `${t(`shell.nav.${item.key}`)} · ` : "";
-  const title = `${section}${organization.name} · ${t("app.name")}`;
+  const title = `${waiting ? `(${waiting}) ` : ""}${section}${organization.name} · ${t("app.name")}`;
   useEffect(() => {
     document.title = title; // la pestaña dice en qué sección y en qué organización se está
   }, [title]);
