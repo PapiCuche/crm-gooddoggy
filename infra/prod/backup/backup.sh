@@ -10,6 +10,8 @@
 #   4. nightly: copia cifrada (un .age por objeto) de los objetos nuevos del bucket de la aplicación
 #      a media/. Lo ya copiado se recuerda en $state_dir/media-copied.txt: el servidor no lista el destino.
 #   5. Marca el éxito (check.sh avisa si en 26 h no hay otro) y avisa a BACKUP_HEARTBEAT_URL.
+# nightly toma antes el lock de los despliegues (deploy_lock en lib.sh): ni un despliegue ni
+# `deploy.sh --migrate` corren a la vez que él (F1-15b).
 # Si algo falla: log backup.failed y Sentry si SENTRY_DSN (alert en lib.sh); sale con error.
 set -euo pipefail
 # shellcheck source=infra/prod/backup/lib.sh
@@ -30,6 +32,12 @@ need docker age rclone curl
 umask 077
 configure backup.failed
 mkdir -p "$state_dir"
+held_lock=''
+if [ "$kind" = nightly ]; then
+  stage=deploy_lock
+  trap 'finish; [ -z "$held_lock" ] || rmdir "$held_lock"' EXIT
+  deploy_lock
+fi
 recipients=(-R "${BACKUP_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-recipients.txt}")
 deploy=${BACKUP_DEPLOY_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-deploy-recipients.txt}
 [ "$kind" = nightly ] || [ ! -s "$deploy" ] || recipients+=(-R "$deploy")

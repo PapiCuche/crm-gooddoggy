@@ -5,6 +5,8 @@
 # el certificado tarda en llegar, y que falla con su mensaje en cada comprobación: el certificado (que
 # no llega en el tiempo de reloj, o malo aunque se pase -k), los límites de espera, PostgreSQL, los
 # topes de cuerpo, /demo y /health/*, la redirección de HTTP y la query de /webhooks en los logs.
+# F1-15b: cada llamada a docker pasa por `timeout 60` y cada curl lleva sus plazos; uno que falla o
+# agota el plazo sale con `smoke FAIL` y el motivo.
 # Cada ejecución tiene un límite real de 10 s: un bucle sin fin falla, no cuelga la prueba.
 # Uso: bash infra/prod/test-smoke.sh
 set -euo pipefail
@@ -14,9 +16,19 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
 touch "$work/release.env"
 
+# timeout falso: solo `timeout 60 <orden>`; la orden sabe que va con plazo (UNDER_TIMEOUT).
+cat > "$work/bin/timeout" <<'EOF'
+#!/bin/sh
+[ "$1" = 60 ] || { echo "timeout inesperado: $*" >&2; exit 125; }
+shift
+UNDER_TIMEOUT=1 exec "$@"
+EOF
 # docker falso: la lectura de PostgreSQL (PG_OUT la cambia) y unos logs; con LEAK, las URL pedidas.
+# Sin `timeout` delante falla; DOCKER_TIMEOUT=exec|logs simula que esa llamada agota el plazo (124).
 cat > "$work/bin/docker" <<'EOF'
 #!/bin/sh
+[ -n "${UNDER_TIMEOUT:-}" ] || { echo "docker sin timeout: $*" >&2; exit 1; }
+case "$*" in *" ${DOCKER_TIMEOUT:-none} "*) exit 124 ;; esac
 case "$*" in
   *" exec -T backend python -c "*) echo "${PG_OUT:-crm_app panic none 0 terse log superuser-rejected}" ;;
   *" logs "*) if [ -n "${LEAK:-}" ]; then cat "$CALLS"; else echo '{"uri":"/webhooks/meta/?redacted"}'; fi ;;
@@ -27,7 +39,8 @@ EOF
 #   TLS_PENDING=N: las N primeras comprobaciones del certificado fallan como sin certificado (35);
 #   TLS_DELAY=S: cada comprobación del certificado tarda S s del reloj simulado;
 #   CERT_BAD: certificado malo, sin -k sale con 60 y con -k responde verificación 18 (como OpenSSL);
-#   CODE_<RUTA>: el estado de esa ruta. Los argumentos de cada comprobación del certificado, a $TLS_ARGS.
+#   CODE_<RUTA>: el estado de esa ruta. Los argumentos de cada comprobación del certificado, a $TLS_ARGS,
+#   y los de las demás, a $CODE_ARGS; CURL_TIMEOUT=<texto>: la URL que lo contiene agota el plazo (28).
 cat > "$work/bin/curl" <<'EOF'
 #!/bin/bash
 args="$*" format="" url="" body="" insecure=""
@@ -56,6 +69,8 @@ if [ "$format" = '%{ssl_verify_result}' ]; then
   fi
   exit 0
 fi
+echo "$args" >> "$CODE_ARGS"
+case $url in *"${CURL_TIMEOUT:-none}"*) printf 000; echo "curl: (28) Operation timed out" >&2; exit 28 ;; esac
 case $url in
   http://*) status=${CODE_HTTP:-308} ;;
   */health/live) status=${CODE_HEALTH_LIVE:-404} ;;
@@ -89,8 +104,9 @@ check() {
   [ $# -eq 0 ] || shift
   : > "$work/calls"
   : > "$work/tls-args"
+  : > "$work/code-args"
   echo 1000 > "$work/clock"
-  env ${vars[@]+"${vars[@]}"} PATH="$work/bin:$PATH" CALLS="$work/calls" TLS_ARGS="$work/tls-args" \
+  env ${vars[@]+"${vars[@]}"} PATH="$work/bin:$PATH" CALLS="$work/calls" TLS_ARGS="$work/tls-args" CODE_ARGS="$work/code-args" \
     CLOCK="$work/clock" CRM_RELEASE_ENV="$work/release.env" \
     sh "$here/smoke.sh" https://crm.example.invalid "$@" > "$work/out" 2>&1 &
   pid=$!
@@ -104,7 +120,8 @@ check() {
   ) > /dev/null 2>&1 &
   dog=$!
   wait "$pid" || status=$?
-  wait "$dog" || true
+  kill "$dog" 2> /dev/null || true
+  wait "$dog" 2> /dev/null || true
   out=$(cat "$work/out")
   case $want in
     OK*)
@@ -133,6 +150,19 @@ else
   echo "FAIL argumentos de la comprobación del certificado: $first" >&2
   failures=$((failures + 1))
 fi
+# Las demás llamadas de curl, con sus plazos (sin esta comprobación, quitarlos no fallaba aquí).
+first=$(head -n 1 "$work/code-args")
+if [[ $first == *"--connect-timeout 5 "* && $first == *"--max-time 60 "* ]]; then
+  echo "ok   curl con --connect-timeout y --max-time en las demás comprobaciones"
+else
+  echo "FAIL argumentos de curl en las demás comprobaciones: $first" >&2
+  failures=$((failures + 1))
+fi
+check "curl agota el plazo en /demo" "smoke FAIL: curl sale con 28 en https://crm.example.invalid/demo" CURL_TIMEOUT=/demo
+check "curl agota el plazo dentro de \$(…)" "smoke FAIL: curl sale con 28 en https://crm.example.invalid/api/smoke/" CURL_TIMEOUT=/api/
+check "curl agota el plazo en HTTP" "smoke FAIL: curl sale con 28 en http://crm.example.invalid/" CURL_TIMEOUT=http://
+check "docker compose exec agota el plazo" "smoke FAIL: PostgreSQL como crm_app: docker compose exec sale con 124" DOCKER_TIMEOUT=exec
+check "docker compose logs agota el plazo" "smoke FAIL: docker compose logs sale con 124" DOCKER_TIMEOUT=logs
 check "el certificado llega a los 10 s" "OKcertificado válido tras 10s" TLS_PENDING=2
 check "el certificado llega justo a los 120 s" OK TLS_PENDING=24
 check "el certificado no llega en 120 s" "no es válido tras 120s (curl sale con 35" TLS_PENDING=25

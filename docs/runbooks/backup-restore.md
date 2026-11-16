@@ -96,6 +96,8 @@ systemctl start crm-backup.service                                 # la primera 
 journalctl -u crm-backup.service -n 20                             # debe terminar en "event":"backup.ok"
 ```
 
+El backup nocturno comparte con `deploy.sh` el lock `/var/lib/crm-deploy/lock` (F1-15b): espera hasta una hora a que termine un despliegue y, si el lock sigue (un despliegue cortado), falla con `backup.failed` y `stage=deploy_lock`. Qué hacer con un despliegue cortado: [infra/prod/README.md](../../infra/prod/README.md), «Volver atrás».
+
 `backup.sh` lee el bucket de la aplicación con las `STORAGE_*` de `runtime.env`. Guarda su estado en `/var/lib/crm-backup`: `last-success` (para el aviso), `last-counts.tsv` (filas por tabla del último volcado) y `media-copied.txt` (los objetos ya copiados, porque el servidor no puede listar el destino). Si se pierde ese directorio, la siguiente noche vuelve a subir todos los objetos: el versionado guarda una versión más de cada uno, y la regla `media-versions` la borra a los 30 días.
 
 ## 5. Alertas

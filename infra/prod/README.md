@@ -9,10 +9,12 @@ Producción en un servidor Linux con Docker Compose, según [ADR-033](../../docs
 | `caddy/Dockerfile` | Caddy con `caddy-ratelimit` (decisión 10), con sus dos bases fijadas por digest. CI la publica (`images.yml`) |
 | `.env.production.example` | Los nombres de las variables, sin valores, en una sección por archivo del servidor |
 | `postgres/bootstrap-roles.sh` | Crea `crm_migrator` y `crm_app` (ADR-002 §1), sin `CREATEDB` ni BD de tests. Se puede repetir |
-| `validate.sh` | `docker compose config` con valores ficticios. Comprueba que solo el proxy publica puertos. Con `--caddy`, también `caddy validate` (CI: `infra-prod.yml`) |
+| `validate.sh` | `docker compose config` con valores ficticios. Comprueba que solo el proxy publica puertos y que cada `FROM` y cada `# syntax=` de todos los Dockerfile van por digest. Con `--caddy`, también `caddy validate` (CI: `infra-prod.yml`) |
+| `build-images.sh` | Construye y prueba las tres imágenes. Lo usan `images-pr.yml` (en cada PR) e `images.yml` (antes de publicar) |
 | `smoke.sh` | La prueba de humo tras `up --wait`, que la llama `deploy.sh` |
 | `deploy.sh` | Despliega un `release.env` por digest: pull, volcado previo cifrado, migrate, up, puerta de salud y vuelta atrás automática (abajo) |
-| `test-deploy.sh` | Prueba `deploy.sh` con un `docker` falso, sin servidor: orden de los pasos, vuelta atrás y negativas (CI: `infra-prod.yml`) |
+| `test-deploy.sh` | Prueba `deploy.sh` con un `docker` falso, sin servidor: orden de los pasos, vuelta atrás, negativas y el lock compartido con el backup nocturno (CI: `infra-prod.yml`) |
+| `crm-migrate.service`, `crm-migrate.timer` | `deploy.sh --migrate` el día 15 de cada mes (abajo, «Migrate mensual») |
 | `backup/` | Backups (F1-16): `backup.sh` (volcado cifrado con age y copia de los objetos a un destino que el servidor no puede leer ni borrar), `restore.sh`, `check.sh` (aviso a las 26 h), las unidades de systemd, `lifecycle.json` (retención 7/4/6 en el destino) y `drill.sh` (el simulacro de CI). Runbook: [backup-restore.md](../../docs/runbooks/backup-restore.md) |
 
 ## Secretos
@@ -41,6 +43,11 @@ Cada sección de la plantilla es un archivo en `CRM_ENV_DIR` (`/etc/crm` por omi
 
 `.github/workflows/images.yml` corre en cada push a `main` (ADR-033 §7). Construye el backend, el frontend y el proxy para `linux/amd64`, los arranca, revisa con gitleaks su configuración y su historial de capas, y los publica como `ghcr.io/<owner>/<repo>/{backend,frontend,proxy}:<SHA>` con procedencia y SBOM. El resumen del job trae el `release.env` de ese SHA: las tres imágenes y las de PostgreSQL y Redis, todas por digest. Es el único workflow con `packages: write`, y no tiene más secreto que `GITHUB_TOKEN`.
 
+- **En cada PR** que toca una imagen, `images-pr.yml` hace la misma construcción y las mismas pruebas (`build-images.sh`) sin credenciales ni publicar. No es un check requerido.
+- **Lo publicado es lo probado.** `build-images.sh` anota el digest de la configuración de cada imagen probada (sus capas, `ENV`, etiquetas e historial). Tras subirla, `images.yml` lee la configuración del registro y, si no es la misma, falla sin dar `release.env`.
+- **Bases por digest.** Las de los tres Dockerfile y su frontend (`# syntax=`) van fijadas por `@sha256:`. `validate.sh` rechaza cualquier `FROM` sin digest. Actualizar una base es cambiar la etiqueta y el digest a la vez (`docker buildx imagetools inspect <imagen>:<etiqueta>`).
+- **`REVISION`.** El `release.env` lleva `REVISION=<SHA>`, el commit de las imágenes.
+
 Los paquetes son **públicos** (ADR-033, decisión 8). GitHub crea cada paquete privado la primera vez. El propietario lo cambia a público una sola vez en la configuración del paquete. Mientras no lo haga, el job avisa. Con paquetes privados, se entra antes de desplegar con un token de solo lectura de paquetes: `sudo docker login ghcr.io`.
 
 ## Desplegar
@@ -57,7 +64,8 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 
 - sin `root`;
 - con cambios sin commit en `infra/prod`;
-- con otro despliegue a medias (`/var/lib/crm-deploy/lock`);
+- con un `REVISION` que no es el commit del checkout de `infra/prod`. `compose.yaml`, `smoke.sh` y `backup/` tienen que ser los de las imágenes: `git checkout <REVISION>`. `--allow-revision-mismatch`, el primer argumento, lo permite y lo anota en `deploy.log` como `AVISO`. Sin checkout de git, solo con ese flag;
+- con otro despliegue a medias o el backup nocturno en curso (`/var/lib/crm-deploy/lock`);
 - con un `CRM_DOMAIN` que no sea un nombre de dominio;
 - con un release (el nuevo o el que está en marcha) que tenga otra variable, una imagen sin `@sha256:<64 hex>`, o un backend, frontend o proxy que no salga de `ghcr.io/papicuche/crm-gooddoggy/`;
 - con un cambio de versión mayor de PostgreSQL: eso exige `pg_upgrade` en una ventana.
@@ -65,9 +73,9 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 | Paso | Si falla |
 | --- | --- |
 | 1. Valida el release y hace `pull` de los cinco digests | Sale. No se ha tocado nada |
-| 2. Volcado previo de la versión en marcha con `backup/backup.sh predeploy`: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age` para las claves de backup y de despliegue, y subido a `db/predeploy/` del destino de los backups, donde caduca a los 7 días. No queda en el servidor. En el primer despliegue no hay nada que volcar | Sale. No se ha tocado nada |
+| 2. Arranca `postgres` y `redis` con los digests **en marcha**, también si estaban parados. Después, el volcado previo de la versión en marcha con `backup/backup.sh predeploy`: `pg_dump` como superusuario por el socket, cifrado al vuelo con `age` para las claves de backup y de despliegue, y subido a `db/predeploy/` del destino de los backups, donde caduca a los 7 días. No queda en el servidor. En el primer despliegue no hay nada que volcar. Nunca se migra sin volcado | Sale. El runtime no se ha tocado |
 | 3. Job `migrate` como `crm_migrator`, contra `postgres` y `redis` con los digests **en marcha** (solo el primer despliegue los arranca con los nuevos) | Sale. El runtime anterior sigue en marcha y `release.env` no cambia |
-| 4. `up -d --wait` del stack: aquí cambian todos los digests, también los de `postgres` y `redis` | Vuelta atrás automática |
+| 4. `up -d --wait` del stack: aquí cambian todos los digests, también los de `postgres` y `redis`. `up` vuelve a lanzar `migrate`, porque el runtime depende de él en `compose.yaml` (así un `up` a mano nunca arranca sin migrar). Ya no queda nada que aplicar: termina en segundos | Vuelta atrás automática |
 | 5. Puerta de salud: `/health/ready` 200 desde dentro del backend (hasta `CRM_HEALTH_TIMEOUT`, 180 s), `smoke.sh https://crm.<DOMINIO>` y `https://crm.<DOMINIO>/login` 200 a través de Caddy | Vuelta atrás automática |
 
 Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como `release.env`. Repetir el mismo release es seguro: no pierde la versión anterior. El registro está en `/var/lib/crm-deploy/deploy.log`: fechas, pasos, digests y el commit de `infra/prod`, nunca valores de los archivos de entorno.
@@ -75,7 +83,7 @@ Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como 
 ## Volver atrás
 
 - **Automática.** Si fallan los pasos 4 o 5, `deploy.sh` vuelve a levantar los digests de `release.env`, es decir, la versión que estaba en marcha, y pasa la puerta otra vez. Entonces imprime `DESPLIEGUE FALLIDO. ROLLBACK OK` y sale con 1. Si la vuelta atrás tampoco pasa la puerta, imprime `ROLLBACK FALLIDO` y sale con 2: mira `docker compose ps` y los logs, y sigue con la manual.
-- **Manual** (una versión desplegada da problemas después): `sudo infra/prod/deploy.sh --rollback` despliega `release.env.previous` con los mismos pasos e intercambia los dos archivos. Para ir más atrás, despliega el `release.env` de ese SHA (el resumen de su job de `images.yml`).
+- **Manual** (una versión desplegada da problemas después): `sudo infra/prod/deploy.sh --rollback` despliega `release.env.previous` con los mismos pasos e intercambia los dos archivos. Antes, `git checkout` del `REVISION` de `release.env.previous`, o `--allow-revision-mismatch --rollback`. Para ir más atrás, despliega el `release.env` de ese SHA (el resumen de su job de `images.yml`).
 - **Nunca se deshacen migraciones.** Volver atrás es seguro solo si las migraciones siguen la regla de expandir y después contraer (ADR-033 §7). Una versión que no la cumple se despliega en una ventana. Su vuelta atrás es restaurar el volcado previo de `db/predeploy/`, con la clave de despliegue o la de backup, y se pierde lo escrito desde entonces ([backup-restore.md](../../docs/runbooks/backup-restore.md), «Volver atrás tras un despliegue con migraciones»).
 
   El orden importa, porque la imagen nueva volvería a migrar la base restaurada. Y depende de cómo terminó `deploy.sh`, porque `release.env` solo rota tras `DESPLIEGUE OK`:
@@ -87,11 +95,26 @@ Si todo pasa, `release.env` pasa a `release.env.previous` y el nuevo queda como 
     2. Después, `sudo infra/prod/deploy.sh /etc/crm/release.env`, que vuelve a desplegar esa misma versión, sin intercambiar archivos. No uses `--rollback` aquí: llevaría producción a una versión aún más vieja.
 - **Un despliegue cortado** (Ctrl-C, `kill`, un reinicio o un error inesperado) no vuelve atrás. Deja `/var/lib/crm-deploy/lock` y `release.env.next`, y lo anota como `INTERRUMPIDO` en `deploy.log`. Mientras estén, ningún despliegue arranca. Mira `deploy.log` y `docker compose ps`, borra los dos y repite el despliegue o haz `--rollback`: los dos son idempotentes. `deploy.sh` ignora `SIGHUP`, pero una terminal cerrada puede cortar igualmente la salida de `docker compose`: por eso, `tmux`.
 
+## Migrate mensual
+
+Las particiones de auditoría se crean al migrar, para el mes en curso y los 12 siguientes (ADR-033 §7). Sin despliegues en un año, se acabarían. `crm-migrate.timer` lanza `deploy.sh --migrate` el día 15 de cada mes a las 12:00 UTC: solo el job `migrate` de la versión en marcha (`release.env`), con el lock de los despliegues. Si hay un despliegue o el backup nocturno en curso, falla y se repite el mes siguiente. Instalación, con el repositorio en `/opt/crm`:
+
+```bash
+sudo install -m 0644 infra/prod/crm-migrate.service infra/prod/crm-migrate.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now crm-migrate.timer
+systemctl list-timers crm-migrate.timer   # la próxima ejecución; el resultado, en journalctl -u crm-migrate
+```
+
+## Backup nocturno y despliegues
+
+El backup nocturno (`backup.sh nightly`) toma el mismo lock que `deploy.sh`, `/var/lib/crm-deploy/lock`. Mientras dura, ningún despliegue arranca. Si un despliegue lo tiene, el backup espera hasta una hora (`BACKUP_LOCK_WAIT`). Si sigue puesto, porque un despliegue se cortó y lo dejó, el backup falla con `backup.failed` (`stage=deploy_lock`) y avisa. `backup.sh predeploy` no lo toma: lo lanza `deploy.sh`, que ya lo tiene.
+
 ## Probar en local
 
 ```bash
 sh infra/prod/validate.sh --caddy
 bash infra/prod/test-smoke.sh   # smoke.sh con docker y curl falsos: certificado, /demo y /health/*
+bash infra/prod/test-deploy.sh  # deploy.sh con docker falso; también el lock con backup.sh nightly
 ```
 
 Para levantarlo entero en local, usa archivos de entorno desechables en un directorio temporal y `CRM_DOMAIN=localhost`. Caddy emite entonces `crm.localhost` con su CA interna. Añade un override que publique el proxy en `127.0.0.1` con otros puertos y un `-p` propio. Al terminar, `down -v`.

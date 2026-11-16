@@ -4,7 +4,9 @@
 # que anotan cada llamada y fallan a demanda (FAIL_* con las letras de los releases que fallan).
 # Comprueba el orden de los pasos, la vuelta atrás automática ante cada fallo de la puerta (ready,
 # smoke.sh, la página de entrada), que migrate y el volcado no tocan el runtime al fallar, que una
-# señal deja el lock, y las negativas antes de tocar nada. Uso: bash infra/prod/test-deploy.sh
+# señal deja el lock, y las negativas antes de tocar nada. F1-15b: REVISION frente al checkout, el
+# volcado previo con postgres parado, un fallo de `up postgres redis`, `--migrate` y el lock que
+# comparte con el backup nocturno. Uso: bash infra/prod/test-deploy.sh
 set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
@@ -27,9 +29,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 echo "$release ${args[*]}" >> "$CALLS"
+if [ -n "${LOCK_PROBE:-}" ] && [ -d "$CRM_DEPLOY_DIR/lock" ]; then echo "lock held" >> "$LOCK_PROBE"; fi
 fails() { [ -n "$release" ] && case $1 in *"$release"*) true ;; *) false ;; esac; }
 case "${args[*]}" in
-  "ps -q --status running postgres") echo pg-container ;;
+  "up -d --wait postgres redis") if fails "$FAIL_STORES"; then exit 1; fi ;;
   "run --rm --no-deps migrate") if fails "$FAIL_RUN"; then exit 1; fi ;;
   "exec -T backend python"*) if fails "$FAIL_READY"; then exit 1; fi ;;
   "pull --quiet") if [ -n "$KILL_ON_PULL" ]; then kill -"$KILL_ON_PULL" "$PPID"; fi ;;
@@ -63,6 +66,11 @@ echo "${FAKE_UID:-0}"
 EOF
 chmod +x "$work/bin/"* "$work/infra/prod/"*.sh "$work/infra/prod/backup/backup.sh"
 echo "CRM_DOMAIN=example.invalid" > "$work/etc/proxy.env"
+# infra/prod es un checkout de git: REVISION de cada release es su HEAD.
+git -C "$work" init -q
+git -C "$work" add infra/prod
+git -C "$work" -c user.name=t -c user.email=t@example.invalid commit -qm t
+head=$(git -C "$work" rev-parse HEAD)
 
 release() { # release <letra> [mayor de postgres]: las cinco imágenes con un digest de esa letra
   local hex name
@@ -72,6 +80,7 @@ release() { # release <letra> [mayor de postgres]: las cinco imágenes con un di
   done
   echo "POSTGRES_IMAGE=docker.io/library/postgres:${2:-18}.6@sha256:$hex"
   echo "REDIS_IMAGE=docker.io/library/redis:8.8.3-alpine@sha256:$hex"
+  echo "REVISION=${3:-$head}"
 }
 release a > "$work/a.env"
 release b > "$work/b.env"
@@ -79,6 +88,7 @@ release c > "$work/c.env"
 
 export CALLS="$work/calls" CRM_ENV_DIR="$work/etc" CRM_DEPLOY_DIR="$work/state" CRM_HEALTH_TIMEOUT=5
 export PATH="$work/bin:$PATH" FAIL_RUN="" FAIL_READY="" FAIL_DUMP="" FAIL_SMOKE="" FAIL_ENTRY=0 KILL_ON_PULL="" KILL_ON_UP=""
+export FAIL_STORES=""
 deploy() {
   : > "$CALLS"
   if "$work/infra/prod/deploy.sh" "$@" > "$work/out" 2>&1; then rc=0; else rc=$?; fi
@@ -102,7 +112,7 @@ rolled_back() { # rolled_back <contexto>: el release nuevo (c) falló y se volvi
   grep -q '^b up -d --wait --wait-timeout 5 --remove-orphans' "$CALLS" || fail "$1: no levantó b"
   grep -q '^b exec -T backend python' "$CALLS" || fail "$1: el rollback no pasó /health/ready"
   grep -q '^smoke .*/release\.env$' "$CALLS" || fail "$1: el rollback no pasó smoke.sh"
-  [ "$(grep '^curl ' "$CALLS" | tail -n 1)" = "curl -fsS -o /dev/null https://crm.example.invalid/login" ] ||
+  [ "$(grep '^curl ' "$CALLS" | tail -n 1)" = "curl -fsS --connect-timeout 5 --max-time 30 -o /dev/null https://crm.example.invalid/login" ] ||
     fail "$1: el rollback no probó la entrada"
   state b a "$1"
   if [ -e "$work/etc/release.env.next" ] || [ -e "$work/state/lock" ]; then fail "$1: quedan restos"; fi
@@ -131,6 +141,16 @@ refused "$work/v.env" "variable no permitida: DATABASE_URL"
 refused "$work/v.env" "CRM_ENV_DIR distinto"
 variant '/^REDIS/d'
 refused "$work/v.env" "falta REDIS_IMAGE"
+variant '/^REVISION/d'
+refused "$work/v.env" "falta REVISION"
+variant 's/^REVISION=.*/REVISION=main/'
+refused "$work/v.env" "REVISION no es el SHA de un commit"
+{ cat "$work/a.env"; echo "REVISION=$head"; } > "$work/v.env"
+refused "$work/v.env" "REVISION repetida"
+other=$(printf 'f%.0s' $(seq 40))
+release a 18 "$other" > "$work/v.env"
+refused "$work/v.env" "el release es de $other e infra/prod está en $head: git checkout $other"
+refused --migrate "no hay $work/etc/release.env"
 echo 'CRM_DOMAIN="example.invalid"' > "$work/etc/proxy.env"
 refused "$work/a.env" "no es un nombre de dominio"
 echo "CRM_DOMAIN=example.invalid" > "$work/etc/proxy.env"
@@ -153,14 +173,43 @@ events=$(grep -oE '^a (pull --quiet|up -d --wait postgres redis|run --rm --no-de
 [ "$events" = "a pull --quiet|a up -d --wait postgres redis|a run --rm --no-deps migrate|a up -d --wait --wait-timeout|a exec -T backend|smoke|curl|" ] ||
   fail "orden: $events"
 
-# Segundo despliegue: backup.sh predeploy de a antes de migrar; postgres y redis siguen en a hasta `up`.
+# Segundo despliegue (postgres parado: el docker falso no lo da por arrancado): postgres y redis de a,
+# después backup.sh predeploy de a y después migrate. Siguen en a hasta `up`.
 deploy "$work/b.env"
 [ "$rc" = 0 ] || fail "despliegue de b"
-grep -qx 'backup predeploy a' "$CALLS" || fail "sin volcado previo de la versión en marcha"
-[ "$(sed -n '/^backup /=' "$CALLS")" -lt "$(sed -n '/run --rm --no-deps migrate/=' "$CALLS")" ] || fail "volcado tras migrar"
-grep -q '^a up -d --wait postgres redis' "$CALLS" || fail "postgres y redis no siguen en a"
+events=$(grep -oE '^a up -d --wait postgres redis|^backup predeploy a$|^b run --rm --no-deps migrate' "$CALLS" | tr '\n' '|')
+[ "$events" = "a up -d --wait postgres redis|backup predeploy a|b run --rm --no-deps migrate|" ] ||
+  fail "postgres y redis de a, volcado y migrate: $events"
 if grep -q '^b up -d --wait postgres redis' "$CALLS"; then fail "postgres y redis cambian antes de migrar"; fi
 state b a "rotación"
+
+# postgres o redis no arrancan: sale sin volcar ni migrar ni tocar el runtime.
+FAIL_STORES=b deploy "$work/c.env"
+[ "$rc" = 1 ] || fail "postgres o redis rotos: exit $rc"
+expect "postgres o redis no arrancan"
+if grep -q -e '^backup' -e 'run --rm' -e '^c up' "$CALLS"; then fail "siguió tras fallar postgres o redis"; fi
+state b a "postgres o redis rotos"
+
+# --migrate (crm-migrate.timer): solo migrate de la versión en marcha, con el lock.
+deploy --migrate
+[ "$rc" = 0 ] || fail "--migrate"
+[ "$(grep -v '^ *$' "$CALLS")" = "b run --rm --no-deps migrate" ] || fail "--migrate hizo más: $(cat "$CALLS")"
+FAIL_RUN=b deploy --migrate
+[ "$rc" = 1 ] || fail "--migrate roto: exit $rc"
+expect "falló migrate de la versión en marcha"
+[ ! -e "$work/state/lock" ] || fail "--migrate dejó el lock"
+grep -qx 'ExecStart=/opt/crm/infra/prod/deploy.sh --migrate' "$src/crm-migrate.service" || fail "crm-migrate.service"
+grep -qx 'OnCalendar=\*-\*-15 12:00:00 UTC' "$src/crm-migrate.timer" || fail "crm-migrate.timer no es mensual"
+
+# Con --allow-revision-mismatch, un release de otro commit se despliega y queda anotado.
+release c 18 "$other" > "$work/v.env"
+deploy --allow-revision-mismatch "$work/v.env"
+[ "$rc" = 0 ] || fail "--allow-revision-mismatch"
+grep -q "AVISO: release de $other con infra/prod en $head" "$work/state/deploy.log" || fail "sin aviso de la revisión"
+state c b "--allow-revision-mismatch"
+deploy "$work/b.env"
+[ "$rc" = 0 ] || fail "volver a b"
+cp "$work/a.env" "$work/etc/release.env.previous"
 
 # Versión mayor distinta de PostgreSQL, y una versión en marcha manipulada: se niega.
 release c 19 > "$work/v.env"
@@ -230,17 +279,62 @@ KILL_ON_PULL=TERM deploy "$work/b.env"
 [ -d "$work/state/lock" ] || fail "la señal quitó el lock"
 [ -f "$work/etc/release.env.next" ] || fail "la señal quitó release.env.next"
 grep -q "INTERRUMPIDO" "$work/state/deploy.log" || fail "el registro no cuenta la interrupción"
-refused "$work/b.env" "hay otro despliegue en curso"
+refused "$work/b.env" "hay otro despliegue o el backup nocturno en curso"
 [ -d "$work/state/lock" ] || fail "borró un lock ajeno"
 rmdir "$work/state/lock"
 rm "$work/etc/release.env.next"
 
-# Un checkout con cambios sin commit en infra/prod no despliega.
-git -C "$work" init -q
-git -C "$work" add infra/prod
-git -C "$work" -c user.name=t -c user.email=t@example.invalid commit -qm t
+# El backup nocturno (backup.sh real, con docker, age y rclone falsos) y deploy.sh comparten el lock.
+mkdir -p "$work/backup-bin" "$work/sleep-bin"
+cat > "$work/backup-bin/age" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do [ "$1" = -o ] && cat > "$2"; shift; done
+EOF
+printf '#!/bin/sh\nexit 0\n' > "$work/backup-bin/rclone"
+# sleep falso: el despliegue en curso termina mientras el nocturno espera.
+cat > "$work/sleep-bin/sleep" <<'EOF'
+#!/bin/sh
+echo "sleep $1" >> "$CALLS"
+rmdir "$CRM_DEPLOY_DIR/lock"
+EOF
+chmod +x "$work/backup-bin/"* "$work/sleep-bin/"*
+printf '%s\n' BACKUP_S3_BUCKET=b BACKUP_S3_ACCESS_KEY_ID=k BACKUP_S3_SECRET_ACCESS_KEY=s > "$work/etc/backup.env"
+printf '%s\n' STORAGE_BUCKET=m > "$work/etc/runtime.env"
+echo "age1example" > "$work/etc/backup-recipients.txt"
+chmod 600 "$work/etc/backup.env" "$work/etc/runtime.env"
+nightly() { # nightly <tipo> <espera máxima> [PATH extra]: backup.sh real; sale en $rc, la salida en $work/out
+  : > "$CALLS"
+  : > "$work/probe"
+  if PATH="${3:-}$work/backup-bin:$PATH" FAKE_UID="$(command -p id -u)" LOCK_PROBE="$work/probe" \
+    BACKUP_STATE_DIR="$work/backup-state" CRM_RELEASE_ENV="$work/etc/release.env" BACKUP_LOCK_WAIT=$2 \
+    bash "$src/backup/backup.sh" "$1" > "$work/out" 2>&1; then
+    rc=0
+  else
+    rc=$?
+  fi
+}
+mkdir "$work/state/lock" # un despliegue en curso (o cortado) que no termina en el plazo: falla con aviso
+nightly nightly 0
+[ "$rc" != 0 ] || fail "el nocturno corrió con el lock de un despliegue"
+expect "stage=deploy_lock"
+if grep -q '^[a-z]* ' "$CALLS"; then fail "el nocturno llamó a docker con el lock ajeno"; fi
+[ -d "$work/state/lock" ] || fail "el nocturno quitó el lock de un despliegue"
+nightly nightly 30 "$work/sleep-bin:" # el despliegue termina: el nocturno espera, lo toma y lo suelta
+grep -qx 'sleep 30' "$CALLS" || fail "el nocturno no esperó"
+grep -qx 'lock held' "$work/probe" || fail "el nocturno vuelca sin el lock"
+[ ! -e "$work/state/lock" ] || fail "el nocturno no soltó el lock (salida $rc)"
+mkdir "$work/state/lock" # predeploy lo lanza deploy.sh con su lock: no espera
+nightly predeploy 0
+if grep -q 'deploy_lock' "$work/out"; then fail "predeploy esperó al lock de deploy.sh"; fi
+grep -qx 'lock held' "$work/probe" || fail "predeploy no llegó a volcar"
+rmdir "$work/state/lock"
+
+# Un checkout con cambios sin commit en infra/prod no despliega; uno que no es de git, tampoco sin
+# --allow-revision-mismatch (no se puede comprobar REVISION).
 echo "# cambio" >> "$work/infra/prod/compose.yaml"
 refused "$work/b.env" "infra/prod tiene cambios sin commit"
+rm -rf "$work/.git"
+refused "$work/b.env" "infra/prod está en (no es un checkout de git)"
 
 if grep -qiE 'password|secret|postgres://' "$work/state/deploy.log"; then fail "el registro lleva secretos"; fi
 echo "test-deploy OK"

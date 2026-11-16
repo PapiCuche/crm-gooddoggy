@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # Despliegue de producción por digest (F1-15, ADR-033 §7). Procedimiento y vuelta atrás: README.md.
-#   1. valida el release nuevo: las cinco imágenes, cada una fijada por @sha256 (nada más);
+#   1. valida el release nuevo: las cinco imágenes, cada una fijada por @sha256 (nada más), y su
+#      REVISION, que tiene que ser el commit del checkout de infra/prod (F1-15b);
 #   2. `pull` de esos digests;
-#   3. volcado previo de la base con `backup/backup.sh predeploy` (F1-16): cifrado con age y subido
-#      al destino de los backups, db/predeploy/, 7 días (ADR-033 §7.2 y §8.2);
+#   3. arranca postgres y redis de la versión en marcha (también si estaban parados) y hace el volcado
+#      previo con `backup/backup.sh predeploy` (F1-16): cifrado con age y subido al destino de los
+#      backups, db/predeploy/, 7 días (ADR-033 §7.2 y §8.2). Sin volcado no se migra;
 #   4. job `migrate` (solo crm_migrator) contra postgres y redis de la versión en marcha; si
 #      falla, para: el runtime anterior sigue en marcha;
 #   5. `up -d --wait` del stack y puerta de salud: /health/ready desde dentro, smoke.sh y la página
-#      de entrada por https a través de Caddy;
+#      de entrada por https a través de Caddy. `up` vuelve a lanzar `migrate` (el runtime depende de
+#      él en compose.yaml): ya no queda nada que aplicar y termina en segundos;
 #   6. si la puerta falla, vuelve sola a los digests de release.env (la versión en marcha) y sale
 #      con error. Nunca deshace migraciones (expandir y contraer, ADR-033 §7).
 # Solo cuando todo pasa, release.env pasa a release.env.previous y el nuevo a release.env.
 # Ejecútalo dentro de tmux: una señal (Ctrl-C, kill) corta el despliegue y deja el lock puesto.
-# Uso: sudo infra/prod/deploy.sh <release.env nuevo> [opciones de curl para smoke.sh]
-#      sudo infra/prod/deploy.sh --rollback [opciones de curl]   (vuelve a release.env.previous)
+# Uso: sudo infra/prod/deploy.sh [--allow-revision-mismatch] <release.env nuevo> [opciones de curl para smoke.sh]
+#      sudo infra/prod/deploy.sh [--allow-revision-mismatch] --rollback [opciones de curl]   (a release.env.previous)
+#      sudo infra/prod/deploy.sh --migrate   (solo `migrate` de la versión en marcha: crm-migrate.timer)
 set -euo pipefail
 umask 077
 
@@ -28,7 +32,7 @@ images="BACKEND_IMAGE FRONTEND_IMAGE PROXY_IMAGE POSTGRES_IMAGE REDIS_IMAGE"
 # Las imágenes propias solo salen de images.yml (ADR-033 §7).
 ghcr="ghcr.io/papicuche/crm-gooddoggy"
 digest='sha256:[0-9a-f]{64}$'
-locked="" finished=""
+locked="" finished="" allow_mismatch=""
 
 # El registro solo lleva fechas, pasos, digests y rutas: nunca el contenido de los archivos de entorno.
 log() {
@@ -74,6 +78,13 @@ release_lines() {
       [ "$value" = "$env_dir" ] || die "$file: CRM_ENV_DIR distinto de $env_dir"
       continue
     fi
+    if [ "$key" = REVISION ]; then
+      [[ $value =~ ^[0-9a-f]{40}$ ]] || die "$file: REVISION no es el SHA de un commit (40 hex)"
+      [[ $seen != *" REVISION "* ]] || die "$file: REVISION repetida"
+      seen="$seen$key "
+      echo "$key=$value"
+      continue
+    fi
     case " $images " in *" $key "*) ;; *) die "$file: variable no permitida: $key" ;; esac
     case $seen in *" $key "*) die "$file: $key repetida" ;; esac
     if [ "$key" = POSTGRES_IMAGE ] || [ "$key" = REDIS_IMAGE ]; then
@@ -86,7 +97,7 @@ release_lines() {
     seen="$seen$key "
     echo "$key=$value"
   done < "$file"
-  for key in $images; do
+  for key in $images REVISION; do
     case $seen in *" $key "*) ;; *) die "$file: falta $key" ;; esac
   done
   echo "CRM_ENV_DIR=$env_dir"
@@ -99,15 +110,10 @@ pg_major() {
 
 # Volcado previo de la versión en marcha, con el backup de F1-16: pg_dump cifrado al vuelo para las
 # claves de backup y de despliegue y subido a db/predeploy/ del destino. Nunca queda en claro en el disco.
+# postgres ya está en marcha (main lo arranca con $current antes): nunca se migra sin volcado.
 predeploy_dump() {
-  local running
-  running=$(compose "$current" ps -q --status running postgres)
-  if [ -z "$running" ]; then
-    log "postgres no está en marcha: sin volcado previo"
-    return
-  fi
   CRM_RELEASE_ENV="$current" "$here/backup/backup.sh" predeploy ||
-    die "falló el volcado previo (backup.sh predeploy): no se ha tocado nada"
+    die "falló el volcado previo (backup.sh predeploy): no se ha migrado ni arrancado el runtime"
   log "volcado previo en el destino de los backups (db/predeploy/)"
 }
 
@@ -127,7 +133,7 @@ except Exception:
   done
   log "/health/ready 200"
   CRM_RELEASE_ENV="$release" sh "$here/smoke.sh" "$origin" "$@" || { log "smoke.sh falló"; return 1; }
-  curl -fsS -o /dev/null "$@" "$origin/login" || { log "la entrada $origin/login no responde 200"; return 1; }
+  curl -fsS --connect-timeout 5 --max-time 30 -o /dev/null "$@" "$origin/login" || { log "la entrada $origin/login no responde 200"; return 1; }
   log "entrada $origin/login 200"
 }
 
@@ -154,8 +160,12 @@ rollback() {
 }
 
 main() {
-  [ $# -ge 1 ] || die "uso: deploy.sh <release.env nuevo> | --rollback [opciones de curl para smoke.sh]"
-  local candidate=$1 domain rev stores
+  if [ "${1:-}" = --allow-revision-mismatch ]; then
+    allow_mismatch=1
+    shift
+  fi
+  [ $# -ge 1 ] || die "uso: deploy.sh [--allow-revision-mismatch] <release.env nuevo> | --rollback | --migrate [opciones de curl]"
+  local candidate=$1 domain rev stores revision
   shift
   [ "$(id -u)" = 0 ] || die "ejecútalo con sudo: los archivos de entorno son de root (ADR-033 §6)"
   command -v docker > /dev/null || die "falta docker"
@@ -176,8 +186,19 @@ main() {
   mkdir -p "$state"
   chmod 700 "$state"
   mkdir "$state/lock" 2> /dev/null ||
-    die "hay otro despliegue en curso, o uno anterior se cortó: revisa $state/deploy.log y borra $state/lock"
+    die "hay otro despliegue o el backup nocturno en curso, o un despliegue anterior se cortó: revisa $state/deploy.log (y journalctl -u crm-backup) antes de borrar $state/lock"
   locked=1
+
+  # ADR-033 §7: las particiones de auditoría se crean al migrar, 12 meses por delante. El
+  # temporizador mensual (crm-migrate.timer) repite `migrate` de la versión en marcha sin desplegar.
+  if [ "$candidate" = --migrate ]; then
+    [ -f "$current" ] || die "no hay $current: todavía no se ha desplegado nada"
+    release_lines "$current" > /dev/null
+    compose "$current" run --rm --no-deps migrate || die "falló migrate de la versión en marcha ($current)"
+    finished=1
+    log "migrate mensual OK: $current"
+    return
+  fi
 
   if [ "$candidate" = --rollback ]; then
     [ -f "$previous" ] || die "no hay $previous al que volver"
@@ -191,19 +212,24 @@ main() {
   if [ -f "$current" ] && [ "$(pg_major "$next")" != "$(pg_major "$current")" ]; then
     die "POSTGRES_IMAGE cambia de versión mayor ($(pg_major "$current") → $(pg_major "$next")): exige pg_upgrade en una ventana"
   fi
-  log "inicio: infra/prod en $rev; release $(grep '_IMAGE=' "$next" | tr '\n' ' ')"
+  # El checkout de infra/prod (compose.yaml, smoke.sh, backup/) tiene que ser el de las imágenes.
+  revision=$(sed -n 's/^REVISION=//p' "$next")
+  if [ "$revision" != "$rev" ]; then
+    [ -n "$allow_mismatch" ] ||
+      die "el release es de $revision e infra/prod está en $rev: git checkout $revision (o --allow-revision-mismatch)"
+    log "AVISO: release de $revision con infra/prod en $rev (--allow-revision-mismatch)"
+  fi
+  log "inicio: infra/prod en $rev; release $(grep -e '_IMAGE=' -e '^REVISION=' "$next" | tr '\n' ' ')"
   compose "$next" config -q
   compose "$next" pull --quiet || die "falló el pull de los digests: no se ha tocado nada"
   log "pull OK"
 
   # postgres y redis siguen en los digests en marcha hasta `start`, que cubren la puerta y la vuelta
-  # atrás. Solo el primer despliegue los arranca con el release nuevo.
+  # atrás. Solo el primer despliegue los arranca con el release nuevo, y no tiene nada que volcar.
   stores=$next
-  if [ -f "$current" ]; then
-    stores=$current
-    predeploy_dump
-  fi
+  if [ -f "$current" ]; then stores=$current; fi
   compose "$stores" up -d --wait postgres redis || die "postgres o redis no arrancan: el runtime no se ha tocado"
+  if [ -f "$current" ]; then predeploy_dump; fi
   compose "$next" run --rm --no-deps migrate ||
     die "fallaron las migraciones: el runtime anterior sigue en marcha y release.env no cambia"
   log "migrate OK"

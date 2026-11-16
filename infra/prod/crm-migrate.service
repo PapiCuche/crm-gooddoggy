@@ -1,0 +1,16 @@
+# `migrate` mensual de la versión en marcha (F1-15b, ADR-033 §7): las particiones de auditoría se
+# crean al migrar, 12 meses por delante, y sin despliegues se acabarían. deploy.sh --migrate toma el
+# lock de los despliegues (y del backup nocturno): si está puesto, falla y lo repite el mes siguiente.
+# /opt/crm es la copia del repositorio en el servidor; instalación: infra/prod/README.md.
+[Unit]
+Description=Good Doggy CRM: migrate mensual (particiones de auditoría)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/crm/infra/prod/deploy.sh --migrate
+TimeoutStartSec=30min
+NoNewPrivileges=true
+ProtectHome=true
+UMask=0077
