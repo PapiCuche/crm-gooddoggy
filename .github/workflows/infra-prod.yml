@@ -2,6 +2,8 @@ name: infra-prod
 
 # F1-13: valida infra/prod (ADR-033) sin servidor ni secretos: shellcheck, `docker compose config`
 # con valores ficticios (solo el proxy publica 80 y 443) y `caddy validate` con la imagen del borde.
+# F1-15: la prueba de deploy.sh con docker falso (fallo de la puerta → vuelta atrás) y la frontera
+# de images.yml (test_workflow_security.py), que el check trusted solo ejecuta desde main.
 # F1-16: la retención de los backups y el simulacro de backup y restauración con un Garage local.
 # F1-17: smoke.sh con docker y curl falsos (certificado, /demo y /health/* desde fuera).
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
@@ -10,6 +12,8 @@ on:
     paths: &paths
       - "infra/prod/**"
       - ".github/workflows/infra-prod.yml"
+      - ".github/workflows/images.yml"
+      - ".github/scripts/test_workflow_security.py"
       - ".github/scripts/test_backup_retention.py"
   push:
     branches: [main]
@@ -33,6 +37,11 @@ jobs:
           persist-credentials: false
       - name: shellcheck
         run: shellcheck -x infra/prod/*.sh infra/prod/postgres/*.sh infra/prod/backup/*.sh
+      - name: deploy.sh (test-deploy.sh, sin servidor)
+        run: bash infra/prod/test-deploy.sh
+      - name: Frontera de los workflows (images.yml incluido)
+        working-directory: .github/scripts
+        run: python3 -m unittest -q test_workflow_security
       - name: Retención de los backups (lifecycle.json y prefijos)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_backup_retention
