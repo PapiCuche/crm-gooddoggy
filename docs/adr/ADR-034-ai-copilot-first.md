@@ -1,6 +1,6 @@
 # ADR-034: Primer corte de IA: copiloto del Inbox con aprobación humana
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-16, decisión del propietario en #765: acepta todas las recomendaciones de D-F8-01…D-F8-09; siempre con aprobación humana antes de enviar)
 - **Date:** 2026-11-13
 - **Deciders:** propuesto por Claude Code (Opus 5.5) dentro del programa autónomo (ADR-015) para la decisión del propietario. Decide qué datos de clientes salen a un proveedor externo y cuánto se gasta: no lo acepta el programa. La aceptación es el work item F8-02 (#765), que solo cierra el propietario. Mientras esté `Proposed` no obliga al código: F8-03 a F8-10 (#766 a #773) están bloqueados hasta esa decisión.
 - **Related:** [ADR-005](ADR-005-ai-provider-abstraction.md) (Accepted; este ADR lo acota), [ADR-006](ADR-006-pricing-engine.md), [ADR-010](ADR-010-messaging-policy.md), [ADR-011](ADR-011-observability-and-logs.md), [ADR-022](ADR-022-secrets-at-rest.md), [ADR-023](ADR-023-mfa-totp.md) §7, [ADR-028](ADR-028-store-data-connectors.md), [ADR-029](ADR-029-whatsapp-cloud-api-channel.md), [module-dependencies.md](../architecture/module-dependencies.md) §1, [security-boundaries.md](../architecture/security-boundaries.md), [03 §I y §J](../fase-0/03-tenancy-rbac-inbox-ia.md), [05 §R (E08, E11) y §S.4](../fase-0/05-backlog-y-roadmap.md), [phase-8.md](../phases/phase-8.md), #764 a #773

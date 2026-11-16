@@ -1,6 +1,6 @@
 # Fase 8 — Infraestructura de IA y tools de lectura: el copiloto del Inbox
 
-- **Estado:** diseño propuesto el 2026-11-13 (F8-01). [ADR-034](../adr/ADR-034-ai-copilot-first.md) está `Proposed`: hasta que el propietario lo acepte, lo cambie o lo rechace (F8-02, #765), este documento es un plan y no un compromiso. Ningún work item con código empieza antes.
+- **Estado:** diseño propuesto el 2026-11-13 (F8-01). [ADR-034](../adr/ADR-034-ai-copilot-first.md) **aceptado el 2026-11-16** (F8-02, #765) con todas las recomendaciones de D-F8-01…D-F8-09: la serie F8-03…F8-10 queda desbloqueada. El copiloto nunca envía solo y no bloquea el Inbox humano.
 - **Objetivo (release R2):** que quien atiende el Inbox pida a Claude una **sugerencia de respuesta** o un **resumen** de la conversación, y decida qué hacer con ella: insertarla en el compositor, editarla o descartarla. **Nada se envía solo.**
 - **Origen:** [ADR-005](../adr/ADR-005-ai-provider-abstraction.md) (Accepted), que ADR-034 acota; historias E08 y E11-07, E11-12 y E11-13 del [backlog §R](../fase-0/05-backlog-y-roadmap.md) y la estrategia de despliegue de la IA ([05 §S.4](../fase-0/05-backlog-y-roadmap.md)); [03 §J](../fase-0/03-tenancy-rbac-inbox-ia.md); ADR-006, ADR-010, ADR-011, ADR-022 y ADR-029.
 
