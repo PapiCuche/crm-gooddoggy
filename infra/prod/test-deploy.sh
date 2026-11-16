@@ -29,7 +29,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 echo "$release ${args[*]}" >> "$CALLS"
-if [ -n "${LOCK_PROBE:-}" ] && [ -d "$CRM_DEPLOY_DIR/lock" ]; then echo "lock held" >> "$LOCK_PROBE"; fi
 fails() { [ -n "$release" ] && case $1 in *"$release"*) true ;; *) false ;; esac; }
 case "${args[*]}" in
   "up -d --wait postgres redis") if fails "$FAIL_STORES"; then exit 1; fi ;;
@@ -286,6 +285,12 @@ rm "$work/etc/release.env.next"
 
 # El backup nocturno (backup.sh real, con docker, age y rclone falsos) y deploy.sh comparten el lock.
 mkdir -p "$work/backup-bin" "$work/sleep-bin"
+# mktemp falso: backup.sh lo llama justo antes de volcar; anota si el lock está puesto.
+cat > "$work/backup-bin/mktemp" <<'EOF'
+#!/bin/sh
+[ ! -d "$CRM_DEPLOY_DIR/lock" ] || echo "lock held" >> "$LOCK_PROBE"
+exec /usr/bin/mktemp "$@"
+EOF
 cat > "$work/backup-bin/age" <<'EOF'
 #!/bin/sh
 while [ $# -gt 0 ]; do [ "$1" = -o ] && cat > "$2"; shift; done
@@ -317,7 +322,7 @@ mkdir "$work/state/lock" # un despliegue en curso (o cortado) que no termina en 
 nightly nightly 0
 [ "$rc" != 0 ] || fail "el nocturno corrió con el lock de un despliegue"
 expect "stage=deploy_lock"
-if grep -q '^[a-z]* ' "$CALLS"; then fail "el nocturno llamó a docker con el lock ajeno"; fi
+[ ! -s "$work/probe" ] || fail "el nocturno siguió con el lock ajeno"
 [ -d "$work/state/lock" ] || fail "el nocturno quitó el lock de un despliegue"
 nightly nightly 30 "$work/sleep-bin:" # el despliegue termina: el nocturno espera, lo toma y lo suelta
 grep -qx 'sleep 30' "$CALLS" || fail "el nocturno no esperó"
@@ -326,7 +331,7 @@ grep -qx 'lock held' "$work/probe" || fail "el nocturno vuelca sin el lock"
 mkdir "$work/state/lock" # predeploy lo lanza deploy.sh con su lock: no espera
 nightly predeploy 0
 if grep -q 'deploy_lock' "$work/out"; then fail "predeploy esperó al lock de deploy.sh"; fi
-grep -qx 'lock held' "$work/probe" || fail "predeploy no llegó a volcar"
+grep -qx 'lock held' "$work/probe" || fail "predeploy no siguió hasta el volcado"
 rmdir "$work/state/lock"
 
 # Un checkout con cambios sin commit en infra/prod no despliega; uno que no es de git, tampoco sin
