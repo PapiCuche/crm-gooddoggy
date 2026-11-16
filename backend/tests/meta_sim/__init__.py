@@ -1,4 +1,5 @@
-"""Simulador de la API de Meta para las pruebas de la Fase 7 (F7-01, ADR-029 §11), sin red real ni
+"""Simulador de la API de Meta para las pruebas de la Fase 7 (F7-01, ADR-029 §11; Messenger e
+Instagram en `social` y `page_graph`, F7b-03, ADR-035 §9), sin red real ni
 credenciales reales: `webhooks` construye y firma los cuerpos del webhook; `graph` es la Graph API
 falsa (`FakeGraph`); `transport` la sirve por `core.http` (con su política real) o por un servidor
 local. Sigue la versión de `GRAPH_VERSION`: cambiarla obliga a revisar los fixtures. Todos los
