@@ -45,7 +45,7 @@ reader="GK$(hex 12)" reader_secret=$(hex 32)
 docker run -d --name "$id-garage" --network "$id-s3" -p "127.0.0.1:$port:3900" \
   -e GARAGE_RPC_SECRET="$(hex 32)" -e GARAGE_DEFAULT_ACCESS_KEY="$app_key" -e GARAGE_DEFAULT_SECRET_KEY="$app_secret" \
   -e GARAGE_DEFAULT_BUCKET=prod-media -v "$repo/infra/docker/garage/garage.toml:/etc/garage.toml:ro" \
-  dxflrs/garage:v2.4.1 /garage server --single-node --default-bucket > /dev/null
+  dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020 /garage server --single-node --default-bucket > /dev/null
 g() { docker exec -e RUST_LOG=warn "$id-garage" /garage "$@" > /dev/null; }
 for _ in $(seq 60); do g bucket info prod-media 2> /dev/null && break; sleep 1; done
 g bucket create backups
@@ -56,7 +56,8 @@ g bucket allow --write backups --key writer
 g bucket allow --read backups --key reader
 g bucket allow --read --write restored-media --key "$app_key"
 # production exige https para el almacenamiento: Caddy con su CA interna delante de Garage.
-docker run -d --name "$id-s3tls" --network "$id-s3" --network-alias s3.drill.internal caddy:2.11.7-alpine \
+docker run -d --name "$id-s3tls" --network "$id-s3" --network-alias s3.drill.internal \
+  caddy:2.11.7-alpine@sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5 \
   caddy reverse-proxy --from s3.drill.internal --to "$id-garage:3900" --internal-certs > /dev/null
 for _ in $(seq 60); do
   docker cp "$id-s3tls:/data/caddy/pki/authorities/local/root.crt" "$work/ca.crt" 2> /dev/null && break
@@ -78,7 +79,7 @@ mkstack() { # <src|dst> <tercer octeto de la red del borde> <bucket>
   mig=$(hex 24) app=$(hex 24) redis=$(hex 16)
   mkdir -p "$d"
   printf '%s\n' "BACKEND_IMAGE=$BACKEND_IMAGE" FRONTEND_IMAGE=example.invalid/unused PROXY_IMAGE=example.invalid/unused \
-    "POSTGRES_IMAGE=${DRILL_POSTGRES_IMAGE:-postgres:18.6}" "REDIS_IMAGE=${DRILL_REDIS_IMAGE:-redis:8.8.3-alpine}" \
+    "POSTGRES_IMAGE=${DRILL_POSTGRES_IMAGE:-postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42}" "REDIS_IMAGE=${DRILL_REDIS_IMAGE:-redis:8.8.3-alpine@sha256:cc9d0aecc235bda23e80287b5ef7c131cae443045b9a332d45932feb71a1e70e}" \
     "CRM_ENV_DIR=$d" "STACK_SUBNET=172.31.$2.0/24" "STACK_IP_RANGE=172.31.$2.128/25" "STACK_PROXY_IP=172.31.$2.2" \
     > "$d/release.env"
   printf '%s\n' "POSTGRES_PASSWORD=$(hex 24)" "CRM_MIGRATOR_PASSWORD=$mig" "CRM_APP_PASSWORD=$app" > "$d/postgres.env"
@@ -100,6 +101,8 @@ age-keygen -y "$work/identity.txt" > "$work/recipients.txt"
 printf '%s\n' "BACKUP_S3_ENDPOINT=$s3" BACKUP_S3_REGION=garage BACKUP_S3_BUCKET=backups \
   "BACKUP_STORAGE_ENDPOINT=$s3" "BACKUP_RECIPIENTS=$work/recipients.txt" > "$work/backup.env"
 cp "$work/backup.env" "$work/restore.env"
+heartbeat="heartbeat-$(hex 8)" # el «token» del ping: nunca en los argumentos de curl
+touch "$work/$heartbeat" && echo "BACKUP_HEARTBEAT_URL=file://$work/$heartbeat" >> "$work/backup.env"
 printf '%s\n' "BACKUP_S3_ACCESS_KEY_ID=$writer" "BACKUP_S3_SECRET_ACCESS_KEY=$writer_secret" >> "$work/backup.env"
 printf '%s\n' "BACKUP_S3_ACCESS_KEY_ID=$reader" "BACKUP_S3_SECRET_ACCESS_KEY=$reader_secret" >> "$work/restore.env"
 
@@ -114,7 +117,8 @@ for size in 2048 300000 6000000; do
 done
 
 echo "== Backup (la alerta primero: un backup que falla deja backup.failed)"
-if stack src env CRM_COMPOSE_PROJECT="$id-missing" BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/failed.log"; then
+# alerted=1 heredado del entorno: no silencia el aviso.
+if stack src env CRM_COMPOSE_PROJECT="$id-missing" alerted=1 BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/failed.log"; then
   fail "un backup sin base no falló"
 fi
 grep -q '"event":"backup.failed"' "$work/failed.log" || fail "sin backup.failed en el log"
@@ -122,23 +126,35 @@ stack src env BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" nightly
 s3_remote WRITER "$s3" garage "$writer" "$writer_secret"
 s3_remote READER "$s3" garage "$reader" "$reader_secret"
 if rclone lsf WRITER:backups/db/daily/ > /dev/null 2>&1; then fail "la credencial del servidor lee el destino"; fi
-object=$(rclone lsf READER:backups/db/daily/)
-[ "$(rclone cat --count 21 "READER:backups/db/daily/$object")" = age-encryption.org/v1 ] || fail "el volcado no está cifrado"
+object=$(rclone lsf --include '*.dump.age' READER:backups/db/daily/)
+for o in "$object" "${object%.dump.age}.counts.age"; do
+  [ "$(rclone cat --count 21 "READER:backups/db/daily/$o")" = age-encryption.org/v1 ] || fail "$o no está cifrado"
+done
 [ "$(rclone lsf -R --files-only READER:backups/media | grep -c '\.age$')" = 3 ] || fail "faltan archivos en el destino"
 if stack src env BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> /dev/null; then :; else fail "check.sh tras un backup"; fi
+stack src env BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2>&1 | grep -q '"prefixes":"daily"' ||
+  fail "otra noche del mismo periodo repitió el semanal o el mensual"
 
 echo "== Fallos: en el volcado, con la configuración legible por otros, y la lista de objetos desordenada"
 last=$(cat "$work/state-src/last-success")
-# pg_dump escribe algo y falla (un pg_dump cortado): sin pipefail, age terminaría bien y se subiría.
+docker=$(command -v docker)
 mkdir "$work/shim"
-printf '#!/bin/sh\ncase " $* " in *" pg_dump "*) printf PGDMP-cut; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v docker)" \
-  > "$work/shim/docker"
-chmod 700 "$work/shim/docker"
+shim() { # <patrón de los argumentos de docker> <qué hace entonces, en sh>: un docker que falla o hace algo antes
+  printf '#!/bin/sh\ncase " $* " in %s) %s ;; esac\nexec %s "$@"\n' "$1" "$2" "$docker" > "$work/shim/docker"
+  chmod 700 "$work/shim/docker"
+}
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s/curl.argv\nexec %s "$@"\n' "$work" "$(command -v curl)" > "$work/shim/curl"
+chmod 700 "$work/shim/curl"
+# Una noche fallida (el domingo o el día 1) no deja su periodo: la siguiente noche buena hace las copias.
+echo "0 1970-01" > "$work/state-src/last-period"
+# pg_dump escribe algo y falla (un pg_dump cortado): sin pipefail, age terminaría bien y se subiría.
+shim '*" pg_dump "*' 'printf PGDMP-cut; exit 1'
 if stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/failed.log"; then
   fail "un volcado fallido no falló"
 fi
 grep -q 'stage=dump' "$work/failed.log" || fail "el fallo del volcado no dice su etapa"
 [ "$(cat "$work/state-src/last-success")" = "$last" ] || fail "un backup fallido movió last-success"
+[ "$(cat "$work/state-src/last-period")" = "0 1970-01" ] || fail "un backup fallido guardó su periodo"
 cp "$work/backup.env" "$work/open.env" && chmod 644 "$work/open.env"
 if stack src env BACKUP_ENV="$work/open.env" bash "$here/backup.sh" 2> "$work/failed.log"; then fail "aceptó un backup.env 0644"; fi
 grep -q '"event":"backup.failed".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.failed"
@@ -151,15 +167,28 @@ fi
 grep -q '"event":"backup.missing"' "$work/failed.log" || fail "sin backup.missing con una marca no numérica"
 LC_ALL=C sort -r -o "$work/state-src/media-copied.txt" "$work/state-src/media-copied.txt"
 echo org/0-not-in-the-bucket >> "$work/state-src/media-copied.txt"
-stack src env BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2>&1 | grep -q '"media_copied":"0"' ||
-  fail "una lista desordenada rompió la copia de objetos"
+# Un .partial de una restauración de objetos fallida no se copia.
+head -c 100 /dev/urandom | rclone rcat "APP:prod-media/org/$org/attachment/2026/11/$(uuid).partial"
+# Una fila escrita mientras se vuelca: ni el volcado ni sus filas por tabla la ven (misma instantánea).
+shim '*" pg_dump "*' "$docker exec $id-src-postgres-1 psql -qU postgres -d crm -c \"INSERT INTO django_migrations \
+(app, name, applied) VALUES ('drill', 'written-during-the-dump', now())\" > /dev/null"
+stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/catchup.log" ||
+  { cat "$work/catchup.log" >&2; fail "la noche buena falló"; }
+grep -q '"media_copied":"0"' "$work/catchup.log" || fail "una lista desordenada o un .partial rompieron la copia de objetos"
+grep -q '"prefixes":"daily weekly monthly"' "$work/catchup.log" || fail "la noche buena no recuperó el semanal y el mensual"
+[ "$(cat "$work/state-src/last-period")" != "0 1970-01" ] || fail "la noche buena no guardó su periodo"
+rclone delete --include '*.partial' APP:prod-media
+[ -s "$work/curl.argv" ] || fail "no hubo ping a BACKUP_HEARTBEAT_URL"
+if grep -qF "$heartbeat" "$work/curl.argv"; then fail "BACKUP_HEARTBEAT_URL en los argumentos de curl"; fi
+if grep -q heartbeat_failed "$work/catchup.log"; then fail "curl no leyó BACKUP_HEARTBEAT_URL de --config"; fi
 
 echo "== Servidor nuevo: postgres vacío y restauración"
 started=$(date +%s)
 stack dst compose up -d --wait --quiet-pull postgres
-restore() {
-  stack dst env BACKUP_ENV="$work/restore.env" bash "$here/restore.sh" --identity "$work/identity.txt" --latest \
-    --roles-env "$work/dst/postgres.env" --expect-counts "$work/state-src/last-counts.tsv" "$@"
+restore_path=$PATH
+restore() { # --expect-counts: las filas de la instantánea del volcado, aunque se escribió durante él
+  stack dst env PATH="$restore_path" BACKUP_ENV="$work/restore.env" bash "$here/restore.sh" --identity "$work/identity.txt" \
+    --latest --roles-env "$work/dst/postgres.env" --expect-counts "$@"
 }
 restore --media 2>&1 | tee "$work/restore.log"
 rto=$(($(date +%s) - started))
@@ -168,6 +197,7 @@ grep -q '"status": "ok"' "$work/restore.log" || fail "/health/ready no está ok"
 rclone check --download APP:prod-media APP:restored-media || fail "los archivos restaurados no son idénticos"
 [ "$(awk -F '\t' '$1 == "organizations" {print $2}' "$work/state-dst/restored-counts.tsv")" = 1 ] ||
   fail "la organización del origen no está"
+cp "$work/state-dst/restored-counts.tsv" "$work/before.tsv"
 
 echo "== Una base con datos no se pisa sin --replace-existing-data, ni con una clave equivocada"
 if restore > /dev/null 2> "$work/refused.log"; then fail "restauró encima de una base con datos"; fi
@@ -175,12 +205,45 @@ grep -q 'no se restaura encima' "$work/refused.log" || fail "la negativa no se e
 age-keygen -o "$work/wrong.txt" 2> /dev/null
 if restore --replace-existing-data --identity "$work/wrong.txt" > /dev/null 2>&1; then fail "restauró con otra clave"; fi
 cp "$work/dst/postgres.env" "$work/roles-open.env" && chmod 644 "$work/roles-open.env"
-if restore --replace-existing-data --roles-env "$work/roles-open.env" > /dev/null 2> "$work/refused.log"; then
+if stack dst env alerted=1 BACKUP_ENV="$work/restore.env" bash "$here/restore.sh" --identity "$work/identity.txt" --latest \
+  --replace-existing-data --roles-env "$work/roles-open.env" > /dev/null 2> "$work/refused.log"; then
   fail "aceptó contraseñas en un archivo 0644"
 fi
 grep -q 'tiene modo' "$work/refused.log" || fail "el rechazo de --roles-env no se explica"
-stack dst table_counts | diff -q - "$work/state-src/last-counts.tsv" > /dev/null || fail "un intento rechazado tocó la base"
-restore --replace-existing-data 2>&1 | grep -q '"event":"restore.ok"' || fail "--replace-existing-data no restauró"
+grep -q '"event":"restore.failed"' "$work/refused.log" || fail "alerted=1 heredado silenció restore.failed"
+stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "un intento rechazado tocó la base"
+
+echo "== --replace-existing-data guarda la base anterior hasta restore.ok, y se puede volver a ella"
+replaced() { stack dst psql_su -d postgres -c "SELECT datname FROM pg_database WHERE datname LIKE 'crm_replaced_%'"; }
+rollback() { # el procedimiento del runbook, §6
+  stack dst compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -v kept="$1" \
+    < "$here/rollback-replaced.sql"
+}
+restore_path="$work/shim:$PATH"
+shim '*RENAME*' 'exit 1' # el renombrado falla: crm sigue intacta y el aviso no nombra una base que no existe
+if restore --replace-existing-data > /dev/null 2> "$work/replace.log"; then fail "un renombrado fallido no falló"; fi
+grep -q '"event":"restore.failed"' "$work/replace.log" || fail "un renombrado fallido no avisó"
+if grep -q 'kept=' "$work/replace.log"; then fail "el aviso dice kept= sin base guardada"; fi
+[ -z "$(replaced)" ] || fail "un renombrado fallido dejó una base guardada"
+stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "un renombrado fallido tocó crm"
+shim '*" up "*" backend "*' 'exit 1' # falla después de pg_restore: el backend no arranca
+if restore --replace-existing-data > /dev/null 2> "$work/replace.log"; then fail "un backend que no arranca no falló"; fi
+restore_path=$PATH
+kept=$(replaced)
+grep -q "\"event\":\"restore.failed\".*kept=$kept" "$work/replace.log" || fail "el aviso no dice qué base se guardó"
+stack dst psql_su -d "$kept" -c "$counts_sql" | diff -q - "$work/before.tsv" > /dev/null || fail "no se guardó la base anterior"
+if rollback crm_replaced_19700101000000 > /dev/null 2>&1; then fail "volvió atrás a una base que no existe"; fi
+stack dst table_counts > /dev/null || fail "una vuelta atrás sin base guardada borró crm"
+rollback "$kept"
+stack dst table_counts | diff -q - "$work/before.tsv" > /dev/null || fail "no se pudo volver a la base anterior"
+restore --replace-existing-data 2>&1 | grep -q '"event":"restore.replaced_dropped"' || fail "--replace-existing-data no restauró"
+[ -z "$(replaced)" ] || fail "tras restore.ok quedó la base anterior"
+
+echo "== Roles que ya existen, sin contraseñas y sin la base crm: restore.sh la crea"
+stack dst compose stop backend 2> /dev/null
+stack dst psql_su -d postgres -c "DROP DATABASE crm WITH (FORCE)"
+stack dst env BACKUP_ENV="$work/restore.env" bash "$here/restore.sh" --identity "$work/identity.txt" --latest --expect-counts \
+  2>&1 | grep -q '"event":"restore.ok"' || fail "sin la base crm y sin --roles-env no restauró"
 
 echo "== Objetos: una clave equivocada no pisa nada y lo que ya está no se vuelve a subir"
 if restore --media-only --overwrite-media --identity "$work/wrong.txt" > /dev/null 2>&1; then fail "restauró objetos con otra clave"; fi

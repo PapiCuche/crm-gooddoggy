@@ -4,7 +4,8 @@ name: infra-prod
 # con valores ficticios (solo el proxy publica 80 y 443) y `caddy validate` con la imagen del borde.
 # F1-15: la prueba de deploy.sh con docker falso (fallo de la puerta → vuelta atrás) y la frontera
 # de images.yml (test_workflow_security.py), que el check trusted solo ejecuta desde main.
-# F1-16: la retención de los backups y el simulacro de backup y restauración con un Garage local.
+# F1-16: la retención de los backups y el simulacro de backup y restauración con un Garage local;
+# también cuando cambia una migración del backend (F1-16b).
 # F1-17: smoke.sh con docker y curl falsos (certificado, /demo y /health/* desde fuera).
 # F1-15b: también cuando cambia un Dockerfile: validate.sh exige sus bases por digest.
 # Ejecuta código del PR: `pull_request` (nunca `pull_request_target`), solo lectura, acciones por SHA.
@@ -19,6 +20,7 @@ on:
       - "frontend/Dockerfile"
       - ".github/scripts/test_workflow_security.py"
       - ".github/scripts/test_backup_retention.py"
+      - "backend/**/migrations/**" # el simulacro restaura y comprueba migrations_at_head
   push:
     branches: [main]
     paths: *paths
