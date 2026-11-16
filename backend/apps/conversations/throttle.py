@@ -12,7 +12,9 @@ entre instancias), en una sola sentencia que bloquea la fila. Cuenta antes de mi
 rechaza (429 con `Retry-After`) al pasar el tope. Las tres rutas comparten el contador. La purga
 del acceso borra estas filas cuando su ventana ya pasó (la ventana es menor que su calma).
 
-La subida de un medio (F7-09b2) tiene su contador por persona (`med:usr:<id>`).
+La subida de un medio (F7-09b2) tiene su contador por persona (`med:usr:<id>`). Su 422
+`MEDIA_INFECTED` (F7-15b) deshace la transacción de la vista: la auditoría y la alerta se dejan
+aquí, después (`outbound_media.infected`).
 """
 
 import re
@@ -22,6 +24,7 @@ from django.conf import settings
 from django.db import connection
 from django.http import HttpRequest, HttpResponse
 
+from apps.conversations import outbound_media
 from core.api.errors import error_response
 
 PATH = re.compile(r"^/api/v1/o/[^/]+/channels/whatsapp/")
@@ -68,4 +71,8 @@ class ChannelThrottleMiddleware:
             limited = error_response("RATE_LIMITED", 429)
             limited.headers["Retry-After"] = str(wait)
             return limited
-        return self.get_response(request)
+        response = self.get_response(request)
+        mark, tenant = getattr(request, "media_infected", None), getattr(request, "tenant", None)
+        if prefix == "med" and mark is not None and tenant is not None:
+            outbound_media.infected(tenant, *mark)
+        return response

@@ -159,16 +159,24 @@ def test_a_storage_error_mid_stream_is_no_verdict_and_retries(
 
 
 class Unclosable(io.BytesIO):
+    """Falla al cerrarse la primera vez y cuenta las veces (la siguiente, al recogerlo, cierra)."""
+
+    closes = 0
+
     def close(self) -> None:
-        raise RuntimeError("cerrar falla")
+        self.closes += 1
+        if self.closes == 1:
+            raise RuntimeError("cerrar falla")
+        super().close()
 
 
-def test_a_failing_close_keeps_the_real_verdict(
+def test_the_blob_is_closed_once_and_a_failing_close_keeps_the_real_verdict(
     world: Any, migrator: DB, clamd: FakeClamd, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    file_id = stored(world, migrator)
-    monkeypatch.setattr(world.blobs, "open", lambda key: Unclosable(JPEG))
+    file_id, blob = stored(world, migrator), Unclosable(JPEG)
+    monkeypatch.setattr(world.blobs, "open", lambda key: blob)
     assert scan.scan(world.a, file_id, 1) == ("CLEAN", None)
+    assert blob.closes == 1  # cerrado (sin fuga), una vez
 
 
 def test_only_inbound_media_files_are_scanned(world: Any, migrator: DB, clamd: FakeClamd) -> None:

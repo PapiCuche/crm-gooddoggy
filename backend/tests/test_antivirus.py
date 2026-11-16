@@ -16,6 +16,11 @@ from core import antivirus
 # El archivo de prueba EICAR, armado en dos trozos: el repositorio no guarda la cadena entera.
 EICAR = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$" + b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 REAL = os.environ.get("CLAMD_TEST_ADDRESS", "")
+# Pasa los magic bytes de un PDF (F7-15b) y lleva EICAR en un objeto `stream`, que clamd extrae y
+# escanea aparte: así se prueba un envío infectado desde el compositor (local-stack.md §6).
+EICAR_PDF = (
+    b"%PDF-1.4\n1 0 obj\n<< /Length 68 >>\nstream\n" + EICAR + b"\nendstream\nendobj\n%%EOF\n"
+)
 
 
 def _instream(conn: socket.socket) -> bytes:
@@ -124,3 +129,4 @@ def test_a_real_clamd_finds_eicar_and_passes_a_clean_file(settings: Any) -> None
     verdict = scan(EICAR, seconds=30.0)
     assert verdict.status == "INFECTED" and verdict.signature and "Eicar" in verdict.signature
     assert scan(b"\xff\xd8\xff\xe0" + bytes(4096), seconds=30.0) == antivirus.Verdict("CLEAN")
+    assert scan(EICAR_PDF, seconds=30.0).status == "INFECTED"  # el envío infectado de la guía

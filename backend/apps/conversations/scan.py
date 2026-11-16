@@ -76,14 +76,15 @@ def _write(ctx: TenantContext, file_id: UUID, status: str, signature: str | None
     return True
 
 
-def _alert(ctx: TenantContext, name: str, file_id: UUID, signature: str | None) -> None:
-    context = {"organization_id": str(ctx.organization_id), "file_id": str(file_id),
-               "signature": signature}  # fmt: skip
+def alert(ctx: TenantContext, name: str, signature: str | None, **ids: UUID) -> None:
+    """La alerta de un veredicto (también la de un envío infectado, F7-15b): ids y la firma."""
+    shown = {key: str(value) for key, value in ids.items()}
+    context = {"organization_id": str(ctx.organization_id), **shown, "signature": signature}
     logger.error(name, **context)
     try:
         reporting.reporter().capture_message(name, context, fingerprint=[name])
     except Exception:  # noqa: BLE001 — un reporte roto no deshace el veredicto
-        logger.warning("media.alert.report_failed", file_id=str(file_id))
+        logger.warning("media.alert.report_failed", **shown)
 
 
 def scan(organization_id: UUID, file_id: UUID, attempt: int) -> tuple[str, int | None]:
@@ -107,7 +108,7 @@ def scan(organization_id: UUID, file_id: UUID, attempt: int) -> tuple[str, int |
     with tenant_scope(ctx):
         written = _write(ctx, file_id, status, signature)
     if written and status in ALERTS:  # una caída de clamd que deja todo en `ERROR` también se ve
-        _alert(ctx, ALERTS[status], file_id, signature)
+        alert(ctx, ALERTS[status], signature, file_id=file_id)
     return (status if written else "SKIPPED"), None
 
 
