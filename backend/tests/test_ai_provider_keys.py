@@ -21,6 +21,7 @@ from apps.ai_gateway import keys
 from apps.ai_gateway.models import KEY_PURPOSE, AIProviderAccount, AIProviderKey
 from apps.ai_gateway.tasks import reseal_provider_keys
 from core import sealed
+from core.observability import reporting
 from core.tenancy.scope import tenant_scope
 from tests.test_contacts_api import crm, real_stack
 from tests.test_conversations_tables import refused
@@ -109,8 +110,10 @@ def test_rotating_and_revoking_wipe_the_old_cipher_and_a_new_key_reactivates(
     crm: SimpleNamespace, migrator: DB
 ) -> None:
     first = store(crm.a)
+    [box] = [cipher(row) for row in rows(crm.a)]
     second = store(crm.a, OTHER_KEY, crm.ana)  # rotación: la misma cuenta
     assert second.pk == first.pk and second.rotated_at is not None
+    assert second.updated_at > first.updated_at  # `update()` no aplica `auto_now`
     assert (second.key_last_four, second.configured_by_user_id) == (OTHER_KEY[-4:], crm.ana.pk)
     old, new = rows(crm.a)
     assert old.ciphertext is None and old.revoked_at is not None and new.revoked_at is None
@@ -118,9 +121,18 @@ def test_rotating_and_revoking_wipe_the_old_cipher_and_a_new_key_reactivates(
     assert revoke(crm.a) is True and revoke(crm.a) is False  # la segunda no hace nada
     gone = account(crm.a)
     assert (gone.status, gone.revoked_at is not None) == ("DISABLED", True)
+    assert gone.updated_at > second.updated_at
     assert all(row.ciphertext is None and row.revoked_at for row in rows(crm.a))
     with pytest.raises(sealed.SealError):
         open_key(crm.a)  # desactivada: no hay nada que abrir
+    # alguien con acceso a la base revive la primera clave en la cuenta desactivada: no se abre
+    revived = "UPDATE ai_provider_keys SET ciphertext = %s, revoked_at = NULL WHERE id = %s"
+    migrator.execute(revived, [box, old.pk])
+    with pytest.raises(sealed.SealError):
+        open_key(crm.a)  # solo abre la clave de una cuenta activa
+    migrator.execute(
+        "UPDATE ai_provider_keys SET ciphertext = NULL, revoked_at = now() WHERE id = %s", [old.pk]
+    )
     assert revoke(crm.b) is False  # sin cuenta
     back = store(crm.a)  # una clave nueva la reactiva; no sustituyó a ninguna viva
     assert (back.status, back.revoked_at, back.rotated_at) == ("ACTIVE", None, second.rotated_at)
@@ -261,7 +273,11 @@ def test_an_account_row_keeps_its_shape(
 
 
 def test_reseal_moves_every_key_to_the_current_master_key_and_reports_what_it_cannot_open(
-    crm: SimpleNamespace, settings: Any, caplog: pytest.LogCaptureFixture, migrator: DB
+    crm: SimpleNamespace,
+    settings: Any,
+    caplog: pytest.LogCaptureFixture,
+    migrator: DB,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings.SECRETS_KEKS = {1: OLD_KEK}
     mine, theirs = store(crm.a), store(crm.b, OTHER_KEY)
@@ -272,14 +288,38 @@ def test_reseal_moves_every_key_to_the_current_master_key_and_reports_what_it_ca
     sql = "UPDATE ai_provider_keys SET ciphertext = %s WHERE account_id = %s"
     migrator.execute(sql, [alien, theirs.pk])
     settings.SECRETS_KEKS = {1: OLD_KEK, 7: NEW_KEK}  # rotación de la clave maestra
+    reports: list[tuple[BaseException, Any]] = []
+
+    class Spy:
+        def capture_exception(self, error: BaseException, context: Any = None) -> None:
+            reports.append((error, context))
+
+    monkeypatch.setattr(reporting, "reporter", lambda: Spy())
     with caplog.at_level(logging.DEBUG):
         assert reseal_provider_keys() == {"key": 7, "resealed": 1, "unreadable": 1, "busy": 0}
+    [(error, context)] = reports  # una vez, solo con cuántas
+    assert type(error) is keys.UnreadableKeys and error.args == (1,)
+    assert context == {"action": "ai.provider_keys_reseal"} and OTHER_KEY not in repr(error)
     kept = rows(crm.a)[-1]
     assert cipher(kept)[:3] == b"\x01\x00\x07" and kept.key_version == 7
     assert open_key(crm.a) == OTHER_KEY and account(crm.a).pk == mine.pk
     stuck = rows(crm.b)[0]
     assert stuck.key_version == 1 and cipher(stuck) == alien  # intacta
     assert reseal_provider_keys() == {"key": 7, "resealed": 0, "unreadable": 1, "busy": 0}
+    assert len(reports) == 2  # cada pasada lo vuelve a avisar
+
+    def broken() -> Any:
+        raise RuntimeError("sin reporte")
+
+    monkeypatch.setattr(reporting, "reporter", broken)
+    assert OTHER_KEY not in caplog.text and KEY not in caplog.text  # lo vuelto a cifrar, tampoco
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG):  # un reporte roto no la para, y queda en el log
+        assert reseal_provider_keys() == {"key": 7, "resealed": 0, "unreadable": 1, "busy": 0}
+    told = [
+        r for r in caplog.records if "ai.provider_keys_unreadable_not_reported" in r.getMessage()
+    ]
+    assert [r.levelname for r in told] == ["ERROR"]
     settings.SECRETS_KEKS = {7: NEW_KEK}  # la anterior ya se puede retirar
     assert open_key(crm.a) == OTHER_KEY
     assert OTHER_KEY not in caplog.text + everything(migrator) and KEY not in caplog.text

@@ -75,7 +75,7 @@ def store(ctx: TenantContext, provider: str, key: str) -> AIProviderAccount:
             accounts.filter(pk=account.pk).update(
                 status=AccountStatus.ACTIVE, revoked_at=None, key_last_four=key[-4:],
                 configured_by_user_id=ctx.user_id, configured_at=now,
-                rotated_at=now if rotated else account.rotated_at,
+                rotated_at=now if rotated else account.rotated_at, updated_at=now,
             )  # fmt: skip
         box, version = _seal(account.provider, account.pk, key.encode())
         AIProviderKey.objects.using(alias).create(
@@ -96,17 +96,24 @@ def revoke(ctx: TenantContext, provider: str) -> bool:
             return False
         _wipe(alias, account.pk)
         now = timezone.now()
-        accounts.filter(pk=account.pk).update(status=AccountStatus.DISABLED, revoked_at=now)
+        accounts.filter(pk=account.pk).update(
+            status=AccountStatus.DISABLED, revoked_at=now, updated_at=now
+        )
     return True
 
 
 def open_key(ctx: TenantContext, provider: str) -> str:
     """La clave en claro de la cuenta activa de `provider`, **solo** para la llamada que la usa:
-    no se guarda ni se registra. `sealed.SealError` si no hay una viva o no se abre."""
+    no se guarda ni se registra. `sealed.SealError` si la cuenta no está activa, no hay una clave
+    viva o no se abre."""
     alias = require_scope(ctx)
+    active = AIProviderAccount.objects.using(alias).filter(
+        provider=provider, status=AccountStatus.ACTIVE
+    )
     row = (
         AIProviderKey.objects.using(alias)
         .filter(provider=provider, revoked_at__isnull=True, ciphertext__isnull=False)
+        .filter(account_id__in=active.values("pk"))
         .first()
     )
     if row is None or row.ciphertext is None:
@@ -119,8 +126,10 @@ def reseal(*, max_orgs: int = 50, batch_size: int = 100) -> dict[str, int]:
     §5, paso 2), como `apps.conversations.credentials.reseal`: descubre las organizaciones con una
     función SECURITY DEFINER (solo ids) y trabaja en el scope de cada una, fila a fila y
     bloqueada; solo cambian `ciphertext` y `key_version`. Lo que no abre se cuenta
-    (`unreadable`) y lo que otra operación tiene bloqueado, también (`busy`). Sin claves maestras
-    lanza `ImproperlyConfigured`."""
+    (`unreadable`, con un reporte) y lo que otra operación tiene bloqueado, también (`busy`). Sin
+    claves maestras lanza `ImproperlyConfigured`. Una organización con claves que no se abren
+    sigue saliendo en el descubrimiento: con el tope `max_orgs` puede dejar fuera a otras hasta
+    que se arregle la clave maestra."""
     done = {"key": sealed.current(), "resealed": 0, "unreadable": 0, "busy": 0}
     with connection.cursor() as cursor:
         cursor.execute(

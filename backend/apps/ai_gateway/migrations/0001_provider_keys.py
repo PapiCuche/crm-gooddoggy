@@ -204,6 +204,7 @@ class Migration(migrations.Migration):
         migrations.RunPython(_privileges, migrations.RunPython.noop),
         # Descubrimiento cross-tenant mínimo para volver a cifrar tras rotar la clave maestra
         # (ADR-022 §5, ADR-002 §3.3): solo ids de organización con una clave viva cifrada con otra.
+        # Enumera organizaciones para un proceso `crm_app` comprometido: aceptado (solo ids).
         SecurityDefinerFunction(
             "ai_provider_keys_stale_organizations",
             arguments="p_key_version integer, p_limit integer",
