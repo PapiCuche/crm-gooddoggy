@@ -66,6 +66,10 @@ deploy() { : > "$CALLS"; "$work/infra/prod/deploy.sh" "$@" > "$work/out" 2>&1; }
 fail() { echo "test-deploy FAIL: $*" >&2; cat "$work/out" >&2; exit 1; }
 letter() { sed -n 's/^BACKEND_IMAGE=.*@sha256:\(.\).*/\1/p' "$1"; }
 expect() { grep -qF -- "$1" "$work/out" || fail "falta en la salida: $1"; }
+state() { # state <actual> <anterior> <contexto>: letras de release.env y release.env.previous
+  [ "$(letter "$work/etc/release.env")" = "$1" ] || fail "$3: release.env"
+  [ "$(letter "$work/etc/release.env.previous" 2> /dev/null)" = "$2" ] || fail "$3: release.env.previous"
+}
 
 # Negativas, antes de tocar nada.
 FAKE_UID=1000 deploy "$work/a.env" && fail "corre sin root"
@@ -83,7 +87,7 @@ expect "falta REDIS_IMAGE"
 
 # Primer despliegue: sin volcado (no hay versión en marcha); orden pull → migrate → up → puerta.
 deploy "$work/a.env" || fail "primer despliegue"
-[ "$(letter "$work/etc/release.env")" = a ] && [ ! -f "$work/etc/release.env.previous" ] || fail "estado tras a"
+state a "" "tras a"
 if grep -q pg_dump "$CALLS"; then fail "volcado sin versión previa"; fi
 events=$(grep -oE '^a (pull --quiet|up -d --wait postgres redis|run --rm --no-deps migrate|up -d --wait --wait-timeout|exec -T backend)|^smoke' "$CALLS" | tr '\n' '|')
 [ "$events" = "a pull --quiet|a up -d --wait postgres redis|a run --rm --no-deps migrate|a up -d --wait --wait-timeout|a exec -T backend|smoke|" ] ||
@@ -95,20 +99,21 @@ grep -q '^a exec -T postgres pg_dump -U postgres -d crm -Fc' "$CALLS" || fail "s
 grep -q '^age -R .*/backup-recipients.txt' "$CALLS" || fail "volcado sin cifrar"
 [ "$(sed -n '/pg_dump/=' "$CALLS")" -lt "$(sed -n '/run --rm --no-deps migrate/=' "$CALLS")" ] || fail "volcado tras migrar"
 ls "$work/state/predeploy/"predeploy-*.dump.age > /dev/null || fail "no se guardó el volcado"
-[ "$(letter "$work/etc/release.env")" = b ] && [ "$(letter "$work/etc/release.env.previous")" = a ] || fail "rotación"
+state b a "rotación"
 
 # La puerta falla con c: vuelve sola a b, sale con 1 y no cambia release.env.
 FAIL_READY=c deploy "$work/c.env" && fail "c pasa con la puerta rota"
 expect "ROLLBACK OK"
 grep -q '^b up -d --wait --wait-timeout 10 --remove-orphans' "$CALLS" || fail "no levantó b"
-[ "$(letter "$work/etc/release.env")" = b ] && [ "$(letter "$work/etc/release.env.previous")" = a ] || fail "estado tras rollback"
-[ ! -e "$work/etc/release.env.next" ] && [ ! -e "$work/state/lock" ] || fail "quedan restos"
+state b a "tras rollback"
+if [ -e "$work/etc/release.env.next" ] || [ -e "$work/state/lock" ]; then fail "quedan restos"; fi
 grep -q "ROLLBACK OK" "$work/state/deploy.log" || fail "el registro no cuenta el rollback"
 
 # migrate falla con c: para antes del up; ni rollback ni cambio de release.env.
 FAIL_RUN=c deploy "$work/c.env" && fail "c pasa con migrate roto"
 expect "fallaron las migraciones"
-! grep -q -- '--remove-orphans' "$CALLS" && [ "$(letter "$work/etc/release.env")" = b ] || fail "migrate roto tocó el runtime"
+if grep -q -- '--remove-orphans' "$CALLS"; then fail "migrate roto tocó el runtime"; fi
+state b a "tras migrate roto"
 
 # Idempotente: repetir b no pierde la versión anterior.
 deploy "$work/b.env" || fail "repetir b"
@@ -116,7 +121,7 @@ deploy "$work/b.env" || fail "repetir b"
 
 # Vuelta atrás manual: a pasa a ser la actual y b la anterior.
 deploy --rollback || fail "--rollback"
-[ "$(letter "$work/etc/release.env")" = a ] && [ "$(letter "$work/etc/release.env.previous")" = b ] || fail "estado tras --rollback"
+state a b "tras --rollback"
 
 # Un despliegue cortado deja el lock: el siguiente se niega.
 mkdir "$work/state/lock"
