@@ -31,6 +31,16 @@ urlpatterns = [
     ),
     path("pricing/batches/", batches.BatchesView.as_view(), name="price-batches"),
     path("pricing/batches/<uuid:batch_id>/", batches.BatchView.as_view(), name="price-batch"),
+    path(
+        "pricing/batches/<uuid:batch_id>/items/",
+        batches.BatchLinesView.as_view(),
+        name="price-batch-items",
+    ),
+    path(
+        "pricing/batches/<uuid:batch_id>/cancel/",
+        batches.BatchCancelView.as_view(),
+        name="price-batch-cancel",
+    ),
     path("pricing/promotions/", promotions.PromotionsView.as_view(), name="promotions"),
     path(
         "pricing/promotions/<uuid:promotion_id>/",

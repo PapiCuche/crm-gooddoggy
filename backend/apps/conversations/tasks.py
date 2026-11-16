@@ -30,6 +30,7 @@ from apps.conversations import (
     ingress,
     media,
     realtime,
+    scan,
 )
 from apps.conversations.channels import (
     AmbiguousChannelError,
@@ -177,12 +178,41 @@ def fetch_media(task: Any, attachment_id: str, organization_id: str, failures: i
         fetch_media.apply_async(kwargs=again, countdown=wait)
 
 
+@subscribe("file.stored")
+@tenant_task(name="conversations.scan_event", bind=True, ignore_result=True, acks_late=True)
+def scan_event(task: Any, event_id: str) -> None:
+    """Handler del outbox: encola el antivirus del archivo recién descargado (F7-15)."""
+    event = OutboxEvent.objects.filter(id=event_id, event_type="file.stored").first()
+    if event is not None:
+        ids = {
+            "file_id": str(event.aggregate_id),
+            "organization_id": str(require().organization_id),
+        }
+        scan_media.apply_async(kwargs=ids)
+
+
+@platform_task(name="conversations.scan_media", bind=True, ignore_result=True, acks_late=True)
+def scan_media(task: Any, file_id: str, organization_id: str, attempt: int = 1) -> None:
+    """Un intento de antivirus (`scan.scan`); sin veredicto vuelve con espera hasta
+    `scan.MAX_ATTEMPTS` y luego queda `ERROR`. Un fallo inesperado lo recoge el barredor."""
+    try:
+        attempt = max(1, min(int(attempt), scan.MAX_ATTEMPTS))
+    except TypeError, ValueError, OverflowError:
+        attempt = scan.MAX_ATTEMPTS
+    outcome, wait = scan.scan(UUID(organization_id), UUID(file_id), attempt)
+    logger.info("media.scan", file_id=file_id, outcome=outcome, attempt=attempt)
+    if wait is not None:
+        again = {"file_id": file_id, "organization_id": organization_id, "attempt": attempt + 1}
+        scan_media.apply_async(kwargs=again, countdown=wait)
+
+
 @platform_task(name="conversations.sweep_media", ignore_result=True)
 def sweep_media(batch_size: int = MEDIA_SWEEP_BATCH) -> dict[str, int]:
     """Vuelve a encolar los adjuntos varados (`media.stranded`: una tarea perdida, un encolado que
-    falló, un tope de fallos) de cada organización activa, leída de `organizations`; cada una en
-    su `tenant_scope`. Un fallo en una no detiene las demás. Registros: ids y contadores."""
-    done: Counter[str] = Counter(organizations=0, requeued=0, failed=0)
+    falló, un tope de fallos) y los antivirus sin tarea viva (`scan.stale`) de cada organización
+    activa, leída de `organizations`; cada una en su `tenant_scope`. Un fallo en una no detiene las
+    demás. Registros: ids y contadores."""
+    done: Counter[str] = Counter(organizations=0, requeued=0, scans=0, failed=0)
     started = time.monotonic()
     found = Organization.objects.filter(status__in=ACCESSIBLE_STATUSES).order_by("pk")
     for organization_id in list(found.values_list("pk", flat=True)):
@@ -191,8 +221,14 @@ def sweep_media(batch_size: int = MEDIA_SWEEP_BATCH) -> dict[str, int]:
         done["organizations"] += 1
         try:
             ctx = TenantContext(organization_id, "celery")
+            size = max(1, min(int(batch_size), MEDIA_SWEEP_BATCH))
             with tenant_scope(ctx):
-                ids = media.stranded(ctx, max(1, min(int(batch_size), MEDIA_SWEEP_BATCH)))
+                ids, unscanned = media.stranded(ctx, size), scan.stale(ctx, size)
+            for pk in unscanned:  # F7-15: un `PENDING` sin antivirus en marcha
+                scan_media.apply_async(
+                    kwargs={"file_id": str(pk), "organization_id": str(organization_id)}
+                )
+                done["scans"] += 1
             for pk in ids:
                 # tras la marca de `stranded`: antes, con el tope lleno, se tomaría por un duplicado
                 fetch_media.apply_async(

@@ -163,9 +163,15 @@ MEDIA_PER_ORG = 2  # F7-09a1b: descargas de medios a la vez por organización (a
 # F7-09b (D-F7-04, decisión del propietario abierta): sin antivirus ningún archivo queda `CLEAN`,
 # así que por omisión no sale ningún medio. `true` envía también los de antivirus `PENDING`.
 MEDIA_SEND_UNSCANNED = env.boolean("MEDIA_SEND_UNSCANNED", False)
+# F7-15 (ADR-008): `host:puerto` de `clamd` (ClamAV). Vacío: nada recibe veredicto y ningún medio
+# entrante se abre (tras los reintentos queda `ERROR`).
+CLAMD_ADDRESS = env.optional("CLAMD_ADDRESS", "")
 # F7-09a1c: las descargas de medios (hasta 120 s cada una) van en su propia cola, de baja
 # concurrencia (`worker-media`), para no ocupar los workers de la salida de mensajes.
-CELERY_TASK_ROUTES = {"conversations.fetch_media": {"queue": "media"}}
+CELERY_TASK_ROUTES = {
+    "conversations.fetch_media": {"queue": "media"},
+    "conversations.scan_media": {"queue": "media"},  # F7-15: el antivirus, tras la descarga
+}
 # F7-09a1d: Redis vuelve a entregar una tarea reservada y sin confirmar pasado este tiempo, y una
 # con `countdown` (o `eta`) espera reservada sin confirmar, con `acks_late` o sin él: ningún
 # `countdown` puede llegar a tanto (es global: medios, `MAX_COUNTDOWN` = 1800 s; las demás, 600 s

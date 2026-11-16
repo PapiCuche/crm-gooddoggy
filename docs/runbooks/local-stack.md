@@ -113,3 +113,41 @@ El canal Sandbox no sale a ningún proveedor: un medio enviado queda `DELIVERED`
    - Envía una imagen con un pie de foto y un PDF sin él. **Esperado:** dos burbujas a la derecha, «Imagen» con el pie y «Documento», que pasan de «En cola» a «Entregado» (pulsa «Actualizar mensajes» si no cambia sola).
    - Un GIF o una imagen de más de 5 MB (un PDF de más de 10 MB) no se adjunta y se explica; no se sube nada.
 6. Al terminar, vuelve a `MEDIA_SEND_UNSCANNED=false` y `make up`: sin antivirus (D-F7-04), ningún medio debe salir fuera de una prueba local.
+
+## 7. Abrir los medios entrantes: el antivirus (F7-15)
+
+Un medio que llega por WhatsApp (imagen, audio, video o sticker) se descarga y queda en espera hasta que el antivirus **ClamAV** lo revisa. Solo un archivo limpio se puede descargar desde el chat; uno infectado o que no se pudo revisar nunca se sirve.
+
+**Qué arranca.** `make up` levanta también el servicio **clamd** (imagen `clamav/clamav:1.5.4-debian`). No publica puertos al host y vive en su propia red `av`, interna (sin salida): solo lo ve **worker-media**, en `clamd:3310`. Su configuración es `infra/docker/clamav/clamd.conf`. Trae firmas en la imagen; el servicio **freshclam** (otro contenedor, el único con salida) las actualiza en el volumen `clamavdata` y clamd las recarga solo. Cargarlas tarda alrededor de un minuto y ocupa ~1 GiB de memoria; `make up` espera a que esté sano.
+
+```bash
+docker compose -f infra/docker/compose.yaml --env-file infra/env/.env ps clamd   # «healthy»
+docker compose -f infra/docker/compose.yaml --env-file infra/env/.env logs -f worker-media | grep media.scan
+```
+
+**Probarlo con un medio real.** Necesitas una cuenta de WhatsApp conectada (runbook [Activación de WhatsApp](whatsapp-activation.md)) y `conversations.view` y `contacts.view` (el Owner las tiene).
+
+1. Desde un teléfono, envía al número del negocio una **imagen**, un **audio** (nota de voz) y un **sticker**.
+2. Abre `/o/<slug>/inbox` y la conversación de ese teléfono. Cada burbuja muestra primero «Recibiendo el archivo del canal…» y luego «Archivo recibido. Todavía no se puede abrir…» mientras el antivirus lo revisa.
+3. **Esperado:** en unos segundos (pulsa «Actualizar mensajes» si no cambia sola) cada burbuja muestra **«Descargar»** con el tipo y el tamaño. Al pulsarlo, el archivo se descarga en otra pestaña.
+4. En el registro de **worker-media** aparece una línea `media.scan` por archivo, con `outcome: CLEAN`.
+
+**Los medios que llegaron antes de F7-15.** Siguen en espera hasta que el barredor (cada minuto) los encuentra: cualquier archivo sin revisar desde hace más de 15 minutos se vuelve a mandar al antivirus. Tras reconstruir el stack, en unos 15 minutos los medios anteriores se pueden abrir sin hacer nada.
+
+**Qué ves si algo va mal.**
+
+| Burbuja | Qué significa | Qué hacer |
+|---|---|---|
+| «El antivirus encontró un virus en este archivo…» | `INFECTED`: queda en la auditoría (`file.scan_infected`, con la firma y sin el contenido) y en el registro como alerta `media.alert.infected` | Nada que abrir. No pidas reenviarlo |
+| «No se pudo revisar este archivo con el antivirus…» | `ERROR`: clamd no respondió en 4 intentos (30 s, 2 min y 10 min de espera) | Comprueba `ps clamd`; pide al cliente que lo reenvíe |
+| Se queda en «Todavía no se puede abrir…» | El antivirus aún no lo revisó (clamd arrancando o la cola `media` ocupada) | Espera; si pasa de 15 min, mira `logs worker-media` |
+
+**Comprobar que detecta un virus.** El archivo de prueba EICAR no es una imagen ni un audio, así que WhatsApp no lo entrega como medio. Para ver que clamd lo detecta (no guarda nada):
+
+```bash
+printf 'X5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' \
+  | docker compose -f infra/docker/compose.yaml --env-file infra/env/.env exec -T clamd clamdscan --no-summary -
+# stream: Eicar-Test-Signature FOUND (y sale con código 1)
+```
+
+El camino completo (EICAR queda `INFECTED`, se audita y nunca se descarga; clamd caído reintenta y acaba en `ERROR`) lo cubren `backend/tests/test_media_scan.py` y `backend/tests/test_antivirus.py`, este último también contra un clamd real en CI.

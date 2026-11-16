@@ -27,6 +27,7 @@ from apps.access.selectors import execution_context
 from apps.audit.services import Entity, record
 from apps.catalog.models import ProductVariant
 from apps.catalog.selectors import branch, brands, categories, live_variants, products
+from apps.pricing.models import ALERT_PERCENT as ALERT_PERCENT  # la regla vive en el modelo
 from apps.pricing.models import (
     BatchItemStatus,
     BatchKind,
@@ -35,14 +36,13 @@ from apps.pricing.models import (
     PriceChangeBatchItem,
     PriceList,
 )
-from apps.pricing.selectors import prices_at, visible_price_lists
+from apps.pricing.selectors import prices_at, visible_batches, visible_price_lists
 from apps.pricing.text import change_reason
 from core.money import CENT, Rounding, amount_text, parse_amount, round_amount
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import require_scope
 
 LINES_MAX = 2000  # síncrono, como la importación de stock (F3-21)
-ALERT_PERCENT = Decimal(30)  # una variación de más del 30 %, en un sentido u otro (04 §K.5)
 AMOUNT_MAX = Decimal("999999999999.99")  # NUMERIC(14,2)
 PENDING, SKIPPED, ERROR = BatchItemStatus.PENDING, BatchItemStatus.SKIPPED, BatchItemStatus.ERROR
 NO_PRICE = "Sin precio en la lista en esa fecha."
@@ -67,6 +67,14 @@ class TooManyLines(Exception):
     def __init__(self, count: int) -> None:
         super().__init__(count)
         self.count = count
+
+
+class BatchStateConflict(Exception):
+    """El estado del lote no admite el cambio (409); `status` es el que tiene."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__(status)
+        self.status = status
 
 
 class ActorRefused(Exception):
@@ -167,9 +175,9 @@ def _line(
 
 
 def alert(item: PriceChangeBatchItem) -> bool:
-    """Una variación de más del 30 % (04 §K.5), sobre la `delta_percent` guardada: así un filtro
-    de las líneas por `delta_percent` cuenta las mismas."""
-    return item.delta_percent is not None and abs(item.delta_percent) > ALERT_PERCENT
+    """Una variación de más del `ALERT_PERCENT` % (04 §K.5), sobre la `delta_percent` guardada: la
+    regla de `models.ALERTING`, el filtro `?alert=` de las líneas, así cuentan las mismas."""
+    return item.alert
 
 
 def create_batch(
@@ -257,4 +265,27 @@ def create_batch(
         metadata = {"price_list_id": str(price_list.pk), **params, **shown, **batch.summary}
         entity = Entity("price_change_batch", batch.pk, price_list.code)
         record(ctx, "price.bulk_previewed", entity, metadata=metadata)
+    return batch
+
+
+def cancel_batch(ctx: TenantContext, batch_id: UUID) -> PriceChangeBatch:
+    """`DRAFT` o `PREVIEWED` → `CANCELLED`, `version + 1` y `price.bulk_cancelled`; no cambia
+    ningún precio. Uno ya cancelado se devuelve tal cual, sin auditar. `ActorRefused` antes de la
+    primera consulta; `PriceChangeBatch.DoesNotExist` si el actor no ve su lista (activa o no);
+    `BatchStateConflict` desde otro estado. La fila, bloqueada hasta el final de la transacción."""
+    require_person(ctx)
+    alias = require_scope(ctx)
+    shown = visible_batches(execution_context(ctx)).using(alias).select_related("price_list")
+    with transaction.atomic(using=alias):
+        batch: PriceChangeBatch = shown.select_for_update(no_key=True, of=("self",)).get(
+            pk=batch_id
+        )
+        if batch.status == BatchStatus.CANCELLED:
+            return batch
+        if batch.status not in (BatchStatus.DRAFT, BatchStatus.PREVIEWED):
+            raise BatchStateConflict(batch.status)
+        before, batch.status, batch.version = batch.status, BatchStatus.CANCELLED, batch.version + 1
+        batch.save(using=alias, update_fields=["status", "version", "updated_at"])
+        entity = Entity("price_change_batch", batch.pk, batch.price_list.code)
+        record(ctx, "price.bulk_cancelled", entity, {"status": [before, batch.status]})
     return batch
