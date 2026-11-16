@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.conversations",
     "apps.tasks",
     "apps.quotes",
+    "apps.ai_gateway",  # F8-03a (ADR-034 §2): L1, no importa módulos de negocio
 ]
 
 MIDDLEWARE = [
@@ -242,6 +243,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "conversations.reseal_credentials",
         "schedule": crontab(hour=3, minute=57),
     },
+    # F8-03a (ADR-022 §5): y las claves de los proveedores de IA, a otra hora.
+    "ai_gateway.reseal_provider_keys": {
+        "task": "ai_gateway.reseal_provider_keys",
+        "schedule": crontab(hour=4, minute=7),
+    },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -328,6 +334,7 @@ SPECTACULAR_SETTINGS = {
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
         "ConversationStatusEnum": "apps.conversations.models.Status",  # F6-02
+        "QuickReplyVariableEnum": "apps.conversations.quick_replies.VARIABLES",  # F6-08a2
         "StageTypeEnum": "apps.deals.models.StageType",  # F5-04: `stage_type`, `status` y `type`
         "TaskTypeEnum": "apps.tasks.models.TaskType",  # F5-08b: `type` de una tarea
         "QuoteStatusEnum": "apps.quotes.models.QuoteStatus",  # F5-09d: `status` de una cotización

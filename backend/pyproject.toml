@@ -149,6 +149,12 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "ai_gateway (L1) no importa módulos de negocio (L3) (ADR-034 §2, F8-03a)"
+type = "forbidden"
+source_modules = ["apps.ai_gateway"]
+forbidden_modules = ["apps.inventory", "apps.pricing", "apps.deals", "apps.conversations", "apps.tasks", "apps.quotes", "apps.catalog", "apps.contacts"]
+
+[[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
 type = "protected"
 protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.organizations.bootstrap"]
