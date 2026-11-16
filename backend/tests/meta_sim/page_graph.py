@@ -3,8 +3,10 @@
 `POST /<PAGE_ID>/messages` [S17] [S20], con la misma `GRAPH_VERSION` que WhatsApp (§6, D-F7-08).
 
 Los códigos y subcódigos son los de ADR-035 §6 [S26] y se reconfirman en F7b-05. Las fuentes no
-dan el estado HTTP de cada uno: se sigue la convención de `graph.py` (401 el token, 400 el resto,
-500 el servidor) y el adaptador clasifica por `code` y `error_subcode`, nunca por el estado.
+dan el estado HTTP de cada uno: el token sale con 401 y con 400 (la API de páginas suele mandar
+`OAuthException` con 400), así que el adaptador clasifica por `code` y `error_subcode`, nunca por
+el estado. El último campo de `ERRORS` es el código propio que §6 exige para cada caso: un `10` o
+un `200` sin el subcódigo de §6 es `PROVIDER_REJECTED`, no `WINDOW_CLOSED` ni `MESSAGES_ACCESS_OFF`.
 """
 
 import json
@@ -18,17 +20,25 @@ from tests.meta_sim import GRAPH_VERSION
 from tests.meta_sim.graph import LOST, TEST_TOKEN, Cut, Response, Timeout
 from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
 
-# nombre -> (estado HTTP, código de Meta, subcódigo, título)
-ERRORS: dict[str, tuple[int, int, int | None, str]] = {
-    "window_closed": (400, 10, 2018278, "This message is sent outside of allowed window."),
-    "window_closed_ig": (400, 10, 2534022, "This message is sent outside of allowed window."),
-    "unreachable": (400, 551, None, "This person isn't receiving messages from you right now."),
-    "token": (401, 190, None, "Invalid OAuth access token."),
-    "rate_limit": (400, 613, None, "Calls to this api have exceeded the rate limit."),
+# nombre -> (estado HTTP, código de Meta, subcódigo, título, código propio de ADR-035 §6)
+ERRORS: dict[str, tuple[int, int, int | None, str, str]] = {
+    "window_closed": (400, 10, 2018278, "This message is sent outside of allowed window.",
+                      "WINDOW_CLOSED"),
+    "window_closed_2534022": (400, 10, 2534022, "This message is sent outside of allowed window.",
+                              "WINDOW_CLOSED"),
+    "unreachable": (400, 551, None, "This person isn't receiving messages from you right now.",
+                    "RECIPIENT_UNREACHABLE"),
+    "token": (401, 190, None, "Invalid OAuth access token.", "TOKEN_INVALID"),
+    "token_400": (400, 190, None, "Invalid OAuth access token.", "TOKEN_INVALID"),
+    "rate_limit": (400, 613, None, "Calls to this api have exceeded the rate limit.",
+                   "RATE_LIMITED"),
     "messages_access_off": (400, 200, 2534041, "The account owner has disabled access to "
-                            "Instagram Direct Messaging."),
-    "invalid": (400, 100, None, "Invalid parameter"),
-    "server": (500, 1, None, "An unknown error occurred"),
+                            "Instagram Direct Messaging.", "MESSAGES_ACCESS_OFF"),
+    "permission_10": (400, 10, None, "Application does not have permission for this action",
+                      "PROVIDER_REJECTED"),
+    "permission_200": (400, 200, None, "Permissions error", "PROVIDER_REJECTED"),
+    "invalid": (400, 100, None, "Invalid parameter", "PROVIDER_REJECTED"),
+    "server": (500, 1, None, "An unknown error occurred", "PROVIDER_ERROR"),
 }  # fmt: skip
 MESSAGING_TYPES = ("RESPONSE", "UPDATE", "MESSAGE_TAG")  # [S20]
 TAGS = ("HUMAN_AGENT",)  # las demás dan `100` desde el 27-04-2026 [S20]
@@ -74,7 +84,7 @@ class FakePageGraph:
                     found["instagram_business_account"] = {"id": self.pages[page]}
                 return self._ok(found)
             case ("POST", [page, "subscribed_apps"]) if page in self.pages:
-                wanted = ",".join(query.get("subscribed_fields", [])).split(",")
+                wanted = ",".join(query.get("subscribed_fields", []) or _form(body)).split(",")
                 if wanted == [""]:
                     return self._error("invalid")
                 self.subscribed[page] = wanted
@@ -115,7 +125,7 @@ class FakePageGraph:
 
     @staticmethod
     def _error(name: str, message: str | None = None) -> Response:
-        status, code, subcode, title = ERRORS[name]
+        status, code, subcode, title, _ = ERRORS[name]
         error: dict[str, Any] = {
             "message": message or title, "type": "OAuthException", "code": code,
             "fbtrace_id": "SIMTRACE0002",
@@ -123,3 +133,12 @@ class FakePageGraph:
         if subcode is not None:
             error["error_subcode"] = subcode
         return status, {"Content-Type": "application/json"}, json.dumps({"error": error}).encode()
+
+
+def _form(body: bytes | None) -> list[str]:
+    """`subscribed_fields` también como parámetro del cuerpo: JSON o formulario."""
+    try:
+        found = json.loads(body or b"{}").get("subscribed_fields", [])
+    except ValueError, AttributeError:
+        found = parse_qs((body or b"").decode(errors="replace")).get("subscribed_fields", [])
+    return [found] if isinstance(found, str) else [str(f) for f in found]

@@ -48,18 +48,22 @@ def error_of(response: Any) -> tuple[int, int, int | None]:
 
 
 def events(payload: Any, channel: Channel, field: str = "messaging") -> list[dict[str, Any]]:
-    """Referencia de la forma de ADR-035 §4–5: sobre, entradas, un evento por `messaging[]`,
-    `sender`/`recipient` con `id`, `timestamp` en ms y el cruce de la cuenta con `entry.id`."""
+    """Referencia de la forma de ADR-035 §4–5: sobre, entradas, eventos de `messaging[]` con
+    `sender`/`recipient`, `timestamp` en ms (salvo la entrega, que no lo trae [S17]) y el cruce
+    de la cuenta con `entry.id`."""
     assert payload["object"] == channel.object and isinstance(payload["entry"], list)
     found = []
     for entry in payload["entry"]:
-        (item,) = entry[field]
         assert entry["id"] == channel.account and isinstance(entry["time"], int)
-        echo = item.get("message", {}).get("is_echo", False)
-        us, them = (item["sender"], item["recipient"])[:: 1 if echo else -1]
-        assert (us["id"], them["id"]) == (entry["id"], channel.customer), "cruce de §4"
-        assert isinstance(item["timestamp"], int) and item["timestamp"] > 10**12
-        found.append(item)
+        for item in entry[field]:
+            echo = item.get("message", {}).get("is_echo", False)
+            us, them = (item["sender"], item["recipient"])[:: 1 if echo else -1]
+            assert (us["id"], them["id"]) == (entry["id"], channel.customer), "cruce de §4"
+            if "delivery" in item:
+                assert "timestamp" not in item and isinstance(item["delivery"]["watermark"], int)
+            else:
+                assert isinstance(item["timestamp"], int) and item["timestamp"] > 10**12
+            found.append(item)
     return found
 
 
@@ -73,7 +77,12 @@ def only(delivery: webhooks.Delivery, channel: Channel, field: str = "messaging"
 SECTION_9 = {  # webhooks que ADR-035 §9 enumera, por canal
     "text", "reply", "own_echo", "foreign_echo", "read", "standby", "is_unsupported",
     "is_deleted", "reaction", "batch", "account_mismatch", "unknown_object",
+    "unreact", "grouped", "echo_account_mismatch",  # variantes de la revisión de #776
 }  # fmt: skip
+EXTRA = {
+    "page": {"delivery", "delivery_no_mids", "sticker"},
+    "instagram": {"story_reply", "own_echo_no_app_id"},
+}
 
 
 @BY_CHANNEL
@@ -81,9 +90,8 @@ def test_the_catalogue_has_every_section_9_event_signed_with_the_app_secret(
     channel: Channel,
 ) -> None:
     found = social.catalogue(channel)
-    extra = {"delivery"} if channel is MESSENGER else {"story_reply"}
     attachments = {f"attachment_{k}" for k in channel.attachments}
-    assert set(found) == SECTION_9 | extra | attachments
+    assert set(found) == SECTION_9 | EXTRA[channel.object] | attachments
     for name, sent in found.items():
         expected = hmac.new(webhooks.TEST_APP_SECRET.encode(), sent.body, hashlib.sha256)
         assert sent.headers[webhooks.SIGNATURE_HEADER] == f"sha256={expected.hexdigest()}", name
@@ -119,7 +127,12 @@ def test_each_attachment_has_its_type_and_a_cdn_url(channel: Channel) -> None:
         (found,) = only(social.signed(channel, social.attachment(channel, kind)), channel)[
             "message"
         ]["attachments"]
+        if kind == "fallback":  # Meta puede mandarlo sin `payload` [S18]
+            assert found == {"type": "fallback"}
+            continue
         assert found["type"] == kind and found["payload"]["url"].startswith("https://")
+    (sticker,) = only(social.catalogue(MESSENGER)["sticker"], MESSENGER)["message"]["attachments"]
+    assert sticker["type"] == "image" and sticker["payload"]["sticker_id"] == social.STICKER_ID
     with pytest.raises(ValueError, match="no envía"):
         social.attachment(MESSENGER, "story_mention")
 
@@ -136,10 +149,19 @@ def test_instagram_story_mention_and_reply_carry_the_story_url_to_strip() -> Non
 
 @BY_CHANNEL
 def test_echoes_go_from_the_account_and_name_the_app_that_sent_them(channel: Channel) -> None:
-    own = only(social.catalogue(channel)["own_echo"], channel)
+    catalogue = social.catalogue(channel)
+    own = only(catalogue["own_echo"], channel)
     assert own["sender"]["id"] == channel.account and own["recipient"]["id"] == channel.customer
-    assert own["message"]["is_echo"] is True and own["message"]["app_id"] == int(social.APP_ID)
-    assert own["message"]["metadata"] == "sim-echo-token"
+    assert own["message"]["is_echo"] is True and own["message"]["metadata"] == "sim-echo-token"
+    if channel is MESSENGER:  # documentado [S19]; en Instagram, SIN VERIFICAR 11/12
+        assert own["message"]["app_id"] == int(social.APP_ID)
+    else:
+        unsure = only(catalogue["own_echo_no_app_id"], channel)["message"]
+        assert "app_id" not in unsure and unsure["metadata"] == "sim-echo-token"
+    mismatch = catalogue["echo_account_mismatch"].json
+    assert mismatch["entry"][0]["messaging"][0]["sender"]["id"] == social.OTHER_ACCOUNT_ID
+    with pytest.raises(AssertionError, match="cruce"):
+        events(mismatch, channel)
     foreign = only(social.catalogue(channel)["foreign_echo"], channel)["message"]
     assert foreign["app_id"] == int(social.OTHER_APP_ID) and "metadata" not in foreign
     bare = only(social.signed(channel, social.echo(channel, app_id=None)), channel)["message"]
@@ -149,8 +171,13 @@ def test_echoes_go_from_the_account_and_name_the_app_that_sent_them(channel: Cha
 def test_reads_use_a_watermark_in_messenger_and_a_mid_in_instagram() -> None:
     assert only(social.catalogue(MESSENGER)["read"], MESSENGER)["read"] == {"watermark": social.AT}
     assert only(social.catalogue(INSTAGRAM)["read"], INSTAGRAM)["read"] == {"mid": "m_SIMOUT000001"}
-    delivered = only(social.catalogue(MESSENGER)["delivery"], MESSENGER)["delivery"]
-    assert delivered == {"mids": ["m_SIMOUT000001"], "watermark": social.AT}
+    catalogue = social.catalogue(MESSENGER)
+    delivered = only(catalogue["delivery"], MESSENGER)
+    assert delivered["delivery"] == {"mids": ["m_SIMOUT000001"], "watermark": social.AT}
+    assert set(delivered) == {"sender", "recipient", "delivery"}  # sin `timestamp` [S17]
+    bare = catalogue["delivery_no_mids"].json["entry"][0]
+    assert bare["messaging"][0]["delivery"] == {"watermark": social.AT}
+    assert bare["time"] == social.AT  # sin `timestamp`, la marca de agua
 
 
 @BY_CHANNEL
@@ -163,8 +190,10 @@ def test_standby_flags_reactions_and_the_account_mismatch(channel: Channel) -> N
     with pytest.raises(ValueError):
         social.flagged(channel, "is_invented")
     assert only(catalogue["reaction"], channel)["reaction"] == {
-        "mid": "m_SIMOUT000001", "action": "react", "emoji": "❤️",
+        "mid": "m_SIMOUT000001", "action": "react", "reaction": "love", "emoji": "❤️",
     }  # fmt: skip
+    unreact = only(catalogue["unreact"], channel)["reaction"]
+    assert unreact == {"mid": "m_SIMOUT000001", "action": "unreact"}
     mismatch = catalogue["account_mismatch"].json
     with pytest.raises(AssertionError, match="cruce"):
         events(mismatch, channel)
@@ -180,6 +209,9 @@ def test_a_batch_has_several_entries_out_of_order(channel: Channel) -> None:
     stamps = [i["timestamp"] for i in items]
     assert len(items) == 3 and stamps != sorted(stamps)
     assert len({i["message"]["mid"] for i in items}) == 3
+    (entry,) = social.catalogue(channel)["grouped"].json["entry"]
+    assert len(entry["messaging"]) == 2  # dos eventos en un mismo `messaging[]`
+    assert len(events(social.catalogue(channel)["grouped"].json, channel)) == 2
 
 
 # --- la Graph API falsa de la página, por core.http -------------------------------------------
@@ -196,24 +228,27 @@ def test_a_send_returns_the_recipient_and_a_new_mid(graph: FakePageGraph, recipi
     assert json.loads(post().data)["message_id"] == "m_SIMOUT000002"
 
 
-KNOWN = {  # ADR-035 §6 [S26]
-    "window_closed": (400, 10, 2018278),
-    "window_closed_ig": (400, 10, 2534022),
-    "unreachable": (400, 551, None),
-    "token": (401, 190, None),
-    "rate_limit": (400, 613, None),
-    "messages_access_off": (400, 200, 2534041),
-    "invalid": (400, 100, None),
-    "server": (500, 1, None),
+KNOWN = {  # ADR-035 §6 [S26]: (estado, código, subcódigo) -> código propio
+    "window_closed": ((400, 10, 2018278), "WINDOW_CLOSED"),
+    "window_closed_2534022": ((400, 10, 2534022), "WINDOW_CLOSED"),
+    "unreachable": ((400, 551, None), "RECIPIENT_UNREACHABLE"),
+    "token": ((401, 190, None), "TOKEN_INVALID"),
+    "token_400": ((400, 190, None), "TOKEN_INVALID"),  # el estado no decide: el código sí
+    "rate_limit": ((400, 613, None), "RATE_LIMITED"),
+    "messages_access_off": ((400, 200, 2534041), "MESSAGES_ACCESS_OFF"),
+    "permission_10": ((400, 10, None), "PROVIDER_REJECTED"),  # `10` sin subcódigo de ventana
+    "permission_200": ((400, 200, None), "PROVIDER_REJECTED"),  # `200` sin 2534041
+    "invalid": ((400, 100, None), "PROVIDER_REJECTED"),
+    "server": ((500, 1, None), "PROVIDER_ERROR"),
 }
 
 
 @ALLOWED
 @pytest.mark.parametrize("name", sorted(KNOWN))
 def test_each_section_6_error_has_its_code_and_subcode(graph: FakePageGraph, name: str) -> None:
-    assert set(KNOWN) == set(ERRORS)
+    assert set(KNOWN) == set(ERRORS) and ERRORS[name][4] == KNOWN[name][1]
     graph.then(name)
-    assert error_of(post()) == KNOWN[name] and graph.sent == []
+    assert error_of(post()) == KNOWN[name][0] and graph.sent == []
     assert post().status == 200  # el guion se agotó
 
 
@@ -266,6 +301,8 @@ def test_subscribing_the_app_records_the_fields(graph: FakePageGraph) -> None:
     assert json.loads(response.data) == {"success": True}
     assert graph.subscribed == {social.PAGE_ID: ["messages", "message_echoes"]}
     assert error_of(post("subscribed_apps", payload={}))[1] == 100
+    assert post("subscribed_apps", payload={"subscribed_fields": "messages"}).status == 200
+    assert graph.subscribed[social.PAGE_ID] == ["messages"]  # también en el cuerpo
 
 
 @ALLOWED
