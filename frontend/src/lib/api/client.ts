@@ -127,6 +127,7 @@ import type {
   PaginatedPriceListList,
   PaginatedProductList,
   PaginatedPromotionList,
+  PaginatedQuickReplyList,
   PaginatedQuickReplyUseList,
   PaginatedQuoteList,
   PaginatedReservationList,
@@ -151,6 +152,7 @@ import type {
   PatchedPipelineUpdateRequest,
   PatchedPriceListUpdateRequest,
   PatchedProductUpdateRequest,
+  PatchedQuickReplyUpdateRequest,
   PatchedQuoteUpdateRequest,
   PatchedRoleUpdateRequest,
   PatchedStageUpdateRequest,
@@ -177,6 +179,9 @@ import type {
   Promotion,
   PromotionCreateRequest,
   PromotionsListParams,
+  QuickRepliesListParams,
+  QuickReply,
+  QuickReplyCreateRequest,
   QuoteApproveRequest,
   QuoteCancelRequest,
   QuoteCreateRequest,
@@ -15073,6 +15078,444 @@ export const useVariantsDelete = <TError = ErrorType<Error>, TContext = unknown>
   TContext
 > => {
   return useMutation(getVariantsDeleteMutationOptions(options), queryClient);
+};
+
+export const getQuickRepliesListUrl = (orgSlug: string, params?: QuickRepliesListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/o/${orgSlug}/quick-replies/?${stringifiedParams}`
+    : `/api/v1/o/${orgSlug}/quick-replies/`;
+};
+
+/**
+ * Las respuestas rápidas no borradas, activas o no, por creación (ADR-016). Con `quick_replies.manage`.
+ */
+export const quickRepliesList = async (
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<PaginatedQuickReplyList> => {
+  return apiFetch<PaginatedQuickReplyList>(getQuickRepliesListUrl(orgSlug, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getQuickRepliesListQueryKey = (orgSlug: string, params?: QuickRepliesListParams) => {
+  return [`/api/v1/o/${orgSlug}/quick-replies/`, ...(params ? [params] : [])] as const;
+};
+
+export const getQuickRepliesListQueryOptions = <
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getQuickRepliesListQueryKey(orgSlug, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof quickRepliesList>>> = ({ signal }) =>
+    quickRepliesList(orgSlug, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type QuickRepliesListQueryResult = NonNullable<Awaited<ReturnType<typeof quickRepliesList>>>;
+export type QuickRepliesListQueryError = ErrorType<Error>;
+
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params: undefined | QuickRepliesListParams,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof quickRepliesList>>,
+          TError,
+          Awaited<ReturnType<typeof quickRepliesList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useQuickRepliesList<
+  TData = Awaited<ReturnType<typeof quickRepliesList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  params?: QuickRepliesListParams,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof quickRepliesList>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getQuickRepliesListQueryOptions(orgSlug, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getQuickRepliesCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/quick-replies/`;
+};
+
+/**
+ * Crea una respuesta activa (`quick_replies.manage`), auditada sin el texto (solo su huella). 400 en `category_id`: no es una categoría viva y activa de la organización. 409 `SHORTCUT_TAKEN`: otra activa ya usa el atajo.
+ */
+export const quickRepliesCreate = async (
+  orgSlug: string,
+  quickReplyCreateRequest: QuickReplyCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuickReply> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuickReply>(getQuickRepliesCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(quickReplyCreateRequest),
+  });
+};
+
+export const getQuickRepliesCreateMutationKey = () => ["quickRepliesCreate"] as const;
+
+export const getQuickRepliesCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickRepliesCreate>>,
+    TError,
+    QuickRepliesCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickRepliesCreate>>,
+  TError,
+  QuickRepliesCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickRepliesCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickRepliesCreate>>,
+    QuickRepliesCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return quickRepliesCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickRepliesCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickRepliesCreate>>
+>;
+export type QuickRepliesCreateMutationBody = QuickReplyCreateRequest;
+export type QuickRepliesCreateMutationError = ErrorType<Error>;
+export type QuickRepliesCreateMutationVariables = {
+  orgSlug: string;
+  data: QuickReplyCreateRequest;
+};
+
+export const useQuickRepliesCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickRepliesCreate>>,
+      TError,
+      QuickRepliesCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickRepliesCreate>>,
+  TError,
+  QuickRepliesCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickRepliesCreateMutationOptions(options), queryClient);
+};
+
+export const getQuickRepliesUpdateUrl = (orgSlug: string, quickReplyId: string) => {
+  return `/api/v1/o/${orgSlug}/quick-replies/${quickReplyId}/`;
+};
+
+/**
+ * Cambia lo enviado, también `is_active` (activar o desactivar), si `version` sigue vigente (409 `STALE_VERSION` si no); lo que no cambia no se escribe ni se audita. 409 `SHORTCUT_TAKEN`. 400 en `category_id` o en `is_active`: la respuesta quedaría activa en una categoría desactivada. Con `quick_replies.manage`.
+ */
+export const quickRepliesUpdate = async (
+  orgSlug: string,
+  quickReplyId: string,
+  patchedQuickReplyUpdateRequest: PatchedQuickReplyUpdateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<QuickReply> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<QuickReply>(getQuickRepliesUpdateUrl(orgSlug, quickReplyId), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(patchedQuickReplyUpdateRequest),
+  });
+};
+
+export const getQuickRepliesUpdateMutationKey = () => ["quickRepliesUpdate"] as const;
+
+export const getQuickRepliesUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickRepliesUpdate>>,
+    TError,
+    QuickRepliesUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickRepliesUpdate>>,
+  TError,
+  QuickRepliesUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickRepliesUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickRepliesUpdate>>,
+    QuickRepliesUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, quickReplyId, data } = props ?? {};
+
+    return quickRepliesUpdate(orgSlug, quickReplyId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickRepliesUpdateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickRepliesUpdate>>
+>;
+export type QuickRepliesUpdateMutationBody = PatchedQuickReplyUpdateRequest;
+export type QuickRepliesUpdateMutationError = ErrorType<Error>;
+export type QuickRepliesUpdateMutationVariables = {
+  orgSlug: string;
+  quickReplyId: string;
+  data: PatchedQuickReplyUpdateRequest;
+};
+
+export const useQuickRepliesUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickRepliesUpdate>>,
+      TError,
+      QuickRepliesUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickRepliesUpdate>>,
+  TError,
+  QuickRepliesUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickRepliesUpdateMutationOptions(options), queryClient);
+};
+
+export const getQuickRepliesDeleteUrl = (orgSlug: string, quickReplyId: string) => {
+  return `/api/v1/o/${orgSlug}/quick-replies/${quickReplyId}/`;
+};
+
+/**
+ * Borra la respuesta (borrado lógico, sin `version`): deja de listarse y su atajo queda libre. 404: no es de la organización o ya está borrada. Con `quick_replies.manage`.
+ */
+export const quickRepliesDelete = async (
+  orgSlug: string,
+  quickReplyId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getQuickRepliesDeleteUrl(orgSlug, quickReplyId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getQuickRepliesDeleteMutationKey = () => ["quickRepliesDelete"] as const;
+
+export const getQuickRepliesDeleteMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof quickRepliesDelete>>,
+    TError,
+    QuickRepliesDeleteMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof quickRepliesDelete>>,
+  TError,
+  QuickRepliesDeleteMutationVariables,
+  TContext
+> => {
+  const mutationKey = getQuickRepliesDeleteMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof quickRepliesDelete>>,
+    QuickRepliesDeleteMutationVariables
+  > = (props) => {
+    const { orgSlug, quickReplyId } = props ?? {};
+
+    return quickRepliesDelete(orgSlug, quickReplyId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type QuickRepliesDeleteMutationResult = NonNullable<
+  Awaited<ReturnType<typeof quickRepliesDelete>>
+>;
+
+export type QuickRepliesDeleteMutationError = ErrorType<Error>;
+export type QuickRepliesDeleteMutationVariables = { orgSlug: string; quickReplyId: string };
+
+export const useQuickRepliesDelete = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof quickRepliesDelete>>,
+      TError,
+      QuickRepliesDeleteMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof quickRepliesDelete>>,
+  TError,
+  QuickRepliesDeleteMutationVariables,
+  TContext
+> => {
+  return useMutation(getQuickRepliesDeleteMutationOptions(options), queryClient);
 };
 
 export const getQuotesListUrl = (orgSlug: string, params?: QuotesListParams) => {
