@@ -1,6 +1,6 @@
 # ADR-035: Canales de Instagram (mensajes directos) y Facebook Messenger con las API oficiales de Meta
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-16, decisión del propietario en #775: acepta todas las recomendaciones de §13; D-F7-09 cambia: Instagram y Messenger pasan a P0, en paralelo a WhatsApp en vivo, y se activa primero Instagram)
 - **Date:** 2026-11-13
 - **Deciders:** propuesto por el programa autónomo (ADR-015 §5) para la decisión del propietario. Mientras esté `Proposed` no obliga al código y ningún work item de código de la serie F7b empieza: todos dependen de la aceptación (F7b-02, #775). Las preguntas que necesitan respuesta del propietario están en §13.
 - **Work items:** F7b-01 #774 (archiva este ADR), F7b-02 #775 (aceptación y D-F7-09), F7b-03 #776 (simulador), F7b-04 #777 (webhook entrante, enrutado e identidades), F7b-05 #778 (adaptadores de salida y política), F7b-06 #779 (pantalla de canales; cierra la serie), F7b-07 #780 (investigación de TikTok, solo documentos).
