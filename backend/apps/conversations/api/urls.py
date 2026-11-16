@@ -4,7 +4,14 @@ from django.conf import settings
 from django.urls import ResolverMatch, URLPattern, path
 from django.urls.resolvers import RoutePattern
 
-from apps.conversations.api import assignment, channels, conversations, media, messages
+from apps.conversations.api import (
+    assignment,
+    channels,
+    conversations,
+    media,
+    messages,
+    quick_replies,
+)
 
 
 class SandboxOnly(URLPattern):
@@ -58,6 +65,16 @@ urlpatterns = [
         "conversations/<uuid:conversation_id>/notes/",
         messages.NotesView.as_view(),
         name="conversation-notes",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/quick-replies/",
+        quick_replies.QuickRepliesView.as_view(),
+        name="conversation-quick-replies",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/quick-replies/<uuid:quick_reply_id>/render/",
+        quick_replies.RenderView.as_view(),
+        name="conversation-quick-reply-render",
     ),
     path(
         "conversations/<uuid:conversation_id>/assign/",

@@ -21,6 +21,7 @@ from django.db.models import F, Max
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
+from apps.conversations import selectors
 from apps.conversations.models import SHORTCUT, QuickReply, QuickReplyCategory
 from apps.conversations.text import clean_body
 from core.tenancy.context import TenantContext
@@ -284,3 +285,15 @@ def delete_reply(ctx: TenantContext, *, quick_reply_id: UUID) -> Any:
     """Borrado lógico: deja de estar activa y su atajo queda libre."""
     gone = {"deleted_at": timezone.now(), "deleted_by_user_id": ctx.user_id, "is_active": False}
     return _write(ctx, QuickReply, quick_reply_id, None, gone, "deleted")
+
+
+def use_reply(ctx: TenantContext, *, quick_reply_id: UUID) -> QuickReply:
+    """Suma un uso (F6-08a2) a una respuesta que se puede usar (`selectors.quick_replies`), con
+    `F()` y sin tocar su `version` ni auditar: es un contador. `DoesNotExist` si no se puede usar.
+    No envía nada: el texto resuelto lo devuelve la API y el envío sigue siendo el de siempre."""
+    alias = require_scope(ctx)
+    usable = selectors.quick_replies().using(alias).filter(pk=quick_reply_id)
+    if not usable.update(usage_count=F("usage_count") + 1):
+        raise QuickReply.DoesNotExist(quick_reply_id)
+    found: QuickReply = usable.get()
+    return found
