@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useFormatter, useTranslations } from "next-intl";
-import { type KeyboardEvent, useEffect, useId, useMemo, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import {
@@ -75,6 +75,7 @@ export function useQuickReplies({
   const [missing, setMissing] = useState<QuickReplyVariableEnum[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [failedAt, setFailedAt] = useState<string | null>(null); // el texto cuando falló `render`
+  const pick = useRef<string | null>(null); // Enter antes de que llegue la búsqueda
   if (typed === undefined && dismissed) setDismissed(false);
   if (text === "" && missing.length > 0) setMissing([]); // enviado o borrado
   const open = enabled && typed !== undefined && !dismissed;
@@ -90,7 +91,8 @@ export function useQuickReplies({
     placeholderData: keepPreviousData,
     staleTime: 30_000,
   });
-  // Mientras la búsqueda no alcanza lo escrito, la lista es la anterior: Enter no elige de ella.
+  // Mientras la búsqueda no alcanza lo escrito, la lista es la anterior: Enter no elige de ella,
+  // espera a la buena y elige su primera opción (si se sigue escribiendo, se olvida).
   const current = q === (typed ?? "") && !found.isPlaceholderData;
   const groups = useMemo(() => byCategory(found.data?.results ?? []), [found.data]);
   const options = groups.flatMap((group) => group.replies);
@@ -110,6 +112,13 @@ export function useQuickReplies({
   };
 
   useEffect(() => {
+    if (pick.current === null || !current) return;
+    const wanted = pick.current;
+    pick.current = null;
+    if (open && wanted === text) choose(active);
+  });
+
+  useEffect(() => {
     if (open && active)
       document.getElementById(optionId(active))?.scrollIntoView?.({ block: "nearest" });
   });
@@ -127,7 +136,8 @@ export function useQuickReplies({
       const next = options[(at + step + options.length) % options.length];
       if (next) setActiveId(next.id);
     } else if (event.key === "Enter" && !event.shiftKey) {
-      if (current) choose(active); // un clic elige lo que se ve; Enter, solo de una lista al día
+      if (current) choose(active);
+      else pick.current = text; // un clic elige lo que se ve; Enter, de la lista de lo escrito
     } else {
       return false;
     }

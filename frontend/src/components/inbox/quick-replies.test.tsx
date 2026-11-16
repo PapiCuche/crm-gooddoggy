@@ -207,7 +207,7 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     expect(s.sends()).toEqual([]);
   });
 
-  it("Enter no elige de la lista anterior mientras la búsqueda no alcanza lo escrito", async () => {
+  it("Enter antes de que llegue la búsqueda espera y elige de lo escrito, no de la lista anterior", async () => {
     const s = server();
     show();
     await openChat();
@@ -217,11 +217,19 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await key("Enter"); // aún se ve la lista de «/», con «/precio» primero
     await settle();
     expect(s.renders()).toBe(0);
-    await waitFor(() => expect(options()).toHaveLength(1));
-    await key("Enter");
+    // Llega la búsqueda de «delivery-l»: se elige su única opción (si fuera «/precio», `render` daría 404).
     await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
     expect(s.renders()).toBe(1);
     expect(s.sends()).toEqual([]);
+    // Si se sigue escribiendo tras Enter, se olvida.
+    await type("/");
+    await waitFor(() => expect(options()).toHaveLength(3));
+    await type("/pre");
+    await key("Enter");
+    await type("/prec");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    await settle();
+    expect(s.renders()).toBe(1);
   });
 
   it("una nota interna no abre el selector", async () => {
