@@ -21,14 +21,14 @@ stage=config tmp=
 finish() {
   local status=$?
   [ -z "$tmp" ] || rm -f "$tmp" "$tmp.list" "$tmp.new"
-  [ "$status" = 0 ] || alert backup.failed "kind=$kind stage=$stage"
+  [ "$status" = 0 ] || [ -n "${alerted:-}" ] || alert backup.failed "kind=$kind stage=$stage"
 }
 trap finish EXIT
 trap 'exit 143' TERM # TimeoutStartSec de systemd: también deja backup.failed
 
 need docker age rclone curl
 umask 077
-configure
+configure backup.failed
 mkdir -p "$state_dir"
 recipients=(-R "${BACKUP_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-recipients.txt}")
 deploy=${BACKUP_DEPLOY_RECIPIENTS:-${CRM_ENV_DIR:-/etc/crm}/backup-deploy-recipients.txt}

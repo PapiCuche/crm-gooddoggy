@@ -129,14 +129,21 @@ if stack src env BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> /dev/nul
 
 echo "== Fallos: en el volcado, con la configuración legible por otros, y la lista de objetos desordenada"
 last=$(cat "$work/state-src/last-success")
-echo not-a-key > "$work/bad-recipients.txt"
-sed "s|^BACKUP_RECIPIENTS=.*|BACKUP_RECIPIENTS=$work/bad-recipients.txt|" "$work/backup.env" > "$work/bad.env"
-if stack src env BACKUP_ENV="$work/bad.env" bash "$here/backup.sh" 2> "$work/failed.log"; then fail "un volcado fallido no falló"; fi
+# pg_dump escribe algo y falla (un pg_dump cortado): sin pipefail, age terminaría bien y se subiría.
+mkdir "$work/shim"
+printf '#!/bin/sh\ncase " $* " in *" pg_dump "*) printf PGDMP-cut; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v docker)" \
+  > "$work/shim/docker"
+chmod 700 "$work/shim/docker"
+if stack src env PATH="$work/shim:$PATH" BACKUP_ENV="$work/backup.env" bash "$here/backup.sh" 2> "$work/failed.log"; then
+  fail "un volcado fallido no falló"
+fi
 grep -q 'stage=dump' "$work/failed.log" || fail "el fallo del volcado no dice su etapa"
 [ "$(cat "$work/state-src/last-success")" = "$last" ] || fail "un backup fallido movió last-success"
 cp "$work/backup.env" "$work/open.env" && chmod 644 "$work/open.env"
 if stack src env BACKUP_ENV="$work/open.env" bash "$here/backup.sh" 2> "$work/failed.log"; then fail "aceptó un backup.env 0644"; fi
-grep -q 'tiene modo' "$work/failed.log" || fail "el rechazo de backup.env no se explica"
+grep -q '"event":"backup.failed".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.failed"
+if stack src env BACKUP_ENV="$work/open.env" bash "$here/check.sh" 2> "$work/failed.log"; then fail "check.sh aceptó backup.env 0644"; fi
+grep -q '"event":"backup.missing".*config_permissions' "$work/failed.log" || fail "backup.env 0644 sin backup.missing"
 mkdir "$work/state-bad" && echo garbage > "$work/state-bad/last-success"
 if BACKUP_STATE_DIR="$work/state-bad" BACKUP_ENV="$work/backup.env" bash "$here/check.sh" 2> "$work/failed.log"; then
   fail "check.sh aceptó una marca no numérica"

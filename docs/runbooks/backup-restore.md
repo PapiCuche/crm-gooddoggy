@@ -42,7 +42,7 @@ Si la clave privada se pierde, sus backups no se pueden leer. Por eso hay dos pe
 
 El propietario elige el proveedor (ADR-033 §11): otro proveedor u otra cuenta que la del servidor, compatible con S3. Lo que el destino tiene que cumplir:
 
-1. **Bucket privado con Object Lock en modo _compliance_ (recomendado) o, como mínimo, con versionado.** Sin ninguno de los dos, subir un objeto con el mismo nombre equivale a borrar el anterior. Ver el punto 4 y «Qué protege cada opción».
+1. **Bucket privado con versionado** (lo mínimo que exige ADR-033 §8.2) y, si el propietario lo decide, **Object Lock** (punto 4). Sin ninguno de los dos, subir un objeto con el mismo nombre equivale a borrar el anterior.
 2. Las reglas de [`lifecycle.json`](../../infra/prod/backup/lifecycle.json) aplicadas con una credencial de administración del propietario (nunca la del servidor). Con la CLI de AWS, que funciona con la mayoría de proveedores compatibles:
 
    ```bash
@@ -68,13 +68,17 @@ El propietario elige el proveedor (ADR-033 §11): otro proveedor u otra cuenta q
    ```
 
    Otros proveedores lo llaman «clave de aplicación» con la capacidad de escribir archivos y sin las de leer, listar o borrar. Si un proveedor no permite una credencial así, ese proveedor no sirve para este destino.
-4. **Object Lock en modo _compliance_ (recomendado).** La retención tiene que durar al menos lo que el nivel más largo que guarda cada copia: 7 días (`daily`, `predeploy`), 28 (`weekly`) y 184 (`monthly`). Con un solo bucket, que es lo que usa `backup.sh`, eso significa una retención por omisión de **184 días**. Si el proveedor admite retención por prefijo, basta con 7, 28 y 184 en cada uno. Una retención de 7 días en todo el bucket **no** protege los semanales ni los mensuales. Con *compliance* nadie, ni el propietario, borra una versión antes de que venza; las reglas de ciclo de vida borran después.
-   - **Alternativa, si el proveedor la admite:** una política del bucket que niegue sobrescribir un objeto que ya existe (escrituras condicionales). Hoy `rclone` no envía esa condición, así que exige probarla antes.
+4. **Protección frente a un servidor comprometido: la elige el propietario.** La credencial del servidor puede escribir, y los nombres de los volcados salen en el journal (`backup.ok`) y se adivinan. Un atacante con root puede subir objetos vacíos con esos nombres. Hay tres opciones, y **todas alargan la retención efectiva más allá del 7/4/6 de ADR-033 (decisión 5)**. Por eso la elección es del propietario y se confirma en su checklist (#781):
 
-   **Qué protege cada opción frente a un servidor comprometido.** La credencial del servidor puede escribir, y los nombres de los volcados salen en el journal (`backup.ok`) y se adivinan. Un atacante con root puede subir objetos vacíos con esos nombres:
-   - **Con Object Lock (compliance):** las versiones buenas siguen bloqueadas hasta que vence su retención. No hay pérdida.
-   - **Solo con versionado:** la versión buena pasa a «no actual», y la regla `db-versions` la borra a los **30 días** (`media-versions`, igual). El riesgo que queda es un atacante que pase **más de 30 días sin ser detectado**: por eso el simulacro trimestral y la revisión de las alertas.
-   - **Coste:** cada volcado vive 30 días más como versión no actual cuando caduca. Son unas 37 copias diarias, 8 semanales y 7 mensuales: unas 52 copias del volcado en lugar de 17, unas tres veces el espacio. Con Object Lock de 184 días en un solo bucket, cada diario vive 184 días: unas 220 copias. Con el volumen de R0 son pocos GB. Si el coste pesa, la opción es un bucket por nivel, que exige un cambio en `backup.sh` (deuda declarada en F1-16).
+   | Opción                                          | Qué pasa si el servidor sobrescribe                                                                 | Retención efectiva                                                                                       | Borrar por una solicitud de datos personales (§9)                                              |
+   | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+   | **A. Solo versionado** (el `lifecycle.json` tal cual) | La versión buena pasa a «no actual», y `db-versions` la borra a los **30 días**. Se pierde si el ataque pasa más de 30 días sin detectarse | Cada copia vive 30 días más: diarios unos 37 días, semanales unos 58 y mensuales unos 214. Unas 52 copias del volcado en lugar de 17 | Sí: el propietario borra todas las versiones con su credencial de administración             |
+   | **B. Object Lock en modo _governance_**         | El servidor no puede borrar ni acortar el bloqueo; solo una credencial con permiso para saltarse el bloqueo (la del propietario) puede | La de A, y además nada se borra antes de que venza el bloqueo                                            | Sí: el propietario, con permiso para saltarse el bloqueo                                      |
+   | **C. Object Lock en modo _compliance_**         | Nadie, ni el propietario ni el proveedor, borra una versión antes de que venza su bloqueo                | Con un solo bucket (lo que usa `backup.sh`), el bloqueo tiene que ser de **184 días** para proteger los mensuales: **cada diario y cada objeto de `media/` viven al menos 184 días** (unas 220 copias del volcado) | **No hasta que venza el bloqueo** (hasta 184 días)                                            |
+
+   - En B y C el bloqueo tiene que durar al menos lo que guarda el nivel: 7 días (`daily`, `predeploy`), 28 (`weekly`) y 184 (`monthly`). Un bloqueo de 7 días en todo el bucket **no** protege los semanales ni los mensuales. Si el proveedor admite bloqueos por prefijo, basta con 7, 28 y 184; un bucket por nivel exigiría un cambio en `backup.sh` (deuda de F1-16).
+   - **Otra alternativa, si el proveedor la admite:** una política del bucket que niegue sobrescribir un objeto que ya existe (escrituras condicionales). Hoy `rclone` no envía esa condición, así que exige probarla antes.
+   - El riesgo que queda en A es un atacante sin detectar durante más de 30 días: por eso el simulacro trimestral y la revisión de las alertas.
 5. Una credencial de **lectura** (`s3:GetObject` y `s3:ListBucket`) para el propietario y su suplente, guardada fuera del servidor.
 
 ## 4. Instalación en el servidor
@@ -98,6 +102,7 @@ journalctl -u crm-backup.service -n 20                             # debe termin
 
 - **`backup.failed`**: `backup.sh` falla en cualquier paso. Queda en el journal (`journalctl -u crm-backup.service`) con la etapa (`counts`, `dump`, `upload` o `media`) y, si `SENTRY_DSN` está en `backup.env`, también como evento en Sentry. El log nunca lleva datos, claves de objetos ni credenciales.
 - **`backup.missing`**: `check.sh` comprueba cada hora que el último backup nocturno correcto tenga menos de 26 h (ADR-033 §8.4). Avisa por el mismo camino.
+- **Permisos de `backup.env`:** si no es de root y `0600`, `backup.sh` y `check.sh` no lo cargan y avisan con `backup.failed` y `backup.missing` (`reason: config_permissions`). Ese aviso va a Sentry solo si el archivo es de root y nadie más puede escribirlo (p. ej., `0644`): su `SENTRY_DSN` es entonces de fiar. Si otros pueden escribirlo, el aviso queda solo en el journal.
 - **Si el servidor entero cae**, esos dos avisos caen con él. Para eso, `BACKUP_HEARTBEAT_URL`: un servicio externo de monitorización que recibe un ping tras cada backup nocturno correcto y avisa si en 26 h no llega ninguno. Lo elige el propietario.
 
 Qué hacer ante un aviso: leer `journalctl -u crm-backup.service -n 50`, corregir la causa (disco, credencial, destino caído) y lanzar `systemctl start crm-backup.service`. Un día sin backup no se recupera después: el RPO de ese día pasa a 48 h.
@@ -169,6 +174,13 @@ El simulacro local restaura una base casi vacía. El tiempo real depende del tam
 ## 9. Límites conocidos
 
 - **RPO de 24 h:** lo escrito desde el último backup nocturno se pierde si se pierde el servidor. WAL continuo queda para más adelante (ADR-033 §8.3).
-- **Un objeto borrado en producción sigue en el backup**, porque el servidor no puede borrar en el destino. Si hay que eliminarlo de verdad (p. ej., una solicitud de borrado de datos personales), lo borra el propietario en el destino, todas sus versiones, con una credencial suya.
+- **Un objeto borrado en producción sigue en el backup**, porque el servidor no puede borrar en el destino.
+- **Solicitud de borrado de datos personales.** Depende de la opción de §3.4:
+  - **Objetos (`media/`):**
+    - Con A, el propietario borra el objeto y todas sus versiones con su credencial de administración.
+    - Con B, lo mismo, con el permiso para saltarse el bloqueo.
+    - Con C no se puede hasta que vence el bloqueo (hasta 184 días desde que se subió). El propietario anota la solicitud y lo borra en cuanto vence.
+  - **Volcados de la base (`db/`):** los datos de la persona siguen en los volcados hasta que caducan: con A o B, hasta unos 214 días el mensual; con C, igual o más. No se editan.
+  - **Si se restaura un volcado anterior a una solicitud**, hay que volver a aplicar los borrados registrados desde entonces. El propietario lleva ese registro.
 - **Los objetos restaurados pierden sus metadatos de S3** (el tipo de contenido queda genérico). La aplicación sirve cada archivo con el tipo guardado en la base (`files.mime_type`), así que no cambia lo que ve el usuario.
 - **Las filas por tabla de `last-counts.tsv` se toman justo antes del volcado**, no en la misma instantánea. Con escrituras durante el volcado pueden diferir en unas filas.

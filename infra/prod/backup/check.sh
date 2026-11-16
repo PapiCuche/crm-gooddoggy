@@ -7,9 +7,7 @@ set -euo pipefail
 # shellcheck source=infra/prod/backup/lib.sh
 . "$(dirname "$0")/lib.sh"
 
-config="${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
-check_file "$config" secret
-load_env "$config"
+secure_config backup.missing # con permisos inseguros, también avisa
 marker="${BACKUP_STATE_DIR:-/var/lib/crm-backup}/last-success"
 max=$((${BACKUP_MAX_AGE_HOURS:-26} * 3600))
 last=$(cat "$marker" 2> /dev/null || echo 0)

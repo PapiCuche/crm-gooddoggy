@@ -37,10 +37,10 @@ while [ $# -gt 0 ]; do
 done
 if [ ! -r "$identity" ] || [ -z "$object$latest$media_only" ]; then usage; fi
 stage=config
-trap '[ $? = 0 ] || alert restore.failed "stage=$stage"' EXIT
+trap '[ $? = 0 ] || [ -n "${alerted:-}" ] || alert restore.failed "stage=$stage"' EXIT
 need docker age rclone
 umask 077
-configure
+configure restore.failed
 check_file "$identity" secret
 [ -z "$roles_env" ] || check_file "$roles_env" secret
 mkdir -p "$state_dir"

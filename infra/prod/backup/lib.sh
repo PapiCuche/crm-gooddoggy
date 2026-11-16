@@ -70,12 +70,25 @@ s3_remote() { # <NOMBRE> <endpoint (vacío = AWS)> <región> <access key> <secre
     "RCLONE_CONFIG_$1_NO_HEAD=true" "RCLONE_CONFIG_$1_NO_CHECK_BUCKET=true"
 }
 
+# backup.env, de root y 0600. Si no lo es, el aviso sale igual (reason=config_permissions) y el script
+# termina. A Sentry solo si nadie más puede escribir el archivo: si no, su SENTRY_DSN no es de fiar.
+secure_config() { # <evento del aviso>
+  local config="${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
+  if check_file "$config" secret; then load_env "$config"; return 0; fi
+  if check_file "$config" 2> /dev/null; then
+    SENTRY_DSN=$(env_value "$config" SENTRY_DSN) SENTRY_ENVIRONMENT=$(env_value "$config" SENTRY_ENVIRONMENT)
+  fi
+  # shellcheck disable=SC2034 # lo leen los traps de salida de backup.sh y restore.sh: no repiten el aviso
+  alerted=1
+  alert "$1" config_permissions
+  exit 1
+}
+
 # DEST: el destino de los backups (backup.env). SRC: el bucket de la aplicación (runtime.env).
-configure() {
-  local runtime="${CRM_ENV_DIR:-/etc/crm}/runtime.env" config="${BACKUP_ENV:-${CRM_ENV_DIR:-/etc/crm}/backup.env}"
-  check_file "$config" secret
+configure() { # <evento del aviso si backup.env no es seguro>
+  local runtime="${CRM_ENV_DIR:-/etc/crm}/runtime.env"
+  secure_config "$1"
   check_file "$runtime" secret
-  load_env "$config"
   : "${BACKUP_S3_BUCKET:?falta BACKUP_S3_BUCKET}" "${BACKUP_S3_ACCESS_KEY_ID:?falta BACKUP_S3_ACCESS_KEY_ID}"
   : "${BACKUP_S3_SECRET_ACCESS_KEY:?falta BACKUP_S3_SECRET_ACCESS_KEY}"
   s3_remote DEST "${BACKUP_S3_ENDPOINT:-}" "${BACKUP_S3_REGION:-us-east-1}" \
