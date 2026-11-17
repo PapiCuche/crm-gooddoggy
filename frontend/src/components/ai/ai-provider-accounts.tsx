@@ -11,7 +11,9 @@ import { STEP_UP_REQUIRED } from "@/components/security/use-step-up";
 import { Button } from "@/components/ui/button";
 import {
   aiProviderAccountsCreate,
+  aiProviderAccountsDestroy,
   aiProviderAccountsList,
+  aiProviderAccountsRotateKey,
   aiProviderAccountsTest,
   getAiProviderAccountsListQueryKey,
 } from "@/lib/api/client";
@@ -28,11 +30,11 @@ const STATUS = {
   DISABLED: { Icon: Unplug, tone: "text-muted" },
 } as const;
 
-// El proveedor de IA (F8-04): las cuentas de `…/ai/provider-accounts/` (F8-03c/d), guardar la
-// clave (también sobre una cuenta borrada, que se reactiva) y probar la conexión; rotar y borrar
-// llegan con F8-04b. Todas las rutas piden `ai.manage` y el segundo factor reciente, y comparten un
-// tope por persona que cuenta también las lecturas: la lista se pide una vez, sin reintentos ni al
-// recuperar el foco, y guardar actualiza la caché con lo que devuelve. De la clave solo se enseñan los últimos cuatro caracteres que manda la API.
+// El proveedor de IA (F8-04): las cuentas de `…/ai/provider-accounts/` (F8-03c/d), guardar o rotar
+// la clave, borrarla y probar la conexión. Todas las rutas piden `ai.manage` y el segundo factor
+// reciente, y comparten un tope por persona que cuenta también las lecturas: la lista se pide una
+// vez, sin reintentos ni al recuperar el foco, y cada escritura actualiza la caché con lo que
+// devuelve. De la clave solo se enseñan los últimos cuatro caracteres que manda la API.
 export function AiProviderAccounts() {
   const t = useTranslations("ai");
   const errors = useTranslations("errors");
@@ -60,6 +62,14 @@ export function AiProviderAccounts() {
         : [...rows, account],
     );
   };
+  const ctx: Ctx = {
+    ...{ slug, put, reload },
+    removed: () => {
+      setSaid(t("remove.done"));
+      setTimeout(() => heading.current?.focus());
+      reload();
+    },
+  };
   // Lo que no se puede arreglar en el formulario (ya existe o ya no está): se vuelve a leer.
   const stale = (error: ApiError) =>
     (error.status === 404 || error.code === "AI_ACCOUNT_EXISTS") && reload();
@@ -74,6 +84,7 @@ export function AiProviderAccounts() {
       <div className="flex flex-col gap-4">
         {active ? null : (
           <KeyForm
+            mode="save"
             send={(apiKey) =>
               aiProviderAccountsCreate(slug, { provider: "ANTHROPIC", api_key: apiKey })
             }
@@ -88,7 +99,7 @@ export function AiProviderAccounts() {
         {rows.length ? (
           <ul aria-label={t("title")} className="flex flex-col gap-3">
             {rows.map((account) => (
-              <Account key={account.id} slug={slug} account={account} reload={reload} />
+              <Account key={account.id} account={account} ctx={ctx} />
             ))}
           </ul>
         ) : (
@@ -152,14 +163,19 @@ export function AiProviderAccounts() {
   );
 }
 
-function Account({
-  slug,
-  account,
-  reload,
-}: {
+type Ctx = {
   slug: string;
-  account: AiProviderAccount;
+  put: (account: AiProviderAccount) => void;
   reload: () => void;
+  removed: () => void;
+};
+
+function Account({
+  account,
+  ctx: { slug, put, reload, removed },
+}: {
+  account: AiProviderAccount;
+  ctx: Ctx;
 }) {
   const t = useTranslations("ai");
   const format = useFormatter();
@@ -214,6 +230,24 @@ function Account({
               ...{ text: label("test", AiProviderTestResultEnum, result), ok: result === "OK" },
             })}
             onGone={reload}
+          />
+          <KeyForm
+            mode="rotate"
+            send={(apiKey) => aiProviderAccountsRotateKey(slug, account.id, { api_key: apiKey })}
+            onDone={put}
+            onFailed={(error) => error.status === 404 && reload()}
+          />
+          <AccountAction
+            label={t("remove.open")}
+            busyLabel={t("remove.busy")}
+            run={() => aiProviderAccountsDestroy(slug, account.id)}
+            done={() => (removed(), null)}
+            onGone={reload}
+            confirm={{
+              ...{ title: t("remove.title", { provider }), effect: t("remove.effect") },
+              ...{ question: t("remove.question", { provider }), yes: t("remove.confirm") },
+              no: t("remove.cancel"),
+            }}
           />
         </div>
       ) : null}

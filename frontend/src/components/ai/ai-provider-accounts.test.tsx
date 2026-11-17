@@ -12,7 +12,9 @@ import { AiProviderAccounts } from "./ai-provider-accounts";
 const BASE = "/api/v1/o/acme/ai/provider-accounts";
 const LIST = `GET ${BASE}/`;
 const CREATE = `POST ${BASE}/`;
+const ROTATE = `POST ${BASE}/k1/key/`;
 const TEST = `POST ${BASE}/k1/test/`;
+const REMOVE = `DELETE ${BASE}/k1/`;
 const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
 const PASTED = "fake-provider-key-for-ui-tests-0001"; // ficticia, con la forma que acepta la API
 const tenant = (codes: string[]): SelfContext => ({
@@ -54,6 +56,15 @@ const saveForm = () => openForm("Guardar clave de Anthropic", "Guardar la clave 
 const paste = (submit: string) => {
   fireEvent.change(keyField(), { target: { value: PASTED } });
   fireEvent.click(screen.getByRole("button", { name: submit }));
+};
+// Rotar (el formulario) o borrar (la confirmación) hasta enviar la escritura.
+const rotate = async () => {
+  await openForm("Rotar clave", "Rotar la clave");
+  paste("Rotar");
+};
+const remove = async () => {
+  fireEvent.click(await screen.findByRole("button", { name: "Borrar clave" }));
+  fireEvent.click(screen.getByRole("button", { name: "Sí, borrar" }));
 };
 const verify = async () => {
   const dialog = await screen.findByRole("dialog");
@@ -108,12 +119,10 @@ describe("Proveedor de IA (F8-04)", () => {
       expect(item).toHaveTextContent(text);
     }
     expect(item).not.toHaveTextContent("Borrada");
-    expect(
-      within(item)
-        .getAllByRole("button")
-        .map((b) => b.textContent),
-    ).toEqual(["Probar conexión"]);
-    // con una clave activa no se ofrece guardar otra (rotarla llega con F8-04b)
+    for (const name of ["Probar conexión", "Rotar clave", "Borrar clave"]) {
+      expect(within(item).getByRole("button", { name })).toBeVisible();
+    }
+    // con una clave activa no se ofrece guardar otra: se rota
     expect(screen.queryByRole("button", { name: "Guardar clave de Anthropic" })).toBeNull();
     expect(sent(api)).toHaveLength(1);
   });
@@ -209,11 +218,7 @@ describe("Proveedor de IA (F8-04)", () => {
   });
 
   it.each([
-    [
-      fail(409, "AI_ACCOUNT_EXISTS"),
-      "Ya hay una clave guardada para ese proveedor. Actualizamos",
-      2,
-    ],
+    [fail(409, "AI_ACCOUNT_EXISTS"), "Ya hay una clave guardada para ese proveedor: rótala.", 2],
     [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo.", 1],
     [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA.", 1],
     [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos.", 1],
@@ -259,9 +264,85 @@ describe("Proveedor de IA (F8-04)", () => {
     expect(sent(api)).toHaveLength(1);
   });
 
+  it("rotar: la cuenta se actualiza con la respuesta, sin otra lectura, y la clave no queda", async () => {
+    const rotated = account({ key_last_four: "0002", rotated_at: "2026-11-17T09:00:00Z" });
+    const api = mockApi({ [LIST]: ok([account()]), [ROTATE]: ok(rotated) });
+    const view = show();
+    const form = await openForm("Rotar clave", "Rotar la clave");
+    expect(form).toHaveAttribute("method", "post");
+    const field = keyField();
+    expect(field).toHaveAttribute("type", "password");
+    expect(field).toHaveAttribute("autocomplete", "new-password");
+    paste("Rotar");
+    expect(field.value).toBe("");
+    expect(await screen.findByText("La clave se rotó. La anterior ya no vale.")).toBeVisible();
+    expect(screen.getByText("…0002")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Rotar clave" })).toHaveFocus());
+    expect(sent(api, "POST", `${BASE}/k1/key/`)).toEqual([{ api_key: PASTED }]);
+    expect(api.mock.calls.filter(([url]) => String(url).includes(PASTED))).toEqual([]);
+    expect(sent(api)).toHaveLength(1);
+    nowhere(view);
+  });
+
+  it("rotar con STEP_UP_REQUIRED abre el código y repite una sola vez con la misma clave", async () => {
+    let rotations = 0;
+    const api = mockApi({
+      [LIST]: ok([account()]),
+      [ROTATE]: () => (++rotations === 1 ? STEP : ok(account({ key_last_four: "0002" }))),
+      [STEP_UP]: ok({ step_up_expires_in: 900 }),
+    });
+    const view = show();
+    await rotate();
+    await verify();
+    expect(await screen.findByText("…0002")).toBeVisible();
+    expect(sent(api, "POST", `${BASE}/k1/key/`).map((body) => body.api_key)).toEqual([
+      ...[PASTED, PASTED],
+    ]);
+    nowhere(view);
+  });
+
+  it.each([
+    [fail(404, "NOT_FOUND"), "Esa clave ya no existe. Actualizamos la lista.", 2],
+    [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo.", 1],
+    [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA.", 1],
+    [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos.", 1],
+    [fail(400, "VALIDATION_ERROR"), "Eso no tiene el formato de una clave de API.", 1],
+  ])("rotar: %o se explica por su código y el campo queda vacío", async (reply, text, lists) => {
+    const api = mockApi({ [LIST]: ok([account()]), [ROTATE]: reply });
+    const view = show();
+    await rotate();
+    expect(await screen.findByText(new RegExp(text))).toBeVisible();
+    for (const raw of ["TEXTO DEL SERVIDOR", "TEXTO DEL CAMPO", reply.body.code]) {
+      expect(document.body.textContent).not.toContain(raw);
+    }
+    expect(keyField().value).toBe("");
+    if (reply.status === 400) expect(keyField()).toHaveAccessibleDescription(new RegExp(text));
+    await waitFor(() => expect(sent(api)).toHaveLength(lists)); // 404: se vuelve a leer, una vez
+    await new Promise((done) => setTimeout(done, 50));
+    expect(sent(api)).toHaveLength(lists);
+    nowhere(view);
+  });
+
+  it.each([
+    ["Rotar clave", rotate],
+    ["Borrar clave", remove],
+    ["Probar conexión", () => screen.findByRole("button", { name: "Probar conexión" })],
+  ])("%s: un 401 lleva al login sin enseñar un error", async (name, write) => {
+    const go = vi.spyOn(browser, "assign").mockImplementation(() => {});
+    const no = fail(401, "NOT_AUTHENTICATED");
+    mockApi({ [LIST]: ok([account()]), [ROTATE]: no, [REMOVE]: no, [TEST]: no });
+    const view = show();
+    await write();
+    if (name === "Probar conexión") fireEvent.click(screen.getByRole("button", { name }));
+    await waitFor(() => expect(go).toHaveBeenCalledWith(expect.stringMatching(/^\/login\b/)));
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+    nowhere(view);
+  });
+
   it.each([
     ["OK", "Conexión correcta: el proveedor aceptó la clave."],
-    ["CREDENTIALS_REJECTED", "El proveedor no aceptó la clave. Revisa en su consola"],
+    ["CREDENTIALS_REJECTED", "El proveedor no aceptó la clave. Rótala por una válida."],
     ["PROVIDER_BILLING", "El proveedor rechazó la llamada por facturación"],
     ["PROVIDER_UNAVAILABLE", "El proveedor no responde ahora."],
     ["RESULTADO_NUEVO", "El resultado de la prueba no se pudo interpretar."],
@@ -291,5 +372,58 @@ describe("Proveedor de IA (F8-04)", () => {
     await verify();
     expect(await screen.findByRole("alert")).toHaveTextContent("Vuelve a probar en 2 minutos.");
     expect(tests).toBe(2);
+  });
+
+  it("borrar pide confirmación con el foco en «Cancelar» y, tras el código, la cuenta queda sin acciones", async () => {
+    let listed = 0;
+    let removes = 0;
+    const off = account({ status: "DISABLED", revoked_at: "2026-11-17T10:00:00Z" });
+    const api = mockApi({
+      [LIST]: () => ok([++listed === 1 ? account() : off]),
+      [`DELETE ${BASE}/k1/`]: () => (++removes === 1 ? STEP : { status: 204 }),
+      [STEP_UP]: ok({ step_up_expires_in: 900 }),
+    });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Borrar clave" }));
+    const group = screen.getByRole("group", { name: "Borrar la clave de Anthropic" });
+    expect(group).toHaveTextContent("la clave se destruye");
+    expect(within(group).getByRole("button", { name: "Cancelar" })).toHaveFocus();
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, borrar" }));
+    await verify();
+    expect(await screen.findByText("La clave se borró.")).toBeVisible();
+    expect(await screen.findByText("Borrada", { selector: "p" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Probar conexión" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Guardar clave de Anthropic" })).toBeVisible();
+    expect([removes, sent(api).length]).toEqual([2, 2]);
+  });
+
+  it("borrar: «Cancelar» no envía nada y devuelve el foco a «Borrar clave»", async () => {
+    const api = mockApi({ [LIST]: ok([account()]) });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Borrar clave" }));
+    const group = screen.getByRole("group", { name: "Borrar la clave de Anthropic" });
+    fireEvent.click(within(group).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Borrar clave" })).toHaveFocus());
+    expect(screen.queryByRole("group")).toBeNull();
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [fail(404, "NOT_FOUND"), "Esa clave ya no existe. Actualizamos la lista.", 2],
+    [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo.", 1],
+    [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA.", 1],
+    [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos.", 1],
+  ])("borrar: %o se explica por su código", async (reply, text, lists) => {
+    const api = mockApi({ [LIST]: ok([account()]), [REMOVE]: reply });
+    show();
+    await remove();
+    expect(await screen.findByRole("alert")).toHaveTextContent(text);
+    for (const raw of ["TEXTO DEL SERVIDOR", reply.body.code]) {
+      expect(document.body.textContent).not.toContain(raw);
+    }
+    await waitFor(() => expect(sent(api)).toHaveLength(lists)); // 404: se vuelve a leer, una vez
+    await new Promise((done) => setTimeout(done, 50));
+    expect(sent(api)).toHaveLength(lists);
+    expect(sent(api, "DELETE", `${BASE}/k1/`)).toHaveLength(1);
   });
 });
