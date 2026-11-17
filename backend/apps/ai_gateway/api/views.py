@@ -1,11 +1,12 @@
 """Las cuentas del proveedor de IA de la organización (F8-03c; ADR-034 §4): listar, crear, rotar la
 clave, borrar (desactivar) y probar la conexión (F8-03d). Cada ruta pide `ai.manage` y, después, el
 segundo factor de hace 15 minutos como mucho (`step_up_methods`, D-F7-11): sin el permiso, 403
-`PERMISSION_DENIED`, nunca `STEP_UP_REQUIRED`. Antes de todo eso, el tope por persona
-(`apps.ai_gateway.throttle`, 429). El cuerpo se valida antes del 404. Una cuenta que no existe, es
-de otra organización o ya está desactivada da el mismo 404. Ninguna respuesta lleva la clave ni su
-cifrado (solo `key_last_four`, el proveedor, el estado y las fechas), ni el cuerpo del proveedor:
-la prueba devuelve solo su código.
+`PERMISSION_DENIED`, nunca `STEP_UP_REQUIRED`. Antes de todo eso, en las escrituras (POST y
+DELETE), el tope por persona (`apps.ai_gateway.throttle`, 429); listar no cuenta (F8-03e). El
+cuerpo se valida antes del 404. Una cuenta que no existe, es de otra organización o ya está
+desactivada da el mismo 404. Ninguna respuesta lleva la clave ni su cifrado (solo `key_last_four`,
+el proveedor, el estado y las fechas), ni el cuerpo del proveedor: la prueba devuelve solo su
+código.
 """
 
 from collections.abc import Iterator
@@ -35,7 +36,7 @@ CONFLICT = "Otra persona está guardando la misma cuenta. Vuelve a intentarlo."
 MALFORMED = "La clave no tiene el formato de una clave de API."
 UNKNOWN = "Proveedor no admitido."
 KEY_HELP = "Solo se escribe: ninguna respuesta la devuelve."
-LIMITED = " 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`."
+LIMITED = " 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`."
 
 
 class AiProviderAccountSerializer(serializers.Serializer[Any]):
@@ -110,10 +111,10 @@ def provider_of(account_id: UUID) -> str:
     get=extend_schema(
         operation_id="ai_provider_accounts_list",
         tags=["ai"],
-        responses={200: AiProviderAccountSerializer(many=True), **errors(401, 403, 404, 429)},
+        responses={200: AiProviderAccountSerializer(many=True), **errors(401, 403, 404)},
         description="Las cuentas de proveedor de IA de la organización, activas y desactivadas "
         "(`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo "
-        "`key_last_four`." + LIMITED,
+        "`key_last_four`. No cuenta en el tope por persona de las escrituras.",
     ),
     post=extend_schema(
         operation_id="ai_provider_accounts_create",

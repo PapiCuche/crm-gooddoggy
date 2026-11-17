@@ -1,8 +1,9 @@
-"""F8-03d: `POST …/ai/provider-accounts/{id}/test/` y el tope por persona de las cinco rutas de
-cuentas (ADR-034 §4, como F7-02e). Middleware, sesión, CSRF, motor de autorización y PostgreSQL con
-`crm_app`; la API de Anthropic, simulada sin red (`tests.ai_sim`). Primero el tope, después
-`ai.manage` y después el segundo factor reciente (D-F7-11); un solo 404; la respuesta lleva solo el
-código de la prueba, nunca la clave ni el cuerpo del proveedor. Claves ficticias."""
+"""F8-03d: `POST …/ai/provider-accounts/{id}/test/` y el tope por persona de las escrituras de
+las rutas de cuentas (ADR-034 §4, como F7-02e; F8-03e: GET y HEAD no cuentan). Middleware, sesión,
+CSRF, motor de autorización y PostgreSQL con `crm_app`; la API de Anthropic, simulada sin red
+(`tests.ai_sim`). Primero el tope, después `ai.manage` y después el segundo factor reciente
+(D-F7-11); un solo 404; la respuesta lleva solo el código de la prueba, nunca la clave ni el cuerpo
+del proveedor. Claves ficticias."""
 
 import logging
 from types import SimpleNamespace
@@ -116,7 +117,7 @@ def test_another_organizations_unknown_or_disabled_account_is_a_single_404(
     assert probe(luis, theirs, B_BASE).json() == {"result": "OK"}  # la suya, sí
 
 
-def test_the_limit_is_shared_by_the_five_routes_and_stops_a_probe_loop(
+def test_the_limit_is_shared_by_the_four_writes_and_stops_a_probe_loop(
     crm: SimpleNamespace, fake: FakeAnthropic, migrator: DB, settings: Any
 ) -> None:
     settings.AI_ACCOUNT_THROTTLE = (4, 600)
@@ -127,12 +128,12 @@ def test_the_limit_is_shared_by_the_five_routes_and_stops_a_probe_loop(
     assert answers[-1].json() == LIMITED and 0 < int(answers[-1]["Retry-After"]) <= 600
     assert len(fake.calls) == 3 and len(audited(migrator)) == 3  # el cuarto no llegó al proveedor
     for method, path, body in (
-        ("get", BASE, None), ("post", BASE, {"provider": "ANTHROPIC", "api_key": OTHER_KEY}),
+        ("post", BASE, {"provider": "ANTHROPIC", "api_key": OTHER_KEY}),
         ("post", f"{BASE}{account_id}/key/", {"api_key": OTHER_KEY}),
         ("delete", f"{BASE}{account_id}/", None), ("post", f"{BASE}{uuid4()}/test/", None),
     ):  # fmt: skip
         assert reply(send(ana, method, path, body)) == (429, b'{"code":"RATE_LIMITED"}'), path
-    assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 10)]
+    assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 9)]
     assert len(fake.calls) == 3 and signed(crm.luis).get(B_BASE).status_code == 200  # otra persona
     assert OTHER_KEY not in everything(migrator)
 
@@ -142,17 +143,80 @@ def test_a_member_without_the_permission_cannot_use_up_the_limit_of_another(
 ) -> None:
     settings.AI_ACCOUNT_THROTTLE = (2, 600)
     vera = signed(crm.vera)  # sin `ai.manage`: el tope cuenta antes del permiso, y solo el suyo
-    assert [vera.get(BASE).status_code for _ in range(4)] == [403, 403, 429, 429]
+    assert [create(vera).status_code for _ in range(4)] == [403, 403, 429, 429]
     assert create(signed(crm.ana)).status_code == 201
 
 
-def test_the_eleventh_request_in_ten_minutes_is_refused_with_the_default_limit(
-    crm: SimpleNamespace, fake: FakeAnthropic
+def test_a_write_refused_for_lack_of_a_recent_second_factor_still_counts(
+    crm: SimpleNamespace, fake: FakeAnthropic, settings: Any, migrator: DB
+) -> None:
+    settings.AI_ACCOUNT_THROTTLE = (2, 600)
+    late = plain(crm.ana)  # Owner sin segundo factor reciente
+    answers = [send(late, "delete", f"{BASE}{uuid4()}/", None) for _ in range(3)]
+    assert [(a.status_code, a.json()["code"]) for a in answers] == [
+        (403, STEP_UP_REQUIRED), (403, STEP_UP_REQUIRED), (429, "RATE_LIMITED"),
+    ]  # fmt: skip
+    assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 3)]
+
+
+def test_the_eleventh_write_in_ten_minutes_is_refused_with_the_default_limit_reads_in_between(
+    crm: SimpleNamespace, fake: FakeAnthropic, migrator: DB
+) -> None:
+    """Las cuatro escrituras cuentan (guardar, rotar, probar y borrar), y leer entre ellas no."""
+    ana = signed(crm.ana)
+    account_id = create(ana).json()["id"]
+    writes = [
+        ("post", f"{BASE}{account_id}/key/", {"api_key": OTHER_KEY}),
+        ("post", f"{BASE}{account_id}/test/", None),
+        ("delete", f"{BASE}{account_id}/", None),
+        *[("post", f"{BASE}{uuid4()}/test/", None)] * 6,
+        ("post", BASE, {"provider": "ANTHROPIC", "api_key": TEST_KEY}),  # la undécima escritura
+    ]
+    answers = []
+    for method, path, body in writes:
+        assert ana.get(BASE).status_code == 200 and ana.head(BASE).status_code == 200
+        answers.append(send(ana, method, path, body))
+    assert [a.status_code for a in answers] == [200, 200, 204] + [404] * 6 + [429]
+    assert answers[-1].json() == LIMITED and 0 < int(answers[-1]["Retry-After"]) <= 600
+    assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 11)]
+    assert len(fake.calls) == 1  # la prueba de conexión llamó una vez al proveedor
+
+
+def test_with_the_limit_used_up_by_writes_a_read_still_answers(
+    crm: SimpleNamespace, fake: FakeAnthropic, settings: Any
+) -> None:
+    settings.AI_ACCOUNT_THROTTLE = (2, 600)
+    ana = signed(crm.ana)
+    account = create(ana).json()
+    assert rotate(ana, uuid4()).status_code == 404 and probe(ana, account["id"]).status_code == 429
+    listed = ana.get(BASE)
+    assert listed.status_code == 200 and [a["id"] for a in listed.json()] == [account["id"]]
+    assert (ana.head(BASE).status_code, ana.head(BASE).content) == (200, b"")
+
+
+def test_eleven_reads_in_a_row_are_never_refused_and_count_nothing(
+    crm: SimpleNamespace, fake: FakeAnthropic, migrator: DB
 ) -> None:
     ana = signed(crm.ana)
-    answers = [probe(ana, uuid4()) for _ in range(11)]
-    assert [a.status_code for a in answers] == [404] * 10 + [429]
-    assert answers[-1].json() == LIMITED and answers[-1]["Retry-After"]
+    assert [ana.get(BASE).status_code for _ in range(11)] == [200] * 11
+    assert migrator.execute(COUNTED).fetchall() == []
+
+
+def test_a_head_counts_nothing(crm: SimpleNamespace, fake: FakeAnthropic, migrator: DB) -> None:
+    ana = signed(crm.ana)
+    assert [ana.head(BASE).status_code for _ in range(11)] == [200] * 11
+    assert migrator.execute(COUNTED).fetchall() == []
+
+
+def test_options_is_still_denied_and_counts_nothing(
+    crm: SimpleNamespace, fake: FakeAnthropic, migrator: DB
+) -> None:
+    ana = signed(crm.ana)
+    account_id = create(ana).json()["id"]
+    for path in (BASE, f"{BASE}{account_id}/", f"{BASE}{account_id}/key/"):
+        answers = [send(ana, "options", path, None) for _ in range(11)]
+        assert {reply(a) for a in answers} == {DENIED}, path
+    assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 1)]  # el alta
 
 
 def test_a_request_the_csrf_check_refuses_or_an_anonymous_one_never_uses_the_limit(
