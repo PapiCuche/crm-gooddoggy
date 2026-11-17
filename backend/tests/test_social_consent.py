@@ -1,0 +1,200 @@
+"""F7b-05b: las palabras de baja y de alta también valen en Instagram y Messenger (ADR-035 §5,
+ADR-010 §2.7). La baja se registra contra el canal de la cuenta y la política la consulta con ese
+mismo canal; la confirmación nombra el canal y sale por la página solo dentro de la ventana (nunca
+con la etiqueta Human Agent); un hilo en `standby` no se responde; un `mid` que no es imprimible se
+descarta en el parser en vez de reintentarse hasta `DEAD`. PostgreSQL real con `crm_app`; el
+simulador firma los webhooks y hace de Graph API."""
+
+import datetime as dt
+from types import SimpleNamespace
+from typing import Any
+from uuid import uuid4
+
+import pytest
+from django.utils import timezone
+
+from apps.contacts import keywords
+from apps.contacts.consents import revoke_consent
+from apps.contacts.models import ContactConsent
+from apps.conversations import inbound, ingress, meta_webhook, policy, tasks
+from apps.conversations.models import Conversation, Message
+from core.tenancy.scope import tenant_scope
+from tests.meta_sim import social
+from tests.meta_sim.page_graph import FakePageGraph
+from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
+from tests.test_conversation_commands import outbound, world, writer
+from tests.test_conversations_dispatch import Retrying, state
+from tests.test_memberships import ctx
+from tests.test_meta_webhook import channel, post
+from tests.test_social_outbound import CHANNELS, graph, talk
+from tests.test_whatsapp_outbound import redis
+
+__all__ = ["channel", "graph", "redis", "world", "writer"]  # las fixtures, para pytest
+pytestmark = pytest.mark.usefixtures("tenant_db", "graph")
+SIM = {"MESSENGER": social.MESSENGER, "INSTAGRAM": social.INSTAGRAM}
+PLATFORMS = sorted(SIM)
+STOP, BACK = keywords.OPT_OUT, keywords.OPT_IN
+SECONDS = dt.timedelta(seconds=5)
+
+
+def event(platform: str, body: str, mid: str, ago: dt.timedelta = SECONDS) -> dict[str, Any]:
+    at = int((timezone.now() - ago).timestamp() * 1000)  # milisegundos [S18]
+    return social.text(SIM[platform], body, mid=mid, at=at)
+
+
+def say(platform: str, found: dict[str, Any], field: str = "messaging") -> dict[str, int]:
+    """El cliente escribe por la cuenta de la organización A (o en `standby`)."""
+    assert post(social.signed(SIM[platform], found, field=field)).status_code == 200
+    return ingress.process()
+
+
+def seen(world: SimpleNamespace) -> SimpleNamespace:
+    with tenant_scope(ctx(world.a)):
+        said = Message.objects.filter(direction="INBOUND").values_list("body", flat=True)
+        return SimpleNamespace(
+            consents=[
+                (c.channel, c.purpose, c.status, c.source) for c in ContactConsent.objects.all()
+            ],
+            replies=list(Message.objects.filter(sender_type="SYSTEM").order_by("created_at")),
+            inbound=list(said),
+        )
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_stop_and_an_alta_are_recorded_against_the_channel_and_confirmed_in_its_name(
+    world: SimpleNamespace, platform: str
+) -> None:
+    convo = talk(world, platform)
+    assert say(platform, event(platform, "BAJA", "m_SIMIN000001")) == {"PROCESSED": 1}
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    [reply] = found.replies
+    assert reply.body == inbound.CONFIRMATIONS[platform][STOP]
+    assert f"por {platform.title()}." in reply.body and "WhatsApp" not in reply.body
+    assert reply.policy_decision["mode"] == "FREE_FORM"
+    with pytest.raises(policy.ConsentRevoked):  # la política lee la baja de ese canal
+        outbound(world, convo, purpose="FOLLOW_UP")
+    assert outbound(world, convo)[0].policy_decision["allowed"] is True  # responder sí
+    say(platform, event(platform, "Alta!", "m_SIMIN000002"))
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert [r.body for r in found.replies] == [
+        inbound.CONFIRMATIONS[platform][k] for k in (STOP, BACK)
+    ]
+    assert f"por {platform.title()}." in found.replies[1].body
+
+
+def test_each_channel_has_its_own_words_and_whatsapp_keeps_its_own() -> None:
+    texts = {p: set(inbound.CONFIRMATIONS[p].values()) for p in ("WHATSAPP", *PLATFORMS)}
+    assert all(len(t) == 2 for t in texts.values())
+    assert not set.intersection(*texts.values())  # ninguna frase compartida entre canales
+    assert all("WhatsApp" in t for t in texts["WHATSAPP"])
+    assert all(len(t.encode()) <= 1000 for t in texts["INSTAGRAM"])  # el tope de Instagram
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_the_policy_reads_the_consent_of_the_conversation_channel_not_another(
+    world: SimpleNamespace, platform: str
+) -> None:
+    convo = talk(world, platform)
+    other = next(p for p in PLATFORMS if p != platform)
+    for revoked in ("WHATSAPP", other):  # la baja de otro canal no alcanza a este
+        with tenant_scope(ctx(world.a)) as tenant:
+            revoke_consent(
+                tenant, contact_id=world.contact_a.pk, channel=revoked, purpose="ALL_PROACTIVE",
+                source="AGENT_RECORDED",
+            )  # fmt: skip
+    assert outbound(world, convo, purpose="FOLLOW_UP")[0].policy_decision["allowed"] is True
+    with tenant_scope(ctx(world.a)) as tenant:
+        revoke_consent(
+            tenant, contact_id=world.contact_a.pk, channel=platform, purpose="FOLLOW_UP",
+            source="AGENT_RECORDED",
+        )  # fmt: skip
+    with pytest.raises(policy.ConsentRevoked):
+        outbound(world, convo, purpose="FOLLOW_UP")
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_the_confirmation_goes_out_through_the_page_as_a_response_without_a_tag(
+    world: SimpleNamespace, graph: FakePageGraph, platform: str
+) -> None:
+    talk(world, platform)
+    say(platform, event(platform, "stop", "m_SIMIN000001"))
+    [reply] = seen(world).replies
+    tasks.deliver(Retrying(0), world.a, reply.pk)
+    assert state(world, reply).delivery_status == "SENT"
+    [sent] = graph.sent
+    assert sent["recipient"] == {"id": CHANNELS[platform][1]}  # el PSID o el IGSID
+    assert (sent["messaging_type"], "tag" in sent) == ("RESPONSE", False)
+    assert sent["message"] == {"text": inbound.CONFIRMATIONS[platform][STOP]}
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_outside_the_window_the_stop_is_kept_but_never_confirmed_even_with_human_agent(
+    world: SimpleNamespace, graph: FakePageGraph, settings: Any, platform: str
+) -> None:
+    settings.META_HUMAN_AGENT_APPROVED = True  # una persona podría escribir; el sistema, no
+    late = dt.timedelta(hours=30)  # Meta reintenta 36 h: un STOP puede llegar tarde
+    talk(world, platform, ago=30)
+    assert say(platform, event(platform, "BAJA", "m_SIMIN000001", ago=late)) == {"PROCESSED": 1}
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert found.replies == [] and graph.sent == []
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_thread_in_standby_keeps_the_stop_but_is_never_answered(
+    world: SimpleNamespace, platform: str
+) -> None:
+    talk(world, platform)
+    say(platform, event(platform, "BAJA", "m_SIMIN000001"), field="standby")
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert found.replies == []
+
+
+def test_a_stop_answering_a_story_counts_without_its_fixed_phrase(world: SimpleNamespace) -> None:
+    talk(world, "INSTAGRAM")
+    at = int(timezone.now().timestamp() * 1000)
+    say("INSTAGRAM", social.story_reply("BAJA", mid="m_SIMIN000001", at=at))
+    found = seen(world)
+    assert found.inbound == ["Respondió a tu historia: BAJA"]
+    assert found.consents == [("INSTAGRAM", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_stop_claimed_again_after_an_alta_does_not_act_twice(
+    world: SimpleNamespace, platform: str
+) -> None:
+    talk(world, platform)
+    stop = event(platform, "BAJA", "m_SIMIN000001")
+    say(platform, stop)
+    say(platform, event(platform, "ALTA", "m_SIMIN000002"))
+    again = ingress.Claimed(  # el mismo ítem, reclamado otra vez después
+        uuid4(), "message", None, None, stop | {"standby": False}, 2, platform,
+        PAGE_ID if platform == "MESSENGER" else IG_ACCOUNT_ID,
+    )  # fmt: skip
+    assert ingress.route(again)[0] == "PROCESSED"
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert len(found.replies) == 2
+
+
+@pytest.mark.parametrize(
+    "mid", [" m_SIMIN000001", "m_SIMIN000001\n", "m_\x00SIMIN", "m_ SIMIN", "m_​SIMIN"]
+)
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_mid_that_is_not_printable_is_refused_by_the_parser_and_never_retried(
+    world: SimpleNamespace, migrator: Any, platform: str, mid: str
+) -> None:
+    talk(world, platform)
+    bad, good = event(platform, "Hola", mid), event(platform, "Hola", "m_SIMIN000002")
+    parsed = meta_webhook.parse(social.signed(SIM[platform], bad, good).body)
+    assert parsed.rejected == ["mid"] and len(parsed.items) == 1
+    assert post(social.signed(SIM[platform], bad, good)).status_code == 200
+    prefix = "fb" if platform == "MESSENGER" else "ig"
+    keys = migrator.execute("SELECT event_key FROM webhook_ingress").fetchall()
+    assert keys == [(f"{prefix}:msg:m_SIMIN000002",)]  # el raro, ni guardado ni reintentado
+    assert ingress.process() == {"PROCESSED": 1}
+    with tenant_scope(ctx(world.a)):
+        assert Conversation.objects.count() == 1

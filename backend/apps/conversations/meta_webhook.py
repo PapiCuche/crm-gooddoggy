@@ -118,6 +118,14 @@ def _quote(value: Any, limit: int) -> str:
     return encoded
 
 
+def _mid(value: Any) -> Any:
+    """El `mid` de un mensaje será su `external_message_id`: imprimible y sin espacios en los
+    extremos, como exige `record_inbound`. Si no, se descarta aquí y no se reintenta en vano."""
+    if isinstance(value, str) and (value != value.strip() or not value.isprintable()):
+        raise Invalid("mid")
+    return value
+
+
 def _deep(value: Any) -> bool:
     """¿Supera `MAX_DEPTH` de anidamiento? Sin recursión: el cuerpo es de quien lo envía."""
     stack = [(value, 1)]
@@ -256,7 +264,7 @@ def _social(social: tuple[str, str], account: str, event: Any, field: str) -> It
             raise Invalid("text")
         _no_story_media(message)
         tag = "del" if message.get("is_deleted") is True else "msg"
-        key, kind = f"{prefix}:{tag}:{_quote(message.get('mid'), ID_MAX)}", "message"
+        key, kind = f"{prefix}:{tag}:{_quote(_mid(message.get('mid')), ID_MAX)}", "message"
     elif prefix == "ig" and isinstance(read, dict):
         key, kind = f"ig:read:{_quote(read.get('mid'), ID_MAX)}", "status"
     elif prefix == "fb" and isinstance(found := delivered or read, dict):

@@ -32,6 +32,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
   { key: "quotes", path: "/cotizaciones", section: "/cotizaciones", permission: "quotes.view" },
   { key: "inbox", path: "/inbox", section: "/inbox", permission: "conversations.view" },
   { key: "channels", path: "/canales", section: "/canales", permission: "channels.manage" },
+  { key: "quickReplies", path: "/respuestas-rapidas", permission: "quick_replies.manage" },
   { key: "catalog", path: "/catalogo/marcas", section: "/catalogo", permission: "products.view" },
   {
     key: "inventory",
