@@ -1838,7 +1838,7 @@ export const getAiProviderAccountsListUrl = (orgSlug: string) => {
 };
 
 /**
- * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`. No cuenta en el tope por persona de las escrituras.
  */
 export const aiProviderAccountsList = async (
   orgSlug: string,
@@ -1971,7 +1971,7 @@ export const getAiProviderAccountsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsCreate = async (
   orgSlug: string,
@@ -2078,7 +2078,7 @@ export const getAiProviderAccountsDestroyUrl = (orgSlug: string, accountId: stri
 };
 
 /**
- * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsDestroy = async (
   orgSlug: string,
@@ -2161,7 +2161,7 @@ export const getAiProviderAccountsRotateKeyUrl = (orgSlug: string, accountId: st
 };
 
 /**
- * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsRotateKey = async (
   orgSlug: string,
@@ -2271,7 +2271,7 @@ export const getAiProviderAccountsTestUrl = (orgSlug: string, accountId: string)
 };
 
 /**
- * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsTest = async (
   orgSlug: string,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { sessionEnded } from "@/app/providers";
 import { useChannelWrite } from "@/components/channels/use-channel-write";
@@ -13,6 +13,7 @@ import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
+const OUTLINE = "border-border min-h-11 border sm:min-h-9";
 type Said = { text: string; ok?: boolean; alert?: boolean } | null;
 
 // Sin sesión (401) se va al login, también desde una escritura que no pasa por TanStack. La
@@ -48,7 +49,7 @@ export function aiError(
   }
 }
 
-// Lo que se dice de un error de probar la conexión; `null`: nada.
+// Lo que se dice de un error de una acción sin formulario (probar, borrar); `null`: nada.
 function useProblem() {
   const errors = useTranslations("ai.errors");
   const api = useTranslations("errors.api");
@@ -60,14 +61,16 @@ function useProblem() {
   };
 }
 
-// Guardar la clave: un campo de contraseña que se vacía al enviar (`secret`). La clave
+// Guardar o rotar la clave: un campo de contraseña que se vacía al enviar (`secret`). La clave
 // solo vive en el cierre de la petición: nunca en el estado de React, la caché de TanStack, el
 // navegador ni la URL. Si la API pide el segundo factor, `run` abre el código y repite una vez.
 export function KeyForm({
+  mode,
   send,
   onDone,
   onFailed,
 }: {
+  mode: "save" | "rotate";
   send: (apiKey: string) => Promise<AiProviderAccount>;
   onDone: (account: AiProviderAccount) => void;
   onFailed: (error: ApiError) => void; // 404 o «ya existe»: la pantalla vuelve a leer la lista
@@ -76,15 +79,17 @@ export function KeyForm({
   const errors = useTranslations("ai.errors");
   const { write, run, stepUp } = useChannelWrite();
   const [open, setOpen] = useState(false);
+  const [done, setDone] = useState(false); // se dice solo al rotar: guardar desmonta el formulario
   const trigger = useRef<HTMLButtonElement>(null);
   const back = () => setTimeout(() => trigger.current?.focus());
+  const Heading = mode === "save" ? "h2" : "h3"; // rotar va dentro de la tarjeta de la cuenta
 
   return (
     <div className="flex min-w-0 flex-col items-start gap-3">
       {open ? (
         <FieldsForm
-          title={t("save.title")}
-          heading={<h2 className="font-medium">{t("save.title")}</h2>}
+          title={t(`${mode}.title`)}
+          heading={<Heading className="font-medium">{t(`${mode}.title`)}</Heading>}
           className="border-border bg-surface flex w-full max-w-xl flex-col gap-4 rounded-lg border p-4"
           fields={[
             {
@@ -97,13 +102,17 @@ export function KeyForm({
           send={(values) =>
             run(
               () => send(values.api_key).then(onDone),
-              () => {}, // la cuenta queda activa: el formulario se va y lo anuncia la página
+              () => {
+                setDone(true);
+                setOpen(false);
+                back();
+              },
               (error) => toLogin(error) || onFailed(error),
             )
           }
           taken={(error) => aiError(error, errors)}
           denied={errors("denied")}
-          labels={{ submit: t("save.submit"), busy: t("save.busy"), cancel: t("cancel") }}
+          labels={{ submit: t(`${mode}.submit`), busy: t(`${mode}.busy`), cancel: t("cancel") }}
           onCancel={() => {
             setOpen(false);
             back();
@@ -112,52 +121,72 @@ export function KeyForm({
       ) : (
         <Button
           ref={trigger}
-          variant="accent"
-          className="min-h-11 sm:min-h-9"
+          variant={mode === "save" ? "accent" : "ghost"}
+          className={mode === "save" ? "min-h-11 sm:min-h-9" : OUTLINE}
           onClick={() => {
             write.reset();
+            setDone(false);
             setOpen(true);
           }}
         >
-          {t("save.open")}
+          {t(`${mode}.open`)}
         </Button>
       )}
+      {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}
+      {mode === "rotate" ? (
+        <p role="status" className={done ? "text-sm" : "sr-only"}>
+          {done ? t("rotate.done") : ""}
+        </p>
+      ) : null}
       {stepUp}
     </div>
   );
 }
 
-// Una acción de una pulsación sobre la cuenta (probar la conexión): una petición a la vez, el
-// código del segundo factor si la API lo pide, y lo que pasó dicho por su código.
+// Una acción de una pulsación sobre la cuenta (probar la conexión, borrar): una petición a la vez,
+// el código del segundo factor si la API lo pide, y lo que pasó dicho por su código. Con
+// `confirm`, antes pregunta lo que pasa, con el foco en «Cancelar» (lo seguro).
 export function AccountAction<T>({
   label,
   busyLabel,
   run,
   done,
   onGone,
+  confirm,
 }: {
   label: string;
   busyLabel: string;
   run: () => Promise<T>;
   done: (value: T) => Said; // lo que se dice al terminar bien
-  onGone: () => void; // 404: la cuenta ya no está
+  onGone: () => void; // 404: la cuenta ya no está (la página lo dice)
+  confirm?: { title: string; question: string; effect: string; yes: string; no: string };
 }) {
   const problem = useProblem();
   const { withStepUp, dialog } = useStepUp();
+  const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<Said>(null);
   const sending = useRef(false); // dos pulsaciones seguidas no son dos peticiones
+  const cancel = useRef<HTMLButtonElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (asking) cancel.current?.focus();
+  }, [asking]);
 
   function go() {
     if (sending.current) return;
     setSaid(null);
+    if (confirm && !asking) return setAsking(true);
     sending.current = true;
     setBusy(true);
     withStepUp(run)
       .then(
-        (value) => setSaid(done(value)),
+        (value) => {
+          setAsking(false);
+          setSaid(done(value));
+        },
         (error: ApiError) => {
-          if (error.status === 404) onGone();
+          if (error.status === 404) return onGone(); // lo dice la página: esta acción se va
           const text = problem(error);
           setSaid(text ? { text, alert: true } : null);
         },
@@ -167,11 +196,48 @@ export function AccountAction<T>({
         setBusy(false);
       });
   }
+  const press = (
+    <Button
+      ref={asking ? undefined : trigger}
+      variant={confirm && !asking ? "ghost" : "primary"}
+      className={confirm && !asking ? OUTLINE : "min-h-11 sm:min-h-9"}
+      aria-disabled={busy}
+      onClick={go}
+    >
+      {busy ? busyLabel : asking ? confirm?.yes : label}
+    </Button>
+  );
+
   return (
     <div className="flex min-w-0 flex-col items-start gap-2">
-      <Button variant="primary" className="min-h-11 sm:min-h-9" aria-disabled={busy} onClick={go}>
-        {busy ? busyLabel : label}
-      </Button>
+      {asking && confirm ? (
+        <div
+          role="group"
+          aria-label={confirm.title}
+          className="border-danger flex w-full max-w-xl flex-col gap-3 rounded-lg border p-3"
+        >
+          <p>{confirm.question}</p>
+          <p className="text-muted text-sm">{confirm.effect}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              ref={cancel}
+              variant="ghost"
+              className={OUTLINE}
+              aria-disabled={busy}
+              onClick={() => {
+                if (sending.current) return;
+                setAsking(false);
+                setTimeout(() => trigger.current?.focus());
+              }}
+            >
+              {confirm.no}
+            </Button>
+            {press}
+          </div>
+        </div>
+      ) : (
+        press
+      )}
       <p
         role="status"
         className={said && !said.alert ? cn("text-sm", !said.ok && "text-danger") : "sr-only"}
