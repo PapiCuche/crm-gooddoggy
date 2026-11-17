@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -14,6 +15,7 @@ import type { Conversation, Grant, QuickReplyUse, SelfContext } from "@/lib/api/
 import { mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
+import { useQuickReplies } from "./quick-replies";
 
 const BASE = "/api/v1/o/acme/conversations";
 const tenant: SelfContext = {
@@ -305,7 +307,7 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await waitFor(() => expect(s.sends()).toHaveLength(1));
   });
 
-  it("el marcado de una respuesta se ve como texto; Tab y salir del cuadro cierran la lista", async () => {
+  it("el marcado se ve como texto; Tab y salir del cuadro cierran sin descartar; Escape descarta", async () => {
     const html = reply("r1", "delivery", "Envío", ["Delivery", 1]);
     server(undefined, { replies: [{ ...html, body: "<b id=boom>x</b> {{contact.name}}" }] });
     show();
@@ -314,17 +316,20 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await waitFor(() => expect(options()).toHaveLength(1));
     expect(document.getElementById("boom")).toBeNull();
     expect(options()[0]).toHaveTextContent("<b id=boom>x</b>");
-    await key("Tab");
-    expect(screen.queryByRole("listbox")).toBeNull();
-    await type("/");
-    await type("/d");
-    expect(screen.queryByRole("listbox")).toBeNull(); // cerrada hasta quitar la `/`
-    await type("");
-    await type("/");
-    await waitFor(() => expect(options()).toHaveLength(1));
+    // Tab no es del selector: deja mover el foco y el `blur` cierra; volver (Shift+Tab) la reabre.
+    expect(fireEvent.keyDown(await box(), { key: "Tab" })).toBe(true);
     fireEvent.blur(await box());
     expect(screen.queryByRole("listbox")).toBeNull();
     fireEvent.focus(await box());
+    await waitFor(() => expect(options()).toHaveLength(1));
+    // Escape sí la descarta: cerrada hasta quitar la `/`.
+    await key("Escape");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await type("/");
+    await type("/d");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await type("");
+    await type("/");
     await waitFor(() => expect(options()).toHaveLength(1));
   });
 
@@ -338,5 +343,76 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await settle();
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(s.searches()).toEqual([]);
+  });
+
+  it("el Enter que eligió, sostenido más allá del margen (repeat), no envía", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    await key("Enter");
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await settle(600); // pasado el margen de 500 ms, solo `repeat` dice que sigue sostenido
+    await key("Enter", { repeat: true });
+    await settle();
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("el clic en una opción no quita el foco al cuadro y la inserta", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    const option = await screen.findByRole("option", { name: /Envío en Lima/ });
+    expect(fireEvent.mouseDown(option)).toBe(false); // `preventDefault`: el cuadro no pierde el foco
+    fireEvent.click(option);
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    expect(s.sends()).toEqual([]);
+  });
+
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229 (Safari)", { keyCode: 229 }],
+  ])(
+    "un Enter del IME (%s) recién insertado es del IME: no se bloquea ni envía",
+    async (_n, ime) => {
+      const s = server();
+      show();
+      await openChat();
+      await type("/delivery-l");
+      await waitFor(() => expect(options()).toHaveLength(1));
+      await key("Enter");
+      await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+      expect(fireEvent.keyDown(await box(), { key: "Enter", ...ime })).toBe(true);
+      await settle();
+      expect(s.sends()).toEqual([]);
+    },
+  );
+
+  it("el hook descarta un `render` que vuelve con otra conversación, aunque el texto sea igual", async () => {
+    const s = server(undefined, { hold: true });
+    const insert = vi.fn();
+    let hook!: ReturnType<typeof useQuickReplies>;
+    let switchTo!: (id: string) => void;
+    function Probe() {
+      const [conversationId, setId] = useState("1");
+      switchTo = setId;
+      hook = useQuickReplies({ enabled: true, conversationId, text: "/delivery-l", insert });
+      return hook.picker;
+    }
+    renderApp(
+      <TenantProvider value={tenant}>
+        <Probe />
+      </TenantProvider>,
+    );
+    await waitFor(() => expect(options()).toHaveLength(1));
+    const enter = { key: "Enter", nativeEvent: {}, preventDefault() {}, stopPropagation() {} };
+    act(() => void hook.onKey(enter as Parameters<typeof hook.onKey>[0]));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    act(() => switchTo("2"));
+    await s.release();
+    await settle();
+    expect(insert).not.toHaveBeenCalled();
   });
 });
