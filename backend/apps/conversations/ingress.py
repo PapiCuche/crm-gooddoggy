@@ -166,7 +166,11 @@ def store(items: list[Any]) -> int:
 
 
 def claim(limit: int = 50, lease: int = LEASE_SECONDS) -> list[Claimed]:
-    rows = _call("SELECT * FROM public.webhook_ingress_claim(%s, %s)", [limit, lease])
+    """Reclama un lote y lo entrega en orden de llegada (`uuidv7`): la función elige los ítems por
+    su `ORDER BY`, pero su `UPDATE … RETURNING` los devuelve en el orden físico de la tabla, y una
+    BAJA procesada después de su ALTA dejaba la baja (TEST-FLAKY-02, #934)."""
+    sql = "SELECT * FROM public.webhook_ingress_claim(%s, %s) ORDER BY id"
+    rows = _call(sql, [limit, lease])
     # El jsonb llega como texto por el cursor de Django.
     return [Claimed(r[0], r[1], r[2], r[3], json.loads(r[4]), *r[5:8]) for r in rows]
 
