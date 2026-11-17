@@ -42,6 +42,7 @@ LIMIT_TIERS = (  # a confirmar con la documentación de Meta
     "TIER_50", "TIER_250", "TIER_1K", "TIER_10K", "TIER_100K", "TIER_UNLIMITED", "TIER_NOT_SET",
 )  # fmt: skip
 META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
+ECHO_HEX = r"^[0-9a-f]{32}$"  # `secrets.token_hex(16)`: 128 bits (ADR-035 §6)
 
 
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
@@ -540,6 +541,9 @@ class Message(TenantModel):
     # instantánea de `PolicyDecision.as_json()` (permitido, modo, motivo y horas), nunca texto.
     policy_decision = models.JSONField(null=True, blank=True)
     file_id = models.UUIDField(null=True, blank=True)  # el medio saliente: FK compuesta (0027)
+    # F7b-05c (ADR-035 §6): la ficha aleatoria (128 bits, `secrets`) que un envío de Instagram o
+    # Messenger lleva en `message.metadata`; su eco la devuelve. Nunca el id ni datos del mensaje.
+    echo_token = models.CharField(max_length=32, null=True, blank=True)  # noqa: DJ001
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -573,6 +577,16 @@ class Message(TenantModel):
                 fields=["organization_id", "client_message_id"],
                 condition=models.Q(client_message_id__isnull=False),
                 name="messages_client_uq",
+            ),
+            models.UniqueConstraint(  # F7b-05c: la ficha del eco, única por cuenta (0046)
+                fields=["organization_id", "channel_account", "echo_token"],
+                condition=models.Q(echo_token__isnull=False),
+                name="messages_echo_token_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(echo_token__isnull=True)
+                | models.Q(direction="OUTBOUND", echo_token__regex=ECHO_HEX),
+                name="messages_echo_token_ck",
             ),
             one_of("direction", Direction, "messages_direction_ck"),
             one_of("sender_type", SenderType, "messages_sender_ck"),

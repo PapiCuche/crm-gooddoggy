@@ -103,7 +103,7 @@ def test_a_reply_inside_the_window_goes_to_the_identity_through_the_page(
     sent, call = graph.sent[0], graph.calls[0]
     assert sent["recipient"] == {"id": CHANNELS[platform][1]}  # el PSID o el IGSID
     assert (sent["messaging_type"], "tag" in sent) == ("RESPONSE", False)
-    assert sent["message"] == {"text": "Hola, ¿en qué te ayudo?"}
+    assert sent["message"] == {"text": "Hola, ¿en qué te ayudo?", "metadata": saved.echo_token}
     assert call["path"] == f"/{GRAPH_VERSION}/{PAGE_ID}/messages"  # Instagram, por su página
     assert saved.policy_decision["mode"] == "FREE_FORM"
 

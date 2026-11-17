@@ -392,6 +392,9 @@ META_GRAPH_HOST = "graph.facebook.com"
 # persona responde por Instagram o Messenger con la ventana de 24 h cerrada, hasta 168 h después.
 # Apagado por omisión: el propietario lo enciende **después** de la aprobación, nunca antes.
 META_HUMAN_AGENT_APPROVED = env.boolean("META_HUMAN_AGENT_APPROVED", False)
+# F7b-05c (ADR-035 §6): el id de la app de Meta del despliegue, para reconocer nuestros ecos de
+# Instagram y Messenger. Vacío por omisión: entonces un eco con `app_id` nunca se toma por nuestro.
+META_APP_ID = env.optional("META_APP_ID", "")
 # F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)
