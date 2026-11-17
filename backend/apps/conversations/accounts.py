@@ -1,5 +1,5 @@
 """Cuentas de WhatsApp: conectar, rotar el token y desconectar (F7-02c; ADR-029 §2, ADR-022). Y
-conectar una página de Messenger o una cuenta de Instagram (F7b-04a, ADR-035 §3), igual.
+una página de Messenger o una cuenta de Instagram (F7b-04a y F7b-06a, ADR-035 §3), igual.
 
 Los únicos escritores de la conexión de una cuenta real; solo la API y las tareas los importan. El
 token de acceso lo guarda `apps.conversations.credentials` (cifrado, atado a la cuenta); aquí se
@@ -74,8 +74,21 @@ def _token(value: Any) -> str:
 REAL = (Platform.WHATSAPP, *SOCIAL)  # las cuentas que Meta puede poner en `ERROR` (ADR-035 §3)
 
 
-def _live() -> QuerySet[ChannelAccount]:
-    return ChannelAccount.objects.filter(platform=Platform.WHATSAPP, deleted_at__isnull=True)
+def _live(platform: str = Platform.WHATSAPP) -> QuerySet[ChannelAccount]:
+    return ChannelAccount.objects.filter(platform=platform, deleted_at__isnull=True)
+
+
+def _check(token: str, account: ChannelAccount) -> dict[str, Any]:
+    """Que Meta acepte `token` para la misma cuenta: el número en su WABA o, en Messenger e
+    Instagram, la misma página (y en Instagram, la misma cuenta vinculada: ADR-035 §3)."""
+    if account.platform == Platform.WHATSAPP:
+        return graph.phone_number(
+            token, account.external_parent_id or "", account.external_account_id
+        )
+    instagram = account.platform == Platform.INSTAGRAM
+    page = account.external_parent_id if instagram else account.external_account_id
+    graph.page(token, page or "", account.external_account_id if instagram else None)
+    return {"quality_rating": None, "messaging_limit_tier": None}  # no existen aquí
 
 
 def _announce(
@@ -174,22 +187,25 @@ def connect_social(
 
 
 def rotate_token(
-    ctx: TenantContext, *, channel_account_id: UUID, access_token: str
-) -> tuple[ChannelAccount, Credential]:
+    ctx: TenantContext, *, channel_account_id: UUID, access_token: str,
+    platform: str = Platform.WHATSAPP,
+) -> tuple[ChannelAccount, Credential]:  # fmt: skip
     """Cambia el token de una cuenta: el nuevo se comprueba con Meta contra el mismo número y el
     mismo WABA, sustituye al anterior (que se invalida y pierde su cifrado) y limpia
     `TOKEN_INVALID`. Una cuenta `ERROR` por `TOKEN_INVALID` no se comprueba nunca, así que sería un
     callejón sin salida: como Meta acaba de verificar el token nuevo contra su mismo número y WABA
     (lo mismo que la comprobación de salud), vuelve a `CONNECTED`, o a `DEGRADED` si la calidad es
-    baja (la base prohíbe volver a `PENDING`). Otro estado no cambia.
-    `DoesNotExist` si no es una cuenta viva de WhatsApp de esta organización."""
+    baja (la base prohíbe volver a `PENDING`). Otro estado no cambia. En Messenger e Instagram
+    (F7b-06a) se comprueba la misma página con `graph.page` y no hay calidad ni nivel.
+    `DoesNotExist` si no es una cuenta viva de `platform` de esta organización."""
     alias = require_scope(ctx)
     token = _token(access_token)
     _allowed(ctx)
-    account = _live().using(alias).get(pk=channel_account_id)
-    seen = graph.phone_number(token, account.external_parent_id or "", account.external_account_id)
+    account = _live(platform).using(alias).get(pk=channel_account_id)
+    seen = _check(token, account)
     with transaction.atomic(using=alias):
-        account = _live().using(alias).select_for_update(no_key=True).get(pk=channel_account_id)
+        found = _live(platform).using(alias).select_for_update(no_key=True)
+        account = found.get(pk=channel_account_id)
         old = account.credential_id
         credentials.revoke(ctx, old)  # antes de guardar la nueva: una viva por cuenta
         credential = credentials.store(ctx, account.pk, token, rotated=True)
@@ -211,14 +227,17 @@ def rotate_token(
     return account, credential
 
 
-def disconnect(ctx: TenantContext, *, channel_account_id: UUID) -> None:
+def disconnect(
+    ctx: TenantContext, *, channel_account_id: UUID, platform: str = Platform.WHATSAPP
+) -> None:
     """Desconecta la cuenta: queda borrada (`DISCONNECTED`, `DISCONNECTED_BY_ADMIN`), su credencial
-    se invalida y su número se libera. `DoesNotExist` si no es una cuenta viva de WhatsApp de esta
-    organización."""
+    se invalida y su número (o su página) se libera. `DoesNotExist` si no es una cuenta viva de
+    `platform` de esta organización."""
     alias = require_scope(ctx)
     _allowed(ctx)
     with transaction.atomic(using=alias):
-        account = _live().using(alias).select_for_update(no_key=True).get(pk=channel_account_id)
+        found = _live(platform).using(alias).select_for_update(no_key=True)
+        account = found.get(pk=channel_account_id)
         old = account.status
         credentials.revoke(ctx, account.credential_id)
         account.status, account.status_detail = "DISCONNECTED", "DISCONNECTED_BY_ADMIN"

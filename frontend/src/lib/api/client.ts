@@ -215,6 +215,8 @@ import type {
   SendMediaFormRequest,
   SendMessageRequest,
   Session,
+  SocialAccount,
+  SocialConnectRequest,
   StageOrderRequest,
   StockImport,
   StockImportCreateRequest,
@@ -1836,7 +1838,7 @@ export const getAiProviderAccountsListUrl = (orgSlug: string) => {
 };
 
 /**
- * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`. No cuenta en el tope por persona de las escrituras.
  */
 export const aiProviderAccountsList = async (
   orgSlug: string,
@@ -1969,7 +1971,7 @@ export const getAiProviderAccountsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsCreate = async (
   orgSlug: string,
@@ -2076,7 +2078,7 @@ export const getAiProviderAccountsDestroyUrl = (orgSlug: string, accountId: stri
 };
 
 /**
- * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsDestroy = async (
   orgSlug: string,
@@ -2159,7 +2161,7 @@ export const getAiProviderAccountsRotateKeyUrl = (orgSlug: string, accountId: st
 };
 
 /**
- * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsRotateKey = async (
   orgSlug: string,
@@ -2269,7 +2271,7 @@ export const getAiProviderAccountsTestUrl = (orgSlug: string, accountId: string)
 };
 
 /**
- * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
  */
 export const aiProviderAccountsTest = async (
   orgSlug: string,
@@ -3970,6 +3972,325 @@ export function useChannelsRetrieve<
   return withQueryKey(query, queryOptions.queryKey);
 }
 
+export const getChannelsSocialConnectUrl = (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+) => {
+  return `/api/v1/o/${orgSlug}/channels/${platform}/`;
+};
+
+/**
+ * Registra una página de Messenger o una cuenta de Instagram como la ruta de WhatsApp (ADR-035 §3): Meta comprueba la página (y su cuenta de Instagram) y se suscribe la app. El 400 sin oráculo va en `page_id` (Messenger) o `instagram_account_id`.
+ */
+export const channelsSocialConnect = async (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  socialConnectRequest: SocialConnectRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<SocialAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<SocialAccount>(getChannelsSocialConnectUrl(orgSlug, platform), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(socialConnectRequest),
+  });
+};
+
+export const getChannelsSocialConnectMutationKey = () => ["channelsSocialConnect"] as const;
+
+export const getChannelsSocialConnectMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSocialConnect>>,
+    TError,
+    ChannelsSocialConnectMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSocialConnect>>,
+  TError,
+  ChannelsSocialConnectMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSocialConnectMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSocialConnect>>,
+    ChannelsSocialConnectMutationVariables
+  > = (props) => {
+    const { orgSlug, platform, data } = props ?? {};
+
+    return channelsSocialConnect(orgSlug, platform, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSocialConnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSocialConnect>>
+>;
+export type ChannelsSocialConnectMutationBody = SocialConnectRequest;
+export type ChannelsSocialConnectMutationError = ErrorType<Error>;
+export type ChannelsSocialConnectMutationVariables = {
+  orgSlug: string;
+  platform: "instagram" | "messenger";
+  data: SocialConnectRequest;
+};
+
+export const useChannelsSocialConnect = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSocialConnect>>,
+      TError,
+      ChannelsSocialConnectMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSocialConnect>>,
+  TError,
+  ChannelsSocialConnectMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSocialConnectMutationOptions(options), queryClient);
+};
+
+export const getChannelsSocialDisconnectUrl = (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/channels/${platform}/${accountId}/`;
+};
+
+/**
+ * Como en WhatsApp. 404 también si la cuenta es de otra plataforma.
+ */
+export const channelsSocialDisconnect = async (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getChannelsSocialDisconnectUrl(orgSlug, platform, accountId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getChannelsSocialDisconnectMutationKey = () => ["channelsSocialDisconnect"] as const;
+
+export const getChannelsSocialDisconnectMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+    TError,
+    ChannelsSocialDisconnectMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+  TError,
+  ChannelsSocialDisconnectMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSocialDisconnectMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+    ChannelsSocialDisconnectMutationVariables
+  > = (props) => {
+    const { orgSlug, platform, accountId } = props ?? {};
+
+    return channelsSocialDisconnect(orgSlug, platform, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSocialDisconnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSocialDisconnect>>
+>;
+
+export type ChannelsSocialDisconnectMutationError = ErrorType<Error>;
+export type ChannelsSocialDisconnectMutationVariables = {
+  orgSlug: string;
+  platform: "instagram" | "messenger";
+  accountId: string;
+};
+
+export const useChannelsSocialDisconnect = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+      TError,
+      ChannelsSocialDisconnectMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSocialDisconnect>>,
+  TError,
+  ChannelsSocialDisconnectMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSocialDisconnectMutationOptions(options), queryClient);
+};
+
+export const getChannelsSocialRotateTokenUrl = (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+) => {
+  return `/api/v1/o/${orgSlug}/channels/${platform}/${accountId}/token/`;
+};
+
+/**
+ * Como en WhatsApp; Meta comprueba la misma página (y la misma cuenta de Instagram). 404 también si la cuenta es de otra plataforma.
+ */
+export const channelsSocialRotateToken = async (
+  orgSlug: string,
+  platform: "instagram" | "messenger",
+  accountId: string,
+  tokenRequest: TokenRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<SocialAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<SocialAccount>(getChannelsSocialRotateTokenUrl(orgSlug, platform, accountId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(tokenRequest),
+  });
+};
+
+export const getChannelsSocialRotateTokenMutationKey = () => ["channelsSocialRotateToken"] as const;
+
+export const getChannelsSocialRotateTokenMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+    TError,
+    ChannelsSocialRotateTokenMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+  TError,
+  ChannelsSocialRotateTokenMutationVariables,
+  TContext
+> => {
+  const mutationKey = getChannelsSocialRotateTokenMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+    ChannelsSocialRotateTokenMutationVariables
+  > = (props) => {
+    const { orgSlug, platform, accountId, data } = props ?? {};
+
+    return channelsSocialRotateToken(orgSlug, platform, accountId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChannelsSocialRotateTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof channelsSocialRotateToken>>
+>;
+export type ChannelsSocialRotateTokenMutationBody = TokenRequest;
+export type ChannelsSocialRotateTokenMutationError = ErrorType<Error>;
+export type ChannelsSocialRotateTokenMutationVariables = {
+  orgSlug: string;
+  platform: "instagram" | "messenger";
+  accountId: string;
+  data: TokenRequest;
+};
+
+export const useChannelsSocialRotateToken = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+      TError,
+      ChannelsSocialRotateTokenMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof channelsSocialRotateToken>>,
+  TError,
+  ChannelsSocialRotateTokenMutationVariables,
+  TContext
+> => {
+  return useMutation(getChannelsSocialRotateTokenMutationOptions(options), queryClient);
+};
+
 export const getChannelsSandboxInboundUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/channels/sandbox/inbound/`;
 };
@@ -4082,7 +4403,7 @@ export const getChannelsWhatsappConnectUrl = (orgSlug: string) => {
 };
 
 /**
- * Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos por persona, las tres rutas).
+ * Registra un número de WhatsApp (`channels.manage`, MFA reciente): comprueba con Meta el token y guarda la cuenta `PENDING` con el token cifrado. 400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503 `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos por persona, compartido con Messenger e Instagram).
  */
 export const channelsWhatsappConnect = async (
   orgSlug: string,
