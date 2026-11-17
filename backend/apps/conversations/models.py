@@ -451,6 +451,11 @@ class Conversation(TenantModel):
                 & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
                 name="conversations_unanswered_idx",
             ),
+            models.Index(  # las cuentas con hilos en `standby` (F7b-06b): CONCURRENTLY en la 0048
+                fields=["organization_id", "channel_account"],
+                condition=models.Q(standby_since__isnull=False) & ~models.Q(status="CLOSED"),
+                name="conversations_standby_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
