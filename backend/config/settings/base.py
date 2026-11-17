@@ -393,6 +393,9 @@ META_WEBHOOK_VERIFY_TOKEN = env.optional("META_WEBHOOK_VERIFY_TOKEN", "")
 # fixtures del simulador. A confirmar con la versión vigente de Meta y su fecha de retirada.
 META_GRAPH_VERSION = "v23.0"
 META_GRAPH_HOST = "graph.facebook.com"
+# ADR-041: el origen del simulador local de Graph (`http://meta-sim:8090`). Vacío en todo
+# despliegue: solo `local` lo lee del entorno; production, migrate y test no arrancan con ella.
+META_GRAPH_SIMULATOR_URL = ""
 # F7b-05a (ADR-035 §7, D-F7b-08): Meta aprobó la función Human Agent en la app. Solo entonces una
 # persona responde por Instagram o Messenger con la ventana de 24 h cerrada, hasta 168 h después.
 # Apagado por omisión: el propietario lo enciende **después** de la aprobación, nunca antes.
