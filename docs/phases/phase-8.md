@@ -72,7 +72,17 @@ Cómo reparte ADR-034 entre ellos:
   - **Sin reintentos:** quien prueba puede volver a hacerlo.
   - **Carreras:** dos altas a la vez de la misma cuenta dan `keys.AccountConflict` (reintentable), no un `IntegrityError`.
   - **Simulador sin red:** `tests/ai_sim.py`.
-- **Para F8-03c:** las rutas, con el segundo factor reciente detrás del permiso.
+
+### F8-03c · Rutas protegidas
+
+- **Hecho en F8-03c (#879):** las rutas de `…/ai/provider-accounts/` (`apps.ai_gateway.api`). Ninguna lleva la clave ni su cifrado: solo `key_last_four`, el proveedor, el estado y las fechas.
+  - `GET` lista las cuentas activas y desactivadas.
+  - `POST` crea una cuenta o reactiva una desactivada. 409 `AI_ACCOUNT_EXISTS`, o 409 `AI_ACCOUNT_CONFLICT` si otra petición la crea a la vez.
+  - `POST …/{id}/key/` rota la clave.
+  - `DELETE …/{id}/` desactiva la cuenta y borra el cifrado de su clave.
+  - **Las cuatro piden `ai.manage` y, después, el segundo factor reciente** (D-F7-11). Sin el permiso responden 403 `PERMISSION_DENIED`; sin el segundo factor, 403 `STEP_UP_REQUIRED`. El issue pide el segundo factor en cada ruta, así que listar también lo exige.
+  - **Un solo 404** para la cuenta que no es de la organización, la que no existe y la desactivada. El cuerpo se valida antes del 404.
+  - OpenAPI y orval regenerados.
 - **Pendiente (opcional):** que las organizaciones con claves ilegibles no acaparen el descubrimiento del re-sellado.
 
 ## Qué necesita el propietario (sin ningún valor real)
