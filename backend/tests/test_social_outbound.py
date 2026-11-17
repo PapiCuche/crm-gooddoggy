@@ -318,6 +318,7 @@ def test_the_claim_carries_the_identity_of_this_account_and_never_shows_it(
         claim = commands.claim_outbound(tenant, message_id=message.pk)
     assert claim is not None and (claim.recipient, claim.parent_id) == (IGSID, PAGE_ID)
     assert IGSID not in repr(claim) and TEST_TOKEN not in repr(claim) and "Hola" not in repr(claim)
+    assert claim.echo_token is not None and claim.echo_token not in repr(claim)  # F7b-05c
     other = account(world.a, "INSTAGRAM", "100000000000103")
     with tenant_scope(ctx(world.a)) as tenant:  # la identidad de otra cuenta no es destinataria
         assert commands._recipient(require_scope(tenant), convo, other) == ""

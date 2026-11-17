@@ -4,6 +4,7 @@ punta contra el simulador: el envío lleva su ficha en `message.metadata`, el ec
 `crm_app`; los webhooks firmados por la ruta, con el cliente de pruebas de Django."""
 
 import datetime as dt
+import importlib
 import re
 from types import SimpleNamespace
 from typing import Any
@@ -21,13 +22,13 @@ from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
 from tests.meta_sim import social
 from tests.meta_sim.page_graph import FakePageGraph
-from tests.meta_sim.social import APP_ID, INSTAGRAM, MESSENGER, OTHER_APP_ID
+from tests.meta_sim.social import APP_ID, IG_ACCOUNT_ID, INSTAGRAM, MESSENGER, OTHER_APP_ID
 from tests.test_conversation_commands import outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_memberships import ctx
 from tests.test_meta_webhook import channel, post
 from tests.test_social_outbound import account_of, graph, send, talk
-from tests.test_social_schema import identity
+from tests.test_social_schema import account, identity
 from tests.test_whatsapp_outbound import redis
 
 __all__ = ["channel", "graph", "redis", "world", "writer"]  # los fixtures, para pytest
@@ -50,6 +51,12 @@ def items(migrator: DB) -> list[tuple[str, str | None, bool]]:
     return migrator.execute(
         "SELECT status, ignored_reason, payload IS NULL FROM webhook_ingress ORDER BY received_at"
     ).fetchall()
+
+
+def stored(world: SimpleNamespace, convo: Any, **over: Any) -> Message:
+    """Un saliente escrito tal cual en la base (su estado y su ficha, sin pasar por el envío)."""
+    out = {"direction": "OUTBOUND", "sender_type": "USER", "sender_user_id": world.ana.pk}
+    return tables.message(world.a, convo, **(out | over))  # type: ignore[no-any-return]
 
 
 def lost(world: SimpleNamespace, graph: FakePageGraph, platform: str) -> Message:
@@ -214,3 +221,83 @@ def test_instagram_marks_read_by_mid_and_waits_for_an_unknown_one(
     assert hook(INSTAGRAM, social.read(INSTAGRAM, mid="m_SIMOUT000001")) == {"PROCESSED": 1}
     saved = state(world, message)
     assert (saved.delivery_status, saved.read_at) == ("READ", AT)
+
+
+def test_echoes_and_watermarks_stay_on_their_own_account(
+    world: SimpleNamespace, graph: FakePageGraph
+) -> None:
+    talk(world, "MESSENGER")
+    ig = account(world.a, "INSTAGRAM", IG_ACCOUNT_ID)
+    who = identity(world.a, world.contact_a, ig, social.PSID)  # el mismo id, en otra cuenta
+    there = tables.conversation(
+        world.a, world.contact_a, ig, "CONV-09996", contact_identity_id=who.pk
+    )
+    other = stored(
+        world, there, delivery_status="SENT", echo_token="b" * 32,
+        sending_at=AT - dt.timedelta(seconds=5),
+    )  # fmt: skip
+    echo = social.echo(MESSENGER, mid="m_SIMOUT000007", metadata="b" * 32)
+    assert hook(MESSENGER, echo) == {"FAILED": 1}
+    assert hook(MESSENGER, social.delivery()) == {"PROCESSED": 1}
+    saved = state(world, other)
+    assert (saved.delivery_status, saved.external_message_id) == ("SENT", None)
+
+
+def test_an_echo_never_touches_a_queued_or_a_rejected_message(
+    world: SimpleNamespace, graph: FakePageGraph
+) -> None:
+    convo = talk(world, "MESSENGER")
+    queued = stored(world, convo, delivery_status="QUEUED", echo_token="c" * 32)
+    rejected = stored(
+        world, convo, delivery_status="FAILED", provider_error_code="PROVIDER_REJECTED",
+        echo_token="d" * 32,
+    )  # fmt: skip
+    echoes = (social.echo(MESSENGER, mid=f"m_SIMOUT00000{n}", metadata=t * 32) for n, t in
+              ((8, "c"), (9, "d")))  # fmt: skip
+    assert hook(MESSENGER, *echoes) == {"FAILED": 2}
+    assert [(state(world, m).delivery_status, state(world, m).external_message_id) for m in
+            (queued, rejected)] == [("QUEUED", None), ("FAILED", None)]  # fmt: skip
+
+
+def test_no_instant_comes_from_the_future_and_a_watermark_never_reconciles_an_unknown_send(
+    world: SimpleNamespace, graph: FakePageGraph
+) -> None:
+    future = int((timezone.now() + dt.timedelta(days=1)).timestamp() * 1000)
+    convo = talk(world, "MESSENGER")
+    graph.then("timeout_after", "timeout_after")  # dos envíos perdidos
+    message, unknown = (send(world, convo)[0] for _ in range(2))
+    echo = graph.echo(MESSENGER)
+    echo["timestamp"] = future
+    hook(MESSENGER, echo)
+    hook(MESSENGER, social.delivery(watermark=future))
+    saved, now = state(world, message), timezone.now()
+    assert saved.delivery_status == "DELIVERED"
+    assert saved.sent_at is not None and saved.sent_at <= now
+    assert saved.delivered_at is not None and saved.delivered_at <= now
+    with tenant_scope(ctx(world.a)) as tenant:  # el segundo lo cerró el barredor
+        commands.fail_sending(tenant, message_id=unknown.pk, reason="PROVIDER_UNKNOWN")
+    assert hook(MESSENGER, social.read(MESSENGER, watermark=future)) == {"PROCESSED": 1}
+    assert state(world, unknown).delivery_status == "FAILED"  # sin `mid`: solo un eco lo concilia
+
+
+def test_the_unique_index_is_rebuilt_after_a_failed_build_or_the_migration_fails(
+    world: SimpleNamespace, graph: FakePageGraph, migrator: DB
+) -> None:
+    module = importlib.import_module("apps.conversations.migrations.0046_message_echo_token_index")
+    editor, convo = SimpleNamespace(connection=migrator), talk(world, "MESSENGER")
+    migrator.execute(module.DROP)
+    migrator.execute(f"CREATE INDEX {module.INDEX} ON messages (echo_token)")  # otro, mismo nombre
+    with pytest.raises(RuntimeError, match="otra definición"):
+        module.create(None, editor)
+    migrator.execute(module.DROP)
+    twins = [stored(world, convo, delivery_status="QUEUED", echo_token="e" * 32) for _ in "ab"]
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        migrator.execute(module.CREATE)  # la construcción falla y deja el índice INVALID
+    assert module._state(editor)[0] is False
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        module.create(None, editor)  # con los duplicados, falla en voz alta
+    migrator.execute("DELETE FROM messages WHERE id = %s", [twins[1].pk])
+    module.create(None, editor)  # se repite: borra el `INVALID` y lo crea válido
+    assert module._state(editor) == (True, module.DEFINITION)
+    with pytest.raises(IntegrityError, match="messages_echo_token_uq"):
+        stored(world, convo, delivery_status="QUEUED", echo_token="e" * 32)

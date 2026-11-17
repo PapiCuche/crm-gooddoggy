@@ -207,6 +207,10 @@ def social(ctx: TenantContext, account: ChannelAccount, event: dict[str, Any]) -
     state, at = ("DELIVERED" if delivered else "READ"), min(until, timezone.now())
     # Todo lo enviado hasta la marca: lo reclamado antes de ella (`sending_at`, antes del POST y
     # de que Meta le ponga su hora). Lo que sigue `SENDING` aún no tiene `mid`: se espera.
+    # Aproximado aun con relojes perfectos: si B se reclama mientras el POST de A está en vuelo,
+    # `sending_at` de B ≤ la hora que Meta da a A (la marca), y el entregado o leído de A marca
+    # también B. Solo es cosmético (el mismo cliente y la misma cuenta) y nunca retrocede. El
+    # arreglo: comparar con la hora de Meta del mensaje (la del eco) o usar `delivery.mids`.
     covered = mine.filter(sending_at__lte=until)
     later = ("SENT",) if delivered else ("SENT", "DELIVERED")
     for pk in covered.filter(delivery_status__in=later).values_list("pk", flat=True):
