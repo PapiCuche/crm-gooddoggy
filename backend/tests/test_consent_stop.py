@@ -94,7 +94,7 @@ def test_a_stop_revokes_once_confirms_once_and_blocks_a_follow_up_but_not_a_repl
     [event], [reply], [stop] = found.events, found.replies, found.inbound
     assert event.evidence == {"message_id": str(stop.pk)} and event.recorded_by_user_id is None
     assert (reply.direction, reply.delivery_status, reply.body) == (
-        "OUTBOUND", "QUEUED", inbound.CONFIRMATIONS[STOP],
+        "OUTBOUND", "QUEUED", inbound.CONFIRMATIONS["WHATSAPP"][STOP],
     )  # fmt: skip
     assert (reply.sender_user_id, reply.policy_decision["purpose"]) == (None, "CUSTOMER_REPLY")
     assert (events(migrator, "consent.revoked"), events(migrator, "message.queued")) == (1, 1)
@@ -120,7 +120,9 @@ def test_an_alta_restores_and_the_history_keeps_both_changes_untouched(
         ("REVOKED", "KEYWORD_STOP"), ("GRANTED", "CUSTOMER_MESSAGE"),
     ]  # fmt: skip
     assert (found.events[0].pk, found.events[0].evidence) == (first.pk, first.evidence)
-    assert [r.body for r in found.replies] == [inbound.CONFIRMATIONS[k] for k in (STOP, BACK)]
+    assert [r.body for r in found.replies] == [
+        inbound.CONFIRMATIONS["WHATSAPP"][k] for k in (STOP, BACK)
+    ]
     message, created = outbound(crm, found.convo, purpose="FOLLOW_UP")
     assert created and message.policy_decision["purpose"] == "FOLLOW_UP"
 
