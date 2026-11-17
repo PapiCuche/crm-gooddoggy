@@ -233,7 +233,11 @@ protected_modules = [
     "apps.contacts.notes",
     "apps.contacts.tags",
 ]
-allowed_importers = ["apps.contacts.api", "apps.conversations.inbound"]  # F7-04: crea el contacto
+allowed_importers = [
+    "apps.contacts.api",
+    "apps.conversations.inbound",  # F7-04: crea el contacto
+    "apps.conversations.profiles",  # F7b-04c: el nombre del cliente de Instagram
+]
 
 [[tool.importlinter.contracts]]
 name = "Comandos de pipelines y oportunidades: solo su API los importa (F5-01, F5-03b, F5-03c)"
