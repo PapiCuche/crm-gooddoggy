@@ -2,12 +2,13 @@
 aprobación de una cotización (`apps.quotes.discounts`), con PostgreSQL real y `crm_app`."""
 
 import json
+import re
 from datetime import timedelta
 from decimal import Decimal as D
 from functools import partial
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from django.db import DataError, IntegrityError, connection
@@ -242,7 +243,26 @@ def test_a_manual_price_covering_the_cost_always_asks_for_approval_and_never_sho
     [asked] = approvals(shop)
     assert asked.reason == "MANUAL_PRICE" and asked.requested_by_user_id == boss.pk
     body = json.dumps(audit(migrator))
-    assert "12345678" not in body and "[texto]" in body and "3000" not in body  # ni texto ni costo
+    assert "[texto]" in body and not {D("12345678"), D("3000")} & figures(body)  # ni texto ni costo
+
+
+FIGURE = re.compile(r"(?<![\w.-])\d+(?:\.\d+)?(?![\w-])")
+
+
+def figures(text: str) -> set[D]:
+    """Las cifras sueltas de `text` (`3000`, `3000.00`, `costo 3000`), no los trozos de un id: un
+    UUID al azar puede llevar `…e3000b…` o `-3000-` sin que el costo se filtre (TEST-FLAKY-01)."""
+    return {D(found) for found in FIGURE.findall(text)}
+
+
+def test_a_figure_inside_a_uuid_is_not_a_leaked_figure() -> None:
+    ids = [str(UUID("5f0e3000-1c2d-4e5f-8a9b-b3a950e3000b")), "wamid.3000",
+           str(UUID("12345678-3000-4a5b-9c3d-000000003000")), str(uuid4())]  # fmt: skip
+    body = json.dumps([["quote.updated", {"id": ids, "total": ["4399.00", "3000.50"]}]])
+    assert "3000" in body and "12345678" in body  # las subcadenas de antes fallaban con estos ids
+    assert figures(body) == {D("4399"), D("3000.50")}  # 3000,50 es otra cifra, no el costo
+    for leaked in ("3000", "3000.00", 3000, 3000.0, "costo 3000.0000.", ["S/ 3000"]):
+        assert D("3000") in figures(json.dumps({"id": ids[0], "x": leaked})), leaked
 
 
 @pytest.mark.parametrize(
