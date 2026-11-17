@@ -23,6 +23,7 @@ from apps.audit.services import Entity, record
 from apps.conversations import credentials, graph
 from apps.conversations.models import (
     META_ID,
+    PAGE_OWNER,
     SOCIAL,
     TOKEN_FORMAT,
     ChannelAccount,
@@ -80,7 +81,8 @@ def _live(platform: str = Platform.WHATSAPP) -> QuerySet[ChannelAccount]:
 
 def _check(token: str, account: ChannelAccount) -> dict[str, Any]:
     """Que Meta acepte `token` para la misma cuenta: el número en su WABA o, en Messenger e
-    Instagram, la misma página (y en Instagram, la misma cuenta vinculada: ADR-035 §3)."""
+    Instagram, la misma página (y en Instagram, la misma cuenta vinculada: ADR-035 §3) con un rol
+    en ella: conectar la suscribe y rotar lee sus apps suscritas, que también pide el rol."""
     if account.platform == Platform.WHATSAPP:
         return graph.phone_number(
             token, account.external_parent_id or "", account.external_account_id
@@ -88,6 +90,7 @@ def _check(token: str, account: ChannelAccount) -> dict[str, Any]:
     instagram = account.platform == Platform.INSTAGRAM
     page = account.external_parent_id if instagram else account.external_account_id
     graph.page(token, page or "", account.external_account_id if instagram else None)
+    graph.subscribed_apps(token, page or "")  # F7b-06e: y un rol en la página, como al conectar
     return {"quality_rating": None, "messaging_limit_tier": None}  # no existen aquí
 
 
@@ -146,7 +149,9 @@ def connect_social(
     §3), en un paso: valida los formatos, comprueba con Meta que el token gestiona la página (y que
     su cuenta de Instagram es la dada), suscribe la app a la página y guarda la cuenta `PENDING` con
     su credencial cifrada. La cuenta registrada (la página o la de Instagram) mal formada o ya
-    registrada en cualquier organización es el mismo `BadNumber`; el resto, como `connect_whatsapp`.
+    registrada en cualquier organización, o su página ya conectada en otra organización con
+    cualquiera de las dos plataformas (F7b-06e), es el mismo `BadNumber`; el resto, como
+    `connect_whatsapp`.
     """
     alias = require_scope(ctx)
     if platform not in (Platform.MESSENGER, Platform.INSTAGRAM):
@@ -177,10 +182,9 @@ def connect_social(
                 created_by_user_id=ctx.user_id,
             )  # fmt: skip
             _announce(ctx, "channel_account.connected", account, None, str(credential.pk))
-    except IntegrityError as error:
-        if getattr(getattr(error.__cause__, "diag", None), "constraint_name", "") != (
-            "channel_accounts_external_uq"
-        ):
+    except IntegrityError as error:  # su DETAIL nombra la otra organización: no sale de aquí
+        taken = getattr(getattr(error.__cause__, "diag", None), "constraint_name", "")
+        if taken not in ("channel_accounts_external_uq", PAGE_OWNER):
             raise
         raise BadNumber(ACCOUNT_REFUSED) from None
     return account, credential
