@@ -18,6 +18,7 @@ from apps.conversations.models import (
     Message,
     MessageAttachment,
     QuickReply,
+    QuickReplyCategory,
 )
 from apps.files.models import File
 
@@ -88,6 +89,11 @@ def channel_accounts() -> QuerySet[ChannelAccount]:
     )  # viva y de esta cuenta: una credencial ajena no se enseña
     found: QuerySet[ChannelAccount] = ChannelAccount.objects.filter(deleted_at__isnull=True)
     return found.annotate(token_last_four=Subquery(live.values("last_four")[:1]))
+
+
+def managed_quick_reply_categories() -> QuerySet[QuickReplyCategory]:
+    """Las categorías no borradas, activas o no (F6-08a4). El orden, la paginación."""
+    return QuickReplyCategory.objects.filter(deleted_at__isnull=True)
 
 
 def managed_quick_replies() -> QuerySet[QuickReply]:

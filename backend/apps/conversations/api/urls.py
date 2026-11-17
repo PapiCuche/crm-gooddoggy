@@ -13,6 +13,10 @@ from apps.conversations.api import (
     quick_replies,
 )
 from apps.conversations.api.quick_reply_admin import ManagedRepliesView, ManagedReplyView
+from apps.conversations.api.quick_reply_category_admin import (
+    ManagedCategoriesView,
+    ManagedCategoryView,
+)
 
 
 class SandboxOnly(URLPattern):
@@ -84,6 +88,12 @@ urlpatterns = [
     ),
     path("quick-replies/", ManagedRepliesView.as_view(), name="quick-replies"),
     path("quick-replies/<uuid:quick_reply_id>/", ManagedReplyView.as_view(), name="quick-reply"),
+    path("quick-reply-categories/", ManagedCategoriesView.as_view(), name="quick-reply-categories"),
+    path(
+        "quick-reply-categories/<uuid:category_id>/",
+        ManagedCategoryView.as_view(),
+        name="quick-reply-category",
+    ),
     path("channels/", channels.ChannelsView.as_view(), name="channels"),
     path("channels/<uuid:account_id>/", channels.ChannelView.as_view(), name="channel"),
     path("channels/whatsapp/", channels.ConnectView.as_view(), name="whatsapp-connect"),
