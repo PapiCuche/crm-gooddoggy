@@ -34,6 +34,8 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
 SIM = {"MESSENGER": MESSENGER, "INSTAGRAM": INSTAGRAM}
 PREFIX = {"page": "fb", "instagram": "ig"}
+NEW_CUSTOMER = "100000000000203"  # otro cliente de la cuenta, sin identidad todavía
+TRAIL = ("message.received", "contact_identity.created", "message.delivery_changed")
 LONGEST_ACCOUNT = "9" * 30  # `META_ID` al máximo
 LONGEST_MIDS = ["%" * 99 + c for c in "%#&+"]  # cada uno, 300 caracteres ya codificados
 
@@ -173,21 +175,41 @@ def test_a_retry_of_an_event_stored_with_the_old_key_duplicates_nothing(
     net = SIM[platform]
     message, _ = send(world, talk(world, platform))  # SENT con `m_SIMOUT000001`
     now = int(timezone.now().timestamp() * 1000)
-    events = [social.text(net, "BAJA", mid="m_SIMIN000001", at=now), graph.echo(net)]
+    stop = social.text(net, "BAJA", mid="m_SIMIN000001", at=now)
+    stop["sender"]["id"] = NEW_CUSTOMER  # una identidad nueva: en Instagram, su evento de perfil
+    events = [stop, graph.echo(net)]
     if net is INSTAGRAM:
         events.append(social.read(INSTAGRAM, mid="m_SIMOUT000001"))
     retry = social.signed(net, *events)
     old = [legacy(i) for i in meta_webhook.parse(retry.body).items]
     assert all(i.key.count(net.account) == 0 for i in old)  # antes del despliegue
     assert ingress.store(old) == len(events) and ingress.process() == {"PROCESSED": len(events)}
-    before = seen(world, message)
+    before, trail_before = seen(world, message), trail(migrator)
     assert post(retry).status_code == 200  # Meta reintenta (≤ 36 h) tras el despliegue
     assert ingress.process() == {"PROCESSED": len(events)}  # ítems nuevos, con la clave nueva
     assert seen(world, message) == before  # ni otro mensaje, ni otra confirmación, ni retroceso
+    assert trail(migrator) == trail_before  # ni otra auditoría ni otro evento del outbox
+    audit, outbox = trail_before
+    assert ("message.delivery_changed" in dict(audit)) and dict(outbox)["message.received"] == 1
+    assert dict(outbox).get("contact_identity.created") == (1 if net is INSTAGRAM else None)
     rows = migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone()
     assert rows == (2 * len(events),)
     assert before.status == ("READ" if net is INSTAGRAM else "SENT")
     assert len(before.inbound) == 1 and len(before.replies) == 1  # la baja, confirmada una vez
+
+
+def trail(migrator: DB) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """Cuántas veces se auditó y se emitió cada hecho que un repetido no debe repetir."""
+    audit = migrator.execute(
+        "SELECT action, count(*) FROM audit_logs WHERE action = ANY(%s) GROUP BY 1 ORDER BY 1",
+        [list(TRAIL)],
+    ).fetchall()
+    outbox = migrator.execute(
+        "SELECT event_type, count(*) FROM outbox_events WHERE event_type = ANY(%s)"
+        " GROUP BY 1 ORDER BY 1",
+        [list(TRAIL)],
+    ).fetchall()
+    return audit, outbox
 
 
 def seen(world: SimpleNamespace, message: Any) -> SimpleNamespace:
@@ -198,3 +220,20 @@ def seen(world: SimpleNamespace, message: Any) -> SimpleNamespace:
             inbound=list(Message.objects.filter(direction="INBOUND").values_list("pk", flat=True)),
             replies=list(Message.objects.filter(sender_type="SYSTEM").values_list("pk", flat=True)),
         )  # fmt: skip
+
+
+def test_an_oversized_watermark_is_refused_alone_and_the_rest_of_the_batch_is_stored(
+    migrator: DB,
+) -> None:
+    good = social.text(MESSENGER, mid="m_SIMIN000001")
+    edge = social.read(MESSENGER, watermark=999_999_999_999_999)  # 15 dígitos: vale
+    huge = social.read(MESSENGER, watermark=10**700)  # firmado; antes rompía la clave y el lote
+    over = social.read(MESSENGER, watermark=meta_webhook.WATERMARK_MAX)
+    parsed = meta_webhook.parse(social.signed(MESSENGER, good, edge, huge, over).body)
+    assert parsed.rejected == ["watermark", "watermark"] and len(parsed.items) == 2
+    assert post(social.signed(MESSENGER, good, edge, huge, over)).status_code == 200
+    stored = migrator.execute("SELECT event_key FROM webhook_ingress ORDER BY event_key").fetchall()
+    assert [k for (k,) in stored] == [
+        f"fb:msg:{MESSENGER.account}:m_SIMIN000001",
+        f"fb:read:{MESSENGER.account}:{MESSENGER.customer}:999999999999999",
+    ]

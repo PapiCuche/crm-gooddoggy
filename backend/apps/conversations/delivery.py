@@ -20,7 +20,7 @@ espera como un estado (`NotYet`). Messenger marca entregado y leído con una mar
 salientes de la identidad reclamados hasta ese instante; Instagram, leído por `mid`. Todo por
 `advance_delivery`: nada retrocede.
 
-La clave de la ingesta es por cuenta (F7b-04d; ADR-035 §4, enmendado el 2026-11-17): si una
+La clave de la ingesta es por cuenta (F7b-04d; ADR-040, que enmienda ADR-035 §4): si una
 cuenta conectada escribe a otra, su eco y el entrante de la otra traen el mismo `mid` y se procesan
 los dos.
 """

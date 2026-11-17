@@ -29,8 +29,8 @@ alguna lista o en total, es `503` sin guardar nada: nunca un `200` que pierda un
 
 Instagram y Messenger (F7b-04b, ADR-035 §4) llegan por la misma ruta y la misma firma: `parse`
 despacha por `object` (`page`, `instagram`). Cada evento de `entry[].messaging[]` o `standby[]` es
-un ítem con `entry.id` como id de enrutado y una clave **por cuenta** (F7b-04d; ADR-035 §4,
-enmendado el 2026-11-17): `fb:msg:<page>:<mid>`, `ig:msg:<igid>:<mid>`, `ig:read:<igid>:<mid>`, un
+un ítem con `entry.id` como id de enrutado y una clave **por cuenta** (F7b-04d; ADR-040,
+que enmienda ADR-035 §4): `fb:msg:<page>:<mid>`, `ig:msg:<igid>:<mid>`, `ig:read:<igid>:<mid>`, un
 borrado `…:del:<cuenta>:<mid>`, `fb:read:<page>:<psid>:<watermark>`, `fb:delivery:…` y lo demás
 `…:other:<cuenta>:<resumen>`. Dos cuentas conectadas que se escriben reciben el mismo `mid` (eco en
 una, entrante en la otra) y cada una guarda el suyo. Las URL de las historias se quitan **antes** de
@@ -68,7 +68,10 @@ MAX_ITEMS, MAX_DEPTH = 5000, 16  # 5 × «a batch with a maximum of 1000 updates
 MAX_ENTRIES = MAX_CHANGES = MAX_ROWS = MAX_ITEMS  # ninguna lista corta antes que el total
 ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
 # La clave social más larga con un `mid`: `ig:read:` + la cuenta (`META_ID`, 30) + `:` + 300 = 339,
-# dentro de los 700 de `webhook_ingress.event_key` (prueba con los dos ids al máximo).
+# dentro de los 700 de `webhook_ingress.event_key` (prueba con los dos ids al máximo). La marca de
+# agua de Messenger (milisegundos) se acota a 15 dígitos: con la cuenta y el PSID, 12 + 30 + 1 + 100
+# + 1 + 15 = 159. Sin tope, un entero enorme rompería el CHECK de la clave y con él todo el lote.
+WATERMARK_MAX = 10**15
 PROFILE_NAME_MAX = 200  # el nombre de perfil que viaja en el ítem; `inbound` lo recorta a 100
 
 
@@ -275,7 +278,7 @@ def _social(social: tuple[str, str], account: str, event: Any, field: str) -> It
         key, kind = f"ig:read:{here}:{_quote(read.get('mid'), ID_MAX)}", "status"
     elif prefix == "fb" and isinstance(found := delivered or read, dict):
         mark = found.get("watermark")
-        if not isinstance(mark, int) or isinstance(mark, bool) or mark < 1:
+        if not isinstance(mark, int) or isinstance(mark, bool) or not 1 <= mark < WATERMARK_MAX:
             raise Invalid("watermark")
         which = "delivery" if isinstance(delivered, dict) else "read"
         key, kind = f"fb:{which}:{here}:{ids[0]}:{mark}", "status"
