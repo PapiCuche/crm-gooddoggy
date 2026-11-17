@@ -12,7 +12,9 @@ Instagram y Messenger (F7b-05a, ADR-035 §7): ventana de 24 h. Con la ventana ce
 respuesta de una **persona** (`sender = USER`) sale con la etiqueta Human Agent
 (`HUMAN_AGENT_TAG`) hasta 168 h después del último mensaje del cliente, **solo** si Meta aprobó esa
 función en la app (`human_agent_approved`, de `META_HUMAN_AGENT_APPROVED`, apagado por omisión,
-D-F7b-08). La IA, las automatizaciones y el sistema nunca la usan; un seguimiento tampoco.
+D-F7b-08). La IA, las automatizaciones y el sistema nunca la usan; un seguimiento tampoco. Una baja
+del canal (o `ANY`) la niega (`CONSENT_REVOKED`, F7b-05d): la regla 7 de ADR-010 exime a la
+respuesta solo **dentro** de la ventana.
 """
 
 import datetime as dt
@@ -137,7 +139,8 @@ def evaluate(
 ) -> PolicyDecision:
     """La decisión para escribir ahora en la conversación. La ventana está abierta mientras
     `now < last_inbound_at + window_hours`: a la hora exacta ya está cerrada. `revoked`: hay una
-    baja que alcanza al canal y al propósito (`contacts.selectors.is_revoked`). `sender`: quién
+    baja que alcanza al canal y al propósito (`contacts.selectors.is_revoked`); a una respuesta
+    solo la niega fuera de la ventana, con la etiqueta. `sender`: quién
     escribe (`SenderType`); por omisión, no una persona. `human_agent_approved`: Meta aprobó la
     etiqueta Human Agent en la app; solo así la usa una persona con la ventana cerrada."""
     if purpose not in PURPOSES:
@@ -166,7 +169,10 @@ def evaluate(
             and purpose == CUSTOMER_REPLY and last_inbound_at is not None
             and now < last_inbound_at + dt.timedelta(hours=tag)
         ):  # fmt: skip
-            tagged, hours, expires = True, tag, last_inbound_at + dt.timedelta(hours=tag)
+            if revoked:  # fuera de la ventana la baja manda, también con la etiqueta (§2.7)
+                reason = "CONSENT_REVOKED"
+            else:
+                tagged, hours, expires = True, tag, last_inbound_at + dt.timedelta(hours=tag)
         else:
             reason = "WINDOW_CLOSED"  # sin mensaje del cliente, la ventana nunca se abrió
     elif revoked and purpose != CUSTOMER_REPLY:  # responder dentro de la ventana no es proactivo

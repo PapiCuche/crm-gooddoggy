@@ -40,8 +40,8 @@ from django.utils import timezone
 
 from apps.contacts import keywords
 from apps.contacts.commands import create_contact
-from apps.contacts.consents import lift_keyword_stop, revoke_consent
-from apps.contacts.models import ConsentSource, Contact
+from apps.contacts.consents import keyword_stop, lift_keyword_stop
+from apps.contacts.models import Contact
 from apps.conversations import commands, media, policy
 from apps.conversations.models import (
     BODY_MAX,
@@ -259,17 +259,18 @@ def _keyword(
     *, confirm: bool = True,
 ) -> None:  # fmt: skip
     """La baja o el alta del canal de la cuenta, si el texto del cliente (`said`) es entero una
-    palabra; solo un cambio real confirma, y solo con `confirm` (un hilo en `standby` no)."""
+    palabra; solo un cambio real confirma, y solo con `confirm` (un hilo en `standby` no). Con la
+    hora del proveedor del mensaje: una palabra más vieja que la última no la revierte (F7b-05d)."""
     action = keywords.action_for(ctx, said)
     if action is None:
         return
     channel = policy.CONSENT_CHANNELS[platform]  # la misma con la que la política la consulta
     where = {"contact_id": contact_id, "channel": channel, "purpose": "ALL_PROACTIVE"}
-    proof = {"message_id": str(saved.pk)}
+    proof, at = {"message_id": str(saved.pk)}, saved.provider_timestamp
     if action == keywords.OPT_OUT:
-        _, changed = revoke_consent(ctx, **where, source=ConsentSource.KEYWORD_STOP, evidence=proof)
+        changed = keyword_stop(ctx, **where, said_at=at, evidence=proof)
     else:  # solo levanta una baja hecha con una palabra; si no, ni evento ni confirmación
-        changed = lift_keyword_stop(ctx, **where, evidence=proof)
+        changed = lift_keyword_stop(ctx, **where, said_at=at, evidence=proof)
     logger.info("meta.webhook.consent_keyword", action=action, changed=changed)  # sin quién
     if changed and confirm:  # la política la niega fuera de la ventana: nunca con etiqueta
         commands.queue_confirmation(

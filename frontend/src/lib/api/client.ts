@@ -6507,7 +6507,7 @@ export const getConversationMessagesSendUrl = (orgSlug: string, conversationId: 
 };
 
 /**
- * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
+ * Pone en cola un mensaje al cliente (`QUEUED`; el envío por el canal es de la tarea de salida), idempotente por `client_message_id`: 202 la primera vez y 200 con el mismo mensaje en un reintento igual. Pide `messages.send` y `conversations.view`; no hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: `CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, `WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra persona).
  */
 export const conversationMessagesSend = async (
   orgSlug: string,

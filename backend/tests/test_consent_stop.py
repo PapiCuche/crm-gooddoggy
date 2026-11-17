@@ -1,7 +1,8 @@
 """F7-08b: palabras de baja y de alta (`consent_keywords`, `contacts.keywords`), el STOP del
 entrante (`inbound`) y la política de consentimiento (ADR-010 §2.7). PostgreSQL real con `crm_app`:
 variantes y frases que no cuentan, la entrega repetida, el seguimiento bloqueado y la respuesta no,
-el alta que lo restablece, el despachador, los permisos y el aislamiento entre organizaciones."""
+el alta que lo restablece, el despachador, los permisos y el aislamiento entre organizaciones.
+F7b-05d: las palabras se aplican por la hora del proveedor (`keyword_at`), no por la llegada."""
 
 import datetime as dt
 import logging
@@ -370,6 +371,60 @@ def test_claiming_waits_for_a_stop_that_is_being_registered(crm: SimpleNamespace
     with tenant_scope(ctx(crm.a)):
         found = Message.objects.get(pk=queued.pk)
     assert (found.delivery_status, found.provider_error_code) == ("FAILED", "CONSENT_REVOKED")
+
+
+@pytest.mark.parametrize("words", [("ALTA", "BAJA"), ("BAJA", "ALTA")])
+def test_keywords_delivered_out_of_order_follow_the_time_the_customer_wrote_them(
+    crm: SimpleNamespace, words: tuple[str, str]
+) -> None:
+    live(crm.a)
+    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=60))  # ya estaba de baja
+    first, last = words  # el cliente escribe `first` y luego `last`; Meta los entrega al revés
+    say("wamid.3", last, ago=dt.timedelta(seconds=10))
+    say("wamid.2", first, ago=dt.timedelta(seconds=20))
+    found = seen(crm.a)
+    final = ("REVOKED", "KEYWORD_STOP") if last == "BAJA" else ("GRANTED", "CUSTOMER_MESSAGE")
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", *final)]
+    assert len(found.events) == (1 if last == "BAJA" else 2)  # la vieja no deja evento
+    with tenant_scope(ctx(crm.a)):
+        row = ContactConsent.objects.get()
+    assert row.keyword_at == found.inbound[1].provider_timestamp  # la de `last`
+
+
+def test_a_keyword_without_the_provider_time_keeps_the_order_of_arrival(
+    crm: SimpleNamespace,
+) -> None:
+    live(crm.a)
+    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=10))
+    alta = webhooks.text_message("ALTA", wamid="wamid.2")
+    del alta["timestamp"]  # sin la hora del proveedor: cuenta la llegada, como antes
+    deliver(alta)
+    ingress.process()
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+
+
+def test_the_keyword_time_migration_goes_back_and_forward(
+    crm: SimpleNamespace, migrator: Any
+) -> None:
+    live(crm.a)
+    say("wamid.1", "BAJA")
+    column = (
+        "SELECT has_column_privilege('crm_app', 'contact_consents', 'keyword_at', 'UPDATE')"
+        " FROM information_schema.columns WHERE table_name = 'contact_consents'"
+        " AND column_name = 'keyword_at'"
+    )
+    assert migrator.execute(column).fetchall() == [(True,)]
+    with as_migrator():
+        call_command("migrate", "contacts", "0008", verbosity=0)
+    assert migrator.execute(column).fetchall() == []
+    kept = "SELECT status, source FROM contact_consents"
+    assert migrator.execute(kept).fetchall() == [("REVOKED", "KEYWORD_STOP")]  # la baja se queda
+    with as_migrator():
+        call_command("migrate", verbosity=0)
+    assert migrator.execute(column).fetchall() == [(True,)]
+    say("wamid.2", "ALTA")  # una fila sin `keyword_at` (anterior) se levanta como siempre
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
 
 
 def test_the_migrations_go_back_and_forward(migrator: Any) -> None:

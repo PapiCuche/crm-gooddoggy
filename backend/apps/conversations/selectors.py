@@ -115,15 +115,18 @@ def messaging_decision(
     contacto o una cuenta que no se ven niegan (cerrado ante la duda). Con `alias`, en la
     transacción de quien llama (el comando que ya bloqueó la conversación); con `account`, la que
     ya leyó (y bloqueó) quien llama. `purpose`: para qué se escribe (`policy.PURPOSES`); una
-    respuesta al cliente no consulta el consentimiento. `sender`: quién escribe; solo una persona
-    (`USER`) puede usar la etiqueta Human Agent, y solo con `META_HUMAN_AGENT_APPROVED`."""
+    respuesta al cliente consulta el consentimiento solo si podría salir con la etiqueta Human
+    Agent (F7b-05d). `sender`: quién escribe; solo una persona (`USER`) puede usar la etiqueta, y
+    solo con `META_HUMAN_AGENT_APPROVED`."""
     accounts, contacts = ChannelAccount.objects, Contact.objects
     if alias is not None:
         accounts, contacts = accounts.using(alias), contacts.using(alias)  # type: ignore[assignment]
     account = account or accounts.filter(pk=convo.channel_account_id).first()
     blocked = contacts.filter(pk=convo.contact_id).values_list("is_blocked", flat=True).first()
     platform = "" if account is None else account.platform
-    revoked = purpose != policy.CUSTOMER_REPLY and is_revoked(
+    approved = settings.META_HUMAN_AGENT_APPROVED
+    tag = sender == policy.PERSON and approved  # fuera de la ventana, la baja la niega
+    revoked = (purpose != policy.CUSTOMER_REPLY or tag) and is_revoked(
         convo.contact_id, policy.CONSENT_CHANNELS.get(platform, "ANY"),
         policy.PURPOSES.get(purpose, purpose), alias=alias,
     )  # fmt: skip
@@ -138,7 +141,7 @@ def messaging_decision(
         purpose=purpose,
         revoked=revoked,
         sender=sender,
-        human_agent_approved=settings.META_HUMAN_AGENT_APPROVED,
+        human_agent_approved=approved,
     )
 
 
