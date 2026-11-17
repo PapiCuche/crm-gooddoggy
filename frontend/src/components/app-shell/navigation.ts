@@ -48,6 +48,7 @@ export const NAVIGATION: readonly NavigationItem[] = [
       (code) => `prices.${code}`,
     ),
   },
+  { key: "ai", path: "/ia", permission: "ai.manage" },
   { key: "audit", path: "/auditoria", permission: "audit.view" },
 ];
 
