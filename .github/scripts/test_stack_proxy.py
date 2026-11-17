@@ -251,8 +251,14 @@ class StackAntivirus(unittest.TestCase):
         for line in ("profiles: [meta-sim]", 'user: "65534:65534"', "read_only: true",
                      "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
             self.assertIn(f"\n    {line}\n", sim)
-        self.assertEqual(re.findall(r'^\s+- "(.*)"', sim[sim.index("ports:"):], re.M)[:1],
-                         ["127.0.0.1:${META_SIM_HOST_PORT:-8090}:8090"])  # solo en loopback
+        self.assertEqual(sim.count("ports:"), 1)  # una sola lista, en la forma de bloque
+        entries = []
+        for line in sim[sim.index("\n    ports:\n"):].split("\n")[2:]:
+            if not line.startswith("      - "):
+                break
+            entries.append(line[8:].split(" #")[0].strip().strip('"'))
+        self.assertEqual(entries, ["127.0.0.1:${META_SIM_HOST_PORT:-8090}:8090"])  # solo loopback
+        self.assertNotIn("privileged", sim)
         self.assertIn("../../backend/tests/meta_sim:/sim/tests/meta_sim:ro", sim)
         runtime = COMPOSE[COMPOSE.index("x-runtime:") : COMPOSE.index("services:")]
         self.assertIn("DJANGO_SETTINGS_MODULE: config.settings.local", runtime)

@@ -46,7 +46,9 @@ __all__ = ["channel", "crm", "real_stack", "social_world", "world"]  # las fixtu
 GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
 OTHER_SECRET = "otrosecretodepruebanoreal0000"  # noqa: S105 — ficticio
-LOOKALIKES = ("graph.facebook.com.evil.test", "x.facebook.com", "facebook.com")
+LOOKALIKES = (
+    "graph.facebook.com.evil.test", "x.graph.facebook.com", "x.facebook.com", "facebook.com",
+)  # fmt: skip
 
 
 @pytest.fixture
@@ -261,11 +263,16 @@ def test_the_simulator_refuses_a_bad_or_oversized_body_and_keeps_a_bounded_log(
             ("127.0.0.1", int(local.origin.rsplit(":", 1)[1])), 5
         ) as conn:
             conn.sendall(f"POST /_sim/then HTTP/1.1\r\nHost: x\r\n{head}\r\n\r\n".encode())
-            return conn.recv(64)
+            reply = b""  # hasta que el simulador cierre: si no la cierra, vence el plazo
+            while chunk := conn.recv(4096):
+                reply += chunk
+            return reply
 
     assert raw("Content-Length: nada").startswith(b"HTTP/1.1 400")
     assert raw("Content-Length: -1").startswith(b"HTTP/1.1 400")
     assert raw(f"Content-Length: {sim_server.BODY_MAX + 1}").startswith(b"HTTP/1.1 413")
+    chunked = raw("Transfer-Encoding: chunked")  # un cuerpo sin longitud: 411 y se cierra
+    assert chunked.startswith(b"HTTP/1.1 411") and b"Connection: close" in chunked
     for _ in range(sim_server.CALLS_MAX + 5):
         local.graph.handle("GET", f"/{GRAPH_VERSION}/{PAGE_ID}", AUTH, None)
         local.graph.handle("GET", f"/{GRAPH_VERSION}/{PHONE_NUMBER_ID}", AUTH, None)

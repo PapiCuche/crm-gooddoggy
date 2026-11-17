@@ -80,6 +80,9 @@ def handler(simulator: Simulator) -> type[BaseHTTPRequestHandler]:
         protocol_version = "HTTP/1.1"
 
         def _serve(self) -> None:
+            if "Content-Length" not in self.headers and "Transfer-Encoding" in self.headers:
+                self.close_connection = True  # un cuerpo sin longitud (chunked): no se lee
+                return self._reply(*_json(411, {"error": "Content-Length"}))
             declared = self.headers.get("Content-Length") or "0"
             valid = re.fullmatch(r"[0-9]{1,10}", declared) is not None
             if not valid or int(declared) > BODY_MAX:  # sin leer el cuerpo ni reusar la conexión
@@ -102,6 +105,8 @@ def handler(simulator: Simulator) -> type[BaseHTTPRequestHandler]:
 
         def _reply(self, status: int, headers: dict[str, str], payload: bytes) -> None:
             self.send_response(status)
+            if self.close_connection:
+                headers = {**headers, "Connection": "close"}
             for name, value in {**headers, "Content-Length": str(len(payload))}.items():
                 self.send_header(name, value)
             self.end_headers()
