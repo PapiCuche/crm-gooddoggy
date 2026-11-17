@@ -97,6 +97,9 @@ def deliver(
                 channel_account_id=claim.account_id,
                 credential_id=claim.credential.pk if claim.credential else None,
             )
+    elif result.reason == "MESSAGES_ACCESS_OFF":  # Instagram: el titular apagó los mensajes
+        with tenant_scope(ctx):
+            accounts.mark_messages_access_off(ctx, channel_account_id=claim.account_id)
 
 
 @subscribe("message.queued")

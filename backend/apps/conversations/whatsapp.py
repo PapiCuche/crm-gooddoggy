@@ -42,7 +42,7 @@ REASONS = {190: "TOKEN_INVALID", 131047: "WINDOW_CLOSED", 131026: "RECIPIENT_UNR
 TOO_FAST = (4, 17, 613, 80007, 130429, 131056)
 
 
-def _field(raw: bytes, *path: str | int) -> Any:
+def field_at(raw: bytes, *path: str | int) -> Any:
     """Un campo de la respuesta de Meta, o `None` si no es lo que se espera."""
     try:
         found: Any = json.loads(raw)
@@ -56,7 +56,7 @@ def _field(raw: bytes, *path: str | int) -> Any:
 def _refused(status: int, raw: bytes, server: type[Exception]) -> SendResult:
     """Un rechazo de Meta: «demasiado rápido» se reintenta, un 5xx es `server` y el resto, un motivo
     cerrado."""
-    code = _field(raw, "error", "code")
+    code = field_at(raw, "error", "code")
     code = code if isinstance(code, int) and not isinstance(code, bool) else None
     if code in TOO_FAST or status == 429:
         raise TemporaryChannelError
@@ -85,13 +85,33 @@ def _upload(base: str, token: str, media: Media) -> dict[str, Any] | SendResult:
             reply = http.request("POST", f"{base}/media", headers=auth, body=body)
     except Exception:
         raise TemporaryChannelError from None
-    found = _field(reply.data, "id")
+    found = field_at(reply.data, "id")
     if reply.status != 200:
         return _refused(reply.status, reply.data, TemporaryChannelError)
     if not isinstance(found, str) or not re.fullmatch(META_ID, found):
         raise TemporaryChannelError
     part = {"id": found} | ({"caption": media.caption} if media.caption else {})
     return part | ({"filename": media.name} if media.kind == "DOCUMENT" else {})
+
+
+def admit(claim: Claim) -> str | SendResult:
+    """El cupo de la cuenta y su token, abierto solo para esta llamada (lo comparten los adaptadores
+    de Meta): sin cupo o sin Redis se reintenta; una credencial que no se abre es `TOKEN_INVALID`,
+    salvo que falte la clave en este despliegue (no es del token: se reintenta)."""
+    assert claim.credential is not None  # noqa: S101 — quien llama ya lo comprobó
+    try:
+        room = limiter.allow(claim.account_id)
+    except Exception:  # Redis caído: falla cerrado hacia el reintento, sin registrar el error
+        logger.warning("channel.limiter_unavailable")
+        raise TemporaryChannelError from None
+    if not room:
+        raise TemporaryChannelError  # sin cupo: no sale, se reintenta
+    try:
+        return credentials.open_token(claim.credential)
+    except sealed.SealError:
+        if not sealed.has_key(claim.credential.key_version):
+            raise TemporaryChannelError from None  # falta la clave en este despliegue
+        return SendResult(False, reason="TOKEN_INVALID")
 
 
 class WhatsAppAdapter:
@@ -110,19 +130,9 @@ class WhatsAppAdapter:
             "messaging_product": "whatsapp", "to": claim.recipient[1:], "type": "text",
             "text": {"body": claim.body}, "biz_opaque_callback_data": str(claim.message_id),
         }  # fmt: skip
-        try:
-            room = limiter.allow(claim.account_id)
-        except Exception:  # Redis caído: falla cerrado hacia el reintento, sin registrar el error
-            logger.warning("channel.limiter_unavailable")
-            raise TemporaryChannelError from None
-        if not room:
-            raise TemporaryChannelError  # sin cupo: no sale, se reintenta
-        try:
-            token = credentials.open_token(claim.credential)  # solo durante esta llamada
-        except sealed.SealError:
-            if not sealed.has_key(claim.credential.key_version):
-                raise TemporaryChannelError from None  # falta la clave en este despliegue: no es
-            return SendResult(False, reason="TOKEN_INVALID")  # del token; se reintenta
+        token = admit(claim)  # solo durante esta llamada
+        if isinstance(token, SendResult):
+            return token
         try:
             if claim.media is not None:  # fuera del `except` de abajo: la subida no es ambigua
                 part = _upload(base, token, claim.media)
@@ -147,7 +157,7 @@ class WhatsAppAdapter:
             del token
         status, raw = reply.status, reply.data
         if status == 200:
-            wamid = _field(raw, "messages", 0, "id")
+            wamid = field_at(raw, "messages", 0, "id")
             if isinstance(wamid, str) and re.fullmatch(EXTERNAL_ID, wamid):
                 return SendResult(True, wamid)
             raise AmbiguousChannelError  # Meta lo aceptó (200) y no dijo con qué id

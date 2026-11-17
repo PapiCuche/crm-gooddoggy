@@ -46,6 +46,7 @@ x-runtime: &runtime
     META_ENABLED: ${META_ENABLED:-false}
     META_APP_SECRETS: ${META_APP_SECRETS:-}
     META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+    META_HUMAN_AGENT_APPROVED: ${META_HUMAN_AGENT_APPROVED:-false}
     # F7-15 (ADR-008): el antivirus de los medios. Sin él, nada se abre (los reintentos acaban en
     # `ERROR`) y ningún archivo se envía (F7-15b: la subida responde 503); no se espera a que esté
     # sano para arrancar: el escaneo reintenta y la persona reintenta el envío. F7-15c: por el

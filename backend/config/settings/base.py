@@ -329,7 +329,7 @@ SPECTACULAR_SETTINGS = {
         "ActorTypeEnum": "core.tenancy.context.ActorType",  # quién hizo un movimiento (F3-36b)
         "AuditResultEnum": "apps.audit.services.Result",
         "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
-        "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED"],  # F7-05a: no un `ModeEnum` suelto
+        "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED", "HUMAN_AGENT_TAG"],  # F7-05a, F7b-05a
         "RevokedEnum": ["REVOKED"],  # el único estado que la API pone a una invitación (F2-82)
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
@@ -384,6 +384,10 @@ META_WEBHOOK_VERIFY_TOKEN = env.optional("META_WEBHOOK_VERIFY_TOKEN", "")
 # fixtures del simulador. A confirmar con la versión vigente de Meta y su fecha de retirada.
 META_GRAPH_VERSION = "v23.0"
 META_GRAPH_HOST = "graph.facebook.com"
+# F7b-05a (ADR-035 §7, D-F7b-08): Meta aprobó la función Human Agent en la app. Solo entonces una
+# persona responde por Instagram o Messenger con la ventana de 24 h cerrada, hasta 168 h después.
+# Apagado por omisión: el propietario lo enciende **después** de la aprobación, nunca antes.
+META_HUMAN_AGENT_APPROVED = env.boolean("META_HUMAN_AGENT_APPROVED", False)
 # F7-05c: envíos por cuenta y ventana en segundos (muy por debajo del tope de Meta); Redis, el del
 # broker. Validado al arrancar con el canal encendido (`env.check_meta`).
 CHANNEL_SEND_LIMIT = (20, 1)

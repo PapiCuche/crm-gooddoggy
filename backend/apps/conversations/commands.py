@@ -47,6 +47,7 @@ from apps.conversations.models import (
     SOCIAL,
     AttentionMode,
     ChannelAccount,
+    ContactIdentity,
     Conversation,
     ConversationAssignment,
     Credential,
@@ -56,7 +57,12 @@ from apps.conversations.models import (
     Platform,
     Status,
 )
-from apps.conversations.policy import PURPOSES, ConversationClosed, require_allowed
+from apps.conversations.policy import (
+    HUMAN_AGENT_TAG,
+    PURPOSES,
+    ConversationClosed,
+    require_allowed,
+)
 from apps.conversations.selectors import messaging_decision
 from apps.conversations.text import clean_body as _body
 from apps.files.models import File
@@ -462,7 +468,7 @@ def record_outbound(
         earlier = Message.objects.using(alias).filter(client_message_id=client_id).first()
         snapshot = None
         if earlier is None:  # un reenvío de lo ya guardado se devuelve aunque ya no se pueda enviar
-            decision = messaging_decision(convo, alias=alias, purpose=purpose)
+            decision = messaging_decision(convo, alias=alias, purpose=purpose, sender="USER")
             require_allowed(decision)  # cerrada, sin canal, bloqueado, ventana cerrada o baja
             snapshot = decision.as_json()
         elif media and not File.objects.using(alias).filter(
@@ -802,7 +808,9 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         account = ChannelAccount.objects.using(alias).get(pk=convo.channel_account_id)
         # el de encolar; sin él (un mensaje anterior a F7-08b), el más estricto
         purpose = (message.policy_decision or {}).get("purpose") or "FOLLOW_UP"
-        decision = messaging_decision(convo, account=account, alias=alias, purpose=purpose)
+        decision = messaging_decision(
+            convo, account=account, alias=alias, purpose=purpose, sender=message.sender_type
+        )
         queued.update(policy_decision=decision.as_json())  # la última decisión queda en el mensaje
         if decision.reason is not None:
             advance_delivery(
@@ -828,7 +836,6 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
                 message.message_type, file.storage_key, file.mime_type, file.sha256,
                 file.original_name, None if message.body == label else message.body,
             )  # fmt: skip
-        phone = Contact.objects.using(alias).filter(pk=convo.contact_id)
         live = Credential.objects.using(alias).filter(
             pk=account.credential_id, owner_id=account.pk, revoked_at__isnull=True
         )  # viva y de esta cuenta
@@ -836,9 +843,24 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         return Claim(
             message_id=message.pk, account_id=account.pk, platform=account.platform,
             phone_number_id=account.external_account_id, body=message.body,
-            recipient=phone.values_list("primary_phone_e164", flat=True).first() or "",
+            recipient=_recipient(alias, convo, account),
             credential=live.first() if account.credential_id else None, media=shown,
+            parent_id=account.external_parent_id,
+            human_agent=decision.mode == HUMAN_AGENT_TAG,
         )  # fmt: skip
+
+
+def _recipient(alias: str, convo: Conversation, account: ChannelAccount) -> str:
+    """El destinatario en el canal (ADR-035 §6): en Messenger e Instagram, el id de la identidad de
+    la conversación **en esa misma cuenta**; si no, el teléfono del contacto. Vacío si no lo hay
+    (el adaptador lo rechaza sin llamar al canal)."""
+    if account.platform in SOCIAL:
+        found = ContactIdentity.objects.using(alias).filter(
+            pk=convo.contact_identity_id, channel_account_id=account.pk
+        )
+        return found.values_list("external_id", flat=True).first() or ""
+    phone = Contact.objects.using(alias).filter(pk=convo.contact_id)
+    return phone.values_list("primary_phone_e164", flat=True).first() or ""
 
 
 def release_outbound(ctx: TenantContext, *, message_id: UUID, wait: dt.timedelta) -> int | None:

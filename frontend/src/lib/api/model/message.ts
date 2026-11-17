@@ -52,6 +52,7 @@ export interface Message {
    * * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
    * * `PROVIDER_ERROR` - PROVIDER_ERROR
    * * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
+   * * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
    */
   provider_error_code: ProviderErrorCodeEnum | NullEnum | null;
   created_at: string;

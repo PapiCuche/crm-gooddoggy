@@ -21,7 +21,14 @@ from django.utils import timezone
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.audit.services import Entity, record
 from apps.conversations import credentials, graph
-from apps.conversations.models import META_ID, TOKEN_FORMAT, ChannelAccount, Credential, Platform
+from apps.conversations.models import (
+    META_ID,
+    SOCIAL,
+    TOKEN_FORMAT,
+    ChannelAccount,
+    Credential,
+    Platform,
+)
 from core.ids import new_id
 from core.outbox import emit
 from core.tenancy.context import TenantContext
@@ -62,6 +69,9 @@ def _token(value: Any) -> str:
     if not isinstance(value, str) or not re.fullmatch(TOKEN_FORMAT, value):
         raise ValueError("token: formato no válido")  # sin repetirlo
     return value
+
+
+REAL = (Platform.WHATSAPP, *SOCIAL)  # las cuentas que Meta puede poner en `ERROR` (ADR-035 §3)
 
 
 def _live() -> QuerySet[ChannelAccount]:
@@ -235,7 +245,8 @@ def _demote(
     sin permiso de persona): `to` con su `detail`, auditado y con evento, solo con ids."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
-        found = _live().using(alias).select_for_update(no_key=True)
+        real = ChannelAccount.objects.filter(platform__in=REAL, deleted_at__isnull=True)
+        found = real.using(alias).select_for_update(no_key=True)
         found = found.filter(pk=account_id, status__in=only)
         if credential_id is not None:  # el resultado es de ESA credencial: ¿se rotó mientras tanto?
             found = found.filter(credential_id=credential_id)
@@ -258,6 +269,15 @@ def mark_token_invalid(
     only = ("PENDING", "CONNECTED", "DEGRADED")
     return _demote(ctx, channel_account_id, only=only, to="ERROR", detail="TOKEN_INVALID",
                    action="channel_account.token_invalid", credential_id=credential_id)  # fmt: skip
+
+
+def mark_messages_access_off(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
+    """El titular de Instagram apagó «Allow access to messages» (ADR-035 §3, `200`/`2534041`): la
+    cuenta pasa a `ERROR` (`MESSAGES_ACCESS_OFF`) y deja de enviar hasta que se reconecte. `False`
+    si ya estaba `ERROR` o `DISCONNECTED`, o ya no está viva."""
+    only = ("PENDING", "CONNECTED", "DEGRADED")
+    return _demote(ctx, channel_account_id, only=only, to="ERROR", detail="MESSAGES_ACCESS_OFF",
+                   action="channel_account.messages_access_off")  # fmt: skip
 
 
 def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
