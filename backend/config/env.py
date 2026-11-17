@@ -180,8 +180,9 @@ def check_meta(
 
 
 def check_ai_throttle(throttle: tuple[int, int]) -> None:
-    """El tope de las rutas de cuentas del proveedor de IA (F8-03d): sin él, la prueba de conexión
-    se repetiría en bucle contra el proveedor. Ventana menor que la calma de la purga del acceso."""
+    """El tope de escrituras de las rutas de cuentas del proveedor de IA (F8-03d, F8-03e): sin él,
+    la prueba de conexión se repetiría en bucle contra el proveedor. Ventana menor que la calma de
+    la purga del acceso."""
     limit, window = throttle
     if not (1 <= limit <= 60 and 60 <= window <= 840):
         raise ImproperlyConfigured("AI_ACCOUNT_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s")
