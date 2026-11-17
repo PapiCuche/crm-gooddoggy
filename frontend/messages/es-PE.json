@@ -2364,7 +2364,8 @@
       "QUALITY_BLOCKED": "WhatsApp bloqueó el envío por la calidad del número.",
       "TEMPLATE_UNAVAILABLE": "La plantilla no está disponible.",
       "PROVIDER_ERROR": "WhatsApp tuvo un problema al procesar el envío.",
-      "MEDIA_NOT_SCANNED": "El archivo no se envió: aún no pasó el antivirus."
+      "MEDIA_NOT_SCANNED": "El archivo no se envió: aún no pasó el antivirus.",
+      "MESSAGES_ACCESS_OFF": "La cuenta de Instagram tiene apagado el acceso a los mensajes. Pide a quien administra los canales que lo active."
     },
     "list": {
       "landmark": "Conversaciones",
@@ -2524,6 +2525,7 @@
       "LIMIT_REACHED": "Se alcanzó el límite de mensajería.",
       "DISCONNECTED_BY_ADMIN": "La desconectó un administrador.",
       "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación.",
+      "MESSAGES_ACCESS_OFF": "El acceso a los mensajes está apagado en Instagram: actívalo en «Herramientas conectadas».",
       "UNKNOWN": "La cuenta informa de un motivo que esta versión no conoce."
     },
     "checklist": {

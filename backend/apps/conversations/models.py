@@ -35,7 +35,7 @@ AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[as
 # texto de un error de Meta.
 STATUS_DETAILS = (
     "TOKEN_INVALID", "WEBHOOK_NOT_SEEN", "QUALITY_LOW", "LIMIT_REACHED", "DISCONNECTED_BY_ADMIN",
-    "PROVIDER_ERROR",
+    "PROVIDER_ERROR", "MESSAGES_ACCESS_OFF",
 )  # fmt: skip
 QUALITY_RATINGS = ("GREEN", "YELLOW", "RED", "UNKNOWN")  # a confirmar con la documentación de Meta
 LIMIT_TIERS = (  # a confirmar con la documentación de Meta
@@ -47,11 +47,13 @@ META_ID = r"^[0-9]{5,30}$"  # `phone_number_id` y WABA: dígitos (a confirmar)
 # Por qué un mensaje saliente quedó `FAILED` (F7-06a; ADR-029 §8): un conjunto cerrado de códigos
 # propios, nunca el título ni el texto del error del proveedor. Los de la política y el despachador
 # y los que salen de la tabla de errores de Meta (`delivery.CODES`). `CONSENT_REVOKED`: F7-08b.
+# `MESSAGES_ACCESS_OFF` (F7b-05a, ADR-035 §6): el titular de Instagram apagó el acceso a mensajes.
 FAILURE_CODES = (
     "CONVERSATION_CLOSED", "CHANNEL_UNAVAILABLE", "CONTACT_BLOCKED", "WINDOW_CLOSED",
     "CONSENT_REVOKED", "ADAPTER_REJECTED", "RETRIES_EXHAUSTED", "TOKEN_INVALID",
     "RECIPIENT_UNREACHABLE", "PROVIDER_REJECTED", "PROVIDER_UNKNOWN", "RATE_LIMITED",
     "QUALITY_BLOCKED", "TEMPLATE_UNAVAILABLE", "PROVIDER_ERROR", "MEDIA_NOT_SCANNED",
+    "MESSAGES_ACCESS_OFF",
 )  # fmt: skip
 
 

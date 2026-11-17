@@ -167,7 +167,7 @@ class SendMediaView(APIView):
         found = mine.filter(pk=kwargs["conversation_id"]).first()
         if found is None or not can(ectx, "messages.send", found):  # antes de leer el cuerpo
             raise NotFound
-        decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY)
+        decision = selectors.messaging_decision(found, purpose=policy.CUSTOMER_REPLY, sender="USER")
         if decision.reason is not None:  # antes de guardar nada; el comando la repite
             raise ApiError(decision.reason, 409, REASONS[decision.reason])
         handler = outbound_media.Capped(max(outbound_media.CAPS.values()))

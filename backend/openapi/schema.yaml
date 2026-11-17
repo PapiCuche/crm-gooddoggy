@@ -13550,6 +13550,7 @@ components:
             * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
             * `PROVIDER_ERROR` - PROVIDER_ERROR
             * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
+            * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
           oneOf:
           - $ref: '#/components/schemas/ProviderErrorCodeEnum'
           - $ref: '#/components/schemas/NullEnum'
@@ -13746,10 +13747,12 @@ components:
       enum:
       - FREE_FORM
       - BLOCKED
+      - HUMAN_AGENT_TAG
       type: string
       description: |-
         * `FREE_FORM` - FREE_FORM
         * `BLOCKED` - BLOCKED
+        * `HUMAN_AGENT_TAG` - HUMAN_AGENT_TAG
     MessagingPolicyReasonEnum:
       enum:
       - INTERNAL_NOTE_NOT_SENDABLE
@@ -16334,6 +16337,7 @@ components:
       - TEMPLATE_UNAVAILABLE
       - PROVIDER_ERROR
       - MEDIA_NOT_SCANNED
+      - MESSAGES_ACCESS_OFF
       type: string
       description: |-
         * `CONVERSATION_CLOSED` - CONVERSATION_CLOSED
@@ -16352,6 +16356,7 @@ components:
         * `TEMPLATE_UNAVAILABLE` - TEMPLATE_UNAVAILABLE
         * `PROVIDER_ERROR` - PROVIDER_ERROR
         * `MEDIA_NOT_SCANNED` - MEDIA_NOT_SCANNED
+        * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
     QualityRatingEnum:
       enum:
       - GREEN
@@ -17537,6 +17542,7 @@ components:
       - LIMIT_REACHED
       - DISCONNECTED_BY_ADMIN
       - PROVIDER_ERROR
+      - MESSAGES_ACCESS_OFF
       type: string
       description: |-
         * `TOKEN_INVALID` - TOKEN_INVALID
@@ -17545,6 +17551,7 @@ components:
         * `LIMIT_REACHED` - LIMIT_REACHED
         * `DISCONNECTED_BY_ADMIN` - DISCONNECTED_BY_ADMIN
         * `PROVIDER_ERROR` - PROVIDER_ERROR
+        * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
     StockImport:
       type: object
       properties:

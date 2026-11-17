@@ -9,6 +9,7 @@
 /**
  * * `FREE_FORM` - FREE_FORM
  * * `BLOCKED` - BLOCKED
+ * * `HUMAN_AGENT_TAG` - HUMAN_AGENT_TAG
  */
 export type MessagingPolicyModeEnum =
   (typeof MessagingPolicyModeEnum)[keyof typeof MessagingPolicyModeEnum];
@@ -16,4 +17,5 @@ export type MessagingPolicyModeEnum =
 export const MessagingPolicyModeEnum = {
   FREE_FORM: "FREE_FORM",
   BLOCKED: "BLOCKED",
+  HUMAN_AGENT_TAG: "HUMAN_AGENT_TAG",
 } as const;

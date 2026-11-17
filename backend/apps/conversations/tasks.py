@@ -101,6 +101,9 @@ def deliver(
                 channel_account_id=claim.account_id,
                 credential_id=claim.credential.pk if claim.credential else None,
             )
+    elif result.reason == "MESSAGES_ACCESS_OFF":  # Instagram: el titular apagó los mensajes
+        with tenant_scope(ctx):
+            accounts.mark_messages_access_off(ctx, channel_account_id=claim.account_id)
 
 
 @subscribe("message.queued")
@@ -265,7 +268,8 @@ def read_profile(organization_id: UUID, identity_id: UUID) -> str:
     """Lee `name` y `username` del cliente con el token de la página **sin transacción** (abierto
     solo durante la llamada) y los aplica en otro scope (`profiles.apply_profile`). Todo dentro del
     scope de `organization_id`: una identidad de otra organización no existe. Un rechazo no cambia
-    nada (la cuenta en `ERROR` por un `190` llega con el adaptador, F7b-05) y alerta.
+    el nombre y alerta; un `190` deja además la cuenta en `ERROR` (`TOKEN_INVALID`, F7b-05a), solo
+    si ese token sigue siendo el de la cuenta.
     `GraphUnavailable` si vale reintentar."""
     ctx = TenantContext(organization_id, "celery")
     with tenant_scope(ctx):
@@ -281,7 +285,8 @@ def read_profile(organization_id: UUID, identity_id: UUID) -> str:
             del token
     except sealed.SealError:
         return "UNREADABLE"
-    except graph.TokenRejected:
+    except graph.TokenRejected:  # la cuenta de la credencial, en el scope de esta organización
+        _reject(ctx, credential.owner_id, credential)
         return "TOKEN_INVALID"
     except graph.GraphRejected:  # el cliente ya no existe o no se deja leer: queda el nombre fijo
         return "REJECTED"

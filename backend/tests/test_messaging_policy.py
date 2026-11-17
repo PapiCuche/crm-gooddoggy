@@ -60,7 +60,7 @@ def test_the_sandbox_has_no_window() -> None:
         )  # fmt: skip
     assert policy.CAPABILITIES.get("WHATSAPP") == policy.ChannelCapabilities(window_hours=24)
     assert policy.CAPABILITIES.get("SANDBOX") == policy.ChannelCapabilities(window_hours=None)
-    assert policy.CAPABILITIES.get("INSTAGRAM") is None
+    assert policy.CAPABILITIES.get("TIKTOK") is None
 
 
 @pytest.mark.parametrize("status", ["DISCONNECTED", "ERROR", "PENDING", "SUSPENDED", ""])
@@ -73,7 +73,7 @@ def test_a_deleted_account_or_a_platform_without_adapter_denies_and_a_degraded_o
     None
 ):
     assert decide(account_deleted=True).reason == "CHANNEL_UNAVAILABLE"
-    assert decide(platform="INSTAGRAM").reason == "CHANNEL_UNAVAILABLE"
+    assert decide(platform="TIKTOK").reason == "CHANNEL_UNAVAILABLE"
     assert decide(account_status="DEGRADED").allowed
 
 

@@ -43,7 +43,9 @@ ERRORS: dict[str, tuple[int, int, int | None, str, str]] = {
 }  # fmt: skip
 MESSAGING_TYPES = ("RESPONSE", "UPDATE", "MESSAGE_TAG")  # [S20]
 TAGS = ("HUMAN_AGENT",)  # las demás dan `100` desde el 27-04-2026 [S20]
-OUTCOMES = ("ok", "slow", "cut", "timeout", *LOST, *ERRORS)
+# Un 200 que no dice con qué id lo aceptó (sin `message_id`, o uno que no es un id): Meta lo envió.
+NO_MID = {"no_mid": None, "bad_mid": "m_ con espacio"}
+OUTCOMES = ("ok", "slow", "cut", "timeout", *LOST, *NO_MID, *ERRORS)
 PROFILE_FIELDS = ("name", "username")  # los que lee D-F7b-06 de los que da [S9]
 
 
@@ -126,6 +128,9 @@ class FakePageGraph:
         mid = f"m_SIMOUT{len(self.sent):06d}"
         if outcome in LOST:
             raise LOST[outcome]  # Meta lo envió, pero la respuesta se pierde (no deduplica, §6)
+        if outcome in NO_MID:
+            reply = {"recipient_id": sent["recipient"]["id"], "message_id": NO_MID[outcome]}
+            return self._ok({k: v for k, v in reply.items() if v is not None})
         return self._ok({"recipient_id": sent["recipient"]["id"], "message_id": mid})
 
     def _profile(self, user: str, fields: list[str]) -> Response:

@@ -4,6 +4,7 @@ quien las sirve (`HasPermission` y `ScopeFilter`)."""
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
 from django.db.models import OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
@@ -107,13 +108,15 @@ def messaging_decision(
     account: ChannelAccount | None = None,
     alias: str | None = None,
     purpose: str = policy.CUSTOMER_REPLY,
+    sender: str = "SYSTEM",
 ) -> policy.PolicyDecision:
     """La decisión de `policy.evaluate` para escribir ahora en la conversación, con los hechos de
     esta organización (RLS): la cuenta de la conversación, su contacto y `last_inbound_at`. Un
     contacto o una cuenta que no se ven niegan (cerrado ante la duda). Con `alias`, en la
     transacción de quien llama (el comando que ya bloqueó la conversación); con `account`, la que
     ya leyó (y bloqueó) quien llama. `purpose`: para qué se escribe (`policy.PURPOSES`); una
-    respuesta al cliente no consulta el consentimiento."""
+    respuesta al cliente no consulta el consentimiento. `sender`: quién escribe; solo una persona
+    (`USER`) puede usar la etiqueta Human Agent, y solo con `META_HUMAN_AGENT_APPROVED`."""
     accounts, contacts = ChannelAccount.objects, Contact.objects
     if alias is not None:
         accounts, contacts = accounts.using(alias), contacts.using(alias)  # type: ignore[assignment]
@@ -134,6 +137,8 @@ def messaging_decision(
         now=timezone.now(),
         purpose=purpose,
         revoked=revoked,
+        sender=sender,
+        human_agent_approved=settings.META_HUMAN_AGENT_APPROVED,
     )
 
 

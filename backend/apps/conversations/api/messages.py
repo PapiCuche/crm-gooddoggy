@@ -239,8 +239,8 @@ class MessagesView(generics.ListAPIView):
 class MessagingPolicySerializer(serializers.Serializer[Any]):
     allowed = serializers.BooleanField()
     mode = serializers.ChoiceField(
-        choices=[(policy.FREE_FORM, policy.FREE_FORM), (policy.BLOCKED, policy.BLOCKED)]
-    )
+        choices=[(m, m) for m in (policy.FREE_FORM, policy.BLOCKED, policy.HUMAN_AGENT_TAG)]
+    )  # `HUMAN_AGENT_TAG`: ventana cerrada, con la etiqueta Human Agent (ADR-035 §7)
     reason = serializers.ChoiceField(
         choices=[(reason, reason) for reason in policy.REASONS],
         allow_null=True,
@@ -274,7 +274,8 @@ class MessagingPolicyView(APIView):
         found = mine.filter(pk=self.kwargs["conversation_id"]).first()
         if found is None or not can(ectx, "messages.send", found):  # el mismo 404 en todo caso
             raise NotFound
-        return Response(MessagingPolicySerializer(selectors.messaging_decision(found)).data)
+        decision = selectors.messaging_decision(found, sender="USER")  # escribe una persona
+        return Response(MessagingPolicySerializer(decision).data)
 
 
 @extend_schema_view(
