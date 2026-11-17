@@ -40,6 +40,7 @@ FUNCTIONS = (
     "public.webhook_ingress_refuse_social(text, text, text, text, text, jsonb, text)",
     "public.resolve_social_account(text, text)",
     "public.conversations_identity_required()",  # INVOKER
+    "public.contact_identities_live_account()",  # F7b-04b, INVOKER
     "public.meta_ingest_counts(timestamptz, timestamptz)",  # F7-11a, SECURITY DEFINER
     "public.quotes_guard()",  # F5-09b: guardas de la cotización, INVOKER
     "public.quote_items_guard()",

@@ -303,7 +303,7 @@ def test_a_delivery_splits_into_one_item_per_logical_unit_with_a_dedup_key() -> 
     [
         (b"x", "json"),
         (webhooks.encode([]), "object"),
-        (webhooks.encode({"object": "page", "entry": []}), "object"),
+        (webhooks.encode({"object": "user", "entry": []}), "object"),
         (webhooks.encode({"object": "whatsapp_business_account", "entry": []}), "entry"),
         (webhooks.encode({"object": "whatsapp_business_account", "entry": "x"}), "entry"),
         (

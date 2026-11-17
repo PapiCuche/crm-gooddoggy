@@ -178,7 +178,7 @@ def malformed() -> dict[str, bytes]:
         "empty": b"",
         "array": b"[]",
         "null": b"null",
-        "wrong_object": encode({**good, "object": "page"}),
+        "wrong_object": encode({**good, "object": "user"}),  # `page` ya es de Messenger
         "entry_not_a_list": encode({"object": "whatsapp_business_account", "entry": "x"}),
         "no_phone_number_id": encode(envelope({"messages": [text_message("x")]})),
         "text_not_a_string": encode(envelope(value(messages=[{**good_text, "text": {"body": 5}}]))),

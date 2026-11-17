@@ -44,6 +44,7 @@ from apps.conversations.channels import REASONS, Claim, Media, SendResult
 from apps.conversations.models import (
     META_ID,
     PREVIEW_MAX,
+    SOCIAL,
     AttentionMode,
     ChannelAccount,
     Conversation,
@@ -229,8 +230,9 @@ def update_channel_account(
 
 
 def _open(
-    ctx: TenantContext, alias: str, contact_id: UUID, account_id: UUID
-) -> tuple[Conversation, bool]:
+    ctx: TenantContext, alias: str, contact_id: UUID, account_id: UUID,
+    identity_id: UUID | None = None,
+) -> tuple[Conversation, bool]:  # fmt: skip
     """La conversación no cerrada del contacto en la cuenta, o una nueva en cola (`PENDING`,
     D-INB-1). Con el contacto bloqueado. Una resuelta hace más de `REOPEN_HOURS` se cierra y se
     abre otra (D-INB-2)."""
@@ -238,8 +240,11 @@ def _open(
     if not live.select_for_update(no_key=True).values_list("pk", flat=True)[:1]:
         raise BadReference("contact_id")
     accounts = ChannelAccount.objects.using(alias).filter(pk=account_id, deleted_at__isnull=True)
-    if not accounts.exists():
+    platform = accounts.values_list("platform", flat=True).first()
+    if platform is None:
         raise BadReference("channel_account_id")
+    if platform in SOCIAL and identity_id is None:  # no solo el disparador (ADR-035 §5)
+        raise BadReference("contact_identity_id")
     open_ones = Conversation.objects.using(alias).exclude(status=Status.CLOSED)
     open_ones = open_ones.filter(contact_id=contact_id, channel_account_id=account_id)
     if (found := open_ones.select_for_update(no_key=True).first()) is not None:
@@ -257,6 +262,7 @@ def _open(
                 number=allocate(ctx, KEY, width=5, using=alias),
                 contact_id=contact_id,
                 channel_account_id=account_id,
+                contact_identity_id=identity_id,
                 last_message_at=now,
             )
     except IntegrityError as error:
@@ -296,6 +302,7 @@ def record_inbound(
     message_type: str = MessageType.TEXT,
     provider_at: dt.datetime | None = None,
     attachment: tuple[str, str] | None = None,
+    contact_identity_id: UUID | None = None,
 ) -> tuple[Message, bool]:
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
@@ -308,7 +315,8 @@ def record_inbound(
     `provider_at` es el instante que informa el canal: ancla de la ventana de 24 h
     (`last_inbound_at`, acotado a «ahora» y sin retroceder); el orden del chat sigue siendo el de
     llegada. Con más de 24 h de antigüedad no reabre una conversación `WAITING_CUSTOMER` ni
-    `RESOLVED` (se anota sin cambiarle el estado)."""
+    `RESOLVED` (se anota sin cambiarle el estado). En Instagram y Messenger, `contact_identity_id`
+    (obligatoria) es la identidad del contacto en la cuenta: la del hilo nuevo (ADR-035 §5)."""
     alias = require_scope(ctx)
     allowed: tuple[str, ...] = (MessageType.TEXT, MessageType.UNSUPPORTED)
     if attachment is not None:  # un medio: su tipo y nada más, con un id de solo dígitos
@@ -325,7 +333,7 @@ def record_inbound(
     with transaction.atomic(using=alias):
         if found := same.first():
             return found, False
-        convo, _ = _open(ctx, alias, contact_id, account_id)
+        convo, _ = _open(ctx, alias, contact_id, account_id, contact_identity_id)
         now = timezone.now()
         seen = min(provider_at, now) if provider_at is not None else None
         stale = provider_at is not None and now - provider_at > dt.timedelta(hours=WINDOW_HOURS)
