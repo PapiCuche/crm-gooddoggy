@@ -336,6 +336,9 @@ SPECTACULAR_SETTINGS = {
         "AuditResultEnum": "apps.audit.services.Result",
         "InvitationStatusEnum": "apps.organizations.models.UserInvitation.Status",  # F2-80
         "MessagingPolicyModeEnum": ["FREE_FORM", "BLOCKED", "HUMAN_AGENT_TAG"],  # F7-05a, F7b-05a
+        # F7b-06a: la cuenta de una red social; la lista entera conserva su nombre.
+        "SocialPlatformEnum": ["MESSENGER", "INSTAGRAM"],
+        "PlatformEnum": "apps.conversations.models.Platform",
         "RevokedEnum": ["REVOKED"],  # el único estado que la API pone a una invitación (F2-82)
         # El catálogo (F3-06, F3-06b): el estado de un producto y el de una variante son listas
         # distintas con valores en común.
