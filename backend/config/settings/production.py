@@ -10,6 +10,7 @@ from django.http.request import validate_host
 from config import env
 from config.settings.base import *  # noqa: F403
 from config.settings.base import (
+    AI_ACCOUNT_THROTTLE,
     ALLOWED_HOSTS,
     APP_ORIGIN,
     CELERY_BROKER_URL,
@@ -117,6 +118,7 @@ if META_ENABLED:
     )
 
 env.check_floor_throttle(QUOTE_FLOOR_THROTTLE)  # el tope del oráculo del costo (F5-09e2)
+env.check_ai_throttle(AI_ACCOUNT_THROTTLE)  # el tope de la prueba de conexión de IA (F8-03d)
 
 # Loopback para las sondas locales (HEALTHCHECK del contenedor): se añade DESPUÉS de validar,
 # así una DJANGO_ALLOWED_HOSTS vacía sigue fallando y el operador no necesita conocer la sonda.

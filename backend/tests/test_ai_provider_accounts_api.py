@@ -34,6 +34,12 @@ SHOWN = {
 }  # fmt: skip
 
 
+@pytest.fixture(autouse=True)
+def roomy(settings: Any) -> None:
+    """Estas pruebas miran las rutas, no su tope por persona (F8-03d lo prueba aparte)."""
+    settings.AI_ACCOUNT_THROTTLE = (60, 600)
+
+
 def create(client: Any, key: str = TEST_KEY, base: str = BASE, **over: Any) -> Any:
     return send(client, "post", base, {"provider": "ANTHROPIC", "api_key": key} | over)
 

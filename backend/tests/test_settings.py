@@ -473,6 +473,20 @@ def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -
 
     kept = max(window for _, window, _, _ in base.LOGIN_THROTTLE.values())
     assert base.CHANNEL_CHECK_THROTTLE[1] < kept and base.MEDIA_UPLOAD_THROTTLE[1] < kept
+    assert base.AI_ACCOUNT_THROTTLE[1] < kept  # los contadores `aik:` (F8-03d)
+
+
+@pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (10, 59), (10, 841), (10, 3600)])
+def test_production_refuses_an_ai_account_limit_it_cannot_enforce(
+    throttle: tuple[int, int],
+) -> None:
+    """La prueba de conexión de IA no se repite en bucle contra el proveedor (F8-03d)."""
+    from config import env
+    from config.settings import base
+
+    env.check_ai_throttle(base.AI_ACCOUNT_THROTTLE)
+    with pytest.raises(ImproperlyConfigured, match="AI_ACCOUNT_THROTTLE"):
+        env.check_ai_throttle(throttle)
 
 
 @pytest.mark.parametrize("throttle", [(0, 600), (61, 600), (5, 59), (5, 841), (5, 3600)])

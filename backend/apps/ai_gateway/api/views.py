@@ -1,9 +1,11 @@
 """Las cuentas del proveedor de IA de la organización (F8-03c; ADR-034 §4): listar, crear, rotar la
-clave y borrar (desactivar). Cada ruta pide `ai.manage` y, después, el segundo factor de hace 15
-minutos como mucho (`step_up_methods`, D-F7-11): sin el permiso, 403 `PERMISSION_DENIED`, nunca
-`STEP_UP_REQUIRED`. El cuerpo se valida antes del 404. Una cuenta que no existe, es de otra
-organización o ya está desactivada da el mismo 404. Ninguna respuesta lleva la clave ni su cifrado:
-solo `key_last_four`, el proveedor, el estado y las fechas.
+clave, borrar (desactivar) y probar la conexión (F8-03d). Cada ruta pide `ai.manage` y, después, el
+segundo factor de hace 15 minutos como mucho (`step_up_methods`, D-F7-11): sin el permiso, 403
+`PERMISSION_DENIED`, nunca `STEP_UP_REQUIRED`. Antes de todo eso, el tope por persona
+(`apps.ai_gateway.throttle`, 429). El cuerpo se valida antes del 404. Una cuenta que no existe, es
+de otra organización o ya está desactivada da el mismo 404. Ninguna respuesta lleva la clave ni su
+cifrado (solo `key_last_four`, el proveedor, el estado y las fechas), ni el cuerpo del proveedor:
+la prueba devuelve solo su código.
 """
 
 from collections.abc import Iterator
@@ -21,6 +23,7 @@ from rest_framework.views import APIView
 from apps.access.permissions import rbac_errors
 from apps.ai_gateway import accounts, keys
 from apps.ai_gateway.models import AccountStatus, AIProviderAccount, Provider
+from apps.ai_gateway.probe import Probe
 from core.api.errors import ApiError
 from core.api.schema import errors
 from core.tenancy import context
@@ -32,6 +35,7 @@ CONFLICT = "Otra persona está guardando la misma cuenta. Vuelve a intentarlo."
 MALFORMED = "La clave no tiene el formato de una clave de API."
 UNKNOWN = "Proveedor no admitido."
 KEY_HELP = "Solo se escribe: ninguna respuesta la devuelve."
+LIMITED = " 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`."
 
 
 class AiProviderAccountSerializer(serializers.Serializer[Any]):
@@ -62,6 +66,13 @@ class AiProviderAccountCreateSerializer(AiProviderKeySerializer):
     # Sin `{input}`: un campo cambiado de sitio pondría la clave en el mensaje (ADR-034 §4).
     provider = serializers.ChoiceField(
         choices=Provider.choices, error_messages={"invalid_choice": UNKNOWN}
+    )
+
+
+class AiProviderTestSerializer(serializers.Serializer[Any]):
+    result = serializers.ChoiceField(
+        choices=[(code.value, code.value) for code in Probe],
+        help_text="Solo el código de la prueba, nunca lo que contestó el proveedor.",
     )
 
 
@@ -99,20 +110,20 @@ def provider_of(account_id: UUID) -> str:
     get=extend_schema(
         operation_id="ai_provider_accounts_list",
         tags=["ai"],
-        responses={200: AiProviderAccountSerializer(many=True), **errors(401, 403, 404)},
+        responses={200: AiProviderAccountSerializer(many=True), **errors(401, 403, 404, 429)},
         description="Las cuentas de proveedor de IA de la organización, activas y desactivadas "
         "(`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo "
-        "`key_last_four`.",
+        "`key_last_four`." + LIMITED,
     ),
     post=extend_schema(
         operation_id="ai_provider_accounts_create",
         tags=["ai"],
         request=AiProviderAccountCreateSerializer,
-        responses={201: AiProviderAccountSerializer, **errors(400, 401, 403, 404, 409)},
+        responses={201: AiProviderAccountSerializer, **errors(400, 401, 403, 404, 409, 429)},
         description="Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), "
         "cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una "
         "clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: "
-        "otra petición la creó a la vez.",
+        "otra petición la creó a la vez." + LIMITED,
     ),
 )
 class AccountsView(APIView):
@@ -136,10 +147,10 @@ class AccountsView(APIView):
         operation_id="ai_provider_accounts_rotate_key",
         tags=["ai"],
         request=AiProviderKeySerializer,
-        responses={200: AiProviderAccountSerializer, **errors(400, 401, 403, 404)},
+        responses={200: AiProviderAccountSerializer, **errors(400, 401, 403, 404, 429)},
         description="Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la "
         "anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o "
-        "está desactivada.",
+        "está desactivada." + LIMITED,
     ),
 )
 class AccountKeyView(APIView):
@@ -160,10 +171,10 @@ class AccountKeyView(APIView):
     delete=extend_schema(
         operation_id="ai_provider_accounts_destroy",
         tags=["ai"],
-        responses={204: None, **errors(401, 403, 404)},
+        responses={204: None, **errors(401, 403, 404, 429)},
         description="Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su "
         "clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de "
-        "otra organización o ya está desactivada.",
+        "otra organización o ya está desactivada." + LIMITED,
     ),
 )
 class AccountView(APIView):
@@ -174,3 +185,26 @@ class AccountView(APIView):
         with account_errors():
             accounts.disable(context.require(), provider=provider_of(account_id))
         return Response(status=204)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="ai_provider_accounts_test",
+        tags=["ai"],
+        request=None,
+        responses={200: AiProviderTestSerializer, **errors(401, 403, 404, 429)},
+        description="Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo "
+        "factor reciente) con la llamada más barata, sin reintentos, y la audita "
+        "(`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, "
+        "`PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. "
+        "404: no existe, es de otra organización o está desactivada." + LIMITED,
+    ),
+)
+class AccountTestView(APIView):
+    required_permissions = {"POST": MANAGE}
+    step_up_methods = STEP_UP
+
+    def post(self, request: Request, account_id: UUID, **kwargs: Any) -> Response:
+        with account_errors():
+            result = accounts.check(context.require(), provider=provider_of(account_id))
+        return Response({"result": result.value})

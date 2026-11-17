@@ -15,6 +15,8 @@ export * from "./aiProviderAccountCreateRequest";
 export * from "./aiProviderAccountStatusEnum";
 export * from "./aiProviderEnum";
 export * from "./aiProviderKeyRequest";
+export * from "./aiProviderTest";
+export * from "./aiProviderTestResultEnum";
 export * from "./assignActionEnum";
 export * from "./assignment";
 export * from "./assignmentStrategyEnum";
