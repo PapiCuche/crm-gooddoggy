@@ -1,7 +1,7 @@
 from typing import Any
 
 from django.conf import settings
-from django.urls import ResolverMatch, URLPattern, path
+from django.urls import ResolverMatch, URLPattern, path, register_converter
 from django.urls.resolvers import RoutePattern
 
 from apps.conversations.api import (
@@ -33,6 +33,20 @@ def hide_sandbox(endpoints: list[Any], **kwargs: Any) -> list[Any]:
         return endpoints
     return [e for e in endpoints if getattr(e[3], "cls", None) is not messages.SandboxInboundView]
 
+
+class SocialPlatform:
+    """`messenger` o `instagram` en la ruta; la vista recibe la plataforma (F7b-06a)."""
+
+    regex = "messenger|instagram"
+
+    def to_python(self, value: str) -> str:
+        return value.upper()
+
+    def to_url(self, value: str) -> str:
+        return value.lower()
+
+
+register_converter(SocialPlatform, "social")
 
 urlpatterns = [
     path("conversations/", conversations.ConversationsView.as_view(), name="conversations"),
@@ -106,6 +120,19 @@ urlpatterns = [
         "channels/whatsapp/<uuid:account_id>/token/",
         channels.RotateTokenView.as_view(),
         name="whatsapp-rotate-token",
+    ),
+    path(
+        "channels/<social:platform>/", channels.SocialConnectView.as_view(), name="social-connect"
+    ),
+    path(
+        "channels/<social:platform>/<uuid:account_id>/",
+        channels.SocialDisconnectView.as_view(),
+        name="social-disconnect",
+    ),
+    path(
+        "channels/<social:platform>/<uuid:account_id>/token/",
+        channels.SocialRotateTokenView.as_view(),
+        name="social-rotate-token",
     ),
     SandboxOnly(
         RoutePattern("channels/sandbox/inbound/", name="sandbox-inbound", is_endpoint=True),
