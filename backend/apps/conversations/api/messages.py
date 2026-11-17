@@ -183,8 +183,9 @@ def queue(found: Conversation, **wanted: Any) -> tuple[Message, bool]:
         "hace falta ver al contacto (el `body` de la respuesta sigue la regla de la lectura). 409: "
         "`CONVERSATION_CLOSED`, `CHANNEL_UNAVAILABLE` (canal sin conectar), `CONTACT_BLOCKED`, "
         "`WINDOW_CLOSED` (pasó la ventana de atención del canal desde el último mensaje del "
-        "cliente) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra conversación u otra "
-        "persona).",
+        "cliente), `CONSENT_REVOKED` (fuera de la ventana, con la etiqueta Human Agent, el cliente "
+        "se dio de baja en este canal) o `CLIENT_MESSAGE_ID_TAKEN` (ese id es de otro texto, otra "
+        "conversación u otra persona).",
     ),
 )
 class MessagesView(generics.ListAPIView):

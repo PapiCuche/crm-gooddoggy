@@ -14,6 +14,7 @@ import psycopg
 import pytest
 from django.utils import timezone
 
+from apps.contacts.models import ContactConsent
 from apps.conversations import ingress, meta_webhook
 from apps.conversations.models import Message
 from core.tenancy.scope import tenant_scope
@@ -175,9 +176,11 @@ def test_a_retry_of_an_event_stored_with_the_old_key_duplicates_nothing(
     net = SIM[platform]
     message, _ = send(world, talk(world, platform))  # SENT con `m_SIMOUT000001`
     now = int(timezone.now().timestamp() * 1000)
-    stop = social.text(net, "BAJA", mid="m_SIMIN000001", at=now)
-    stop["sender"]["id"] = NEW_CUSTOMER  # una identidad nueva: en Instagram, su evento de perfil
-    events = [stop, graph.echo(net)]
+    stop = social.text(net, "BAJA", mid="m_SIMIN000001", at=now - 2000)
+    back = social.text(net, "ALTA", mid="m_SIMIN000002", at=now - 1000)  # después, por su hora
+    for said in (stop, back):  # una identidad nueva: en Instagram, su evento de perfil
+        said["sender"]["id"] = NEW_CUSTOMER
+    events = [stop, back, graph.echo(net)]
     if net is INSTAGRAM:
         events.append(social.read(INSTAGRAM, mid="m_SIMOUT000001"))
     retry = social.signed(net, *events)
@@ -190,12 +193,13 @@ def test_a_retry_of_an_event_stored_with_the_old_key_duplicates_nothing(
     assert seen(world, message) == before  # ni otro mensaje, ni otra confirmación, ni retroceso
     assert trail(migrator) == trail_before  # ni otra auditoría ni otro evento del outbox
     audit, outbox = trail_before
-    assert ("message.delivery_changed" in dict(audit)) and dict(outbox)["message.received"] == 1
+    assert ("message.delivery_changed" in dict(audit)) and dict(outbox)["message.received"] == 2
     assert dict(outbox).get("contact_identity.created") == (1 if net is INSTAGRAM else None)
     rows = migrator.execute("SELECT count(*) FROM webhook_ingress").fetchone()
     assert rows == (2 * len(events),)
     assert before.status == ("READ" if net is INSTAGRAM else "SENT")
-    assert len(before.inbound) == 1 and len(before.replies) == 1  # la baja, confirmada una vez
+    assert len(before.inbound) == 2 and len(before.replies) == 2  # baja y alta, una vez cada una
+    assert [(c, s) for c, s, _ in before.consents] == [(platform, "GRANTED")]  # el alta, la última
 
 
 def trail(migrator: DB) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
@@ -219,6 +223,7 @@ def seen(world: SimpleNamespace, message: Any) -> SimpleNamespace:
             status=saved.delivery_status, mid=saved.external_message_id,
             inbound=list(Message.objects.filter(direction="INBOUND").values_list("pk", flat=True)),
             replies=list(Message.objects.filter(sender_type="SYSTEM").values_list("pk", flat=True)),
+            consents=list(ContactConsent.objects.values_list("channel", "status", "updated_at")),
         )  # fmt: skip
 
 
