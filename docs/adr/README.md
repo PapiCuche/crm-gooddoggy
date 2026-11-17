@@ -17,7 +17,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-009](ADR-009-git-strategy.md) | GitHub Flow | Accepted (enmendado en parte por ADR-015) | 2026-09-28 |
 | [ADR-010](ADR-010-messaging-policy.md) | MessagingPolicyService, ventana de atención y plantillas | Accepted | 2026-09-28 |
 | [ADR-011](ADR-011-observability-and-logs.md) | Observabilidad y separación de logs (aplicación / auditoría / IA) | Accepted | 2026-09-28 |
-| [ADR-012](ADR-012-engineering-runtime-baseline.md) | Baseline de runtimes, herramientas e imágenes; emulador S3 local (Garage) | Accepted; ampliado por ADR-025 en §1 (fila de `uqr`) | 2026-09-28 |
+| [ADR-012](ADR-012-engineering-runtime-baseline.md) | Baseline de runtimes, herramientas e imágenes; emulador S3 local (Garage) | Accepted; ampliado por ADR-025 en §1 (fila de `uqr`); acotado en parte por ADR-042: excepción de `pnpm audit` solo para GHSA-fc5q, hasta el 2026-12-01 | 2026-09-28 |
 | [ADR-013](ADR-013-platform-audit.md) | Auditoría de plataforma en un sumidero propio, sin tenant y solo de inserción | Accepted | 2026-10-02 |
 | [ADR-014](ADR-014-api-errors-and-authentication.md) | Contrato de errores de la API, autenticación por sesión y rutas de plataforma | Accepted (excepciones acotadas en ADR-026 §5: las cuentas de prueba; y en ADR-020 §4: aceptar invitaciones) | 2026-10-02 |
 | [ADR-015](ADR-015-autonomous-delivery-program.md) | Programa de entrega autónoma con merge por gates (modifica la aprobación y el merge de ADR-009 dentro del programa) | Accepted | 2026-10-02 |
@@ -46,6 +46,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-038](ADR-038-mfa-membership-policy-hook.md) | Dónde se aplica la política de segundo factor por membresía de ADR-023 §9: `MFA_ENFORCEMENT` (`warn` por defecto, validado al arrancar), un gancho de `core.tenancy` (`TENANCY_SECOND_FACTOR_POLICY`) servido por `apps.members` con los selectores de `access` y `accounts`, aplicado al final de `resolve_tenant` (HTTP y WebSocket, después del 404 y del 403 de suspendida): 403 `MFA_REQUIRED` y cierre 4428 con `enforce`; `me/` dice `mfa.required` y `mfa.missing` | Accepted | 2026-11-14 |
 | [ADR-040](ADR-040-social-ingress-key-per-account.md) | Clave de deduplicación de la ingesta de Instagram y Messenger por cuenta (`fb:msg:<page>:<mid>`, `ig:msg:<igid>:<mid>`, `ig:read:<igid>:<mid>`…; enmienda ADR-035 §4) | Accepted | 2026-11-17 |
 | [ADR-041](ADR-041-local-meta-graph-simulator.md) | Simulador local de la Graph API de Meta: `META_GRAPH_SIMULATOR_URL` solo en los settings `local` (production, migrate y test no arrancan con ella) y una única excepción de `core.http` en desarrollo, solo para el host de Graph y después de su política (acota ADR-035 §6) | Accepted | 2026-11-17 |
+| [ADR-042](ADR-042-audit-exception-picomatch-ghsa-fc5q.md) | Excepción acotada y con caducidad en `pnpm audit`: ignora solo GHSA-fc5q-39xc-vjpf (ReDoS en picomatch ≤4.0.7, sin corrección; en producción solo por `next-intl > @parcel/watcher`) con `auditConfig.ignoreGhsas`, revisión cada 7 días y caducidad 2026-12-01 que hace cumplir una prueba; se retira en #929 (acota ADR-012) | Accepted (2026-11-17, decisión del propietario registrada en #928) | 2026-11-17 |
 
 ## Plantilla
 
