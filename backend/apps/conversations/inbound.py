@@ -22,6 +22,9 @@ Instagram y Messenger (F7b-04b, ADR-035 §5): sin teléfono. El cliente es su id
 fusiona con otro contacto (D-F7b-05). El texto se sanea igual; un adjunto, una mención o un mensaje
 no soportado es `UNSUPPORTED` con una frase fija; la respuesta a una historia lleva la suya. Los
 ecos, los leídos y las entregas esperan a F7b-05; reacciones, borrados y lo demás se cuentan.
+
+El contacto nuevo de Instagram emite `contact_identity.created`: su nombre llega después
+(`profiles`, F7b-04c, D-F7b-06).
 """
 
 import datetime as dt
@@ -46,7 +49,9 @@ from apps.conversations.models import (
     Message,
     MessageType,
 )
+from apps.conversations.profiles import SOCIAL_NAMES
 from core.observability.logging import get_logger
+from core.outbox import emit
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import require_scope
 
@@ -68,7 +73,6 @@ SOCIAL_LABELS = {  # `attachments[].type` de Instagram y Messenger [S7] [S18]
     "story_mention": "Te mencionó en una historia", "fallback": "Enlace compartido",
 }  # fmt: skip
 STORY_REPLY = "Respondió a tu historia"
-SOCIAL_NAMES = {"MESSENGER": "Cliente de Messenger", "INSTAGRAM": "Cliente de Instagram"}
 CONFIRMATIONS = {  # D-F7-05: texto fijo en español (a confirmar por el propietario)
     keywords.OPT_OUT: "Listo: ya no te enviaremos mensajes por iniciativa nuestra por WhatsApp. "
     "Si nos escribes, te seguiremos respondiendo.",
@@ -306,7 +310,11 @@ def _identity(ctx: TenantContext, account: ChannelAccount, customer: str) -> Con
         )],
         ignore_conflicts=True,
     )  # fmt: skip
-    return mine.get()  # la relectura: la que quedó, sea esta u otra
+    found = mine.get()  # la relectura: la que quedó, sea esta u otra
+    if account.platform == "INSTAGRAM" and found.contact_id == contact.pk:  # D-F7b-06: solo ids
+        emit(ctx, "contact_identity.created", aggregate_type="contact_identity",
+             aggregate_id=found.pk)  # fmt: skip
+    return found
 
 
 def receive_social(
