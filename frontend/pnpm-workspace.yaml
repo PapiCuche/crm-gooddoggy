@@ -25,3 +25,13 @@ overrides:
   # vía orval > ajv 8.20.0, que pide ^3.0.1. GHSA-w74x-v6f9-j3xg y GHSA-wjr9-j795-jxcr
   # (moderados) y dos bajos.
   fast-uri@3: 3.1.9
+# Excepción de `pnpm audit` acotada y con caducidad (SEC-DEV-03, #928; ADR-042). Solo un aviso:
+# GHSA-fc5q-39xc-vjpf (alto), ReDoS en picomatch <=4.0.7, sin versión corregida. En producción solo
+# llega por next-intl > @parcel/watcher > picomatch, el vigilante del extractor de mensajes de
+# next-intl, que este proyecto no activa: solo carga en build y desarrollo, y sus patrones son los
+# nuestros, nunca texto del usuario. Decisión del propietario del 2026-11-17; revisión cada 7 días.
+# Caduca el 2026-12-01: desde el 2026-12-02 (UTC) src/build/audit-exceptions.test.ts falla si sigue
+# aquí. Se quita en #929 cuando picomatch publique la corrección y cumpla las 24 h de ADR-012.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf # caduca: 2026-12-01
