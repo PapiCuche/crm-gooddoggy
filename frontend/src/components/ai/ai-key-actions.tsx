@@ -158,7 +158,7 @@ export function AccountAction<T>({
   busyLabel: string;
   run: () => Promise<T>;
   done: (value: T) => Said; // lo que se dice al terminar bien
-  onGone: () => void; // 404: la cuenta ya no está
+  onGone: () => void; // 404: la cuenta ya no está (la página lo dice)
   confirm?: { title: string; question: string; effect: string; yes: string; no: string };
 }) {
   const problem = useProblem();
@@ -186,7 +186,7 @@ export function AccountAction<T>({
           setSaid(done(value));
         },
         (error: ApiError) => {
-          if (error.status === 404) onGone();
+          if (error.status === 404) return onGone(); // lo dice la página: esta acción se va
           const text = problem(error);
           setSaid(text ? { text, alert: true } : null);
         },

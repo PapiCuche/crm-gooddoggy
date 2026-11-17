@@ -66,6 +66,8 @@ const remove = async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Borrar clave" }));
   fireEvent.click(screen.getByRole("button", { name: "Sí, borrar" }));
 };
+const probe = async () =>
+  fireEvent.click(await screen.findByRole("button", { name: "Probar conexión" }));
 const verify = async () => {
   const dialog = await screen.findByRole("dialog");
   fireEvent.change(within(dialog).getByLabelText(/^Código/), { target: { value: "123456" } });
@@ -102,7 +104,17 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
-  for (const spy of logged) expect(JSON.stringify(spy.mock.calls)).not.toContain(PASTED);
+  // Cada argumento como texto, con su pila y en JSON: un `Error` con la clave sale como `{}` en JSON.
+  for (const spy of logged) {
+    const said = spy.mock.calls.flat().map((arg: unknown) => {
+      let json = "";
+      try {
+        json = JSON.stringify(arg) ?? "";
+      } catch {} // una estructura circular: basta con su texto
+      return `${String(arg)} ${(arg as Error | null)?.stack ?? ""} ${json}`;
+    });
+    expect(said.join("\n")).not.toContain(PASTED);
+  }
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -302,7 +314,6 @@ describe("Proveedor de IA (F8-04)", () => {
   });
 
   it.each([
-    [fail(404, "NOT_FOUND"), "Esa clave ya no existe. Actualizamos la lista.", 2],
     [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo.", 1],
     [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA.", 1],
     [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos.", 1],
@@ -317,7 +328,6 @@ describe("Proveedor de IA (F8-04)", () => {
     }
     expect(keyField().value).toBe("");
     if (reply.status === 400) expect(keyField()).toHaveAccessibleDescription(new RegExp(text));
-    await waitFor(() => expect(sent(api)).toHaveLength(lists)); // 404: se vuelve a leer, una vez
     await new Promise((done) => setTimeout(done, 50));
     expect(sent(api)).toHaveLength(lists);
     nowhere(view);
@@ -326,14 +336,13 @@ describe("Proveedor de IA (F8-04)", () => {
   it.each([
     ["Rotar clave", rotate],
     ["Borrar clave", remove],
-    ["Probar conexión", () => screen.findByRole("button", { name: "Probar conexión" })],
-  ])("%s: un 401 lleva al login sin enseñar un error", async (name, write) => {
+    ["Probar conexión", probe],
+  ])("%s: un 401 lleva al login sin enseñar un error", async (_, write) => {
     const go = vi.spyOn(browser, "assign").mockImplementation(() => {});
     const no = fail(401, "NOT_AUTHENTICATED");
     mockApi({ [LIST]: ok([account()]), [ROTATE]: no, [REMOVE]: no, [TEST]: no });
     const view = show();
     await write();
-    if (name === "Probar conexión") fireEvent.click(screen.getByRole("button", { name }));
     await waitFor(() => expect(go).toHaveBeenCalledWith(expect.stringMatching(/^\/login\b/)));
     expect(go).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alert")).toBeNull();
@@ -409,11 +418,10 @@ describe("Proveedor de IA (F8-04)", () => {
   });
 
   it.each([
-    [fail(404, "NOT_FOUND"), "Esa clave ya no existe. Actualizamos la lista.", 2],
-    [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo.", 1],
-    [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA.", 1],
-    [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos.", 1],
-  ])("borrar: %o se explica por su código", async (reply, text, lists) => {
+    [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo."],
+    [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA."],
+    [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos."],
+  ])("borrar: %o se explica por su código", async (reply, text) => {
     const api = mockApi({ [LIST]: ok([account()]), [REMOVE]: reply });
     show();
     await remove();
@@ -421,9 +429,70 @@ describe("Proveedor de IA (F8-04)", () => {
     for (const raw of ["TEXTO DEL SERVIDOR", reply.body.code]) {
       expect(document.body.textContent).not.toContain(raw);
     }
-    await waitFor(() => expect(sent(api)).toHaveLength(lists)); // 404: se vuelve a leer, una vez
     await new Promise((done) => setTimeout(done, 50));
-    expect(sent(api)).toHaveLength(lists);
+    expect(sent(api)).toHaveLength(1);
     expect(sent(api, "DELETE", `${BASE}/k1/`)).toHaveLength(1);
+  });
+
+  it.each([
+    ["Rotar clave", rotate],
+    ["Borrar clave", remove],
+    ["Probar conexión", probe],
+  ])("%s: un 404 lo dice la página, la cuenta queda borrada y se lee una vez", async (_, write) => {
+    let listed = 0;
+    const gone = fail(404, "NOT_FOUND");
+    const off = account({ status: "DISABLED", revoked_at: "2026-11-17T10:00:00Z" });
+    const api = mockApi({
+      [LIST]: () => ok([++listed === 1 ? account() : off]),
+      ...{ [ROTATE]: gone, [REMOVE]: gone, [TEST]: gone },
+    });
+    const view = show();
+    await write();
+    await waitFor(() => expect(sent(api)).toHaveLength(2));
+    expect(await screen.findByText("Borrada", { selector: "p" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Esa clave ya no existe. Actualizamos la lista.",
+    );
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+    await new Promise((done) => setTimeout(done, 50));
+    expect(sent(api)).toHaveLength(2);
+    nowhere(view);
+  });
+
+  it("borrar: si la relectura falla, la cuenta no sigue activa con sus acciones", async () => {
+    let listed = 0;
+    mockApi({
+      [LIST]: () => (++listed === 1 ? ok([account()]) : fail(429, "RATE_LIMITED", "540")),
+      [REMOVE]: { status: 204 },
+    });
+    show();
+    await remove();
+    expect(await screen.findByText("La clave se borró.")).toBeVisible();
+    await waitFor(() => expect(listed).toBe(2));
+    await new Promise((done) => setTimeout(done, 50));
+    expect(screen.getByText("Borrada", { selector: "p" })).toBeVisible();
+    for (const name of ["Probar conexión", "Rotar clave", "Borrar clave"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.getByRole("button", { name: "Guardar clave de Anthropic" })).toBeVisible();
+  });
+
+  it("borrar: «Cancelar» no hace nada mientras se envía", async () => {
+    const api = mockApi({ [LIST]: ok([account()]) });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Borrar clave" }));
+    let release = () => {};
+    api.mockImplementationOnce(
+      () => new Promise((done) => (release = () => done(new Response(null, { status: 204 })))),
+    );
+    const group = screen.getByRole("group", { name: "Borrar la clave de Anthropic" });
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, borrar" }));
+    expect(within(group).getByRole("button", { name: "Borrando…" })).toBeVisible();
+    fireEvent.click(within(group).getByRole("button", { name: "Cancelar" }));
+    await new Promise((done) => setTimeout(done, 50));
+    expect(screen.getByRole("group", { name: "Borrar la clave de Anthropic" })).toBeVisible();
+    expect(sent(api, "DELETE", `${BASE}/k1/`)).toHaveLength(1);
+    release();
+    expect(await screen.findByText("La clave se borró.")).toBeVisible();
   });
 });

@@ -33,8 +33,9 @@ const STATUS = {
 // El proveedor de IA (F8-04): las cuentas de `…/ai/provider-accounts/` (F8-03c/d), guardar o rotar
 // la clave, borrarla y probar la conexión. Todas las rutas piden `ai.manage` y el segundo factor
 // reciente, y comparten un tope por persona que cuenta también las lecturas: la lista se pide una
-// vez, sin reintentos ni al recuperar el foco, y cada escritura actualiza la caché con lo que
-// devuelve. De la clave solo se enseñan los últimos cuatro caracteres que manda la API.
+// vez, sin reintentos ni al recuperar el foco. Guardar y rotar actualizan la caché con lo que
+// devuelven; borrar (o un 404) marca la cuenta como borrada en la caché y vuelve a leer la lista
+// una vez. De la clave solo se enseñan los últimos cuatro caracteres que manda la API.
 export function AiProviderAccounts() {
   const t = useTranslations("ai");
   const errors = useTranslations("errors");
@@ -52,7 +53,7 @@ export function AiProviderAccounts() {
     retry: false,
   });
   const heading = useRef<HTMLHeadingElement>(null);
-  const [said, setSaid] = useState<string | null>(null);
+  const [said, setSaid] = useState<{ text: string; alert?: boolean } | null>(null);
   const [dismissed, setDismissed] = useState(false); // el código de la lista, cancelado
   const reload = () => void list.refetch();
   const put = (account: AiProviderAccount) => {
@@ -62,13 +63,19 @@ export function AiProviderAccounts() {
         : [...rows, account],
     );
   };
+  // La cuenta ya no está activa (se borró, o un 404: otra persona la borró). Se marca en la caché
+  // antes de volver a leer: si la lectura falla, la tarjeta no sigue «Activa» con sus acciones. Sus
+  // acciones se desmontan, así que lo que pasó lo dice la página y el foco va al título.
+  const gone = (account: AiProviderAccount, text: string, alert?: boolean) => {
+    put({ ...account, status: "DISABLED" });
+    setSaid({ text, alert });
+    setTimeout(() => heading.current?.focus());
+    reload();
+  };
   const ctx: Ctx = {
-    ...{ slug, put, reload },
-    removed: () => {
-      setSaid(t("remove.done"));
-      setTimeout(() => heading.current?.focus());
-      reload();
-    },
+    ...{ slug, put },
+    removed: (account) => gone(account, t("remove.done")),
+    lost: (account) => gone(account, own("NOT_FOUND"), true),
   };
   // Lo que no se puede arreglar en el formulario (ya existe o ya no está): se vuelve a leer.
   const stale = (error: ApiError) =>
@@ -90,7 +97,7 @@ export function AiProviderAccounts() {
             }
             onDone={(account) => {
               put(account); // el formulario se va con la cuenta activa: lo dice la página
-              setSaid(t("save.done"));
+              setSaid({ text: t("save.done") });
               setTimeout(() => heading.current?.focus());
             }}
             onFailed={stale}
@@ -155,9 +162,14 @@ export function AiProviderAccounts() {
         </h1>
         <p className="text-muted">{t("intro", { organization: organization.name })}</p>
       </div>
-      <p role="status" className={said ? "text-sm" : "sr-only"}>
-        {said ?? ""}
+      <p role="status" className={said && !said.alert ? "text-sm" : "sr-only"}>
+        {said && !said.alert ? said.text : ""}
       </p>
+      {said?.alert ? (
+        <p role="alert" className="text-danger text-sm">
+          {said.text}
+        </p>
+      ) : null}
       {body}
     </section>
   );
@@ -166,13 +178,13 @@ export function AiProviderAccounts() {
 type Ctx = {
   slug: string;
   put: (account: AiProviderAccount) => void;
-  reload: () => void;
-  removed: () => void;
+  removed: (account: AiProviderAccount) => void;
+  lost: (account: AiProviderAccount) => void; // 404: la cuenta ya no está
 };
 
 function Account({
   account,
-  ctx: { slug, put, reload, removed },
+  ctx: { slug, put, removed, lost },
 }: {
   account: AiProviderAccount;
   ctx: Ctx;
@@ -229,20 +241,20 @@ function Account({
             done={({ result }) => ({
               ...{ text: label("test", AiProviderTestResultEnum, result), ok: result === "OK" },
             })}
-            onGone={reload}
+            onGone={() => lost(account)}
           />
           <KeyForm
             mode="rotate"
             send={(apiKey) => aiProviderAccountsRotateKey(slug, account.id, { api_key: apiKey })}
             onDone={put}
-            onFailed={(error) => error.status === 404 && reload()}
+            onFailed={(error) => error.status === 404 && lost(account)}
           />
           <AccountAction
             label={t("remove.open")}
             busyLabel={t("remove.busy")}
             run={() => aiProviderAccountsDestroy(slug, account.id)}
-            done={() => (removed(), null)}
-            onGone={reload}
+            done={() => (removed(account), null)}
+            onGone={() => lost(account)}
             confirm={{
               ...{ title: t("remove.title", { provider }), effect: t("remove.effect") },
               ...{ question: t("remove.question", { provider }), yes: t("remove.confirm") },
