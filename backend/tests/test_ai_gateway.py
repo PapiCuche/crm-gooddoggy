@@ -252,6 +252,7 @@ PART = f"ai_llm_calls_y{timezone.now():%Y}m{timezone.now():%m}"  # la partición
 REFUSED = {  # SQL de `crm_app` en el scope de A -> la restricción o el privilegio que lo frena
     "UPDATE ai_budget_usage SET reserved_usd = -1": "ai_budget_usage_ck",
     "UPDATE ai_budget_usage SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
+    "UPDATE ai_budget_usage SET spent_usd = 'NaN'": "ai_budget_usage_not_nan",
     "INSERT INTO ai_budget_usage SELECT * FROM ai_budget_usage ON CONFLICT (organization_id, month)"
     " DO UPDATE SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
     "UPDATE ai_budget_reservations SET settled_at = now()": "ai_budget_reservations_settled_once",

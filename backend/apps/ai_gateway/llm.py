@@ -7,9 +7,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 
-class Outcome(StrEnum):
-    """El resultado de una llamada; los cinco primeros quedan en `ai_llm_calls.outcome`."""
-
+class Outcome(StrEnum):  # los cinco primeros quedan en `ai_llm_calls.outcome`
     OK = "OK"
     CREDENTIALS_REJECTED = "CREDENTIALS_REJECTED"
     PROVIDER_BILLING = "PROVIDER_BILLING"

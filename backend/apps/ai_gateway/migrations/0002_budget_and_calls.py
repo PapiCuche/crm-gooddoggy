@@ -36,6 +36,7 @@ CREATE TABLE public.ai_llm_calls (
   outcome varchar(24) NOT NULL CHECK (outcome IN ('OK', 'CREDENTIALS_REJECTED',
     'PROVIDER_BILLING', 'PROVIDER_UNAVAILABLE', 'PROVIDER_ERROR')),
   request_id varchar(64) NOT NULL DEFAULT '',
+  CONSTRAINT ai_llm_calls_not_nan CHECK (reserved_usd <> 'NaN' AND cost_usd <> 'NaN'),
   PRIMARY KEY (organization_id, created_at, id),
   CONSTRAINT ai_llm_calls_reservation_fk FOREIGN KEY (organization_id, reservation_id)
     REFERENCES public.ai_budget_reservations (organization_id, id),
@@ -44,7 +45,7 @@ CREATE TABLE public.ai_llm_calls (
 ) PARTITION BY RANGE (created_at)
 """
 # Crea el mes actual y los `p_months` siguientes (UTC). Sin EXECUTE para `crm_app` (sin DDL en
-# el runtime); llamarla cada mes desde una tarea es de F8-05b (#932).
+# el runtime).
 ENSURE = """
 CREATE FUNCTION public.ai_llm_calls_ensure_partitions(p_months integer) RETURNS integer
 LANGUAGE plpgsql VOLATILE SET search_path = pg_catalog, public, pg_temp AS $fn$
@@ -124,9 +125,9 @@ def _calls(apps: Any, schema_editor: Any) -> None:
     function = "public.ai_llm_calls_ensure_partitions(integer)"
     schema_editor.execute(f"ALTER FUNCTION {function} OWNER TO {owner}")
     schema_editor.execute(f"REVOKE ALL ON FUNCTION {function} FROM PUBLIC")
-    schema_editor.execute(
-        "SELECT public.ai_llm_calls_ensure_partitions(1)"
-    )  # este mes y el que viene
+    # Este mes y los doce siguientes (como `audit_logs`); el `post_migrate` que mantiene el
+    # horizonte es de F8-05b (#932). Sin partición, el ajuste falla con el proveedor ya pagado.
+    schema_editor.execute("SELECT public.ai_llm_calls_ensure_partitions(12)")
 
 
 def _drop_calls(apps: Any, schema_editor: Any) -> None:
@@ -266,6 +267,17 @@ class Migration(migrations.Migration):
             "ai_budget_reservations_month_fk",
             "(organization_id, month)",
             "ai_budget_usage (organization_id, month)",
+        ),
+        *(  # un NaN de numeric pasa `>= 0` y congelaría el presupuesto: se rechaza
+            migrations.RunSQL(
+                f"ALTER TABLE public.{t} ADD CONSTRAINT {t}_not_nan CHECK ({cond})",
+                f"ALTER TABLE public.{t} DROP CONSTRAINT IF EXISTS {t}_not_nan",
+            )
+            for t, cond in (
+                ("ai_budgets", "monthly_usd <> 'NaN'"),
+                ("ai_budget_usage", "spent_usd <> 'NaN' AND reserved_usd <> 'NaN'"),
+                ("ai_budget_reservations", "amount_usd <> 'NaN'"),
+            )
         ),
         migrations.RunSQL(GUARDS, DROP_GUARDS),
         migrations.RunPython(_privileges, migrations.RunPython.noop),
