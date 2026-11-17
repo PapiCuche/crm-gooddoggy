@@ -1,8 +1,8 @@
 """Una API de Anthropic falsa para las pruebas de `apps.ai_gateway` (F8-03b), sin red: contesta
-`GET /v1/models` y `POST /v1/messages` (F8-05) con las respuestas y los errores documentados
-(ADR-034 §3). `install` sustituye solo la capa de red de `core.http` (como
-`tests.meta_sim.transport`): su política real (https, allowlist, cabeceras) sigue aplicándose.
-Cada cuerpo lleva `BODY_MARK`: una prueba comprueba que no sale del CRM. Ninguna clave es real."""
+`GET /v1/models` y `POST /v1/messages` con las respuestas y errores documentados; `install` cambia
+solo la capa de red de `core.http` (como `tests.meta_sim.transport`), así que su política real
+(https, allowlist, cabeceras) sigue aplicándose. Cada cuerpo de error lleva `BODY_MARK`: una prueba
+comprueba que ningún cuerpo del proveedor sale del CRM. Ninguna clave es real."""
 
 import io
 import json
@@ -48,6 +48,7 @@ class FakeAnthropic:
     retries: list[Any] = field(default_factory=list)  # lo que pidió `core.http`, por llamada
     timeouts: list[Any] = field(default_factory=list)
     body: bytes | None = None  # el de la petición en curso
+    request_id, retry_after = REQUEST_ID, "2"  # F8-05: las cabeceras de la respuesta
     script: list[str] = field(default_factory=list)  # F8-05: un resultado por llamada, antes
     usage: dict[str, Any] = field(default_factory=lambda: {"input_tokens": 9, "output_tokens": 9})
 
@@ -97,9 +98,9 @@ class _Manager:
         self.fake.timeouts.append(options.get("timeout"))
         self.fake.body = options.get("body")
         status, body = self.fake.handle(method, url, dict(headers or {}))
-        reply_headers = {"request-id": REQUEST_ID, "content-type": "application/json"}
+        reply_headers = {"request-id": self.fake.request_id, "content-type": "application/json"}
         if status == 429:  # como la API real: un 429 dice cuándo volver
-            reply_headers["retry-after"] = "2"
+            reply_headers["retry-after"] = self.fake.retry_after
         return urllib3.HTTPResponse(
             body=io.BytesIO(body), headers=reply_headers, status=status, preload_content=False
         )

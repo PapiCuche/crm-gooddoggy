@@ -4,6 +4,7 @@ reintentos, solo tras un 429 o un 5xx (sin uso) y dentro del plazo; nunca tras u
 un corte (pudo facturar). Solo se registran el estado y el `request-id`, nunca el cuerpo."""
 
 import json
+import re
 import time
 from typing import Any
 
@@ -19,19 +20,9 @@ ATTEMPTS = 3  # la llamada y como mucho dos reintentos
 INTERNAL = (400, 404, 409, 413)
 
 
-def _turn(turn: llm.Turn) -> dict[str, Any]:
-    if turn.raw:
-        return {"role": turn.role, "content": list(turn.raw)}
-    content: list[dict[str, Any]] = [{"type": "text", "text": turn.text}] if turn.text else []
-    content += [{"type": "tool_use", "id": c.id, "name": c.name, "input": c.input}
-                for c in turn.tool_calls]  # fmt: skip
-    content += [{"type": "tool_result", "tool_use_id": r.id, "content": r.content,
-                 "is_error": r.is_error} for r in turn.tool_results]  # fmt: skip
-    return {"role": turn.role, "content": content}
-
-
-def _count(usage: dict[str, Any], name: str) -> int:
-    value = usage.get(name) or 0
+def _count(usage: dict[str, Any], name: str, default: int | None = 0) -> int:
+    """Un conteo del uso; los de entrada y salida son obligatorios (`default=None`)."""
+    value = default if usage.get(name) is None else usage[name]
     if type(value) is not int or value < 0:
         raise ValueError(name)  # sin el valor
     return value
@@ -42,7 +33,8 @@ def _usage(usage: dict[str, Any]) -> llm.Usage:
     split = usage.get("cache_creation") or {}
     five, hour = (_count(split, f"ephemeral_{t}_input_tokens") for t in ("5m", "1h"))
     hour += max(_count(usage, "cache_creation_input_tokens") - five - hour, 0)
-    return llm.Usage(_count(usage, "input_tokens"), _count(usage, "output_tokens"), five, hour,
+    return llm.Usage(_count(usage, "input_tokens", None), _count(usage, "output_tokens", None),
+                     five, hour,
                      _count(usage, "cache_read_input_tokens"))  # fmt: skip
 
 
@@ -55,17 +47,18 @@ def _parse(raw: bytes, request_id: str) -> llm.LLMResponse:
         text = "".join(b["text"] for b in blocks if b["type"] == "text")
         usage, stop = _usage(data["usage"]), str(data["stop_reason"])
     except ValueError, KeyError, TypeError, AttributeError, RecursionError:
-        raise ProviderError(Outcome.PROVIDER_UNAVAILABLE, billed=True) from None  # pudo cobrarla
-    return llm.LLMResponse(text, calls, stop, usage, request_id, tuple(blocks))
+        raise ProviderError(Outcome.PROVIDER_UNAVAILABLE, billed=True,  # pudo cobrarla
+                            request_id=request_id) from None  # fmt: skip
+    return llm.LLMResponse(text, calls, stop, usage, request_id)
 
 
 class AnthropicAdapter:
     def encode(self, request: llm.LLMRequest, params: dict[str, Any]) -> bytes:
         output: dict[str, Any] = {"effort": params["effort"]}
         body: dict[str, Any] = {
-            "model": params["model"], "max_tokens": params["max_tokens"],
-            "system": request.system, "messages": [_turn(t) for t in request.turns],
-            "output_config": output,
+            "model": params["model"], "max_tokens": params["max_tokens"], "output_config": output,
+            "system": request.system,
+            "messages": [{"role": t.role, "content": t.text} for t in request.turns],
         }  # fmt: skip
         if request.tools:
             body["tools"] = [{"name": t.name, "description": t.description, "strict": True,
@@ -99,10 +92,10 @@ class AnthropicAdapter:
                 if outcome == Outcome.PROVIDER_UNAVAILABLE and reply.status in INTERNAL:
                     outcome = Outcome.PROVIDER_ERROR  # un fallo nuestro: no se reintenta
                 after = reply.headers.get("retry-after", "")
-                wait = float(after) if after.isdigit() and len(after) < 6 else 1.0
+                wait = float(after) if re.fullmatch(r"[0-9]{1,5}", after) else 1.0
                 again = outcome == Outcome.PROVIDER_UNAVAILABLE and attempt < ATTEMPTS - 1
                 again = again and (reply.status == 429 or reply.status >= 500)
                 if not again or time.monotonic() + wait >= end:
-                    raise ProviderError(outcome, billed=False)
+                    raise ProviderError(outcome, billed=False, request_id=rid)
                 time.sleep(wait)
         raise AssertionError("inalcanzable")  # pragma: no cover

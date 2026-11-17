@@ -27,13 +27,6 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
-class ToolResult:
-    id: str  # el de su `ToolCall`
-    content: str
-    is_error: bool = False
-
-
-@dataclass(frozen=True)
 class Tool:
     name: str
     description: str
@@ -41,12 +34,9 @@ class Tool:
 
 
 @dataclass(frozen=True)
-class Turn:
+class Turn:  # devolver resultados de tools y reenviar los bloques del modelo: #932
     role: str  # "user" | "assistant"
-    text: str = ""
-    tool_calls: tuple[ToolCall, ...] = ()
-    tool_results: tuple[ToolResult, ...] = ()
-    raw: tuple[Any, ...] = ()  # los bloques del proveedor de una respuesta: vuelven sin cambios
+    text: str
 
 
 @dataclass(frozen=True)
@@ -75,15 +65,14 @@ class LLMResponse:
     stop: str
     usage: Usage
     request_id: str
-    raw: tuple[Any, ...] = ()  # para el `Turn` siguiente
 
 
 class ProviderError(Exception):  # noqa: N818 — solo el código y si pudo facturar
     """`billed`: salió y no hubo respuesta de error (pudo cobrarla): la reserva cuenta entera."""
 
-    def __init__(self, outcome: Outcome, *, billed: bool) -> None:
+    def __init__(self, outcome: Outcome, *, billed: bool, request_id: str = "") -> None:
         super().__init__(outcome.value)
-        self.outcome, self.billed = outcome, billed
+        self.outcome, self.billed, self.request_id = outcome, billed, request_id
 
 
 class LLMProviderAdapter(Protocol):

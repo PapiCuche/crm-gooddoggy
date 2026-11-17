@@ -47,7 +47,9 @@ FUNCTIONS = (
     "public.quote_approvals_guard()",
     "public.inventory_reservations_guard()",  # F3-33, INVOKER
     "public.message_attachments_advance()",  # F7-09a1b, INVOKER
-    "public.ai_llm_calls_settled_once()",  # F8-05, INVOKER
+    "public.ai_budget_reservations_guard()",  # F8-05, INVOKER
+    "public.ai_budget_usage_guard()",
+    "public.ai_llm_calls_ensure_partitions(integer)",
 )
 
 

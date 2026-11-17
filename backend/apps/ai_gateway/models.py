@@ -119,11 +119,6 @@ class AIProviderKey(TenantModel):
         return str(self.pk)
 
 
-PURPOSES = ("SUGGEST", "SUMMARY")  # para qué se llama al modelo (ADR-034 §5)
-OUTCOMES = ("OK", "CREDENTIALS_REJECTED", "PROVIDER_BILLING", "PROVIDER_UNAVAILABLE",
-            "PROVIDER_ERROR")  # fmt: skip
-
-
 def _usd(null: bool = False) -> models.DecimalField[Any, Any]:
     return models.DecimalField(max_digits=12, decimal_places=6, null=null)
 
@@ -160,36 +155,20 @@ class AIBudgetUsage(TenantModel):
         ]  # fmt: skip
 
 
-class AILLMCall(TenantModel):
-    """Una llamada: su reserva y, ajustada una sola vez, el uso real; nunca prompt ni respuesta."""
+class AIBudgetReservation(TenantModel):
+    """Lo reservado para una llamada, sin nada del prompt; se ajusta una sola vez (disparador en
+    0002) y entonces se escribe su fila de `ai_llm_calls`, de solo inserción y particionada por
+    mes (ADR-011), creada en SQL en la migración."""
 
     id = uuid7_primary_key()
-    month = models.DateField()
-    provider = models.CharField(max_length=16, choices=Provider.choices)
-    model = models.CharField(max_length=64)
-    purpose = models.CharField(max_length=16)
-    conversation_id = models.UUIDField(null=True, blank=True)  # sin FK: L1 no conoce el Inbox
-    requested_by_user_id = models.UUIDField(null=True, blank=True)
-    reserved_usd = _usd()
-    cost_usd = _usd(null=True)
-    input_tokens = models.PositiveIntegerField(null=True)  # sin caché
-    output_tokens = models.PositiveIntegerField(null=True)
-    cache_write_tokens = models.PositiveIntegerField(null=True)
-    cache_read_tokens = models.PositiveIntegerField(null=True)
-    latency_ms = models.PositiveIntegerField(null=True)
-    outcome = models.CharField(max_length=24, blank=True, default="")
-    request_id = models.CharField(max_length=64, blank=True, default="")  # el del proveedor
+    month = models.DateField()  # FK compuesta a su fila de `ai_budget_usage` (0002)
+    amount_usd = _usd()
     created_at = models.DateTimeField(auto_now_add=True)
     settled_at = models.DateTimeField(null=True)
 
     class Meta:
-        db_table = "ai_llm_calls"
+        db_table = "ai_budget_reservations"
         constraints = [
-            models.CheckConstraint(name="ai_llm_calls_ck", condition=models.Q(
-                provider__in=Provider.values, purpose__in=PURPOSES, reserved_usd__gt=0)),
-            models.CheckConstraint(  # reservada sin uso; o ajustada con su costo y su resultado
-                condition=models.Q(settled_at__isnull=True, cost_usd__isnull=True, outcome="")
-                | models.Q(settled_at__isnull=False, cost_usd__gte=0, outcome__in=OUTCOMES),
-                name="ai_llm_calls_settled_ck",
-            ),
-        ]  # fmt: skip
+            models.UniqueConstraint(fields=["organization_id", "id"], name="ai_budget_res_uq"),
+            models.CheckConstraint(condition=models.Q(amount_usd__gt=0), name="ai_budget_res_ck"),
+        ]

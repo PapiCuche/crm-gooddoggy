@@ -15,10 +15,11 @@ import pytest
 from django.conf import settings
 from django.db import DatabaseError, connection
 from django.test import override_settings
+from django.utils import timezone
 
 from apps.ai_gateway import gateway, keys, prices
 from apps.ai_gateway.gateway import GatewayError
-from apps.ai_gateway.llm import LLMRequest, Outcome, Tool, ToolCall, ToolResult, Turn, Usage
+from apps.ai_gateway.llm import LLMRequest, Outcome, Tool, Turn, Usage
 from core.tenancy.scope import tenant_scope
 from tests import ai_sim
 from tests.ai_sim import BODY_MARK, TEST_KEY, FakeAnthropic
@@ -29,13 +30,12 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
 PROMPT, USAGE = "texto-del-cliente-que-no-se-registra", {"input_tokens": 1000, "output_tokens": 500}
 ASK = LLMRequest("SUGGEST", "Eres un asistente.", (Turn("user", PROMPT),))
+BAD = ({"input_tokens": -1, "output_tokens": 1}, {"output_tokens": 1}, {"input_tokens": 1})
+TWO, PARAMS = (*ASK.turns, Turn("assistant", "x")), settings.AI_PROVIDER_PARAMS["ANTHROPIC"]
 SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"],
           "additionalProperties": False}  # fmt: skip
 CACHED = {"cache_creation_input_tokens": 300, "cache_read_input_tokens": 1000,  # sin desglose: 1 h
           "cache_creation": {"ephemeral_5m_input_tokens": 100}}  # fmt: skip
-LOOP = (Turn("assistant", raw=({"type": "thinking", "thinking": ""},)),
-        Turn("user", tool_results=(ToolResult("t1", "ok"),)),
-        Turn("assistant", "x", tool_calls=(ToolCall("t2", "f", {"q": "a"}),)))  # fmt: skip
 
 
 @pytest.fixture
@@ -69,10 +69,11 @@ def code(w: SimpleNamespace, org: UUID | None = None) -> Outcome:
 
 def ledger(migrator: DB) -> tuple[Any, ...]:
     usage = migrator.execute("SELECT spent_usd, reserved_usd FROM ai_budget_usage").fetchall()
-    calls = migrator.execute(
+    calls = migrator.execute(  # una fila por reserva, con su llamada si ya se ajustó
         "SELECT outcome, reserved_usd, cost_usd, input_tokens, output_tokens, request_id,"
-        " settled_at IS NOT NULL, cache_write_tokens, cache_read_tokens FROM ai_llm_calls"
-        " ORDER BY created_at"
+        " settled_at IS NOT NULL, cache_write_tokens, cache_read_tokens"
+        " FROM ai_budget_reservations r LEFT JOIN ai_llm_calls c ON c.reservation_id = r.id"
+        " ORDER BY r.created_at"
     ).fetchall()
     return usage, calls
 
@@ -84,7 +85,7 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
     world.fake.usage |= CACHED
     tools = (Tool("search_product", "Busca un producto", SCHEMA),)
     with caplog.at_level(logging.DEBUG):
-        reply = call(world, LLMRequest("SUMMARY", "s", (*ASK.turns, *LOOP), tools, SCHEMA))
+        reply = call(world, LLMRequest("SUMMARY", "s", TWO, tools, SCHEMA))
     assert (reply.text, reply.stop, reply.usage) == (f"respuesta {BODY_MARK}", "end_turn",
                                                     Usage(1000, 500, 100, 200, 1000))  # fmt: skip
     [sent] = world.fake.calls
@@ -97,19 +98,15 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
     }  # fmt: skip
     assert body["tools"] == [{"name": "search_product", "description": "Busca un producto",
                               "strict": True, "input_schema": SCHEMA}]  # fmt: skip
-    assert [m["content"] for m in body["messages"]] == [
-        [{"type": "text", "text": PROMPT}], [{"type": "thinking", "thinking": ""}],
-        [{"type": "tool_result", "tool_use_id": "t1", "content": "ok", "is_error": False}],
-        [{"type": "text", "text": "x"},
-         {"type": "tool_use", "id": "t2", "name": "f", "input": {"q": "a"}}],
-    ]  # fmt: skip
+    assert body["messages"] == [{"role": "user", "content": PROMPT},
+                                {"role": "assistant", "content": "x"}]  # fmt: skip
     assert world.fake.timeouts[0].read_timeout > 15  # el modelo tarda más que una API normal
     [(spent, reserved)], [row] = ledger(migrator)
     cost = Decimal("0.00815")  # 1000 × 2 + 100 × 2.5 + 200 × 4 + 1000 × 0.1 + 500 × 10, por millón
     assert row[0] == "OK" and row[2:] == (cost, 1000, 500, ai_sim.REQUEST_ID, True, 300, 1000)
     assert row[1] > row[2] and (spent, reserved) == (cost, 0)
-    call_id = migrator.execute("SELECT id FROM ai_llm_calls").fetchone()[0]  # type: ignore[index]
-    assert gateway.settle(ctx(world.a), call_id, Outcome.OK, Decimal(0)) is False  # una sola vez
+    held = migrator.execute("SELECT id FROM ai_budget_reservations").fetchone()[0]  # type: ignore[index]
+    assert gateway.settle(ctx(world.a), held, ASK, Outcome.OK, Decimal(0)) is False  # una sola vez
     assert ledger(migrator) == ([(spent, reserved)], [row])
     logged = caplog.text + str([r.__dict__ for r in caplog.records])
     assert not any(s in logged for s in (PROMPT, BODY_MARK, TEST_KEY))
@@ -185,21 +182,46 @@ def test_provider_errors_are_normalized_and_settled_once(
     [(spent, reserved)], [row] = ledger(migrator)
     assert (row[0], row[6], reserved) == (expected.value, True, 0)
     assert (spent, row[2]) == ((row[1], row[1]) if billed else (0, 0))
+    assert row[5] == ("" if name in ("unreachable", "timeout", "cut") else ai_sim.REQUEST_ID)
     if calls == 3:  # `retry-after` del 429 (2 s); sin él, 1 s
         assert world.sleeps == ([2.0, 2.0] if name == "rate_limit" else [1.0, 1.0])
+
+
+def seconds(total: float) -> Any:
+    return override_settings(AI_PROVIDER_PARAMS={"ANTHROPIC": {**PARAMS, "seconds": total}})
 
 
 def test_retries_stop_at_the_deadline(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "1")
     world.fake.script = ["overloaded", "ok"]
     assert call(world).stop == "end_turn" and len(world.fake.calls) == 2
-    params = {"ANTHROPIC": {**settings.AI_PROVIDER_PARAMS["ANTHROPIC"], "seconds": 2}}
     world.fake.script = ["rate_limit"]  # pide 2 s y el plazo total es de 2
-    with override_settings(AI_PROVIDER_PARAMS=params):
+    with seconds(2):
         assert code(world) == Outcome.PROVIDER_UNAVAILABLE
     assert len(world.fake.calls) == 3 and world.sleeps == [1.0]
-    world.fake.usage = {"input_tokens": -1, "output_tokens": 1}  # un uso imposible
-    assert code(world) == Outcome.PROVIDER_UNAVAILABLE
+    world.fake.script, world.fake.retry_after = ["rate_limit", "ok"], "²"  # no es un número
+    assert call(world).stop == "end_turn" and world.sleeps == [1.0, 1.0]
+    for usage in BAD:  # usos imposibles: cuentan enteros
+        world.fake.usage = usage
+        assert code(world) == Outcome.PROVIDER_UNAVAILABLE
+        assert ledger(migrator)[1][-1][1:3] == (ledger(migrator)[1][-1][1],) * 2  # cuenta entera
+    world.fake.usage = USAGE
+    for total in (500, 0.2):  # la espera de lectura, entre 1 y 120 s
+        with seconds(total):
+            call(world)
+    assert [t.read_timeout for t in world.fake.timeouts[-2:]] == [120.0, 1.0]
+
+
+def test_other_months_and_odd_request_ids(world: SimpleNamespace, migrator: DB) -> None:
+    budget(migrator, world.a, "1")
+    usage = "INSERT INTO ai_budget_usage VALUES (%s, uuidv7(), '2001-01-01', 0.9, 0.05)"
+    migrator.execute(usage, [world.a])  # un mes anterior: ni su tope ni su ajuste
+    for rid in ("r" * 80, "\x07id"):
+        world.fake.request_id = rid
+        call(world)
+    assert [row[5] for row in ledger(migrator)[1]] == ["r" * 64, ""]
+    rows = migrator.execute("SELECT spent_usd, reserved_usd FROM ai_budget_usage ORDER BY month")
+    assert rows.fetchall() == [(Decimal("0.9"), Decimal("0.05")), (Decimal("0.014"), 0)]
 
 
 def test_no_price_or_key_reserves_nothing(world: SimpleNamespace, migrator: DB) -> None:
@@ -215,30 +237,38 @@ def test_no_price_or_key_reserves_nothing(world: SimpleNamespace, migrator: DB) 
 
 
 def test_a_cap_equal_to_one_reservation(world: SimpleNamespace, migrator: DB) -> None:
-    params = settings.AI_PROVIDER_PARAMS["ANTHROPIC"]
-    body = gateway.ADAPTERS["ANTHROPIC"].encode(ASK, params)  # más 1000 tokens por las tools
-    amount = prices.ceiling("ANTHROPIC", params["model"], len(body) + 1000, params["max_tokens"])
+    body = gateway.ADAPTERS["ANTHROPIC"].encode(ASK, PARAMS)  # más 1000 tokens por las tools
+    amount = prices.ceiling("ANTHROPIC", PARAMS["model"], len(body) + 1000, PARAMS["max_tokens"])
     budget(migrator, world.a, str(amount))
     call(world)
     assert ledger(migrator)[1][0][1] == amount and code(world) == Outcome.AI_BUDGET_EXHAUSTED
 
 
-CALL = ("INSERT INTO ai_llm_calls (id, organization_id, month, provider, model, purpose,"
-        " reserved_usd, outcome, request_id, created_at) VALUES (uuidv7(), %s, {}, 'ANTHROPIC',"
-        " 'm', '{}', {}, '', '', now())")  # fmt: skip
-NOW = "(SELECT month FROM ai_budget_usage)"
+CALL = ("INSERT INTO ai_llm_calls (organization_id, reservation_id, provider, model, purpose,"
+        " reserved_usd, cost_usd, outcome)"
+        " VALUES (%s, {}, 'ANTHROPIC', 'm', '{}', {}, 0, 'OK')")  # fmt: skip
+HELD = "(SELECT id FROM ai_budget_reservations)"
+PART = f"ai_llm_calls_y{timezone.now():%Y}m{timezone.now():%m}"  # la partición de este mes (UTC)
 REFUSED = {  # SQL de `crm_app` en el scope de A -> la restricción o el privilegio que lo frena
     "UPDATE ai_budget_usage SET reserved_usd = -1": "ai_budget_usage_ck",
-    CALL.format(NOW, "SUGGEST", 0): "ai_llm_calls_ck",
-    CALL.format(NOW, "OTHER", 1): "ai_llm_calls_ck",
-    CALL.format("'2001-01-01'", "SUGGEST", 1): "ai_llm_calls_month_fk",
-    "UPDATE ai_llm_calls SET outcome = 'OK', cost_usd = 0": "ai_llm_calls_settled_once",
+    "UPDATE ai_budget_usage SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
+    "INSERT INTO ai_budget_usage SELECT * FROM ai_budget_usage ON CONFLICT (organization_id, month)"
+    " DO UPDATE SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
+    "UPDATE ai_budget_reservations SET settled_at = now()": "ai_budget_reservations_settled_once",
+    "INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(), now()"
+    " FROM ai_budget_usage": "ai_budget_reservations_settled_once",  # ni nacer ajustada
+    CALL.format(HELD, "SUGGEST", 0): "ai_llm_calls_reserved_usd_check",
+    CALL.format(HELD, "OTHER", 1): "ai_llm_calls_purpose_check",
+    CALL.format("uuidv7()", "SUGGEST", 1): "ai_llm_calls_reservation_fk",
     "INSERT INTO ai_budgets (id, organization_id, monthly_usd)"
     " VALUES (uuidv7(), %s, 1000)": "permission denied",
     "UPDATE ai_budgets SET monthly_usd = 1000": "permission denied",  # no sube su tope
-    "UPDATE ai_llm_calls SET reserved_usd = 0.000001": "permission denied",
+    "UPDATE ai_llm_calls SET cost_usd = 0": "permission denied",  # de solo inserción
+    "UPDATE ai_budget_reservations SET amount_usd = 1": "permission denied",
     "UPDATE ai_budget_usage SET month = month": "permission denied",
     "DELETE FROM ai_llm_calls": "permission denied",  # ni borra lo gastado
+    f"DELETE FROM {PART}": "permission denied",  # noqa: S608
+    "DELETE FROM ai_budget_reservations": "permission denied",
     "DELETE FROM ai_budget_usage": "permission denied",
 }
 
@@ -254,7 +284,7 @@ def test_the_database_guards_the_ledger_from_crm_app(
     cause = caught.value.__cause__
     assert REFUSED[statement] in (cause.diag.constraint_name, str(cause).split(" for ")[0])  # type: ignore[union-attr]
     with tenant_scope(ctx(world.b)), pytest.raises(DatabaseError, match="row-level security"):
-        connection.cursor().execute(CALL.format("'2026-11-01'", "SUGGEST", 1), [world.a])
+        connection.cursor().execute(CALL.format("uuidv7()", "SUGGEST", 1), [world.a])
 
 
 TIER = {"above": 100, "input": "3", "cache_write_5m": "3.75", "cache_write_1h": "6",
