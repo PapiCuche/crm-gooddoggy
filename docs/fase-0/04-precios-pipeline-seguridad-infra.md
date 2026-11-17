@@ -388,6 +388,7 @@ POST /webhooks/meta/   (y /webhooks/tiktok/ con su propio esquema de firma)
        mensaje  → "wa:msg:{message.id}"
        estado   → "wa:status:{status.id}:{status.status}"   (un evento por transición)
        IG/FB    → "ig:msg:{mid}" / "fb:msg:{mid}" ; reacciones, lecturas y postbacks con su propio ID
+                  (hoy por cuenta: "ig:msg:{igid}:{mid}" / "fb:msg:{page}:{mid}", ADR-040)
   4. INSERT … ON CONFLICT (provider, event_key) DO NOTHING (los duplicados se descartan aquí).
   5. Encola process_webhook_ingress para los insertados (transaction.on_commit).
   6. Responde 200 en < 1 s SIEMPRE que la firma sea válida (aunque luego falle el procesamiento):

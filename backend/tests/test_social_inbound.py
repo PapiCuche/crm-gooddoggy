@@ -157,10 +157,10 @@ def test_the_tenant_is_the_account_owner_and_unknown_or_deleted_accounts_write_n
         "SELECT event_key, status, ignored_reason, routed_organization_id FROM webhook_ingress"
         " ORDER BY event_key"
     ).fetchall()
-    assert routed == [
-        ("fb:msg:m_SIMIN000001", "PROCESSED", None, social_world.b),
-        ("fb:msg:m_SIMIN000002", "IGNORED", "UNKNOWN_ACCOUNT", None),
-        ("fb:msg:m_SIMIN000003", "IGNORED", "UNKNOWN_ACCOUNT", None),
+    assert routed == [  # la clave lleva la cuenta (F7b-04d): ordenadas por cuenta
+        (f"fb:msg:{PAGE_ID}:m_SIMIN000003", "IGNORED", "UNKNOWN_ACCOUNT", None),
+        ("fb:msg:100000000000888:m_SIMIN000002", "IGNORED", "UNKNOWN_ACCOUNT", None),
+        (f"fb:msg:{OTHER_ACCOUNT_ID}:m_SIMIN000001", "PROCESSED", None, social_world.b),
     ]
     assert inbox(social_world.a) == [] and [t for t, _ in inbox(social_world.b)] == TEXT
 
