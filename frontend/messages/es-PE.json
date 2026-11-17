@@ -33,7 +33,8 @@
       "inbox": "Inbox",
       "channels": "Canales",
       "tasks": "Mis tareas",
-      "quotes": "Cotizaciones"
+      "quotes": "Cotizaciones",
+      "quickReplies": "Respuestas rápidas"
     },
     "loading": "Cargando tu espacio…",
     "noRole": "Sin rol asignado",
@@ -2993,6 +2994,65 @@
         "revise": "Revisión {number} abierta como borrador.",
         "cancel": "Cotización cancelada."
       }
+    }
+  },
+  "quickReplies": {
+    "eyebrow": "Good Doggy / Inbox",
+    "title": "Respuestas rápidas",
+    "intro": "Los textos que el equipo de {organization} inserta en el Inbox escribiendo «/» y el atajo. Una desactivada no aparece en el Inbox y libera su atajo.",
+    "loading": "Cargando respuestas rápidas…",
+    "denied": "No tienes permiso para gestionar las respuestas rápidas de esta organización.",
+    "noCategories": "No hay categorías activas.",
+    "emptyCategory": "Sin respuestas en esta categoría.",
+    "inactive": "Desactivada",
+    "uses": "{count, plural, =0 {Sin usos} one {# uso} other {# usos}}",
+    "stale": "«{name}» cambió o ya no existe. La lista se volvió a cargar: revisa y repite el cambio.",
+    "failed": "No se pudo cambiar «{name}». {reason}",
+    "reloadFailed": "Se guardó, pero la lista no se pudo actualizar. Recarga la página.",
+    "act": {
+      "deactivate": "Desactivar",
+      "activate": "Reactivar",
+      "delete": "Borrar",
+      "busy": "Guardando…",
+      "deactivateLabel": "Desactivar {name}",
+      "activateLabel": "Reactivar {name}",
+      "deleteLabel": "Borrar {name}",
+      "ask": "¿Borrar «{name}»? Deja de estar disponible y su atajo queda libre. No se puede deshacer.",
+      "confirm": "Sí, borrar",
+      "cancel": "Cancelar",
+      "deactivated": "«{name}» desactivada.",
+      "activated": "«{name}» reactivada.",
+      "deleted": "«{name}» borrada."
+    },
+    "form": {
+      "open": "Nueva respuesta",
+      "title": "Nueva respuesta rápida",
+      "edit": "Editar",
+      "editLabel": "Editar {name}",
+      "shortcut": "Atajo",
+      "shortcutHint": "Lo que se escribe tras «/» en el Inbox: hasta 32 letras sin acento, cifras, _ o -.",
+      "shortcutRequired": "Escribe el atajo.",
+      "shortcutInvalid": "Usa hasta 32 letras sin acento, cifras, _ o -, sin espacios.",
+      "shortcutTaken": "Ya hay una respuesta activa con ese atajo. Elige otro o desactiva la otra.",
+      "name": "Título",
+      "nameRequired": "Escribe el título.",
+      "nameInvalid": "El título no es válido: una línea de hasta 100 caracteres.",
+      "category": "Categoría",
+      "categoryInvalid": "Elige una categoría activa.",
+      "body": "Texto",
+      "bodyHint": "Hasta 4096 caracteres. Puedes usar {variables}.",
+      "bodyRequired": "Escribe el texto de la respuesta.",
+      "bodyInvalid": "El texto no es válido: solo admite las variables indicadas, con llaves dobles.",
+      "preview": "Vista previa con un cliente de ejemplo (Rosa Quispe):",
+      "sampleFirst": "Rosa",
+      "sampleName": "Rosa Quispe",
+      "create": "Crear respuesta",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para gestionar las respuestas rápidas.",
+      "done": "Respuesta /{name} {created, select, true {creada} other {guardada}}.",
+      "unchanged": "Sin cambios en /{name}: no había nada que guardar."
     }
   }
 }
