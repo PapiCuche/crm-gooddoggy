@@ -1764,6 +1764,219 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/channels/{platform}/:
+    post:
+      operationId: channels_social_connect
+      description: 'Registra una página de Messenger o una cuenta de Instagram como
+        la ruta de WhatsApp (ADR-035 §3): Meta comprueba la página (y su cuenta de
+        Instagram) y se suscribe la app. El 400 sin oráculo va en `page_id` (Messenger)
+        o `instagram_account_id`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: platform
+        schema:
+          type: string
+          enum:
+          - instagram
+          - messenger
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialConnectRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/channels/{platform}/{account_id}/:
+    delete:
+      operationId: channels_social_disconnect
+      description: Como en WhatsApp. 404 también si la cuenta es de otra plataforma.
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: platform
+        schema:
+          type: string
+          enum:
+          - instagram
+          - messenger
+        required: true
+      tags:
+      - conversations
+      security:
+      - sessionCookie: []
+      responses:
+        '204':
+          description: No response body
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/channels/{platform}/{account_id}/token/:
+    post:
+      operationId: channels_social_rotate_token
+      description: Como en WhatsApp; Meta comprueba la misma página (y la misma cuenta
+        de Instagram). 404 también si la cuenta es de otra plataforma.
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: platform
+        schema:
+          type: string
+          enum:
+          - instagram
+          - messenger
+        required: true
+      tags:
+      - conversations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/channels/sandbox/inbound/:
     post:
       operationId: channels_sandbox_inbound
@@ -1839,7 +2052,7 @@ paths:
         400 en `phone_number_id`: no se puede registrar (mal formado o repetido: el
         mismo error); `CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; 503
         `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos
-        por persona, las tres rutas).'
+        por persona, compartido con Messenger e Instagram).'
       parameters:
       - in: path
         name: org_slug
@@ -17458,6 +17671,98 @@ components:
           $ref: '#/components/schemas/User'
       required:
       - user
+    SocialAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          $ref: '#/components/schemas/SocialPlatformEnum'
+        name:
+          type: string
+        display_identifier:
+          type: string
+        page_id:
+          type: string
+          description: En Instagram, la página vinculada.
+        instagram_account_id:
+          type: string
+          nullable: true
+        status:
+          $ref: '#/components/schemas/ChannelAccountStatusEnum'
+        status_detail:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/StatusDetailEnum'
+          - $ref: '#/components/schemas/NullEnum'
+        last_healthcheck_at:
+          type: string
+          format: date-time
+          nullable: true
+        token_last_four:
+          type: string
+        token_rotated_at:
+          type: string
+          format: date-time
+          nullable: true
+        token_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - created_at
+      - display_identifier
+      - id
+      - instagram_account_id
+      - last_healthcheck_at
+      - name
+      - page_id
+      - platform
+      - status
+      - status_detail
+      - token_expires_at
+      - token_last_four
+      - token_rotated_at
+      - version
+    SocialConnectRequest:
+      type: object
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+          description: El token de acceso del usuario del sistema de Meta. Solo se
+            guarda cifrado.
+        name:
+          type: string
+          minLength: 1
+          description: El nombre que le das a la cuenta.
+          maxLength: 100
+        page_id:
+          type: string
+          minLength: 1
+          description: La página de Facebook (en Instagram, la vinculada).
+        instagram_account_id:
+          type: string
+          minLength: 1
+          description: Obligatorio en Instagram y prohibido en Messenger.
+      required:
+      - access_token
+      - name
+      - page_id
+    SocialPlatformEnum:
+      enum:
+      - MESSENGER
+      - INSTAGRAM
+      type: string
+      description: |-
+        * `MESSENGER` - MESSENGER
+        * `INSTAGRAM` - INSTAGRAM
     Stage:
       type: object
       properties:

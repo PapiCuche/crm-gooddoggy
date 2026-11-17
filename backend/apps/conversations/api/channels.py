@@ -1,4 +1,5 @@
-"""Leer, conectar, rotar el token y desconectar las cuentas de canal (F7-02d y F7-07a, ADR-029 §2).
+"""Leer, conectar, rotar el token y desconectar las cuentas de canal (F7-02d y F7-07a, ADR-029 §2;
+Messenger e Instagram en F7b-06a, ADR-035 §3, con las mismas garantías).
 
 `channels.manage`, comprobado antes de leer el cuerpo o la base; el cuerpo, antes del 404. Una
 cuenta que no existe, es de otra organización o ya está desconectada da el mismo 404 (al conectar,
@@ -11,7 +12,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from django.db.models import QuerySet
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -36,6 +37,10 @@ from core.tenancy import context
 REFUSED = "Meta no aceptó ese token para ese número. Revisa el token, el WABA y el número."
 UNAVAILABLE = "No se pudo consultar a Meta ahora. Vuelve a intentarlo en unos minutos."
 DISABLED = "El canal de WhatsApp no está habilitado en este despliegue."
+SOCIAL_REFUSED = "Meta no aceptó ese token para esa página. Revisa el token, la página y la cuenta."
+SOCIAL_DISABLED = "Los canales de Messenger e Instagram no están habilitados en este despliegue."
+FIELD = {"MESSENGER": "page_id", "INSTAGRAM": "instagram_account_id"}  # la cuenta que se registra
+PLATFORM = OpenApiParameter("platform", str, OpenApiParameter.PATH, enum=["messenger", "instagram"])
 
 
 class WhatsAppAccountSerializer(serializers.Serializer[Any]):
@@ -50,6 +55,23 @@ class WhatsAppAccountSerializer(serializers.Serializer[Any]):
     messaging_limit_tier = serializers.ChoiceField(choices=LIMIT_TIERS, allow_null=True)
     last_healthcheck_at = serializers.DateTimeField(allow_null=True)
     token_last_four = serializers.CharField(help_text="Lo único que se enseña del token.")
+    token_rotated_at = serializers.DateTimeField(allow_null=True)
+    token_expires_at = serializers.DateTimeField(allow_null=True)
+    version = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+
+
+class SocialAccountSerializer(serializers.Serializer[Any]):
+    id = serializers.UUIDField()
+    platform = serializers.ChoiceField(choices=["MESSENGER", "INSTAGRAM"])
+    name = serializers.CharField()
+    display_identifier = serializers.CharField()
+    page_id = serializers.CharField(help_text="En Instagram, la página vinculada.")
+    instagram_account_id = serializers.CharField(allow_null=True)
+    status = serializers.ChoiceField(choices=AccountStatus.choices)
+    status_detail = serializers.ChoiceField(choices=STATUS_DETAILS, allow_null=True)
+    last_healthcheck_at = serializers.DateTimeField(allow_null=True)
+    token_last_four = serializers.CharField()
     token_rotated_at = serializers.DateTimeField(allow_null=True)
     token_expires_at = serializers.DateTimeField(allow_null=True)
     version = serializers.IntegerField()
@@ -79,6 +101,8 @@ class ChannelAccountSerializer(serializers.Serializer[Any]):
 
 
 def shown(account: ChannelAccount, credential: Credential) -> dict[str, Any]:
+    if account.platform != Platform.WHATSAPP:
+        return shown_social(account, credential)
     keep = (
         "id", "name", "display_identifier", "status", "status_detail", "quality_rating",
         "messaging_limit_tier", "last_healthcheck_at", "version", "created_at",
@@ -90,20 +114,39 @@ def shown(account: ChannelAccount, credential: Credential) -> dict[str, Any]:
     return WhatsAppAccountSerializer(data).data  # type: ignore[no-any-return]
 
 
+def shown_social(account: ChannelAccount, credential: Credential) -> dict[str, Any]:
+    keep = (
+        "id", "platform", "name", "display_identifier", "status", "status_detail",
+        "last_healthcheck_at", "version", "created_at",
+    )  # fmt: skip
+    data: dict[str, Any] = {key: getattr(account, key) for key in keep}
+    instagram = account.platform == Platform.INSTAGRAM
+    data["page_id"] = account.external_parent_id if instagram else account.external_account_id
+    data["instagram_account_id"] = account.external_account_id if instagram else None
+    data |= {"token_last_four": credential.last_four, "token_rotated_at": credential.rotated_at}
+    data["token_expires_at"] = credential.expires_at
+    return SocialAccountSerializer(data).data  # type: ignore[no-any-return]
+
+
 @contextmanager
-def channel_errors() -> Iterator[None]:
-    """Lo que lanzan los comandos de cuentas, con la forma del contrato (ADR-014)."""
+def channel_errors(platform: str = Platform.WHATSAPP) -> Iterator[None]:
+    """Lo que lanzan los comandos de cuentas, con la forma del contrato (ADR-014). La cuenta que no
+    se puede registrar es un 400 en su campo, con el mismo texto que una mal formada."""
+    whatsapp = platform == Platform.WHATSAPP
     try:
         with rbac_errors():
             yield
-    except accounts.BadNumber:  # el mismo error que un número mal formado: sin oráculo
-        raise serializers.ValidationError({"phone_number_id": [accounts.NUMBER_REFUSED]}) from None
+    except accounts.BadNumber as error:  # el mismo error que un id mal formado: sin oráculo
+        field = "phone_number_id" if whatsapp else FIELD[platform]
+        raise serializers.ValidationError({field: [str(error)]}) from None
     except graph.GraphRejected:
-        raise ApiError("CHANNEL_CREDENTIALS_REJECTED", 400, REFUSED) from None
+        refused = REFUSED if whatsapp else SOCIAL_REFUSED
+        raise ApiError("CHANNEL_CREDENTIALS_REJECTED", 400, refused) from None
     except graph.GraphUnavailable:
         raise ApiError("CHANNEL_PROVIDER_UNAVAILABLE", 503, UNAVAILABLE) from None
     except graph.ChannelNotEnabled:
-        raise ApiError("CHANNEL_NOT_ENABLED", 409, DISABLED) from None
+        disabled = DISABLED if whatsapp else SOCIAL_DISABLED
+        raise ApiError("CHANNEL_NOT_ENABLED", 409, disabled) from None
 
 
 @extend_schema_view(
@@ -117,7 +160,7 @@ def channel_errors() -> Iterator[None]:
         "`phone_number_id`: no se puede registrar (mal formado o repetido: el mismo error); "
         "`CHANNEL_CREDENTIALS_REJECTED`; 409 `CHANNEL_NOT_ENABLED`; "
         "503 `CHANNEL_PROVIDER_UNAVAILABLE`; 429 `RATE_LIMITED` (5 peticiones cada 10 minutos por "
-        "persona, las tres rutas).",
+        "persona, compartido con Messenger e Instagram).",
     ),
 )
 class ConnectView(APIView):
@@ -150,10 +193,11 @@ class RotateTokenView(APIView):
     def post(self, request: Request, **kwargs: Any) -> Response:
         wanted = inputs.TokenSerializer(data=request.data)  # el cuerpo, antes del 404
         wanted.is_valid(raise_exception=True)
-        with channel_errors():
+        platform = self.kwargs.get("platform", Platform.WHATSAPP)  # de la ruta, nunca del cuerpo
+        with channel_errors(platform):
             done = accounts.rotate_token(
                 context.require(), channel_account_id=self.kwargs["account_id"],
-                access_token=wanted.validated_data["access_token"],
+                access_token=wanted.validated_data["access_token"], platform=platform,
             )  # fmt: skip
         return Response(shown(*done))
 
@@ -171,9 +215,67 @@ class DisconnectView(APIView):
     required_permissions = {"DELETE": "channels.manage"}
 
     def delete(self, request: Request, **kwargs: Any) -> Response:
-        with channel_errors():
-            accounts.disconnect(context.require(), channel_account_id=self.kwargs["account_id"])
+        platform = self.kwargs.get("platform", Platform.WHATSAPP)
+        with channel_errors(platform):
+            accounts.disconnect(
+                context.require(), channel_account_id=self.kwargs["account_id"], platform=platform
+            )
         return Response(status=204)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="channels_social_connect",
+        tags=["conversations"],
+        parameters=[PLATFORM],
+        request=inputs.SocialConnectSerializer,
+        responses={201: SocialAccountSerializer, **errors(400, 401, 403, 409, 429, 503)},
+        description="Registra una página de Messenger o una cuenta de Instagram como la ruta de "
+        "WhatsApp (ADR-035 §3): Meta comprueba la página (y su cuenta de Instagram) y se suscribe "
+        "la app. El 400 sin oráculo va en `page_id` (Messenger) o `instagram_account_id`.",
+    ),
+)
+class SocialConnectView(APIView):
+    required_permissions = {"POST": "channels.manage"}
+    step_up_methods = {"POST"}  # D-F7-11
+
+    def post(self, request: Request, **kwargs: Any) -> Response:
+        platform = self.kwargs["platform"]
+        body = inputs.SocialConnectSerializer(data=request.data, context={"platform": platform})
+        body.is_valid(raise_exception=True)
+        with channel_errors(platform):
+            made = accounts.connect_social(
+                context.require(), platform=platform, **body.validated_data
+            )
+        return Response(shown(*made), status=201)
+
+
+@extend_schema_view(
+    post=extend_schema(
+        operation_id="channels_social_rotate_token",
+        tags=["conversations"],
+        parameters=[PLATFORM],
+        request=inputs.TokenSerializer,
+        responses={200: SocialAccountSerializer, **errors(400, 401, 403, 404, 409, 429, 503)},
+        description="Como en WhatsApp; Meta comprueba la misma página (y la misma cuenta de "
+        "Instagram). 404 también si la cuenta es de otra plataforma.",
+    ),
+)
+class SocialRotateTokenView(RotateTokenView):
+    pass
+
+
+@extend_schema_view(
+    delete=extend_schema(
+        operation_id="channels_social_disconnect",
+        tags=["conversations"],
+        parameters=[PLATFORM],
+        responses={204: None, **errors(401, 403, 404, 429)},
+        description="Como en WhatsApp. 404 también si la cuenta es de otra plataforma.",
+    ),
+)
+class SocialDisconnectView(DisconnectView):
+    pass
 
 
 @extend_schema_view(
