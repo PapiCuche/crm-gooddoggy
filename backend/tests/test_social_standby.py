@@ -99,6 +99,20 @@ def test_a_newer_normal_inbound_clears_it_and_an_older_one_does_not_change_it(
     assert standby_since(world, convo) == since  # uno normal más antiguo tampoco la limpia
 
 
+def test_a_standby_inbound_that_reopens_a_resolved_thread_also_keeps_the_state(
+    world: SimpleNamespace,
+) -> None:
+    convo = talk(world, "INSTAGRAM")
+    with tenant_scope(ctx(world.a)):
+        Conversation.objects.filter(pk=convo.pk).update(
+            status="RESOLVED", resolved_at=timezone.now()
+        )
+    say("INSTAGRAM", event("INSTAGRAM", "Hola", "m_SIMIN000001"), field=STANDBY)
+    with tenant_scope(ctx(world.a)):
+        found = Conversation.objects.get(pk=convo.pk)
+    assert (found.status, found.standby_since is not None) == ("OPEN", True)
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_the_account_and_the_conversation_expose_the_state(
     world: SimpleNamespace, platform: str
