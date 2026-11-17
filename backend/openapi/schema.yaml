@@ -15333,10 +15333,14 @@ components:
       enum:
       - SANDBOX
       - WHATSAPP
+      - MESSENGER
+      - INSTAGRAM
       type: string
       description: |-
         * `SANDBOX` - Sandbox
         * `WHATSAPP` - Whatsapp
+        * `MESSENGER` - Messenger
+        * `INSTAGRAM` - Instagram
     Price:
       type: object
       properties:

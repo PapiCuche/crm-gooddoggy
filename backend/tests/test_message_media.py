@@ -977,6 +977,7 @@ OFF = r"session_replication_role|(ENABLE|DISABLE)\s+(ALWAYS\s+|REPLICA\s+)?TRIGG
 DROPS = {
     "apps/conversations/migrations/0005_whatsapp_account.py",
     "apps/conversations/migrations/0021_message_attachments.py",
+    "apps/conversations/migrations/0040_social_channels.py",  # F7b-04a
     "apps/pricing/migrations/0004_promotions_frozen.py",
     "apps/quotes/migrations/0002_approvals_and_discount_policies.py",
 }

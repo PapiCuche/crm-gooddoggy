@@ -2389,7 +2389,8 @@
       "hint": {
         "reply": "Enter envía; Mayús+Enter agrega una línea.",
         "note": "Solo tu equipo ve esto, el cliente no.",
-        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea."
+        "noteKeys": "Enter guarda; Mayús+Enter agrega una línea.",
+        "pick": "Enter elige la respuesta rápida; Esc cierra la lista."
       },
       "count": "{count} de {max} caracteres",
       "over": "Te pasaste por {over, plural, one {# carácter} other {# caracteres}}.",
@@ -2419,7 +2420,8 @@
       "overLimit": {
         "reply": "Pasaste el tope de caracteres: no se puede enviar.",
         "note": "Pasaste el tope de caracteres: no se puede guardar."
-      }
+      },
+      "placeholder": "Escribe / para usar una respuesta rápida"
     },
     "assign": {
       "take": "Tomar",
@@ -2473,6 +2475,21 @@
       "token": "el token venció o ya no es válido; no se pueden enviar mensajes.",
       "pending": "falta terminar la conexión o aprobar permisos.",
       "link": "Revisar en Canales"
+    },
+    "quickReplies": {
+      "label": "Respuestas rápidas",
+      "keys": "↑ ↓ para moverte, Enter para elegir, Esc para cerrar.",
+      "loading": "Buscando respuestas…",
+      "empty": "No hay respuestas rápidas con ese atajo o texto.",
+      "inserting": "Preparando el texto…",
+      "gone": "Esa respuesta ya no está disponible. Elige otra.",
+      "count": "{count, plural, =0 {Sin respuestas rápidas} one {# respuesta rápida} other {# respuestas rápidas}}. Usa las flechas para moverte y Enter para elegir.",
+      "missing": "Quedó sin completar: {fields}. Revísalo antes de enviar.",
+      "variable": {
+        "firstName": "el nombre del cliente",
+        "name": "el nombre completo del cliente",
+        "org": "el nombre de tu empresa"
+      }
     }
   },
   "channels": {
@@ -2488,6 +2505,8 @@
     "platform": {
       "SANDBOX": "Sandbox",
       "WHATSAPP": "WhatsApp",
+      "MESSENGER": "Messenger",
+      "INSTAGRAM": "Instagram",
       "UNKNOWN": "Otro canal"
     },
     "status": {
