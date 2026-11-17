@@ -11,6 +11,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from config import env
 
+env.refuse_local_only()  # ADR-041
 if "DATABASE_URL" in os.environ:
     raise ImproperlyConfigured("El job de migraciones no debe recibir DATABASE_URL (runtime)")
 os.environ["DATABASE_URL"] = env.required("DATABASE_MIGRATOR_URL")  # solo dentro de este proceso
