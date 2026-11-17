@@ -37,7 +37,7 @@ def _error(raw: bytes) -> dict[str, Any]:
     return error if isinstance(error, dict) else {}
 
 
-def _classify(status: int, raw: bytes) -> Probe:
+def classify(status: int, raw: bytes) -> Probe:
     error = _error(raw) if status != 200 else {}
     details = error.get("details")
     code = details.get("error_code") if isinstance(details, dict) else None
@@ -73,7 +73,7 @@ def check(provider: str, key: str) -> Probe:
     except http.BlockedDestination, http.HTTPError, OSError:
         logger.warning("ai.provider_probe_failed", provider=provider)  # sin el mensaje
         return Probe.PROVIDER_UNAVAILABLE
-    result = _classify(reply.status, reply.data)
+    result = classify(reply.status, reply.data)
     request_id = reply.headers.get("request-id", "")
     shown = request_id[:64] if request_id.isprintable() else ""
     logger.info(

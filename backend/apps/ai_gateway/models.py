@@ -3,6 +3,8 @@ con FORCE RLS y FKs compuestas en la migración. La clave solo existe cifrada en
 lo único a la vista es `key_last_four`. Nada se borra: una clave se invalida (cifrado borrado) y la
 cuenta se desactiva. El modelo elegido llega con la lista permitida (F8-05)."""
 
+from typing import Any
+
 from django.db import models
 from django.db.models.functions import Length
 from django.db.models.lookups import Exact, GreaterThanOrEqual, LessThanOrEqual
@@ -115,3 +117,79 @@ class AIProviderKey(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+
+PURPOSES = ("SUGGEST", "SUMMARY")  # para qué se llama al modelo (ADR-034 §5)
+OUTCOMES = ("OK", "CREDENTIALS_REJECTED", "PROVIDER_BILLING", "PROVIDER_UNAVAILABLE",
+            "PROVIDER_ERROR")  # fmt: skip
+
+
+def _usd(null: bool = False) -> models.DecimalField[Any, Any]:
+    return models.DecimalField(max_digits=12, decimal_places=6, null=null)
+
+
+class AIBudget(TenantModel):
+    """El tope mensual en USD (F8-05): sin fila no hay llamadas. `crm_app` solo lo lee."""
+
+    id = uuid7_primary_key()
+    monthly_usd = _usd()
+
+    class Meta:
+        db_table = "ai_budgets"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id"], name="ai_budgets_org_uq"),
+            models.CheckConstraint(condition=models.Q(monthly_usd__gt=0), name="ai_budgets_ck"),
+        ]
+
+
+class AIBudgetUsage(TenantModel):
+    """Lo gastado y lo reservado de un mes (su primer día, en UTC)."""
+
+    id = uuid7_primary_key()
+    month = models.DateField()
+    spent_usd = _usd()
+    reserved_usd = _usd()
+
+    class Meta:
+        db_table = "ai_budget_usage"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "month"],
+                                    name="ai_budget_usage_month_uq"),
+            models.CheckConstraint(name="ai_budget_usage_ck", condition=models.Q(
+                month__day=1, spent_usd__gte=0, reserved_usd__gte=0)),
+        ]  # fmt: skip
+
+
+class AILLMCall(TenantModel):
+    """Una llamada: su reserva y, ajustada una sola vez, el uso real; nunca prompt ni respuesta."""
+
+    id = uuid7_primary_key()
+    month = models.DateField()
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    model = models.CharField(max_length=64)
+    purpose = models.CharField(max_length=16)
+    conversation_id = models.UUIDField(null=True, blank=True)  # sin FK: L1 no conoce el Inbox
+    requested_by_user_id = models.UUIDField(null=True, blank=True)
+    reserved_usd = _usd()
+    cost_usd = _usd(null=True)
+    input_tokens = models.PositiveIntegerField(null=True)  # sin caché
+    output_tokens = models.PositiveIntegerField(null=True)
+    cache_write_tokens = models.PositiveIntegerField(null=True)
+    cache_read_tokens = models.PositiveIntegerField(null=True)
+    latency_ms = models.PositiveIntegerField(null=True)
+    outcome = models.CharField(max_length=24, blank=True, default="")
+    request_id = models.CharField(max_length=64, blank=True, default="")  # el del proveedor
+    created_at = models.DateTimeField(auto_now_add=True)
+    settled_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "ai_llm_calls"
+        constraints = [
+            models.CheckConstraint(name="ai_llm_calls_ck", condition=models.Q(
+                provider__in=Provider.values, purpose__in=PURPOSES, reserved_usd__gt=0)),
+            models.CheckConstraint(  # reservada sin uso; o ajustada con su costo y su resultado
+                condition=models.Q(settled_at__isnull=True, cost_usd__isnull=True, outcome="")
+                | models.Q(settled_at__isnull=False, cost_usd__gte=0, outcome__in=OUTCOMES),
+                name="ai_llm_calls_settled_ck",
+            ),
+        ]  # fmt: skip

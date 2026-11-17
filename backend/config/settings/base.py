@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import Any
 
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
@@ -408,6 +409,18 @@ if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
 # `apps.ai_gateway` lo llama, con la clave sellada de la organización.
 AI_PROVIDER_HOSTS = {"ANTHROPIC": "api.anthropic.com"}
 HTTP_ALLOWED_HOSTS.extend(h for h in AI_PROVIDER_HOSTS.values() if h not in HTTP_ALLOWED_HOSTS)
+# F8-05 (ADR-034 §3, D-F8-03): los modelos permitidos y su precio en USD por millón de tokens, de la
+# página oficial de precios de Anthropic (consultada el día `since`). Sin precio no se llama.
+# Cambiarlo es un PR. `long`: el tramo de prompt largo (más de `above` tokens), si lo hay.
+AI_MODELS: dict[str, dict[str, dict[str, Any]]] = {"ANTHROPIC": {"claude-sonnet-5-5": {
+    "since": "2026-11-17", "input": "2", "cache_write_5m": "2.50", "cache_write_1h": "4",
+    "cache_read": "0.10", "output": "10",
+}}}  # fmt: skip
+# El modelo y los parámetros por proveedor (el modelo por cuenta, F8-05b); `seconds`: plazo total.
+AI_PROVIDER_PARAMS: dict[str, dict[str, Any]] = {"ANTHROPIC": {
+    "model": "claude-sonnet-5-5", "max_tokens": 2048, "effort": "medium", "seconds": 60,
+}}  # fmt: skip
+AI_TOOL_TOKENS = 1000  # margen de la reserva por los tokens que añade la API al usar tools
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

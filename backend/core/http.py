@@ -229,18 +229,23 @@ def _check_headers(headers: dict[str, str] | None) -> dict[str, str]:
 
 
 NO_RETRY = urllib3.Retry(total=0, redirect=False, raise_on_redirect=False)
+MAX_READ_SECONDS = 120.0
 
 
 def request(
     method: str, url: str, *, headers: dict[str, str] | None = None, body: bytes | None = None,
-    json: Any = None, retry: bool = True,
+    json: Any = None, retry: bool = True, read_seconds: float | None = None,
 ) -> urllib3.BaseHTTPResponse:  # fmt: skip
     """Sin `**kwargs`: no se pueden quitar timeouts ni el bloqueo de redirects. `retry=False` solo
     **quita** los reintentos (y la espera de `Retry-After`): para quien no puede esperar, como una
-    prueba dentro de una petición web (F8-03b)."""
+    prueba dentro de una petición web (F8-03b). `read_seconds` alarga la espera de lectura (un
+    modelo de IA responde en segundos, F8-05), como mucho hasta `MAX_READ_SECONDS`."""
     check_url(url)
     _check_headers(headers)  # los nombres originales se envían tal cual: ya no hay prohibidos
     extra: dict[str, Any] = {} if retry else {"retries": NO_RETRY}
+    if read_seconds is not None:
+        read = min(max(read_seconds, 1.0), MAX_READ_SECONDS)
+        extra["timeout"] = urllib3.Timeout(connect=5.0, read=read)
     reply = _manager.request(
         method, url, headers=headers, body=body, json=json, redirect=False, preload_content=False,
         **extra,
