@@ -17,8 +17,9 @@ from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
 from apps.contacts import keywords
-from apps.contacts.consents import revoke_consent
+from apps.contacts.consents import grant_consent, revoke_consent
 from apps.contacts.models import ConsentKeyword, ContactConsent, ContactConsentEvent
+from apps.contacts.selectors import is_revoked
 from apps.conversations import commands, inbound, ingress, policy, selectors
 from apps.conversations.models import Conversation, Message
 from core.tenancy.scope import tenant_scope
@@ -389,6 +390,59 @@ def test_keywords_delivered_out_of_order_follow_the_time_the_customer_wrote_them
     with tenant_scope(ctx(crm.a)):
         row = ContactConsent.objects.get()
     assert row.keyword_at == found.inbound[1].provider_timestamp  # la de `last`
+
+
+def test_an_older_baja_never_moves_the_keyword_time_back(crm: SimpleNamespace) -> None:
+    live(crm.a)  # BAJA t1, ALTA t2 y BAJA t3, entregados t3, t1, t2: queda la de t3
+    say("wamid.3", "BAJA", ago=dt.timedelta(seconds=10))
+    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=30))
+    say("wamid.2", "ALTA", ago=dt.timedelta(seconds=20))
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    with tenant_scope(ctx(crm.a)):
+        row = ContactConsent.objects.get()
+    assert row.keyword_at == found.inbound[0].provider_timestamp  # la de t3
+
+
+def test_an_alta_that_changes_nothing_still_keeps_an_older_baja_out(crm: SimpleNamespace) -> None:
+    live(crm.a)
+    say("wamid.1", "Hola", ago=dt.timedelta(seconds=60))
+    with tenant_scope(ctx(crm.a)) as tenant:  # ya está de alta, por otra vía
+        grant_consent(
+            tenant, contact_id=seen(crm.a).convo.contact_id, channel="WHATSAPP",
+            purpose="ALL_PROACTIVE", source="AGENT_RECORDED",
+        )  # fmt: skip
+    say("wamid.3", "ALTA", ago=dt.timedelta(seconds=10))  # t4: no cambia nada, pero cuenta
+    say("wamid.2", "BAJA", ago=dt.timedelta(seconds=20))  # t3, entregada tarde
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "AGENT_RECORDED")]
+    assert found.replies == []
+
+
+def spied(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
+    """Cada consulta de la baja que hace `selectors.messaging_decision`."""
+    calls: list[tuple[Any, ...]] = []
+
+    def spy(*args: Any, **kwargs: Any) -> bool:
+        calls.append(args)
+        return is_revoked(*args, **kwargs)
+
+    monkeypatch.setattr("apps.conversations.selectors.is_revoked", spy)
+    return calls
+
+
+def test_a_whatsapp_reply_never_reads_the_consent(
+    crm: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = spied(monkeypatch)
+    settings.META_HUMAN_AGENT_APPROVED = True  # WhatsApp no tiene la etiqueta
+    live(crm.a)
+    say("wamid.1", "Hola", ago=dt.timedelta(hours=30))
+    with pytest.raises(policy.WindowClosed):
+        outbound(crm, seen(crm.a).convo)
+    say("wamid.2", "Hola")
+    assert outbound(crm, seen(crm.a).convo)[1] is True
+    assert calls == []
 
 
 def test_a_keyword_without_the_provider_time_keeps_the_order_of_arrival(

@@ -122,6 +122,25 @@ class PolicyDecision:
         }
 
 
+def taggable(
+    *, platform: str, purpose: str, sender: str, human_agent_approved: bool,
+    last_inbound_at: dt.datetime | None, now: dt.datetime,
+) -> bool:  # fmt: skip
+    """Si la respuesta saldría ahora con la etiqueta Human Agent, salvo una baja: una persona
+    (`PERSON`), con la función aprobada, en un canal que la tiene, con la ventana cerrada y dentro
+    de su plazo. Fuera de eso una baja no cambia la decisión de una respuesta, así que
+    `selectors.messaging_decision` no la consulta (F7b-05d)."""
+    caps = CAPABILITIES.get(platform)
+    if (
+        caps is None or caps.window_hours is None or caps.human_agent_hours is None
+        or last_inbound_at is None or not human_agent_approved or sender != PERSON
+        or purpose != CUSTOMER_REPLY
+    ):  # fmt: skip
+        return False
+    window = last_inbound_at + dt.timedelta(hours=caps.window_hours)
+    return window <= now < last_inbound_at + dt.timedelta(hours=caps.human_agent_hours)
+
+
 def evaluate(
     *,
     conversation_status: str,
@@ -164,10 +183,9 @@ def evaluate(
         reason = "CONTACT_BLOCKED"
     elif hours is not None and (expires is None or now >= expires):
         tag = caps.human_agent_hours if caps is not None else None
-        if (
-            tag is not None and human_agent_approved and sender == PERSON
-            and purpose == CUSTOMER_REPLY and last_inbound_at is not None
-            and now < last_inbound_at + dt.timedelta(hours=tag)
+        if tag is not None and last_inbound_at is not None and taggable(
+            platform=platform, purpose=purpose, sender=sender,
+            human_agent_approved=human_agent_approved, last_inbound_at=last_inbound_at, now=now,
         ):  # fmt: skip
             if revoked:  # fuera de la ventana la baja manda, también con la etiqueta (§2.7)
                 reason = "CONSENT_REVOKED"

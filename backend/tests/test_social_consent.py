@@ -24,6 +24,7 @@ from core.tenancy.scope import tenant_scope
 from tests.meta_sim import social
 from tests.meta_sim.page_graph import FakePageGraph
 from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
+from tests.test_consent_stop import spied
 from tests.test_conversation_commands import outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_memberships import ctx
@@ -294,3 +295,22 @@ def test_a_baja_delivered_after_a_later_alta_does_not_revert_it(
     found = seen(world)
     assert found.consents == [(platform, "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
     assert len(found.replies) == 2  # la baja vieja no confirma nada
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_reply_reads_the_consent_only_when_it_would_go_out_with_the_tag(
+    world: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    calls = spied(monkeypatch)
+    settings.META_HUMAN_AGENT_APPROVED = True
+    convo = talk(world, platform)
+    outbound(world, convo)  # dentro de la ventana la baja no cambia nada: ni se consulta
+    assert calls == []
+    with tenant_scope(ctx(world.a)):
+        Conversation.objects.filter(pk=convo.pk).update(last_inbound_at=timezone.now() - 30 * HOUR)
+    assert outbound(world, convo)[0].policy_decision["mode"] == "HUMAN_AGENT_TAG"
+    assert len(calls) == 1
+    settings.META_HUMAN_AGENT_APPROVED = False
+    with pytest.raises(policy.WindowClosed):
+        outbound(world, convo)
+    assert len(calls) == 1
