@@ -158,6 +158,14 @@ def check_meta(
         )
 
 
+def check_ai_throttle(throttle: tuple[int, int]) -> None:
+    """El tope de las rutas de cuentas del proveedor de IA (F8-03d): sin él, la prueba de conexión
+    se repetiría en bucle contra el proveedor. Ventana menor que la calma de la purga del acceso."""
+    limit, window = throttle
+    if not (1 <= limit <= 60 and 60 <= window <= 840):
+        raise ImproperlyConfigured("AI_ACCOUNT_THROTTLE: 1 a 60 peticiones, ventana de 60 a 840 s")
+
+
 def check_floor_throttle(rules: dict[str, tuple[int, int]]) -> None:
     """El tope de las rutas que miden el suelo de costo (F5-09e2): sin él, el costo se deduce."""
     quote, user = rules["quote"], rules["user"]

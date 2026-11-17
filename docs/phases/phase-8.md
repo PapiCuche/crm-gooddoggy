@@ -29,7 +29,7 @@ No hay nada de IA en el código: ni `apps.ai_gateway`, ni `apps.ai_agents`, ni t
 | F8-03a | [#766](https://github.com/PapiCuche/crm-gooddoggy/issues/766) Claves de proveedor: tabla sellada, permiso `ai.manage` y re-sellado (sin rutas) | `feature/f8-ai-provider-keys` | F8-02 | backend |
 | F8-03b | [#878](https://github.com/PapiCuche/crm-gooddoggy/issues/878) Comandos, prueba de conexión y simulador | — | F8-03a | backend |
 | F8-03c | [#879](https://github.com/PapiCuche/crm-gooddoggy/issues/879) Rutas protegidas: listar, crear, rotar y borrar | — | F8-03b | backend |
-| F8-03d | [#880](https://github.com/PapiCuche/crm-gooddoggy/issues/880) Ruta de la prueba de conexión y límite de tasa | — | F8-03c | backend |
+| F8-03d | [#880](https://github.com/PapiCuche/crm-gooddoggy/issues/880) Ruta de la prueba de conexión y límite de tasa | `feature/f8-ai-provider-test-route` | F8-03c | backend |
 | F8-04 | [#767](https://github.com/PapiCuche/crm-gooddoggy/issues/767) Pantalla de claves y prueba de conexión                                | `feature/f8-ai-provider-keys-screen`        | F8-03d              | frontend           |
 | F8-05 | [#768](https://github.com/PapiCuche/crm-gooddoggy/issues/768) `ai_gateway` con Anthropic: presupuesto, corte duro y registro de uso  | `feature/f8-ai-gateway-anthropic`           | F8-03a, F8-03b      | backend            |
 | F8-06 | [#769](https://github.com/PapiCuche/crm-gooddoggy/issues/769) Kill switch global y por organización                                  | `feature/f8-ai-kill-switch`                 | F8-05               | backend y frontend |
@@ -84,6 +84,14 @@ Cómo reparte ADR-034 entre ellos:
   - **Un solo 404** para la cuenta que no es de la organización, la que no existe y la desactivada. El cuerpo se valida antes del 404.
   - OpenAPI y orval regenerados.
 - **Pendiente (opcional):** que las organizaciones con claves ilegibles no acaparen el descubrimiento del re-sellado.
+
+### F8-03d · Prueba de conexión y límite de tasa
+
+- **Hecho en F8-03d (#880):**
+  - `POST …/ai/provider-accounts/{id}/test/` llama a `accounts.check`: una sola llamada al proveedor, sin reintentos, auditada como `ai.account.tested`. Responde 200 `{"result": …}` con `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`, nunca el cuerpo del proveedor, su `request-id` ni la clave. Pide `ai.manage` y, después, el segundo factor reciente. Un solo 404 para la cuenta ajena, la que no existe y la desactivada, sin llamar al proveedor.
+  - **Tope por persona** (`apps.ai_gateway.throttle`, como F7-02e): 10 peticiones cada 10 minutos (`AI_ACCOUNT_THROTTLE`, pendiente de confirmación del PO), compartido por las cinco rutas (listar, crear, rotar, borrar y probar), con claves `aik:usr:<id>` en `login_throttles`. Responde 429 `RATE_LIMITED` con `Retry-After`. Va tras la autenticación y el CSRF y antes del tenant: cuenta lo que acaba en error y antes del permiso, así un miembro sin `ai.manage` solo se limita a sí mismo. Un anónimo o una petición que el CSRF rechaza no cuentan. En production, `env.check_ai_throttle` exige de 1 a 60 peticiones y una ventana de 60 a 840 segundos (menor que la calma de la purga del acceso).
+  - OpenAPI (el 429 en las cinco rutas) y orval regenerados.
+- **Para F8-04:** la pantalla tiene que caber en el tope: listar también cuenta, así que no debe volver a pedir la lista al recuperar el foco ni en bucle; el 429 se explica con la espera de `Retry-After`.
 
 ## Qué necesita el propietario (sin ningún valor real)
 

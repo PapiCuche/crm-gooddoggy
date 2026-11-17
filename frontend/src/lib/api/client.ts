@@ -26,6 +26,7 @@ import type {
   AiProviderAccount,
   AiProviderAccountCreateRequest,
   AiProviderKeyRequest,
+  AiProviderTest,
   AssignRequest,
   Assignment,
   AuditListParams,
@@ -1830,7 +1831,7 @@ export const getAiProviderAccountsListUrl = (orgSlug: string) => {
 };
 
 /**
- * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`.
+ * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
  */
 export const aiProviderAccountsList = async (
   orgSlug: string,
@@ -1963,7 +1964,7 @@ export const getAiProviderAccountsCreateUrl = (orgSlug: string) => {
 };
 
 /**
- * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez.
+ * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
  */
 export const aiProviderAccountsCreate = async (
   orgSlug: string,
@@ -2070,7 +2071,7 @@ export const getAiProviderAccountsDestroyUrl = (orgSlug: string, accountId: stri
 };
 
 /**
- * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada.
+ * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
  */
 export const aiProviderAccountsDestroy = async (
   orgSlug: string,
@@ -2153,7 +2154,7 @@ export const getAiProviderAccountsRotateKeyUrl = (orgSlug: string, accountId: st
 };
 
 /**
- * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada.
+ * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
  */
 export const aiProviderAccountsRotateKey = async (
   orgSlug: string,
@@ -2256,6 +2257,89 @@ export const useAiProviderAccountsRotateKey = <TError = ErrorType<Error>, TConte
   TContext
 > => {
   return useMutation(getAiProviderAccountsRotateKeyMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsTestUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/test/`;
+};
+
+/**
+ * Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo factor reciente) con la llamada más barata, sin reintentos, y la audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. 404: no existe, es de otra organización o está desactivada. 429 `RATE_LIMITED`: el tope por persona de estas rutas, con `Retry-After`.
+ */
+export const aiProviderAccountsTest = async (
+  orgSlug: string,
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderTest> => {
+  return apiFetch<AiProviderTest>(getAiProviderAccountsTestUrl(orgSlug, accountId), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getAiProviderAccountsTestMutationKey = () => ["aiProviderAccountsTest"] as const;
+
+export const getAiProviderAccountsTestMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+    TError,
+    AiProviderAccountsTestMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+  TError,
+  AiProviderAccountsTestMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsTestMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+    AiProviderAccountsTestMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId } = props ?? {};
+
+    return aiProviderAccountsTest(orgSlug, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsTestMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsTest>>
+>;
+
+export type AiProviderAccountsTestMutationError = ErrorType<Error>;
+export type AiProviderAccountsTestMutationVariables = { orgSlug: string; accountId: string };
+
+export const useAiProviderAccountsTest = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+      TError,
+      AiProviderAccountsTestMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsTest>>,
+  TError,
+  AiProviderAccountsTestMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsTestMutationOptions(options), queryClient);
 };
 
 export const getAuditListUrl = (orgSlug: string, params?: AuditListParams) => {
