@@ -53,6 +53,7 @@ MIDDLEWARE = [
     "core.api.middleware.ApiCsrfMiddleware",  # CSRF de /api/ antes de resolver el tenant
     "apps.conversations.throttle.ChannelThrottleMiddleware",  # F7-02e: tope por persona
     "apps.quotes.api.limit.QuoteFloorLimitMiddleware",  # F5-09e2: el oráculo del costo
+    "apps.ai_gateway.throttle.AiAccountThrottleMiddleware",  # F8-03d: tope por persona
     "core.tenancy.middleware.TenantResolutionMiddleware",  # siempre tras la autenticación
 ]
 
@@ -103,6 +104,9 @@ MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
+# Rutas de cuentas del proveedor de IA (F8-03d): peticiones de una persona por ventana (segundos),
+# compartidas por las cinco rutas; la prueba de conexión llama al proveedor. Pendiente del PO.
+AI_ACCOUNT_THROTTLE = (10, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
 # Rutas que miden el suelo de costo de una cotización (F5-09e2): peticiones por persona y
