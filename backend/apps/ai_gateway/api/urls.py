@@ -14,4 +14,9 @@ urlpatterns = [
         views.AccountKeyView.as_view(),
         name="ai-provider-account-key",
     ),
+    path(
+        "ai/provider-accounts/<uuid:account_id>/test/",
+        views.AccountTestView.as_view(),
+        name="ai-provider-account-test",
+    ),
 ]
