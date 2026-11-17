@@ -103,7 +103,7 @@ def test_a_reply_inside_the_window_goes_to_the_identity_through_the_page(
     sent, call = graph.sent[0], graph.calls[0]
     assert sent["recipient"] == {"id": CHANNELS[platform][1]}  # el PSID o el IGSID
     assert (sent["messaging_type"], "tag" in sent) == ("RESPONSE", False)
-    assert sent["message"] == {"text": "Hola, ¿en qué te ayudo?"}
+    assert sent["message"] == {"text": "Hola, ¿en qué te ayudo?", "metadata": saved.echo_token}
     assert call["path"] == f"/{GRAPH_VERSION}/{PAGE_ID}/messages"  # Instagram, por su página
     assert saved.policy_decision["mode"] == "FREE_FORM"
 
@@ -318,6 +318,7 @@ def test_the_claim_carries_the_identity_of_this_account_and_never_shows_it(
         claim = commands.claim_outbound(tenant, message_id=message.pk)
     assert claim is not None and (claim.recipient, claim.parent_id) == (IGSID, PAGE_ID)
     assert IGSID not in repr(claim) and TEST_TOKEN not in repr(claim) and "Hola" not in repr(claim)
+    assert claim.echo_token is not None and claim.echo_token not in repr(claim)  # F7b-05c
     other = account(world.a, "INSTAGRAM", "100000000000103")
     with tenant_scope(ctx(world.a)) as tenant:  # la identidad de otra cuenta no es destinataria
         assert commands._recipient(require_scope(tenant), convo, other) == ""

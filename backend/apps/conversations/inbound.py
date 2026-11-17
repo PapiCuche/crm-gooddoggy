@@ -336,10 +336,10 @@ def receive_social(
     estaba), o el motivo por el que se ignora. `Throttled` como `receive`."""
     message = event.get("message")
     if kind == "status":
-        return "STATUS_LATER"  # leídos y entregas: `advance_delivery`, F7b-05
+        return "STATUS_LATER"  # no llega: la ruta los pasa a `delivery.social` (F7b-05c)
     if kind != "message" or not isinstance(message, dict):
         return "REACTION" if "reaction" in event else "UNKNOWN_EVENT"
-    if message.get("is_echo") is True:  # con `app_id` o sin él (SIN VERIFICAR 12): F7b-05
+    if message.get("is_echo") is True:  # no llega: la ruta los pasa a `delivery.social`
         return "ECHO"
     if message.get("is_deleted") is True:  # lo ya registrado no se borra: se cuenta
         logger.info("meta.webhook.deleted", channel_account_id=str(account.pk))
