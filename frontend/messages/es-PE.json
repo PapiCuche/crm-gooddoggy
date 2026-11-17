@@ -3011,6 +3011,8 @@
     "order": "Orden {order}",
     "uses": "{count, plural, =0 {Sin usos} one {# uso} other {# usos}}",
     "stale": "«{name}» cambió o ya no existe. La lista se volvió a cargar: revisa y repite el cambio.",
+    "deactivateCategory": "Desactivar la categoría {name}",
+    "activateCategory": "Reactivar la categoría {name}",
     "inUse": "La categoría «{name}» tiene respuestas activas: desactívalas o muévelas a otra categoría antes. La lista se volvió a cargar.",
     "failed": "No se pudo cambiar «{name}». {reason}",
     "reloadFailed": "Se guardó, pero la lista no se pudo actualizar. Recarga la página.",

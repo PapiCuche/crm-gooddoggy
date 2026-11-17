@@ -39,7 +39,11 @@ type Answer = { status: number; body?: unknown };
 type Row = { id: string; version: number };
 // Una API de mentira con estado. `answerOnce`: lo que responde la próxima escritura.
 function server(
-  start = [cat("c2", "Precios", 2), cat("c1", "Delivery", 1), cat("c3", "Viejas", 9, false)],
+  start = [
+    { ...cat("c2", "Precios", 2), version: 2 },
+    cat("c1", "Delivery", 1),
+    cat("c3", "Viejas", 9, false),
+  ],
 ) {
   let cats = start;
   let replies = [qr("r1", "envio", "c1"), qr("r2", "lista", "c2", false)];
@@ -95,6 +99,8 @@ function server(
     retitle: (id: string, title: string) =>
       (replies = replies.map((one) => (one.id === id ? { ...one, title } : one))),
     addCategory: (name: string) => (cats = [...cats, cat("cx", name, 50)]),
+    setCategory: (id: string, patch: Partial<ManagedQuickReplyCategory>) =>
+      (cats = cats.map((one) => (one.id === id ? { ...one, ...patch } : one))),
     drop: (id: string) => (replies = replies.filter((one) => one.id !== id)),
     breakList: (times: number) => (broken = times),
     writes: () =>
@@ -293,6 +299,11 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     fill("Orden", "1.5");
     submit("Crear categoría");
     expect(within(form()).getByText(/número entero entre/)).toBeInTheDocument();
+    for (const outside of ["32768", "-32769"]) {
+      fill("Orden", outside);
+      submit("Crear categoría");
+      expect(within(form()).getByText(/número entero entre/)).toBeInTheDocument();
+    }
     fill("Orden", "");
     api.answerOnce({ status: 409, body: { code: "CATEGORY_NAME_TAKEN" } });
     api.addCategory("Garantía");
@@ -342,6 +353,13 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     fill("Orden", "");
     submit("Guardar");
     expect(within(form()).getByText("Escribe el orden: un número entero.")).toBeVisible();
+    fill("Orden", "1");
+    fill("Nombre", "Otra");
+    api.answerOnce({ status: 409, body: { code: "CATEGORY_NAME_TAKEN" } });
+    api.addCategory("Otra");
+    submit("Guardar");
+    expect(await within(form()).findByText(/Ya hay una categoría con ese nombre/)).toBeVisible();
+    expect(await screen.findByRole("heading", { level: 2, name: "Otra" })).toBeVisible();
     fill("Nombre", "Envíos");
     fill("Orden", "5");
     submit("Guardar");
@@ -358,9 +376,19 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("«Precios» cambió o ya no existe");
     expect(screen.queryByRole("form")).toBeNull();
     expect(await screen.findByText("Cambiada por otra persona")).toBeVisible(); // recargada
+    fireEvent.click(
+      screen.getByRole("button", { name: "Renombrar u ordenar la categoría Viejas" }),
+    );
+    fill("Nombre", "Antiguas");
+    api.answerOnce({ status: 404, body: { code: "NOT_FOUND" } });
+    submit("Guardar");
+    expect(await screen.findByText(/«Viejas» cambió o ya no existe/)).toBeInTheDocument();
+    expect(screen.queryByRole("form")).toBeNull();
     expect(api.writes()).toEqual([
+      'PATCH /quick-reply-categories/c1/ {"name":"Otra","version":1}',
       'PATCH /quick-reply-categories/c1/ {"name":"Envíos","sort_order":5,"version":1}',
-      'PATCH /quick-reply-categories/c2/ {"name":"Tarifas","version":1}',
+      'PATCH /quick-reply-categories/c2/ {"name":"Tarifas","version":2}',
+      'PATCH /quick-reply-categories/c3/ {"name":"Antiguas","version":1}',
     ]);
   });
 
@@ -369,19 +397,56 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     show();
     api.answerOnce({ status: 409, body: { code: "CATEGORY_IN_USE" } });
     api.retitle("r1", "Cambiada por otra persona");
-    fireEvent.click(await screen.findByRole("button", { name: "Desactivar Delivery" }));
+    const delivery = await screen.findByRole("button", {
+      name: "Desactivar la categoría Delivery",
+    });
+    fireEvent.click(delivery);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "La categoría «Delivery» tiene respuestas activas",
     );
     expect(await screen.findByText("Cambiada por otra persona")).toBeVisible(); // recargada
-    fireEvent.click(screen.getByRole("button", { name: "Desactivar Precios" }));
+    fireEvent.click(delivery); // tras un error, el botón vuelve a escribir
+    expect(await screen.findByText("«Delivery» desactivada.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar la categoría Precios" }));
     expect(await screen.findByText("«Precios» desactivada.")).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "Reactivar Viejas" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reactivar la categoría Viejas" }));
     expect(await screen.findByText("«Viejas» reactivada.")).toBeInTheDocument();
     expect(api.writes()).toEqual([
       'PATCH /quick-reply-categories/c1/ {"is_active":false,"version":1}',
-      'PATCH /quick-reply-categories/c2/ {"is_active":false,"version":1}',
+      'PATCH /quick-reply-categories/c1/ {"is_active":false,"version":1}',
+      'PATCH /quick-reply-categories/c2/ {"is_active":false,"version":2}',
       'PATCH /quick-reply-categories/c3/ {"is_active":true,"version":1}',
     ]);
+  });
+
+  it("la respuesta ofrece las categorías activas, más la inactiva en la que ya está", async () => {
+    const api = server();
+    api.setCategory("c1", { is_active: false });
+    show();
+    const options = () =>
+      within(form())
+        .getAllByRole("option")
+        .map((one) => one.textContent);
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva respuesta" }));
+    expect(options()).toEqual(["Precios"]);
+    fireEvent.click(within(form()).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Editar /envio" }));
+    expect(options()).toEqual(["Delivery", "Precios"]);
+  });
+
+  it("un STALE cuya recarga trae lo mismo no deja la marca: un refetch posterior no mueve el foco", async () => {
+    const api = server();
+    const view = show();
+    fireEvent.click(await screen.findByRole("button", { name: "Editar /envio" }));
+    fill("Título", "Otro");
+    api.answerOnce({ status: 409, body: { code: "STALE_VERSION" } });
+    submit("Guardar");
+    expect(await screen.findByText(/«\/envio» cambió o ya no existe/)).toBeInTheDocument();
+    await waitFor(() => expect(view.client.isFetching()).toBe(0)); // la recarga, igual
+    (document.activeElement as HTMLElement).blur();
+    api.retitle("r1", "Cambiada por otra persona");
+    await act(() => view.client.invalidateQueries());
+    expect(await screen.findByText("Cambiada por otra persona")).toBeVisible();
+    expect(document.activeElement).toBe(document.body);
   });
 });

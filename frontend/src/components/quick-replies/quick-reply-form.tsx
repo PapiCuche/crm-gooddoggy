@@ -274,7 +274,7 @@ export function CategoryForm({
           ...{ required: t("nameRequired"), invalid: t("nameInvalid") },
         },
         {
-          ...{ name: "sort_order", label: t("order"), max: 6, inputMode: "numeric" as const },
+          ...{ name: "sort_order", label: t("order"), max: 6 }, // sin `inputMode`: iOS no da el signo menos
           ...{ invalid: t("orderInvalid"), valid: fits },
           ...(category
             ? { required: t("orderRequired"), defaultValue: String(category.sort_order) }

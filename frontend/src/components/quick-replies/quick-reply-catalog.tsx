@@ -52,6 +52,7 @@ export function QuickReplyCatalog() {
   const off = (row: { is_active: boolean }) =>
     row.is_active ? null : <span className={OFF}>{t("inactive")}</span>;
   // La fila que se va (borrada o movida) se lleva el foco: al título, tras pintar la lista nueva.
+  // Por `dataUpdatedAt`: una recarga que trae lo mismo conserva `list.data` y también suelta la marca.
   // Solo si el foco estaba en la página: Safari no enfoca un botón al pulsarlo, y entonces el
   // título no debe quitarle el sitio al lector ni subir la página.
   const refocus = useRef(false);
@@ -59,7 +60,7 @@ export function QuickReplyCatalog() {
   useEffect(() => {
     if (refocus.current && document.activeElement === document.body) heading.current?.focus();
     refocus.current = false;
-  }, [list.data]);
+  }, [list.dataUpdatedAt]);
   // Si la recarga falla, la lista no cambia: la marca no espera a un refetch posterior.
   const reload = async () => {
     await queryClient.invalidateQueries({ queryKey: key });
@@ -200,6 +201,9 @@ export function QuickReplyCatalog() {
                   <Act
                     ctx={ctx}
                     name={category.name}
+                    label={t(category.is_active ? "deactivateCategory" : "activateCategory", {
+                      name: category.name,
+                    })}
                     active={category.is_active}
                     run={() =>
                       quickReplyCategoriesUpdate(slug, category.id, {
@@ -266,11 +270,13 @@ export function QuickReplyCatalog() {
 function Act({
   ctx,
   name,
+  label,
   active,
   run,
 }: {
   ctx: Ctx;
   name: string;
+  label?: string; // el nombre accesible del botón, si no es «Desactivar {name}»
   active?: boolean;
   run: () => Promise<unknown>;
 }) {
@@ -327,7 +333,7 @@ function Act({
         <Button
           variant="ghost"
           className={cn("border-border min-h-11 border sm:min-h-9", asking && "text-danger")}
-          aria-label={asking ? undefined : t(`${what}Label`, { name })}
+          aria-label={asking ? undefined : (label ?? t(`${what}Label`, { name }))}
           aria-describedby={asking ? id : undefined}
           aria-disabled={busy}
           onClick={go}
