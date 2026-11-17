@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -14,6 +15,7 @@ import type { Conversation, Grant, QuickReplyUse, SelfContext } from "@/lib/api/
 import { mockApi, renderApp } from "@/test-utils";
 
 import { Inbox } from "./inbox";
+import { useQuickReplies } from "./quick-replies";
 
 const BASE = "/api/v1/o/acme/conversations";
 const tenant: SelfContext = {
@@ -60,6 +62,7 @@ function server(
     routes[`GET ${BASE}/${one.id}/`] = { status: 200, body: one };
     routes[`GET ${BASE}/${one.id}/messages/`] = page([]);
     routes[`POST ${BASE}/${one.id}/messages/`] = { status: 202, body: { id: "s1", body: "ok" } };
+    routes[`POST ${BASE}/${one.id}/notes/`] = { status: 201, body: { id: "n1", body: "ok" } };
     for (const id of ["r1", "r3"])
       routes[`POST ${BASE}/${one.id}/quick-replies/${id}/render/`] = render;
   }
@@ -90,6 +93,7 @@ function server(
       calls((url, method) => url.pathname.endsWith("/messages/") && method === "POST").map(
         ([, init]) => JSON.parse(String(init!.body)) as { body: string },
       ),
+    notes: () => calls((url, method) => url.pathname.endsWith("/notes/") && method === "POST"),
   };
 }
 const rendered = {
@@ -305,7 +309,7 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await waitFor(() => expect(s.sends()).toHaveLength(1));
   });
 
-  it("el marcado de una respuesta se ve como texto; Tab y salir del cuadro cierran la lista", async () => {
+  it("el marcado se ve como texto; Tab y salir del cuadro cierran sin descartar; Escape descarta", async () => {
     const html = reply("r1", "delivery", "Envío", ["Delivery", 1]);
     server(undefined, { replies: [{ ...html, body: "<b id=boom>x</b> {{contact.name}}" }] });
     show();
@@ -314,17 +318,20 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await waitFor(() => expect(options()).toHaveLength(1));
     expect(document.getElementById("boom")).toBeNull();
     expect(options()[0]).toHaveTextContent("<b id=boom>x</b>");
-    await key("Tab");
-    expect(screen.queryByRole("listbox")).toBeNull();
-    await type("/");
-    await type("/d");
-    expect(screen.queryByRole("listbox")).toBeNull(); // cerrada hasta quitar la `/`
-    await type("");
-    await type("/");
-    await waitFor(() => expect(options()).toHaveLength(1));
+    // Tab no es del selector: deja mover el foco y el `blur` cierra; volver (Shift+Tab) la reabre.
+    expect(fireEvent.keyDown(await box(), { key: "Tab" })).toBe(true);
     fireEvent.blur(await box());
     expect(screen.queryByRole("listbox")).toBeNull();
     fireEvent.focus(await box());
+    await waitFor(() => expect(options()).toHaveLength(1));
+    // Escape sí la descarta: cerrada hasta quitar la `/`.
+    await key("Escape");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await type("/");
+    await type("/d");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await type("");
+    await type("/");
     await waitFor(() => expect(options()).toHaveLength(1));
   });
 
@@ -338,5 +345,116 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     await settle();
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(s.searches()).toEqual([]);
+  });
+
+  it("en una nota, el selector no frena un Enter sostenido (repeat): la nota se guarda", async () => {
+    const s = server();
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    const note = await screen.findByRole("textbox", { name: "Nota interna" });
+    fireEvent.change(note, { target: { value: "Llamar mañana" } });
+    fireEvent.keyDown(note, { key: "Enter", repeat: true });
+    await waitFor(() => expect(s.notes()).toHaveLength(1));
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("Mayús+Enter con la lista abierta no elige ni envía: es un salto de línea", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(fireEvent.keyDown(await box(), { key: "Enter", shiftKey: true })).toBe(true);
+    await settle(50);
+    expect(s.renders()).toBe(0);
+    expect(s.sends()).toEqual([]);
+    expect(await box()).toHaveValue("/delivery-l");
+  });
+
+  it("el Enter que eligió, sostenido más allá del margen (repeat), no envía", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    await key("Enter");
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    await settle(600); // pasado el margen de 500 ms, solo `repeat` dice que sigue sostenido
+    await key("Enter", { repeat: true });
+    await settle();
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("el clic en una opción no quita el foco al cuadro y la inserta", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    const option = await screen.findByRole("option", { name: /Envío en Lima/ });
+    expect(fireEvent.mouseDown(option)).toBe(false); // `preventDefault`: el cuadro no pierde el foco
+    fireEvent.click(option);
+    await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+    expect(s.sends()).toEqual([]);
+  });
+
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229 (Safari)", { keyCode: 229 }],
+  ])(
+    "un Enter del IME (%s) recién insertado es del IME: no se bloquea ni envía",
+    async (_n, ime) => {
+      const s = server();
+      show();
+      await openChat();
+      await type("/delivery-l");
+      await waitFor(() => expect(options()).toHaveLength(1));
+      await key("Enter");
+      await waitFor(() => expect(box()).resolves.toHaveValue(rendered.text));
+      expect(fireEvent.keyDown(await box(), { key: "Enter", ...ime })).toBe(true);
+      await settle();
+      expect(s.sends()).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229 (Safari)", { keyCode: 229 }],
+  ])("un Enter del IME (%s) con la lista abierta no elige ni envía", async (_n, ime) => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(fireEvent.keyDown(await box(), { key: "Enter", ...ime })).toBe(true);
+    await settle(50);
+    expect(s.renders()).toBe(0);
+    expect(s.sends()).toEqual([]);
+    expect(await box()).toHaveValue("/delivery-l");
+  });
+
+  it("el hook descarta un `render` que vuelve con otra conversación, aunque el texto sea igual", async () => {
+    const s = server(undefined, { hold: true });
+    const insert = vi.fn();
+    let hook!: ReturnType<typeof useQuickReplies>;
+    let switchTo!: (id: string) => void;
+    function Probe() {
+      const [conversationId, setId] = useState("1");
+      switchTo = setId;
+      hook = useQuickReplies({ enabled: true, conversationId, text: "/delivery-l", insert });
+      return hook.picker;
+    }
+    renderApp(
+      <TenantProvider value={tenant}>
+        <Probe />
+      </TenantProvider>,
+    );
+    await waitFor(() => expect(options()).toHaveLength(1));
+    const enter = { key: "Enter", nativeEvent: {}, preventDefault() {}, stopPropagation() {} };
+    act(() => void hook.onKey(enter as Parameters<typeof hook.onKey>[0]));
+    await waitFor(() => expect(s.held).toHaveLength(1));
+    act(() => switchTo("2"));
+    await s.release();
+    await settle();
+    expect(insert).not.toHaveBeenCalled();
   });
 });

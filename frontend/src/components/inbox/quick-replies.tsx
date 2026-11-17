@@ -142,6 +142,9 @@ export function useQuickReplies({
 
   // Devuelve si la tecla era del selector; si lo era, el cuadro no hace nada más (Enter no envía).
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Una tecla del IME (Safari: sin `isComposing`, con `keyCode` 229) es suya, también Enter.
+    const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+    if (composing) return false;
     const enter = event.key === "Enter" && !event.shiftKey;
     if (!open) {
       // El Enter que eligió, sostenido o repetido al instante, no envía el texto sin revisarlo.
@@ -149,12 +152,7 @@ export function useQuickReplies({
       event.preventDefault();
       return true;
     }
-    const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
-    if (composing) return false;
-    if (event.key === "Tab") {
-      setDismissed(true); // Tab sigue moviendo el foco
-      return false;
-    }
+    // Tab no cierra: mueve el foco y el `blur` ya la cierra; al volver con Shift+Tab, reabre.
     if (event.key === "Escape") {
       setDismissed(true);
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
