@@ -46,6 +46,7 @@ Cada work item es un issue con el alcance completo. Este documento solo los orde
 | F6-08a1 | [#860](https://github.com/PapiCuche/crm-gooddoggy/issues/860) Respuestas rápidas: tablas, permiso, siembra de categorías y comandos (sin rutas)                                                                                                           | `feature/f6-quick-replies-api`    | —                      | backend    |
 | F6-08a2 | [#869](https://github.com/PapiCuche/crm-gooddoggy/issues/869) Respuestas rápidas: API de uso desde la conversación (buscar y resolver variables, sin enviar)                                                                                              | `feature/f6-quick-replies-use-api`| #860                   | backend    |
 | F6-08a3 | [#870](https://github.com/PapiCuche/crm-gooddoggy/issues/870) Respuestas rápidas: API de gestión (listar, crear, editar, activar/desactivar, borrar) | `feature/f6-quick-replies-manage-api` | #860 | backend |
+| F6-08a4 | [#871](https://github.com/PapiCuche/crm-gooddoggy/issues/871) Respuestas rápidas: API de gestión de categorías (crear, renombrar, ordenar, desactivar)                                                                                                    | `feature/f6-quick-reply-categories-api`| #860                   | backend    |
 | F6-09   | [#862](https://github.com/PapiCuche/crm-gooddoggy/issues/862) Inbox para atender rápido: «Sin responder», red de origen, avisos de mensajes nuevos y cuentas caídas | `feature/f6-inbox-attention` | — | feature |
 
 ## Historias

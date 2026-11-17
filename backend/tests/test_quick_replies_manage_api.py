@@ -237,8 +237,8 @@ def test_an_active_reply_never_lands_in_an_inactive_category(
     elsewhere = create(world, ana, shortcut="otra", category_id=category(world, "Pagos")).json()
     assert change(ana, asleep["id"], is_active=False).status_code == 200
     delivery = UUID(category(world))
-    with tenant_scope(ctx(world.a, world.ana)) as tenant:
-        qr.update_category(tenant, category_id=delivery, version=1, is_active=False)
+    with tenant_scope(ctx(world.a)):  # sin el comando: desde F6-08a4 no se desactiva con activas
+        QuickReplyCategory.objects.filter(pk=delivery).update(is_active=False)
     before = stored(migrator)
     for refused, field in (
         (create(world, ana, shortcut="nueva"), "category_id"),
