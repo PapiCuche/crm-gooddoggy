@@ -9,9 +9,11 @@ homónimos, ADR-028): el segundo proceso espera, encuentra el del primero y lo r
 fusiona. El nombre del perfil no se usa para buscar. Nada de aquí registra un teléfono ni un texto.
 
 Un texto (ya saneado) que es exactamente una palabra de baja o de alta de la organización
-(`contacts.keywords`, F7-08b) revoca lo proactivo de WhatsApp o levanta una baja de palabra, con el
-mensaje como evidencia, y si cambió algo encola una confirmación fija: en la transacción del mensaje
-y solo la primera vez que llega. Una imagen, un audio, un video o un sticker con un id válido
+(`contacts.keywords`, F7-08b) revoca lo proactivo del canal de la cuenta (`policy.CONSENT_CHANNELS`)
+o levanta una baja de palabra, con el mensaje como evidencia, y si cambió algo encola una
+confirmación fija con el nombre del canal: en la transacción del mensaje y solo la primera vez que
+llega. Vale igual en Instagram y Messenger (F7b-05b, ADR-035 §5); en `standby` la baja queda, pero
+no se responde. Una imagen, un audio, un video o un sticker con un id válido
 (`media.found`) es un mensaje de su tipo (F7-09a2b; el sticker, `IMAGE`) con la frase fija como
 cuerpo, y su adjunto nace con él en `record_inbound` (un webhook repetido no lo vuelve a crear); sin
 id válido sigue siendo `UNSUPPORTED`.
@@ -40,7 +42,7 @@ from apps.contacts import keywords
 from apps.contacts.commands import create_contact
 from apps.contacts.consents import lift_keyword_stop, revoke_consent
 from apps.contacts.models import ConsentSource, Contact
-from apps.conversations import commands, media
+from apps.conversations import commands, media, policy
 from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
@@ -73,11 +75,16 @@ SOCIAL_LABELS = {  # `attachments[].type` de Instagram y Messenger [S7] [S18]
     "story_mention": "Te mencionó en una historia", "fallback": "Enlace compartido",
 }  # fmt: skip
 STORY_REPLY = "Respondió a tu historia"
-CONFIRMATIONS = {  # D-F7-05: texto fijo en español (a confirmar por el propietario)
-    keywords.OPT_OUT: "Listo: ya no te enviaremos mensajes por iniciativa nuestra por WhatsApp. "
-    "Si nos escribes, te seguiremos respondiendo.",
-    keywords.OPT_IN: "Listo: volverás a recibir nuestros mensajes por WhatsApp.",
-}
+CONFIRMATIONS = {  # D-F7-05: texto fijo en español (a confirmar por el propietario), por canal
+    platform: {
+        keywords.OPT_OUT: f"Listo: ya no te enviaremos mensajes por iniciativa nuestra por {name}. "
+        "Si nos escribes, te seguiremos respondiendo.",
+        keywords.OPT_IN: f"Listo: volverás a recibir nuestros mensajes por {name}.",
+    }
+    for platform, name in (
+        ("WHATSAPP", "WhatsApp"), ("MESSENGER", "Messenger"), ("INSTAGRAM", "Instagram")
+    )
+}  # fmt: skip
 
 
 class Throttled(Exception):  # noqa: N818 — el tope de contactos nuevos por minuto
@@ -243,25 +250,30 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
         attachment=attachment,
     )  # fmt: skip
     if created and message_type == MessageType.TEXT:
-        _keyword(ctx, contact.pk, saved)
+        _keyword(ctx, contact.pk, saved, account.platform, saved.body)
     return None
 
 
-def _keyword(ctx: TenantContext, contact_id: Any, saved: Message) -> None:
-    """La baja o el alta, si el texto entero es una palabra; solo un cambio real confirma."""
-    action = keywords.action_for(ctx, saved.body)
+def _keyword(
+    ctx: TenantContext, contact_id: Any, saved: Message, platform: str, said: str,
+    *, confirm: bool = True,
+) -> None:  # fmt: skip
+    """La baja o el alta del canal de la cuenta, si el texto del cliente (`said`) es entero una
+    palabra; solo un cambio real confirma, y solo con `confirm` (un hilo en `standby` no)."""
+    action = keywords.action_for(ctx, said)
     if action is None:
         return
-    where = {"contact_id": contact_id, "channel": "WHATSAPP", "purpose": "ALL_PROACTIVE"}
+    channel = policy.CONSENT_CHANNELS[platform]  # la misma con la que la política la consulta
+    where = {"contact_id": contact_id, "channel": channel, "purpose": "ALL_PROACTIVE"}
     proof = {"message_id": str(saved.pk)}
     if action == keywords.OPT_OUT:
         _, changed = revoke_consent(ctx, **where, source=ConsentSource.KEYWORD_STOP, evidence=proof)
     else:  # solo levanta una baja hecha con una palabra; si no, ni evento ni confirmación
         changed = lift_keyword_stop(ctx, **where, evidence=proof)
     logger.info("meta.webhook.consent_keyword", action=action, changed=changed)  # sin quién
-    if changed:
+    if changed and confirm:  # la política la niega fuera de la ventana: nunca con etiqueta
         commands.queue_confirmation(
-            ctx, conversation_id=saved.conversation_id, body=CONFIRMATIONS[action]
+            ctx, conversation_id=saved.conversation_id, body=CONFIRMATIONS[platform][action]
         )
 
 
@@ -334,11 +346,15 @@ def receive_social(
         return "DELETED"
     body, message_type = _social_body(message)
     identity = _identity(ctx, account, event["sender"]["id"])
-    commands.record_inbound(
+    saved, created = commands.record_inbound(
         ctx, contact_id=identity.contact_id, channel_account_id=account.pk,
         external_message_id=message["mid"], body=body, message_type=message_type,
         provider_at=instant_ms(event.get("timestamp")), contact_identity_id=identity.pk,
     )  # fmt: skip
-    if event.get("standby") is True:  # otra app controla el hilo: se registra, nunca se responde
+    standby = event.get("standby") is True
+    if standby:  # otra app controla el hilo: se registra, nunca se responde
         logger.info("meta.webhook.standby", channel_account_id=str(account.pk))
+    if created and message_type == MessageType.TEXT:  # el texto del cliente, sin la frase fija
+        said = clean_text(message["text"])  # de la respuesta a una historia
+        _keyword(ctx, identity.contact_id, saved, account.platform, said, confirm=not standby)
     return None
