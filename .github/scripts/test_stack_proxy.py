@@ -239,6 +239,22 @@ class StackAntivirus(unittest.TestCase):
         self.assertRegex(command, r'"TCP-LISTEN:3310,[^"]*", "TCP:clamd:3310"\]$')  # solo a clamd
         self.assertNotIn("ports:", relay)
 
+    def test_the_graph_simulator_lives_only_in_the_development_stack(self):
+        """ADR-041: el servicio y su variable, solo en el compose de desarrollo y tras un perfil;
+        el simulador se monta desde `tests/`, que ninguna imagen copia."""
+        for path in ("infra/prod/compose.yaml", "infra/prod/Caddyfile", "backend/Dockerfile"):
+            text = (ROOT / path).read_text()
+            for needle in ("meta-sim", "meta_sim", "META_GRAPH_SIMULATOR_URL", "tests"):
+                self.assertNotIn(needle, text, f"{needle} en {path}")
+        self.assertIn("tests/", (ROOT / "backend/.dockerignore").read_text().split())
+        sim = COMPOSE[COMPOSE.index("  meta-sim:") : COMPOSE.index("  mailpit:")]
+        self.assertIn("profiles: [meta-sim]", sim)
+        self.assertIn("../../backend/tests/meta_sim:/sim/tests/meta_sim:ro", sim)
+        runtime = COMPOSE[COMPOSE.index("x-runtime:") : COMPOSE.index("services:")]
+        self.assertIn("DJANGO_SETTINGS_MODULE: config.settings.local", runtime)
+        self.assertEqual(re.findall(r"META_GRAPH_SIMULATOR_URL: (\S+)", COMPOSE),
+                         ["${META_GRAPH_SIMULATOR_URL:-}"])  # solo el runtime local, vacía
+
 
 if __name__ == "__main__":
     unittest.main()

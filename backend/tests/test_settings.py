@@ -36,6 +36,7 @@ BASE_ENV: dict[str, str | None] = {
     "META_APP_SECRETS": None,
     "META_WEBHOOK_VERIFY_TOKEN": None,
     "MFA_ENFORCEMENT": None,
+    "META_GRAPH_SIMULATOR_URL": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
@@ -53,7 +54,7 @@ def forget_loaded_settings() -> Iterator[None]:
     """Cada carga deja `base` en `sys.modules` con las variables de su caso (el canal de Meta
     encendido, por ejemplo): quien importe `local` o `test` después heredaría ese estado."""
     yield
-    for name in ("production", "local", "migrate", "base"):
+    for name in ("production", "local", "migrate", "test", "base"):
         sys.modules.pop(f"config.settings.{name}", None)
 
 
@@ -511,3 +512,54 @@ def test_the_whatsapp_channel_on_needs_a_send_limit_and_a_broker_for_it(
 
     with pytest.raises(ImproperlyConfigured, match="CHANNEL_SEND_LIMIT"):
         env.check_meta([META_SECRET], META_VERIFY, "v23.0", (5, 600), send, broker)
+
+
+SIMULATOR = "http://meta-sim:8090"
+MIGRATE_ENV: dict[str, str | None] = {
+    "DATABASE_URL": None, "DATABASE_MIGRATOR_URL": "postgres://crm_migrator:x@db:5432/crm",
+    "DJANGO_SECRET_KEY": None,
+}  # fmt: skip
+
+
+def load_test(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> Any:
+    for key, value in env.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    for name in ("config.settings.test", "config.settings.base"):
+        sys.modules.pop(name, None)
+    return importlib.import_module("config.settings.test")
+
+
+@pytest.mark.parametrize("value", [SIMULATOR, ""])
+@pytest.mark.parametrize(
+    "loader",
+    [load_production, lambda m, **e: load_migrate(m, **MIGRATE_ENV, **e), load_test],
+    ids=["production", "migrate", "test"],
+)
+def test_only_the_local_settings_start_with_the_graph_simulator(
+    monkeypatch: pytest.MonkeyPatch, loader: Callable[..., Any], value: str
+) -> None:
+    """ADR-041: production, el job de migraciones y las pruebas no arrancan con la variable puesta,
+    aunque venga vacía; sin ella, su valor es vacío (`core.http` no la usa)."""
+    with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL") as raised:
+        loader(monkeypatch, META_GRAPH_SIMULATOR_URL=value)
+    assert SIMULATOR not in str(raised.value)
+    assert loader(monkeypatch, META_GRAPH_SIMULATOR_URL=None).META_GRAPH_SIMULATOR_URL == ""
+    assert load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value).META_GRAPH_SIMULATOR_URL == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://meta-sim:8090", "http://meta-sim", "http://meta-sim:8090/", "http://meta-sim:0",
+        "http://meta-sim:8090/v23.0", "http://user:pw@meta-sim:8090", "http://META-SIM:8090",
+        "http://meta-sim:8090?x=1", "http://meta-sim:99999", "ftp://meta-sim:8090",
+    ],
+)  # fmt: skip
+def test_the_local_settings_refuse_a_simulator_that_is_not_a_bare_http_origin(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL"):
+        load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value)

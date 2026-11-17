@@ -21,6 +21,9 @@ _ORIGIN = re.compile(
 )
 # `versión:clave`. 43 caracteres de base64 para URL son 32 bytes; el relleno `=` es opcional.
 _KEY = re.compile(r"([1-9][0-9]{0,4}):([A-Za-z0-9_-]{43})=?")
+# ADR-041: variables que solo aceptan los settings `local`, y la forma del simulador de Graph.
+LOCAL_ONLY = ("META_GRAPH_SIMULATOR_URL",)
+_SIMULATOR = re.compile(r"http://[a-z0-9][a-z0-9.-]{0,252}:([1-9][0-9]{0,4})")
 
 
 def required(name: str) -> str:
@@ -91,6 +94,24 @@ def origin(name: str) -> str:
         valid = False
     if not valid:  # solo se nombra la variable: el valor puede llevar credenciales
         raise ImproperlyConfigured(f"{name} debe ser un origen http(s) sin ruta ni credenciales")
+    return value
+
+
+def refuse_local_only() -> None:
+    """ADR-041: production, migrate y test no arrancan con una variable de `LOCAL_ONLY`, aunque
+    venga vacía. Solo se nombra la variable."""
+    found = [name for name in LOCAL_ONLY if name in os.environ]
+    if found:
+        raise ImproperlyConfigured("Variables solo del stack local: " + ", ".join(found))
+
+
+def simulator(name: str) -> str:
+    """ADR-041: el origen del simulador local, `http://<host>:<puerto>` en minúsculas y sin ruta,
+    consulta ni credenciales; o vacío."""
+    value = os.environ.get(name, "").strip()
+    found = _SIMULATOR.fullmatch(value)
+    if value and not (found and int(found.group(1)) <= 65535):
+        raise ImproperlyConfigured(f"{name} debe ser http://<host>:<puerto>, sin ruta")
     return value
 
 
