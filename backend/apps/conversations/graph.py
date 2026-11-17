@@ -34,6 +34,10 @@ class GraphRejected(Exception):
     """Meta no aceptó el token para ese WABA o ese número (o no existen)."""
 
 
+class TokenRejected(GraphRejected):
+    """Meta rechazó el token mismo (`190`), no el objeto pedido."""
+
+
 class GraphUnavailable(Exception):
     """No se pudo preguntar a Meta ahora (red, tiempo agotado o error suyo): vale reintentar."""
 
@@ -91,21 +95,23 @@ def phone_number(token: str, waba_id: str, phone_number_id: str) -> dict[str, An
     }
 
 
-def _ask(method: str, path: str, token: str) -> dict[str, Any]:
+def _ask(method: str, path: str, token: str, *, retry: bool = True) -> dict[str, Any]:
     """Una llamada a la Graph API con los mismos criterios que `phone_number`: `GraphRejected` si
-    Meta rechaza el token o el objeto, `GraphUnavailable` si no se pudo saber."""
+    Meta rechaza el token o el objeto (`TokenRejected` si es el token), `GraphUnavailable` si no
+    se pudo saber. `retry=False` deja los reintentos a quien llama (`core.http`)."""
     if not settings.META_ENABLED:
         raise ChannelNotEnabled
     url = f"https://{settings.META_GRAPH_HOST}/{settings.META_GRAPH_VERSION}/{path}"
     try:
-        reply = http.request(method, url, headers={"Authorization": f"Bearer {token}"})
+        auth = {"Authorization": f"Bearer {token}"}
+        reply = http.request(method, url, headers=auth, retry=retry)
         status, raw = reply.status, reply.data
     except http.BlockedDestination, http.HTTPError, OSError:
         raise GraphUnavailable from None
     if status == 429 or _code(raw) in THROTTLED:
         raise GraphUnavailable
     if status in (400, 401, 403, 404):
-        raise GraphRejected
+        raise TokenRejected if _code(raw) == 190 else GraphRejected
     if status != 200 or len(raw) > BODY_MAX:
         raise GraphUnavailable
     try:
@@ -141,3 +147,13 @@ def subscribe(token: str, page_id: str) -> None:
     found = _ask("POST", f"{page_id}/subscribed_apps?subscribed_fields={SUBSCRIBED_FIELDS}", token)
     if found.get("success") is not True:
         raise GraphUnavailable
+
+
+def profile(token: str, customer: str) -> dict[str, Any]:
+    """`name` y `username` del cliente de Instagram `customer` (su IGSID) con el token de la página
+    (User Profile API, ADR-035 [S9]; D-F7b-06). Son datos que escribe el cliente: se devuelven tal
+    cual llegan y quien los guarde los sanea. Sin reintentos de `core.http`: los acota la tarea."""
+    if not re.fullmatch(META_ID, customer):
+        raise ValueError("identificador de Meta no válido")
+    found = _ask("GET", f"{customer}?fields=name,username", token, retry=False)
+    return {"name": found.get("name"), "username": found.get("username")}

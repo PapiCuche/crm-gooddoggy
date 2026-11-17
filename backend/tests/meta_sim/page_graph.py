@@ -1,6 +1,7 @@
 """La Graph API falsa de una página de Facebook: Messenger e Instagram con Facebook Login (ADR-035
 §2, §3, §6 y §9). Sirve `GET /<PAGE_ID>`, `POST /<PAGE_ID>/subscribed_apps` y
-`POST /<PAGE_ID>/messages` [S17] [S20], con la misma `GRAPH_VERSION` que WhatsApp (§6, D-F7-08).
+`POST /<PAGE_ID>/messages` [S17] [S20], y el perfil `GET /<IGSID>?fields=name,username` de la User
+Profile API [S9] (F7b-04c), con la misma `GRAPH_VERSION` que WhatsApp (§6, D-F7-08).
 
 Los códigos y subcódigos son los de ADR-035 §6 [S26] y se reconfirman en F7b-05. Las fuentes no
 dan el estado HTTP de cada uno: el token sale con 401 y con 400 (la API de páginas suele mandar
@@ -18,7 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from tests.meta_sim import GRAPH_VERSION
 from tests.meta_sim.graph import LOST, TEST_TOKEN, Cut, Response, Timeout
-from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
+from tests.meta_sim.social import IG_ACCOUNT_ID, IGSID, PAGE_ID
 
 # nombre -> (estado HTTP, código de Meta, subcódigo, título, código propio de ADR-035 §6)
 ERRORS: dict[str, tuple[int, int, int | None, str, str]] = {
@@ -45,12 +46,15 @@ TAGS = ("HUMAN_AGENT",)  # las demás dan `100` desde el 27-04-2026 [S20]
 # Un 200 que no dice con qué id lo aceptó (sin `message_id`, o uno que no es un id): Meta lo envió.
 NO_MID = {"no_mid": None, "bad_mid": "m_ con espacio"}
 OUTCOMES = ("ok", "slow", "cut", "timeout", *LOST, *NO_MID, *ERRORS)
+PROFILE_FIELDS = ("name", "username")  # los que lee D-F7b-06 de los que da [S9]
 
 
 @dataclass
 class FakePageGraph:
     """`pages` va de cada página a la cuenta de Instagram vinculada (o `None`). `script` fija el
-    resultado de los próximos envíos, uno por llamada; sin script, el envío sale bien."""
+    resultado de los próximos envíos y lecturas de perfil, uno por llamada; sin script, salen bien.
+    `profiles` va de cada IGSID a lo que su perfil devuelve (cualquier valor, para probar el
+    saneado); un IGSID que no está da el `100` «no existe»."""
 
     token: str = TEST_TOKEN
     pages: dict[str, str | None] = field(default_factory=lambda: {PAGE_ID: IG_ACCOUNT_ID})
@@ -59,6 +63,9 @@ class FakePageGraph:
     sent: list[dict[str, Any]] = field(default_factory=list)  # lo que "se envió" a clientes
     subscribed: dict[str, list[str]] = field(default_factory=dict)  # página -> campos
     calls: list[dict[str, Any]] = field(default_factory=list)  # método, ruta y query
+    profiles: dict[str, dict[str, Any]] = field(
+        default_factory=lambda: {IGSID: {"name": "Cliente Simulado", "username": "cliente.sim"}}
+    )
 
     def then(self, *outcomes: str) -> FakePageGraph:
         unknown = set(outcomes) - set(OUTCOMES)
@@ -93,6 +100,8 @@ class FakePageGraph:
                 return self._ok({"success": True})
             case ("POST", [page, "messages"]) if page in self.pages:
                 return self._send(page, body)
+            case ("GET", [user]) if user in self.profiles:
+                return self._profile(user, ",".join(query.get("fields", [])).split(","))
         return self._error("invalid", "Unsupported request. Object does not exist")
 
     def _send(self, page: str, body: bytes | None) -> Response:
@@ -123,6 +132,17 @@ class FakePageGraph:
             reply = {"recipient_id": sent["recipient"]["id"], "message_id": NO_MID[outcome]}
             return self._ok({k: v for k, v in reply.items() if v is not None})
         return self._ok({"recipient_id": sent["recipient"]["id"], "message_id": mid})
+
+    def _profile(self, user: str, fields: list[str]) -> Response:
+        outcome = self.script.popleft() if self.script else "ok"
+        if outcome in ("cut", *LOST):
+            raise Cut
+        if outcome == "timeout":
+            raise Timeout
+        if outcome in ERRORS:
+            return self._error(outcome)
+        found = self.profiles[user]
+        return self._ok({k: found[k] for k in PROFILE_FIELDS if k in fields and k in found})
 
     @staticmethod
     def _ok(payload: dict[str, Any]) -> Response:

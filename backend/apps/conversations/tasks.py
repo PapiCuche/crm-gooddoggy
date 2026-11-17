@@ -7,6 +7,7 @@ se quedan.
 pasajero (seguro que no llegó) devuelve el reclamo y reintenta con espera creciente; al agotarse
 queda `FAILED` (`RETRIES_EXHAUSTED`). Un resultado ambiguo no se reenvía: sigue `SENDING`. Ningún
 registro lleva el texto. `publish_realtime` (F6-07a): tipo e ids al WebSocket del Inbox.
+`fetch_profile` (F7b-04c): el nombre del cliente de Instagram tras su primer mensaje.
 """
 
 import datetime as dt
@@ -29,6 +30,7 @@ from apps.conversations import (
     ingest_alerts,
     ingress,
     media,
+    profiles,
     realtime,
     scan,
 )
@@ -60,6 +62,8 @@ REQUEUE_WAIT = 120  # segundos: lo que el barredor de la cola deja pasar antes d
 MEDIA_GIVE_UP = 3  # fallos inesperados seguidos de `fetch_media` antes de dejarlo al barredor
 MEDIA_SWEEP_BATCH = 100  # adjuntos varados por organización y pasada
 MEDIA_SWEEP_SECONDS = 50.0  # lo máximo que una pasada del barredor de medios ocupa un worker
+PROFILE_RETRIES = 3  # reintentos de la lectura del perfil de Instagram si Meta no contesta
+PROFILE_QUIET = ("OK", "KEPT", "SKIPPED")  # lo demás alerta (sin el token ni el perfil)
 
 
 def deliver(
@@ -245,6 +249,65 @@ def sweep_media(batch_size: int = MEDIA_SWEEP_BATCH) -> dict[str, int]:
             done["failed"] += 1
     logger.info("media.swept", **done)
     return dict(done)
+
+
+@subscribe("contact_identity.created")
+@tenant_task(name="conversations.profile_event", bind=True, ignore_result=True, acks_late=True)
+def profile_event(task: Any, event_id: str) -> None:
+    """Handler del outbox: encola la lectura del nombre del cliente de Instagram (D-F7b-06)."""
+    event = OutboxEvent.objects.filter(id=event_id, event_type="contact_identity.created").first()
+    if event is not None:
+        ids = {
+            "identity_id": str(event.aggregate_id),
+            "organization_id": str(require().organization_id),
+        }
+        fetch_profile.apply_async(kwargs=ids)
+
+
+def read_profile(organization_id: UUID, identity_id: UUID) -> str:
+    """Lee `name` y `username` del cliente con el token de la página **sin transacción** (abierto
+    solo durante la llamada) y los aplica en otro scope (`profiles.apply_profile`). Todo dentro del
+    scope de `organization_id`: una identidad de otra organización no existe. Un rechazo no cambia
+    nada (la cuenta en `ERROR` por un `190` llega con el adaptador, F7b-05) y alerta.
+    `GraphUnavailable` si vale reintentar."""
+    ctx = TenantContext(organization_id, "celery")
+    with tenant_scope(ctx):
+        target = profiles.profile_target(ctx, identity_id=identity_id)
+    if target is None:
+        return "SKIPPED"
+    customer, credential = target
+    try:
+        token = credentials.open_token(credential)
+        try:
+            found = graph.profile(token, customer)
+        finally:
+            del token
+    except sealed.SealError:
+        return "UNREADABLE"
+    except graph.TokenRejected:
+        return "TOKEN_INVALID"
+    except graph.GraphRejected:  # el cliente ya no existe o no se deja leer: queda el nombre fijo
+        return "REJECTED"
+    except graph.ChannelNotEnabled, ValueError:
+        return "SKIPPED"
+    with tenant_scope(ctx):
+        return profiles.apply_profile(ctx, identity_id=identity_id, profile=found)
+
+
+@platform_task(name="conversations.fetch_profile", bind=True, ignore_result=True, acks_late=True)
+def fetch_profile(task: Any, identity_id: str, organization_id: str) -> None:
+    """`read_profile` con `PROFILE_RETRIES` reintentos acotados si Meta no contesta (límite de
+    tasa, 5xx, red). Registra ids y el resultado; nunca el token, el IGSID ni el perfil."""
+    try:
+        outcome = read_profile(UUID(organization_id), UUID(identity_id))
+    except graph.GraphUnavailable:
+        retries = task.request.retries
+        if retries < PROFILE_RETRIES:
+            countdown = min(BACKOFF_SECONDS * 2**retries, BACKOFF_MAX)
+            raise task.retry(countdown=countdown, max_retries=PROFILE_RETRIES) from None
+        outcome = "UNAVAILABLE"
+    log = logger.info if outcome in PROFILE_QUIET else logger.error
+    log("contact.profile", contact_identity_id=identity_id, outcome=outcome)
 
 
 @platform_task(name="conversations.dispatch_message", bind=True, ignore_result=True, acks_late=True)
