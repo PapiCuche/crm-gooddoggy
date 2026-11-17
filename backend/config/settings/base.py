@@ -104,8 +104,9 @@ MFA_CODE_THROTTLE = (10, 24 * 60 * 60)
 # Rutas de cuentas de WhatsApp (F7-02e): peticiones de una persona por ventana (segundos); conectar
 # y rotar preguntan a Meta en cada una. Pendiente de confirmación del PO.
 CHANNEL_CHECK_THROTTLE = (5, 10 * 60)
-# Rutas de cuentas del proveedor de IA (F8-03d): peticiones de una persona por ventana (segundos),
-# compartidas por las cinco rutas; la prueba de conexión llama al proveedor. Pendiente del PO.
+# Rutas de cuentas del proveedor de IA (F8-03d): escrituras (POST y DELETE: guardar, rotar, borrar
+# y probar) de una persona por ventana (segundos); la prueba de conexión llama al proveedor. GET y
+# HEAD no cuentan. Confirmado por el propietario el 2026-11-17 (F8-03e, #767).
 AI_ACCOUNT_THROTTLE = (10, 10 * 60)
 # Subidas de medios (F7-09b2): peticiones de una persona por ventana (< su calma). Pendiente del PO.
 MEDIA_UPLOAD_THROTTLE = (30, 10 * 60)
