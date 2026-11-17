@@ -34,7 +34,9 @@ CUSTOMER_REPLY = "CUSTOMER_REPLY"
 # Para qué se escribe (ADR-010 §2) → el propósito de consentimiento que lo cubre. Los demás llegan
 # con quien los envíe (F7-10, automatizaciones): uno desconocido es un `ValueError`.
 PURPOSES = {CUSTOMER_REPLY: "ALL_PROACTIVE", "FOLLOW_UP": "FOLLOW_UP"}
-CONSENT_CHANNELS = {"WHATSAPP": "WHATSAPP"}  # plataforma → canal del consentimiento (otra: ANY)
+CONSENT_CHANNELS = {  # plataforma → canal del consentimiento (otra: ANY); F7b-05b, ADR-035 §5
+    "WHATSAPP": "WHATSAPP", "MESSENGER": "MESSENGER", "INSTAGRAM": "INSTAGRAM",
+}  # fmt: skip
 
 
 class ConversationClosed(Exception):
