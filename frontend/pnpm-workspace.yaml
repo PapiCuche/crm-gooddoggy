@@ -10,7 +10,8 @@ minimumReleaseAgeStrict: true # sin excepciones (las de Next 16.3.8 se retiraron
 # Overrides para dependencias transitivas cuyo paquete padre aún no pide la versión corregida.
 # Se aplican a todo el árbol (producción incluida), no solo a desarrollo; hoy estos paquetes
 # solo llegan por herramientas de desarrollo. Cada valor es la versión parcheada más baja
-# (ADR-012 §4.5 y §4.6). Se retira cada uno cuando su padre pida la versión corregida.
+# (ADR-012 §4.5; revisados en SEC-DEV-02, #894). Se retira cada uno cuando su padre pida la
+# versión corregida.
 overrides:
   # vía orval > @scalar/json-magic, que fija undici exacto (0.15.x llega a 7.29.1; orval pide
   # ^0.15.0). 7.30.1 corrige GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx,
