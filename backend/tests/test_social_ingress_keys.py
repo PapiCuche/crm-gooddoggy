@@ -30,6 +30,8 @@ from tests.test_social_outbound import graph, send, talk
 from tests.test_social_schema import account
 from tests.test_whatsapp_outbound import redis
 
+OTHER_PAGE = "100000000000998"  # la página de la otra cuenta de Instagram
+
 __all__ = ["channel", "graph", "redis", "world", "writer"]  # los fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
@@ -128,7 +130,8 @@ def test_two_accounts_that_write_to_each_other_both_process_the_same_mid(
     graph.then("timeout_after")  # el envío de A salió y su respuesta se perdió: solo el eco
     message, _ = send(world, talk(world, platform))  # la reconcilia con su `mid`
     owner = world.a if same_org else world.b
-    other = account(owner, platform, OTHER_ACCOUNT_ID)  # B, la cuenta que recibe a A
+    page = OTHER_PAGE if platform == "INSTAGRAM" else None  # cada cuenta, su página (F7b-06e)
+    other = account(owner, platform, OTHER_ACCOUNT_ID, external_parent_id=page)  # la que recibe
     echo = social.signed(net, graph.echo(net))  # en la cuenta de A
     received = social.text(net, "Respuesta", mid="m_SIMOUT000001", account=OTHER_ACCOUNT_ID)
     arrived = social.signed(net, received, entry_id=OTHER_ACCOUNT_ID)  # en la de B

@@ -235,7 +235,7 @@ def test_a_190_on_the_profile_read_puts_the_account_in_error(
     """F7b-05a (obligación de #778): el `190` de la lectura del perfil deja la cuenta en `ERROR`
     (`TOKEN_INVALID`), como el del envío; la otra organización no se toca."""
     assert account_state(crm.a, ig)[0] != "ERROR"
-    other = account(crm.b, "INSTAGRAM", "100000000000103")  # otra organización, otra cuenta
+    other = account(crm.b, "INSTAGRAM", "100000000000103", external_parent_id="100000000000998")
     meta.then(script)
     run(crm.a, ig)
     assert account_state(crm.a, ig) == ("ERROR", "TOKEN_INVALID")
