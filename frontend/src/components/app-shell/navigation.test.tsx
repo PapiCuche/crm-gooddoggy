@@ -297,6 +297,19 @@ describe("navegación del shell", () => {
     ]);
   });
 
+  it("«Inteligencia artificial» pide `ai.manage` y va antes de «Auditoría»", async () => {
+    route.pathname = "/o/acme/ia";
+    const view = (code: string) => ({ code, scopes: [] });
+    expect((await links([view("ai.use"), view("audit.view")])).flat()).not.toContain("/o/acme/ia");
+    cleanup();
+    expect(await links([view("audit.view"), view("ai.manage")])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/ia", "page"],
+      ["/o/acme/auditoria", null],
+    ]);
+    expect(document.title).toBe("Inteligencia artificial · Acme SAC · Good Doggy CRM");
+  });
+
   it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
     route.pathname = "/o/acme/precios/listas";
     const without = ["prices.bulk_update", "product_cost.view", "inventory.view"];
