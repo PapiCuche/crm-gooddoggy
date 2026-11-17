@@ -8,8 +8,8 @@ from typing import Any
 from rest_framework import serializers
 
 from apps.conversations import commands, outbound_media
-from apps.conversations.accounts import NUMBER_REFUSED
-from apps.conversations.models import BODY_MAX, META_ID, TOKEN_FORMAT
+from apps.conversations.accounts import ACCOUNT_REFUSED, NUMBER_REFUSED
+from apps.conversations.models import BODY_MAX, META_ID, TOKEN_FORMAT, Platform
 from apps.conversations.text import clean_body
 from core.api.strict import Choice, Closed, Id, Text, Whole
 
@@ -141,3 +141,24 @@ class ConnectSerializer(TokenSerializer):
         help_text="El identificador del número en Meta (`phone_number_id`).",
     )
     waba_id = Pattern(META_ID, "Identificador no válido.", help_text="El WABA al que pertenece.")
+
+
+class SocialConnectSerializer(TokenSerializer):
+    # F7b-06a. La plataforma, de la ruta (`platform` en el contexto). La cuenta que se registra mal
+    # formada da el mismo mensaje que una ya registrada: sin oráculo. Comentario: ver `Closed`.
+    name = Text(max_length=100, help_text="El nombre que le das a la cuenta.")
+    page_id = Pattern(
+        META_ID, ACCOUNT_REFUSED,
+        help_text="La página de Facebook (en Instagram, la vinculada).",
+    )  # fmt: skip
+    instagram_account_id = Pattern(
+        META_ID, ACCOUNT_REFUSED, required=False,
+        help_text="Obligatorio en Instagram y prohibido en Messenger.",
+    )  # fmt: skip
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        instagram = self.context.get("platform") == Platform.INSTAGRAM
+        if instagram != ("instagram_account_id" in attrs):
+            wrong = "Obligatorio en Instagram." if instagram else "Solo en Instagram."
+            raise serializers.ValidationError({"instagram_account_id": [wrong]})
+        return attrs
