@@ -2,8 +2,10 @@
 ADR-010 §2.7). La baja se registra contra el canal de la cuenta y la política la consulta con ese
 mismo canal; la confirmación nombra el canal y sale por la página solo dentro de la ventana (nunca
 con la etiqueta Human Agent); un hilo en `standby` no se responde; un `mid` que no es imprimible se
-descarta en el parser en vez de reintentarse hasta `DEAD`. PostgreSQL real con `crm_app`; el
-simulador firma los webhooks y hace de Graph API."""
+descarta en el parser en vez de reintentarse hasta `DEAD`. F7b-05d: fuera de la ventana una baja
+niega también la respuesta con la etiqueta Human Agent, al encolar y al despachar; una palabra
+entregada tarde no revierte otra posterior. PostgreSQL real con `crm_app`; el simulador firma los
+webhooks y hace de Graph API."""
 
 import datetime as dt
 from types import SimpleNamespace
@@ -22,9 +24,11 @@ from core.tenancy.scope import tenant_scope
 from tests.meta_sim import social
 from tests.meta_sim.page_graph import FakePageGraph
 from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
+from tests.test_consent_stop import spied
 from tests.test_conversation_commands import outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_memberships import ctx
+from tests.test_messaging_policy import HOUR, NOW, decide
 from tests.test_meta_webhook import channel, post
 from tests.test_social_outbound import CHANNELS, graph, talk
 from tests.test_whatsapp_outbound import redis
@@ -202,3 +206,111 @@ def test_a_mid_that_is_not_printable_is_refused_by_the_parser_and_never_retried(
     assert ingress.process() == {"PROCESSED": 1}
     with tenant_scope(ctx(world.a)):
         assert Conversation.objects.count() == 1
+
+
+def revoke(world: SimpleNamespace, channel: str) -> None:
+    with tenant_scope(ctx(world.a)) as tenant:
+        revoke_consent(
+            tenant, contact_id=world.contact_a.pk, channel=channel, purpose="ALL_PROACTIVE",
+            source="KEYWORD_STOP",
+        )  # fmt: skip
+
+
+def test_outside_the_window_a_revocation_denies_the_tag_and_inside_nothing_changes() -> None:
+    late, approved = NOW - 30 * HOUR, {"sender": "USER", "human_agent_approved": True}
+    for platform in PLATFORMS:
+        denied = decide(platform=platform, last_inbound_at=late, revoked=True, **approved)
+        assert (denied.allowed, denied.reason, denied.mode) == (False, "CONSENT_REVOKED", "BLOCKED")
+        tagged = decide(platform=platform, last_inbound_at=late, revoked=False, **approved)
+        assert tagged.mode == "HUMAN_AGENT_TAG"
+        inside = decide(platform=platform, last_inbound_at=NOW - HOUR, revoked=True, **approved)
+        assert (inside.allowed, inside.mode) == (True, "FREE_FORM")  # la regla 7 de ADR-010
+    whatsapp = decide(platform="WHATSAPP", last_inbound_at=late, revoked=True, **approved)
+    assert whatsapp.reason == "WINDOW_CLOSED"  # sin etiqueta: lo mismo que antes
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+@pytest.mark.parametrize("revoked", ["SAME", "ANY"])
+def test_a_revocation_blocks_a_tagged_reply_when_queued_and_when_dispatched(
+    world: SimpleNamespace, graph: FakePageGraph, settings: Any, platform: str, revoked: str
+) -> None:
+    settings.META_HUMAN_AGENT_APPROVED = True
+    convo = talk(world, platform, ago=30)
+    waiting, _ = outbound(world, convo)  # encolada con la etiqueta, antes de la baja
+    assert waiting.policy_decision["mode"] == "HUMAN_AGENT_TAG"
+    revoke(world, platform if revoked == "SAME" else "ANY")
+    with pytest.raises(policy.ConsentRevoked):  # al encolar
+        outbound(world, convo)
+    tasks.deliver(Retrying(0), world.a, waiting.pk)  # al despachar, con la baja ya registrada
+    saved = state(world, waiting)
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "CONSENT_REVOKED")
+    assert graph.sent == []
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_revocation_of_another_channel_keeps_the_tag_and_inside_the_window_the_reply_goes(
+    world: SimpleNamespace, graph: FakePageGraph, settings: Any, platform: str
+) -> None:
+    settings.META_HUMAN_AGENT_APPROVED = True
+    revoke(world, "WHATSAPP")
+    convo = talk(world, platform, ago=30)
+    message, _ = outbound(world, convo)
+    tasks.deliver(Retrying(0), world.a, message.pk)
+    assert state(world, message).delivery_status == "SENT"
+    assert graph.sent[0]["tag"] == "HUMAN_AGENT"
+    revoke(world, platform)
+    with tenant_scope(ctx(world.a)):  # el cliente vuelve a escribir: dentro, la respuesta sale
+        Conversation.objects.filter(pk=convo.pk).update(last_inbound_at=timezone.now() - HOUR)
+    inside, _ = outbound(world, convo)
+    tasks.deliver(Retrying(0), world.a, inside.pk)
+    assert state(world, inside).delivery_status == "SENT"
+    assert (graph.sent[1]["messaging_type"], "tag" in graph.sent[1]) == ("RESPONSE", False)
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_an_alta_delivered_after_a_later_baja_leaves_the_customer_out(
+    world: SimpleNamespace, platform: str
+) -> None:
+    talk(world, platform)
+    say(platform, event(platform, "BAJA", "m_SIMIN000001", ago=dt.timedelta(seconds=60)))
+    later = event(platform, "BAJA", "m_SIMIN000003", ago=dt.timedelta(seconds=10))
+    earlier = event(platform, "ALTA", "m_SIMIN000002", ago=dt.timedelta(seconds=20))
+    say(platform, later)  # Meta entrega al revés: la baja de después llega primero
+    say(platform, earlier)
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert [r.body for r in found.replies] == [inbound.CONFIRMATIONS[platform][STOP]]
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_baja_delivered_after_a_later_alta_does_not_revert_it(
+    world: SimpleNamespace, platform: str
+) -> None:
+    talk(world, platform)
+    say(platform, event(platform, "BAJA", "m_SIMIN000001", ago=dt.timedelta(seconds=60)))
+    later = event(platform, "ALTA", "m_SIMIN000003", ago=dt.timedelta(seconds=10))
+    earlier = event(platform, "BAJA", "m_SIMIN000002", ago=dt.timedelta(seconds=20))
+    say(platform, later)
+    say(platform, earlier)
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert len(found.replies) == 2  # la baja vieja no confirma nada
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_reply_reads_the_consent_only_when_it_would_go_out_with_the_tag(
+    world: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, platform: str
+) -> None:
+    calls = spied(monkeypatch)
+    settings.META_HUMAN_AGENT_APPROVED = True
+    convo = talk(world, platform)
+    outbound(world, convo)  # dentro de la ventana la baja no cambia nada: ni se consulta
+    assert calls == []
+    with tenant_scope(ctx(world.a)):
+        Conversation.objects.filter(pk=convo.pk).update(last_inbound_at=timezone.now() - 30 * HOUR)
+    assert outbound(world, convo)[0].policy_decision["mode"] == "HUMAN_AGENT_TAG"
+    assert len(calls) == 1
+    settings.META_HUMAN_AGENT_APPROVED = False
+    with pytest.raises(policy.WindowClosed):
+        outbound(world, convo)
+    assert len(calls) == 1

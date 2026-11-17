@@ -66,6 +66,7 @@ const REFRESH_ON = [
   "CHANNEL_UNAVAILABLE",
   "CONTACT_BLOCKED",
   "WINDOW_CLOSED",
+  "CONSENT_REVOKED", // fuera de la ventana, la etiqueta Human Agent y una baja (F7b-05d)
 ];
 type Pages = InfiniteData<PaginatedMessageList, string>;
 
