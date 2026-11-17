@@ -198,7 +198,8 @@ def test_a_mid_that_is_not_printable_is_refused_by_the_parser_and_never_retried(
     assert post(social.signed(SIM[platform], bad, good)).status_code == 200
     prefix = "fb" if platform == "MESSENGER" else "ig"
     keys = migrator.execute("SELECT event_key FROM webhook_ingress").fetchall()
-    assert keys == [(f"{prefix}:msg:m_SIMIN000002",)]  # el raro, ni guardado ni reintentado
+    where = SIM[platform].account  # la clave lleva la cuenta (F7b-04d)
+    assert keys == [(f"{prefix}:msg:{where}:m_SIMIN000002",)]  # el raro, ni guardado ni reintentado
     assert ingress.process() == {"PROCESSED": 1}
     with tenant_scope(ctx(world.a)):
         assert Conversation.objects.count() == 1
