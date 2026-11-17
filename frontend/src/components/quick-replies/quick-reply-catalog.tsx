@@ -23,12 +23,12 @@ import { type Ctx, Editor, ReplyForm } from "./quick-reply-form";
 type Data = [ManagedQuickReplyCategory[], QuickReply[]];
 type Said = { text: string; alert?: boolean } | null;
 const BOX = "border-border bg-surface rounded-lg border";
+const OFF = "border-border text-muted rounded-full border px-2 py-0.5 text-xs font-normal";
 const page = (cursor?: string) => ({ limit: 200, ...(cursor ? { cursor } : {}) });
 
-// Las respuestas rápidas y sus categorías (F6-08c): `GET …/quick-replies/` y
-// `…/quick-reply-categories/` (F6-08a3/a4), enteras, activas o no, agrupadas por categoría en su
-// orden. Todo pide `quick_replies.manage`; un 403 solo se explica. Cada cambio vuelve a pedir la
-// lista; un 409 `STALE_VERSION` o un 404 lo dice y recarga.
+// Las respuestas rápidas (F6-08c): `…/quick-replies/` y `…/quick-reply-categories/` (F6-08a3/a4)
+// enteras, activas o no, agrupadas por categoría en su orden; todo pide `quick_replies.manage`.
+// Cada cambio vuelve a pedir la lista; un 409 `STALE_VERSION` o un 404 lo dice y recarga.
 export function QuickReplyCatalog() {
   const t = useTranslations("quickReplies");
   const errors = useTranslations("errors");
@@ -48,21 +48,23 @@ export function QuickReplyCatalog() {
     gcTime: 0,
   });
   const off = (row: { is_active: boolean }) =>
-    row.is_active ? null : (
-      <span className="border-border text-muted rounded-full border px-2 py-0.5 text-xs font-normal">
-        {t("inactive")}
-      </span>
-    );
+    row.is_active ? null : <span className={OFF}>{t("inactive")}</span>;
   const reload = () => queryClient.invalidateQueries({ queryKey: key });
+  // La fila que se va (borrada o movida) se lleva el foco: al título, tras pintar la lista nueva.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (refocus.current && document.activeElement === document.body) heading.current?.focus();
+    refocus.current = false;
+  }, [list.data]);
   const ctx: Ctx = {
     slug,
     clear: () => setSaid(null),
     say: (text) => setSaid({ text }),
     after: async (text) => {
+      refocus.current = true;
       await reload();
       const failed = queryClient.getQueryState(key)?.status === "error";
       setSaid({ text: failed ? t("reloadFailed") : text });
-      if (document.activeElement === document.body) heading.current?.focus(); // la fila se fue
     },
     fail: (error, name) => {
       if (error.status === 401) return; // `Providers` lleva al login
@@ -83,10 +85,9 @@ export function QuickReplyCatalog() {
     const ordered = categories.toSorted(
       (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "es"),
     );
-    const usable = ordered.filter((c) => c.is_active);
     body = (
       <div className="flex max-w-4xl min-w-0 flex-col gap-6">
-        {usable.length ? (
+        {ordered.some((c) => c.is_active) ? (
           <Editor label={t("form.open")} accent onOpen={ctx.clear}>
             {(close) => <ReplyForm ctx={ctx} categories={ordered} close={close} />}
           </Editor>

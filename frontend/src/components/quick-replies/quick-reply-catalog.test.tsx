@@ -75,6 +75,9 @@ function server() {
   vi.stubGlobal("fetch", api);
   return Object.assign(api, {
     answerOnce: (answer: Answer) => (next = answer),
+    // Otra persona la cambia: la lista lo trae cuando se vuelva a pedir.
+    retitle: (id: string, title: string) =>
+      (replies = replies.map((one) => (one.id === id ? { ...one, title } : one))),
     writes: () =>
       api.mock.calls.flatMap(([url, init]) =>
         init?.method && init.method !== "GET"
@@ -165,19 +168,21 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     expect(await within(form()).findByText(/Ya hay una respuesta activa/)).toBeInTheDocument();
     fill("Atajo", "envio-lima");
     api.answerOnce({ status: 409, body: { code: "STALE_VERSION" } });
+    api.retitle("r1", "Cambiado por otra persona");
     submit("Guardar");
     expect(await screen.findByText(/«\/envio» cambió o ya no existe/)).toHaveAttribute(
       "role",
       "alert",
     );
     expect(screen.queryByRole("form")).toBeNull();
+    expect(await screen.findByText("Cambiado por otra persona")).toBeVisible(); // recargada
     expect(api.writes()).toEqual([
       'PATCH /quick-replies/r1/ {"shortcut":"lista","version":1}',
       'PATCH /quick-replies/r1/ {"shortcut":"envio-lima","version":1}',
     ]);
   });
 
-  it("desactiva, reactiva y borra tras confirmar", async () => {
+  it("desactiva, reactiva y borra tras confirmar; el foco, al título", async () => {
     const api = server();
     show();
     fireEvent.click(await screen.findByRole("button", { name: "Desactivar /envio" }));
@@ -187,13 +192,30 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Borrar /lista" }));
     expect(screen.getByText(/¿Borrar «\/lista»?/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancelar" })).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Sí, borrar" }));
+    const yes = screen.getByRole("button", { name: "Sí, borrar" });
+    yes.focus();
+    fireEvent.click(yes);
     expect(await screen.findByText("«/lista» borrada.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus(); // la fila se llevó el foco
     expect(screen.queryByText("/lista")).toBeNull();
     expect(api.writes()).toEqual([
       'PATCH /quick-replies/r1/ {"is_active":false,"version":1}',
       'PATCH /quick-replies/r2/ {"is_active":true,"version":1}',
       "DELETE /quick-replies/r2/",
     ]);
+  });
+
+  it("mover una respuesta a otra categoría lleva el foco al título", async () => {
+    const api = server();
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Editar /envio" }));
+    fill("Categoría", "c2");
+    const save = within(form()).getByRole("button", { name: "Guardar" });
+    save.focus();
+    fireEvent.click(save);
+    expect(await screen.findByText("Respuesta /envio guardada.")).toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Precios" })).getByText("/envio")).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    expect(api.writes()).toEqual(['PATCH /quick-replies/r1/ {"category_id":"c2","version":1}']);
   });
 });
