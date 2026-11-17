@@ -241,6 +241,57 @@ def test_an_ambiguous_result_is_never_resent(
     assert state(world, message).delivery_status == "SENDING" and len(graph.calls) == 1
 
 
+@pytest.mark.parametrize("outcome", ["no_mid", "bad_mid"])
+def test_an_accepted_send_without_a_valid_message_id_stays_sending_and_is_never_resent(
+    world: SimpleNamespace, graph: FakePageGraph, outcome: str
+) -> None:
+    graph.then(outcome)
+    message, saved = send(world, talk(world, "INSTAGRAM"))
+    assert (saved.delivery_status, saved.external_message_id) == ("SENDING", None)
+    tasks.deliver(Retrying(0), world.a, message.pk)
+    assert state(world, message).delivery_status == "SENDING" and len(graph.sent) == 1
+
+
+def test_with_the_meta_channel_off_nothing_reaches_the_graph_api(
+    world: SimpleNamespace, graph: FakePageGraph, settings: Any
+) -> None:
+    convo = talk(world, "MESSENGER")
+    settings.META_ENABLED = False
+    saved = send(world, convo)[1]
+    assert (saved.delivery_status, saved.provider_error_code) == ("FAILED", "CHANNEL_UNAVAILABLE")
+    assert graph.calls == []
+
+
+@pytest.mark.parametrize("recipient", ["", "a b", "../me", "x" * 101, "1\n2", "１２３"])
+def test_a_malformed_recipient_is_refused_before_any_url_is_built(
+    world: SimpleNamespace, graph: FakePageGraph, recipient: str
+) -> None:
+    message, _ = outbound(world, talk(world, "INSTAGRAM"))
+    with tenant_scope(ctx(world.a)) as tenant:
+        claim = commands.claim_outbound(tenant, message_id=message.pk)
+    assert claim is not None
+    found = channels.adapter_for("INSTAGRAM").send(dataclasses.replace(claim, recipient=recipient))
+    assert (found.ok, found.reason, graph.calls) == (False, "RECIPIENT_UNREACHABLE", [])
+
+
+@pytest.mark.parametrize(
+    ("platform", "page"),
+    [("MESSENGER", "me"), ("MESSENGER", "1234/../5678"), ("INSTAGRAM", None),
+     ("INSTAGRAM", "12345?x=1"), ("MESSENGER", "１２３４５")],
+)  # fmt: skip
+def test_a_malformed_page_id_is_refused_before_any_url_is_built(
+    world: SimpleNamespace, graph: FakePageGraph, platform: str, page: str | None
+) -> None:
+    message, _ = outbound(world, talk(world, platform))
+    with tenant_scope(ctx(world.a)) as tenant:
+        claim = commands.claim_outbound(tenant, message_id=message.pk)
+    assert claim is not None
+    which = "parent_id" if platform == "INSTAGRAM" else "phone_number_id"
+    with pytest.raises(ValueError, match="identificador de Meta"):
+        channels.adapter_for(platform).send(dataclasses.replace(claim, **{which: page}))
+    assert graph.calls == []
+
+
 @pytest.mark.parametrize(
     ("platform", "body"),
     [("INSTAGRAM", "ñ" * 501), ("MESSENGER", "a" * 2001)],  # 1002 bytes; 2001 caracteres
