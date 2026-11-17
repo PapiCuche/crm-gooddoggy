@@ -29,9 +29,12 @@ alguna lista o en total, es `503` sin guardar nada: nunca un `200` que pierda un
 
 Instagram y Messenger (F7b-04b, ADR-035 §4) llegan por la misma ruta y la misma firma: `parse`
 despacha por `object` (`page`, `instagram`). Cada evento de `entry[].messaging[]` o `standby[]` es
-un ítem con la clave de su plataforma (`fb:msg:<mid>`, `ig:msg:<mid>`, `fb:read:…`, `fb:delivery:…`,
-`ig:read:<mid>`; un borrado, `…:del:<mid>`; lo demás, un resumen del evento) y `entry.id` como id de
-enrutado. Las URL de las historias se quitan **antes** de guardar: Meta prohíbe guardar esa media.
+un ítem con `entry.id` como id de enrutado y una clave **por cuenta** (F7b-04d; ADR-040,
+que enmienda ADR-035 §4): `fb:msg:<page>:<mid>`, `ig:msg:<igid>:<mid>`, `ig:read:<igid>:<mid>`, un
+borrado `…:del:<cuenta>:<mid>`, `fb:read:<page>:<psid>:<watermark>`, `fb:delivery:…` y lo demás
+`…:other:<cuenta>:<resumen>`. Dos cuentas conectadas que se escriben reciben el mismo `mid` (eco en
+una, entrante en la otra) y cada una guarda el suyo. Las URL de las historias se quitan **antes** de
+guardar: Meta prohíbe guardar esa media.
 """
 
 import hashlib
@@ -64,6 +67,11 @@ PERSON = re.compile(EXTERNAL_ID)  # el PSID o el IGSID, y la cuenta en el evento
 MAX_ITEMS, MAX_DEPTH = 5000, 16  # 5 × «a batch with a maximum of 1000 updates»
 MAX_ENTRIES = MAX_CHANGES = MAX_ROWS = MAX_ITEMS  # ninguna lista corta antes que el total
 ID_MAX, TEXT_MAX, KEY_PART_MAX = 200, 8192, 300
+# La clave social más larga con un `mid`: `ig:read:` + la cuenta (`META_ID`, 30) + `:` + 300 = 339,
+# dentro de los 700 de `webhook_ingress.event_key` (prueba con los dos ids al máximo). La marca de
+# agua de Messenger (milisegundos) se acota a 15 dígitos: con la cuenta y el PSID, 12 + 30 + 1 + 100
+# + 1 + 15 = 159. Sin tope, un entero enorme rompería el CHECK de la clave y con él todo el lote.
+WATERMARK_MAX = 10**15
 PROFILE_NAME_MAX = 200  # el nombre de perfil que viaja en el ítem; `inbound` lo recorta a 100
 
 
@@ -257,6 +265,7 @@ def _social(social: tuple[str, str], account: str, event: Any, field: str) -> It
         raise Invalid("ids")
     (platform, prefix), payload = social, event
     payload["standby"] = field == "standby"
+    here = _quote(account, ID_MAX)  # la cuenta va en la clave: el mismo `mid` llega a dos cuentas
     message, read, delivered = event.get("message"), event.get("read"), event.get("delivery")
     if isinstance(message, dict):
         text = message.get("text")
@@ -264,18 +273,18 @@ def _social(social: tuple[str, str], account: str, event: Any, field: str) -> It
             raise Invalid("text")
         _no_story_media(message)
         tag = "del" if message.get("is_deleted") is True else "msg"
-        key, kind = f"{prefix}:{tag}:{_quote(_mid(message.get('mid')), ID_MAX)}", "message"
+        key, kind = f"{prefix}:{tag}:{here}:{_quote(_mid(message.get('mid')), ID_MAX)}", "message"
     elif prefix == "ig" and isinstance(read, dict):
-        key, kind = f"ig:read:{_quote(read.get('mid'), ID_MAX)}", "status"
+        key, kind = f"ig:read:{here}:{_quote(read.get('mid'), ID_MAX)}", "status"
     elif prefix == "fb" and isinstance(found := delivered or read, dict):
         mark = found.get("watermark")
-        if not isinstance(mark, int) or isinstance(mark, bool) or mark < 1:
+        if not isinstance(mark, int) or isinstance(mark, bool) or not 1 <= mark < WATERMARK_MAX:
             raise Invalid("watermark")
         which = "delivery" if isinstance(delivered, dict) else "read"
-        key, kind = f"fb:{which}:{account}:{ids[0]}:{mark}", "status"
+        key, kind = f"fb:{which}:{here}:{ids[0]}:{mark}", "status"
     else:  # reacción, edición, postback…: se guarda y se ignora con su motivo
         digest = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
-        key, kind = f"{prefix}:other:{digest[:32]}", "other"
+        key, kind = f"{prefix}:other:{here}:{digest[:32]}", "other"
     return Item(kind, key, None, None, payload, platform, account)
 
 
