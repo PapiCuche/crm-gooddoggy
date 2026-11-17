@@ -1,7 +1,5 @@
-"""F7b-06a: `POST …/channels/{messenger,instagram}/`, `…/{id}/token/` y `DELETE …/{id}/` (ADR-035
-§3), con las garantías de WhatsApp (F7-02d, F7-07c, F7-02e). Middleware, sesión, CSRF, motor de
-autorización y PostgreSQL con `crm_app`; la Graph API de la página simulada servida por
-`core.http`. Ninguna salida lleva el token."""
+"""F7b-06a: las rutas de Messenger e Instagram (ADR-035 §3) con las garantías de WhatsApp (F7-02d,
+F7-07c, F7-02e), sobre el stack real y la Graph API de la página simulada. Nunca sale el token."""
 
 import json
 import logging
@@ -16,10 +14,12 @@ from django.test import Client
 from apps.conversations import accounts, commands
 from core.api.step_up import STEP_UP_REQUIRED
 from tests.meta_sim import transport
-from tests.meta_sim.graph import TEST_TOKEN
+from tests.meta_sim.graph import TEST_TOKEN, FakeGraph
 from tests.meta_sim.page_graph import FakePageGraph
 from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
+from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
 from tests.test_channel_accounts import NEW_TOKEN, everything, run
+from tests.test_channel_accounts import connect as connect_whatsapp
 from tests.test_channel_accounts_api import signed
 from tests.test_conversations_api import UNAUTHENTICATED
 from tests.test_member_branch import DENIED
@@ -64,9 +64,8 @@ def test_connect_rotate_and_disconnect_and_no_output_carries_the_token(
         gone = send(ana, "delete", f"{BASE}{platform}/{account['id']}/", None)
     assert connected.status_code == 201 and meta.subscribed.keys() == {PAGE_ID}
     assert (account["platform"], account["status"]) == (platform.upper(), "PENDING")
-    assert (account["page_id"], account["instagram_account_id"]) == (
-        PAGE_ID, IG_ACCOUNT_ID if instagram else None
-    )  # fmt: skip
+    ig = IG_ACCOUNT_ID if instagram else None
+    assert (account["page_id"], account["instagram_account_id"]) == (PAGE_ID, ig)
     assert account["token_last_four"] == TEST_TOKEN[-4:] and "credential_id" not in account
     assert rotated.status_code == 200 and rotated.json()["token_last_four"] == NEW_TOKEN[-4:]
     assert rotated.json()["token_rotated_at"] is not None and gone.status_code == 204
@@ -103,7 +102,8 @@ def test_the_permission_is_checked_before_the_body_the_lookup_and_meta(
         assert reply(send(Client(enforce_csrf_checks=True), method, path, {})) == UNAUTHENTICATED
         other = path.replace("org-a", "org-b")  # ana no es miembro de B
         assert reply(send(signed(crm.ana), method, other, body(platform))) == NOT_FOUND
-    assert meta.calls == []
+    unknown = send(signed(crm.ana), "post", f"{BASE}telegram/", body(platform))
+    assert unknown.status_code == 404 and meta.calls == []  # nunca llega a `connect_social`
 
 
 @PLATFORMS
@@ -120,24 +120,33 @@ def test_connecting_and_rotating_ask_for_a_recent_second_factor_and_disconnectin
     assert send(ana, "delete", f"{BASE}{platform}/{account.pk}/", None).status_code == 204
 
 
-@pytest.mark.parametrize("target", ["other_org", "other_platform", "sandbox", "gone", "none"])
+@pytest.mark.parametrize(
+    "target", ["other_org", "other_platform", "sandbox", "gone", "none", "whatsapp", "on_whatsapp"]
+)
 def test_an_account_that_is_not_yours_or_not_of_the_route_is_not_found(
-    crm: SimpleNamespace, meta: FakePageGraph, target: str
+    crm: SimpleNamespace, meta: FakePageGraph, monkeypatch: pytest.MonkeyPatch, target: str
 ) -> None:
     ana = signed(crm.ana)
-    ids = {
+    ids: dict[str, Any] = {
         "other_org": lambda: made(crm, "instagram", "b").pk,
         "other_platform": lambda: made(crm, "messenger").pk,  # por la ruta de Instagram
         "sandbox": lambda: run(crm.a, crm.ana, commands.ensure_sandbox_account).pk,
         "gone": lambda: made(crm, "instagram").pk,
         "none": uuid4,
+        "whatsapp": lambda: connect_whatsapp(crm)[0].pk,  # por las rutas sociales
+        "on_whatsapp": lambda: made(crm, "messenger").pk,  # por las de WhatsApp
     }
+    if target == "whatsapp":  # se conecta con la Graph API de WhatsApp
+        transport.install(monkeypatch, FakeGraph(numbers={PHONE_NUMBER_ID: WABA_ID}))
     pk = ids[target]()
+    transport.install(monkeypatch, meta)  # la de la página, que cuenta lo que se le pregunta
     if target == "gone":
         assert send(ana, "delete", f"{BASE}instagram/{pk}/", None).status_code == 204
     meta.calls.clear()
-    assert reply(rotate(ana, "instagram", pk)) == NOT_FOUND
-    assert reply(send(ana, "delete", f"{BASE}instagram/{pk}/", None)) == NOT_FOUND
+    routes = {"whatsapp": ["messenger", "instagram"], "on_whatsapp": ["whatsapp"]}
+    for route in routes.get(target, ["instagram"]):
+        assert reply(rotate(ana, route, pk)) == NOT_FOUND, route
+        assert reply(send(ana, "delete", f"{BASE}{route}/{pk}/", None)) == NOT_FOUND, route
     assert meta.calls == []  # a Meta no se le preguntó nada
     assert rotate(ana, "instagram", pk, "corto").status_code == 400  # el cuerpo, antes del 404
 
