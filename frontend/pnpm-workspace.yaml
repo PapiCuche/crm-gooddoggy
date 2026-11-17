@@ -7,15 +7,21 @@ allowBuilds:
   unrs-resolver: false
 minimumReleaseAge: 1440
 minimumReleaseAgeStrict: true # sin excepciones (las de Next 16.3.8 se retiraron en F3-16)
-# Overrides solo para dependencias de desarrollo cuyo paquete padre no tiene aún una versión que
-# pida la corregida. Cada valor es la versión parcheada más baja (ADR-012 §4.5, SEC-DEV-01).
+# Overrides para dependencias transitivas cuyo paquete padre aún no pide la versión corregida.
+# Se aplican a todo el árbol (producción incluida), no solo a desarrollo; hoy estos paquetes
+# solo llegan por herramientas de desarrollo. Cada valor es la versión parcheada más baja
+# (ADR-012 §4.5 y §4.6). Se retira cada uno cuando su padre pida la versión corregida.
 overrides:
-  # vía orval > @scalar/json-magic, que fija undici exacto. 7.30.1 corrige GHSA-xjj6-f33q-929c,
-  # GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm (altos) y cuatro moderados.
+  # vía orval > @scalar/json-magic, que fija undici exacto (0.15.x llega a 7.29.1; orval pide
+  # ^0.15.0). 7.30.1 corrige GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26, GHSA-2m5v-pch6-74hx,
+  # GHSA-qrxm-fqhp-jwvm (altos) y cuatro moderados.
   undici@7: 7.30.1
-  # vía jsdom, que pide ^8.10.2 (ningún jsdom 30.x exige >=8.12.2). Mismos avisos que undici@7.
+  # vía jsdom 30.1.1, que pide ^8.10.2 (30.1.3 pide ^8.12.1; solo jsdom 31, una mayor, exige
+  # ^8.12.3). Mismos avisos que undici@7.
   undici@8: 8.12.2
-  # vía orval y eslint-plugin-react-hooks. GHSA-mrhx-c7xc-m3w5 (alto).
+  # vía orval (@scalar/types pide ^4.4.3) y eslint-plugin-react-hooks (^3.25.0 || ^4.0.0).
+  # GHSA-mrhx-c7xc-m3w5 (alto).
   zod@4: 4.6.6
-  # vía orval > ajv. GHSA-w74x-v6f9-j3xg y GHSA-wjr9-j795-jxcr (moderados) y dos bajos.
+  # vía orval > ajv 8.20.0, que pide ^3.0.1. GHSA-w74x-v6f9-j3xg y GHSA-wjr9-j795-jxcr
+  # (moderados) y dos bajos.
   fast-uri@3: 3.1.9

@@ -183,6 +183,11 @@ El mantenedor autorizó leer XLSX en la importación de stock con `openpyxl` en 
 - **Queda un aviso moderado:** GHSA-g3hv-75wg-m249 en minimatch 10.2.6, vía `eslint-config-next > typescript-eslint` 8.71.0 (`@typescript-eslint/typescript-estree` pide `^10.2.2`). La primera versión que pide minimatch 11 es typescript-eslint 8.73.0, publicada el 2026-11-16 a las 17:06 UTC: aún no cumple `minimumReleaseAge`. Forzar minimatch 11 con un override cruzaría una versión mayor. El aviso exige que un atacante controle el patrón glob; aquí los patrones salen de la configuración del repositorio.
 - El cliente orval regenerado no cambia. `@eslint/compat` 2.1.1, `@vitejs/plugin-react` 6.1.1, jsdom 30.1.1 y orval 8.38.0 siguen igual. Ninguna versión nueva necesita excepción de `minimumReleaseAge`.
 
+### 4.6 typescript-eslint 8.73.0 (SEC-DEV-02, 2026-11-17, #894)
+
+- **typescript-eslint y `@typescript-eslint/*` 8.71.0 → 8.73.0** (publicadas el 2026-11-16 entre las 17:06 y las 17:08 UTC; cumplen `minimumReleaseAge` sin excepción). Solo cambia el lockfile: `eslint-config-next` 16.4.5 pide `^8.56.0`. `@typescript-eslint/typescript-estree` 8.73.0 pide `minimatch ^11.0.1`, así que minimatch 10.2.6 sale del árbol y se **cierra GHSA-g3hv-75wg-m249**, el aviso que §4.5 dejaba abierto. Las reglas de ESLint no cambian (`--print-config` igual salvo la versión del parser y del plugin).
+- **Los cuatro overrides de §4.5 se mantienen:** ningún padre pide aún la versión corregida. `@scalar/json-magic` 0.15.x fija como mucho undici 7.29.1 (orval 8.38.0 pide `^0.15.0`); jsdom 30.1.1 pide undici `^8.10.2` y solo jsdom 31 (mayor) exige `^8.12.3`; zod llega con `^4.4.3` (`@scalar/types`) y `^3.25.0 || ^4.0.0` (eslint-plugin-react-hooks); ajv 8.20.0 pide fast-uri `^3.0.1`. Los overrides se aplican a todo el árbol, no solo a desarrollo.
+
 ### 5. Gestores de paquetes y herramientas
 
 - **pnpm 12.8.1** (F1-09; antes 12.6.0): dist-tag `latest` desde el 2026-09-30. Se fija con `"packageManager": "pnpm@12.8.1"` en `frontend/package.json`; en CI, `pnpm/action-setup` lee ese campo. En local, se instala con el método oficial vigente (standalone o `npm`). **No se depende de Corepack:** la documentación oficial de pnpm ya no lo presenta como método de instalación.
