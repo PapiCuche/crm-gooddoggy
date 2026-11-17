@@ -7,8 +7,12 @@ cambios a la vez del mismo contacto se serializan. Cada cambio real actualiza el
 repetir lo que ya vale no escribe nada. La evidencia lleva solo ids y etiquetas cortas, nunca el
 texto de un mensaje ni datos del cliente, y la auditoría no la copia. Cada cambio deja también su
 evento en el outbox (`consent.granted` o `consent.revoked`, F7-08b) con ids, canal y propósito.
+
+Las palabras del cliente (F7b-05d) llevan el instante del proveedor (`said_at`): la fila guarda el
+de la última (`keyword_at`, aunque no cambiara nada) y una más vieja, entregada tarde, no la toca.
 """
 
+import datetime as dt
 from uuid import UUID
 
 from django.db import transaction
@@ -49,6 +53,7 @@ def _evidence(value: dict[str, str] | None) -> dict[str, str]:
 def _write(
     ctx: TenantContext, contact_id: UUID, channel: str, purpose: str, status: str, source: str,
     evidence: dict[str, str] | None, *, only_after_stop: bool = False,
+    said_at: dt.datetime | None = None,
 ) -> tuple[ContactConsent, bool]:  # fmt: skip
     alias = require_scope(ctx)
     if channel not in Channel.values or purpose not in Purpose.values:
@@ -63,7 +68,13 @@ def _write(
         live.select_for_update(no_key=True).get(pk=contact_id)
         where = {"contact_id": contact_id, "channel": channel, "purpose": purpose}
         row = ContactConsent.objects.using(alias).filter(**where).first()
+        last = None if row is None else row.keyword_at
+        if row is not None and said_at is not None and last is not None and said_at < last:
+            return row, False  # una palabra más vieja que la última no la revierte
         if row is not None and row.status == status:
+            if said_at is not None and said_at != last:  # la última palabra, aunque no cambie
+                row.keyword_at = said_at
+                row.save(using=alias, update_fields=["keyword_at", "updated_at"])
             return row, False
         if only_after_stop and (
             row is None or row.status != ConsentStatus.REVOKED
@@ -75,6 +86,7 @@ def _write(
         values = {
             "status": status, "source": source, "evidence": proof,
             "recorded_by_user_id": ctx.user_id, **stamp,
+            **({} if said_at is None else {"keyword_at": said_at}),
         }  # fmt: skip
         if row is None:
             row = ContactConsent.objects.using(alias).create(**where, **values)
@@ -113,17 +125,31 @@ def revoke_consent(
     return _write(ctx, contact_id, channel, purpose, ConsentStatus.REVOKED, source, evidence)
 
 
+def keyword_stop(
+    ctx: TenantContext, *, contact_id: UUID, channel: str, purpose: str,
+    said_at: dt.datetime | None, evidence: dict[str, str] | None = None,
+) -> bool:  # fmt: skip
+    """La baja por palabra (F7-08b): revoca con `KEYWORD_STOP`, salvo que la fila ya tenga una
+    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio). Devuelve si
+    cambió algo. Mismos errores que `revoke_consent`."""
+    return _write(
+        ctx, contact_id, channel, purpose, ConsentStatus.REVOKED, ConsentSource.KEYWORD_STOP,
+        evidence, said_at=said_at,
+    )[1]  # fmt: skip
+
+
 def lift_keyword_stop(
     ctx: TenantContext, *, contact_id: UUID, channel: str, purpose: str,
-    evidence: dict[str, str] | None = None,
+    said_at: dt.datetime | None = None, evidence: dict[str, str] | None = None,
 ) -> bool:  # fmt: skip
     """El alta por palabra (F7-08b): concede **solo** si la fila vigente está `REVOKED` por una
     palabra de baja (`KEYWORD_STOP`); sin fila o revocada por otra vía no hace nada (`False`).
-    Mismos errores que `grant_consent`."""
+    Una palabra posterior a `said_at` en la fila tampoco se revierte. Mismos errores que
+    `grant_consent`."""
     try:
         return _write(
             ctx, contact_id, channel, purpose, ConsentStatus.GRANTED,
-            ConsentSource.CUSTOMER_MESSAGE, evidence, only_after_stop=True,
+            ConsentSource.CUSTOMER_MESSAGE, evidence, only_after_stop=True, said_at=said_at,
         )[1]  # fmt: skip
     except _NothingToLift:
         return False

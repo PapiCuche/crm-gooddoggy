@@ -287,6 +287,9 @@ class ContactConsent(TenantModel):
     revoked_at = models.DateTimeField(null=True, blank=True)
     evidence = models.JSONField(default=dict, blank=True)
     recorded_by_user_id = models.UUIDField(null=True, blank=True)  # vacío: el sistema
+    # El instante del proveedor de la última palabra de baja o alta de esta fila (F7b-05d): una
+    # palabra más vieja, entregada tarde, no la revierte. Vacío: ninguna, o sin ese instante.
+    keyword_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
