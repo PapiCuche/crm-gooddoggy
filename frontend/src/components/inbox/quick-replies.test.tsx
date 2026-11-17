@@ -62,6 +62,7 @@ function server(
     routes[`GET ${BASE}/${one.id}/`] = { status: 200, body: one };
     routes[`GET ${BASE}/${one.id}/messages/`] = page([]);
     routes[`POST ${BASE}/${one.id}/messages/`] = { status: 202, body: { id: "s1", body: "ok" } };
+    routes[`POST ${BASE}/${one.id}/notes/`] = { status: 201, body: { id: "n1", body: "ok" } };
     for (const id of ["r1", "r3"])
       routes[`POST ${BASE}/${one.id}/quick-replies/${id}/render/`] = render;
   }
@@ -92,6 +93,7 @@ function server(
       calls((url, method) => url.pathname.endsWith("/messages/") && method === "POST").map(
         ([, init]) => JSON.parse(String(init!.body)) as { body: string },
       ),
+    notes: () => calls((url, method) => url.pathname.endsWith("/notes/") && method === "POST"),
   };
 }
 const rendered = {
@@ -345,6 +347,30 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
     expect(s.searches()).toEqual([]);
   });
 
+  it("en una nota, el selector no frena un Enter sostenido (repeat): la nota se guarda", async () => {
+    const s = server();
+    show(grants("conversations.view", "messages.note"));
+    await openChat();
+    const note = await screen.findByRole("textbox", { name: "Nota interna" });
+    fireEvent.change(note, { target: { value: "Llamar mañana" } });
+    fireEvent.keyDown(note, { key: "Enter", repeat: true });
+    await waitFor(() => expect(s.notes()).toHaveLength(1));
+    expect(s.sends()).toEqual([]);
+  });
+
+  it("Mayús+Enter con la lista abierta no elige ni envía: es un salto de línea", async () => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(fireEvent.keyDown(await box(), { key: "Enter", shiftKey: true })).toBe(true);
+    await settle(50);
+    expect(s.renders()).toBe(0);
+    expect(s.sends()).toEqual([]);
+    expect(await box()).toHaveValue("/delivery-l");
+  });
+
   it("el Enter que eligió, sostenido más allá del margen (repeat), no envía", async () => {
     const s = server();
     show();
@@ -389,6 +415,22 @@ describe("respuestas rápidas en el cuadro de respuesta (F6-08b)", () => {
       expect(s.sends()).toEqual([]);
     },
   );
+
+  it.each([
+    ["isComposing", { isComposing: true }],
+    ["keyCode 229 (Safari)", { keyCode: 229 }],
+  ])("un Enter del IME (%s) con la lista abierta no elige ni envía", async (_n, ime) => {
+    const s = server();
+    show();
+    await openChat();
+    await type("/delivery-l");
+    await waitFor(() => expect(options()).toHaveLength(1));
+    expect(fireEvent.keyDown(await box(), { key: "Enter", ...ime })).toBe(true);
+    await settle(50);
+    expect(s.renders()).toBe(0);
+    expect(s.sends()).toEqual([]);
+    expect(await box()).toHaveValue("/delivery-l");
+  });
 
   it("el hook descarta un `render` que vuelve con otra conversación, aunque el texto sea igual", async () => {
     const s = server(undefined, { hold: true });
