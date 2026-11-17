@@ -17,9 +17,13 @@ SENDERS = ("USER", "AI_AGENT", "SYSTEM")  # los que pueden escribir una nota int
 
 class Platform(models.TextChoices):
     SANDBOX = "SANDBOX"  # el canal de pruebas
-    WHATSAPP = (
-        "WHATSAPP"  # la Cloud API oficial de Meta (ADR-029); Instagram… llegan con su adapter
-    )
+    WHATSAPP = "WHATSAPP"  # la Cloud API oficial de Meta (ADR-029)
+    MESSENGER = "MESSENGER"  # una página de Facebook (ADR-035 §3)
+    INSTAGRAM = "INSTAGRAM"  # una cuenta profesional de Instagram vinculada a su página
+
+
+SOCIAL = (Platform.MESSENGER, Platform.INSTAGRAM)  # identidad por cuenta, sin teléfono (ADR-035)
+EXTERNAL_ID = r"^[A-Za-z0-9._-]{1,100}$"  # el PSID o el IGSID: un id opaco de Meta, sin espacios
 
 
 AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[assignment]
@@ -174,6 +178,29 @@ class ChannelAccount(TenantModel):
                 ),
                 name="channel_accounts_whatsapp_ck",
             ),
+            models.CheckConstraint(  # una página: sin padre ni la salud propia de WhatsApp
+                condition=~models.Q(platform="MESSENGER")
+                | (
+                    models.Q(external_account_id__regex=META_ID)
+                    & models.Q(external_parent_id__isnull=True)
+                    & models.Q(quality_rating__isnull=True, messaging_limit_tier__isnull=True)
+                ),
+                name="channel_accounts_messenger_ck",
+            ),
+            models.CheckConstraint(  # una cuenta de Instagram: su página vinculada es el padre
+                condition=~models.Q(platform="INSTAGRAM")
+                | (
+                    models.Q(external_account_id__regex=META_ID)
+                    & models.Q(external_parent_id__isnull=False)
+                    & models.Q(external_parent_id__regex=META_ID)
+                    & models.Q(quality_rating__isnull=True, messaging_limit_tier__isnull=True)
+                ),
+                name="channel_accounts_instagram_ck",
+            ),
+            models.UniqueConstraint(  # destino de la FK de las identidades: la misma plataforma
+                fields=["organization_id", "id", "platform"],
+                name="channel_accounts_org_platform_uq",
+            ),
             models.CheckConstraint(  # el Sandbox no tiene WABA, credencial ni salud
                 condition=~models.Q(platform="SANDBOX")
                 | models.Q(
@@ -283,6 +310,55 @@ class Credential(TenantModel):
         return str(self.pk)
 
 
+class ContactIdentity(TenantModel):
+    """El id de un contacto en una cuenta de Instagram o Messenger (ADR-035 §5; 02 §E.5): el IGSID
+    o el PSID, únicos por cuenta de canal y nunca globales. Sin teléfono y nunca se fusiona: dos
+    redes son dos contactos hasta que una persona los vincule (D-F7b-05). Inmutable: `crm_app` solo
+    lee e inserta. La plataforma es la de la cuenta (FK compuesta en la migración)."""
+
+    id = uuid7_primary_key()
+    contact = models.ForeignKey(
+        "contacts.Contact", models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    channel_account = models.ForeignKey(
+        ChannelAccount, models.PROTECT, related_name="+", db_constraint=False, db_index=False
+    )
+    platform = models.CharField(max_length=16, choices=Platform.choices)
+    external_id = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_identities"
+        indexes = [
+            models.Index(
+                fields=["organization_id", "contact"], name="contact_identities_contact_idx"
+            )
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization_id", "id"], name="contact_identities_org_id_uq"
+            ),
+            models.UniqueConstraint(  # destino de la FK de la conversación: su contacto y cuenta
+                fields=["organization_id", "id", "contact", "channel_account"],
+                name="contact_identities_thread_uq",
+            ),
+            models.UniqueConstraint(  # el PSID es por página y el IGSID por cuenta [S1] [S27]
+                fields=["organization_id", "channel_account", "external_id"],
+                name="contact_identities_external_uq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(platform__in=SOCIAL), name="contact_identities_platform_ck"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(external_id__regex=EXTERNAL_ID),
+                name="contact_identities_external_ck",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return str(self.pk)
+
+
 class Conversation(TenantModel):
     """Un hilo de un contacto en una cuenta de canal. Tres ejes (§I): `status`, quién atiende
     (equipo y persona a la vez, ADR-007) y `attention_mode`. La asignación solo la escribirá
@@ -299,6 +375,12 @@ class Conversation(TenantModel):
     channel_account = models.ForeignKey(
         ChannelAccount, models.PROTECT, related_name="+", db_constraint=False, db_index=False
     )
+    # A quién responder en Instagram o Messenger (ADR-035 §5): obligatoria en esas cuentas
+    # (disparador) y del mismo contacto y cuenta que el hilo (FK compuesta, migración 0040).
+    contact_identity = models.ForeignKey(
+        ContactIdentity, models.PROTECT, null=True, blank=True, related_name="+",
+        db_constraint=False, db_index=False,
+    )  # fmt: skip
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     attention_mode = models.CharField(
         max_length=16, choices=AttentionMode.choices, default=AttentionMode.HUMAN
@@ -788,8 +870,11 @@ class WebhookIngress(models.Model):
     provider = models.CharField(max_length=16)
     event_key = models.CharField(max_length=700)
     kind = models.CharField(max_length=16)
-    waba_id = models.CharField(max_length=30)
+    waba_id = models.CharField(max_length=30, null=True)  # noqa: DJ001 — solo WhatsApp
     phone_number_id = models.CharField(max_length=30, null=True)  # noqa: DJ001
+    # F7b-04a (ADR-035 §4): la plataforma y, en Instagram y Messenger, el `entry.id` que enruta.
+    platform = models.CharField(max_length=16, db_default="WHATSAPP")
+    routing_id = models.CharField(max_length=30, null=True)  # noqa: DJ001
     status = models.CharField(max_length=16, db_default="RECEIVED")
     payload = models.JSONField(null=True)
     payload_hash = models.CharField(max_length=64)
@@ -821,6 +906,18 @@ class WebhookIngress(models.Model):
                     payload_hash__regex=r"^[0-9a-f]{64}$", attempts__lte=INGRESS_MAX_ATTEMPTS
                 ),
                 name="webhook_ingress_shape_ck",
+            ),
+            models.CheckConstraint(  # WhatsApp enruta por número y WABA; los demás, por cuenta
+                condition=models.Q(
+                    platform="WHATSAPP", waba_id__isnull=False, routing_id__isnull=True
+                )
+                | models.Q(
+                    platform__in=SOCIAL,
+                    waba_id__isnull=True,
+                    phone_number_id__isnull=True,
+                    routing_id__isnull=False,
+                ),
+                name="webhook_ingress_route_ck",
             ),
         ]
         indexes = [

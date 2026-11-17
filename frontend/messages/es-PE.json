@@ -2488,6 +2488,8 @@
     "platform": {
       "SANDBOX": "Sandbox",
       "WHATSAPP": "WhatsApp",
+      "MESSENGER": "Messenger",
+      "INSTAGRAM": "Instagram",
       "UNKNOWN": "Otro canal"
     },
     "status": {

@@ -673,8 +673,8 @@ def test_going_back_to_the_tables_only_removes_the_processing_functions(migrator
     with as_migrator():
         call_command("migrate", "conversations", verbosity=0)
     assert migrator.execute(names, ["resolve_channel_account"]).fetchone() == (
-        7,
-    )  # y el registro de rechazos (F7-11b)
+        9,
+    )  # y el registro de rechazos (F7-11b) y las versiones sociales (F7b-04a)
 
 
 def test_the_purge_never_deletes_a_pending_item_before_the_cap_whatever_the_days_asked(
