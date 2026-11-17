@@ -38,6 +38,7 @@ from config.settings.base import (
 # ADR-002 §1.1: la credencial del migrador (BYPASSRLS) es exclusiva del job de migraciones.
 # web/worker/ws/beat se niegan a arrancar si la reciben. Solo se nombra la variable, nunca su valor.
 FORBIDDEN_RUNTIME_VARIABLES = ("DATABASE_MIGRATOR_URL", "CRM_MIGRATOR_PASSWORD")
+env.refuse_local_only()  # ADR-041: el simulador local de Graph nunca en production
 _leaked = [name for name in FORBIDDEN_RUNTIME_VARIABLES if name in os.environ]
 if _leaked:
     raise ImproperlyConfigured(
