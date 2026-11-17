@@ -283,6 +283,20 @@ describe("navegación del shell", () => {
     expect(document.title).toBe("Canales · Acme SAC · Good Doggy CRM");
   });
 
+  it("«Respuestas rápidas» pide `quick_replies.manage` y va tras «Canales»", async () => {
+    route.pathname = "/o/acme/respuestas-rapidas";
+    const view = (code: string) => ({ code, scopes: [] });
+    expect((await links([view("messages.send")])).flat()).not.toContain(
+      "/o/acme/respuestas-rapidas",
+    );
+    cleanup();
+    expect(await links([view("channels.manage"), view("quick_replies.manage")])).toEqual([
+      ["/o/acme", null],
+      ["/o/acme/canales", null],
+      ["/o/acme/respuestas-rapidas", "page"],
+    ]);
+  });
+
   it("«Precios» sale con cualquiera de los permisos de lectura o `prices.manage`, tras «Inventario»", async () => {
     route.pathname = "/o/acme/precios/listas";
     const without = ["prices.bulk_update", "product_cost.view", "inventory.view"];
