@@ -125,11 +125,15 @@ def test_the_confirmation_goes_out_through_the_page_as_a_response_without_a_tag(
     say(platform, event(platform, "stop", "m_SIMIN000001"))
     [reply] = seen(world).replies
     tasks.deliver(Retrying(0), world.a, reply.pk)
-    assert state(world, reply).delivery_status == "SENT"
+    saved = state(world, reply)
+    assert saved.delivery_status == "SENT"
     [sent] = graph.sent
     assert sent["recipient"] == {"id": CHANNELS[platform][1]}  # el PSID o el IGSID
     assert (sent["messaging_type"], "tag" in sent) == ("RESPONSE", False)
-    assert sent["message"] == {"text": inbound.CONFIRMATIONS[platform][STOP]}
+    assert sent["message"] == {  # con su ficha del eco, como todo envío social (F7b-05c)
+        "text": inbound.CONFIRMATIONS[platform][STOP],
+        "metadata": saved.echo_token,
+    }
 
 
 @pytest.mark.parametrize("platform", PLATFORMS)

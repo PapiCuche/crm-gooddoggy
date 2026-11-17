@@ -82,6 +82,8 @@ class PageAdapter:
             "recipient": {"id": claim.recipient}, "messaging_type": "RESPONSE",
             "message": {"text": claim.body},
         }  # fmt: skip
+        if claim.echo_token is not None:  # nuestra ficha: así se reconoce el eco (ADR-035 §6)
+            body["message"]["metadata"] = claim.echo_token
         if claim.human_agent:  # solo una persona, con la función aprobada (la política lo decide)
             body |= {"messaging_type": "MESSAGE_TAG", "tag": "HUMAN_AGENT"}
         token = admit(claim)

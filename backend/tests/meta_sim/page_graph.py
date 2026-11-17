@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from tests.meta_sim import GRAPH_VERSION
+from tests.meta_sim import GRAPH_VERSION, social
 from tests.meta_sim.graph import LOST, TEST_TOKEN, Cut, Response, Timeout
-from tests.meta_sim.social import IG_ACCOUNT_ID, IGSID, PAGE_ID
+from tests.meta_sim.social import APP_ID, IG_ACCOUNT_ID, IGSID, PAGE_ID
 
 # nombre -> (estado HTTP, código de Meta, subcódigo, título, código propio de ADR-035 §6)
 ERRORS: dict[str, tuple[int, int, int | None, str, str]] = {
@@ -120,6 +120,8 @@ class FakePageGraph:
             valid = isinstance(sent["recipient"]["id"], str) and bool(sent["recipient"]["id"])
             valid = valid and isinstance(sent["message"]["text"], str) and kind in MESSAGING_TYPES
             valid = valid and (kind != "MESSAGE_TAG" or tag in TAGS)
+            meta = sent["message"].get("metadata")  # hasta 1000 caracteres [S19]
+            valid = valid and (meta is None or isinstance(meta, str) and 1 <= len(meta) <= 1000)
         except ValueError, KeyError, TypeError:
             valid = False
         if not valid:
@@ -132,6 +134,17 @@ class FakePageGraph:
             reply = {"recipient_id": sent["recipient"]["id"], "message_id": NO_MID[outcome]}
             return self._ok({k: v for k, v in reply.items() if v is not None})
         return self._ok({"recipient_id": sent["recipient"]["id"], "message_id": mid})
+
+    def echo(
+        self, channel: social.Channel, n: int = 1, app_id: str | None = APP_ID
+    ) -> dict[str, Any]:
+        """El eco del envío `n` (desde 1): su `mid` y la misma `metadata` que se envió [S19]
+        (SIN VERIFICAR 11: que vuelva igual). `app_id=None`, el eco de Instagram sin él."""
+        sent = self.sent[n - 1]["message"]
+        return social.echo(
+            channel, sent["text"], mid=f"m_SIMOUT{n:06d}", app_id=app_id,
+            metadata=sent.get("metadata"),
+        )  # fmt: skip
 
     def _profile(self, user: str, fields: list[str]) -> Response:
         outcome = self.script.popleft() if self.script else "ok"

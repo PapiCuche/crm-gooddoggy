@@ -57,6 +57,7 @@ class Claim:
     media: Media | None = None
     parent_id: str | None = None  # el `external_parent_id`: la página por la que envía Instagram
     human_agent: bool = False  # la política decidió `HUMAN_AGENT_TAG` (ADR-035 §7)
+    echo_token: str | None = field(default=None, repr=False)  # `message.metadata` (ADR-035 §6)
 
 
 @dataclass(frozen=True, slots=True)

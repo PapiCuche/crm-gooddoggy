@@ -19,6 +19,7 @@ retrocede el mensaje y no es un error (ADR-010, §E.6).
 
 import datetime as dt
 import re
+import secrets
 import unicodedata
 from typing import Any
 from uuid import UUID
@@ -839,6 +840,10 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
         live = Credential.objects.using(alias).filter(
             pk=account.credential_id, owner_id=account.pk, revoked_at__isnull=True
         )  # viva y de esta cuenta
+        token = message.echo_token
+        if account.platform in SOCIAL and token is None:  # ADR-035 §6: el eco la devuelve
+            token = secrets.token_hex(16)
+            queued.update(echo_token=token)
         advance_delivery(ctx, message_id=message.pk, status=Delivery.SENDING)
         return Claim(
             message_id=message.pk, account_id=account.pk, platform=account.platform,
@@ -846,7 +851,7 @@ def claim_outbound(ctx: TenantContext, *, message_id: UUID) -> Claim | None:
             recipient=_recipient(alias, convo, account),
             credential=live.first() if account.credential_id else None, media=shown,
             parent_id=account.external_parent_id,
-            human_agent=decision.mode == HUMAN_AGENT_TAG,
+            human_agent=decision.mode == HUMAN_AGENT_TAG, echo_token=token,
         )  # fmt: skip
 
 

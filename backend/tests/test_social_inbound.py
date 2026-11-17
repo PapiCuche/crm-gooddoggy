@@ -40,14 +40,19 @@ EXPECTED: dict[str, tuple[list[tuple[str, str | None]], list[str]]] = {
     "story_reply": ([OK], TEXT), "batch": ([OK] * 3, TEXT * 3), "grouped": ([OK] * 2, TEXT * 2),
     "is_unsupported": ([OK], NONE), "sticker": ([OK], NONE),
     **{f"attachment_{k}": ([OK], NONE) for c in CHANNELS for k in c.attachments},
-    "own_echo": ignored("ECHO"), "foreign_echo": ignored("ECHO"),
-    "own_echo_no_app_id": ignored("ECHO"),  # las dos formas del eco (SIN VERIFICAR 11/12)
-    "read": ignored("STATUS_LATER"), "delivery": ignored("STATUS_LATER"),
-    "delivery_no_mids": ignored("STATUS_LATER"),  # sin `timestamp` y sin `mids`
+    # F7b-05c: la ficha del catálogo no es una de las nuestras; sin salientes, nada que marcar
+    "own_echo": ignored("UNKNOWN_MESSAGE"), "foreign_echo": ignored("FOREIGN_ECHO"),
+    "own_echo_no_app_id": ignored("FOREIGN_ECHO"),  # las dos formas del eco (SIN VERIFICAR 11/12)
+    "read": ([OK], []), "delivery": ([OK], []),
+    "delivery_no_mids": ([OK], []),  # sin `timestamp` y sin `mids`
     "is_deleted": ignored("DELETED"), "reaction": ignored("REACTION"),
     "unreact": ignored("REACTION"), "account_mismatch": ignored("ACCOUNT_MISMATCH"),
     "echo_account_mismatch": ignored("ACCOUNT_MISMATCH"), "unknown_object": ([], []),
 }  # fmt: skip
+# Instagram marca leído por `mid`: uno que no se conoce espera y se reintenta (F7b-05c).
+INSTAGRAM_ONLY: dict[str, tuple[list[tuple[str, str | None]], list[str]]] = {
+    "read": ([("FAILED", None)], [])
+}
 LABELS = {
     "attachment_story_mention": "Te mencionó en una historia",
     "attachment_fallback": "Enlace compartido",  # sin `payload`
@@ -86,14 +91,15 @@ def text_to(external: str, mid: str, customer: str = social.PSID) -> webhooks.De
     ("net", "name"), [(c.object, n) for c in CHANNELS for n in social.catalogue(c)]
 )
 def test_every_catalogue_event_has_its_expected_outcome(
-    social_world: SimpleNamespace, migrator: DB, net: str, name: str
+    social_world: SimpleNamespace, migrator: DB, net: str, name: str, settings: Any
 ) -> None:
+    settings.META_APP_ID = social.APP_ID
     delivery = social.catalogue(MESSENGER if net == "page" else social.INSTAGRAM)[name]
     assert post(delivery).status_code == 200
     stored = str(migrator.execute("SELECT payload::text FROM webhook_ingress").fetchall())
     assert social.STORY_URL not in stored  # quitada antes de guardar (ADR-035 §4)
     ingress.process()
-    statuses, types = EXPECTED[name]
+    statuses, types = (INSTAGRAM_ONLY if net == "instagram" else {}).get(name, EXPECTED[name])
     assert outcome(migrator) == sorted(statuses, key=str)
     found = inbox(social_world.a)
     assert [t for t, _ in found] == types and inbox(social_world.b) == []

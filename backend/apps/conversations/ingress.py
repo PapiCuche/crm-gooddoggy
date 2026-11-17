@@ -284,8 +284,19 @@ def _route_social(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | N
             logger.warning("meta.webhook.account_mismatch", channel_account_id=str(account_id))
             return "IGNORED", None, None, "ACCOUNT_MISMATCH"
         seen(context, account)
-        if reason := inbound.receive_social(context, account, item.kind, item.payload):
-            return "IGNORED", organization_id, account_id, reason
+        try:  # un eco, un leído o una entrega: su saliente (F7b-05c); lo demás, el entrante
+            outgoing = echo or item.kind == "status"
+            if reason := (
+                delivery.social(context, account, item.payload)
+                if outgoing
+                else inbound.receive_social(context, account, item.kind, item.payload)
+            ):
+                return "IGNORED", organization_id, account_id, reason
+        except delivery.NotYet as wait:  # como un estado de WhatsApp: espera y luego se cierra
+            if item.attempts >= UNKNOWN_AFTER:
+                logger.info("meta.webhook.status_unknown_message", reason=wait.closing)
+                return "IGNORED", organization_id, account_id, wait.closing
+            return "FAILED", None, None, "MESSAGE_NOT_FOUND"
     return "PROCESSED", organization_id, account_id, None
 
 
