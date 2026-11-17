@@ -82,10 +82,16 @@ beforeAll(() => {
     this.dispatchEvent(new Event("close"));
   };
 });
+// En cada test la consola se observa: la clave nunca sale por ella.
+let logged: ReturnType<typeof vi.spyOn>[] = [];
 beforeEach(() => {
   document.cookie = "csrftoken=token-de-prueba";
+  logged = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+    vi.spyOn(console, level),
+  );
 });
 afterEach(() => {
+  for (const spy of logged) expect(JSON.stringify(spy.mock.calls)).not.toContain(PASTED);
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -123,6 +129,7 @@ describe("Proveedor de IA (F8-04)", () => {
   it.each([
     [fail(403, "PERMISSION_DENIED"), "Solo quien tiene el permiso de gestionar la IA"],
     [fail(429, "RATE_LIMITED", "61"), "Demasiados intentos. Vuelve a probar en 2 minutos."],
+    [fail(404, "NOT_FOUND"), "No encontramos el proveedor de IA de esta organización."],
   ])("un error de la lista se explica por su código, sin ofrecer acciones", async (reply, text) => {
     mockApi({ [LIST]: reply });
     show();
@@ -165,9 +172,6 @@ describe("Proveedor de IA (F8-04)", () => {
   });
 
   it("guardar: contraseña por POST, un envío, el campo vacío y la clave en ninguna parte", async () => {
-    const logged = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
-      vi.spyOn(console, level),
-    );
     const api = mockApi({ [LIST]: ok([]), [CREATE]: ok(account(), 201) });
     const view = show();
     expect(await screen.findByText("Todavía no hay ninguna clave guardada.")).toBeVisible();
@@ -186,7 +190,6 @@ describe("Proveedor de IA (F8-04)", () => {
     expect(api.mock.calls.filter(([url]) => String(url).includes(PASTED))).toEqual([]);
     expect(sent(api)).toHaveLength(1); // la cuenta llega en la respuesta: no se gasta otra lectura
     nowhere(view);
-    for (const spy of logged) expect(JSON.stringify(spy.mock.calls)).not.toContain(PASTED);
   });
 
   it("guardar con STEP_UP_REQUIRED abre el código y repite una sola vez con la misma clave", async () => {
@@ -206,10 +209,15 @@ describe("Proveedor de IA (F8-04)", () => {
   });
 
   it.each([
-    [fail(409, "AI_ACCOUNT_EXISTS"), "Ya hay una clave guardada para ese proveedor: rótala.", 2],
+    [
+      fail(409, "AI_ACCOUNT_EXISTS"),
+      "Ya hay una clave guardada para ese proveedor. Actualizamos",
+      2,
+    ],
     [fail(409, "AI_ACCOUNT_CONFLICT"), "Otra persona está guardando la clave ahora mismo.", 1],
     [fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA.", 1],
     [fail(429, "RATE_LIMITED", "540"), "Vuelve a probar en 9 minutos.", 1],
+    [fail(429, "RATE_LIMITED", "999999999"), "Espera un momento antes de volver a probar.", 1],
     [fail(400, "VALIDATION_ERROR"), "Eso no tiene el formato de una clave de API.", 1],
     [fail(500, "CODIGO_NUEVO"), "Algo salió mal de nuestro lado", 1],
   ])("guardar: %o se explica por su código", async (reply, text, lists) => {
@@ -253,7 +261,7 @@ describe("Proveedor de IA (F8-04)", () => {
 
   it.each([
     ["OK", "Conexión correcta: el proveedor aceptó la clave."],
-    ["CREDENTIALS_REJECTED", "El proveedor no aceptó la clave. Rótala por una válida."],
+    ["CREDENTIALS_REJECTED", "El proveedor no aceptó la clave. Revisa en su consola"],
     ["PROVIDER_BILLING", "El proveedor rechazó la llamada por facturación"],
     ["PROVIDER_UNAVAILABLE", "El proveedor no responde ahora."],
     ["RESULTADO_NUEVO", "El resultado de la prueba no se pudo interpretar."],

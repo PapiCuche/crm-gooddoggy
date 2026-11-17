@@ -35,18 +35,20 @@ export function aiError(
     case "AI_ACCOUNT_CONFLICT":
     case "STEP_UP_REQUIRED":
       return { text: t(error.code) };
-    case "RATE_LIMITED": // el tope por persona: `Retry-After` en minutos, hacia arriba
+    case "RATE_LIMITED": // el tope por persona: `Retry-After` en minutos, hacia arriba; una
+      // espera de más de una hora no es la de este tope y se dice sin cifra
       return {
-        text: error.retryAfter
-          ? t("RATE_LIMITED_WAIT", { minutes: Math.ceil(error.retryAfter / 60) })
-          : t("RATE_LIMITED"),
+        text:
+          error.retryAfter && error.retryAfter <= 3600
+            ? t("RATE_LIMITED_WAIT", { minutes: Math.ceil(error.retryAfter / 60) })
+            : t("RATE_LIMITED"),
       };
     default:
       return null;
   }
 }
 
-// Lo que se dice de un error de una acción sin formulario (probar, borrar); `null`: nada.
+// Lo que se dice de un error de probar la conexión; `null`: nada.
 function useProblem() {
   const errors = useTranslations("ai.errors");
   const api = useTranslations("errors.api");
@@ -74,7 +76,6 @@ export function KeyForm({
   const errors = useTranslations("ai.errors");
   const { write, run, stepUp } = useChannelWrite();
   const [open, setOpen] = useState(false);
-  const [done, setDone] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const back = () => setTimeout(() => trigger.current?.focus());
 
@@ -96,11 +97,7 @@ export function KeyForm({
           send={(values) =>
             run(
               () => send(values.api_key).then(onDone),
-              () => {
-                setDone(true);
-                setOpen(false);
-                back();
-              },
+              () => {}, // la cuenta queda activa: el formulario se va y lo anuncia la página
               (error) => toLogin(error) || onFailed(error),
             )
           }
@@ -119,17 +116,12 @@ export function KeyForm({
           className="min-h-11 sm:min-h-9"
           onClick={() => {
             write.reset();
-            setDone(false);
             setOpen(true);
           }}
         >
           {t("save.open")}
         </Button>
       )}
-      {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}
-      <p role="status" className={done ? "text-sm" : "sr-only"}>
-        {done ? t("save.done") : ""}
-      </p>
       {stepUp}
     </div>
   );

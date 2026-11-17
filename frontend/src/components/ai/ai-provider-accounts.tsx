@@ -105,7 +105,9 @@ export function AiProviderAccounts() {
         <p role="alert" className={step ? undefined : "text-danger"}>
           {step
             ? t("stepUp")
-            : (aiError(list.error, own)?.text ?? errors(`api.${apiErrorKey(list.error)}`))}
+            : list.error.code === "NOT_FOUND"
+              ? t("missing")
+              : (aiError(list.error, own)?.text ?? errors(`api.${apiErrorKey(list.error)}`))}
         </p>
         <Button variant="primary" size="lg" onClick={step ? () => setDismissed(false) : reload}>
           {step ? t("verify") : errors("retry")}

@@ -2635,6 +2635,7 @@
     "stepUp": "Para ver o cambiar la clave, confirma tu identidad con un código de segundo factor.",
     "verify": "Confirmar con mi código",
     "empty": "Todavía no hay ninguna clave guardada.",
+    "missing": "No encontramos el proveedor de IA de esta organización. Recarga la página.",
     "provider": { "ANTHROPIC": "Anthropic", "UNKNOWN": "Otro proveedor" },
     "status": { "ACTIVE": "Activa", "DISABLED": "Borrada", "UNKNOWN": "Estado desconocido" },
     "fields": {
@@ -2661,14 +2662,14 @@
       "open": "Probar conexión",
       "busy": "Probando…",
       "OK": "Conexión correcta: el proveedor aceptó la clave.",
-      "CREDENTIALS_REJECTED": "El proveedor no aceptó la clave. Rótala por una válida.",
+      "CREDENTIALS_REJECTED": "El proveedor no aceptó la clave. Revisa en su consola que siga activa.",
       "PROVIDER_BILLING": "El proveedor rechazó la llamada por facturación o por el límite de gasto. Revísalo en su consola.",
       "PROVIDER_UNAVAILABLE": "El proveedor no responde ahora. Inténtalo de nuevo en unos minutos.",
       "UNKNOWN": "El resultado de la prueba no se pudo interpretar. Inténtalo de nuevo."
     },
     "errors": {
       "denied": "No tienes permiso para gestionar la IA.",
-      "AI_ACCOUNT_EXISTS": "Ya hay una clave guardada para ese proveedor: rótala. Actualizamos la lista.",
+      "AI_ACCOUNT_EXISTS": "Ya hay una clave guardada para ese proveedor. Actualizamos la lista.",
       "AI_ACCOUNT_CONFLICT": "Otra persona está guardando la clave ahora mismo. Vuelve a intentarlo.",
       "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
