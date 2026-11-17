@@ -33,6 +33,7 @@ DB = psycopg.Connection[Any]
 B_BASE = "/api/v1/o/org-b/ai/provider-accounts/"
 COUNTED = "SELECT key, failures FROM login_throttles WHERE key LIKE 'aik:%'"
 LIMITED = {"code": "RATE_LIMITED"}
+CONTACTS = "/api/v1/o/org-a/contacts/"  # otra ruta de tenant con escritura
 
 
 @pytest.fixture
@@ -213,7 +214,9 @@ def test_options_is_still_denied_and_counts_nothing(
 ) -> None:
     ana = signed(crm.ana)
     account_id = create(ana).json()["id"]
-    for path in (BASE, f"{BASE}{account_id}/", f"{BASE}{account_id}/key/"):
+    for path in (
+        BASE, f"{BASE}{account_id}/", f"{BASE}{account_id}/key/", f"{BASE}{account_id}/test/",
+    ):  # fmt: skip
         answers = [send(ana, "options", path, None) for _ in range(11)]
         assert {reply(a) for a in answers} == {DENIED}, path
     assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 1)]  # el alta
@@ -233,3 +236,27 @@ def test_a_request_the_csrf_check_refuses_or_an_anonymous_one_never_uses_the_lim
     assert migrator.execute(COUNTED).fetchall() == []  # nada contó
     assert create(ana).status_code == 201 and rotate(ana, uuid4()).status_code == 404
     assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 2)]
+
+
+def test_any_method_that_is_not_a_read_counts_even_one_no_view_declares(
+    crm: SimpleNamespace, fake: FakeAnthropic, settings: Any, migrator: DB
+) -> None:
+    """Falla cerrado: un PUT o un PATCH (hoy denegados por las vistas) cuentan como escrituras."""
+    settings.AI_ACCOUNT_THROTTLE = (2, 600)
+    ana = signed(crm.ana)
+    path = f"{BASE}{uuid4()}/"
+    answers = [send(ana, method, path, {}) for method in ("patch", "put", "patch")]
+    assert [reply(a) for a in answers[:2]] == [DENIED, DENIED]  # ninguna vista los declara
+    assert reply(answers[2]) == (429, b'{"code":"RATE_LIMITED"}')
+    assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 3)]
+
+
+def test_writes_on_other_tenant_routes_never_touch_this_limit(
+    crm: SimpleNamespace, fake: FakeAnthropic, migrator: DB
+) -> None:
+    """El tope es solo de las rutas de cuentas de IA: escribir en el resto del CRM no lo gasta."""
+    ana = signed(crm.ana)
+    made = [send(ana, "post", CONTACTS, {"display_name": f"Cliente {i}"}) for i in range(11)]
+    assert [a.status_code for a in made] == [201] * 11
+    assert migrator.execute(COUNTED).fetchall() == []
+    assert create(ana).status_code == 201  # y su tope de IA sigue entero

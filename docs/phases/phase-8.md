@@ -97,7 +97,7 @@ Cómo reparte ADR-034 entre ellos:
 ### F8-03e · El tope cuenta solo las escrituras
 
 - **Decisión del propietario (2026-11-17, registrada en #767):** la E2E de la pantalla (PR #915) mostró que abrir, guardar, probar y recargar ya gastaban 4 de las 10 peticiones, y un Owner quedó bloqueado 9 minutos.
-- **Hecho en F8-03e (#916):** el tope cuenta solo POST y DELETE (guardar, rotar, borrar y probar la conexión), 10 cada 10 minutos por persona; GET y HEAD no cuentan (leer no llama al proveedor y sigue pidiendo `ai.manage` y el segundo factor). Una escritura que acaba en 403 (sin permiso o sin segundo factor) sigue contando. OPTIONS no cuenta y las vistas lo siguen denegando. El valor, la ventana y `env.check_ai_throttle` no cambian.
+- **Hecho en F8-03e (#916):** el tope cuenta solo POST y DELETE (guardar, rotar, borrar y probar la conexión), 10 cada 10 minutos por persona; GET y HEAD no cuentan (leer no llama al proveedor y sigue pidiendo `ai.manage` y el segundo factor). Una escritura que acaba en 403 (sin permiso o sin segundo factor) sigue contando. OPTIONS no cuenta y las vistas lo siguen denegando. Falla cerrado: cuenta todo método que no sea GET, HEAD u OPTIONS, así que un PUT o un PATCH futuro (cambiar el modelo) contará sin tocar el middleware. Escribir en otras rutas del CRM no gasta este tope. El valor, la ventana y `env.check_ai_throttle` no cambian.
   - OpenAPI: el listado ya no declara el 429; orval regenerado.
 
 ## Qué necesita el propietario (sin ningún valor real)
