@@ -358,5 +358,10 @@ def receive_social(
         logger.info("meta.webhook.standby", channel_account_id=str(account.pk))
     if created and message_type == MessageType.TEXT:  # el texto del cliente, sin la frase fija
         said = clean_text(message["text"])  # de la respuesta a una historia
-        _keyword(ctx, identity.contact_id, saved, account.platform, said, confirm=not standby)
+        held = standby or (  # el estado guardado: un reintento tardío no lo deshace
+            Conversation.objects.using(require_scope(ctx))
+            .filter(pk=saved.conversation_id, standby_since__isnull=False)
+            .exists()
+        )
+        _keyword(ctx, identity.contact_id, saved, account.platform, said, confirm=not held)
     return None

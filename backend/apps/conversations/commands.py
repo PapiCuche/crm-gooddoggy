@@ -326,8 +326,9 @@ def record_inbound(
     `RESOLVED` (se anota sin cambiarle el estado). En Instagram y Messenger, `contact_identity_id`
     (obligatoria) es la identidad del contacto en la cuenta: la del hilo nuevo (ADR-035 §5), y
     `standby` dice si otra app controla el hilo (ADR-035 §4): fija `standby_since` (`True`) o la
-    limpia (`False`), solo si el mensaje es el entrante más reciente según el canal; `None` (los
-    demás canales) no la toca."""
+    limpia (`False`), solo si el mensaje es el entrante más reciente según el canal (en un empate
+    la fija, nunca la limpia; sin `provider_at` cuenta la llegada); `None` (los demás canales) no
+    la toca."""
     alias = require_scope(ctx)
     allowed: tuple[str, ...] = (MessageType.TEXT, MessageType.UNSUPPORTED)
     if attachment is not None:  # un medio: su tipo y nada más, con un id de solo dígitos
@@ -361,8 +362,11 @@ def record_inbound(
             return same.get(), False  # el mismo mensaje, a la vez
         if attachment is not None:
             media.attach(ctx, message, *attachment)
-        anchor = max(convo.last_inbound_at, seen or now) if convo.last_inbound_at else seen or now
-        if standby is not None and anchor == (seen or now):  # uno más antiguo no lo cambia
+        at, before = seen or now, convo.last_inbound_at
+        anchor = max(before, at) if before else at
+        # Solo el entrante más reciente cambia el `standby`; en un empate (el canal da segundos)
+        # lo fija, nunca lo limpia: ante la duda, nada responde solo (ADR-035 §4).
+        if standby is not None and (before is None or at > before or (standby and at == before)):
             convo.standby_since = (convo.standby_since or anchor) if standby else None
         convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"

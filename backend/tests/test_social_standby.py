@@ -10,13 +10,16 @@ from typing import Any
 
 import psycopg
 import pytest
+from django.db import connection
 from django.test import Client
 from django.utils import timezone
 
+from apps.conversations import commands
 from apps.conversations.models import Conversation
 from apps.organizations.models import OrganizationMembership
 from core.tenancy.scope import tenant_scope
 from tests import test_conversations_tables as tables
+from tests.meta_sim import social
 from tests.meta_sim.page_graph import FakePageGraph
 from tests.test_authorization import give
 from tests.test_channel_accounts_api import signed
@@ -24,7 +27,7 @@ from tests.test_conversation_commands import world, writer
 from tests.test_memberships import ctx
 from tests.test_meta_webhook import channel
 from tests.test_self_context import real_stack
-from tests.test_social_consent import PLATFORMS, event, say, seen
+from tests.test_social_consent import PLATFORMS, SIM, event, say, seen
 from tests.test_social_outbound import CHANNELS, graph, talk
 from tests.test_social_schema import account, identity
 from tests.test_whatsapp_outbound import redis
@@ -41,6 +44,7 @@ pytestmark = pytest.mark.usefixtures("tenant_db", "graph")
 API = "/api/v1/o/{}/"
 STANDBY = "standby"
 MIGRATION = importlib.import_module("apps.conversations.migrations.0047_conversation_standby_since")
+INDEX = importlib.import_module("apps.conversations.migrations.0048_conversations_standby_index")
 
 
 def standby_since(world: SimpleNamespace, convo: Conversation, org: Any = None) -> Any:
@@ -175,9 +179,77 @@ def test_the_runtime_role_writes_the_column_and_going_back_refuses_while_a_threa
         "AND attrelid = 'public.conversations'::regclass"
     ).fetchone()
     assert acl is not None and "crm_app=w/" in acl[0]  # la concesión de columna, explícita
+    with pytest.raises(RuntimeError, match="BYPASSRLS"):  # `crm_app` no ve todas las filas
+        MIGRATION.refuse_standby(None, SimpleNamespace(connection=connection))
     editor = SimpleNamespace(connection=migrator)
+    talk(world, "INSTAGRAM")  # un hilo que no está en `standby` no cuenta
     MIGRATION.refuse_standby(None, editor)  # sin hilos en `standby`, vuelve atrás
     talk(world, "MESSENGER")
     say("MESSENGER", event("MESSENGER", "Hola", "m_SIMIN000001"), field=STANDBY)
     with pytest.raises(RuntimeError, match="1 conversations are in standby"):
         MIGRATION.refuse_standby(None, editor)
+
+
+def test_the_partial_index_is_rebuilt_after_a_failed_build_or_the_migration_fails(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    editor = SimpleNamespace(connection=migrator)
+    talk(world, "MESSENGER")  # dos hilos de la misma organización
+    talk(world, "INSTAGRAM")
+    migrator.execute(INDEX.DROP)
+    with pytest.raises(psycopg.errors.UniqueViolation):  # una construcción cortada: `INVALID`
+        migrator.execute(
+            f"CREATE UNIQUE INDEX CONCURRENTLY {INDEX.INDEX} ON conversations (organization_id)"
+        )
+    assert INDEX._state(editor)[0] is False
+    INDEX.create(None, editor)  # se repite: borra el `INVALID` y lo crea válido
+    assert INDEX._state(editor) == (True, INDEX.DEFINITION)
+    migrator.execute(INDEX.DROP)
+    migrator.execute(f"CREATE INDEX {INDEX.INDEX} ON conversations (status)")  # otro, mismo nombre
+    with pytest.raises(RuntimeError, match="otra definición"):
+        INDEX.create(None, editor)
+    migrator.execute(INDEX.DROP)
+    INDEX.create(None, editor)
+    assert INDEX._state(editor) == (True, INDEX.DEFINITION)
+
+
+def test_a_late_normal_stop_never_answers_a_thread_in_standby(world: SimpleNamespace) -> None:
+    convo = talk(world, "MESSENGER")
+    say(
+        "MESSENGER", event("MESSENGER", "Hola", "m_SIMIN000001", ago=dt.timedelta(0)), field=STANDBY
+    )
+    late = event("MESSENGER", "BAJA", "m_SIMIN000002", ago=dt.timedelta(minutes=2))
+    assert say("MESSENGER", late) == {"PROCESSED": 1}  # Meta lo reintenta después del `standby`
+    assert standby_since(world, convo) is not None
+    assert seen(world).replies == []  # el hilo sigue en `standby`: ninguna confirmación
+
+
+def test_in_the_same_second_a_normal_inbound_never_clears_the_state(world: SimpleNamespace) -> None:
+    convo = talk(world, "MESSENGER")
+    second = int((timezone.now() - dt.timedelta(seconds=10)).timestamp()) * 1000
+    hold = social.text(SIM["MESSENGER"], "Hola", mid="m_SIMIN000001", at=second + 900)
+    say("MESSENGER", hold, field=STANDBY)
+    since = standby_since(world, convo)
+    assert since is not None
+    earlier = social.text(SIM["MESSENGER"], "Antes", mid="m_SIMIN000002", at=second + 100)
+    say("MESSENGER", earlier)  # 800 ms antes, el mismo segundo: el canal no los distingue
+    assert standby_since(world, convo) == since
+
+
+def test_without_the_channel_time_the_arrival_decides(world: SimpleNamespace) -> None:
+    convo = talk(world, "MESSENGER")
+
+    def record(mid: str, standby: bool) -> None:
+        with tenant_scope(ctx(world.a)) as tenant:
+            commands.record_inbound(
+                tenant, contact_id=world.contact_a.pk, channel_account_id=convo.channel_account_id,
+                external_message_id=mid, body="Hola", contact_identity_id=convo.contact_identity_id,
+                standby=standby,
+            )  # fmt: skip
+
+    before = timezone.now()
+    record("m_SIMIN000001", standby=True)
+    since = standby_since(world, convo)
+    assert since is not None and since >= before  # la hora de llegada
+    record("m_SIMIN000002", standby=False)  # llega después: la limpia
+    assert standby_since(world, convo) is None
