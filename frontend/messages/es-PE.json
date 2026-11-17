@@ -3004,11 +3004,14 @@
     "intro": "Los textos que el equipo de {organization} inserta en el Inbox escribiendo «/» y el atajo. Una desactivada no aparece en el Inbox y libera su atajo.",
     "loading": "Cargando respuestas rápidas…",
     "denied": "No tienes permiso para gestionar las respuestas rápidas de esta organización.",
-    "noCategories": "No hay categorías activas.",
+    "categories": "Categorías",
+    "noCategories": "No hay categorías activas. Crea o reactiva una en «Categorías» para guardar respuestas.",
     "emptyCategory": "Sin respuestas en esta categoría.",
     "inactive": "Desactivada",
+    "order": "Orden {order}",
     "uses": "{count, plural, =0 {Sin usos} one {# uso} other {# usos}}",
     "stale": "«{name}» cambió o ya no existe. La lista se volvió a cargar: revisa y repite el cambio.",
+    "inUse": "La categoría «{name}» tiene respuestas activas: desactívalas o muévelas a otra categoría antes. La lista se volvió a cargar.",
     "failed": "No se pudo cambiar «{name}». {reason}",
     "reloadFailed": "Se guardó, pero la lista no se pudo actualizar. Recarga la página.",
     "act": {
@@ -3055,6 +3058,27 @@
       "denied": "No tienes permiso para gestionar las respuestas rápidas.",
       "done": "Respuesta /{name} {created, select, true {creada} other {guardada}}.",
       "unchanged": "Sin cambios en /{name}: no había nada que guardar."
+    },
+    "categoryForm": {
+      "open": "Nueva categoría",
+      "title": "Nueva categoría",
+      "edit": "Renombrar u ordenar",
+      "editLabel": "Renombrar u ordenar la categoría {name}",
+      "name": "Nombre",
+      "nameRequired": "Escribe el nombre de la categoría.",
+      "nameInvalid": "El nombre no es válido: una línea de hasta 100 caracteres.",
+      "nameTaken": "Ya hay una categoría con ese nombre, quizá desactivada. La lista se volvió a cargar.",
+      "order": "Orden",
+      "orderHint": "Opcional. Un número entero: van de menor a mayor. Vacío, al final.",
+      "orderRequired": "Escribe el orden: un número entero.",
+      "orderInvalid": "Escribe un número entero entre -32768 y 32767.",
+      "create": "Crear categoría",
+      "save": "Guardar",
+      "busy": "Guardando…",
+      "cancel": "Cancelar",
+      "denied": "No tienes permiso para gestionar las respuestas rápidas.",
+      "done": "Categoría «{name}» {created, select, true {creada} other {guardada}}.",
+      "unchanged": "Sin cambios en «{name}»: no había nada que guardar."
     }
   }
 }

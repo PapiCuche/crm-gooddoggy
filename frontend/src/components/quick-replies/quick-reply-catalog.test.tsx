@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TenantProvider } from "@/components/app-shell/tenant-context";
@@ -36,11 +36,15 @@ const qr = (id: string, shortcut: string, category_id: string, is_active = true)
   }) as QuickReply;
 
 type Answer = { status: number; body?: unknown };
+type Row = { id: string; version: number };
 // Una API de mentira con estado. `answerOnce`: lo que responde la próxima escritura.
-function server() {
-  const cats = [cat("c2", "Precios", 2), cat("c1", "Delivery", 1), cat("c3", "Viejas", 9, false)];
+function server(
+  start = [cat("c2", "Precios", 2), cat("c1", "Delivery", 1), cat("c3", "Viejas", 9, false)],
+) {
+  let cats = start;
   let replies = [qr("r1", "envio", "c1"), qr("r2", "lista", "c2", false)];
   let next: Answer | null = null;
+  let broken = 0; // cuántas lecturas de la lista fallan aún
   const json = ({ status, body }: Answer) =>
     new Response(body === undefined ? null : JSON.stringify(body), { status });
   const api = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -49,8 +53,13 @@ function server() {
     const path = url.pathname.slice(BASE.length);
     if (method === "GET" && path === "/quick-reply-categories/")
       return json({ status: 200, body: { results: cats, next: null } });
-    if (method === "GET" && path === "/quick-replies/")
+    if (method === "GET" && path === "/quick-replies/") {
+      if (broken > 0) {
+        broken -= 1;
+        return json({ status: 500, body: { code: "INTERNAL_ERROR" } });
+      }
       return json({ status: 200, body: { results: replies, next: null } });
+    }
     if (next) {
       const answer = next;
       next = null;
@@ -62,14 +71,21 @@ function server() {
       replies = [...replies, made];
       return json({ status: 201, body: made });
     }
-    const id = path.split("/")[2];
+    if (method === "POST") {
+      const made = cat(`c${cats.length + 1}`, data.name, data.sort_order ?? 99);
+      cats = [...cats, made];
+      return json({ status: 201, body: made });
+    }
+    const [, kind, id] = path.split("/");
     if (method === "DELETE") {
       replies = replies.filter((one) => one.id !== id);
       return json({ status: 204 });
     }
-    const row = replies.find((one) => one.id === id)!;
+    const rows: Row[] = kind === "quick-replies" ? replies : cats;
+    const row = rows.find((one) => one.id === id)!;
     const saved = { ...row, ...data, version: row.version + 1 };
-    replies = replies.map((one) => (one.id === id ? saved : one));
+    if (kind === "quick-replies") replies = replies.map((one) => (one.id === id ? saved : one));
+    else cats = cats.map((one) => (one.id === id ? saved : one));
     return json({ status: 200, body: saved });
   });
   vi.stubGlobal("fetch", api);
@@ -78,6 +94,9 @@ function server() {
     // Otra persona la cambia: la lista lo trae cuando se vuelva a pedir.
     retitle: (id: string, title: string) =>
       (replies = replies.map((one) => (one.id === id ? { ...one, title } : one))),
+    addCategory: (name: string) => (cats = [...cats, cat("cx", name, 50)]),
+    drop: (id: string) => (replies = replies.filter((one) => one.id !== id)),
+    breakList: (times: number) => (broken = times),
     writes: () =>
       api.mock.calls.flatMap(([url, init]) =>
         init?.method && init.method !== "GET"
@@ -106,7 +125,7 @@ afterEach(() => {
 });
 
 describe("pantalla de respuestas rápidas (F6-08c)", () => {
-  it("agrupa por categoría en su orden, con las inactivas", async () => {
+  it("agrupa por categoría en su orden, con las inactivas, y lista las categorías", async () => {
     server();
     show();
     const groups = await screen.findAllByRole("heading", { level: 2 });
@@ -114,7 +133,11 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
       "Delivery",
       "Precios",
       "ViejasDesactivada",
+      "Categorías",
     ]);
+    const categories = screen.getByRole("list", { name: "Categorías" });
+    expect(within(categories).getByText("Orden 9")).toBeInTheDocument();
+    expect(document.activeElement).toBe(document.body); // cargar no mueve el foco
     const prices = screen.getByRole("list", { name: "Precios" });
     expect(within(prices).getByText("/lista")).toBeInTheDocument();
     expect(within(prices).getByText("Desactivada")).toBeInTheDocument();
@@ -139,8 +162,9 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     fill("Atajo", "/Delivery");
     fill("Título", "Envío a domicilio");
     fill("Categoría", "c2");
-    fill("Texto", "Hola {{contact.first_name}}, {{org.name}} te lo lleva hoy. {{x}}");
-    expect(within(form()).getByText("Hola Rosa, Acme SAC te lo lleva hoy. {{x}}")).toBeVisible();
+    fill("Texto", "Hola {{contact.first_name}}, {{org.name}} te lo lleva. {{x}} {{constructor}}");
+    const shown = "Hola Rosa, Acme SAC te lo lleva. {{x}} {{constructor}}";
+    expect(within(form()).getByText(shown)).toBeVisible();
     api.answerOnce({ status: 400, body: { code: "VALIDATION_ERROR", fields: { body: ["x"] } } });
     submit("Crear respuesta");
     expect(await within(form()).findByText(/solo admite las variables/)).toBeInTheDocument();
@@ -182,17 +206,22 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     ]);
   });
 
-  it("desactiva, reactiva y borra tras confirmar; el foco, al título", async () => {
+  it("desactiva (una vez aunque se pulse dos), reactiva y borra tras confirmar; el foco, al título", async () => {
     const api = server();
     show();
-    fireEvent.click(await screen.findByRole("button", { name: "Desactivar /envio" }));
+    const off = await screen.findByRole("button", { name: "Desactivar /envio" });
+    off.focus();
+    fireEvent.click(off);
+    fireEvent.click(off);
     expect(await screen.findByText("«/envio» desactivada.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reactivar /envio" })).toHaveFocus(); // sigue ahí
     fireEvent.click(await screen.findByRole("button", { name: "Reactivar /lista" }));
     expect(await screen.findByText("«/lista» reactivada.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Borrar /lista" }));
     expect(screen.getByText(/¿Borrar «\/lista»?/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancelar" })).toHaveFocus();
     const yes = screen.getByRole("button", { name: "Sí, borrar" });
+    expect(yes).toHaveAccessibleDescription(/No se puede deshacer/);
     yes.focus();
     fireEvent.click(yes);
     expect(await screen.findByText("«/lista» borrada.")).toBeInTheDocument();
@@ -217,5 +246,142 @@ describe("pantalla de respuestas rápidas (F6-08c)", () => {
     expect(within(screen.getByRole("list", { name: "Precios" })).getByText("/envio")).toBeVisible();
     expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
     expect(api.writes()).toEqual(['PATCH /quick-replies/r1/ {"category_id":"c2","version":1}']);
+  });
+
+  it("sin el foco en la página (Safari), el título no lo toma; un 404 que se lleva la fila, sí", async () => {
+    const api = server();
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desactivar /envio" }));
+    expect(await screen.findByText("«/envio» desactivada.")).toBeInTheDocument();
+    expect(document.activeElement).toBe(document.body);
+    const on = screen.getByRole("button", { name: "Reactivar /envio" });
+    on.focus();
+    api.answerOnce({ status: 404, body: { code: "NOT_FOUND" } });
+    api.drop("r1"); // otra persona la borró
+    fireEvent.click(on);
+    expect(await screen.findByText(/«\/envio» cambió o ya no existe/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("/envio")).toBeNull());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("si la recarga falla lo dice, y un refetch posterior no mueve el foco", async () => {
+    const api = server();
+    const view = show();
+    const off = await screen.findByRole("button", { name: "Desactivar /envio" });
+    off.focus();
+    api.breakList(2); // la lectura y su reintento
+    fireEvent.click(off);
+    expect(await screen.findByText(/Se guardó, pero la lista no se pudo/)).toBeInTheDocument();
+    off.blur();
+    await act(() => view.client.invalidateQueries());
+    expect(await screen.findByRole("button", { name: "Reactivar /envio" })).toBeVisible();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("sin categorías activas, remite a «Categorías»", async () => {
+    server([cat("c1", "Viejas", 1, false)]);
+    show();
+    expect(await screen.findByText(/No hay categorías activas. Crea o reactiva una/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Nueva respuesta" })).toBeNull();
+  });
+
+  it("crea una categoría con su orden (CATEGORY_NAME_TAKEN recarga) y la usa en una respuesta", async () => {
+    const api = server();
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva categoría" }));
+    fill("Nombre", "Garantía");
+    fill("Orden", "1.5");
+    submit("Crear categoría");
+    expect(within(form()).getByText(/número entero entre/)).toBeInTheDocument();
+    fill("Orden", "");
+    api.answerOnce({ status: 409, body: { code: "CATEGORY_NAME_TAKEN" } });
+    api.addCategory("Garantía");
+    submit("Crear categoría");
+    expect(await within(form()).findByText(/Ya hay una categoría con ese nombre/)).toBeVisible();
+    expect(await screen.findByRole("heading", { level: 2, name: "Garantía" })).toBeVisible();
+    fill("Nombre", "Garantías");
+    api.answerOnce({ status: 400, body: { code: "VALIDATION_ERROR", fields: { name: ["x"] } } });
+    submit("Crear categoría");
+    expect(await within(form()).findByText(/El nombre no es válido/)).toBeVisible();
+    fill("Orden", "0");
+    api.answerOnce({
+      status: 400,
+      body: { code: "VALIDATION_ERROR", fields: { sort_order: ["x"] } },
+    });
+    submit("Crear categoría");
+    expect(await within(form()).findByText(/número entero entre/)).toBeVisible();
+    submit("Crear categoría");
+    expect(await screen.findByText("Categoría «Garantías» creada.")).toBeInTheDocument();
+    const groups = screen.getAllByRole("heading", { level: 2 }).map((one) => one.textContent);
+    expect(groups.slice(0, 2)).toEqual(["Garantías", "Delivery"]); // orden 0, antes que el 1
+    fireEvent.click(screen.getByRole("button", { name: "Nueva respuesta" }));
+    fill("Atajo", "garantia");
+    fill("Título", "Garantía");
+    fill("Categoría", "c5");
+    fill("Texto", "Un año de garantía.");
+    submit("Crear respuesta");
+    const list = await screen.findByRole("list", { name: "Garantías" });
+    expect(within(list).getByText("/garantia")).toBeVisible();
+    expect(api.writes().slice(0, 5)).toEqual([
+      'POST /quick-reply-categories/ {"name":"Garantía"}',
+      'POST /quick-reply-categories/ {"name":"Garantías"}',
+      'POST /quick-reply-categories/ {"name":"Garantías","sort_order":0}',
+      'POST /quick-reply-categories/ {"name":"Garantías","sort_order":0}',
+      'POST /quick-replies/ {"shortcut":"garantia","title":"Garantía","category_id":"c5","body":"Un año de garantía."}',
+    ]);
+  });
+
+  it("renombra y reordena con un solo PATCH; sin cambios no escribe; STALE_VERSION recarga", async () => {
+    const api = server();
+    show();
+    const edit = "Renombrar u ordenar la categoría Delivery";
+    fireEvent.click(await screen.findByRole("button", { name: edit }));
+    submit("Guardar");
+    expect(await screen.findByText("Sin cambios en «Delivery»: no había nada que guardar."));
+    fireEvent.click(screen.getByRole("button", { name: edit }));
+    fill("Orden", "");
+    submit("Guardar");
+    expect(within(form()).getByText("Escribe el orden: un número entero.")).toBeVisible();
+    fill("Nombre", "Envíos");
+    fill("Orden", "5");
+    submit("Guardar");
+    expect(await screen.findByText("Categoría «Envíos» guardada.")).toBeInTheDocument();
+    const groups = screen.getAllByRole("heading", { level: 2 }).map((one) => one.textContent);
+    expect(groups.slice(0, 3)).toEqual(["Precios", "Envíos", "ViejasDesactivada"]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Renombrar u ordenar la categoría Precios" }),
+    );
+    fill("Nombre", "Tarifas");
+    api.answerOnce({ status: 409, body: { code: "STALE_VERSION" } });
+    api.retitle("r2", "Cambiada por otra persona");
+    submit("Guardar");
+    expect(await screen.findByRole("alert")).toHaveTextContent("«Precios» cambió o ya no existe");
+    expect(screen.queryByRole("form")).toBeNull();
+    expect(await screen.findByText("Cambiada por otra persona")).toBeVisible(); // recargada
+    expect(api.writes()).toEqual([
+      'PATCH /quick-reply-categories/c1/ {"name":"Envíos","sort_order":5,"version":1}',
+      'PATCH /quick-reply-categories/c2/ {"name":"Tarifas","version":1}',
+    ]);
+  });
+
+  it("desactiva y reactiva una categoría; CATEGORY_IN_USE lo explica y recarga", async () => {
+    const api = server();
+    show();
+    api.answerOnce({ status: 409, body: { code: "CATEGORY_IN_USE" } });
+    api.retitle("r1", "Cambiada por otra persona");
+    fireEvent.click(await screen.findByRole("button", { name: "Desactivar Delivery" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "La categoría «Delivery» tiene respuestas activas",
+    );
+    expect(await screen.findByText("Cambiada por otra persona")).toBeVisible(); // recargada
+    fireEvent.click(screen.getByRole("button", { name: "Desactivar Precios" }));
+    expect(await screen.findByText("«Precios» desactivada.")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Reactivar Viejas" }));
+    expect(await screen.findByText("«Viejas» reactivada.")).toBeInTheDocument();
+    expect(api.writes()).toEqual([
+      'PATCH /quick-reply-categories/c1/ {"is_active":false,"version":1}',
+      'PATCH /quick-reply-categories/c2/ {"is_active":false,"version":1}',
+      'PATCH /quick-reply-categories/c3/ {"is_active":true,"version":1}',
+    ]);
   });
 });

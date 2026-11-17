@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { Button } from "@/components/ui/button";
@@ -12,13 +12,14 @@ import {
   quickRepliesList,
   quickRepliesUpdate,
   quickReplyCategoriesList,
+  quickReplyCategoriesUpdate,
 } from "@/lib/api/client";
 import type { ManagedQuickReplyCategory, QuickReply } from "@/lib/api/model";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
-import { type Ctx, Editor, ReplyForm } from "./quick-reply-form";
+import { CategoryForm, type Ctx, Editor, ReplyForm } from "./quick-reply-form";
 
 type Data = [ManagedQuickReplyCategory[], QuickReply[]];
 type Said = { text: string; alert?: boolean } | null;
@@ -27,8 +28,9 @@ const OFF = "border-border text-muted rounded-full border px-2 py-0.5 text-xs fo
 const page = (cursor?: string) => ({ limit: 200, ...(cursor ? { cursor } : {}) });
 
 // Las respuestas rápidas (F6-08c): `…/quick-replies/` y `…/quick-reply-categories/` (F6-08a3/a4)
-// enteras, activas o no, agrupadas por categoría en su orden; todo pide `quick_replies.manage`.
-// Cada cambio vuelve a pedir la lista; un 409 `STALE_VERSION` o un 404 lo dice y recarga.
+// enteras, activas o no, agrupadas por categoría en su orden, y la gestión de sus categorías
+// (F6-08c2); todo pide `quick_replies.manage`. Cada cambio vuelve a pedir la lista; un 409
+// `STALE_VERSION`, `CATEGORY_IN_USE` o un 404 lo dice y recarga.
 export function QuickReplyCatalog() {
   const t = useTranslations("quickReplies");
   const errors = useTranslations("errors");
@@ -49,21 +51,30 @@ export function QuickReplyCatalog() {
   });
   const off = (row: { is_active: boolean }) =>
     row.is_active ? null : <span className={OFF}>{t("inactive")}</span>;
-  const reload = () => queryClient.invalidateQueries({ queryKey: key });
   // La fila que se va (borrada o movida) se lleva el foco: al título, tras pintar la lista nueva.
+  // Solo si el foco estaba en la página: Safari no enfoca un botón al pulsarlo, y entonces el
+  // título no debe quitarle el sitio al lector ni subir la página.
   const refocus = useRef(false);
+  const mark = () => (refocus.current = document.activeElement !== document.body);
   useEffect(() => {
     if (refocus.current && document.activeElement === document.body) heading.current?.focus();
     refocus.current = false;
   }, [list.data]);
+  // Si la recarga falla, la lista no cambia: la marca no espera a un refetch posterior.
+  const reload = async () => {
+    await queryClient.invalidateQueries({ queryKey: key });
+    const failed = queryClient.getQueryState(key)?.status === "error";
+    if (failed) refocus.current = false;
+    return failed;
+  };
   const ctx: Ctx = {
     slug,
+    reload: () => void reload(),
     clear: () => setSaid(null),
     say: (text) => setSaid({ text }),
     after: async (text) => {
-      refocus.current = true;
-      await reload();
-      const failed = queryClient.getQueryState(key)?.status === "error";
+      mark();
+      const failed = await reload();
       setSaid({ text: failed ? t("reloadFailed") : text });
     },
     fail: (error, name) => {
@@ -71,9 +82,15 @@ export function QuickReplyCatalog() {
       const reason =
         error.code === "PERMISSION_DENIED" ? t("form.denied") : errors(`api.${apiErrorKey(error)}`);
       const stale = error.status === 404 || error.code === "STALE_VERSION";
-      const text = stale ? t("stale", { name }) : t("failed", { name, reason });
+      const inUse = error.code === "CATEGORY_IN_USE";
+      const text = stale
+        ? t("stale", { name })
+        : inUse
+          ? t("inUse", { name })
+          : t("failed", { name, reason });
       setSaid({ text, alert: true });
-      if (stale) void reload();
+      if (stale) mark(); // la fila pudo irse (borrada o movida por otra persona)
+      if (stale || inUse) void reload();
     },
   };
 
@@ -86,77 +103,116 @@ export function QuickReplyCatalog() {
       (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, "es"),
     );
     body = (
-      <div className="flex max-w-4xl min-w-0 flex-col gap-6">
-        {ordered.some((c) => c.is_active) ? (
-          <Editor label={t("form.open")} accent onOpen={ctx.clear}>
-            {(close) => <ReplyForm ctx={ctx} categories={ordered} close={close} />}
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+        <div className="flex min-w-0 flex-col gap-6">
+          {ordered.some((c) => c.is_active) ? (
+            <Editor label={t("form.open")} accent onOpen={ctx.clear}>
+              {(close) => <ReplyForm ctx={ctx} categories={ordered} close={close} />}
+            </Editor>
+          ) : (
+            <p className="text-muted">{t("noCategories")}</p>
+          )}
+          {ordered.map((category) => {
+            const rows = replies.filter((r) => r.category_id === category.id);
+            return (
+              <section key={category.id} className="flex flex-col gap-2">
+                <h2 className="flex flex-wrap items-center gap-2 font-semibold">
+                  <bdi>{category.name}</bdi>
+                  {off(category)}
+                </h2>
+                {rows.length ? (
+                  <ul aria-label={category.name} className="flex flex-col gap-2">
+                    {rows.map((reply) => {
+                      const name = `/${reply.shortcut}`;
+                      const flip = { is_active: !reply.is_active, version: reply.version };
+                      return (
+                        <li key={reply.id} className={cn(BOX, "flex flex-col gap-1 p-4")}>
+                          <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <span className="font-mono font-medium wrap-anywhere">{name}</span>
+                            <bdi className="min-w-0 wrap-anywhere">{reply.title}</bdi>
+                            {off(reply)}
+                          </p>
+                          <p className="text-muted line-clamp-3 text-sm wrap-anywhere whitespace-pre-wrap">
+                            <bdi>{reply.body}</bdi>
+                          </p>
+                          <p className="text-muted text-xs">
+                            {t("uses", { count: reply.usage_count })}
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-start gap-2">
+                            <Editor
+                              label={t("form.edit")}
+                              aria={t("form.editLabel", { name })}
+                              onOpen={ctx.clear}
+                            >
+                              {(close) => (
+                                <ReplyForm
+                                  ctx={ctx}
+                                  reply={reply}
+                                  categories={ordered}
+                                  close={close}
+                                />
+                              )}
+                            </Editor>
+                            <Act
+                              ctx={ctx}
+                              name={name}
+                              active={reply.is_active}
+                              run={() => quickRepliesUpdate(slug, reply.id, flip)}
+                            />
+                            <Act
+                              ctx={ctx}
+                              name={name}
+                              run={() => quickRepliesDelete(slug, reply.id)}
+                            />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-muted text-sm">{t("emptyCategory")}</p>
+                )}
+              </section>
+            );
+          })}
+        </div>
+        <section className="flex flex-col gap-3">
+          <h2 className="font-semibold">{t("categories")}</h2>
+          <Editor label={t("categoryForm.open")} onOpen={ctx.clear}>
+            {(close) => <CategoryForm ctx={ctx} close={close} />}
           </Editor>
-        ) : (
-          <p className="text-muted">{t("noCategories")}</p>
-        )}
-        {ordered.map((category) => {
-          const rows = replies.filter((r) => r.category_id === category.id);
-          return (
-            <section key={category.id} className="flex flex-col gap-2">
-              <h2 className="flex flex-wrap items-center gap-2 font-semibold">
-                <bdi>{category.name}</bdi>
-                {off(category)}
-              </h2>
-              {rows.length ? (
-                <ul aria-label={category.name} className="flex flex-col gap-2">
-                  {rows.map((reply) => {
-                    const name = `/${reply.shortcut}`;
-                    const flip = { is_active: !reply.is_active, version: reply.version };
-                    return (
-                      <li key={reply.id} className={cn(BOX, "flex flex-col gap-1 p-4")}>
-                        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                          <span className="font-mono font-medium wrap-anywhere">{name}</span>
-                          <bdi className="min-w-0 wrap-anywhere">{reply.title}</bdi>
-                          {off(reply)}
-                        </p>
-                        <p className="text-muted line-clamp-3 text-sm wrap-anywhere whitespace-pre-wrap">
-                          <bdi>{reply.body}</bdi>
-                        </p>
-                        <p className="text-muted text-xs">
-                          {t("uses", { count: reply.usage_count })}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-start gap-2">
-                          <Editor
-                            label={t("form.edit")}
-                            aria={t("form.editLabel", { name })}
-                            onOpen={ctx.clear}
-                          >
-                            {(close) => (
-                              <ReplyForm
-                                ctx={ctx}
-                                reply={reply}
-                                categories={ordered}
-                                close={close}
-                              />
-                            )}
-                          </Editor>
-                          <Act
-                            ctx={ctx}
-                            name={name}
-                            active={reply.is_active}
-                            run={() => quickRepliesUpdate(slug, reply.id, flip)}
-                          />
-                          <Act
-                            ctx={ctx}
-                            name={name}
-                            run={() => quickRepliesDelete(slug, reply.id)}
-                          />
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="text-muted text-sm">{t("emptyCategory")}</p>
-              )}
-            </section>
-          );
-        })}
+          <ul aria-label={t("categories")} className="flex flex-col gap-2">
+            {ordered.map((category) => (
+              <li key={category.id} className={cn(BOX, "p-3")}>
+                <p className="flex flex-wrap items-center gap-2 text-sm">
+                  <bdi className="font-medium wrap-anywhere">{category.name}</bdi>
+                  <span className="text-muted">{t("order", { order: category.sort_order })}</span>
+                  {off(category)}
+                </p>
+                <div className="mt-2 flex flex-wrap items-start gap-2">
+                  <Editor
+                    label={t("categoryForm.edit")}
+                    aria={t("categoryForm.editLabel", { name: category.name })}
+                    onOpen={ctx.clear}
+                  >
+                    {(close) => <CategoryForm ctx={ctx} category={category} close={close} />}
+                  </Editor>
+                  <Act
+                    ctx={ctx}
+                    name={category.name}
+                    active={category.is_active}
+                    run={() =>
+                      quickReplyCategoriesUpdate(slug, category.id, {
+                        is_active: !category.is_active,
+                        version: category.version,
+                      })
+                    }
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       </div>
     );
   } else if (list.isError && list.error.status !== 401) {
@@ -179,7 +235,7 @@ export function QuickReplyCatalog() {
   }
 
   return (
-    <section className="flex max-w-4xl flex-col gap-6">
+    <section className="flex max-w-6xl flex-col gap-6">
       <div className="flex flex-col gap-2">
         <p className="text-[13px] tracking-wide uppercase">{t("eyebrow")}</p>
         <h1
@@ -222,9 +278,15 @@ function Act({
   const what = active === undefined ? "delete" : active ? "deactivate" : "activate";
   const [asking, setAsking] = useState(false);
   const cancel = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  // Dos pulsaciones seguidas no son dos escrituras: `isPending` llega una tarea después.
+  const sending = useRef(false);
   const write = useMutation<unknown, ApiError>({
     mutationFn: run,
     networkMode: "always",
+    onSettled: () => {
+      sending.current = false;
+    },
     onSuccess: () => ctx.after(t(`${what}d` as "deleted", { name })),
     onError: (error) => ctx.fail(error, name),
   });
@@ -233,9 +295,10 @@ function Act({
     if (asking) cancel.current?.focus(); // lo seguro
   }, [asking]);
   const go = () => {
-    if (busy) return;
+    if (busy || sending.current) return;
     ctx.clear();
     if (what === "delete" && !asking) return setAsking(true);
+    sending.current = true;
     write.mutate();
   };
 
@@ -245,7 +308,11 @@ function Act({
       // Enter mantenido repite la pulsación: desactivaría y reactivaría sin parar.
       onKeyDown={(event) => event.repeat && event.key === "Enter" && event.preventDefault()}
     >
-      {asking ? <p className="text-sm wrap-anywhere">{t("ask", { name })}</p> : null}
+      {asking ? (
+        <p id={id} className="text-sm wrap-anywhere">
+          {t("ask", { name })}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {asking ? (
           <Button
@@ -261,6 +328,7 @@ function Act({
           variant="ghost"
           className={cn("border-border min-h-11 border sm:min-h-9", asking && "text-danger")}
           aria-label={asking ? undefined : t(`${what}Label`, { name })}
+          aria-describedby={asking ? id : undefined}
           aria-disabled={busy}
           onClick={go}
         >

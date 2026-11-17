@@ -6,7 +6,12 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useTenant } from "@/components/app-shell/tenant-context";
 import { FieldsForm } from "@/components/forms/fields-form";
 import { Button } from "@/components/ui/button";
-import { useQuickRepliesCreate, useQuickRepliesUpdate } from "@/lib/api/client";
+import {
+  useQuickRepliesCreate,
+  useQuickRepliesUpdate,
+  useQuickReplyCategoriesCreate,
+  useQuickReplyCategoriesUpdate,
+} from "@/lib/api/client";
 import {
   type ManagedQuickReplyCategory,
   type QuickReply,
@@ -19,6 +24,7 @@ import { cn } from "@/lib/utils";
 // (409 `STALE_VERSION` o 404: recarga y lo dice).
 export type Ctx = {
   slug: string;
+  reload: () => void;
   clear: () => void;
   say: (text: string) => void;
   after: (text: string) => Promise<void>;
@@ -26,6 +32,7 @@ export type Ctx = {
 };
 
 const SHORTCUT = /^\/?[a-z0-9_-]{1,32}$/i; // la `/` inicial se acepta y no se envía
+const ORDER = /^-?\d{1,5}$/;
 const TOKEN = /\{\{\s*([^{}\s]*)\s*\}\}/g; // como el resolvedor de la API
 const VARIABLES = Object.values(QuickReplyVariableEnum);
 const AREA =
@@ -105,11 +112,12 @@ export function ReplyForm({
   const write = reply ? update : create;
   const bad = write.error?.code === "VALIDATION_ERROR" ? (write.error.fields ?? {}) : {};
   const bodyError = empty ? t("bodyRequired") : "body" in bad ? t("bodyInvalid") : undefined;
-  const sample: Record<string, string> = {
-    "contact.first_name": t("sampleFirst"),
-    "contact.name": t("sampleName"),
-    "org.name": organization.name,
-  };
+  // Un `Map`, no un objeto: `{{constructor}}` no es una variable.
+  const sample = new Map([
+    ["contact.first_name", t("sampleFirst")],
+    ["contact.name", t("sampleName")],
+    ["org.name", organization.name],
+  ]);
   const options = categories.filter((c) => c.is_active || c.id === reply?.category_id);
   const title = reply ? t("editLabel", { name: `/${reply.shortcut}` }) : t("title");
 
@@ -183,7 +191,7 @@ export function ReplyForm({
           <div className="bg-surface-raised flex flex-col gap-1 rounded-lg p-3 text-sm">
             <p className="text-muted">{t("preview")}</p>
             <p className="wrap-anywhere whitespace-pre-wrap">
-              {text.replace(TOKEN, (all, key: string) => sample[key] ?? all)}
+              {text.replace(TOKEN, (all, key: string) => sample.get(key) ?? all)}
             </p>
           </div>
         </>
@@ -218,6 +226,78 @@ export function ReplyForm({
       }
       denied={t("denied")}
       labels={{ submit: t(reply ? "save" : "create"), busy: t("busy"), cancel: t("cancel") }}
+      onCancel={close}
+    />
+  );
+}
+
+// Crear (sin `category`) o renombrar y reordenar una categoría (F6-08c2). El orden es un entero, de
+// menor a mayor: cambiarlo es un solo PATCH de esta categoría, sin tocar las demás.
+export function CategoryForm({
+  ctx,
+  category,
+  close,
+}: {
+  ctx: Ctx;
+  category?: ManagedQuickReplyCategory;
+  close: () => void;
+}) {
+  const t = useTranslations("quickReplies.categoryForm");
+  const base = useRef(category);
+  const mutation = {
+    networkMode: "always" as const,
+    onSuccess: async (row: ManagedQuickReplyCategory) => {
+      await ctx.after(t("done", { name: row.name, created: String(!category) }));
+      close();
+    },
+    onError: (error: ApiError) => {
+      if (error.code === "CATEGORY_NAME_TAKEN") return ctx.reload(); // la otra, a la vista
+      if (!category || !gone(error)) return;
+      close();
+      ctx.fail(error, category.name);
+    },
+  };
+  const create = useQuickReplyCategoriesCreate({ mutation });
+  const update = useQuickReplyCategoriesUpdate({ mutation });
+  const write = category ? update : create;
+  const title = category ? t("editLabel", { name: category.name }) : t("title");
+  const fits = (v: string) => ORDER.test(v) && Number(v) >= -32768 && Number(v) <= 32767;
+
+  return (
+    <FieldsForm
+      title={title}
+      heading={<h3 className="font-medium wrap-anywhere">{title}</h3>}
+      className="border-border bg-surface flex w-full flex-col gap-4 rounded-lg border p-4"
+      fields={[
+        {
+          ...{ name: "name", label: t("name"), max: 100, defaultValue: category?.name },
+          ...{ required: t("nameRequired"), invalid: t("nameInvalid") },
+        },
+        {
+          ...{ name: "sort_order", label: t("order"), max: 6, inputMode: "numeric" as const },
+          ...{ invalid: t("orderInvalid"), valid: fits },
+          ...(category
+            ? { required: t("orderRequired"), defaultValue: String(category.sort_order) }
+            : { hint: t("orderHint") }),
+        },
+      ]}
+      write={write}
+      send={({ name, sort_order: order }) => {
+        const wanted = { name, ...(order ? { sort_order: Number(order) } : {}) };
+        if (!category) return create.mutate({ orgSlug: ctx.slug, data: wanted });
+        const data = changed(wanted, base.current!);
+        if (Object.keys(data).length === 0) {
+          close();
+          return ctx.say(t("unchanged", { name: category.name }));
+        }
+        const version = base.current!.version;
+        update.mutate({ orgSlug: ctx.slug, categoryId: category.id, data: { ...data, version } });
+      }}
+      taken={(error) =>
+        error.code === "CATEGORY_NAME_TAKEN" ? { field: "name", text: t("nameTaken") } : null
+      }
+      denied={t("denied")}
+      labels={{ submit: t(category ? "save" : "create"), busy: t("busy"), cancel: t("cancel") }}
       onCancel={close}
     />
   );
