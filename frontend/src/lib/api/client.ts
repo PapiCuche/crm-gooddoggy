@@ -23,6 +23,9 @@ import type {
 
 import type {
   AddStageRequest,
+  AiProviderAccount,
+  AiProviderAccountCreateRequest,
+  AiProviderKeyRequest,
   AssignRequest,
   Assignment,
   AuditListParams,
@@ -1826,6 +1829,439 @@ export function useMeOrganizations<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getAiProviderAccountsListUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/`;
+};
+
+/**
+ * Las cuentas de proveedor de IA de la organización, activas y desactivadas (`ai.manage` y segundo factor reciente). Nunca la clave ni su cifrado: solo `key_last_four`.
+ */
+export const aiProviderAccountsList = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount[]> => {
+  return apiFetch<AiProviderAccount[]>(getAiProviderAccountsListUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiProviderAccountsListQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/provider-accounts/`] as const;
+};
+
+export const getAiProviderAccountsListQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiProviderAccountsListQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiProviderAccountsList>>> = ({ signal }) =>
+    aiProviderAccountsList(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiProviderAccountsListQueryResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsList>>
+>;
+export type AiProviderAccountsListQueryError = ErrorType<Error>;
+
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiProviderAccountsList>>,
+          TError,
+          Awaited<ReturnType<typeof aiProviderAccountsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiProviderAccountsList>>,
+          TError,
+          Awaited<ReturnType<typeof aiProviderAccountsList>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiProviderAccountsList<
+  TData = Awaited<ReturnType<typeof aiProviderAccountsList>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof aiProviderAccountsList>>, TError, TData>
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiProviderAccountsListQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiProviderAccountsCreateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/`;
+};
+
+/**
+ * Guarda la clave de un proveedor (`ai.manage` y segundo factor reciente), cifrada; reactiva una cuenta desactivada. 400 en `api_key`: no tiene el formato de una clave. 409 `AI_ACCOUNT_EXISTS`: ya hay una activa (se rota). 409 `AI_ACCOUNT_CONFLICT`: otra petición la creó a la vez.
+ */
+export const aiProviderAccountsCreate = async (
+  orgSlug: string,
+  aiProviderAccountCreateRequest: AiProviderAccountCreateRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiProviderAccount>(getAiProviderAccountsCreateUrl(orgSlug), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiProviderAccountCreateRequest),
+  });
+};
+
+export const getAiProviderAccountsCreateMutationKey = () => ["aiProviderAccountsCreate"] as const;
+
+export const getAiProviderAccountsCreateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+    TError,
+    AiProviderAccountsCreateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+  TError,
+  AiProviderAccountsCreateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsCreateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+    AiProviderAccountsCreateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiProviderAccountsCreate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsCreateMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsCreate>>
+>;
+export type AiProviderAccountsCreateMutationBody = AiProviderAccountCreateRequest;
+export type AiProviderAccountsCreateMutationError = ErrorType<Error>;
+export type AiProviderAccountsCreateMutationVariables = {
+  orgSlug: string;
+  data: AiProviderAccountCreateRequest;
+};
+
+export const useAiProviderAccountsCreate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+      TError,
+      AiProviderAccountsCreateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsCreate>>,
+  TError,
+  AiProviderAccountsCreateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsCreateMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsDestroyUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/`;
+};
+
+/**
+ * Desactiva la cuenta (`ai.manage` y segundo factor reciente): el cifrado de su clave se borra. Para volver a usarla se guarda una clave nueva. 404: no existe, es de otra organización o ya está desactivada.
+ */
+export const aiProviderAccountsDestroy = async (
+  orgSlug: string,
+  accountId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<void> => {
+  return apiFetch<void>(getAiProviderAccountsDestroyUrl(orgSlug, accountId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getAiProviderAccountsDestroyMutationKey = () => ["aiProviderAccountsDestroy"] as const;
+
+export const getAiProviderAccountsDestroyMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+    TError,
+    AiProviderAccountsDestroyMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+  TError,
+  AiProviderAccountsDestroyMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsDestroyMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+    AiProviderAccountsDestroyMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId } = props ?? {};
+
+    return aiProviderAccountsDestroy(orgSlug, accountId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsDestroyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsDestroy>>
+>;
+
+export type AiProviderAccountsDestroyMutationError = ErrorType<Error>;
+export type AiProviderAccountsDestroyMutationVariables = { orgSlug: string; accountId: string };
+
+export const useAiProviderAccountsDestroy = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+      TError,
+      AiProviderAccountsDestroyMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsDestroy>>,
+  TError,
+  AiProviderAccountsDestroyMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsDestroyMutationOptions(options), queryClient);
+};
+
+export const getAiProviderAccountsRotateKeyUrl = (orgSlug: string, accountId: string) => {
+  return `/api/v1/o/${orgSlug}/ai/provider-accounts/${accountId}/key/`;
+};
+
+/**
+ * Sustituye la clave de la cuenta (`ai.manage` y segundo factor reciente): la anterior se invalida y su cifrado se borra. 404: no existe, es de otra organización o está desactivada.
+ */
+export const aiProviderAccountsRotateKey = async (
+  orgSlug: string,
+  accountId: string,
+  aiProviderKeyRequest: AiProviderKeyRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiProviderAccount> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiProviderAccount>(getAiProviderAccountsRotateKeyUrl(orgSlug, accountId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiProviderKeyRequest),
+  });
+};
+
+export const getAiProviderAccountsRotateKeyMutationKey = () =>
+  ["aiProviderAccountsRotateKey"] as const;
+
+export const getAiProviderAccountsRotateKeyMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+    TError,
+    AiProviderAccountsRotateKeyMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+  TError,
+  AiProviderAccountsRotateKeyMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiProviderAccountsRotateKeyMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+    AiProviderAccountsRotateKeyMutationVariables
+  > = (props) => {
+    const { orgSlug, accountId, data } = props ?? {};
+
+    return aiProviderAccountsRotateKey(orgSlug, accountId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiProviderAccountsRotateKeyMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>
+>;
+export type AiProviderAccountsRotateKeyMutationBody = AiProviderKeyRequest;
+export type AiProviderAccountsRotateKeyMutationError = ErrorType<Error>;
+export type AiProviderAccountsRotateKeyMutationVariables = {
+  orgSlug: string;
+  accountId: string;
+  data: AiProviderKeyRequest;
+};
+
+export const useAiProviderAccountsRotateKey = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+      TError,
+      AiProviderAccountsRotateKeyMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiProviderAccountsRotateKey>>,
+  TError,
+  AiProviderAccountsRotateKeyMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiProviderAccountsRotateKeyMutationOptions(options), queryClient);
+};
 
 export const getAuditListUrl = (orgSlug: string, params?: AuditListParams) => {
   const normalizedParams = new URLSearchParams();

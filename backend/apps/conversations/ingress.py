@@ -7,10 +7,15 @@ sobre ellas y solo entra por las funciones `SECURITY DEFINER` de las migraciones
 **nunca** usa la organización que diga el payload: sale de `resolve_channel_account` (la cuenta
 que la propia organización registró), y el procesador solo enruta y marca: un ítem enrutado queda
 `PROCESSED` sin efecto hasta F7-04.
+
+Instagram y Messenger (F7b-04b, ADR-035 §4) se guardan con las versiones `_social` de las funciones
+y se enrutan por `resolve_social_account` (la cuenta viva de ese `entry.id` firmado), con el cruce
+obligatorio de la cuenta del evento (`ACCOUNT_MISMATCH`) antes de escribir nada.
 """
 
 import json
 import math
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -23,7 +28,7 @@ from psycopg.types.json import Jsonb
 
 from apps.audit.services import Entity, record
 from apps.conversations import delivery, inbound
-from apps.conversations.models import ChannelAccount
+from apps.conversations.models import META_ID, ChannelAccount
 from core.observability.logging import get_logger
 from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
@@ -44,10 +49,12 @@ _now = time.monotonic  # separado para que una prueba mueva el reloj
 class Claimed:
     id: UUID
     kind: str
-    waba_id: str
+    waba_id: str | None
     phone_number_id: str | None
     payload: dict[str, Any]
     attempts: int
+    platform: str = "WHATSAPP"
+    routing_id: str | None = None
 
 
 def clean(value: Any) -> Any:
@@ -99,20 +106,28 @@ def refuse(item: Any, sqlstate: str) -> bool:
     sql = "SELECT public.webhook_ingress_refuse(%s, %s, %s, %s, %s, %s, %s)"
     payload = Jsonb(clean(item.payload))
     args = [PROVIDER, item.key, item.kind, item.waba_id, item.phone_number_id, payload, reason]
+    if getattr(item, "platform", "WHATSAPP") != "WHATSAPP":  # con plataforma y `entry.id`
+        sql = sql.replace("refuse(", "refuse_social(")
+        args[3:5] = [item.platform, item.routing_id]
     return _bound(sql, args)[0][0] is not None
 
 
 def _insert_all(items: list[Any]) -> int:
     """Todos los ítems en una sola sentencia, en el orden dado; devuelve cuántos eran nuevos."""
+    social = getattr(items[0], "platform", "WHATSAPP") != "WHATSAPP"  # un solo `object`
     rows = [
-        {"k": i.key, "t": i.kind, "w": i.waba_id, "n": i.phone_number_id, "p": clean(i.payload)}
+        {"k": i.key, "t": i.kind, "p": clean(i.payload)}
+        | ({"w": i.platform, "n": i.routing_id} if social else
+           {"w": i.waba_id, "n": i.phone_number_id})
         for i in items
-    ]
+    ]  # fmt: skip
     sql = (  # la función, volátil, se evalúa después del `ORDER BY`: en el orden dado
         "SELECT count(s.id) FROM (SELECT public.webhook_ingress_insert(%s, e->>'k', e->>'t',"
         " e->>'w', e->>'n', e->'p') AS id FROM jsonb_array_elements(%s) WITH ORDINALITY AS a(e, n)"
         " ORDER BY a.n) AS s"
     )
+    if social:  # la versión con plataforma y `entry.id` (0040): mismo orden de argumentos
+        sql = sql.replace("webhook_ingress_insert(", "webhook_ingress_insert_social(")
     return int(_bound(sql, [PROVIDER, Jsonb(rows)])[0][0])
 
 
@@ -153,7 +168,7 @@ def store(items: list[Any]) -> int:
 def claim(limit: int = 50, lease: int = LEASE_SECONDS) -> list[Claimed]:
     rows = _call("SELECT * FROM public.webhook_ingress_claim(%s, %s)", [limit, lease])
     # El jsonb llega como texto por el cursor de Django.
-    return [Claimed(r[0], r[1], r[2], r[3], json.loads(r[4]), r[5]) for r in rows]
+    return [Claimed(r[0], r[1], r[2], r[3], json.loads(r[4]), *r[5:8]) for r in rows]
 
 
 def mark(
@@ -192,7 +207,7 @@ def resolve_social(platform: str, external_id: str) -> tuple[UUID, UUID] | None:
     """(organización, cuenta) de la cuenta viva de Instagram o Messenger de ese `entry.id` firmado
     (ADR-035 §4), o `None`: la organización nunca sale del payload."""
     sql = "SELECT * FROM public.resolve_social_account(%s, %s)"
-    found = _call(sql, [platform, external_id])
+    found = _bound(sql, [platform, external_id])  # el id, aparte: nunca en el texto ni en el log
     return (found[0][0], found[0][1]) if found else None
 
 
@@ -221,6 +236,8 @@ def wake() -> None:
 def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
     """A dónde va un ítem: (estado, organización, cuenta, motivo). La organización es la de la
     cuenta registrada, nunca una del payload; el WABA del evento tiene que ser el de la cuenta."""
+    if item.platform != "WHATSAPP":
+        return _route_social(item)
     if item.phone_number_id is None:
         return "IGNORED", None, None, "NO_NUMBER"  # cuenta y plantillas: F7-10 y F7-11
     found = resolve("WHATSAPP", item.phone_number_id)
@@ -245,6 +262,30 @@ def route(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
                     logger.info("meta.webhook.status_unknown_message")  # y su payload se vacía
                     return "IGNORED", organization_id, account_id, "UNKNOWN_MESSAGE"
                 return "FAILED", None, None, "MESSAGE_NOT_FOUND"
+    return "PROCESSED", organization_id, account_id, None
+
+
+def _route_social(item: Claimed) -> tuple[str, UUID | None, UUID | None, str | None]:
+    """Instagram o Messenger: la cuenta viva de ese `entry.id`; la cuenta que nombra el evento (el
+    destinatario, o el remitente en un eco) tiene que ser esa misma, o no se escribe nada."""
+    if item.routing_id is None or not re.fullmatch(META_ID, item.routing_id):
+        return "IGNORED", None, None, "UNKNOWN_ACCOUNT"  # el resolver lanzaría: ni se le pregunta
+    if (found := resolve_social(item.platform, item.routing_id)) is None:
+        return "IGNORED", None, None, "UNKNOWN_ACCOUNT"
+    organization_id, account_id = found
+    context = TenantContext(organization_id, "webhook", actor_type=ActorType.INTEGRATION)
+    message = item.payload.get("message")
+    echo = isinstance(message, dict) and message.get("is_echo") is True
+    named = item.payload.get("sender" if echo else "recipient")
+    with tenant_scope(context):
+        live = ChannelAccount.objects.filter(pk=account_id, deleted_at__isnull=True)
+        account = live.filter(platform=item.platform, external_account_id=item.routing_id).first()
+        if account is None or not isinstance(named, dict) or named.get("id") != item.routing_id:
+            logger.warning("meta.webhook.account_mismatch", channel_account_id=str(account_id))
+            return "IGNORED", None, None, "ACCOUNT_MISMATCH"
+        seen(context, account)
+        if reason := inbound.receive_social(context, account, item.kind, item.payload):
+            return "IGNORED", organization_id, account_id, reason
     return "PROCESSED", organization_id, account_id, None
 
 
