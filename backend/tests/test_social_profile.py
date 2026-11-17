@@ -14,7 +14,7 @@ from django.db import connection
 
 from apps.contacts.commands import update_contact
 from apps.contacts.models import Contact
-from apps.conversations import inbound, profiles, tasks
+from apps.conversations import credentials, graph, inbound, profiles, tasks
 from apps.conversations.models import ChannelAccount, ContactIdentity
 from core.outbox.models import OutboxEvent
 from core.tenancy.scope import tenant_scope
@@ -220,3 +220,43 @@ def test_the_task_runs_in_the_identity_organization_only(
     monkeypatch.setattr(profiles, "apply_profile", spy)
     run(crm.a, ig)
     assert seen == [(crm.a, str(crm.a))] and name_of(crm.a, ig) == "Cliente Simulado"
+
+
+def account_state(org: UUID, identity: ContactIdentity) -> tuple[str, str | None]:
+    with tenant_scope(ctx(org)):
+        found = ChannelAccount.objects.get(pk=identity.channel_account_id)
+        return found.status, found.status_detail
+
+
+@pytest.mark.parametrize("script", ["token", "token_400"])
+def test_a_190_on_the_profile_read_puts_the_account_in_error(
+    crm: SimpleNamespace, meta: FakePageGraph, ig: ContactIdentity, script: str
+) -> None:
+    """F7b-05a (obligación de #778): el `190` de la lectura del perfil deja la cuenta en `ERROR`
+    (`TOKEN_INVALID`), como el del envío; la otra organización no se toca."""
+    assert account_state(crm.a, ig)[0] != "ERROR"
+    other = account(crm.b, "INSTAGRAM", "100000000000103")  # otra organización, otra cuenta
+    meta.then(script)
+    run(crm.a, ig)
+    assert account_state(crm.a, ig) == ("ERROR", "TOKEN_INVALID")
+    with tenant_scope(ctx(crm.b)):
+        assert ChannelAccount.objects.get(pk=other.pk).status == "PENDING"
+
+
+def test_a_190_for_a_token_already_rotated_leaves_the_account_alone(
+    crm: SimpleNamespace, meta: FakePageGraph, ig: ContactIdentity, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El `190` es del token que se leyó: si mientras tanto se rotó, la cuenta no pasa a `ERROR`."""
+    before = account_state(crm.a, ig)
+
+    def rotated(token: str, customer: str) -> Any:
+        with tenant_scope(ctx(crm.a)) as tenant:  # como `rotate_token`: revocar y guardar otro
+            old = ChannelAccount.objects.get(pk=ig.channel_account_id).credential_id
+            credentials.revoke(tenant, old)
+            fresh = credentials.store(tenant, ig.channel_account_id, "otro-token-de-prueba")
+            ChannelAccount.objects.filter(pk=ig.channel_account_id).update(credential_id=fresh.pk)
+        raise graph.TokenRejected
+
+    monkeypatch.setattr(graph, "profile", rotated)
+    run(crm.a, ig)
+    assert account_state(crm.a, ig) == before
