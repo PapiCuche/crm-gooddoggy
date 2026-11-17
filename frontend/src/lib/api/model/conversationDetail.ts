@@ -34,6 +34,11 @@ export interface ConversationDetail {
    */
   last_message_preview: string | null;
   last_message_direction: LastMessageDirectionEnum | NullEnum | null;
+  /**
+   * Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035 §4).
+   * @nullable
+   */
+  standby_since: string | null;
   version: number;
   /** @nullable */
   assigned_at: string | null;

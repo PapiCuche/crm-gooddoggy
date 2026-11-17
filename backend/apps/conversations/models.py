@@ -416,6 +416,9 @@ class Conversation(TenantModel):
     )
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    # Instagram o Messenger (ADR-035 §4): desde cuándo otra app controla el hilo (`standby`). La
+    # fija un entrante en `standby` y la limpia uno normal, el más reciente según el canal.
+    standby_since = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)

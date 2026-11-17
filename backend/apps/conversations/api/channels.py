@@ -73,6 +73,10 @@ class ChannelAccountSerializer(serializers.Serializer[Any]):
         allow_null=True,
         help_text="Lo único que se enseña del token; `null` si la cuenta no tiene credencial viva.",
     )
+    has_standby_conversations = serializers.BooleanField(
+        help_text="Instagram o Messenger: alguna conversación no cerrada de la cuenta está en "
+        "`standby` (otra app controla el hilo, ADR-035 §4)."
+    )
     version = serializers.IntegerField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()

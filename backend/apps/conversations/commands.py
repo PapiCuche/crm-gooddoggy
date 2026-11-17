@@ -310,6 +310,7 @@ def record_inbound(
     provider_at: dt.datetime | None = None,
     attachment: tuple[str, str] | None = None,
     contact_identity_id: UUID | None = None,
+    standby: bool | None = None,
 ) -> tuple[Message, bool]:
     """Registra un mensaje del cliente, idempotente por `(cuenta, external_message_id)`: repetirlo
     devuelve el mismo y no cambia nada. Abre o reutiliza la conversación (`PENDING` si es nueva),
@@ -323,7 +324,10 @@ def record_inbound(
     (`last_inbound_at`, acotado a «ahora» y sin retroceder); el orden del chat sigue siendo el de
     llegada. Con más de 24 h de antigüedad no reabre una conversación `WAITING_CUSTOMER` ni
     `RESOLVED` (se anota sin cambiarle el estado). En Instagram y Messenger, `contact_identity_id`
-    (obligatoria) es la identidad del contacto en la cuenta: la del hilo nuevo (ADR-035 §5)."""
+    (obligatoria) es la identidad del contacto en la cuenta: la del hilo nuevo (ADR-035 §5), y
+    `standby` dice si otra app controla el hilo (ADR-035 §4): fija `standby_since` (`True`) o la
+    limpia (`False`), solo si el mensaje es el entrante más reciente según el canal; `None` (los
+    demás canales) no la toca."""
     alias = require_scope(ctx)
     allowed: tuple[str, ...] = (MessageType.TEXT, MessageType.UNSUPPORTED)
     if attachment is not None:  # un medio: su tipo y nada más, con un id de solo dígitos
@@ -358,16 +362,20 @@ def record_inbound(
         if attachment is not None:
             media.attach(ctx, message, *attachment)
         anchor = max(convo.last_inbound_at, seen or now) if convo.last_inbound_at else seen or now
+        if standby is not None and anchor == (seen or now):  # uno más antiguo no lo cambia
+            convo.standby_since = (convo.standby_since or anchor) if standby else None
         convo.last_inbound_at, convo.last_message_at = anchor, now
         convo.last_message_preview, convo.last_message_direction = _preview(text), "INBOUND"
         if convo.status in (Status.WAITING_CUSTOMER, Status.RESOLVED) and not stale:
             _status(  # con las marcas del mensaje: `update_fields` no las guardaría de otro modo
                 ctx, alias, convo, Status.OPEN, "conversation.reopened", resolved_at=None,
-                last_inbound_at=anchor, last_message_at=now,
+                last_inbound_at=anchor, last_message_at=now, standby_since=convo.standby_since,
                 last_message_preview=convo.last_message_preview, last_message_direction="INBOUND",
             )  # fmt: skip
         else:
-            convo.save(using=alias, update_fields=[*LAST, "last_inbound_at", "updated_at"])
+            convo.save(
+                using=alias, update_fields=[*LAST, "last_inbound_at", "standby_since", "updated_at"]
+            )
         record(ctx, "message.received", Entity("message", message.pk), None, _sent(message))
         ids = {
             "conversation_id": convo.pk,
