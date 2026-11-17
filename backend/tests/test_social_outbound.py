@@ -286,9 +286,13 @@ def test_a_malformed_page_id_is_refused_before_any_url_is_built(
     with tenant_scope(ctx(world.a)) as tenant:
         claim = commands.claim_outbound(tenant, message_id=message.pk)
     assert claim is not None
-    which = "parent_id" if platform == "INSTAGRAM" else "phone_number_id"
+    bad = (
+        dataclasses.replace(claim, parent_id=page)
+        if platform == "INSTAGRAM"
+        else dataclasses.replace(claim, phone_number_id=str(page))
+    )
     with pytest.raises(ValueError, match="identificador de Meta"):
-        channels.adapter_for(platform).send(dataclasses.replace(claim, **{which: page}))
+        channels.adapter_for(platform).send(bad)
     assert graph.calls == []
 
 
