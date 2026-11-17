@@ -167,7 +167,7 @@ El camino completo (EICAR queda `INFECTED`, se audita y nunca se descarga; clamd
 
 ## 8. Instagram, Messenger y WhatsApp contra el simulador de Meta (F7b-06c)
 
-Para probar conectar, recibir y responder sin Meta ([ADR-041](../adr/ADR-041-local-meta-graph-simulator.md)). El servicio `meta-sim` sirve la Graph API falsa de `backend/tests/meta_sim` (fuera de toda imagen) y el backend le manda las llamadas a Graph **solo** con los settings `local`. Todos los valores son ficticios: **nunca pegues un token real** en un stack con el simulador encendido.
+Para probar conectar, recibir y responder sin cuentas de Meta ([ADR-041](../adr/ADR-041-local-meta-graph-simulator.md)). El servicio `meta-sim` sirve la Graph API falsa de `backend/tests/meta_sim` (fuera de toda imagen) y el backend le manda las llamadas a Graph **solo** con los settings `local`. Todos los valores son ficticios: **nunca pegues un token real** en un stack con el simulador encendido, y **no lo enciendas contra una base que ya tenga cuentas reales** de una página o de WhatsApp: sus tokens irían por http al simulador, que guarda en memoria las cabeceras de WhatsApp. No pongas `META_GRAPH_SIMULATOR_URL` sin el perfil `meta-sim`: el nombre `meta-sim` lo resolvería el resolvedor de tu red (con sus dominios de búsqueda).
 
 **1. Configuración.** En `infra/env/.env`, los valores de ejemplo del bloque «Simulador local de Meta» de `.env.example`:
 
@@ -232,4 +232,4 @@ Cada envío lleva un `mid` nuevo y la hora actual (abre la ventana de 24 h). En 
 curl -s -X POST http://127.0.0.1:8090/_sim/then -d '{"page": ["window_closed"]}'
 ```
 
-**Límites.** Los medios entrantes no se descargan (la descarga sigue con la política normal). El simulador guarda todo en memoria: reiniciarlo lo vacía, y las cuentas ya conectadas siguen funcionando porque siempre acepta los mismos ids y el mismo token.
+**Límites.** Los medios entrantes no se descargan: la descarga sigue con la política normal, y el simulador no conoce ningún medio (la consulta falla). Si un día devolviera una URL, el backend intentaría bajarla del `lookaside.fbsbx.com` **real** con el token ficticio, y Meta lo rechazaría; ninguna otra llamada sale a Meta. El simulador guarda todo en memoria: reiniciarlo lo vacía, y las cuentas ya conectadas siguen funcionando porque siempre acepta los mismos ids y el mismo token.

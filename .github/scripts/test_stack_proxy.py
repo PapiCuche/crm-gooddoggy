@@ -248,7 +248,11 @@ class StackAntivirus(unittest.TestCase):
                 self.assertNotIn(needle, text, f"{needle} en {path}")
         self.assertIn("tests/", (ROOT / "backend/.dockerignore").read_text().split())
         sim = COMPOSE[COMPOSE.index("  meta-sim:") : COMPOSE.index("  mailpit:")]
-        self.assertIn("profiles: [meta-sim]", sim)
+        for line in ("profiles: [meta-sim]", 'user: "65534:65534"', "read_only: true",
+                     "cap_drop: [ALL]", 'security_opt: ["no-new-privileges:true"]'):
+            self.assertIn(f"\n    {line}\n", sim)
+        self.assertEqual(re.findall(r'^\s+- "(.*)"', sim[sim.index("ports:"):], re.M)[:1],
+                         ["127.0.0.1:${META_SIM_HOST_PORT:-8090}:8090"])  # solo en loopback
         self.assertIn("../../backend/tests/meta_sim:/sim/tests/meta_sim:ro", sim)
         runtime = COMPOSE[COMPOSE.index("x-runtime:") : COMPOSE.index("services:")]
         self.assertIn("DJANGO_SETTINGS_MODULE: config.settings.local", runtime)

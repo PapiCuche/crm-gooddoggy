@@ -6,6 +6,7 @@ loopback; el webhook firmado de `send_webhook` entra por la ruta pública. Postg
 
 import hashlib
 import hmac
+import io
 import json
 import re
 import socket
@@ -18,10 +19,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from urllib3.connectionpool import HTTPConnectionPool
 
 from apps.conversations import graph, ingress
 from core import http
 from tests.meta_sim import GRAPH_VERSION, send_webhook
+from tests.meta_sim import server as sim_server
 from tests.meta_sim.graph import TEST_TOKEN
 from tests.meta_sim.server import Simulator, serve
 from tests.meta_sim.social import IG_ACCOUNT_ID, IGSID, PAGE_ID, PSID
@@ -42,6 +45,8 @@ from tests.test_social_inbound import inbox, social_world
 __all__ = ["channel", "crm", "real_stack", "social_world", "world"]  # las fixtures, para pytest
 GRAPH = f"https://graph.facebook.com/{GRAPH_VERSION}"
 AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
+OTHER_SECRET = "otrosecretodepruebanoreal0000"  # noqa: S105 — ficticio
+LOOKALIKES = ("graph.facebook.com.evil.test", "x.facebook.com", "facebook.com")
 
 
 @pytest.fixture
@@ -59,7 +64,8 @@ def local(sim: SimpleNamespace, settings: Any) -> SimpleNamespace:
     """El modo del stack local: `DEBUG` y el origen del simulador, como `config.settings.local`."""
     settings.DEBUG, settings.META_GRAPH_SIMULATOR_URL = True, sim.origin
     settings.META_ENABLED = True
-    settings.HTTP_ALLOWED_HOSTS = ["graph.facebook.com", "api.example.com"]
+    # Hosts parecidos al de Graph en la allowlist: solo el exacto va al simulador.
+    settings.HTTP_ALLOWED_HOSTS = [*LOOKALIKES, "graph.facebook.com", "api.example.com"]
     return sim
 
 
@@ -108,7 +114,6 @@ def test_the_simulator_scripts_outcomes_and_shows_what_it_received(local: Simple
         "http://graph.facebook.com/v23.0/x",
         "https://graph.facebook.com:8443/v23.0/x",
         "https://user:pw@graph.facebook.com/v23.0/x",
-        "https://graph.facebook.com.evil.test/v23.0/x",
         "https://lookaside.fbsbx.com/x",
     ],
 )
@@ -128,6 +133,39 @@ def test_in_local_mode_an_allowed_host_still_needs_a_public_ip(
     with pytest.raises(http.NonPublicAddress):
         http.request("GET", f"https://api.example.com/{GRAPH_VERSION}/{PAGE_ID}", headers=AUTH)
     assert calls(local) == 0
+
+
+@pytest.mark.parametrize("host", LOOKALIKES)
+def test_in_local_mode_only_the_exact_graph_host_goes_to_the_simulator(
+    local: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
+    """En la allowlist y con un nombre parecido (prefijo o sufijo del de Graph): sale por la
+    política normal, así que con DNS a loopback se bloquea, y el simulador no recibe nada."""
+    monkeypatch.setattr(socket, "getaddrinfo", resolving_to("127.0.0.1"))
+    with pytest.raises(http.NonPublicAddress):
+        http.request("GET", f"https://{host}/{GRAPH_VERSION}/{PAGE_ID}", headers=AUTH)
+    assert calls(local) == 0
+
+
+def test_in_local_mode_a_download_keeps_the_policy_even_from_the_graph_host(
+    local: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-041 no toca `download`: ni con el host de Graph entre los de medios va al simulador."""
+    settings.META_MEDIA_HOSTS = ("lookaside.fbsbx.com", "graph.facebook.com")
+    monkeypatch.setattr(socket, "getaddrinfo", resolving_to("127.0.0.1"))
+    sink = io.BytesIO()
+    with pytest.raises(http.NonPublicAddress):
+        http.download(
+            f"{GRAPH}/{PAGE_ID}", sink, max_bytes=100, hosts=["graph.facebook.com"], headers=AUTH
+        )
+    assert calls(local) == 0 and sink.getvalue() == b""
+
+
+def test_the_simulator_pool_speaks_only_http_with_the_same_limits() -> None:
+    for manager in (http._manager, http._simulator):
+        assert manager.connection_pool_kw["timeout"] is http._LIMITS["timeout"]
+        assert manager.connection_pool_kw["retries"] is http._LIMITS["retries"]
+    assert http._simulator.pool_classes_by_scheme == {"http": HTTPConnectionPool}
 
 
 def test_in_local_mode_graph_still_has_to_be_in_the_allowlist(
@@ -185,10 +223,10 @@ def test_the_sender_posts_a_body_signed_with_the_given_secret(kind: str) -> None
     threading.Thread(target=server.handle_request, daemon=True).start()
     Capture.seen.clear()
     url = f"http://127.0.0.1:{server.server_port}/webhooks/meta/"
-    assert send_webhook.send(url, kind, "Hola", send_webhook.DEV_APP_SECRET) == 200
+    assert send_webhook.send(url, kind, "Hola", OTHER_SECRET) == 200
     server.server_close()
     ((headers, body),) = Capture.seen
-    mac = hmac.new(send_webhook.DEV_APP_SECRET.encode(), body, hashlib.sha256).hexdigest()
+    mac = hmac.new(OTHER_SECRET.encode(), body, hashlib.sha256).hexdigest()  # el dado
     assert headers[SIGNATURE_HEADER] == f"sha256={mac}"
     expected = "whatsapp_business_account" if kind == "whatsapp" else kind
     assert json.loads(body)["object"] == expected
@@ -213,3 +251,24 @@ def test_a_webhook_from_the_sender_is_ingested_into_the_inbox(
     unsigned = send_webhook.delivery(kind, "Hola")  # firmado con otro secreto: 401, nada nuevo
     assert SIGNATURE_HEADER not in unsigned.headers
     assert post(deliver(unsigned.body, secret=TEST_APP_SECRET)).status_code == 401
+
+
+def test_the_simulator_refuses_a_bad_or_oversized_body_and_keeps_a_bounded_log(
+    local: SimpleNamespace,
+) -> None:
+    def raw(head: str) -> bytes:
+        with socket.create_connection(
+            ("127.0.0.1", int(local.origin.rsplit(":", 1)[1])), 5
+        ) as conn:
+            conn.sendall(f"POST /_sim/then HTTP/1.1\r\nHost: x\r\n{head}\r\n\r\n".encode())
+            return conn.recv(64)
+
+    assert raw("Content-Length: nada").startswith(b"HTTP/1.1 400")
+    assert raw("Content-Length: -1").startswith(b"HTTP/1.1 400")
+    assert raw(f"Content-Length: {sim_server.BODY_MAX + 1}").startswith(b"HTTP/1.1 413")
+    for _ in range(sim_server.CALLS_MAX + 5):
+        local.graph.handle("GET", f"/{GRAPH_VERSION}/{PAGE_ID}", AUTH, None)
+        local.graph.handle("GET", f"/{GRAPH_VERSION}/{PHONE_NUMBER_ID}", AUTH, None)
+    whatsapp = local.graph.whatsapp
+    assert len(local.graph.page.calls) == len(whatsapp.calls) == sim_server.CALLS_MAX
+    assert len(whatsapp.requests) == sim_server.CALLS_MAX

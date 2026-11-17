@@ -4,7 +4,7 @@
 - **Date:** 2026-11-17
 - **Deciders:** propietario del producto (#779); redactado por el programa autónomo (ADR-015).
 - **Work items:** F7b-06c ([#920](https://github.com/PapiCuche/crm-gooddoggy/issues/920))
-- **Related:** [ADR-035](ADR-035-instagram-messenger-channels.md) §6 (lo acota **solo** en el stack de desarrollo: los adaptadores salen por `core.http` con IP pública), §1.4 (sin cambios: nada llama a Meta en desarrollo); [ADR-012](ADR-012-engineering-runtime-baseline.md) (sin cambios: urllib3 solo en `core.http`); [ADR-026](ADR-026-test-accounts.md) §1 (el mismo patrón: production no arranca con la variable); ADR-029 §6 y §10 (Proposed); [storage-http.md](../architecture/storage-http.md) B9.
+- **Related:** [ADR-035](ADR-035-instagram-messenger-channels.md) §6 (lo acota **solo** en el stack de desarrollo: los adaptadores salen por `core.http` con IP pública), §1.4 (sin cambios en su regla; con el simulador, las llamadas a Graph de los adaptadores no salen a Meta, pero una descarga de medios sí puede, ver *Security implications*); [ADR-012](ADR-012-engineering-runtime-baseline.md) (sin cambios: urllib3 solo en `core.http`); [ADR-026](ADR-026-test-accounts.md) §1 (el mismo patrón: production no arranca con la variable); ADR-029 §6 y §10 (Proposed); [storage-http.md](../architecture/storage-http.md) B9.
 
 ## Context
 
@@ -37,7 +37,9 @@ La prueba en el navegador de la pantalla de canales (#779) tiene que conectar cu
 
 - La excepción exige a la vez `DEBUG` y el ajuste, que solo existe en `local`; production, el job de migraciones y las pruebas se niegan a arrancar con la variable puesta (pruebas en `test_settings`).
 - Solo se redirige el host exacto de Graph y solo después de `check_url`: la política de salida no cambia para ningún otro destino (pruebas con el simulador encendido: http, otro puerto, credenciales, sufijos, la IP del simulador, un host de la allowlist que resuelve a loopback y Graph fuera de la allowlist).
-- Con el simulador encendido, una llamada a Graph viaja por http dentro de la red del stack. Por eso **nunca** se pega un token real en un stack con `META_GRAPH_SIMULATOR_URL`: iría por http al simulador, que lo guarda en memoria (la Graph API falsa de WhatsApp anota las cabeceras para las pruebas; `/_sim/state` no las enseña).
+- Con el simulador encendido, una llamada a Graph viaja por http dentro de la red del stack y llega al simulador, que la guarda en memoria (la Graph API falsa de WhatsApp anota las cabeceras, con el token, para las pruebas; `/_sim/state` no las enseña). Por eso **nunca** se enciende el simulador contra una base que ya guarda tokens reales de una página o de WhatsApp (los envíos, la salud y el perfil los usarían), ni se pega uno real en ese stack.
+- Con la variable puesta y el perfil `meta-sim` apagado, el nombre `meta-sim` lo resuelve el resolvedor del host, incluidos sus dominios de búsqueda: otra máquina con ese nombre recibiría las llamadas a Graph. Encender la variable sin el perfil es un error de configuración.
+- `download` no tiene excepción. Con un medio entrante de WhatsApp, el backend pide su id al simulador y, si recibe una URL, la baja por la política normal: de `https://lookaside.fbsbx.com/...`, el host **real**, con el token ficticio. Hoy el simulador no conoce ningún medio (la consulta falla y no se baja nada), pero no se puede afirmar que el stack nunca llame a Meta: si un día devolviera una URL, Meta rechazaría el token y el adjunto quedaría sin bajar. Ninguna otra llamada sale a Meta.
 - El puerto del simulador se publica solo en `127.0.0.1`.
 
 ## Operational implications

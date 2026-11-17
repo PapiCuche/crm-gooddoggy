@@ -1,8 +1,10 @@
 import base64
 import importlib
+import re
 import secrets
 import sys
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -556,6 +558,7 @@ def test_only_the_local_settings_start_with_the_graph_simulator(
         "https://meta-sim:8090", "http://meta-sim", "http://meta-sim:8090/", "http://meta-sim:0",
         "http://meta-sim:8090/v23.0", "http://user:pw@meta-sim:8090", "http://META-SIM:8090",
         "http://meta-sim:8090?x=1", "http://meta-sim:99999", "ftp://meta-sim:8090",
+        "http://user@meta-sim:8090", "http://meta-sim:8090#x",
     ],
 )  # fmt: skip
 def test_the_local_settings_refuse_a_simulator_that_is_not_a_bare_http_origin(
@@ -563,3 +566,24 @@ def test_the_local_settings_refuse_a_simulator_that_is_not_a_bare_http_origin(
 ) -> None:
     with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL"):
         load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value)
+
+
+def test_only_the_local_settings_read_the_simulator_and_nothing_imports_them() -> None:
+    """ADR-041: `base` lo deja vacío sin leer el entorno; `env.simulator` solo en `local`; el
+    código de la aplicación nunca importa `config.settings.local` (solo por su nombre)."""
+    root = Path(__file__).resolve().parents[1]
+    base_lines = [
+        line.strip() for line in (root / "config/settings/base.py").read_text().splitlines()
+        if "META_GRAPH_SIMULATOR_URL" in line and not line.strip().startswith("#")
+    ]  # fmt: skip
+    assert base_lines == ['META_GRAPH_SIMULATOR_URL = ""']
+    sources = {
+        str(path.relative_to(root)): path.read_text()
+        for folder in ("config", "core", "apps") for path in (root / folder).rglob("*.py")
+    }  # fmt: skip
+    assert [name for name, text in sources.items() if "env.simulator(" in text] == [
+        "config/settings/local.py"
+    ]
+    imports = re.compile(r"^\s*(from\s+config\.settings(\.local\b|\s+import\s+.*\blocal\b)"
+                         r"|import\s+config\.settings\.local\b)", re.M)  # fmt: skip
+    assert [name for name, text in sources.items() if imports.search(text)] == []

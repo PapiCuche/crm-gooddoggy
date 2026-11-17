@@ -245,6 +245,7 @@ services:
     user: "65534:65534"
     read_only: true
     cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     volumes:
       - ../../backend/tests/meta_sim:/sim/tests/meta_sim:ro
     ports:

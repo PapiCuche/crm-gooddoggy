@@ -11,6 +11,7 @@ llamadas, los de `then`). Uso: `python -m tests.meta_sim.server --port 8090`.
 
 import argparse
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,8 @@ from tests.meta_sim.graph import TEST_TOKEN, Cut, FakeGraph, Response, Timeout
 from tests.meta_sim.page_graph import FakePageGraph
 
 HANG_SECONDS = 20.0  # un `timeout` del guion: más que la lectura de `core.http` (15 s)
+BODY_MAX = 32 << 20  # más que un medio de WhatsApp; un cuerpo mayor es 413 sin leerlo
+CALLS_MAX = 500  # el registro de llamadas de las Graph API falsas, solo las últimas
 
 
 class Simulator:
@@ -42,7 +45,13 @@ class Simulator:
             first = path.strip("/").split("/")[1:2]
             numbers = self.whatsapp.numbers
             whatsapp = bool(first) and (first[0] in numbers or first[0] in numbers.values())
-            return (self.whatsapp if whatsapp else self.page).handle(method, target, headers, body)
+            try:
+                return (self.whatsapp if whatsapp else self.page).handle(
+                    method, target, headers, body
+                )
+            finally:  # un stack que corre días no crece sin fin (lo enviado sí se guarda)
+                for log in (self.page.calls, self.whatsapp.calls, self.whatsapp.requests):
+                    del log[:-CALLS_MAX]
 
     def _admin(self, method: str, path: str, body: bytes | None) -> Response:
         if (method, path) == ("GET", "/_sim/state"):
@@ -71,7 +80,12 @@ def handler(simulator: Simulator) -> type[BaseHTTPRequestHandler]:
         protocol_version = "HTTP/1.1"
 
         def _serve(self) -> None:
-            size = int(self.headers.get("Content-Length") or 0)
+            declared = self.headers.get("Content-Length") or "0"
+            valid = re.fullmatch(r"[0-9]{1,10}", declared) is not None
+            if not valid or int(declared) > BODY_MAX:  # sin leer el cuerpo ni reusar la conexión
+                self.close_connection = True
+                return self._reply(*_json(413 if valid else 400, {"error": "Content-Length"}))
+            size = int(declared)
             body = self.rfile.read(size) if size else None
             try:
                 status, headers, payload = simulator.handle(
@@ -84,6 +98,9 @@ def handler(simulator: Simulator) -> type[BaseHTTPRequestHandler]:
                 time.sleep(HANG_SECONDS)
                 self.close_connection = True
                 return
+            self._reply(status, headers, payload)
+
+        def _reply(self, status: int, headers: dict[str, str], payload: bytes) -> None:
             self.send_response(status)
             for name, value in {**headers, "Content-Length": str(len(payload))}.items():
                 self.send_header(name, value)
