@@ -246,7 +246,7 @@ def test_the_social_insert_refuses_what_is_not_a_validated_item(bad: dict[str, A
     connection.close()
 
 
-def test_until_the_social_webhook_exists_the_processor_closes_a_social_item_untouched(
+def test_a_social_item_that_does_not_name_its_account_is_closed_untouched(
     world: SimpleNamespace, migrator: DB
 ) -> None:
     account(world.a)
@@ -255,7 +255,7 @@ def test_until_the_social_webhook_exists_the_processor_closes_a_social_item_unto
     row = migrator.execute(
         "SELECT ignored_reason, payload, routed_organization_id FROM webhook_ingress"
     ).fetchone()
-    assert row == ("NO_NUMBER", None, None)  # sin enrutar ni escribir nada del tenant
+    assert row == ("ACCOUNT_MISMATCH", None, None)  # sin enrutar ni escribir nada del tenant
     assert run(world.a, "SELECT count(*) FROM messages", []) == [(0,)]
 
 
