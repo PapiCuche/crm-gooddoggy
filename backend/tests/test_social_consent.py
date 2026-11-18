@@ -360,6 +360,19 @@ def test_with_our_clock_behind_meta_each_word_keeps_its_meta_time(
     assert seen(world).consents == [(platform, "ALL_PROACTIVE", status, source)]
 
 
+@pytest.mark.parametrize("stamp", ["1700000000000", -5, True, 10**15])
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_provider_time_that_does_not_parse_never_lets_an_alta_lift_a_baja(
+    world: SimpleNamespace, platform: str, stamp: Any
+) -> None:
+    """F7b-05f: con una hora que no vale (texto, negativa, booleana, más allá de 2100) la BAJA
+    revoca por llegada y el ALTA no cuenta; solo sin hora cuenta la llegada."""
+    talk(world, platform)
+    for word, mid in (("BAJA", "m_SIMIN000001"), ("ALTA", "m_SIMIN000002")):
+        say(platform, event(platform, word, mid) | {"timestamp": stamp})
+    assert seen(world).consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_a_reply_reads_the_consent_only_when_it_would_go_out_with_the_tag(
     world: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, platform: str

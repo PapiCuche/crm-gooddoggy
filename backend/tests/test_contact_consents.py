@@ -2,6 +2,7 @@
 02 §E.5), con PostgreSQL real y el rol `crm_app`; también `contacts.is_blocked`."""
 
 import datetime as dt
+import random
 import threading
 import time
 from types import SimpleNamespace
@@ -384,29 +385,80 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> list[dt.datetime]:
     return now
 
 
-@pytest.mark.parametrize(("ahead", "kept"), [(59, True), (60, True), (61, False)])
+@pytest.mark.parametrize("ahead", [59, 60, 61])
 @pytest.mark.parametrize("said", ["BAJA", "ALTA"])
 @pytest.mark.usefixtures("clock")
-def test_a_meta_time_ahead_of_our_clock_counts_only_up_to_the_allowance(
-    world: SimpleNamespace, said: str, ahead: int, kept: bool
+def test_an_alta_ahead_of_our_clock_counts_only_up_to_the_allowance_and_a_baja_always(
+    world: SimpleNamespace, said: str, ahead: int
 ) -> None:
     assert consents.KEYWORD_AHEAD == 60 * S
-    assert word(world, said, SECOND + ahead * S) is True
-    bound = SECOND + 60 * S if said == "BAJA" else SECOND  # la baja, el tope; el alta, «ahora»
-    assert stored(world)[2] == (SECOND + ahead * S if kept else bound)
+    counts = said == "BAJA" or ahead <= 60
+    assert word(world, said, SECOND + ahead * S) is counts
+    with tenant_scope(ctx(world.a)):
+        found = list(ContactConsent.objects.values_list("status", "keyword_at"))
+    status = "REVOKED" if said == "BAJA" else "GRANTED"
+    assert found == ([(status, SECOND + ahead * S)] if counts else [])  # ni concede ni guarda
 
 
-def test_a_far_future_word_never_blocks_the_other_word_past_the_allowance(
+def test_past_the_allowance_an_older_alta_never_lifts_a_newer_baja(
     world: SimpleNamespace, clock: list[dt.datetime]
 ) -> None:
-    year_2100 = dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
-    assert word(world, "BAJA", year_2100) is True
-    assert word(world, "ALTA", SECOND + 60 * S) is False  # el empate con el tope: la baja
-    clock[0] = NOW + 61 * S  # pasa el margen
-    assert word(world, "ALTA", SECOND + 61 * S) is True  # y el alta vale
-    assert word(world, "ALTA", year_2100) is False  # ya de alta: guarda «ahora», no 2100
-    assert stored(world)[2] == SECOND + 61 * S
-    assert word(world, "BAJA", SECOND + 61 * S) is True  # una baja de entonces nunca se pierde
+    """Revisión de #951: nuestro reloj 65 s detrás de Meta; la BAJA de las 12:00:10 llega a las
+    11:59:05 y un ALTA de las 12:00:08, entregada 7 s tarde, a las 11:59:10."""
+    clock[0] = SECOND + 10 * S - 65 * S
+    assert word(world, "BAJA", SECOND + 10 * S) is True
+    clock[0] = SECOND + 8 * S - 65 * S + 7 * S
+    assert word(world, "ALTA", SECOND + 8 * S) is False
+    assert stored(world) == ("REVOKED", STOP, SECOND + 10 * S)  # su hora, no un tope
+
+
+@pytest.mark.parametrize("granted", [False, True])
+def test_a_far_future_alta_never_blocks_a_later_real_baja(
+    world: SimpleNamespace, clock: list[dt.datetime], granted: bool
+) -> None:
+    """Revisión de #951: nuestro reloj 5 min delante de Meta; un ALTA con hora de 2099 no cuenta
+    (sin fila, o sobre un alta anterior) y la BAJA real de 10 s después revoca."""
+    clock[0] = NOW + 300 * S
+    if granted:
+        assert word(world, "ALTA", SECOND) is True
+    assert word(world, "ALTA", dt.datetime(2099, 12, 31, tzinfo=dt.UTC)) is False
+    with tenant_scope(ctx(world.a)):
+        assert list(ContactConsent.objects.values_list("keyword_at", flat=True)) == (
+            [SECOND] if granted else []
+        )
+    clock[0] = NOW + 310 * S
+    assert word(world, "BAJA", SECOND + 10 * S) is True
+    assert stored(world) == ("REVOKED", STOP, SECOND + 10 * S)
+
+
+def test_a_far_future_baja_blocks_keyword_altas_on_the_side_of_the_opt_out(
+    world: SimpleNamespace, clock: list[dt.datetime]
+) -> None:
+    far = dt.datetime(2099, 12, 31, tzinfo=dt.UTC)
+    assert word(world, "BAJA", far) is True
+    clock[0] = NOW + 3600 * S
+    assert word(world, "ALTA", SECOND + 3600 * S) is False
+    assert stored(world) == ("REVOKED", STOP, far)
+
+
+def test_the_clock_is_read_with_the_contact_locked(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locked: list[bool] = []
+    probe = "SELECT 1 FROM contacts WHERE id = %s FOR NO KEY UPDATE NOWAIT"
+
+    def now() -> dt.datetime:
+        try:  # otra conexión: si la fila del contacto está tomada, falla sin esperar
+            migrator.execute(probe, [world.mine])
+            locked.append(False)
+        except psycopg.errors.LockNotAvailable:
+            locked.append(True)
+        return NOW
+
+    monkeypatch.setattr(consents, "timezone", SimpleNamespace(now=now))
+    word(world, "ALTA", SECOND + 61 * S)  # fuera del margen: solo lee el reloj
+    word(world, "BAJA", SECOND)
+    assert locked and all(locked), locked
 
 
 @pytest.mark.usefixtures("clock")
@@ -496,3 +548,81 @@ def test_an_alta_racing_an_agent_revocation_waits_on_the_contact_and_lifts_nothi
 
     assert contended(migrator, world.a, agent, alta) == [True, False]
     assert stored(world) == ("REVOKED", "AGENT_RECORDED", at + 5 * S)
+
+
+STARTS = ["none", "agent_grant", "keyword", *OTHERS]  # cómo está la fila antes de las palabras
+
+
+def scenario(rng: random.Random, skews: float, delays: float) -> dict[str, Any]:
+    """Unas palabras con su hora de Meta (con empates y milisegundos), nuestro reloj desfasado
+    `skew` segundos y cada una procesada con su retraso: el orden de proceso sale de ahí."""
+    skew = rng.choice([0.0, rng.uniform(-skews, skews), rng.choice([0.3, -0.3, 0.9, -0.9])])
+    words = [
+        (rng.choice(["BAJA", "ALTA"]), rng.randint(0, 30) + rng.choice([0, 0, rng.random()]),
+         rng.choice([0.0, rng.uniform(0, delays)]))
+        for _ in range(rng.randint(1, 4))
+    ]  # fmt: skip
+    return {"skew": skew, "words": words, "start": rng.choice(STARTS), "k0": rng.randint(0, 30)}
+
+
+def owner_rule(case: dict[str, Any]) -> str:
+    """#937: la palabra más reciente por la hora de Meta (segundos enteros); en un empate, la baja.
+    Una baja de otro origen no la levanta ninguna palabra."""
+    if case["start"] in OTHERS:
+        return "REVOKED"
+    said = [(int(at), kind) for kind, at, _ in case["words"]]
+    said += [(case["k0"], "BAJA")] if case["start"] == "keyword" else []
+    top = max(at for at, _ in said)
+    return "REVOKED" if ("BAJA" in {k for at, k in said if at == top}) else "GRANTED"
+
+
+def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str, bool]:
+    """Juega el caso en un contacto nuevo. Devuelve el estado final y si todas las horas de Meta
+    quedaron dentro del margen cuando se procesaron."""
+    with tenant_scope(ctx(org)):
+        where = {"contact_id": Contact.objects.create(display_name="Caso").pk}
+    where |= {"channel": WA, "purpose": ALL}
+    skew = dt.timedelta(seconds=case["skew"])
+    meta = [(SECOND + dt.timedelta(seconds=at), kind, delay) for kind, at, delay in case["words"]]
+    plays = sorted((at - skew + dt.timedelta(seconds=delay), at, kind) for at, kind, delay in meta)
+    if case["start"] == "keyword":  # una baja anterior, procesada antes que todas
+        k0 = SECOND + case["k0"] * S
+        plays.insert(0, (min(plays[0][0], k0 - skew), k0, "BAJA"))
+    elif case["start"] != "none":
+        clock[0] = plays[0][0] - 120 * S
+        with tenant_scope(ctx(org)) as tenant:
+            write = grant_consent if case["start"] == "agent_grant" else revoke_consent
+            write(
+                tenant,
+                **where,
+                source=OTHERS[0] if case["start"] == "agent_grant" else case["start"],
+            )
+    within = True
+    for server, at, kind in plays:
+        clock[0] = server
+        within &= (
+            at.replace(microsecond=0) - server.replace(microsecond=0) <= consents.KEYWORD_AHEAD
+        )
+        command = keyword_stop if kind == "BAJA" else lift_keyword_stop
+        run(org, command, contact_id=where["contact_id"], channel=WA, purpose=ALL, said_at=at)
+    with tenant_scope(ctx(org)):
+        row = ContactConsent.objects.filter(**where).first()  # sin fila: un alta que no contó
+    return (row.status if row else "NONE"), within
+
+
+@pytest.mark.parametrize(
+    ("seed", "skews", "delays"),
+    [(1, 0.99, 5), (2, 60, 30), (3, 59, 200), (4, 600, 30), (5, 600, 200), (6, 3600, 3600)],
+)
+def test_any_skew_delay_and_order_keeps_the_owner_rule_or_stays_on_the_opt_out(
+    world: SimpleNamespace, clock: list[dt.datetime], seed: int, skews: float, delays: float
+) -> None:
+    """Dentro del margen, la regla exacta del propietario; fuera, nunca `GRANTED` si la palabra
+    más reciente de Meta fue una baja (semillas fijas: el mismo resultado siempre)."""
+    rng, wrong = random.Random(seed), []  # noqa: S311 — casos de prueba, no secretos
+    for _ in range(60):
+        case = scenario(rng, skews, delays)
+        want, (got, within) = owner_rule(case), play(world.a, case, clock)
+        if got != want and (within or want == "REVOKED"):
+            wrong.append((case, want, got))
+    assert not wrong, wrong[:3]

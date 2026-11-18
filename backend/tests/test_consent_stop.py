@@ -648,6 +648,24 @@ def test_a_keyword_without_the_provider_time_keeps_the_order_of_arrival(
     assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
 
 
+@pytest.mark.parametrize("stamp", ["abc", "", "999", "4102444801", "-5", 1_700_000_000])
+def test_a_provider_time_that_does_not_parse_lets_a_baja_revoke_but_never_an_alta_lift(
+    crm: SimpleNamespace, stamp: Any
+) -> None:
+    """F7b-05f: solo una palabra sin hora cuenta por llegada; con una hora que no vale (texto, fuera
+    de 2001-2100, un número sin comillas), la BAJA revoca igual y el ALTA no cuenta."""
+    live(crm.a)
+    say("wamid.1", "ALTA", ago=dt.timedelta(seconds=30))
+    for wamid, word in (("wamid.2", "BAJA"), ("wamid.3", "ALTA")):
+        deliver(webhooks.text_message(word, wamid=wamid) | {"timestamp": stamp})
+        assert ingress.process() == {"PROCESSED": 1}
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert [r.body for r in found.replies] == [
+        inbound.CONFIRMATIONS["WHATSAPP"][k] for k in (BACK, STOP)
+    ]  # el ALTA que no contó no confirma
+
+
 def test_the_keyword_time_migration_goes_back_and_forward(
     crm: SimpleNamespace, migrator: Any
 ) -> None:

@@ -15,10 +15,10 @@ el bloqueo del contacto, y el segundo compara con la hora que dejó el primero. 
 baja, en cualquier orden. Sin hora del proveedor (`None`) cuenta la llegada, como antes.
 
 F7b-05f: se ordena por la hora cruda de Meta en segundos enteros (dos palabras del mismo segundo
-empatan y gana la baja), aunque el reloj del servidor vaya detrás. Una hora más allá de «ahora» más
-`KEYWORD_AHEAD` no se cree: una baja guarda ese tope (sigue revocando y frena un alta como mucho ese
-margen) y un alta guarda «ahora» (nunca frena una baja posterior). Con el servidor más de ese margen
-detrás de Meta la regla deja de ser exacta, siempre del lado de la baja.
+empatan y gana la baja), aunque el reloj del servidor vaya detrás. Un alta con una hora más allá de
+«ahora» más `KEYWORD_AHEAD` no cuenta: ni concede ni guarda su hora, así nunca frena una baja
+posterior. Una baja guarda su hora aunque pase ese margen: una hora falsa en el futuro frena las
+altas por palabra hasta entonces (del lado de la baja; un cambio manual sigue sin tocar la hora).
 """
 
 import datetime as dt
@@ -56,15 +56,20 @@ def _evidence(value: dict[str, str] | None) -> dict[str, str]:
     return dict(found)
 
 
+class _AltaAhead(Exception):
+    """Un alta con una hora de Meta más allá del margen: no cuenta (F7b-05f)."""
+
+
 def _said(said_at: dt.datetime | None, status: str) -> dt.datetime | None:
-    """La hora que ordena la palabra: la de Meta en segundos enteros y acotada (F7b-05f)."""
+    """La hora que ordena la palabra: la de Meta en segundos enteros (F7b-05f). `_AltaAhead` si es
+    un alta más allá de «ahora» + `KEYWORD_AHEAD`; una baja vale con cualquier hora."""
     if said_at is None:
         return None
-    now = timezone.now().replace(microsecond=0)
-    said, cap = said_at.replace(microsecond=0), now + KEYWORD_AHEAD
-    if said <= cap:
-        return said
-    return cap if status == ConsentStatus.REVOKED else now  # ante la duda, del lado de la baja
+    said = said_at.replace(microsecond=0)
+    ahead = said > timezone.now().replace(microsecond=0) + KEYWORD_AHEAD
+    if ahead and status == ConsentStatus.GRANTED:
+        raise _AltaAhead
+    return said
 
 
 def _write(
@@ -172,9 +177,13 @@ def lift_keyword_stop(
     """El alta por palabra (F7-08b): concede si la fila vigente está `REVOKED` por una palabra de
     baja (`KEYWORD_STOP`) o si no hay fila (F7b-05e: así guarda su hora y una BAJA más vieja,
     entregada después, no revoca). Revocada por otra vía no la levanta (`False`), pero guarda su
-    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora. Devuelve si
-    cambió algo. Mismos errores que `grant_consent`."""
-    return _write(
-        ctx, contact_id, channel, purpose, ConsentStatus.GRANTED, ConsentSource.CUSTOMER_MESSAGE,
-        evidence, lift=True, said_at=said_at,
-    )[1]  # fmt: skip
+    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora; con `said_at`
+    más allá de «ahora» + `KEYWORD_AHEAD` no hace nada (F7b-05f). Devuelve si cambió algo. Mismos
+    errores que `grant_consent`."""
+    try:
+        return _write(
+            ctx, contact_id, channel, purpose, ConsentStatus.GRANTED,
+            ConsentSource.CUSTOMER_MESSAGE, evidence, lift=True, said_at=said_at,
+        )[1]  # fmt: skip
+    except _AltaAhead:
+        return False  # ni concede ni guarda su hora: nunca frena una baja posterior
