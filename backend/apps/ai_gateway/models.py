@@ -125,7 +125,8 @@ def _usd(null: bool = False, digits: int = 12) -> models.DecimalField[Any, Any]:
 
 class AIBudget(TenantModel):
     """Los topes mensual y diario en USD (F8-05, F8-05b2): sin fila o sin tope diario no hay
-    llamadas (falla cerrado). `crm_app` solo los lee."""
+    llamadas (falla cerrado). Los fija `apps.ai_gateway.budgets` (F8-05b3): `crm_app` inserta la
+    fila de su organización y cambia solo los dos topes (0005); el diario no pasa del mensual."""
 
     id = uuid7_primary_key()
     monthly_usd = _usd()
@@ -138,6 +139,8 @@ class AIBudget(TenantModel):
             models.CheckConstraint(condition=models.Q(monthly_usd__gt=0), name="ai_budgets_ck"),
             models.CheckConstraint(condition=models.Q(daily_usd__gt=0),
                                    name="ai_budgets_daily_ck"),
+            models.CheckConstraint(condition=models.Q(daily_usd__lte=models.F("monthly_usd")),
+                                   name="ai_budgets_daily_le_monthly"),
         ]  # fmt: skip
 
 
