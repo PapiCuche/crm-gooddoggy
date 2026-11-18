@@ -28,6 +28,7 @@ from tests.test_memberships import ctx
 from tests.test_meta_webhook import channel, post
 from tests.test_social_outbound import graph, send, talk
 from tests.test_social_schema import account
+from tests.test_webhook_ingress import fresh_heap, last_everywhere
 from tests.test_whatsapp_outbound import redis
 
 OTHER_PAGE = "100000000000998"  # la página de la otra cuenta de Instagram
@@ -189,7 +190,10 @@ def test_a_retry_of_an_event_stored_with_the_old_key_duplicates_nothing(
     retry = social.signed(net, *events)
     old = [legacy(i) for i in meta_webhook.parse(retry.body).items]
     assert all(i.key.count(net.account) == 0 for i in old)  # antes del despliegue
-    assert ingress.store(old) == len(events) and ingress.process() == {"PROCESSED": len(events)}
+    fresh_heap(migrator)
+    assert ingress.store(old) == len(events)
+    last_everywhere(migrator, next(i.key for i in old if i.key.endswith(":m_SIMIN000001")))
+    assert ingress.process() == {"PROCESSED": len(events)}  # la BAJA, aún antes que la ALTA (#934)
     before, trail_before = seen(world, message), trail(migrator)
     assert post(retry).status_code == 200  # Meta reintenta (≤ 36 h) tras el despliegue
     assert ingress.process() == {"PROCESSED": len(events)}  # ítems nuevos, con la clave nueva
