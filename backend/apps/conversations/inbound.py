@@ -347,15 +347,21 @@ def receive_social(
         return "DELETED"
     body, message_type = _social_body(message)
     identity = _identity(ctx, account, event["sender"]["id"])
+    standby = event.get("standby") is True  # otra app controla el hilo: nunca se responde
     saved, created = commands.record_inbound(
         ctx, contact_id=identity.contact_id, channel_account_id=account.pk,
         external_message_id=message["mid"], body=body, message_type=message_type,
         provider_at=instant_ms(event.get("timestamp")), contact_identity_id=identity.pk,
+        standby=standby,
     )  # fmt: skip
-    standby = event.get("standby") is True
-    if standby:  # otra app controla el hilo: se registra, nunca se responde
+    if standby:
         logger.info("meta.webhook.standby", channel_account_id=str(account.pk))
     if created and message_type == MessageType.TEXT:  # el texto del cliente, sin la frase fija
         said = clean_text(message["text"])  # de la respuesta a una historia
-        _keyword(ctx, identity.contact_id, saved, account.platform, said, confirm=not standby)
+        held = standby or (  # el estado guardado: un reintento tardío no lo deshace
+            Conversation.objects.using(require_scope(ctx))
+            .filter(pk=saved.conversation_id, standby_since__isnull=False)
+            .exists()
+        )
+        _keyword(ctx, identity.contact_id, saved, account.platform, said, confirm=not held)
     return None

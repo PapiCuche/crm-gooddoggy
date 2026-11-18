@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db.models import OuterRef, Q, QuerySet, Subquery
+from django.db.models import Exists, OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
 from apps.contacts.models import Contact
@@ -20,6 +20,7 @@ from apps.conversations.models import (
     MessageAttachment,
     QuickReply,
     QuickReplyCategory,
+    Status,
 )
 from apps.files.models import File
 
@@ -84,12 +85,20 @@ def servable(conversation_id: UUID, attachment_id: UUID) -> tuple[MessageAttachm
 
 def channel_accounts() -> QuerySet[ChannelAccount]:
     """Las cuentas de canal vivas, cada una con `token_last_four` (el final de su credencial viva,
-    `NULL` si no la tiene) en la misma consulta. Nunca se anota nada más de la credencial."""
+    `NULL` si no la tiene) y `has_standby_conversations` (alguna conversación no cerrada de la
+    cuenta en `standby`, ADR-035 §4) en la misma consulta. Nunca se anota nada más de la
+    credencial."""
     live = Credential.objects.filter(
         pk=OuterRef("credential_id"), owner_id=OuterRef("pk"), revoked_at__isnull=True
     )  # viva y de esta cuenta: una credencial ajena no se enseña
+    standby = Conversation.objects.filter(
+        channel_account_id=OuterRef("pk"), standby_since__isnull=False
+    ).exclude(status=Status.CLOSED)
     found: QuerySet[ChannelAccount] = ChannelAccount.objects.filter(deleted_at__isnull=True)
-    return found.annotate(token_last_four=Subquery(live.values("last_four")[:1]))
+    return found.annotate(
+        token_last_four=Subquery(live.values("last_four")[:1]),
+        has_standby_conversations=Exists(standby),
+    )
 
 
 def managed_quick_reply_categories() -> QuerySet[QuickReplyCategory]:
