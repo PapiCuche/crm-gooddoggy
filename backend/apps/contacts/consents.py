@@ -10,6 +10,9 @@ evento en el outbox (`consent.granted` o `consent.revoked`, F7-08b) con ids, can
 
 Las palabras del cliente (F7b-05d) llevan el instante del proveedor (`said_at`): la fila guarda el
 de la última (`keyword_at`, aunque no cambiara nada) y una más vieja, entregada tarde, no la toca.
+Decide la hora de Meta, nunca el orden de proceso (F7b-05e): dos lotes a la vez se serializan con
+el bloqueo del contacto, y el segundo compara con la hora que dejó el primero. En un empate gana la
+baja, en cualquier orden. Sin hora del proveedor (`None`) cuenta la llegada, como antes.
 """
 
 import datetime as dt
@@ -36,10 +39,6 @@ EVIDENCE_KEYS = frozenset({"message_id", "ingress_id", "form", "note"})
 EVIDENCE_VALUE_MAX = 200
 
 
-class _NothingToLift(Exception):  # noqa: N818 — lo recoge `lift_keyword_stop`
-    pass
-
-
 def _evidence(value: dict[str, str] | None) -> dict[str, str]:
     """Solo claves conocidas, con texto corto: la evidencia no es un cajón de datos."""
     found = value or {}
@@ -52,7 +51,7 @@ def _evidence(value: dict[str, str] | None) -> dict[str, str]:
 
 def _write(
     ctx: TenantContext, contact_id: UUID, channel: str, purpose: str, status: str, source: str,
-    evidence: dict[str, str] | None, *, only_after_stop: bool = False,
+    evidence: dict[str, str] | None, *, lift: bool = False,
     said_at: dt.datetime | None = None,
 ) -> tuple[ContactConsent, bool]:  # fmt: skip
     alias = require_scope(ctx)
@@ -69,18 +68,18 @@ def _write(
         where = {"contact_id": contact_id, "channel": channel, "purpose": purpose}
         row = ContactConsent.objects.using(alias).filter(**where).first()
         last = None if row is None else row.keyword_at
-        if row is not None and said_at is not None and last is not None and said_at < last:
-            return row, False  # una palabra más vieja que la última no la revierte
-        if row is not None and row.status == status:
+        if row is not None and said_at is not None and last is not None and (
+            said_at < last or (said_at == last and status == ConsentStatus.GRANTED)
+        ):  # fmt: skip
+            return row, False  # una palabra más vieja no revierte la última; en un empate, baja
+        if row is not None and (
+            row.status == status
+            or (lift and row.source != ConsentSource.KEYWORD_STOP)
+        ):  # fmt: skip
             if said_at is not None and said_at != last:  # la última palabra, aunque no cambie
                 row.keyword_at = said_at
                 row.save(using=alias, update_fields=["keyword_at", "updated_at"])
-            return row, False
-        if only_after_stop and (
-            row is None or row.status != ConsentStatus.REVOKED
-            or row.source != ConsentSource.KEYWORD_STOP
-        ):  # fmt: skip
-            raise _NothingToLift  # nadie se dio de baja con una palabra: nada que restablecer
+            return row, False  # un alta no levanta una baja que no fue una palabra
         now, before = timezone.now(), row.status if row else None
         stamp = {"granted_at" if status == ConsentStatus.GRANTED else "revoked_at": now}
         values = {
@@ -130,8 +129,9 @@ def keyword_stop(
     said_at: dt.datetime | None, evidence: dict[str, str] | None = None,
 ) -> bool:  # fmt: skip
     """La baja por palabra (F7-08b): revoca con `KEYWORD_STOP`, salvo que la fila ya tenga una
-    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio). Devuelve si
-    cambió algo. Mismos errores que `revoke_consent`."""
+    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio). Un alta de la
+    misma hora no la detiene: en un empate gana la baja. Devuelve si cambió algo. Mismos errores
+    que `revoke_consent`."""
     return _write(
         ctx, contact_id, channel, purpose, ConsentStatus.REVOKED, ConsentSource.KEYWORD_STOP,
         evidence, said_at=said_at,
@@ -142,14 +142,12 @@ def lift_keyword_stop(
     ctx: TenantContext, *, contact_id: UUID, channel: str, purpose: str,
     said_at: dt.datetime | None = None, evidence: dict[str, str] | None = None,
 ) -> bool:  # fmt: skip
-    """El alta por palabra (F7-08b): concede **solo** si la fila vigente está `REVOKED` por una
-    palabra de baja (`KEYWORD_STOP`); sin fila o revocada por otra vía no hace nada (`False`).
-    Una palabra posterior a `said_at` en la fila tampoco se revierte. Mismos errores que
-    `grant_consent`."""
-    try:
-        return _write(
-            ctx, contact_id, channel, purpose, ConsentStatus.GRANTED,
-            ConsentSource.CUSTOMER_MESSAGE, evidence, only_after_stop=True, said_at=said_at,
-        )[1]  # fmt: skip
-    except _NothingToLift:
-        return False
+    """El alta por palabra (F7-08b): concede si la fila vigente está `REVOKED` por una palabra de
+    baja (`KEYWORD_STOP`) o si no hay fila (F7b-05e: así guarda su hora y una BAJA más vieja,
+    entregada después, no revoca). Revocada por otra vía no la levanta (`False`), pero guarda su
+    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora. Devuelve si
+    cambió algo. Mismos errores que `grant_consent`."""
+    return _write(
+        ctx, contact_id, channel, purpose, ConsentStatus.GRANTED, ConsentSource.CUSTOMER_MESSAGE,
+        evidence, lift=True, said_at=said_at,
+    )[1]  # fmt: skip

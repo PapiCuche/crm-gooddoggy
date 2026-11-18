@@ -269,7 +269,7 @@ def _keyword(
     proof, at = {"message_id": str(saved.pk)}, saved.provider_timestamp
     if action == keywords.OPT_OUT:
         changed = keyword_stop(ctx, **where, said_at=at, evidence=proof)
-    else:  # solo levanta una baja hecha con una palabra; si no, ni evento ni confirmación
+    else:  # levanta una baja hecha con una palabra, o concede sin fila (F7b-05e); nada más
         changed = lift_keyword_stop(ctx, **where, said_at=at, evidence=proof)
     logger.info("meta.webhook.consent_keyword", action=action, changed=changed)  # sin quién
     if changed and confirm:  # la política la niega fuera de la ventana: nunca con etiqueta

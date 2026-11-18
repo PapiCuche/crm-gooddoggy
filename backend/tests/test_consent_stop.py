@@ -5,7 +5,10 @@ el alta que lo restablece, el despachador, los permisos y el aislamiento entre o
 F7b-05d: las palabras se aplican por la hora del proveedor (`keyword_at`), no por la llegada."""
 
 import datetime as dt
+import itertools
 import logging
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -110,9 +113,9 @@ def test_an_alta_restores_and_the_history_keeps_both_changes_untouched(
     crm: SimpleNamespace,
 ) -> None:
     live(crm.a)
-    say("wamid.1", "BAJA")
+    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=30))
     first = seen(crm.a).events[0]
-    say("wamid.2", "alta")
+    say("wamid.2", "alta", ago=dt.timedelta(seconds=20))
     say("wamid.3", "ALTA!")  # ya estaba de alta: ni evento ni otra confirmación
     late = webhooks.text_message("BAJA", wamid="wamid.1")  # la baja, reclamada otra vez después
     ingress.route(ingress.Claimed(uuid4(), "message", WABA_ID, PHONE_NUMBER_ID, late, 2))
@@ -272,10 +275,8 @@ def test_a_stored_keyword_that_breaks_the_rules_is_ignored(
         )
 
 
-@pytest.mark.parametrize(
-    "body", ["ALTA", "No me den de baja, solo quiero el precio", "stop por favor"]
-)
-def test_an_alta_without_a_baja_or_a_keyword_in_a_sentence_does_nothing_at_all(
+@pytest.mark.parametrize("body", ["No me den de baja, solo quiero el precio", "stop por favor"])
+def test_a_keyword_inside_a_sentence_does_nothing_at_all(
     crm: SimpleNamespace, migrator: Any, body: str
 ) -> None:
     live(crm.a)
@@ -301,6 +302,14 @@ def test_an_alta_never_lifts_a_revocation_that_was_not_a_keyword(
     assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "AGENT_RECORDED")]
     assert len(found.events) == 1 and found.replies == []
     assert events(migrator, "consent.granted") == 0
+    with tenant_scope(ctx(crm.a)) as tenant:  # pero su hora cuenta (F7b-05e)
+        assert ContactConsent.objects.get().keyword_at == found.inbound[1].provider_timestamp
+        grant_consent(
+            tenant, contact_id=convo.contact_id, channel="WHATSAPP", purpose="ALL_PROACTIVE",
+            source="AGENT_RECORDED",
+        )  # fmt: skip
+    say("wamid.0", "BAJA", ago=dt.timedelta(seconds=60))  # más vieja que el ALTA: no revoca
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "AGENT_RECORDED")]
 
 
 @pytest.mark.parametrize(
@@ -417,6 +426,156 @@ def test_an_alta_that_changes_nothing_still_keeps_an_older_baja_out(crm: SimpleN
     found = seen(crm.a)
     assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "AGENT_RECORDED")]
     assert found.replies == []
+
+
+def ago(seconds: int) -> int:
+    return int((timezone.now() - dt.timedelta(seconds=seconds)).timestamp())
+
+
+def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> list[str]:
+    """Dos workers (`--concurrency 2`) reclaman cada uno su ítem antes de que ninguno lo procese.
+    El del ítem cuyo payload lleva `first` escribe su palabra y retiene la transacción hasta que el
+    otro espera un bloqueo de PostgreSQL; entonces confirma y el otro sigue (F7b-05e)."""
+    claimed = threading.Barrier(2, timeout=10)
+    wrote, go, release = threading.Event(), threading.Event(), threading.Event()
+    leader: list[threading.Thread] = []
+    outcome: list[str] = []
+    real = {name: getattr(inbound, name) for name in ("keyword_stop", "lift_keyword_stop")}
+
+    def holding(name: str) -> Any:
+        def run(*args: Any, **kwargs: Any) -> bool:
+            done = bool(real[name](*args, **kwargs))
+            if threading.current_thread() in leader:
+                wrote.set()
+                release.wait(timeout=10)
+            return done
+
+        return run
+
+    for name in real:
+        monkeypatch.setattr(inbound, name, holding(name))
+
+    def worker() -> None:
+        try:
+            [item] = ingress.claim(1)
+            if first in str(item.payload):  # su id de Meta (`wamid` o `mid`)
+                leader.append(threading.current_thread())
+            claimed.wait()  # los dos lotes ya están reclamados
+            if threading.current_thread() not in leader:
+                assert go.wait(timeout=10)
+            outcome.append(ingress.handle(item))
+        except Exception as error:  # noqa: BLE001 — lo comprueba quien llama
+            outcome.append(type(error).__name__)
+        finally:
+            wrote.set()
+            connection.close()
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    assert wrote.wait(timeout=10)
+    go.set()
+    deadline, waited = time.monotonic() + 10, False
+    while not waited and time.monotonic() < deadline:  # se observa la espera, no se supone
+        waited = migrator.execute("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()[0]
+        release.wait(timeout=0.02)
+    release.set()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert not any(t.is_alive() for t in threads) and len(leader) == 1, outcome
+    assert waited, "el segundo lote no esperó al primero"
+    return outcome
+
+
+TIMES = [  # (más vieja, más nueva, la que se confirma antes, segundos entre las dos)
+    ("BAJA", "ALTA", "new", 10), ("BAJA", "ALTA", "old", 10), ("ALTA", "BAJA", "new", 10),
+    ("ALTA", "BAJA", "old", 10), ("BAJA", "ALTA", "new", 0), ("BAJA", "ALTA", "old", 0),
+]  # fmt: skip
+
+
+def final(newer: str, gap: int) -> tuple[str, str]:
+    """La última palabra por la hora de Meta; en un empate, la baja (F7b-05e)."""
+    if newer == "BAJA" or gap == 0:
+        return ("REVOKED", "KEYWORD_STOP")
+    return ("GRANTED", "CUSTOMER_MESSAGE")
+
+
+@pytest.mark.parametrize(("older", "newer", "first", "gap"), TIMES)
+def test_two_batches_at_once_follow_the_time_the_customer_wrote_them(
+    crm: SimpleNamespace, migrator: Any, monkeypatch: pytest.MonkeyPatch,
+    older: str, newer: str, first: str, gap: int,
+) -> None:  # fmt: skip
+    live(crm.a)
+    say("wamid.0", "Hola", ago=dt.timedelta(seconds=60))
+    base = ago(20)  # una sola lectura del reloj: el empate es exacto
+    deliver(webhooks.text_message(older, wamid="wamid.old", at=base))
+    deliver(webhooks.text_message(newer, wamid="wamid.new", at=base + gap))
+    assert two_batches(migrator, monkeypatch, f"wamid.{first}") == ["PROCESSED", "PROCESSED"]
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", *final(newer, gap))]
+    with tenant_scope(ctx(crm.a)):
+        revoked = is_revoked(found.convo.contact_id, "WHATSAPP", "FOLLOW_UP")
+    assert revoked is (final(newer, gap)[0] == "REVOKED")
+
+
+@pytest.mark.parametrize("newer", ["ALTA", "BAJA"])
+def test_one_delivery_out_of_order_follows_the_time_of_each_word(
+    crm: SimpleNamespace, newer: str
+) -> None:
+    live(crm.a)
+    older = "BAJA" if newer == "ALTA" else "ALTA"
+    deliver(  # `store` guarda por clave: la más nueva (`wamid.A`) se procesa primero
+        webhooks.text_message(newer, wamid="wamid.A", at=ago(10)),
+        webhooks.text_message(older, wamid="wamid.B", at=ago(20)),
+    )
+    assert ingress.process() == {"PROCESSED": 2}
+    found = seen(crm.a)
+    assert [m.body for m in found.inbound] == [newer, older]  # de verdad, al revés
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", *final(newer, 10))]
+    assert len(found.events) == len(found.replies) == 1  # la vieja no cambia ni confirma
+
+
+def test_a_lone_alta_grants_with_its_time_and_an_older_baja_delivered_later_stays_out(
+    crm: SimpleNamespace, migrator: Any
+) -> None:
+    live(crm.a)
+    say("wamid.2", "ALTA", ago=dt.timedelta(seconds=10))
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert [r.body for r in found.replies] == [inbound.CONFIRMATIONS["WHATSAPP"][BACK]]
+    assert events(migrator, "consent.granted") == 1
+    with tenant_scope(ctx(crm.a)):
+        assert ContactConsent.objects.get().keyword_at == found.inbound[0].provider_timestamp
+    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=20))
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert (len(found.events), len(found.replies)) == (1, 1)
+    assert events(migrator, "consent.revoked") == 0
+
+
+def test_a_lone_alta_permits_nothing_that_no_row_did_not_already_permit(
+    crm: SimpleNamespace, settings: Any
+) -> None:
+    live(crm.a)
+    say("wamid.1", "Hola", ago=dt.timedelta(seconds=60))
+
+    def grid() -> list[Any]:
+        convo, now = seen(crm.a).convo, timezone.now()
+        found = []
+        with tenant_scope(ctx(crm.a)):
+            for approved, last, purpose, sender in itertools.product(
+                (False, True), (now - HOUR, now - 30 * HOUR), policy.PURPOSES, ("SYSTEM", "USER")
+            ):
+                settings.META_HUMAN_AGENT_APPROVED = approved
+                convo.last_inbound_at = last
+                decision = selectors.messaging_decision(convo, purpose=purpose, sender=sender)
+                found.append((decision.allowed, decision.reason, decision.tagged, decision.purpose))
+        return found
+
+    before = grid()
+    say("wamid.2", "ALTA", ago=dt.timedelta(seconds=30))
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert grid() == before  # GRANTED no abre nada que sin fila estuviera cerrado
 
 
 def spied(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
