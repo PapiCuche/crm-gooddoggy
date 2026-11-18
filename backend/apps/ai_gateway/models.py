@@ -124,17 +124,21 @@ def _usd(null: bool = False, digits: int = 12) -> models.DecimalField[Any, Any]:
 
 
 class AIBudget(TenantModel):
-    """El tope mensual en USD (F8-05): sin fila no hay llamadas. `crm_app` solo lo lee."""
+    """Los topes mensual y diario en USD (F8-05, F8-05b2): sin fila o sin tope diario no hay
+    llamadas (falla cerrado). `crm_app` solo los lee."""
 
     id = uuid7_primary_key()
     monthly_usd = _usd()
+    daily_usd = _usd(null=True)  # NULL: sin tope diario, sin llamadas; sin `NaN` (0004)
 
     class Meta:
         db_table = "ai_budgets"
         constraints = [
             models.UniqueConstraint(fields=["organization_id"], name="ai_budgets_org_uq"),
             models.CheckConstraint(condition=models.Q(monthly_usd__gt=0), name="ai_budgets_ck"),
-        ]
+            models.CheckConstraint(condition=models.Q(daily_usd__gt=0),
+                                   name="ai_budgets_daily_ck"),
+        ]  # fmt: skip
 
 
 class AIBudgetUsage(TenantModel):
@@ -156,6 +160,25 @@ class AIBudgetUsage(TenantModel):
         ]  # fmt: skip
 
 
+class AIBudgetDailyUsage(TenantModel):
+    """Lo gastado y lo reservado de un día de Lima (ADR-043), como `AIBudgetUsage`: `crm_app` solo
+    lo lee; lo cambian `ai_budget_reserve` y `ai_budget_settle` (0004), siempre tras el mes."""
+
+    id = uuid7_primary_key()
+    day = models.DateField()
+    spent_usd = _usd(digits=18)
+    reserved_usd = _usd()
+
+    class Meta:
+        db_table = "ai_budget_daily_usage"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "day"],
+                                    name="ai_budget_daily_usage_day_uq"),
+            models.CheckConstraint(name="ai_budget_daily_usage_ck", condition=models.Q(
+                spent_usd__gte=0, reserved_usd__gte=0)),
+        ]  # fmt: skip
+
+
 class AIBudgetReservation(TenantModel):
     """Lo reservado para una llamada, sin nada del prompt, con lo que necesita su fila de
     `ai_llm_calls` (de solo inserción y particionada por mes, ADR-011): se ajusta una sola vez
@@ -163,6 +186,7 @@ class AIBudgetReservation(TenantModel):
 
     id = uuid7_primary_key()
     month = models.DateField()  # FK compuesta a su fila de `ai_budget_usage` (0002)
+    day = models.DateField()  # y a la de `ai_budget_daily_usage` (0004)
     amount_usd = _usd()
     created_at = models.DateTimeField(auto_now_add=True)
     settled_at = models.DateTimeField(null=True)
