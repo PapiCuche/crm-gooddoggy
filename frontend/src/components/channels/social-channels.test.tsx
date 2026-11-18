@@ -343,11 +343,9 @@ describe("Messenger e Instagram en Canales (F7b-06)", () => {
     const group = await screen.findByRole("group", { name: "Desconectar Página Tienda" });
     expect(sent(api).filter((call) => call.method === "DELETE")).toEqual([]);
     fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
-    expect(
-      await screen.findByText(
-        "«Página Tienda» quedó desconectada: ya no recibe ni envía mensajes.",
-      ),
-    ).toBeVisible();
+    expect(await screen.findByText(/quedó desconectada/)).toHaveTextContent(
+      "«Página Tienda» quedó desconectada: ya no recibe ni envía mensajes.",
+    );
     await waitFor(() => expect(screen.queryByRole("button", { name: "Rotar token" })).toBeNull());
     expect(
       sent(api)
@@ -355,6 +353,93 @@ describe("Messenger e Instagram en Canales (F7b-06)", () => {
         .map((call) => call.url),
     ).toEqual([`${BASE}/messenger/m1/`]);
   });
+
+  // F7b-06f: los mutantes que sobrevivieron a la revisión de #938 (M04, M15, M19).
+  it("desconectar Instagram: un solo DELETE a su ruta aunque se confirme dos veces", async () => {
+    let listed = 0;
+    const api = mockApi({
+      [LIST]: () => page(++listed === 1 ? [ig] : []),
+      [`DELETE ${BASE}/instagram/i1/`]: { status: 204 },
+    });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+    const group = await screen.findByRole("group", { name: "Desconectar IG Tienda" });
+    const yes = within(group).getByRole("button", { name: "Sí, desconectar" });
+    fireEvent.click(yes);
+    fireEvent.click(yes); // el segundo clic llega mientras el primero sigue en vuelo
+    expect(await screen.findByText(/quedó desconectada/)).toBeVisible();
+    expect(
+      sent(api)
+        .filter((call) => call.method === "DELETE")
+        .map((call) => call.url),
+    ).toEqual([`${BASE}/instagram/i1/`]);
+  });
+
+  it("el aviso de standby sale solo de `has_standby_conversations`, no del estado", async () => {
+    const calm = social("i5", { status: "CONNECTED", status_detail: null });
+    const held = social("i6", { has_standby_conversations: true });
+    mockApi({ [LIST]: page([calm, held]) });
+    show();
+    const [first, second] = await cards();
+    expect(within(first!).queryByRole("note")).toBeNull();
+    expect(within(first!).getByText("El CRM atiende las conversaciones")).toBeVisible();
+    expect(within(second!).getByRole("note")).toHaveTextContent("Otra app controla");
+  });
+
+  it("el aviso de desconectada aísla el nombre: un carácter de dirección no lo reordena", async () => {
+    let listed = 0;
+    const named = social("m1", { ...fb, name: "Tienda\u202Eabc" });
+    mockApi({
+      [LIST]: () => page(++listed === 1 ? [named] : []),
+      [`DELETE ${BASE}/messenger/m1/`]: { status: 204 },
+    });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+    const group = await screen.findByRole("group", { name: /^Desconectar / });
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
+    const done = await screen.findByText(/quedó desconectada/);
+    const bdi = done.querySelector("bdi")!;
+    expect(bdi.textContent).toBe("Tienda\u202Eabc");
+    expect(bdi).toHaveAttribute("dir", "auto");
+  });
+
+  it.each([
+    ["instagram", ig],
+    ["messenger", fb],
+  ] as const)(
+    "%s: el 404 al rotar o desconectar se sigue leyendo cuando la tarjeta ya no está",
+    async (route, account) => {
+      let listed = 0;
+      mockApi({
+        [LIST]: () => page(++listed === 1 ? [account] : []),
+        [`POST ${BASE}/${route}/${account.id}/token/`]: {
+          status: 404,
+          body: { code: "NOT_FOUND" },
+        },
+      });
+      show();
+      fireEvent.click(await screen.findByRole("button", { name: "Rotar token" }));
+      await screen.findByRole("form", { name: "Rotar el token" });
+      type(/^Token nuevo/, SECRET);
+      fireEvent.click(screen.getByRole("button", { name: "Rotar" }));
+      await waitFor(() => expect(screen.queryByText(account.name)).toBeNull()); // la lista nueva
+      expect(screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.")).toBeVisible();
+      noSecret();
+      cleanup();
+      listed = 0;
+      mockApi({
+        [LIST]: () => page(++listed === 1 ? [account] : []),
+        [`DELETE ${BASE}/${route}/${account.id}/`]: { status: 404, body: { code: "NOT_FOUND" } },
+      });
+      show();
+      fireEvent.click(await screen.findByRole("button", { name: "Desconectar" }));
+      const group = await screen.findByRole("group", { name: /^Desconectar / });
+      fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
+      await waitFor(() => expect(screen.queryByText(account.name)).toBeNull());
+      expect(screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.")).toBeVisible();
+      expect(document.body.textContent).not.toMatch(/quedó desconectada/);
+    },
+  );
 
   it("una cuenta desconectada o de una plataforma desconocida no ofrece acciones", async () => {
     const gone = social("i4", { status: "DISCONNECTED" });

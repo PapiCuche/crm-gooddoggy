@@ -422,7 +422,7 @@ describe("Canales (F7-07b)", () => {
     },
   );
 
-  it("rotar: un 404 (la cuenta ya no existe) lo dice y vuelve a leer la lista", async () => {
+  it("rotar: un 404 (la cuenta ya no existe) cierra el formulario, lo dice y vuelve a leer la lista", async () => {
     const api = mockApi({
       [LIST]: page([wa]),
       [ROTATE]: { status: 404, body: { code: "NOT_FOUND" } },
@@ -430,12 +430,60 @@ describe("Canales (F7-07b)", () => {
     show();
     await openRotate();
     rotate();
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Esa cuenta ya no existe. Actualizamos la lista.",
-    );
+    expect(
+      await screen.findByText("Esa cuenta ya no existe. Actualizamos la lista."),
+    ).toBeVisible();
     await waitFor(() => expect(listReads(api)).toBe(2));
-    expect(field(/^Token nuevo/).value).toBe("");
+    expect(screen.queryByRole("form", { name: "Rotar el token" })).toBeNull();
     noSecret();
+  });
+
+  // F7b-06f: la lista nueva ya no trae la cuenta y su tarjeta se va; el aviso vive fuera de ella.
+  it.each([
+    ["rotar", ROTATE],
+    ["desconectar", DISCONNECT],
+  ])("%s: el 404 se sigue leyendo cuando la tarjeta ya no está", async (action, route) => {
+    let listed = 0;
+    mockApi({
+      [LIST]: () => page(++listed === 1 ? [wa] : []),
+      [route]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    show();
+    if (action === "rotar") {
+      await openRotate();
+      rotate();
+    } else {
+      const group = await askDisconnect();
+      fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
+    }
+    await waitFor(() => expect(screen.queryByText("Tienda Lima")).toBeNull());
+    const notice = screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.");
+    expect(notice).toBeVisible();
+    expect(notice).toHaveAttribute("role", "status"); // se anuncia, fuera de la tarjeta
+    // el foco va al título: no cae a `<body>` con el formulario o la tarjeta que se fueron
+    expect(screen.getByRole("heading", { level: 1, name: "Canales" })).toHaveFocus();
+    expect(screen.queryByRole("alert")).toBeNull();
+    noSecret();
+  });
+
+  it("desconectar: un 404 con la cuenta aún en la lista cierra la pregunta y avisa fuera de la tarjeta", async () => {
+    const api = mockApi({
+      [LIST]: page([wa]),
+      [DISCONNECT]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    show();
+    const group = await askDisconnect();
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
+    await waitFor(() => expect(listReads(api)).toBe(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: "Desconectar Tienda Lima" })).toBeNull(),
+    );
+    expect(screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(screen.queryByRole("alert")).toBeNull(); // ningún aviso queda dentro de la tarjeta
+    expect(screen.getByRole("heading", { level: 1, name: "Canales" })).toHaveFocus();
   });
 
   it("rotar: 429 dice cuánto esperar", async () => {
@@ -511,7 +559,9 @@ describe("Canales (F7-07b)", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Desconectar" })).toHaveFocus());
     const again = await askDisconnect();
     fireEvent.click(within(again).getByRole("button", { name: "Sí, desconectar" }));
-    await waitFor(() => expect(screen.queryByText("Tienda Lima")).toBeNull()); // la lista nueva
+    // la lista nueva: la tarjeta se va y el aviso, fuera de ella, nombra la cuenta
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Rotar token" })).toBeNull());
+    expect(screen.getByText(/quedó desconectada/)).toHaveTextContent("«Tienda Lima» quedó");
     expect(sent(api).filter((call) => call.method === "DELETE")).toHaveLength(1);
   });
 
