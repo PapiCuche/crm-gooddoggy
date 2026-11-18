@@ -1,5 +1,5 @@
 """F7b-06e (ADR-035 §3): una página es de una sola organización, sea cual sea la plataforma
-(`channel_accounts_page_owner_ex`, migración `0047`). En la misma organización, Messenger e
+(`channel_accounts_page_owner_ex`, migración `0049`). En la misma organización, Messenger e
 Instagram de una página conviven. La negativa es el mismo 400 que una cuenta mal formada o ya
 registrada, y el DETAIL de PostgreSQL (que nombra la otra organización) no sale a ningún sitio."""
 
@@ -152,7 +152,7 @@ def test_raw_sql_as_the_app_role_cannot_put_a_page_in_two_organizations(
 def test_the_migration_refuses_pages_already_shared_and_says_only_how_many(
     crm: SimpleNamespace, meta: FakePageGraph, migrator: DB
 ) -> None:
-    step = importlib.import_module("apps.conversations.migrations.0047_channel_accounts_page_owner")
+    step = importlib.import_module("apps.conversations.migrations.0049_channel_accounts_page_owner")
     connect(crm, "INSTAGRAM", "a")
     with app() as raw, pytest.raises(RuntimeError, match="BYPASSRLS"):
         step.refuse_shared_pages(raw.cursor())  # crm_app no ve las demás organizaciones

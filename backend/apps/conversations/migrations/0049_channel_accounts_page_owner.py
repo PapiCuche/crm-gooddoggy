@@ -38,13 +38,13 @@ def refuse_shared_pages(cursor: Any) -> None:
     cursor.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user")
     if not cursor.fetchone()[0]:
         raise RuntimeError(
-            "conversations 0047: run as crm_migrator with BYPASSRLS (RLS hides rows)"
+            "conversations 0049: run as crm_migrator with BYPASSRLS (RLS hides rows)"
         )
     cursor.execute(SHARED)
     count = cursor.fetchone()[0]
     if count:
         raise RuntimeError(
-            f"conversations 0047: {count} page(s) connected in more than one organization;"
+            f"conversations 0049: {count} page(s) connected in more than one organization;"
             " disconnect one account of each before migrating"
         )
 
@@ -56,7 +56,7 @@ def _check(apps: Any, schema_editor: Any) -> None:
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("conversations", "0046_message_echo_token_index"),
+        ("conversations", "0048_conversations_standby_index"),
     ]
 
     operations = [
