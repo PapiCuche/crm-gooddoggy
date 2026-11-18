@@ -17,8 +17,8 @@ import { DisconnectAccount } from "./disconnect-account";
 import { RotateToken } from "./rotate-token";
 
 // Los canales (F7-07b): las cuentas que devuelve `GET /api/v1/o/{slug}/channels/` (F7-07a), la
-// Sandbox, WhatsApp, Messenger e Instagram (F7b-06), con su estado y su salud. Quién las ve lo decide la API
-// (`channels.manage`); un 403 solo se explica. Ninguna pantalla enseña un secreto: del token solo
+// Sandbox, WhatsApp, Messenger e Instagram (F7b-06), con su estado y su salud. Quién las ve lo
+// decide la API (`channels.manage`); un 403 solo se explica. Ninguna pantalla enseña un secreto: del token solo
 // los últimos cuatro caracteres. Lo que la API dice de una cuenta es texto que no controlamos:
 // los nombres van por `Plain`, y los códigos de estado se traducen, nunca se pintan tal cual.
 export function ChannelsList() {
