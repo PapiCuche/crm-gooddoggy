@@ -11,7 +11,9 @@ Una `EXCLUDE` no admite `NOT VALID`: si ya hubiera una página en dos organizaci
 se niega antes de crearla y dice **cuántas**, sin ids (el error de PostgreSQL los nombraría en el
 registro del despliegue); se desconecta una de cada par y se repite. Nunca borra nada. Necesita
 BYPASSRLS (crm_migrator), como la `0040`, para ver las filas de todas las organizaciones.
-`lock_timeout` de 5 s: el índice GiST se construye bajo un bloqueo exclusivo de una tabla pequeña.
+Antes de contar bloquea la tabla frente a escrituras (`SHARE ROW EXCLUSIVE`, hasta el final de la
+migración) y `lock_timeout` de 5 s: el índice GiST se construye bajo un bloqueo exclusivo de una
+tabla pequeña.
 Hacia atrás, borra la restricción. Crea `btree_gist` si falta (como pricing `0002`, que puede
 correr después) y no la borra.
 """
@@ -41,6 +43,8 @@ def refuse_shared_pages(cursor: Any) -> None:
         raise RuntimeError(
             "conversations 0049: run as crm_migrator with BYPASSRLS (RLS hides rows)"
         )
+    # nadie conecta otra página hasta que exista la `EXCLUDE`: lo contado no cambia por detrás
+    cursor.execute("LOCK TABLE public.channel_accounts IN SHARE ROW EXCLUSIVE MODE")
     cursor.execute(SHARED)
     count = cursor.fetchone()[0]
     if count:

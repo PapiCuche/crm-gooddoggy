@@ -21,7 +21,7 @@ from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
 from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
 from tests.test_channel_accounts import NEW_TOKEN, everything, run
 from tests.test_channel_accounts import connect as connect_whatsapp
-from tests.test_channel_accounts_api import signed
+from tests.test_channel_accounts_api import NAME_REFUSED, signed
 from tests.test_conversations_api import UNAUTHENTICATED
 from tests.test_member_branch import DENIED
 from tests.test_self_context import NOT_FOUND, reply
@@ -257,7 +257,8 @@ def test_a_name_with_control_or_invisible_characters_is_a_field_error_not_a_500(
 ) -> None:  # F7b-06e: antes, `accounts._name` lanzaba un `ValueError` que nadie capturaba
     response = send(signed(crm.ana), "post", f"{BASE}{platform}/", body(platform, name=name))
     assert response.status_code == 400 and list(response.json()["fields"]) == ["name"]
-    assert name not in response.content.decode() and meta.calls == []
+    assert response.json()["fields"]["name"][0]["message"] == NAME_REFUSED  # sin repetir el valor
+    assert meta.calls == []
     assert migrator.execute("SELECT count(*) FROM channel_accounts").fetchone() == (0,)
 
 

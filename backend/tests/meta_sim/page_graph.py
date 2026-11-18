@@ -96,8 +96,8 @@ class FakePageGraph:
             case ("GET", [page, "subscribed_apps"]) if page in self.pages:
                 if page in self.no_role:
                     return self._error("permission_200")
-                apps = [{"id": APP_ID, "subscribed_fields": self.subscribed[page]}]
-                return self._ok({"data": apps if page in self.subscribed else []})
+                mine = {"id": APP_ID, "subscribed_fields": self.subscribed.get(page)}
+                return self._ok({"data": [mine] if page in self.subscribed else []})
             case ("POST", [page, "subscribed_apps"]) if page in self.pages:
                 wanted = ",".join(query.get("subscribed_fields", []) or _form(body)).split(",")
                 if wanted == [""]:

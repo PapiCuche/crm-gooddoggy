@@ -14,7 +14,7 @@ import re
 from typing import Any
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connections, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
@@ -172,6 +172,13 @@ def connect_social(
     account_id = new_id()
     try:
         with transaction.atomic(using=alias):
+            # De una en una por página (la de Facebook en las dos plataformas), ya sin llamadas a
+            # Meta: dos organizaciones que la guardan a la vez se esperarían la una a la otra en la
+            # `EXCLUDE` (un deadlock, un 500); así, la segunda ve la primera y recibe `BadNumber`.
+            # Dos páginas cuyo hash coincide solo se esperan un momento.
+            with connections[alias].cursor() as cursor:
+                key = f"channel_page:{page}"
+                cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
             credential = credentials.store(ctx, account_id, token)
             account = ChannelAccount.objects.using(alias).create(
                 id=account_id, platform=platform, name=name, external_account_id=external,
@@ -182,7 +189,7 @@ def connect_social(
                 created_by_user_id=ctx.user_id,
             )  # fmt: skip
             _announce(ctx, "channel_account.connected", account, None, str(credential.pk))
-    except IntegrityError as error:  # su DETAIL nombra la otra organización: no sale de aquí
+    except IntegrityError as error:  # el error de PostgreSQL (con la RLS, sin valores) no sale
         taken = getattr(getattr(error.__cause__, "diag", None), "constraint_name", "")
         if taken not in ("channel_accounts_external_uq", PAGE_OWNER):
             raise

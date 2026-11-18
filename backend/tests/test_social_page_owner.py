@@ -1,7 +1,7 @@
 """F7b-06e (ADR-035 §3): una página es de una sola organización, sea cual sea la plataforma
 (`channel_accounts_page_owner_ex`, migración `0049`). En la misma organización, Messenger e
 Instagram de una página conviven. La negativa es el mismo 400 que una cuenta mal formada o ya
-registrada, y el DETAIL de PostgreSQL (que nombra la otra organización) no sale a ningún sitio."""
+registrada, y el error de PostgreSQL no sale a ningún sitio."""
 
 import importlib
 import logging
@@ -16,7 +16,7 @@ import pytest
 from django.db import connection, connections
 from psycopg.conninfo import make_conninfo
 
-from apps.conversations import accounts
+from apps.conversations import accounts, graph
 from tests.meta_sim.page_graph import FakePageGraph
 from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
 from tests.test_channel_accounts_api import signed
@@ -73,10 +73,13 @@ def test_a_page_of_another_organization_gets_the_answer_of_a_malformed_account(
 
 
 def test_one_organization_holds_both_platforms_of_its_page_and_freeing_it_lets_another_in(
-    crm: SimpleNamespace, meta: FakePageGraph
+    crm: SimpleNamespace, meta: FakePageGraph, migrator: DB
 ) -> None:
     made = [post(crm, "a", platform) for platform in ("messenger", "instagram")]
     assert [r.status_code for r in made] == [201, 201]
+    held = "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = %s"
+    pid = connection.connection.info.backend_pid  # el bloqueo de la página acaba con su transacción
+    assert migrator.execute(held, [pid]).fetchone() == (0,)
     assert post(crm, "b", "messenger").status_code == 400
     ana = signed(crm.ana)
     for response in made:
@@ -133,6 +136,58 @@ def test_the_database_decides_between_two_organizations_connecting_the_page_at_o
         assert outcome == ["MESSENGER"]
 
 
+def race(crm: SimpleNamespace, org: str, outcome: list[Any], page: str, mine: str | None) -> None:
+    """Una conexión, en su hilo y con su conexión: Instagram si trae su cuenta, si no Messenger."""
+    over = {"page_id": page} | ({"instagram_account_id": mine} if mine else {})
+    try:
+        made = connect(crm, "INSTAGRAM" if mine else "MESSENGER", org, **over)[0]
+        outcome.append(made.organization_id)
+    except Exception as error:  # noqa: BLE001 — se comprueba en el test
+        outcome.append(error)
+    finally:
+        connections.close_all()
+
+
+ROUNDS = 50  # sin el bloqueo, alrededor de un par de cada doce acababa en un deadlock
+
+
+def test_two_organizations_released_together_on_one_page_never_meet_a_deadlock(
+    crm: SimpleNamespace, meta: FakePageGraph, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A conecta Instagram y B Messenger sobre la misma página, soltadas a la vez justo antes de
+    guardar. Cada `INSERT` espera la fila de la otra en la `EXCLUDE`: sin el bloqueo de la página,
+    PostgreSQL abortaba a una con un deadlock (`OperationalError`, un 500). Con él, siempre gana
+    una y la otra recibe el mismo `BadNumber` que una página ya conectada."""
+    barrier, subscribe = threading.Barrier(2), graph.subscribe
+
+    def together(token: str, page: str) -> None:
+        subscribe(token, page)
+        barrier.wait(10)  # las dos, a la vez, hasta la transacción
+
+    monkeypatch.setattr(graph, "subscribe", together)
+    for n in range(ROUNDS):
+        page, mine = f"2000000000{n:05}", f"3000000000{n:05}"
+        meta.pages[page] = mine
+        outcome: list[Any] = []
+        pair = [
+            threading.Thread(target=race, args=(crm, "a", outcome, page, mine)),
+            threading.Thread(target=race, args=(crm, "b", outcome, page, None)),
+        ]
+        for thread in pair:
+            thread.start()
+        for thread in pair:
+            thread.join(20)  # un hilo colgado falla aquí, no bloquea la suite
+        assert not any(thread.is_alive() for thread in pair)
+        refused = [o for o in outcome if isinstance(o, accounts.BadNumber)]
+        assert len(outcome) == 2 and len(refused) == 1, outcome  # nunca un `OperationalError`
+        assert str(refused[0]) == accounts.ACCOUNT_REFUSED
+        owner = "SELECT array_agg(DISTINCT organization_id), count(*) FROM channel_accounts"
+        found = migrator.execute(owner + " WHERE COALESCE(external_parent_id, external_account_id)"
+                                 " = %s", [page]).fetchone()  # fmt: skip
+        assert found == ([next(o for o in outcome if o not in refused)], 1)
+    assert migrator.execute("SELECT count(*) FROM credentials").fetchone() == (ROUNDS,)
+
+
 def test_raw_sql_as_the_app_role_cannot_put_a_page_in_two_organizations(
     crm: SimpleNamespace, meta: FakePageGraph
 ) -> None:
@@ -159,6 +214,8 @@ def test_the_migration_refuses_pages_already_shared_and_says_only_how_many(
     with migrator.transaction(force_rollback=True), migrator.cursor() as cursor:
         cursor.execute(INSERT, [uuid4(), crm.a, "MESSENGER", PAGE_ID, None])  # la misma org.
         step.refuse_shared_pages(cursor)  # una página en una sola organización: pasa
+        held = "SELECT mode FROM pg_locks WHERE pid = pg_backend_pid() AND relation = %s::regclass"
+        assert ("ShareRowExclusiveLock",) in cursor.execute(held, ["channel_accounts"]).fetchall()
         cursor.execute(
             "ALTER TABLE channel_accounts DROP CONSTRAINT channel_accounts_page_owner_ex"
         )
