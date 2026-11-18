@@ -23,6 +23,11 @@ Una baja sin hora del proveedor (o con una que no vale) guarda nuestra hora más
 la última guardada si es mayor: ningún alta dentro del margen la levanta (en un empate, la baja);
 el cliente vuelve a escribir ALTA pasado ese minuto. Un alta sin hora del proveedor no cuenta
 (decisión del propietario en #937): el orden de llegada ya no decide nada.
+
+F7b-05g: una hora de Meta más vieja que «ahora» menos `KEYWORD_STALE` (más que los reintentos de
+Meta) no se cree y cuenta como sin hora: la baja revoca igual, el alta no cuenta. Una concesión
+manual (`grant_consent`) que cambia el estado borra `keyword_at`: la baja siguiente, con la hora que
+sea o sin ella, siempre revoca. Una revocación manual no la toca (ninguna palabra la levanta).
 """
 
 import datetime as dt
@@ -48,6 +53,7 @@ from core.tenancy.scope import require_scope
 EVIDENCE_KEYS = frozenset({"message_id", "ingress_id", "form", "note"})
 EVIDENCE_VALUE_MAX = 200
 KEYWORD_AHEAD = dt.timedelta(seconds=60)  # cuánto puede ir el reloj de Meta por delante del nuestro
+KEYWORD_STALE = dt.timedelta(hours=48)  # los reintentos de Meta (hasta 36 h) más un margen
 
 
 def _evidence(value: dict[str, str] | None) -> dict[str, str]:
@@ -65,12 +71,15 @@ class _AltaIgnored(Exception):
 
 
 def _said(said_at: dt.datetime | None, status: str) -> dt.datetime | None:
-    """La hora que ordena la palabra: la de Meta en segundos enteros (F7b-05f). `_AltaIgnored` si es
-    un alta más allá de «ahora» + `KEYWORD_AHEAD`; una baja vale con cualquier hora."""
+    """La hora que ordena la palabra: la de Meta en segundos enteros (F7b-05f); `None` si es más
+    vieja que «ahora» - `KEYWORD_STALE` (F7b-05g). `_AltaIgnored` si es un alta más allá de «ahora»
+    + `KEYWORD_AHEAD`; una baja vale con cualquier hora futura."""
     if said_at is None:
         return None
-    said = said_at.replace(microsecond=0)
-    ahead = said > timezone.now().replace(microsecond=0) + KEYWORD_AHEAD
+    said, now = said_at.replace(microsecond=0), timezone.now().replace(microsecond=0)
+    if said < now - KEYWORD_STALE:
+        return None  # imposible por lo vieja: como sin hora
+    ahead = said > now + KEYWORD_AHEAD
     if ahead and status == ConsentStatus.GRANTED:
         raise _AltaIgnored
     return said
@@ -92,9 +101,9 @@ def _write(
     with transaction.atomic(using=alias):
         live = Contact.objects.using(alias).filter(deleted_at__isnull=True)
         live.select_for_update(no_key=True).get(pk=contact_id)
+        said_at = _said(said_at, status)  # con el reloj leído ya dentro del bloqueo
         if lift and said_at is None:  # decisión del propietario (#937): un alta sin hora no cuenta
             raise _AltaIgnored
-        said_at = _said(said_at, status)  # con el reloj leído ya dentro del bloqueo
         where = {"contact_id": contact_id, "channel": channel, "purpose": purpose}
         row = ContactConsent.objects.using(alias).filter(**where).first()
         last = None if row is None else row.keyword_at
@@ -118,11 +127,12 @@ def _write(
                 row.save(using=alias, update_fields=["keyword_at", "updated_at"])
             return row, False  # un alta no levanta una baja que no fue una palabra
         now, before = timezone.now(), row.status if row else None
+        manual = status == ConsentStatus.GRANTED and not lift  # F7b-05g: borra la hora
         stamp = {"granted_at" if status == ConsentStatus.GRANTED else "revoked_at": now}
         values = {
             "status": status, "source": source, "evidence": proof,
             "recorded_by_user_id": ctx.user_id, **stamp,
-            **({} if said_at is None else {"keyword_at": said_at}),
+            **({"keyword_at": said_at} if said_at is not None or manual else {}),
         }  # fmt: skip
         if row is None:
             row = ContactConsent.objects.using(alias).create(**where, **values)
@@ -149,9 +159,10 @@ def grant_consent(
     evidence: dict[str, str] | None = None,
 ) -> tuple[ContactConsent, bool]:  # fmt: skip
     """Concede el consentimiento para ese canal y propósito. Devuelve la fila vigente y si cambió
-    algo (ya concedido: `False`, sin evento). `ValueError` si el canal, el propósito, el origen o
-    la evidencia no valen (`KEYWORD_STOP` solo revoca); `DoesNotExist` si el contacto no es de la
-    organización o está borrado."""
+    algo (ya concedido: `False`, sin evento). Si cambia, borra `keyword_at` (F7b-05g): así una baja
+    por palabra posterior siempre revoca, aunque la guardada fuera futura. `ValueError` si el canal,
+    el propósito, el origen o la evidencia no valen (`KEYWORD_STOP` solo revoca); `DoesNotExist`
+    si el contacto no es de la organización o está borrado."""
     return _write(ctx, contact_id, channel, purpose, ConsentStatus.GRANTED, source, evidence)
 
 
@@ -170,10 +181,10 @@ def keyword_stop(
     said_at: dt.datetime | None, evidence: dict[str, str] | None = None,
 ) -> bool:  # fmt: skip
     """La baja por palabra (F7-08b): revoca con `KEYWORD_STOP`, salvo que la fila ya tenga una
-    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio o no vale: entonces
-    cuenta nuestra hora más `KEYWORD_AHEAD`, o la última guardada si es mayor, F7b-05f). Un alta de
-    la misma hora no la detiene: en un empate gana la baja. Devuelve si cambió algo. Mismos errores
-    que `revoke_consent`."""
+    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio o no vale, y una
+    más vieja que `KEYWORD_STALE` igual: entonces cuenta nuestra hora más `KEYWORD_AHEAD`, o la
+    última guardada si es mayor, F7b-05f y F7b-05g). Un alta de la misma hora no la detiene: en un
+    empate gana la baja. Devuelve si cambió algo. Mismos errores que `revoke_consent`."""
     return _write(
         ctx, contact_id, channel, purpose, ConsentStatus.REVOKED, ConsentSource.KEYWORD_STOP,
         evidence, said_at=said_at,
@@ -187,9 +198,10 @@ def lift_keyword_stop(
     """El alta por palabra (F7-08b): concede si la fila vigente está `REVOKED` por una palabra de
     baja (`KEYWORD_STOP`) o si no hay fila (F7b-05e: así guarda su hora y una BAJA más vieja,
     entregada después, no revoca). Revocada por otra vía no la levanta (`False`), pero guarda su
-    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora; sin `said_at`
-    o con uno más allá de «ahora» + `KEYWORD_AHEAD` no hace nada (F7b-05f; decisión del propietario
-    en #937). Devuelve si cambió algo. Mismos errores que `grant_consent`."""
+    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora; sin
+    `said_at`, con uno más allá de «ahora» + `KEYWORD_AHEAD` o más viejo que `KEYWORD_STALE` no hace
+    nada (F7b-05f y F7b-05g; decisión del propietario en #937). Devuelve si cambió algo. Mismos
+    errores que `grant_consent`."""
     try:
         return _write(
             ctx, contact_id, channel, purpose, ConsentStatus.GRANTED,

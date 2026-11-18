@@ -42,7 +42,7 @@ from apps.contacts import keywords
 from apps.contacts.commands import create_contact
 from apps.contacts.consents import keyword_stop, lift_keyword_stop
 from apps.contacts.models import Contact
-from apps.conversations import commands, media, policy
+from apps.conversations import commands, ingest_alerts, media, policy
 from apps.conversations.models import (
     BODY_MAX,
     ChannelAccount,
@@ -249,6 +249,8 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
         ctx, contact_id=contact.pk, channel_account_id=account.pk, external_message_id=external,
         body=body, message_type=message_type, provider_at=at, attachment=attachment,
     )  # fmt: skip
+    if created:
+        ingest_alerts.provider_time(at)  # el desfase de nuestro reloj (F7b-05g): solo cifras
     if created and message_type == MessageType.TEXT:
         _keyword(ctx, contact.pk, saved, account.platform, saved.body, at)
     return None
@@ -359,6 +361,8 @@ def receive_social(
     )  # fmt: skip
     if standby:
         logger.info("meta.webhook.standby", channel_account_id=str(account.pk))
+    if created:
+        ingest_alerts.provider_time(at)
     if created and message_type == MessageType.TEXT:  # el texto del cliente, sin la frase fija
         said = clean_text(message["text"])  # de la respuesta a una historia
         held = standby or (  # el estado guardado: un reintento tardío no lo deshace

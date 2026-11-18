@@ -18,16 +18,28 @@ retraso de la cola es del momento: solo se evalúa en la ventana más reciente.
 Cada ventana deja una línea `meta.ingest.metrics` y, por umbral (`settings.META_ALERTS`) alcanzado,
 un evento `meta.alert.<tipo>` de nivel `ERROR` y, si hay Sentry, el mismo evento con esa huella.
 Solo fechas, conteos, umbrales y códigos propios: nunca teléfonos, textos, ids de Meta ni tokens.
+
+**Desfase del reloj** (F7b-05g): las bajas y altas se ordenan por la hora de Meta con un margen de
+60 s sobre nuestro reloj (`contacts.consents.KEYWORD_AHEAD`); un reloj nuestro más atrasado lo
+rompe (despliegue: NTP). Cada mensaje entrante nuevo con hora de Meta mide en este proceso (el reloj
+es del host, no de una organización) cuánto va esa hora por delante del nuestro. Si los últimos
+`SKEW_SAMPLES` van todos más de `SKEW_AHEAD` segundos por delante, avisa `meta.alert.clock_skew`
+(como las demás alertas), como mucho una vez cada `SKEW_QUIET` segundos por proceso: solo cifras (el
+menor adelanto visto, las muestras y el umbral). Es una cota inferior: la entrega y la cola restan.
 """
 
+import contextlib
 import datetime as dt
+import os
 import threading
 import time
+from collections import deque
 from collections.abc import Iterable
 from typing import Any
 
 from django.conf import settings
 from django.db import Error, connection, transaction
+from django.utils import timezone
 
 from core.observability import reporting
 from core.observability.logging import get_logger
@@ -53,6 +65,47 @@ _lock = threading.Lock()
 _pending = 0
 _last_flush = 0.0
 _now = time.monotonic  # separado para que una prueba mueva el reloj
+SKEW_AHEAD = 30  # segundos que la hora de Meta puede ir por delante de la nuestra sin avisar
+SKEW_SAMPLES = 5  # mensajes seguidos que tienen que pasarlo: «de forma sostenida»
+SKEW_QUIET = 300.0  # segundos entre dos avisos de un mismo proceso
+SKEW_EVENT = "meta.alert.clock_skew"
+_skew_lock = threading.Lock()
+_skew: deque[float] = deque(maxlen=SKEW_SAMPLES)  # acotada: nunca más de `SKEW_SAMPLES`
+_skew_alerted: float | None = None
+
+
+def _skew_reset() -> None:
+    """Un proceso hijo (Celery prefork) empieza de cero, con su propio candado."""
+    global _skew_lock, _skew, _skew_alerted
+    _skew_lock, _skew, _skew_alerted = threading.Lock(), deque(maxlen=SKEW_SAMPLES), None
+
+
+os.register_at_fork(after_in_child=_skew_reset)
+
+
+def provider_time(at: dt.datetime | None) -> None:
+    """Mide cuánto va por delante de nuestro reloj la hora de Meta (`at`) de un mensaje entrante
+    nuevo y avisa si va por delante de forma sostenida. Sin hora, nada. Nunca lanza."""
+    global _skew_alerted
+    if at is None:
+        return
+    ahead = (at - timezone.now()).total_seconds()
+    with _skew_lock:
+        _skew.append(ahead)
+        least = min(_skew)
+        if len(_skew) < SKEW_SAMPLES or least <= SKEW_AHEAD:
+            return
+        now = _now()
+        if _skew_alerted is not None and now - _skew_alerted < SKEW_QUIET:
+            return
+        _skew_alerted = now
+    context = {"ahead_seconds": int(least), "samples": SKEW_SAMPLES, "threshold": SKEW_AHEAD}
+    try:  # el registro y el reporte juntos: ninguno de los dos frena la ingesta
+        logger.error(SKEW_EVENT, **context)
+        reporting.reporter().capture_message(SKEW_EVENT, context, fingerprint=[SKEW_EVENT])
+    except Exception:  # noqa: BLE001 — un aviso roto no frena la ingesta
+        with contextlib.suppress(Exception):
+            logger.warning("meta.alert.report_failed", alert="clock_skew")
 
 
 def bad_signature() -> None:
