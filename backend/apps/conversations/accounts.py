@@ -90,8 +90,31 @@ def _check(token: str, account: ChannelAccount) -> dict[str, Any]:
     instagram = account.platform == Platform.INSTAGRAM
     page = account.external_parent_id if instagram else account.external_account_id
     graph.page(token, page or "", account.external_account_id if instagram else None)
-    graph.subscribed_apps(token, page or "")  # F7b-06e: y un rol en la página, como al conectar
-    return {"quality_rating": None, "messaging_limit_tier": None}  # no existen aquí
+    subscribed = graph.subscription(token, page or "")  # F7b-06e: y un rol en la página
+    return {"quality_rating": None, "messaging_limit_tier": None, "subscribed": subscribed}
+
+
+UNSUBSCRIBED = "PAGE_NOT_SUBSCRIBED"
+# F7b-06g (ADR-035 §10): (estado, detalle) de una cuenta social según su página tenga suscrita la
+# app del CRM o no. Solo estos pares cambian: `ERROR`, `TOKEN_INVALID`, `MESSAGES_ACCESS_OFF` y lo
+# demás siguen igual. Sin suscripción la cuenta aún envía (`DEGRADED`), pero no recibe.
+Pair = tuple[str, str | None]
+LOST: dict[Pair, Pair] = {
+    ("CONNECTED", None): ("DEGRADED", UNSUBSCRIBED),
+    ("PENDING", "WEBHOOK_NOT_SEEN"): ("PENDING", UNSUBSCRIBED),
+}
+BACK: dict[Pair, Pair] = {
+    ("DEGRADED", UNSUBSCRIBED): ("CONNECTED", None),
+    ("PENDING", UNSUBSCRIBED): ("PENDING", "WEBHOOK_NOT_SEEN"),
+}
+
+
+def _follow(account: ChannelAccount, subscribed: bool | None) -> None:
+    """Aplica a la cuenta (ya bloqueada) lo que Meta dice de la suscripción de su página. `None`
+    (no se sabe) y WhatsApp no cambian nada."""
+    if account.platform in SOCIAL and subscribed is not None:
+        key = (account.status, account.status_detail)
+        account.status, account.status_detail = (BACK if subscribed else LOST).get(key, key)
 
 
 def _announce(
@@ -217,7 +240,7 @@ def rotate_token(
     with transaction.atomic(using=alias):
         found = _live(platform).using(alias).select_for_update(no_key=True)
         account = found.get(pk=channel_account_id)
-        old = account.credential_id
+        old, status, detail = account.credential_id, account.status, account.status_detail
         credentials.revoke(ctx, old)  # antes de guardar la nueva: una viva por cuenta
         credential = credentials.store(ctx, account.pk, token, rotated=True)
         account.credential_id, account.last_healthcheck_at = credential.pk, timezone.now()
@@ -230,7 +253,11 @@ def rotate_token(
                 low = seen["quality_rating"] in ("YELLOW", "RED")
                 account.status = "DEGRADED" if low else "CONNECTED"
                 account.status_detail = "QUALITY_LOW" if low else None
-                changed["status"] = ["ERROR", account.status]
+        _follow(account, seen.get("subscribed"))  # F7b-06g: lo que Meta dijo de la página
+        if account.status != status:
+            changed["status"] = [status, account.status]
+        if account.status_detail not in (detail, None):  # un detalle nuevo, no uno que se limpia
+            changed["status_detail"] = [detail, account.status_detail]
         account.version += 1
         fields = [*ACCOUNT_FIELDS, "status", "status_detail", "version", "updated_at"]
         account.save(using=alias, update_fields=fields)
@@ -318,23 +345,58 @@ def mark_degraded(ctx: TenantContext, *, channel_account_id: UUID) -> bool:
                    action="channel_account.degraded")  # fmt: skip
 
 
+CHECKED = ("PENDING", "CONNECTED", "DEGRADED")  # las que se comprueban (ADR-029 §12)
+
+
 def health_target(
     ctx: TenantContext, *, channel_account_id: UUID
-) -> tuple[str, str, Credential] | None:
+) -> tuple[str, str, str, Credential] | None:
     """Lo que la comprobación de salud necesita de una cuenta viva `PENDING`, `CONNECTED` o
-    `DEGRADED`: su WABA, su número y su credencial viva (la fila cifrada: el token se abre solo
-    durante la llamada a Meta). `None` si ya no se comprueba o no tiene credencial."""
+    `DEGRADED`: su plataforma, su WABA (o su página en Messenger e Instagram, F7b-06g), su número
+    (o su cuenta) y su credencial viva (la fila cifrada: el token se abre solo durante la llamada a
+    Meta). `None` si ya no se comprueba o no tiene credencial."""
     alias = require_scope(ctx)
-    account = _live().using(alias).filter(
-        pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
-    ).first()  # fmt: skip
+    real = ChannelAccount.objects.filter(platform__in=REAL, deleted_at__isnull=True)
+    account = real.using(alias).filter(pk=channel_account_id, status__in=CHECKED).first()
     live = Credential.objects.using(alias).filter(
         pk=account.credential_id if account else None, owner_id=channel_account_id,
         revoked_at__isnull=True,
     )  # fmt: skip
     if account is None or (credential := live.first()) is None:
         return None
-    return account.external_parent_id or "", account.external_account_id, credential
+    page = account.external_account_id if account.platform == Platform.MESSENGER else None
+    parent = page or account.external_parent_id or ""
+    return account.platform, parent, account.external_account_id, credential
+
+
+def apply_subscription(
+    ctx: TenantContext, *, channel_account_id: UUID, credential_id: UUID, subscribed: bool | None
+) -> bool:
+    """Una comprobación de una cuenta de Messenger o Instagram (F7b-06g, ADR-035 §10): guarda la
+    hora y, si la página perdió o recuperó la suscripción de la app, el estado (`_follow`), auditado
+    con ids y códigos. Solo si `credential_id` sigue siendo la credencial de la cuenta (no se rotó
+    mientras tanto). `False` si ya no se comprueba."""
+    alias = require_scope(ctx)
+    with transaction.atomic(using=alias):
+        real = ChannelAccount.objects.filter(platform__in=SOCIAL, deleted_at__isnull=True)
+        found = real.using(alias).select_for_update(no_key=True).filter(
+            pk=channel_account_id, status__in=CHECKED, credential_id=credential_id
+        )  # fmt: skip
+        if (account := found.first()) is None:
+            return False
+        before = (account.status, account.status_detail)
+        _follow(account, subscribed)
+        account.last_healthcheck_at = timezone.now()
+        fields = ["last_healthcheck_at", "updated_at"]
+        now = (account.status, account.status_detail)
+        if now != before:
+            account.version += 1
+            fields += ["status", "status_detail", "version"]
+        account.save(using=alias, update_fields=fields)
+        if now != before:
+            changes = {"status": [before[0], now[0]], "status_detail": [before[1], now[1]]}
+            _announce(ctx, "channel_account.health", account, changes, None)
+        return True
 
 
 def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, tier: str) -> bool:

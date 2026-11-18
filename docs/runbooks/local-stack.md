@@ -232,4 +232,13 @@ Cada envío lleva un `mid` nuevo y la hora actual (abre la ventana de 24 h). En 
 curl -s -X POST http://127.0.0.1:8090/_sim/then -d '{"page": ["window_closed"]}'
 ```
 
+**7. Página sin suscribir (F7b-06g).** Con el `META_APP_ID` del paso 1 (el id de la app del simulador), con `SIM_TOKEN` igual al token de ejemplo de la tabla de arriba, quita la suscripción de la página y espera la siguiente comprobación de salud (cada `CHANNEL_HEALTH_INTERVAL_MINUTES`, 15 por omisión) o rota el token desde `/canales`:
+
+```bash
+curl -s -X DELETE -H "Authorization: Bearer $SIM_TOKEN" \
+  http://127.0.0.1:8090/v23.0/100000000000101/subscribed_apps
+```
+
+La tarjeta pasa a **Con problemas**, con el motivo «La página no tiene suscrita la app del CRM…» y ese paso del checklist en rojo. Para recuperarla, vuelve a conectar otra cuenta de la misma página (suscribe la app) o, en el simulador, `POST` a la misma ruta con `?subscribed_fields=messages`; en la siguiente comprobación vuelve a **Conectada**.
+
 **Límites.** Los medios entrantes no se descargan: la descarga sigue con la política normal, y el simulador no conoce ningún medio (la consulta falla). Si un día devolviera una URL, el backend intentaría bajarla del `lookaside.fbsbx.com` **real** con el token ficticio, y Meta lo rechazaría; ninguna otra llamada sale a Meta. El simulador guarda todo en memoria: reiniciarlo lo vacía, y las cuentas ya conectadas siguen funcionando porque siempre acepta los mismos ids y el mismo token.

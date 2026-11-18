@@ -17864,6 +17864,7 @@ components:
       - DISCONNECTED_BY_ADMIN
       - PROVIDER_ERROR
       - MESSAGES_ACCESS_OFF
+      - PAGE_NOT_SUBSCRIBED
       type: string
       description: |-
         * `TOKEN_INVALID` - TOKEN_INVALID
@@ -17873,6 +17874,7 @@ components:
         * `DISCONNECTED_BY_ADMIN` - DISCONNECTED_BY_ADMIN
         * `PROVIDER_ERROR` - PROVIDER_ERROR
         * `MESSAGES_ACCESS_OFF` - MESSAGES_ACCESS_OFF
+        * `PAGE_NOT_SUBSCRIBED` - PAGE_NOT_SUBSCRIBED
     StockImport:
       type: object
       properties:
