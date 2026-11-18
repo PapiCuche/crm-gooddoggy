@@ -96,6 +96,19 @@ def test_the_day_is_lima_and_yesterday_does_not_count(world: SimpleNamespace, mi
     assert migrator.execute(stored, [held]).fetchone() == (True,)
 
 
+def test_in_july_the_cut_is_lima_midnight_not_new_york_and_the_functions_stay_stable(
+    migrator: DB,
+) -> None:
+    """Lima es UTC-5 todo el año; Nueva York, UTC-4 en julio: una zona cambiada se ve aquí."""
+    both = "SELECT ai_budget_month(%s::timestamptz)::text, ai_budget_day(%s::timestamptz)::text"
+    for at, expected in (("2026-07-01 04:30:00+00", ("2026-06-01", "2026-06-30")),
+                         ("2026-07-01 05:00:00+00", ("2026-07-01", "2026-07-01"))):  # fmt: skip
+        assert migrator.execute(both, [at, at]).fetchone() == expected, at
+    stable = "SELECT proname, provolatile FROM pg_proc WHERE proname LIKE 'ai_budget_%%' AND"
+    rows = migrator.execute(stable + " proname IN ('ai_budget_day', 'ai_budget_month') ORDER BY 1")
+    assert rows.fetchall() == [("ai_budget_day", "s"), ("ai_budget_month", "s")]
+
+
 def test_a_reservation_settles_on_its_own_day(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "100", daily="1")
     held = reserve(world, "0.5")
@@ -185,7 +198,7 @@ DENIED = (  # `crm_app`, en el scope de A: el día solo cambia por las funciones
     "UPDATE ai_budget_daily_usage SET spent_usd = spent_usd + 1",
     "DELETE FROM ai_budget_daily_usage",
     "TRUNCATE ai_budget_daily_usage",
-    "UPDATE ai_budgets SET daily_usd = 1000",
+    "UPDATE ai_budgets SET organization_id = organization_id",  # solo los topes (F8-05b3)
     "UPDATE ai_budget_reservations SET day = day",
     "SELECT public.ai_budget_day(now())",
 )
@@ -193,14 +206,20 @@ GUARDED = {  # siguen para el dueño de las funciones -> la restricción que lo 
     "UPDATE ai_budget_daily_usage SET reserved_usd = -1": "ai_budget_daily_usage_ck",
     "UPDATE ai_budget_daily_usage SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
     "UPDATE ai_budget_daily_usage SET spent_usd = 'NaN'": "ai_budget_daily_usage_not_nan",
-    "UPDATE ai_budgets SET daily_usd = 'NaN'": "ai_budgets_daily_not_nan",
+    "UPDATE ai_budgets SET daily_usd = 'NaN', monthly_usd = 'NaN'": "ai_budgets_daily_not_nan",
+    "UPDATE ai_budgets SET daily_usd = 'NaN'": "ai_budgets_daily_le_monthly",  # NaN, el mayor
     "UPDATE ai_budgets SET daily_usd = 0": "ai_budgets_daily_ck",
     "INSERT INTO ai_budget_daily_usage SELECT organization_id, uuidv7(), day, 0, 0"
     " FROM ai_budget_daily_usage":
     "ai_budget_daily_usage_day_uq",
     "INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(), NULL,"
-    " purpose, requested_by_user_id, provider, model, NULL, day - 1 FROM ai_budget_reservations":
-    "ai_budget_reservations_day_fk",  # una reserva sin su fila del día
+    " purpose, requested_by_user_id, provider, model, NULL, CASE WHEN day = month THEN day + 1"
+    " ELSE month END FROM ai_budget_reservations":
+    "ai_budget_reservations_day_fk",  # una reserva sin su fila del día, en su mes
+    "INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(), NULL,"
+    " purpose, requested_by_user_id, provider, model, NULL, month - 1 FROM ai_budget_reservations":
+    "ai_budget_reservations_day_in_month",  # el día fuera de su mes (F8-05b3)
+    "UPDATE ai_budgets SET daily_usd = monthly_usd + 1": "ai_budgets_daily_le_monthly",
 }  # fmt: skip
 
 

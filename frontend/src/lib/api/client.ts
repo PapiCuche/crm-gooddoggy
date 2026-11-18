@@ -23,6 +23,8 @@ import type {
 
 import type {
   AddStageRequest,
+  AiBudget,
+  AiBudgetWriteRequest,
   AiProviderAccount,
   AiProviderAccountCreateRequest,
   AiProviderKeyRequest,
@@ -1832,6 +1834,229 @@ export function useMeOrganizations<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getAiBudgetRetrieveUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/budget/`;
+};
+
+/**
+ * Los topes mensual y diario de IA de la organización, en USD con 6 decimales (`ai.manage` y segundo factor reciente); null si no hay: sin los dos, la IA no llama (`AI_BUDGET_NOT_SET`). No cuenta en el tope por persona de las escrituras.
+ */
+export const aiBudgetRetrieve = async (
+  orgSlug: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiBudget> => {
+  return apiFetch<AiBudget>(getAiBudgetRetrieveUrl(orgSlug), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getAiBudgetRetrieveQueryKey = (orgSlug: string) => {
+  return [`/api/v1/o/${orgSlug}/ai/budget/`] as const;
+};
+
+export const getAiBudgetRetrieveQueryOptions = <
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getAiBudgetRetrieveQueryKey(orgSlug);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof aiBudgetRetrieve>>> = ({ signal }) =>
+    aiBudgetRetrieve(orgSlug, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: orgSlug !== null && orgSlug !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type AiBudgetRetrieveQueryResult = NonNullable<Awaited<ReturnType<typeof aiBudgetRetrieve>>>;
+export type AiBudgetRetrieveQueryError = ErrorType<Error>;
+
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options: {
+    query: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>> &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>> &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+          TError,
+          Awaited<ReturnType<typeof aiBudgetRetrieve>>
+        >,
+        "initialData"
+      >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+export function useAiBudgetRetrieve<
+  TData = Awaited<ReturnType<typeof aiBudgetRetrieve>>,
+  TError = ErrorType<Error>,
+>(
+  orgSlug: string,
+  options?: {
+    query?: Partial<UseQueryOptions<Awaited<ReturnType<typeof aiBudgetRetrieve>>, TError, TData>>;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+  const queryOptions = getAiBudgetRetrieveQueryOptions(orgSlug, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+export const getAiBudgetUpdateUrl = (orgSlug: string) => {
+  return `/api/v1/o/${orgSlug}/ai/budget/`;
+};
+
+/**
+ * Fija los dos topes (`ai.manage` y segundo factor reciente) y lo audita (`ai.limits.changed`, con el antes y el después). Importes en USD mayores que cero, con 6 decimales como mucho; el diario no supera al mensual. Bajar un tope por debajo de lo gastado corta la siguiente llamada. 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.
+ */
+export const aiBudgetUpdate = async (
+  orgSlug: string,
+  aiBudgetWriteRequest: AiBudgetWriteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<AiBudget> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<AiBudget>(getAiBudgetUpdateUrl(orgSlug), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(aiBudgetWriteRequest),
+  });
+};
+
+export const getAiBudgetUpdateMutationKey = () => ["aiBudgetUpdate"] as const;
+
+export const getAiBudgetUpdateMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiBudgetUpdate>>,
+    TError,
+    AiBudgetUpdateMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiBudgetUpdate>>,
+  TError,
+  AiBudgetUpdateMutationVariables,
+  TContext
+> => {
+  const mutationKey = getAiBudgetUpdateMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiBudgetUpdate>>,
+    AiBudgetUpdateMutationVariables
+  > = (props) => {
+    const { orgSlug, data } = props ?? {};
+
+    return aiBudgetUpdate(orgSlug, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiBudgetUpdateMutationResult = NonNullable<Awaited<ReturnType<typeof aiBudgetUpdate>>>;
+export type AiBudgetUpdateMutationBody = AiBudgetWriteRequest;
+export type AiBudgetUpdateMutationError = ErrorType<Error>;
+export type AiBudgetUpdateMutationVariables = { orgSlug: string; data: AiBudgetWriteRequest };
+
+export const useAiBudgetUpdate = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiBudgetUpdate>>,
+      TError,
+      AiBudgetUpdateMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiBudgetUpdate>>,
+  TError,
+  AiBudgetUpdateMutationVariables,
+  TContext
+> => {
+  return useMutation(getAiBudgetUpdateMutationOptions(options), queryClient);
+};
 
 export const getAiProviderAccountsListUrl = (orgSlug: string) => {
   return `/api/v1/o/${orgSlug}/ai/provider-accounts/`;

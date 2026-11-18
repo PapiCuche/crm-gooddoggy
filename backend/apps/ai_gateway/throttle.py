@@ -1,10 +1,11 @@
 """Tope de escrituras de cada persona en las rutas de cuentas del proveedor de IA (F8-03d; ADR-034
-§4), como el de las cuentas de WhatsApp (F7-02e): la prueba de conexión llama al proveedor cada vez,
-así que nadie la repite en bucle. Cuentan las escrituras (hoy POST y DELETE: guardar, rotar, borrar
-y probar), que comparten el contador; GET y HEAD no cuentan (decisión del propietario del
-2026-11-17, F8-03e): leer no llama al proveedor y sigue pidiendo `ai.manage` y el segundo factor.
-OPTIONS tampoco cuenta: las vistas lo deniegan. Falla cerrado: todo método que no sea de lectura
-cuenta, así que un PUT o un PATCH futuro (cambiar el modelo, ADR-034 §4) cuenta sin tocar esto.
+§4) y en la de los topes de gasto (F8-05b3), como el de las cuentas de WhatsApp (F7-02e): la prueba
+de conexión llama al proveedor cada vez, así que nadie la repite en bucle. Cuentan las escrituras
+(POST, PUT y DELETE: guardar, rotar, borrar, probar y fijar los topes), que comparten el contador;
+GET y HEAD no cuentan (decisión del propietario del 2026-11-17, F8-03e): leer no llama al proveedor
+y sigue pidiendo `ai.manage` y el segundo factor. OPTIONS tampoco cuenta: las vistas lo deniegan.
+Falla cerrado: todo método que no sea de lectura cuenta, así que un PATCH futuro (cambiar el modelo,
+ADR-034 §4) cuenta sin tocar esto.
 
 Es un middleware **fuera** del scope de tenant: una ruta de tenant que acaba en error deshace su
 transacción (`TenantResolutionMiddleware`), y con ella el contador. Va tras la autenticación y el
@@ -28,7 +29,7 @@ from django.http import HttpRequest, HttpResponse
 
 from core.api.errors import error_response
 
-PATH = re.compile(r"^/api/v1/o/[^/]+/ai/provider-accounts/")
+PATH = re.compile(r"^/api/v1/o/[^/]+/ai/(provider-accounts|budget)/")
 READS = ("GET", "HEAD", "OPTIONS")  # las que no cuentan; las demás, sí (F8-03e)
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)
