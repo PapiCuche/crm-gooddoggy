@@ -18,7 +18,7 @@ from django.db import IntegrityError, connection
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
-from apps.contacts import keywords
+from apps.contacts import consents, keywords
 from apps.contacts.consents import grant_consent, revoke_consent
 from apps.contacts.models import ConsentKeyword, ContactConsent, ContactConsentEvent
 from apps.contacts.selectors import is_revoked
@@ -40,6 +40,7 @@ from tests.test_webhook_ingress import deliver
 __all__ = ["broker", "channel", "crm", "fresh_wake", "real_stack"]  # las fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 STOP, BACK = keywords.OPT_OUT, keywords.OPT_IN
+MINUTE = dt.timedelta(minutes=1)
 
 
 def say(wamid: str, body: str, *, ago: dt.timedelta = dt.timedelta(seconds=5)) -> dict[str, int]:
@@ -668,11 +669,11 @@ def test_a_provider_time_that_does_not_parse_lets_a_baja_revoke_but_never_an_alt
 
 @pytest.mark.parametrize("stamp", ["abc", None, "MISSING", "4102444801"])
 def test_a_baja_without_a_usable_time_still_beats_an_older_alta_delivered_after_it(
-    crm: SimpleNamespace, stamp: Any
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, stamp: Any
 ) -> None:
-    """Revisión de #951 (2.ª pasada): la BAJA, la más nueva, llega sin hora (o con una que no
-    vale) y guarda la nuestra; el ALTA de 30 s antes, entregada después, no la levanta. Un ALTA
-    posterior a esa hora, sí."""
+    """Revisión de #951 (2.ª y 3.ª pasada): la BAJA, la más nueva, llega sin hora (o con una que no
+    vale) y guarda la nuestra más el margen; ni el ALTA de 30 s antes, entregada después, ni una de
+    5 s después la levantan. Una de 2 min después, procesada entonces, sí."""
     live(crm.a)
     say("wamid.0", "Hola", ago=dt.timedelta(seconds=60))
     baja = webhooks.text_message("BAJA", wamid="wamid.1")
@@ -684,7 +685,11 @@ def test_a_baja_without_a_usable_time_still_beats_an_older_alta_delivered_after_
     ingress.process()
     say("wamid.2", "ALTA", ago=dt.timedelta(seconds=30))
     assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
-    say("wamid.3", "ALTA", ago=dt.timedelta(seconds=-5))  # 5 s después de la BAJA
+    say("wamid.3", "ALTA", ago=dt.timedelta(seconds=-5))  # 5 s después: dentro del minuto
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    now = timezone.now  # 2 min más tarde, en el reloj de Meta y en el nuestro
+    monkeypatch.setattr(consents, "timezone", SimpleNamespace(now=lambda: now() + 2 * MINUTE))
+    say("wamid.4", "ALTA", ago=-2 * MINUTE)
     assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
 
 

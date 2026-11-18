@@ -441,17 +441,43 @@ def test_a_far_future_baja_blocks_keyword_altas_on_the_side_of_the_opt_out(
     assert stored(world) == ("REVOKED", STOP, far)
 
 
-@pytest.mark.parametrize(("alta", "status"), [(-1, "REVOKED"), (30, "REVOKED"), (31, "GRANTED")])
-def test_a_baja_without_a_time_takes_ours_or_the_later_stored_one(
-    world: SimpleNamespace, clock: list[dt.datetime], alta: int, status: str
+@pytest.mark.parametrize(
+    ("alta", "later", "status"), [(30, 0, "REVOKED"), (60, 0, "REVOKED"), (61, 1, "GRANTED")]
+)
+def test_a_baja_without_a_time_takes_our_clock_plus_the_allowance(
+    world: SimpleNamespace, clock: list[dt.datetime], alta: int, later: int, status: str
 ) -> None:
-    """Revisión de #951 (2.ª pasada): una baja sin hora guarda nuestra hora, o la última guardada
-    si es mayor (un alta 30 s por delante, dentro del margen); en un empate, la baja."""
-    assert word(world, "ALTA", SECOND + 30 * S) is True
+    """Revisión de #951 (3.ª pasada): una baja sin hora guarda nuestra hora más el margen; ningún
+    alta dentro del margen la levanta (en un empate, la baja); una posterior, ya dentro, sí."""
+    assert word(world, "ALTA", SECOND + 30 * S) is True  # 30 s por delante de nuestro reloj
     assert word(world, "BAJA", None) is True
-    assert stored(world) == ("REVOKED", STOP, SECOND + 30 * S)
-    word(world, "ALTA", SECOND + alta * S)  # antes, en el empate o después de esa hora
+    assert stored(world) == ("REVOKED", STOP, SECOND + 60 * S)
+    clock[0] = NOW + later * S
+    word(world, "ALTA", SECOND + alta * S)
     assert stored(world)[0] == status
+
+
+def test_with_our_clock_behind_meta_an_older_alta_never_lifts_an_untimed_baja(
+    world: SimpleNamespace, clock: list[dt.datetime]
+) -> None:
+    """El límite que cerró la 3.ª pasada: nuestro reloj 30 s detrás de Meta; la BAJA sin hora (dicha
+    a las 12:00:10) y un ALTA de las 12:00:08 entregada 5 s después."""
+    clock[0] = SECOND + 10 * S - 30 * S
+    assert word(world, "BAJA", None) is True
+    clock[0] += 5 * S
+    assert word(world, "ALTA", SECOND + 8 * S) is False
+    assert stored(world) == ("REVOKED", STOP, SECOND + 40 * S)
+
+
+def test_a_baja_without_a_time_keeps_a_later_stored_time(
+    world: SimpleNamespace, clock: list[dt.datetime]
+) -> None:
+    """Tras una baja con hora futura y una concesión del agente, una baja sin hora toma esa hora
+    (la mayor) y revoca: en el empate, la baja."""
+    assert word(world, "BAJA", SECOND + 3600 * S) is True
+    grant(world, source="AGENT_RECORDED")
+    assert word(world, "BAJA", None) is True
+    assert stored(world) == ("REVOKED", STOP, SECOND + 3600 * S)
 
 
 def test_the_clock_is_read_with_the_contact_locked(
@@ -633,23 +659,24 @@ def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str
 @pytest.mark.parametrize(
     ("seed", "skews", "delays", "untimed"),
     [(1, 0.99, 5, 0.2), (2, 60, 30, 0.2), (3, 59, 200, 0.2), (4, 600, 30, 0.2),
-     (5, 600, 200, 0.2), (6, 3600, 3600, 0.2), (7, 5, 30, 0.5), (8, 60, 60, 0.5)],
+     (5, 600, 200, 0.2), (6, 3600, 3600, 0.2), (7, 5, 30, 0.5), (8, 60, 60, 0.5), (9, 50, 40, 0.6)],
 )  # fmt: skip
 def test_any_skew_delay_and_order_keeps_the_owner_rule_or_stays_on_the_opt_out(
     world: SimpleNamespace, clock: list[dt.datetime], seed: int, skews: float, delays: float,
     untimed: float,
 ) -> None:  # fmt: skip
     """Dentro del margen y con todas las horas, la regla exacta del propietario; si no, nunca
-    `GRANTED` si la palabra más reciente de Meta fue una baja, salvo una baja sin hora con nuestro
-    reloj detrás del de Meta (guarda nuestra hora: límite documentado). Semillas fijas."""
+    `GRANTED` si la palabra más reciente de Meta fue una baja, con hora o sin ella, salvo una baja
+    sin hora con nuestro reloj más de `KEYWORD_AHEAD` detrás del de Meta (su hora real no se
+    conoce; límite documentado). Semillas fijas."""
     rng, wrong = random.Random(seed), []  # noqa: S311 — casos de prueba, no secretos
     for _ in range(60):
         case = scenario(rng, skews, delays, untimed)
         want, (got, within) = owner_rule(case), play(world.a, case, clock)
         timed = all(word[3] for word in case["words"])
-        untimed_baja = any(not t and k == "BAJA" for k, _, _, t in case["words"])
         exact = within and timed and got != want
-        unsafe = want == "REVOKED" and got == "GRANTED" and not (untimed_baja and case["skew"] > 0)
+        untimed_baja = any(not t and k == "BAJA" for k, _, _, t in case["words"])
+        unsafe = want == "REVOKED" and got == "GRANTED" and (within or not untimed_baja)
         if exact or unsafe:
             wrong.append((case, want, got))
     assert not wrong, wrong[:3]
