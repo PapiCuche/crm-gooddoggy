@@ -5,8 +5,10 @@ Solo `ai_budget_reserve` pone las marcas y los eventos (ADR-044, ADR-045). Clave
 
 import threading
 import time
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import psycopg
 import pytest
@@ -40,6 +42,12 @@ MONTH_ROW = (  # una fila del mes sembrada por el dueño: lo gastado y las dos m
     " (ai_budget_month(now()) - %s * interval '1 month')::date, %s, 0, %s, %s)"
 )
 
+EDGES = (UUID(int=0), UUID(int=2**128 - 1))
+ORG = (
+    "INSERT INTO organizations (id, slug, name, status, created_at)"
+    " VALUES (%s, %s, 'X', 'ACTIVE', now())"
+)
+
 
 def events(migrator: DB) -> list[Any]:
     return migrator.execute(EVENTS).fetchall()
@@ -58,13 +66,16 @@ def b_in_the_same_month(world: SimpleNamespace, migrator: DB) -> None:
     filtro de organización ausente la marcaría, o compararía el gasto de A con el tope de B."""
     budget(migrator, world.b, "1")
     migrator.execute(MONTH_ROW, [world.b, 0, "50", None, None])
+    for other in EDGES:  # dos más, con el id menor y el mayor: ninguna «otra fila» es la de A
+        migrator.execute(ORG, [other, f"org-{other.hex[:6]}"])
+        budget(migrator, other, "1")
 
 
 def test_80_percent_alerts_once_with_the_cap_id_and_month_only(
     world: SimpleNamespace, migrator: DB
 ) -> None:
+    b_in_the_same_month(world, migrator)  # el tope de B, creado antes que el de A
     budget(migrator, world.a, "10")
-    b_in_the_same_month(world, migrator)
     reserve(world, "7.999999")  # por debajo del 80 % de A (y por encima del tope de B)
     assert events(migrator) == [] and marks(migrator, world.a) == [(True, False, False)]
     reserve(world, "0.000001")  # justo el 80 %
@@ -77,17 +88,36 @@ def test_80_percent_alerts_once_with_the_cap_id_and_month_only(
 def test_a_monthly_cut_alerts_once_reserves_nothing_and_never_calls(
     world: SimpleNamespace, migrator: DB
 ) -> None:
-    budget(migrator, world.a, "0.000001")  # menos que una llamada
     b_in_the_same_month(world, migrator)
-    assert code(world) == Outcome.AI_BUDGET_EXHAUSTED  # el gateway confirma el aviso
-    assert events(migrator) == [alert(world.a, EXCEEDED)]  # sin pasar por el 80 %
+    budget(migrator, world.a, "1")
+    reserve(world, "0.99")  # el 80 %
+    assert code(world) == Outcome.AI_BUDGET_EXHAUSTED  # el gateway confirma el aviso del corte
+    assert events(migrator) == [alert(world.a, THRESHOLD), alert(world.a, EXCEEDED)]
     with tenant_scope(ctx(world.a, world.ana)):
-        assert scalar(RESERVE, ["0.000002", "SUGGEST"]) is None  # cortada: sin reserva
+        assert scalar(RESERVE, ["0.02", "SUGGEST"]) is None  # cortada: sin reserva
     assert code(world) == Outcome.AI_BUDGET_EXHAUSTED
-    assert world.fake.calls == [] and events(migrator) == [alert(world.a, EXCEEDED)]
+    assert world.fake.calls == [] and len(events(migrator)) == 2  # no repite
     usage = "SELECT spent_usd + reserved_usd FROM ai_budget_usage WHERE organization_id = %s"
-    assert migrator.execute(usage, [world.a]).fetchall() == [(0,)]
-    assert marks(migrator, world.a) == [(True, False, True)]
+    assert migrator.execute(usage, [world.a]).fetchall() == [(Decimal("0.99"),)]
+    assert marks(migrator, world.a) == [(True, True, True)]
+    assert marks(migrator, world.b) == [(True, False, False)]
+
+
+def test_an_oversized_cut_below_80_percent_refuses_without_spending_the_alert(
+    world: SimpleNamespace, migrator: DB
+) -> None:
+    """Una reserva enorme se corta sin aviso; el corte de verdad del mes avisa después."""
+    b_in_the_same_month(world, migrator)  # al 10 % de A, A ya pasa el 80 % del tope de B
+    budget(migrator, world.a, "10")
+    for spent in ("1", "6.999999"):  # al 10 % y justo por debajo del 80 %
+        reserve(world, spent)
+        with tenant_scope(ctx(world.a, world.ana)):
+            assert scalar(RESERVE, ["100", "SUGGEST"]) is None  # cortada, sin llamar
+    assert events(migrator) == [] and marks(migrator, world.a) == [(True, False, False)]
+    reserve(world, "0.000001")  # justo el 80 %
+    with tenant_scope(ctx(world.a, world.ana)):
+        assert scalar(RESERVE, ["2.000001", "SUGGEST"]) is None
+    assert events(migrator) == [alert(world.a, THRESHOLD), alert(world.a, EXCEEDED)]
     assert marks(migrator, world.b) == [(True, False, False)]
 
 
@@ -112,13 +142,15 @@ def test_a_new_lima_month_alerts_again(world: SimpleNamespace, migrator: DB) -> 
     assert marks(migrator, world.a) == [*passed, (True, True, True)]
 
 
-@pytest.mark.parametrize(("amount", "kind"), [("0.3", THRESHOLD), ("3", EXCEEDED)])
+@pytest.mark.parametrize(
+    ("before", "amount", "kind"), [("7.5", "0.3", THRESHOLD), ("8.5", "3", EXCEEDED)]
+)
 def test_concurrent_reserves_alert_once(
-    world: SimpleNamespace, migrator: DB, amount: str, kind: str
+    world: SimpleNamespace, migrator: DB, before: str, amount: str, kind: str
 ) -> None:
     """Las reservas esperan juntas a la fila del mes; al soltarla, una sola deja el aviso."""
     budget(migrator, world.a, "10")
-    reserve(world, "7.5")
+    reserve(world, before)
     results: list[Any] = []
 
     def run() -> None:
@@ -146,7 +178,7 @@ def test_concurrent_reserves_alert_once(
         thread.join(timeout=30)
     assert len(results) == 4 and not any(isinstance(r, Exception) for r in results)
     assert all((r is None) == (kind == EXCEEDED) for r in results)  # cortadas todas o ninguna
-    assert events(migrator) == [alert(world.a, kind)]
+    assert [e for e in events(migrator) if e[1] == kind] == [alert(world.a, kind)]
 
 
 DENIED = (  # `crm_app`, en el scope de A: las marcas solo las pone la reserva
@@ -179,5 +211,5 @@ def test_crm_app_cannot_write_the_marks_and_the_owner_cannot_rewrite_them(
     for statement in REWRITE:
         with pytest.raises(psycopg.errors.IntegrityError) as caught:
             migrator.execute(statement)
-            assert caught.value.diag.constraint_name == "ai_budget_usage_alerted_once"
+        assert caught.value.diag.constraint_name == "ai_budget_usage_alerted_once", statement
     assert marks(migrator, world.a) == [(True, True, True)]

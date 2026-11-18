@@ -6,9 +6,10 @@ ADR-044 solo para eso): el id del tope como agregado y el mes como único dato.
 
 - `ai.budget.threshold_reached`: la reserva lleva lo gastado más lo reservado del mes al 80 % del
   tope mensual o más.
-- `ai.budget.exceeded`: el tope mensual corta la reserva. Para que la marca y el evento se
-  confirmen, ese corte ya no lanza la excepción: la función devuelve NULL sin reservar nada y el
-  gateway responde `AI_BUDGET_EXHAUSTED` sin llamar al proveedor. El corte del día sigue lanzando
+- `ai.budget.exceeded`: el tope mensual corta la reserva con el mes ya en el 80 % o más (una
+  reserva enorme que se corta antes no gasta el aviso del mes). Para que la marca y el evento se
+  confirmen, el corte del mes ya no lanza la excepción: la función devuelve NULL sin reservar nada
+  y el gateway responde `AI_BUDGET_EXHAUSTED` sin llamar al proveedor. El corte del día sigue lanzando
   y deshace todo, también la marca del 80 % de esa misma reserva.
 
 Una vez: cada marca se pone con `WHERE … IS NULL` y el evento solo si esa sentencia cambió la fila.
@@ -78,8 +79,11 @@ BEGIN
   WHERE b.organization_id = org AND u.organization_id = org AND u.month = m
     AND u.spent_usd + u.reserved_usd + p_amount <= b.monthly_usd;
   IF NOT FOUND THEN  -- el tope del mes la corta: sin reservar nada, el aviso se confirma
-    UPDATE public.ai_budget_usage SET exceeded_alerted_at = now()
-    WHERE organization_id = org AND month = m AND exceeded_alerted_at IS NULL;
+    -- solo si el mes ya está en el 80 %: una reserva enorme antes no gasta el aviso del mes
+    UPDATE public.ai_budget_usage u SET exceeded_alerted_at = now()
+    FROM public.ai_budgets b
+    WHERE b.organization_id = org AND u.organization_id = org AND u.month = m
+      AND u.exceeded_alerted_at IS NULL AND u.spent_usd + u.reserved_usd >= b.monthly_usd * 0.8;
     IF FOUND THEN
       {_event("ai.budget.exceeded")};
     END IF;

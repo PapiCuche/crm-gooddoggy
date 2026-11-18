@@ -16,7 +16,7 @@ Si la función solo pusiera la marca y la aplicación emitiera el evento despué
 
 Se amplía la excepción de ADR-044, solo en esto: `public.ai_budget_reserve` puede **insertar en `outbox_events`** dos eventos, `ai.budget.threshold_reached` y `ai.budget.exceeded`, y nada más. Condiciones:
 
-1. **En la misma transacción que su marca** (`ai_budget_usage.threshold_alerted_at` o `exceeded_alerted_at`), y solo si la sentencia que pone la marca (`… WHERE marca IS NULL`) cambió la fila: una vez por organización y mes de Lima.
+1. **En la misma transacción que su marca** (`ai_budget_usage.threshold_alerted_at` o `exceeded_alerted_at`), y solo si la sentencia que pone la marca (`… WHERE marca IS NULL`) cambió la fila: una vez por organización y mes de Lima. `ai.budget.exceeded` solo sale si el corte llega con el mes ya en el 80 % o más; una reserva enorme cortada antes se rechaza igual, pero no gasta el aviso del mes.
 2. **Agregado:** `aggregate_type = 'ai_budget'` y `aggregate_id` = el id de la fila de `ai_budgets` de la organización. **Payload:** exactamente `{"month": "AAAA-MM-01"}`. Sin importes, prompts, personas ni conversaciones.
 3. **Filtro explícito por organización** en cada sentencia, como en ADR-044 §2: la organización del evento es `app_current_tenant()` y el tope se busca con `organization_id = app_current_tenant()`.
 4. **Pruebas que matan los mutantes** que quitan cada uno de esos filtros, y pruebas de concurrencia de que dos reservas a la vez dejan un solo evento.
@@ -35,6 +35,7 @@ Todo lo demás de ADR-044 sigue igual. `ai_budget_settle` no escribe en el outbo
 
 - El aviso y su marca se confirman o se deshacen juntos. Para que el aviso del corte se confirme, el corte del **mes** ya no lanza una excepción: `ai_budget_reserve` devuelve NULL sin reservar nada y el gateway responde `AI_BUDGET_EXHAUSTED` sin llamar al proveedor.
 - `crm_app` conserva su INSERT en `outbox_events` (lo usa `core.outbox.emit`), así que el runtime puede escribir un evento `ai.budget.*` falso. No puede tocar las marcas. Los suscriptores deben tratar estos eventos solo como notificaciones, nunca como prueba del gasto ni como orden.
+- Por los mismos permisos, que ya existían, sobre `outbox_events` (INSERT, UPDATE y DELETE), el runtime también podría borrar o cambiar un aviso real antes de publicarlo. La marca queda puesta igual. Este ADR no cambia esos permisos.
 
 ## Security implications
 
