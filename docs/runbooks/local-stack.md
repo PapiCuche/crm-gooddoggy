@@ -197,7 +197,7 @@ Si el puerto 8090 está ocupado, define `META_SIM_HOST_PORT`. Para apagarlo, qui
 | Token | `meta-sim-test-access-token-not-real` |
 | WhatsApp: WABA y `phone_number_id` | `100000000000001` y `100000000000002` |
 
-WhatsApp se conecta desde **Canales**. Instagram y Messenger, desde la pantalla cuando lleguen sus rutas (#918, #779); mientras tanto, desde el shell del backend, con un Owner de la organización (p. ej. la de pruebas de §4):
+Las tres cuentas se conectan desde **Canales** («Conectar WhatsApp», «Conectar Messenger», «Conectar Instagram», con el segundo factor del Owner). También desde el shell del backend, con un Owner de la organización (p. ej. la de pruebas de §4):
 
 ```bash
 docker compose -f infra/docker/compose.yaml --env-file infra/env/.env exec -T backend python manage.py shell -c "
