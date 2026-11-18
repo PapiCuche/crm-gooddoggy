@@ -2369,6 +2369,15 @@
       "MEDIA_NOT_SCANNED": "El archivo no se envió: aún no pasó el antivirus.",
       "MESSAGES_ACCESS_OFF": "La cuenta de Instagram tiene apagado el acceso a los mensajes. Pide a quien administra los canales que lo active."
     },
+    "failureSocial": {
+      "TOKEN_INVALID": "El acceso de {network} ya no es válido. Pide a quien administra los canales que reconecte la cuenta.",
+      "RECIPIENT_UNREACHABLE": "Esa persona no puede recibir mensajes de {network} ahora.",
+      "PROVIDER_REJECTED": "{network} rechazó el mensaje.",
+      "PROVIDER_UNKNOWN": "Puede que sí se haya enviado: {network} no lo confirmó. Reenviarlo podría duplicar el mensaje.",
+      "RATE_LIMITED": "{network} limitó el envío por exceso de mensajes. Inténtalo más tarde.",
+      "QUALITY_BLOCKED": "{network} bloqueó el envío.",
+      "PROVIDER_ERROR": "{network} tuvo un problema al procesar el envío."
+    },
     "list": {
       "landmark": "Conversaciones",
       "label": "Lista de conversaciones"
@@ -2640,8 +2649,7 @@
       "confirm": "Sí, desconectar",
       "busy": "Desconectando…",
       "cancel": "Cancelar",
-      "gone": "Esa cuenta ya no existe. Actualizamos la lista.",
-      "done": "«{name}» quedó desconectada: ya no recibe ni envía mensajes."
+      "done": "«<n>{name}</n>» quedó desconectada: ya no recibe ni envía mensajes."
     },
     "errors": {
       "denied": "No tienes permiso para gestionar los canales.",
