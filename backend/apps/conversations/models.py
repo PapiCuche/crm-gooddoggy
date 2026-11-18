@@ -35,10 +35,11 @@ AccountStatus: type[models.TextChoices] = models.TextChoices(  # type: ignore[as
 
 
 # Por qué una cuenta real no está bien (ADR-029 §2): un código de un conjunto cerrado, nunca el
-# texto de un error de Meta.
+# texto de un error de Meta. `PAGE_NOT_SUBSCRIBED` (F7b-06g, ADR-035 §10): la app del CRM no está
+# entre las apps suscritas de la página de Messenger o Instagram.
 STATUS_DETAILS = (
     "TOKEN_INVALID", "WEBHOOK_NOT_SEEN", "QUALITY_LOW", "LIMIT_REACHED", "DISCONNECTED_BY_ADMIN",
-    "PROVIDER_ERROR", "MESSAGES_ACCESS_OFF",
+    "PROVIDER_ERROR", "MESSAGES_ACCESS_OFF", "PAGE_NOT_SUBSCRIBED",
 )  # fmt: skip
 QUALITY_RATINGS = ("GREEN", "YELLOW", "RED", "UNKNOWN")  # a confirmar con la documentación de Meta
 LIMIT_TIERS = (  # a confirmar con la documentación de Meta

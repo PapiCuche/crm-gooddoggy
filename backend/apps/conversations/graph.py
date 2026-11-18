@@ -22,8 +22,8 @@ SUBSCRIBED_FIELDS = (
     "messages,message_echoes,message_deliveries,message_reads,messaging_handovers,standby"
 )
 # Códigos de límite de tasa de Meta: llegan con 400, pero no son un token rechazado (los mismos que
-# el adaptador de salida reintenta, `whatsapp.TOO_FAST`).
-THROTTLED = (4, 17, 613, 80007, 130429, 131056)
+# el adaptador de salida reintenta, `whatsapp.TOO_FAST`, y `32`, el límite de una página: F7b-06g).
+THROTTLED = (4, 17, 32, 613, 80007, 130429, 131056)
 
 
 class ChannelNotEnabled(Exception):
@@ -149,16 +149,37 @@ def subscribe(token: str, page_id: str) -> None:
         raise GraphUnavailable
 
 
-def subscribed_apps(token: str, page_id: str) -> list[str]:
-    """Los ids de las apps suscritas a la página (`GET /<PAGE_ID>/subscribed_apps`, F7b-06e). Meta
-    solo la contesta a un token con un rol en la página: si no, `GraphRejected`. Una respuesta sin
-    la lista de `data` no es de Meta (`GraphUnavailable`)."""
+def subscribed_apps(token: str, page_id: str) -> tuple[list[str], bool]:
+    """Los ids de las apps suscritas a la página (`GET /<PAGE_ID>/subscribed_apps`, F7b-06e) y si
+    Meta dice que hay más páginas de la lista (`paging.next`: solo se lee la primera). Meta solo la
+    contesta a un token con un rol en la página: si no, `GraphRejected`. Una respuesta sin la lista
+    de `data` no es de Meta (`GraphUnavailable`)."""
     if not re.fullmatch(META_ID, page_id):
         raise ValueError("identificador de Meta no válido")
-    rows = _ask("GET", f"{page_id}/subscribed_apps", token).get("data")
+    found = _ask("GET", f"{page_id}/subscribed_apps", token)
+    rows, paging = found.get("data"), found.get("paging")
     if not isinstance(rows, list):
         raise GraphUnavailable
-    return [str(r["id"]) for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+    more = isinstance(paging, dict) and bool(paging.get("next"))
+    ids = [str(r["id"]) for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+    return ids, more
+
+
+def subscription(token: str, page_id: str) -> bool | None:
+    """¿Tiene la página suscrita la app del despliegue? (F7b-06g). `None` si no se sabe: sin un
+    `META_APP_ID` válido, o si no está en la primera página de la lista y Meta dice que hay más."""
+    ids, more = subscribed_apps(token, page_id)
+    found = ours(ids)
+    return None if found is False and more else found
+
+
+def ours(apps: list[str]) -> bool | None:
+    """¿Está la app del despliegue (`META_APP_ID`) entre las suscritas `apps`? `None` si no se
+    sabe: sin un id de app válido nunca se supone ni lo uno ni lo otro (F7b-06g)."""
+    app = settings.META_APP_ID
+    if not isinstance(app, str) or not re.fullmatch(META_ID, app):
+        return None
+    return app in apps
 
 
 def profile(token: str, customer: str) -> dict[str, Any]:
