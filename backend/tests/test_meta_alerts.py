@@ -4,7 +4,10 @@ de Meta."""
 
 import datetime as dt
 import logging
+import os
+import sys
 import threading
+from collections import deque
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -13,6 +16,7 @@ import psycopg
 import pytest
 from django.conf import settings
 from django.db import DatabaseError, InterfaceError, connection, connections
+from django.utils import timezone
 
 from apps.conversations import ingest_alerts, ingress, tasks
 from core.observability import reporting
@@ -454,3 +458,131 @@ def test_the_current_window_trails_the_database_clock_by_the_grace() -> None:
         before = float(cursor.fetchone()[0])
     found = ingest_alerts._current()  # sin parchear: el reloj de la base
     assert found in (ingest_alerts.window_of(before), ingest_alerts.window_of(before + 1))
+
+
+# ---- F7b-05g: el desfase de nuestro reloj respecto a la hora de Meta, en este proceso
+
+T0 = dt.datetime(2026, 11, 18, 12, 0, tzinfo=dt.UTC)
+SKEW = ingest_alerts.SKEW_EVENT
+
+
+def skewed(monkeypatch: pytest.MonkeyPatch, behind: float) -> list[float]:
+    """El reloj del proceso, `behind` segundos detrás del real, el estado del desfase a cero y el
+    reloj monótono de los avisos en 1000 (la prueba lo mueve)."""
+    real = timezone.now
+    shift = dt.timedelta(seconds=behind)
+    monkeypatch.setattr(ingest_alerts, "timezone", SimpleNamespace(now=lambda: real() - shift))
+    monkeypatch.setattr(ingest_alerts, "_skew", deque(maxlen=ingest_alerts.SKEW_SAMPLES))
+    monkeypatch.setattr(ingest_alerts, "_skew_alerted", None)
+    mono = [1000.0]
+    monkeypatch.setattr(ingest_alerts, "_now", lambda: mono[0])
+    return mono
+
+
+def ahead_by(monkeypatch: pytest.MonkeyPatch, *seconds: float | None) -> None:
+    """Una muestra por valor: una hora de Meta esos segundos por delante de `T0` (nuestro reloj)."""
+    monkeypatch.setattr(ingest_alerts, "timezone", SimpleNamespace(now=lambda: T0))
+    for value in seconds:
+        ingest_alerts.provider_time(None if value is None else T0 + dt.timedelta(seconds=value))
+
+
+@pytest.fixture
+def mono(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    return skewed(monkeypatch, 0)
+
+
+def test_the_skew_figures_are_named_and_the_memory_is_bounded() -> None:
+    assert (ingest_alerts.SKEW_AHEAD, ingest_alerts.SKEW_SAMPLES) == (30, 5)
+    assert ingest_alerts.SKEW_QUIET == 300
+    assert ingest_alerts._skew.maxlen == ingest_alerts.SKEW_SAMPLES
+
+
+@pytest.mark.parametrize(
+    ("samples", "fires"),
+    [((31,) * 5, True), ((31,) * 4, False), ((30,) * 5, False), ((30.5,) * 5, True),
+     ((31, 31, 10, 31, 31), False), ((10,) + (31,) * 5, True), ((31,) * 4 + (None,), False),
+     ((31, 31, None, 31, 31, 31), True), ((-3600,) * 4 + (31,) * 5, True),
+     ((31,) * 4 + (-5,), False)],
+)  # fmt: skip
+def test_only_samples_consistently_more_than_30_s_ahead_raise_the_alert(
+    monkeypatch: pytest.MonkeyPatch, fresh: Spy, mono: list[float], samples: tuple[Any, ...],
+    fires: bool,
+) -> None:  # fmt: skip
+    ahead_by(monkeypatch, *samples)
+    assert [m for m, _, _ in fresh.messages] == ([SKEW] if fires else [])
+
+
+def test_the_alert_carries_figures_only_and_waits_its_quiet_time(
+    monkeypatch: pytest.MonkeyPatch, fresh: Spy, mono: list[float],
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    caplog.set_level(logging.DEBUG)
+    ahead_by(monkeypatch, 95, 61.9, 70, 80, 90)
+    assert fresh.messages == [
+        (SKEW, {"ahead_seconds": 61, "samples": 5, "threshold": 30}, [SKEW])
+    ]  # el menor de los cinco, en segundos enteros; ni ids ni texto
+    record = next(r for r in caplog.records if SKEW in str(r.msg))
+    assert record.levelno == logging.ERROR
+    assert '"ahead_seconds": 61, "samples": 5, "threshold": 30' in json_formatter().format(record)
+    mono[0] += ingest_alerts.SKEW_QUIET - 1
+    ahead_by(monkeypatch, 95)
+    assert len(fresh.messages) == 1  # dentro de la calma: no repite
+    mono[0] += 1
+    ahead_by(monkeypatch, 95)
+    assert len(fresh.messages) == 2  # pasada la calma, y aún desfasado: avisa otra vez
+
+
+def test_a_broken_reporter_never_breaks_the_ingest(
+    monkeypatch: pytest.MonkeyPatch, mono: list[float], caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken() -> Any:
+        raise RuntimeError("sin sentry")
+
+    monkeypatch.setattr(reporting, "reporter", broken)
+    caplog.set_level(logging.WARNING)
+    ahead_by(monkeypatch, *(40,) * 5)
+    assert "meta.alert.report_failed" in caplog.text
+
+
+def test_threads_at_once_keep_five_samples_and_raise_one_alert(
+    monkeypatch: pytest.MonkeyPatch, fresh: Spy, mono: list[float]
+) -> None:
+    """Hilos a la vez, cambiando de hilo tan a menudo como se puede: la cola sigue con 5 muestras y
+    sale un solo aviso (sin el candado, dos hilos podrían pasar la comprobación a la vez)."""
+    monkeypatch.setattr(ingest_alerts, "timezone", SimpleNamespace(now=lambda: T0))
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    start = threading.Barrier(8)
+
+    def work() -> None:
+        start.wait(timeout=10)
+        for _ in range(300):
+            ingest_alerts.provider_time(T0 + dt.timedelta(seconds=45))
+
+    threads = [threading.Thread(target=work) for _ in range(8)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+    finally:
+        sys.setswitchinterval(interval)
+    assert len(ingest_alerts._skew) == 5 and len(fresh.messages) == 1
+
+
+def test_a_forked_worker_starts_with_its_own_empty_skew(
+    monkeypatch: pytest.MonkeyPatch, mono: list[float]
+) -> None:
+    """Celery prefork: el hijo no hereda las muestras, el aviso ni un candado tomado."""
+    ahead_by(monkeypatch, *(45,) * 5)
+    assert ingest_alerts._skew_alerted is not None
+    ingest_alerts._skew_lock.acquire()  # como si otro hilo lo tuviera al bifurcar
+    try:
+        pid = os.fork()
+        if pid == 0:  # el hijo: sale sin volver a pytest
+            fresh = len(ingest_alerts._skew) == 0 and ingest_alerts._skew_alerted is None
+            os._exit(0 if fresh and ingest_alerts._skew_lock.acquire(timeout=1) else 1)
+        _, status = os.waitpid(pid, 0)
+    finally:
+        ingest_alerts._skew_lock.release()
+    assert os.waitstatus_to_exitcode(status) == 0
