@@ -85,6 +85,8 @@ TENANT_TABLES = (
 TENANT_TABLES = ("quote_approvals", "discount_policies", "quote_items", "quotes", *TENANT_TABLES)
 # F8-03a: las claves, delante de sus cuentas; las cuentas, delante de las membresías
 TENANT_TABLES = ("ai_provider_keys", "ai_provider_accounts", *TENANT_TABLES)
+TENANT_TABLES = ("ai_budget_usage", "ai_budgets", *TENANT_TABLES)  # F8-05
+TENANT_TABLES = ("ai_llm_calls", "ai_budget_reservations", *TENANT_TABLES)  # delante de su mes
 PLATFORM_AUDIT = "platform_audit_logs"  # F2-10: platform-owned, la limpia el migrador
 
 

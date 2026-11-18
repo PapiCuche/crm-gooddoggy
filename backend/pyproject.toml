@@ -155,6 +155,18 @@ source_modules = ["apps.ai_gateway"]
 forbidden_modules = ["apps.inventory", "apps.pricing", "apps.deals", "apps.conversations", "apps.tasks", "apps.quotes", "apps.catalog", "apps.contacts"]
 
 [[tool.importlinter.contracts]]
+name = "Ningún módulo de L0 a L3 importa apps.ai_* (ADR-034 §2, F8-05)"
+type = "forbidden"
+source_modules = ["core", "apps.access", "apps.accounts", "apps.audit", "apps.catalog", "apps.contacts", "apps.conversations", "apps.deals", "apps.files", "apps.imports", "apps.inventory", "apps.members", "apps.organizations", "apps.pricing", "apps.provisioning", "apps.quotes", "apps.tasks"]
+forbidden_modules = ["apps.ai_gateway"]
+
+[[tool.importlinter.contracts]]
+name = "apps.ai_* no importa la API ni las tareas de otros módulos (ADR-034 §2, F8-05)"
+type = "forbidden"
+source_modules = ["apps.ai_gateway"]
+forbidden_modules = ["apps.access.api", "apps.accounts.api", "apps.accounts.tasks", "apps.audit.api", "apps.members.api", "apps.organizations.api", "apps.provisioning"]
+
+[[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
 type = "protected"
 protected_modules = ["apps.access.bootstrap", "apps.accounts.bootstrap", "apps.organizations.bootstrap"]

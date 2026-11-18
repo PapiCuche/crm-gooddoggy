@@ -3,6 +3,8 @@ con FORCE RLS y FKs compuestas en la migración. La clave solo existe cifrada en
 lo único a la vista es `key_last_four`. Nada se borra: una clave se invalida (cifrado borrado) y la
 cuenta se desactiva. El modelo elegido llega con la lista permitida (F8-05)."""
 
+from typing import Any
+
 from django.db import models
 from django.db.models.functions import Length
 from django.db.models.lookups import Exact, GreaterThanOrEqual, LessThanOrEqual
@@ -115,3 +117,58 @@ class AIProviderKey(TenantModel):
 
     def __str__(self) -> str:
         return str(self.pk)
+
+
+def _usd(null: bool = False) -> models.DecimalField[Any, Any]:
+    return models.DecimalField(max_digits=12, decimal_places=6, null=null)
+
+
+class AIBudget(TenantModel):
+    """El tope mensual en USD (F8-05): sin fila no hay llamadas. `crm_app` solo lo lee."""
+
+    id = uuid7_primary_key()
+    monthly_usd = _usd()
+
+    class Meta:
+        db_table = "ai_budgets"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id"], name="ai_budgets_org_uq"),
+            models.CheckConstraint(condition=models.Q(monthly_usd__gt=0), name="ai_budgets_ck"),
+        ]
+
+
+class AIBudgetUsage(TenantModel):
+    """Lo gastado y lo reservado de un mes (su primer día, en UTC)."""
+
+    id = uuid7_primary_key()
+    month = models.DateField()
+    spent_usd = _usd()
+    reserved_usd = _usd()
+
+    class Meta:
+        db_table = "ai_budget_usage"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "month"],
+                                    name="ai_budget_usage_month_uq"),
+            models.CheckConstraint(name="ai_budget_usage_ck", condition=models.Q(
+                month__day=1, spent_usd__gte=0, reserved_usd__gte=0)),
+        ]  # fmt: skip
+
+
+class AIBudgetReservation(TenantModel):
+    """Lo reservado para una llamada, sin nada del prompt; se ajusta una sola vez (disparador en
+    0002) y entonces se escribe su fila de `ai_llm_calls`, de solo inserción y particionada por
+    mes (ADR-011), creada en SQL en la migración."""
+
+    id = uuid7_primary_key()
+    month = models.DateField()  # FK compuesta a su fila de `ai_budget_usage` (0002)
+    amount_usd = _usd()
+    created_at = models.DateTimeField(auto_now_add=True)
+    settled_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "ai_budget_reservations"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id", "id"], name="ai_budget_res_uq"),
+            models.CheckConstraint(condition=models.Q(amount_usd__gt=0), name="ai_budget_res_ck"),
+        ]

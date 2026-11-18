@@ -1,5 +1,5 @@
 """Una API de Anthropic falsa para las pruebas de `apps.ai_gateway` (F8-03b), sin red: contesta
-`GET /v1/models` con las respuestas y los errores documentados (ADR-034 §3). `install` sustituye
+`GET /v1/models` y `POST /v1/messages` con las respuestas y errores documentados; `install` cambia
 solo la capa de red de `core.http` (como `tests.meta_sim.transport`), así que su política real
 (https, allowlist, cabeceras) sigue aplicándose. Cada cuerpo de error lleva `BODY_MARK`: una prueba
 comprueba que ningún cuerpo del proveedor sale del CRM. Ninguna clave es real."""
@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import urllib3
-from urllib3.exceptions import ProtocolError, ReadTimeoutError
+from urllib3.exceptions import ConnectTimeoutError, ProtocolError, ReadTimeoutError
 
 from core import http
 
@@ -33,6 +33,7 @@ ERRORS: dict[str, tuple[int, str, str, str | None]] = {
     "overloaded": (529, "overloaded_error", "overloaded", None),
     "bad_request": (400, "invalid_request_error", "bad request", None),
     "not_found": (404, "not_found_error", "not found", None),
+    "teapot": (418, "api_error", "unexpected", None),  # F8-05: un estado no documentado
 }  # fmt: skip
 OUTCOMES = ("ok", "garbage", "cut", "timeout", *ERRORS)
 
@@ -45,20 +46,33 @@ class FakeAnthropic:
     outcome: str = "ok"
     calls: list[dict[str, Any]] = field(default_factory=list)
     retries: list[Any] = field(default_factory=list)  # lo que pidió `core.http`, por llamada
+    timeouts: list[Any] = field(default_factory=list)
+    body: bytes | None = None  # el de la petición en curso
+    request_id, retry_after = REQUEST_ID, "2"  # F8-05: las cabeceras de la respuesta
+    script: list[str] = field(default_factory=list)  # F8-05: un resultado por llamada, antes
+    usage: dict[str, Any] = field(default_factory=lambda: {"input_tokens": 9, "output_tokens": 9})
 
     def handle(self, method: str, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
-        parts = urlsplit(url)
+        parts, body = urlsplit(url), self.body
         self.calls.append(
             {"method": method, "path": parts.path, "query": parse_qs(parts.query),
-             "headers": dict(headers)}
+             "headers": dict(headers), "body": json.loads(body) if body else None}
         )  # fmt: skip
-        if self.outcome == "cut":
+        outcome = self.script.pop(0) if self.script else self.outcome
+        if outcome == "cut":
             raise ProtocolError("Connection aborted.")
-        if self.outcome == "timeout":
+        if outcome == "unreachable":  # F8-05: no llegó a conectar
+            raise ConnectTimeoutError(None, url, "Connect timed out.")
+        if outcome == "timeout":
             raise ReadTimeoutError(None, url, "Read timed out.")  # type: ignore[arg-type]
-        name = "unauthorized" if headers.get("x-api-key") != self.key else self.outcome
-        if (method, parts.path) != ("GET", "/v1/models") and name == "ok":
+        name = "unauthorized" if headers.get("x-api-key") != self.key else outcome
+        route = (method, parts.path)
+        if route not in {("GET", "/v1/models"), ("POST", "/v1/messages")} and name == "ok":
             name = "not_found"
+        if name == "ok" and route == ("POST", "/v1/messages"):
+            text = {"type": "text", "text": f"respuesta {BODY_MARK}"}
+            reply = {"content": [text], "stop_reason": "end_turn", "usage": self.usage}
+            return 200, json.dumps({"id": "msg_fake", "type": "message", **reply}).encode()
         if name == "ok":
             data = [{"type": "model", "id": "claude-fake-model", "display_name": BODY_MARK}]
             return 200, json.dumps({"data": data, "has_more": True}).encode()
@@ -81,10 +95,12 @@ class _Manager:
         if urlsplit(url).hostname != HOST:  # nada fuera del simulador
             raise AssertionError(f"el simulador no atiende {urlsplit(url).hostname}")
         self.fake.retries.append(options.get("retries", "default"))  # el gestor real reintentaría
+        self.fake.timeouts.append(options.get("timeout"))
+        self.fake.body = options.get("body")
         status, body = self.fake.handle(method, url, dict(headers or {}))
-        reply_headers = {"request-id": REQUEST_ID, "content-type": "application/json"}
+        reply_headers = {"request-id": self.fake.request_id, "content-type": "application/json"}
         if status == 429:  # como la API real: un 429 dice cuándo volver
-            reply_headers["retry-after"] = "2"
+            reply_headers["retry-after"] = self.fake.retry_after
         return urllib3.HTTPResponse(
             body=io.BytesIO(body), headers=reply_headers, status=status, preload_content=False
         )
