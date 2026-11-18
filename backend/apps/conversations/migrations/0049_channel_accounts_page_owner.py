@@ -12,7 +12,8 @@ se niega antes de crearla y dice **cuántas**, sin ids (el error de PostgreSQL l
 registro del despliegue); se desconecta una de cada par y se repite. Nunca borra nada. Necesita
 BYPASSRLS (crm_migrator), como la `0040`, para ver las filas de todas las organizaciones.
 `lock_timeout` de 5 s: el índice GiST se construye bajo un bloqueo exclusivo de una tabla pequeña.
-Hacia atrás, borra la restricción. `btree_gist` ya está (pricing `0002`).
+Hacia atrás, borra la restricción. Crea `btree_gist` si falta (como pricing `0002`, que puede
+correr después) y no la borra.
 """
 
 from typing import Any
@@ -62,6 +63,11 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunSQL("SET LOCAL lock_timeout = '5s'", "SET LOCAL lock_timeout = '5s'"),
         migrations.RunPython(_check, migrations.RunPython.noop),
+        # la `EXCLUDE` compara texto y uuid en GiST. Sin depender del orden de las apps: pricing
+        # también la crea, y hacia atrás no se borra (la comparten)
+        migrations.RunSQL(
+            "CREATE EXTENSION IF NOT EXISTS btree_gist", reverse_sql=migrations.RunSQL.noop
+        ),
         migrations.AddConstraint(
             model_name="channelaccount",
             constraint=django.contrib.postgres.constraints.ExclusionConstraint(
