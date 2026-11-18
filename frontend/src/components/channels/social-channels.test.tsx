@@ -311,7 +311,13 @@ describe("Messenger e Instagram en Canales (F7b-06)", () => {
   it("una página sin suscribir lo dice en el motivo y en el checklist; suscrita, no (F7b-06g)", async () => {
     const lost = social("i4", { status: "DEGRADED", status_detail: "PAGE_NOT_SUBSCRIBED" });
     const waiting = social("i5", { status_detail: "PAGE_NOT_SUBSCRIBED" }); // aún PENDING
-    mockApi({ [LIST]: page([lost, waiting, { ...fb, status: "CONNECTED", status_detail: null }]) });
+    const fine = {
+      ...fb,
+      status: "CONNECTED",
+      status_detail: null,
+      page_subscription: "SUBSCRIBED",
+    };
+    mockApi({ [LIST]: page([lost, waiting, fine]) });
     show();
     const [first, second, third] = await cards();
     const steps = (card: HTMLElement) =>
@@ -336,6 +342,22 @@ describe("Messenger e Instagram en Canales (F7b-06)", () => {
       "Mensajes de Meta recibidos",
     ]);
     expect(third).not.toHaveTextContent("no tiene suscrita");
+  });
+
+  it("sin la respuesta de Meta, la suscripción sale sin comprobar, nunca en verde (F7b-06h)", async () => {
+    const connected = { status: "CONNECTED", status_detail: null } as const;
+    const unknown = social("i6", { ...connected, page_subscription: "UNKNOWN" });
+    const error = social("i7", { status: "ERROR", status_detail: "TOKEN_INVALID" });
+    const old = social("i8", { ...connected, page_subscription: undefined }); // una API anterior
+    mockApi({ [LIST]: page([unknown, error, old]) });
+    show();
+    for (const card of await cards()) {
+      const list = within(card).getByRole("list", { name: "Lo que falta para usar la cuenta" });
+      const step = within(list).getAllByRole("listitem")[1];
+      expect(step).toHaveTextContent(/^Suscripción de la página sin comprobar$/);
+      expect(step!.querySelector("svg")).toHaveClass("text-muted");
+      expect(card).not.toHaveTextContent("Página suscrita");
+    }
   });
 
   it.each([

@@ -36,7 +36,7 @@ LIST = "/api/v1/o/org-a/channels/"
 SHOWN = {
     "id", "platform", "name", "status", "status_detail", "quality_rating", "messaging_limit_tier",
     "last_healthcheck_at", "external_account_id", "external_parent_id", "token_last_four",
-    "has_standby_conversations", "version", "created_at", "updated_at",
+    "has_standby_conversations", "page_subscription", "version", "created_at", "updated_at",
 }  # fmt: skip
 FORBIDDEN = ("credential", "cipher", "fingerprint", "key_version", "revoked", "access_token")
 

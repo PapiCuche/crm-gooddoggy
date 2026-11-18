@@ -2548,7 +2548,8 @@
       },
       "subscription": {
         "ok": "Página suscrita a la app del CRM",
-        "bad": "La página no tiene suscrita la app del CRM"
+        "bad": "La página no tiene suscrita la app del CRM",
+        "unknown": "Suscripción de la página sin comprobar"
       },
       "webhook": {
         "ok": "Mensajes de Meta recibidos",
