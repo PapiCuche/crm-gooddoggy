@@ -18,11 +18,13 @@ export function RotateToken({
   route,
   accountId,
   onRotated,
+  onMissing,
 }: {
   slug: string;
   route: Route;
   accountId: string;
   onRotated: () => void;
+  onMissing: () => void; // 404: lo dice la lista, fuera de esta tarjeta (F7b-06f)
 }) {
   const t = useTranslations("channels.rotate");
   const errors = useTranslations("channels.errors");
@@ -57,8 +59,13 @@ export function RotateToken({
                 onRotated();
                 setTimeout(() => trigger.current?.focus());
               },
-              // La cuenta ya no está (404): se vuelve a leer la lista, como al desconectar.
-              (error) => error.status === 404 && onRotated(),
+              // La cuenta ya no está (404): el formulario se cierra y lo dice la lista, que se
+              // vuelve a leer, como al desconectar.
+              (error) => {
+                if (error.status !== 404) return;
+                setOpen(false);
+                onMissing();
+              },
             )
           }
           taken={(error) => channelError(error, errors, social)}
