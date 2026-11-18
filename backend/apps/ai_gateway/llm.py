@@ -7,14 +7,18 @@ from typing import Any, Protocol
 from uuid import UUID
 
 
-class Outcome(StrEnum):  # los cinco primeros quedan en `ai_llm_calls.outcome`
+class Outcome(StrEnum):  # los seis primeros quedan en `ai_llm_calls.outcome`
     OK = "OK"
     CREDENTIALS_REJECTED = "CREDENTIALS_REJECTED"
     PROVIDER_BILLING = "PROVIDER_BILLING"
     PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
     PROVIDER_ERROR = "PROVIDER_ERROR"  # 400, 404, 409, 413: un fallo nuestro, no se reintenta
+    # Salió y no hubo respuesta (tiempo agotado, corte, cuerpo ilegible): pudo cobrarla, la reserva
+    # cuenta entera. Solo en el registro; quien llama recibe `PROVIDER_UNAVAILABLE`.
+    PROVIDER_UNCERTAIN = "PROVIDER_UNCERTAIN"
     AI_NOT_CONFIGURED = "AI_NOT_CONFIGURED"  # sin cuenta activa, sin clave legible o sin precio
-    AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"  # sin tope o sin margen: no se llama
+    AI_BUDGET_NOT_SET = "AI_BUDGET_NOT_SET"  # sin tope: no se llama, igual que sin margen
+    AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"  # sin margen: no se llama
 
 
 @dataclass(frozen=True)

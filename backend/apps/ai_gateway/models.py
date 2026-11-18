@@ -138,7 +138,8 @@ class AIBudget(TenantModel):
 
 
 class AIBudgetUsage(TenantModel):
-    """Lo gastado y lo reservado de un mes (su primer día, en UTC)."""
+    """Lo gastado y lo reservado de un mes (su primer día, en hora de Lima: ADR-043). `crm_app` solo
+    lo lee: lo cambian `ai_budget_reserve` y `ai_budget_settle` (0003)."""
 
     id = uuid7_primary_key()
     month = models.DateField()
@@ -156,15 +157,20 @@ class AIBudgetUsage(TenantModel):
 
 
 class AIBudgetReservation(TenantModel):
-    """Lo reservado para una llamada, sin nada del prompt; se ajusta una sola vez (disparador en
-    0002) y entonces se escribe su fila de `ai_llm_calls`, de solo inserción y particionada por
-    mes (ADR-011), creada en SQL en la migración."""
+    """Lo reservado para una llamada, sin nada del prompt, con lo que necesita su fila de
+    `ai_llm_calls` (de solo inserción y particionada por mes, ADR-011): se ajusta una sola vez
+    (disparador en 0002) y entonces se escribe esa fila. Solo por las funciones de 0003."""
 
     id = uuid7_primary_key()
     month = models.DateField()  # FK compuesta a su fila de `ai_budget_usage` (0002)
     amount_usd = _usd()
     created_at = models.DateTimeField(auto_now_add=True)
     settled_at = models.DateTimeField(null=True)
+    purpose = models.CharField(max_length=16)  # CHECK, FK de quien pide y del modelo: 0003
+    requested_by_user_id = models.UUIDField()
+    provider = models.CharField(max_length=16)
+    model = models.CharField(max_length=64)
+    conversation_id = models.UUIDField(null=True)
 
     class Meta:
         db_table = "ai_budget_reservations"
