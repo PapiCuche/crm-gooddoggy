@@ -423,7 +423,7 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
             if whatsapp:
                 seen = graph.phone_number(token, parent, number)
             else:
-                subscribed = graph.ours(graph.subscribed_apps(token, parent))
+                subscribed = graph.subscription(token, parent)
         finally:
             del token
     except sealed.SealError:

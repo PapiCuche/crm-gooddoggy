@@ -149,16 +149,28 @@ def subscribe(token: str, page_id: str) -> None:
         raise GraphUnavailable
 
 
-def subscribed_apps(token: str, page_id: str) -> list[str]:
-    """Los ids de las apps suscritas a la página (`GET /<PAGE_ID>/subscribed_apps`, F7b-06e). Meta
-    solo la contesta a un token con un rol en la página: si no, `GraphRejected`. Una respuesta sin
-    la lista de `data` no es de Meta (`GraphUnavailable`)."""
+def subscribed_apps(token: str, page_id: str) -> tuple[list[str], bool]:
+    """Los ids de las apps suscritas a la página (`GET /<PAGE_ID>/subscribed_apps`, F7b-06e) y si
+    Meta dice que hay más páginas de la lista (`paging.next`: solo se lee la primera). Meta solo la
+    contesta a un token con un rol en la página: si no, `GraphRejected`. Una respuesta sin la lista
+    de `data` no es de Meta (`GraphUnavailable`)."""
     if not re.fullmatch(META_ID, page_id):
         raise ValueError("identificador de Meta no válido")
-    rows = _ask("GET", f"{page_id}/subscribed_apps", token).get("data")
+    found = _ask("GET", f"{page_id}/subscribed_apps", token)
+    rows, paging = found.get("data"), found.get("paging")
     if not isinstance(rows, list):
         raise GraphUnavailable
-    return [str(r["id"]) for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+    more = isinstance(paging, dict) and bool(paging.get("next"))
+    ids = [str(r["id"]) for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+    return ids, more
+
+
+def subscription(token: str, page_id: str) -> bool | None:
+    """¿Tiene la página suscrita la app del despliegue? (F7b-06g). `None` si no se sabe: sin un
+    `META_APP_ID` válido, o si no está en la primera página de la lista y Meta dice que hay más."""
+    ids, more = subscribed_apps(token, page_id)
+    found = ours(ids)
+    return None if found is False and more else found
 
 
 def ours(apps: list[str]) -> bool | None:

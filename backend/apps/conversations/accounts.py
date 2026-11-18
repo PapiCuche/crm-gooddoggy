@@ -90,8 +90,8 @@ def _check(token: str, account: ChannelAccount) -> dict[str, Any]:
     instagram = account.platform == Platform.INSTAGRAM
     page = account.external_parent_id if instagram else account.external_account_id
     graph.page(token, page or "", account.external_account_id if instagram else None)
-    apps = graph.subscribed_apps(token, page or "")  # F7b-06e: y un rol en la página
-    return {"quality_rating": None, "messaging_limit_tier": None, "subscribed": graph.ours(apps)}
+    subscribed = graph.subscription(token, page or "")  # F7b-06e: y un rol en la página
+    return {"quality_rating": None, "messaging_limit_tier": None, "subscribed": subscribed}
 
 
 UNSUBSCRIBED = "PAGE_NOT_SUBSCRIBED"

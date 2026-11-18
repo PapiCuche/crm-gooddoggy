@@ -4,6 +4,7 @@ salud lee `GET /<PAGE_ID>/subscribed_apps` con la credencial de la cuenta y guar
 suscribirla. Contra la Graph API de la página simulada (ADR-041); PostgreSQL real con `crm_app`."""
 
 import datetime as dt
+import json
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -216,7 +217,7 @@ def test_each_organization_is_checked_in_its_own_scope_and_meta_is_asked_outside
     inside: list[bool] = []
     real = graph.subscribed_apps
 
-    def spy(token: str, page: str) -> list[str]:
+    def spy(token: str, page: str) -> tuple[list[str], bool]:
         inside.append(connection.in_atomic_block)
         return real(token, page)
 
@@ -237,6 +238,47 @@ def test_a_throttle_is_unavailable_and_changes_nothing(
     assert read(world.a, mine).last_healthcheck_at == OLD and state(world.a, mine) == (
         "CONNECTED", None
     )  # fmt: skip
+
+
+def test_more_pages_of_apps_without_ours_in_the_first_is_unknown_not_unsubscribed(
+    world: SimpleNamespace, ours: FakePageGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mine, other = social(world.a), {"id": OTHER_APP_ID}
+    rest = {"next": f"https://graph.facebook.com/v23.0/{PAGE_ID}/subscribed_apps?after=X"}
+    pages = {"paging": rest}
+
+    def reply(*_: Any) -> tuple[int, dict[str, str], bytes]:
+        return 200, {}, json.dumps({"data": [other], **pages}).encode()
+
+    monkeypatch.setattr(ours, "handle", reply)
+    assert tasks.healthcheck_accounts() == {"OK": 1}
+    found = read(world.a, mine)  # solo se lee la primera página: la nuestra puede ir después
+    assert (found.status, found.status_detail, found.version) == ("CONNECTED", None, 1)
+    assert found.last_healthcheck_at is not None and found.last_healthcheck_at > OLD
+    pages.clear()  # sin más páginas, la lista está entera: no está suscrita
+    again(world.a, mine)
+    tasks.healthcheck_accounts()
+    assert state(world.a, mine) == ("DEGRADED", "PAGE_NOT_SUBSCRIBED")
+    other["id"], pages["paging"] = APP_ID, rest  # la nuestra en la primera página sí cuenta
+    again(world.a, mine)
+    tasks.healthcheck_accounts()
+    assert state(world.a, mine) == ("CONNECTED", None)
+
+
+def test_without_an_app_id_an_unsubscribed_page_never_recovers_by_guessing(
+    crm: SimpleNamespace, meta: FakePageGraph, settings: Any
+) -> None:
+    settings.META_APP_ID = ""  # la página tiene la app suscrita, pero no se sabe cuál es la nuestra
+    made = connect(crm, "MESSENGER")[0]
+    with tenant_scope(ctx(crm.a)):
+        ChannelAccount.objects.filter(pk=made.pk).update(
+            status="DEGRADED", status_detail="PAGE_NOT_SUBSCRIBED", last_healthcheck_at=OLD
+        )
+    assert tasks.healthcheck_accounts() == {"OK": 1}
+    assert state(crm.a, made.pk) == ("DEGRADED", "PAGE_NOT_SUBSCRIBED")
+    rotated, _ = run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=made.pk,
+                     access_token=TEST_TOKEN, platform="MESSENGER")  # fmt: skip
+    assert (rotated.status, rotated.status_detail) == ("DEGRADED", "PAGE_NOT_SUBSCRIBED")
 
 
 def test_a_190_is_a_rejected_token_and_no_role_on_the_page_keeps_the_state(
