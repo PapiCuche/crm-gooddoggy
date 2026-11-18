@@ -68,6 +68,11 @@ class ConversationSerializer(serializers.Serializer[Any]):
     last_message_direction = serializers.ChoiceField(
         choices=[("INBOUND", "INBOUND"), ("OUTBOUND", "OUTBOUND")], allow_null=True
     )
+    standby_since = serializers.DateTimeField(
+        allow_null=True,
+        help_text="Instagram o Messenger: desde cuándo otra app controla el hilo (`standby`); "
+        "`null` si no. Mientras tanto nada responde solo (ADR-035 §4).",
+    )
     version = serializers.IntegerField()
 
 

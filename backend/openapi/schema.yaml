@@ -12356,6 +12356,10 @@ components:
           nullable: true
           description: Lo único que se enseña del token; `null` si la cuenta no tiene
             credencial viva.
+        has_standby_conversations:
+          type: boolean
+          description: 'Instagram o Messenger: alguna conversación no cerrada de la
+            cuenta está en `standby` (otra app controla el hilo, ADR-035 §4).'
         version:
           type: integer
         created_at:
@@ -12368,6 +12372,7 @@ components:
       - created_at
       - external_account_id
       - external_parent_id
+      - has_standby_conversations
       - id
       - last_healthcheck_at
       - messaging_limit_tier
@@ -12685,6 +12690,13 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        standby_since:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Instagram o Messenger: desde cuándo otra app controla el hilo
+            (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035
+            §4).'
         version:
           type: integer
       required:
@@ -12700,6 +12712,7 @@ components:
       - last_message_direction
       - last_message_preview
       - number
+      - standby_since
       - status
       - version
     ConversationContact:
@@ -12761,6 +12774,13 @@ components:
           oneOf:
           - $ref: '#/components/schemas/LastMessageDirectionEnum'
           - $ref: '#/components/schemas/NullEnum'
+        standby_since:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Instagram o Messenger: desde cuándo otra app controla el hilo
+            (`standby`); `null` si no. Mientras tanto nada responde solo (ADR-035
+            §4).'
         version:
           type: integer
         assigned_at:
@@ -12801,6 +12821,7 @@ components:
       - last_message_preview
       - number
       - resolved_at
+      - standby_since
       - status
       - updated_at
       - version

@@ -34,6 +34,8 @@ export interface ChannelAccount {
    * @nullable
    */
   token_last_four: string | null;
+  /** Instagram o Messenger: alguna conversación no cerrada de la cuenta está en `standby` (otra app controla el hilo, ADR-035 §4). */
+  has_standby_conversations: boolean;
   version: number;
   created_at: string;
   updated_at: string;
