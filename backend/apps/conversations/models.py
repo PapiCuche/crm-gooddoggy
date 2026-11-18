@@ -3,8 +3,10 @@ Tablas tenant-owned con FORCE RLS y FKs compuestas en la migración. Nada se bor
 marca borrada, una conversación se cierra o se archiva, el historial de asignaciones es inmutable
 y un mensaje no se reescribe salvo el estado de entrega, que solo avanza."""
 
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import RangeOperators
 from django.db import models
-from django.db.models.functions import Length, Lower, Now
+from django.db.models.functions import Coalesce, Length, Lower, Now
 from django.db.models.lookups import LessThanOrEqual
 
 from core.db.models import TenantModel, uuid7_primary_key
@@ -23,6 +25,7 @@ class Platform(models.TextChoices):
 
 
 SOCIAL = (Platform.MESSENGER, Platform.INSTAGRAM)  # identidad por cuenta, sin teléfono (ADR-035)
+PAGE_OWNER = "channel_accounts_page_owner_ex"  # la página de Messenger o la de Instagram
 EXTERNAL_ID = r"^[A-Za-z0-9._-]{1,100}$"  # el PSID o el IGSID: un id opaco de Meta, sin espacios
 
 
@@ -162,6 +165,15 @@ class ChannelAccount(TenantModel):
                 fields=["platform", "external_account_id"],
                 condition=models.Q(deleted_at__isnull=True),
                 name="channel_accounts_external_uq",
+            ),
+            ExclusionConstraint(  # F7b-06e (ADR-035 §3): una página, de una sola organización
+                name=PAGE_OWNER,  # sea cual sea la plataforma; en la misma, Messenger e Instagram
+                index_type="gist",
+                expressions=[
+                    (Coalesce("external_parent_id", "external_account_id"), RangeOperators.EQUAL),
+                    ("organization_id", RangeOperators.NOT_EQUAL),
+                ],
+                condition=models.Q(deleted_at__isnull=True, platform__in=SOCIAL),
             ),
             one_of("platform", Platform, "channel_accounts_platform_ck"),
             one_of("status", AccountStatus, "channel_accounts_status_ck"),

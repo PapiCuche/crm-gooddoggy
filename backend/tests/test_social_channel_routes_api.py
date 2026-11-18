@@ -12,6 +12,7 @@ import pytest
 from django.test import Client
 
 from apps.conversations import accounts, commands
+from apps.conversations.api import channels
 from core.api.step_up import STEP_UP_REQUIRED
 from tests.meta_sim import transport
 from tests.meta_sim.graph import TEST_TOKEN, FakeGraph
@@ -20,7 +21,7 @@ from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
 from tests.meta_sim.webhooks import PHONE_NUMBER_ID, WABA_ID
 from tests.test_channel_accounts import NEW_TOKEN, everything, run
 from tests.test_channel_accounts import connect as connect_whatsapp
-from tests.test_channel_accounts_api import signed
+from tests.test_channel_accounts_api import NAME_REFUSED, signed
 from tests.test_conversations_api import UNAUTHENTICATED
 from tests.test_member_branch import DENIED
 from tests.test_self_context import NOT_FOUND, reply
@@ -69,8 +70,11 @@ def test_connect_rotate_and_disconnect_and_no_output_carries_the_token(
     assert account["token_last_four"] == TEST_TOKEN[-4:] and "credential_id" not in account
     assert rotated.status_code == 200 and rotated.json()["token_last_four"] == NEW_TOKEN[-4:]
     assert rotated.json()["token_rotated_at"] is not None and gone.status_code == 204
-    # la rotación se comprueba con `graph.page`: la misma página, sin volver a suscribirla
-    assert [(c["method"], c["path"]) for c in checked] == [("GET", f"/v23.0/{PAGE_ID}")]
+    # la rotación se comprueba con `graph.page` (la misma página) y lee sus apps suscritas (exige
+    # un rol en la página, F7b-06e), sin volver a suscribirla
+    assert [(c["method"], c["path"]) for c in checked] == [
+        ("GET", f"/v23.0/{PAGE_ID}"), ("GET", f"/v23.0/{PAGE_ID}/subscribed_apps"),
+    ]  # fmt: skip
     assert "instagram_business_account" in checked[0]["query"]["fields"][0]
     outputs = b"".join(r.content for r in (connected, rotated, gone)).decode() + caplog.text
     for token in (TEST_TOKEN, NEW_TOKEN):
@@ -205,6 +209,9 @@ def test_rotating_checks_the_same_page_and_linked_account_and_revives_a_rejected
     meta.pages[PAGE_ID] = OTHER  # la página ya no está vinculada a esa cuenta de Instagram
     linked = rotate(ana, "instagram", account.pk, TEST_TOKEN)
     assert (linked.status_code, linked.json()["code"]) == (400, "CHANNEL_CREDENTIALS_REJECTED")
+    # F7b-06e: el texto de la página, nunca el de WhatsApp («ese número»)
+    social = "Meta no aceptó ese token para esa página. Revisa el token, la página y la cuenta."
+    assert linked.json()["message"] == social and "número" not in linked.content.decode()
     refused = rotate(ana, "instagram", account.pk, REJECTED)
     assert (refused.status_code, refused.json()["code"]) == (400, "CHANNEL_CREDENTIALS_REJECTED")
     transport.install(monkeypatch, Down())
@@ -213,6 +220,7 @@ def test_rotating_checks_the_same_page_and_linked_account_and_revives_a_rejected
     settings.META_ENABLED = False
     off = send(ana, "post", f"{BASE}messenger/", body("messenger"))
     assert (off.status_code, off.json()["code"]) == (409, "CHANNEL_NOT_ENABLED")
+    assert off.json()["message"] == channels.SOCIAL_DISABLED
     assert migrator.execute(live, [account.pk]).fetchone() == before  # nada cambió
     assert before is not None and before[:2] == ("ERROR", "TOKEN_INVALID")
     settings.META_ENABLED, meta.pages[PAGE_ID] = True, IG_ACCOUNT_ID
@@ -240,3 +248,45 @@ def test_the_social_routes_share_the_rate_limit_of_the_whatsapp_routes(
         assert limited.status_code == 429 and limited.json()["code"] == "RATE_LIMITED", path
         assert int(limited["Retry-After"]) > 0
     assert len(meta.calls) == 1  # ni se preguntó a Meta
+
+
+@PLATFORMS
+@pytest.mark.parametrize("name", ["a\x07b", "a\nb", "a\u200bb", "a\u202eb"])
+def test_a_name_with_control_or_invisible_characters_is_a_field_error_not_a_500(
+    crm: SimpleNamespace, meta: FakePageGraph, migrator: DB, platform: str, name: str
+) -> None:  # F7b-06e: antes, `accounts._name` lanzaba un `ValueError` que nadie capturaba
+    response = send(signed(crm.ana), "post", f"{BASE}{platform}/", body(platform, name=name))
+    assert response.status_code == 400 and list(response.json()["fields"]) == ["name"]
+    assert response.json()["fields"]["name"][0]["message"] == NAME_REFUSED  # sin repetir el valor
+    assert meta.calls == []
+    assert migrator.execute("SELECT count(*) FROM channel_accounts").fetchone() == (0,)
+
+
+class NoList(FakePageGraph):
+    """Contesta 200 a las apps suscritas, pero sin la lista de `data`."""
+
+    def handle(self, method: str, target: str, *args: Any) -> Any:
+        if target.split("?")[0].endswith("/subscribed_apps") and method == "GET":
+            return 200, {"Content-Type": "application/json"}, b'{"data": {}}'
+        return super().handle(method, target, *args)
+
+
+@PLATFORMS
+def test_rotating_needs_a_role_on_the_page_like_connecting_and_changes_nothing_without_it(
+    crm: SimpleNamespace, meta: FakePageGraph, migrator: DB, monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+) -> None:  # fmt: skip
+    account, ana = made(crm, platform), signed(crm.ana)
+    live = "SELECT status, credential_id, version FROM channel_accounts WHERE id = %s"
+    before = migrator.execute(live, [account.pk]).fetchone()
+    meta.no_role, meta.token = {PAGE_ID}, NEW_TOKEN  # el token ve la página, sin rol en ella
+    refused = rotate(ana, platform, account.pk)
+    assert (refused.status_code, refused.json()["code"]) == (400, "CHANNEL_CREDENTIALS_REJECTED")
+    weird = NoList(token=NEW_TOKEN)
+    transport.install(monkeypatch, weird)
+    odd = rotate(ana, platform, account.pk)
+    assert (odd.status_code, odd.json()["code"]) == (503, "CHANNEL_PROVIDER_UNAVAILABLE")
+    assert migrator.execute(live, [account.pk]).fetchone() == before  # nada cambió
+    meta.no_role = set()
+    transport.install(monkeypatch, meta)
+    assert rotate(ana, platform, account.pk).status_code == 200

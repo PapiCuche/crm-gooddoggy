@@ -1,5 +1,5 @@
 """La Graph API falsa de una página de Facebook: Messenger e Instagram con Facebook Login (ADR-035
-§2, §3, §6 y §9). Sirve `GET /<PAGE_ID>`, `POST /<PAGE_ID>/subscribed_apps` y
+§2, §3, §6 y §9). Sirve `GET /<PAGE_ID>`, `GET` y `POST /<PAGE_ID>/subscribed_apps` y
 `POST /<PAGE_ID>/messages` [S17] [S20], y el perfil `GET /<IGSID>?fields=name,username` de la User
 Profile API [S9] (F7b-04c), con la misma `GRAPH_VERSION` que WhatsApp (§6, D-F7-08).
 
@@ -63,6 +63,7 @@ class FakePageGraph:
     sent: list[dict[str, Any]] = field(default_factory=list)  # lo que "se envió" a clientes
     subscribed: dict[str, list[str]] = field(default_factory=dict)  # página -> campos
     calls: list[dict[str, Any]] = field(default_factory=list)  # método, ruta y query
+    no_role: set[str] = field(default_factory=set)  # páginas sin rol: no leen sus apps (F7b-06e)
     profiles: dict[str, dict[str, Any]] = field(
         default_factory=lambda: {IGSID: {"name": "Cliente Simulado", "username": "cliente.sim"}}
     )
@@ -92,6 +93,11 @@ class FakePageGraph:
                 if self.pages[page] is not None and "instagram_business_account" in fields:
                     found["instagram_business_account"] = {"id": self.pages[page]}
                 return self._ok(found)
+            case ("GET", [page, "subscribed_apps"]) if page in self.pages:
+                if page in self.no_role:
+                    return self._error("permission_200")
+                mine = {"id": APP_ID, "subscribed_fields": self.subscribed.get(page)}
+                return self._ok({"data": [mine] if page in self.subscribed else []})
             case ("POST", [page, "subscribed_apps"]) if page in self.pages:
                 wanted = ",".join(query.get("subscribed_fields", []) or _form(body)).split(",")
                 if wanted == [""]:
