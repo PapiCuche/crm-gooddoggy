@@ -9,8 +9,8 @@ ADR-044 solo para eso): el id del tope como agregado y el mes como único dato.
 - `ai.budget.exceeded`: el tope mensual corta la reserva con el mes ya en el 80 % o más (una
   reserva enorme que se corta antes no gasta el aviso del mes). Para que la marca y el evento se
   confirmen, el corte del mes ya no lanza la excepción: la función devuelve NULL sin reservar nada
-  y el gateway responde `AI_BUDGET_EXHAUSTED` sin llamar al proveedor. El corte del día sigue lanzando
-  y deshace todo, también la marca del 80 % de esa misma reserva.
+  y el gateway responde `AI_BUDGET_EXHAUSTED` sin llamar al proveedor. El corte del día sigue
+  lanzando y deshace todo, también la marca del 80 % de esa misma reserva.
 
 Una vez: cada marca se pone con `WHERE … IS NULL` y el evento solo si esa sentencia cambió la fila.
 Dos reservas a la vez esperan al bloqueo de la fila del mes y la segunda ya ve la marca. Una marca
