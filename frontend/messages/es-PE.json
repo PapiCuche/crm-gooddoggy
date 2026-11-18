@@ -2544,6 +2544,16 @@
         "ok": "Calidad del número buena",
         "warn": "La calidad del número bajó",
         "wait": "Falta la primera comprobación de calidad"
+      },
+      "access": {
+        "ok": "Acceso a los mensajes de Instagram activado",
+        "bad": "El acceso a los mensajes de Instagram está apagado",
+        "wait": "Falta confirmar el acceso a los mensajes de Instagram"
+      },
+      "control": {
+        "ok": "El CRM atiende las conversaciones",
+        "warn": "Otra app controla alguna conversación",
+        "wait": "Falta confirmar qué app atiende las conversaciones"
       }
     },
     "fields": {
@@ -2554,7 +2564,9 @@
       "quality": "Calidad",
       "tier": "Nivel de mensajería",
       "checked": "Última comprobación",
-      "neverChecked": "Todavía no se comprobó"
+      "neverChecked": "Todavía no se comprobó",
+      "page": "Página de Facebook (ID)",
+      "igAccount": "Cuenta de Instagram (ID)"
     },
     "quality": {
       "GREEN": "Buena",
@@ -2590,7 +2602,22 @@
       "wabaInvalid": "Ese ID de cuenta no sirve. Usa solo cifras.",
       "phoneRequired": "Escribe el ID del número de teléfono.",
       "tokenRequired": "Pega el token de acceso.",
-      "tokenInvalid": "Ese token no sirve."
+      "tokenInvalid": "Ese token no sirve.",
+      "page": "ID de la página de Facebook",
+      "linkedPage": "ID de la página de Facebook vinculada",
+      "igAccount": "ID de la cuenta profesional de Instagram",
+      "pageRequired": "Escribe el ID de la página.",
+      "igRequired": "Escribe el ID de la cuenta de Instagram.",
+      "messenger": {
+        "open": "Conectar Messenger",
+        "title": "Conectar una página de Messenger",
+        "note": "Se comprueba con Meta que el token gestiona esa página y se suscribe la app. La cuenta nace pendiente hasta recibir su primer mensaje."
+      },
+      "instagram": {
+        "open": "Conectar Instagram",
+        "title": "Conectar una cuenta de Instagram",
+        "note": "Se comprueba con Meta que la cuenta es la de esa página y se suscribe la app. La cuenta nace pendiente hasta recibir su primer mensaje."
+      }
     },
     "rotate": {
       "open": "Rotar token",
@@ -2602,7 +2629,8 @@
       "cancel": "Cancelar",
       "done": "El token se rotó.",
       "required": "Pega el token nuevo.",
-      "invalid": "Ese token no sirve."
+      "invalid": "Ese token no sirve.",
+      "socialHint": "Sustituye al anterior, que deja de valer. Instagram y Messenger de una misma página tienen cada uno su token: rotar uno no rota el otro. No se vuelve a mostrar ni se guarda en este navegador."
     },
     "disconnect": {
       "open": "Desconectar",
@@ -2612,7 +2640,8 @@
       "confirm": "Sí, desconectar",
       "busy": "Desconectando…",
       "cancel": "Cancelar",
-      "gone": "Esa cuenta ya no existe. Actualizamos la lista."
+      "gone": "Esa cuenta ya no existe. Actualizamos la lista.",
+      "done": "«{name}» quedó desconectada: ya no recibe ni envía mensajes."
     },
     "errors": {
       "denied": "No tienes permiso para gestionar los canales.",
@@ -2623,7 +2652,15 @@
       "STEP_UP_REQUIRED": "Confirma tu identidad con un código de segundo factor para continuar.",
       "RATE_LIMITED": "Demasiados intentos. Espera un momento antes de volver a probar.",
       "RATE_LIMITED_WAIT": "Demasiados intentos. Vuelve a probar en {minutes, plural, one {# minuto} other {# minutos}}.",
-      "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista."
+      "NOT_FOUND": "Esa cuenta ya no existe. Actualizamos la lista.",
+      "badPage": "No se puede registrar esa página.",
+      "badAccount": "No se puede registrar esa cuenta de Instagram.",
+      "SOCIAL_NOT_ENABLED": "Los canales de Messenger e Instagram no están habilitados en este despliegue.",
+      "SOCIAL_REJECTED": "Meta no aceptó ese token. Revisa que sea el del usuario del sistema y que gestione esa página."
+    },
+    "standby": {
+      "title": "Otra app controla una conversación",
+      "body": "Al menos una conversación abierta de esta cuenta la atiende otra app de la página. Sus mensajes llegan al Inbox, pero el CRM no responde nada automáticamente mientras otra app la controle."
     }
   },
   "ai": {

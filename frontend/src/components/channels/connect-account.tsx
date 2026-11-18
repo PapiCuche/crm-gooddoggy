@@ -5,16 +5,30 @@ import { useEffect, useRef, useState } from "react";
 
 import { FieldsForm } from "@/components/forms/fields-form";
 import { Button } from "@/components/ui/button";
-import { channelsWhatsappConnect } from "@/lib/api/client";
+import { channelsSocialConnect, channelsWhatsappConnect } from "@/lib/api/client";
+import type { ConnectRequest, SocialConnectRequest } from "@/lib/api/model";
+import { cn } from "@/lib/utils";
 
 import { channelError } from "./channel-errors";
+import type { Route } from "./channel-routes";
 import { useChannelWrite } from "./use-channel-write";
 
-// Conectar una cuenta de WhatsApp (F7-07b): `POST …/channels/whatsapp/` con el WABA, el
-// `phone_number_id`, el token y un nombre. El token es un campo de contraseña que se vacía al
-// enviar (`secret`) y solo vive en el cierre de la petición: no se guarda en estado, en la caché
-// ni en el navegador. Un número no registrable da el mismo error sin más detalle.
-export function ConnectAccount({ slug, onConnected }: { slug: string; onConnected: () => void }) {
+type Body<T> = Record<string, string> & T;
+
+// Conectar una cuenta: WhatsApp (F7-07b, `POST …/channels/whatsapp/` con el WABA y el
+// `phone_number_id`), Messenger (la página) o Instagram (la página vinculada y la cuenta) por
+// `POST …/channels/{messenger|instagram}/` (F7b-06). El token es un campo de contraseña que se
+// vacía al enviar (`secret`) y solo vive en el cierre de la petición: no se guarda en estado, en la
+// caché ni en el navegador. Una cuenta no registrable da el mismo error sin más detalle.
+export function ConnectAccount({
+  slug,
+  route,
+  onConnected,
+}: {
+  slug: string;
+  route: Route;
+  onConnected: () => void;
+}) {
   const t = useTranslations("channels.connect");
   const errors = useTranslations("channels.errors");
   const { write, run, stepUp } = useChannelWrite();
@@ -29,29 +43,40 @@ export function ConnectAccount({ slug, onConnected }: { slug: string; onConnecte
     }
     opened.current = open;
   }, [open]);
+  const social = route !== "whatsapp";
+  const text = (key: "open" | "title" | "note") => t(social ? `${route}.${key}` : key);
+  // Un id de Meta: cifras, sin corrector ni mayúsculas en el móvil.
+  const id = (name: string, label: string, required: string, invalid: string) => ({
+    ...{ name, max: 30, label, required, invalid },
+    ...{ inputMode: "numeric" as const, literal: true },
+  });
+  // El mismo texto para cualquier cuenta que no se pueda registrar: no se descompone.
+  const own =
+    route === "whatsapp"
+      ? [
+          id("waba_id", t("waba"), t("wabaRequired"), t("wabaInvalid")),
+          id("phone_number_id", t("phone"), t("phoneRequired"), errors("badNumber")),
+        ]
+      : route === "messenger"
+        ? [id("page_id", t("page"), t("pageRequired"), errors("badPage"))]
+        : [
+            id("page_id", t("linkedPage"), t("pageRequired"), errors("badPage")),
+            id("instagram_account_id", t("igAccount"), t("igRequired"), errors("badAccount")),
+          ];
 
   return (
-    <div className="flex flex-col items-start gap-3">
+    <div className={cn("flex flex-col items-start gap-3", open && "w-full")}>
       {open ? (
         <FieldsForm
-          title={t("title")}
-          heading={<h2 className="font-medium">{t("title")}</h2>}
+          title={text("title")}
+          heading={<h2 className="font-medium">{text("title")}</h2>}
           className="border-border bg-surface flex w-full max-w-xl flex-col gap-4 rounded-lg border p-4"
           fields={[
             {
               ...{ name: "name", max: 100, label: t("name"), invalid: t("nameInvalid") },
               required: t("nameRequired"),
             },
-            {
-              ...{ name: "waba_id", max: 30, label: t("waba"), invalid: t("wabaInvalid") },
-              ...{ required: t("wabaRequired"), inputMode: "numeric", literal: true },
-            },
-            {
-              ...{ name: "phone_number_id", max: 30, label: t("phone") },
-              // El mismo texto para cualquier número que no se pueda registrar: no se descompone.
-              ...{ invalid: errors("badNumber"), required: t("phoneRequired") },
-              ...{ inputMode: "numeric", literal: true },
-            },
+            ...own,
             {
               ...{ name: "access_token", max: 2048, label: t("token"), hint: t("tokenHint") },
               ...{ invalid: t("tokenInvalid"), required: t("tokenRequired"), secret: true },
@@ -61,18 +86,22 @@ export function ConnectAccount({ slug, onConnected }: { slug: string; onConnecte
           write={write}
           send={(values) =>
             run(
-              () => channelsWhatsappConnect(slug, values),
+              // Solo los campos de esta plataforma; la forma la comprueba la API.
+              () =>
+                social
+                  ? channelsSocialConnect(slug, route, values as Body<SocialConnectRequest>)
+                  : channelsWhatsappConnect(slug, values as Body<ConnectRequest>),
               () => {
-                setDone(values.name);
+                setDone(values.name ?? "");
                 setOpen(false);
                 onConnected();
               },
             )
           }
-          taken={(error) => channelError(error, errors)}
+          taken={(error) => channelError(error, errors, social)}
           denied={errors("denied")}
           labels={{ submit: t("submit"), busy: t("busy"), cancel: t("cancel") }}
-          note={<p className="text-muted text-sm">{t("note")}</p>}
+          note={<p className="text-muted text-sm">{text("note")}</p>}
           onCancel={() => setOpen(false)}
         />
       ) : (
@@ -86,7 +115,7 @@ export function ConnectAccount({ slug, onConnected }: { slug: string; onConnecte
             setOpen(true);
           }}
         >
-          {t("open")}
+          {text("open")}
         </Button>
       )}
       {/* Siempre montado: un lector de pantalla anuncia el resultado cuando cambia. */}

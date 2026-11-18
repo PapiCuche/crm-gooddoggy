@@ -4,24 +4,28 @@ import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { channelsWhatsappDisconnect } from "@/lib/api/client";
 import { Plain } from "@/components/inbox/plain";
 import { apiErrorKey } from "@/lib/api-errors";
 import type { ApiError } from "@/lib/http";
 
-// Desconectar una cuenta (F7-07b): `DELETE …/channels/whatsapp/{id}/` tras una confirmación que
+import { type Route, disconnect } from "./channel-routes";
+
+// Desconectar una cuenta (F7-07b; Messenger e Instagram en F7b-06):
+// `DELETE …/channels/{whatsapp|messenger|instagram}/{id}/` tras una confirmación que
 // dice lo que pasa: deja de recibir y enviar, y reconectar es crear una cuenta nueva. El foco
 // va a «Cancelar» (lo seguro) al abrir y la lista se vuelve a pedir al terminar.
 export function DisconnectAccount({
   slug,
+  route,
   accountId,
   name,
   onDisconnected,
 }: {
   slug: string;
+  route: Route;
   accountId: string;
   name: string;
-  onDisconnected: () => void;
+  onDisconnected: (gone: boolean) => void; // `gone`: la desconectó esta pantalla
 }) {
   const t = useTranslations("channels.disconnect");
   const errors = useTranslations("channels.errors");
@@ -39,16 +43,16 @@ export function DisconnectAccount({
     if (busy) return;
     setBusy(true);
     setProblem(null);
-    channelsWhatsappDisconnect(slug, accountId).then(
+    disconnect(slug, route, accountId).then(
       () => {
         setBusy(false);
-        onDisconnected(); // la cuenta ya no está: su tarjeta se va con la lista nueva
+        onDisconnected(true); // la cuenta ya no está: su tarjeta se va con la lista nueva
       },
       (error: ApiError) => {
         setBusy(false);
         if (error.status === 401) return; // `Providers` lleva al login
         // La cuenta ya no existe (404): se vuelve a leer la lista y se dice.
-        if (error.status === 404) onDisconnected();
+        if (error.status === 404) onDisconnected(false);
         setProblem(
           error.status === 403
             ? errors("denied")

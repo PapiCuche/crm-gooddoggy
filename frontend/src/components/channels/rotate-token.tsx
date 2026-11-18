@@ -5,19 +5,22 @@ import { useRef, useState } from "react";
 
 import { FieldsForm } from "@/components/forms/fields-form";
 import { Button } from "@/components/ui/button";
-import { channelsWhatsappRotateToken } from "@/lib/api/client";
 
 import { channelError } from "./channel-errors";
+import { type Route, rotateToken } from "./channel-routes";
 import { useChannelWrite } from "./use-channel-write";
 
-// Rotar el token de una cuenta (F7-07b): `POST …/channels/whatsapp/{id}/token/`. Mismo trato del
-// secreto que al conectar: campo de contraseña que se vacía al enviar y que nunca se guarda.
+// Rotar el token de una cuenta (F7-07b; Messenger e Instagram en F7b-06):
+// `POST …/channels/{whatsapp|messenger|instagram}/{id}/token/`. Mismo trato del secreto que al
+// conectar: campo de contraseña que se vacía al enviar y que nunca se guarda.
 export function RotateToken({
   slug,
+  route,
   accountId,
   onRotated,
 }: {
   slug: string;
+  route: Route;
   accountId: string;
   onRotated: () => void;
 }) {
@@ -27,6 +30,9 @@ export function RotateToken({
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const social = route !== "whatsapp";
+  // Instagram y Messenger de una misma página tienen cada uno su token (ADR-035 §3): se dice.
+  const hint = social ? "socialHint" : "hint";
 
   return (
     <div className="flex min-w-0 flex-col items-start gap-3">
@@ -37,14 +43,14 @@ export function RotateToken({
           className="border-border flex w-full max-w-xl flex-col gap-3 rounded-lg border p-3"
           fields={[
             {
-              ...{ name: "access_token", max: 2048, label: t("token"), hint: t("hint") },
+              ...{ name: "access_token", max: 2048, label: t("token"), hint: t(hint) },
               ...{ invalid: t("invalid"), required: t("required"), secret: true, literal: true },
             },
           ]}
           write={write}
           send={(values) =>
             run(
-              () => channelsWhatsappRotateToken(slug, accountId, values),
+              () => rotateToken(slug, route, accountId, values.access_token),
               () => {
                 setDone(true);
                 setOpen(false);
@@ -55,7 +61,7 @@ export function RotateToken({
               (error) => error.status === 404 && onRotated(),
             )
           }
-          taken={(error) => channelError(error, errors)}
+          taken={(error) => channelError(error, errors, social)}
           denied={errors("denied")}
           labels={{ submit: t("submit"), busy: t("busy"), cancel: t("cancel") }}
           onCancel={() => {
