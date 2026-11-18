@@ -119,6 +119,10 @@ Cómo reparte ADR-034 entre ellos:
   - **Mes de Lima** (ADR-043, decisión del propietario del 2026-11-18): `ai_budget_month(now())`. Las particiones siguen por mes UTC. Esto cierra el desvío de UTC de F8-05.
   - **Particiones:** un `post_migrate` de `apps.ai_gateway` mantiene el horizonte (mes actual + 12) con `ai_llm_calls_ensure_partitions`, sobre la que `crm_app` no tiene EXECUTE.
   - Quedan en #932: tope diario, comando y rutas del tope, avisos, barrido de huérfanas, modelo por cuenta y turnos con tools.
+- **Hecho en F8-05b2 (#949)**, segunda de las siete partes de F8-05b (#932):
+  - **Tope diario** (decisión del propietario del 2026-11-18): `ai_budgets.daily_usd` y una fila de uso por día de Lima en `ai_budget_daily_usage` (`ai_budget_day(now())`, ADR-043), con los mismos CHECK que la del mes (sin `NaN`, gastado y reservado nunca negativos, lo gastado no baja), FORCE RLS y solo lectura para `crm_app`. Cada reserva guarda su día, con FK compuesta a esa fila.
+  - **Mes y después día:** `ai_budget_reserve` comprueba y reserva en la fila del mes y después en la del día; si el día no cabe, `AI_BUDGET_EXHAUSTED` y no queda nada reservado en el mes. `ai_budget_settle` ajusta en el mismo orden la fila del día **de la reserva**, aunque el ajuste llegue pasada la medianoche. Las firmas no cambian y cada sentencia nueva filtra por la organización de la sesión (ADR-044). Un mismo orden de bloqueo en las dos funciones evita interbloqueos entre una reserva y un ajuste.
+  - **Sin tope diario no hay llamadas** (falla cerrado, ADR-034 §5): una organización con solo el tope mensual recibe `AI_BUDGET_NOT_SET` hasta que tenga los dos. La columna admite NULL para no inventar un tope a una fila que ya exista; la pantalla para fijarlos es F8-05b3.
 
 ## Qué necesita el propietario (sin ningún valor real)
 
