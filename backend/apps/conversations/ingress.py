@@ -317,7 +317,8 @@ def seen(ctx: TenantContext, account: ChannelAccount) -> None:
     if account.status != "PENDING":
         return
     before = (account.status, account.status_detail)
-    if account.status_detail == "WEBHOOK_NOT_SEEN":
+    # Un evento firmado de la página también prueba que la app volvió a estar suscrita (F7b-06g).
+    if account.status_detail in ("WEBHOOK_NOT_SEEN", "PAGE_NOT_SUBSCRIBED"):
         account.status_detail = None
     ready = account.credential_id is not None and account.last_healthcheck_at is not None
     if account.status_detail is None and ready:

@@ -22,8 +22,8 @@ SUBSCRIBED_FIELDS = (
     "messages,message_echoes,message_deliveries,message_reads,messaging_handovers,standby"
 )
 # Códigos de límite de tasa de Meta: llegan con 400, pero no son un token rechazado (los mismos que
-# el adaptador de salida reintenta, `whatsapp.TOO_FAST`).
-THROTTLED = (4, 17, 613, 80007, 130429, 131056)
+# el adaptador de salida reintenta, `whatsapp.TOO_FAST`, y `32`, el límite de una página: F7b-06g).
+THROTTLED = (4, 17, 32, 613, 80007, 130429, 131056)
 
 
 class ChannelNotEnabled(Exception):
@@ -159,6 +159,15 @@ def subscribed_apps(token: str, page_id: str) -> list[str]:
     if not isinstance(rows, list):
         raise GraphUnavailable
     return [str(r["id"]) for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+
+
+def ours(apps: list[str]) -> bool | None:
+    """¿Está la app del despliegue (`META_APP_ID`) entre las suscritas `apps`? `None` si no se
+    sabe: sin un id de app válido nunca se supone ni lo uno ni lo otro (F7b-06g)."""
+    app = settings.META_APP_ID
+    if not isinstance(app, str) or not re.fullmatch(META_ID, app):
+        return None
+    return app in apps
 
 
 def profile(token: str, customer: str) -> dict[str, Any]:
