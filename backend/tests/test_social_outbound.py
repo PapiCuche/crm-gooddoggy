@@ -16,7 +16,8 @@ import urllib3
 from django.utils import timezone
 from urllib3.exceptions import ReadTimeoutError
 
-from apps.conversations import channels, commands, credentials, meta_page, policy, tasks
+from apps.conversations import channels, commands, credentials, meta_page, policy, tasks, whatsapp
+from apps.conversations import graph as graph_api
 from apps.conversations.models import ChannelAccount, Conversation
 from apps.conversations.policy import WindowClosed
 from core import http
@@ -228,6 +229,28 @@ def test_each_meta_error_ends_where_its_code_says(
     assert (found.status, found.status_detail) == (
         ("ERROR", expected) if demoted else ("CONNECTED", None)
     )
+
+
+@pytest.mark.parametrize("name", ["throttle_messenger", "throttle_pages", "throttle_instagram"])
+def test_a_messenger_reply_throttled_by_meta_goes_back_to_the_queue_and_never_fails(
+    world: SimpleNamespace, graph: FakePageGraph, name: str
+) -> None:
+    """F7b-06i: los límites de uso del negocio (`80001`, `80002`, `80006`) eran `PROVIDER_REJECTED`,
+    un fallo final: el mensaje se perdía por ir rápido. Ahora vuelve a la cola con espera."""
+    convo = talk(world, "MESSENGER")
+    graph.then(name)
+    message, _ = outbound(world, convo)
+    task = Retrying(0)
+    with pytest.raises(RuntimeError, match="retry"):
+        tasks.deliver(task, world.a, message.pk)
+    saved = state(world, message)
+    assert (saved.delivery_status, saved.provider_error_code, task.asked) == ("QUEUED", None, [30])
+    assert (account_of(world, convo).status, len(graph.sent)) == ("CONNECTED", 0)
+
+
+def test_every_code_an_outbound_adapter_retries_is_also_a_throttle_for_the_graph_reads() -> None:
+    assert {80001, 80002, 80006} <= set(meta_page.TOO_FAST)
+    assert set(meta_page.TOO_FAST) | set(whatsapp.TOO_FAST) <= set(graph_api.THROTTLED)
 
 
 @pytest.mark.parametrize("outcome", ["cut", "timeout", "cut_after", "timeout_after"])
