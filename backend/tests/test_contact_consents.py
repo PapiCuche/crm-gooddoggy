@@ -1,7 +1,9 @@
 """F7-08: `contact_consents`, su historial inmutable y los comandos que los escriben (ADR-010,
 02 §E.5), con PostgreSQL real y el rol `crm_app`; también `contacts.is_blocked`."""
 
+import datetime as dt
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -11,10 +13,10 @@ import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, IntegrityError, connection
 
-from apps.contacts import selectors
+from apps.contacts import consents, selectors
 from apps.contacts.commands import set_blocked
-from apps.contacts.consents import grant_consent, revoke_consent
-from apps.contacts.models import Contact, ContactConsent, ContactConsentEvent
+from apps.contacts.consents import grant_consent, keyword_stop, lift_keyword_stop, revoke_consent
+from apps.contacts.models import ConsentSource, Contact, ContactConsent, ContactConsentEvent
 from core.tenancy.scope import tenant_scope
 from tests.factories import make_user
 from tests.test_anti_escalation import audit
@@ -348,3 +350,149 @@ def test_the_migration_goes_back_and_forward_keeping_the_contacts(
     assert history(world) == []
     grant(world)  # y vuelve a funcionar
     assert history(world) == [("GRANTED", OPT_IN)]
+
+
+# ---- F7b-05f: la hora de Meta acotada; el origen que un alta no levanta; la espera en el contacto
+
+
+NOW = dt.datetime(2026, 11, 18, 12, 0, 0, 700_000, tzinfo=dt.UTC)  # nuestro reloj, con fracción
+SECOND, S = NOW.replace(microsecond=0), dt.timedelta(seconds=1)
+OTHERS = sorted(set(ConsentSource.values) - {STOP})  # cada origen que no es una palabra de baja
+WAITING_ON_A_CONTACT = (  # un backend con la fila de un contacto pedida, esperando a quien la tiene
+    "SELECT count(*) FROM pg_locks t JOIN pg_locks w ON w.pid = t.pid AND NOT w.granted"
+    " AND w.locktype = 'transactionid' WHERE t.locktype = 'tuple' AND t.granted"
+    " AND t.relation = 'contacts'::regclass"
+)
+
+
+def word(w: SimpleNamespace, said: str, at: dt.datetime | None) -> bool:
+    command = keyword_stop if said == "BAJA" else lift_keyword_stop
+    return bool(run(w.a, command, contact_id=w.mine, channel=WA, purpose=ALL, said_at=at))
+
+
+def stored(w: SimpleNamespace) -> tuple[str, str, dt.datetime | None]:
+    with tenant_scope(ctx(w.a)):
+        row = ContactConsent.objects.get()
+    return row.status, row.source, row.keyword_at
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> list[dt.datetime]:
+    """Nuestro reloj, el que lee `consents`, fijo en `NOW` hasta que el test lo mueva."""
+    now = [NOW]
+    monkeypatch.setattr(consents, "timezone", SimpleNamespace(now=lambda: now[0]))
+    return now
+
+
+@pytest.mark.parametrize(("ahead", "kept"), [(59, True), (60, True), (61, False)])
+@pytest.mark.parametrize("said", ["BAJA", "ALTA"])
+@pytest.mark.usefixtures("clock")
+def test_a_meta_time_ahead_of_our_clock_counts_only_up_to_the_allowance(
+    world: SimpleNamespace, said: str, ahead: int, kept: bool
+) -> None:
+    assert consents.KEYWORD_AHEAD == 60 * S
+    assert word(world, said, SECOND + ahead * S) is True
+    bound = SECOND + 60 * S if said == "BAJA" else SECOND  # la baja, el tope; el alta, «ahora»
+    assert stored(world)[2] == (SECOND + ahead * S if kept else bound)
+
+
+def test_a_far_future_word_never_blocks_the_other_word_past_the_allowance(
+    world: SimpleNamespace, clock: list[dt.datetime]
+) -> None:
+    year_2100 = dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
+    assert word(world, "BAJA", year_2100) is True
+    assert word(world, "ALTA", SECOND + 60 * S) is False  # el empate con el tope: la baja
+    clock[0] = NOW + 61 * S  # pasa el margen
+    assert word(world, "ALTA", SECOND + 61 * S) is True  # y el alta vale
+    assert word(world, "ALTA", year_2100) is False  # ya de alta: guarda «ahora», no 2100
+    assert stored(world)[2] == SECOND + 61 * S
+    assert word(world, "BAJA", SECOND + 61 * S) is True  # una baja de entonces nunca se pierde
+
+
+@pytest.mark.usefixtures("clock")
+def test_two_words_in_the_same_second_of_meta_tie_and_the_baja_wins(
+    world: SimpleNamespace,
+) -> None:
+    assert word(world, "BAJA", SECOND + 10 * S + dt.timedelta(milliseconds=100)) is True
+    assert word(world, "ALTA", SECOND + 10 * S + dt.timedelta(milliseconds=900)) is False
+    assert stored(world) == ("REVOKED", STOP, SECOND + 10 * S)
+
+
+@pytest.mark.parametrize("over_keyword", [False, True])
+@pytest.mark.parametrize("source", OTHERS)
+def test_an_alta_never_lifts_a_revocation_of_any_other_source(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any], source: str, over_keyword: bool
+) -> None:
+    at = SECOND.replace(year=2025)  # cualquier hora de Meta, ya pasada
+    if over_keyword:  # ya de baja por palabra: el otro origen igual se registra
+        assert word(world, "BAJA", at) is True
+    row, changed = revoke(world, source=source)
+    assert (changed, row.status, row.source, row.keyword_at) == (
+        True, "REVOKED", source, at if over_keyword else None,
+    )  # fmt: skip
+    assert word(world, "ALTA", at + 5 * S) is False  # más nueva, y aun así no la levanta
+    assert word(world, "BAJA", at + 6 * S) is False  # una palabra no rebaja el origen
+    assert stored(world) == ("REVOKED", source, at + 6 * S)
+    assert history(world) == [("REVOKED", source)] + [("REVOKED", STOP)] * over_keyword
+    done = [a[3] for a in audit(migrator) if a[0] == "consent.revoked"]
+    first = [{"status": [None, "REVOKED"]}]  # la primera baja: la de la palabra o la del origen
+    assert done == first + [{"status": ["REVOKED"] * 2, "source": [STOP, source]}] * over_keyword
+    outbox = "SELECT count(*) FROM outbox_events WHERE event_type = 'consent.revoked'"
+    assert migrator.execute(outbox).fetchone() == (1 + over_keyword,)
+
+
+def contended(migrator: psycopg.Connection[Any], org: UUID, first: Any, second: Any) -> list[Any]:
+    """`first` escribe y retiene su transacción; `second` tiene que esperar en la fila del contacto
+    (no en otro bloqueo antes) y sigue cuando `first` confirma."""
+    wrote, release, outcome = threading.Event(), threading.Event(), list[Any]([None, None])
+
+    def work(index: int, command: Any) -> None:
+        try:
+            with tenant_scope(ctx(org)) as tenant:
+                outcome[index] = command(tenant)
+                if index == 0:
+                    wrote.set()
+                    release.wait(timeout=10)
+        except Exception as error:  # noqa: BLE001 — lo comprueba el test
+            outcome[index] = type(error).__name__
+        finally:
+            wrote.set()
+            connection.close()
+
+    threads = [threading.Thread(target=work, args=pair) for pair in enumerate((first, second))]
+    threads[0].start()
+    assert wrote.wait(timeout=10)
+    threads[1].start()
+    try:
+        assert on_a_contact(migrator), "el segundo no esperó en la fila del contacto"
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(timeout=10)
+    return outcome
+
+
+def on_a_contact(migrator: psycopg.Connection[Any]) -> bool:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:  # se observa la espera, no se supone
+        if migrator.execute(WAITING_ON_A_CONTACT).fetchone() != (0,):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_an_alta_racing_an_agent_revocation_waits_on_the_contact_and_lifts_nothing(
+    world: SimpleNamespace, migrator: psycopg.Connection[Any]
+) -> None:
+    at = SECOND.replace(year=2025)
+    word(world, "BAJA", at)
+    where = {"contact_id": world.mine, "channel": WA, "purpose": ALL}
+
+    def agent(tenant: Any) -> bool:
+        return revoke_consent(tenant, **where, source="AGENT_RECORDED")[1]
+
+    def alta(tenant: Any) -> bool:
+        return lift_keyword_stop(tenant, **where, said_at=at + 5 * S)
+
+    assert contended(migrator, world.a, agent, alta) == [True, False]
+    assert stored(world) == ("REVOKED", "AGENT_RECORDED", at + 5 * S)

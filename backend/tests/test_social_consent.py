@@ -340,6 +340,26 @@ def test_a_baja_delivered_after_a_later_alta_does_not_revert_it(
     assert len(found.replies) == 2  # la baja vieja no confirma nada
 
 
+@pytest.mark.parametrize(
+    ("first", "second", "ms", "status"),
+    [("BAJA", "ALTA", (10_000, 0), "REVOKED"), ("BAJA", "ALTA", (100, 900), "REVOKED"),
+     ("ALTA", "BAJA", (10_000, 0), "GRANTED")],
+)  # fmt: skip
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_with_our_clock_behind_meta_each_word_keeps_its_meta_time(
+    world: SimpleNamespace, platform: str, first: str, second: str, ms: tuple[int, int],
+    status: str,
+) -> None:  # fmt: skip
+    """F7b-05f: Meta va 30 s por delante y `first` llega antes. Una palabra 10 s más vieja no
+    revierte la nueva; dos del mismo segundo (unos milisegundos aparte) empatan: gana la baja."""
+    talk(world, platform)
+    base = (int(timezone.now().timestamp()) + 30) * 1000
+    for said, at, mid in ((first, ms[0], "m_SIMIN000001"), (second, ms[1], "m_SIMIN000002")):
+        say(platform, social.text(SIM[platform], said, mid=mid, at=base + at))
+    source = "KEYWORD_STOP" if status == "REVOKED" else "CUSTOMER_MESSAGE"
+    assert seen(world).consents == [(platform, "ALL_PROACTIVE", status, source)]
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_a_reply_reads_the_consent_only_when_it_would_go_out_with_the_tag(
     world: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, platform: str

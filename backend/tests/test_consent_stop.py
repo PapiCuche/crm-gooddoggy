@@ -8,7 +8,6 @@ import datetime as dt
 import itertools
 import logging
 import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -28,6 +27,7 @@ from apps.conversations.models import Conversation, Message
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
+from tests.test_contact_consents import on_a_contact
 from tests.test_conversation_commands import outbound
 from tests.test_conversations_dispatch import Counting, dispatch
 from tests.test_inbound_whatsapp import broker, channel, contact, crm, fresh_wake, live, real_stack
@@ -435,7 +435,8 @@ def ago(seconds: int) -> int:
 def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> list[str]:
     """Dos workers (`--concurrency 2`) reclaman cada uno su ítem antes de que ninguno lo procese.
     El del ítem cuyo payload lleva `first` escribe su palabra y retiene la transacción hasta que el
-    otro espera un bloqueo de PostgreSQL; entonces confirma y el otro sigue (F7b-05e)."""
+    otro espera la fila del contacto; entonces confirma y el otro sigue (F7b-05e). F7b-05f: solo en
+    esta prueba se quita el bloqueo de aviso por cliente, que de otro modo lo frenaría antes."""
     claimed = threading.Barrier(2, timeout=10)
     wrote, go, release = threading.Event(), threading.Event(), threading.Event()
     leader: list[threading.Thread] = []
@@ -454,6 +455,7 @@ def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> l
 
     for name in real:
         monkeypatch.setattr(inbound, name, holding(name))
+    monkeypatch.setattr(inbound, "_lock", lambda alias, key: None)  # solo aquí: ver el docstring
 
     def worker() -> None:
         try:
@@ -475,15 +477,14 @@ def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> l
         thread.start()
     assert wrote.wait(timeout=10)
     go.set()
-    deadline, waited = time.monotonic() + 10, False
-    while not waited and time.monotonic() < deadline:  # se observa la espera, no se supone
-        waited = migrator.execute("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()[0]
-        release.wait(timeout=0.02)
-    release.set()
-    for thread in threads:
-        thread.join(timeout=10)
+    try:
+        waited = on_a_contact(migrator)  # se observa la espera en la fila del contacto
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(timeout=10)
     assert not any(t.is_alive() for t in threads) and len(leader) == 1, outcome
-    assert waited, "el segundo lote no esperó al primero"
+    assert waited, "el segundo lote no esperó al primero en la fila del contacto"
     return outcome
 
 
@@ -516,6 +517,36 @@ def test_two_batches_at_once_follow_the_time_the_customer_wrote_them(
     with tenant_scope(ctx(crm.a)):
         revoked = is_revoked(found.convo.contact_id, "WHATSAPP", "FOLLOW_UP")
     assert revoked is (final(newer, gap)[0] == "REVOKED")
+
+
+@pytest.mark.parametrize("skew", [30, -30])  # nuestro reloj detrás del de Meta, o delante
+@pytest.mark.parametrize(("newer", "gap"), [("BAJA", 10), ("ALTA", 10), ("BAJA", 0)])
+def test_with_our_clock_off_meta_the_newest_word_by_meta_still_wins(
+    crm: SimpleNamespace, newer: str, gap: int, skew: int
+) -> None:
+    """F7b-05f: la más nueva se procesa antes; la vieja, después, con nuestro reloj más adelante."""
+    live(crm.a)
+    say("wamid.0", "Hola", ago=dt.timedelta(seconds=60))
+    older, base = ("BAJA" if newer == "ALTA" else "ALTA"), ago(-skew)  # la hora de la más nueva
+    for said, wamid, at in ((newer, "wamid.new", base), (older, "wamid.old", base - gap)):
+        deliver(webhooks.text_message(said, wamid=wamid, at=at))
+        assert ingress.process() == {"PROCESSED": 1}
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", *final(newer, gap))]
+
+
+def test_a_meta_time_ahead_of_our_clock_orders_the_words_but_never_moves_the_window(
+    crm: SimpleNamespace,
+) -> None:
+    live(crm.a)
+    at = ago(-30)  # Meta va 30 s por delante
+    deliver(webhooks.text_message("BAJA", wamid="wamid.1", at=at))
+    ingress.process()
+    found, now = seen(crm.a), timezone.now()
+    with tenant_scope(ctx(crm.a)):
+        row = ContactConsent.objects.get()
+    assert row.keyword_at == dt.datetime.fromtimestamp(at, dt.UTC)  # la de Meta, sin acotar
+    assert found.convo.last_inbound_at <= now  # la ventana de 24 h, acotada a «ahora» como antes
+    assert found.inbound[0].provider_timestamp <= now
 
 
 @pytest.mark.parametrize("newer", ["ALTA", "BAJA"])
