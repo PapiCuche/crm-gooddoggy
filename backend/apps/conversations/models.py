@@ -428,6 +428,9 @@ class Conversation(TenantModel):
     )
     resolved_at = models.DateTimeField(null=True, blank=True)
     closed_at = models.DateTimeField(null=True, blank=True)
+    # Instagram o Messenger (ADR-035 §4): desde cuándo otra app controla el hilo (`standby`). La
+    # fija un entrante en `standby` y la limpia uno normal, el más reciente según el canal.
+    standby_since = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     version = models.PositiveIntegerField(default=1)
@@ -459,6 +462,11 @@ class Conversation(TenantModel):
                 condition=models.Q(last_message_direction="INBOUND")
                 & ~models.Q(status__in=["RESOLVED", "CLOSED"]),
                 name="conversations_unanswered_idx",
+            ),
+            models.Index(  # las cuentas con hilos en `standby` (F7b-06b): CONCURRENTLY en la 0048
+                fields=["organization_id", "channel_account"],
+                condition=models.Q(standby_since__isnull=False) & ~models.Q(status="CLOSED"),
+                name="conversations_standby_idx",
             ),
         ]
         constraints = [

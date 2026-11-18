@@ -1,8 +1,10 @@
+import ast
 import base64
 import importlib
 import secrets
 import sys
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -36,6 +38,7 @@ BASE_ENV: dict[str, str | None] = {
     "META_APP_SECRETS": None,
     "META_WEBHOOK_VERIFY_TOKEN": None,
     "MFA_ENFORCEMENT": None,
+    "META_GRAPH_SIMULATOR_URL": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
@@ -53,7 +56,7 @@ def forget_loaded_settings() -> Iterator[None]:
     """Cada carga deja `base` en `sys.modules` con las variables de su caso (el canal de Meta
     encendido, por ejemplo): quien importe `local` o `test` después heredaría ese estado."""
     yield
-    for name in ("production", "local", "migrate", "base"):
+    for name in ("production", "local", "migrate", "test", "base"):
         sys.modules.pop(f"config.settings.{name}", None)
 
 
@@ -511,3 +514,128 @@ def test_the_whatsapp_channel_on_needs_a_send_limit_and_a_broker_for_it(
 
     with pytest.raises(ImproperlyConfigured, match="CHANNEL_SEND_LIMIT"):
         env.check_meta([META_SECRET], META_VERIFY, "v23.0", (5, 600), send, broker)
+
+
+SIMULATOR = "http://meta-sim:8090"
+MIGRATE_ENV: dict[str, str | None] = {
+    "DATABASE_URL": None, "DATABASE_MIGRATOR_URL": "postgres://crm_migrator:x@db:5432/crm",
+    "DJANGO_SECRET_KEY": None,
+}  # fmt: skip
+
+
+def load_test(monkeypatch: pytest.MonkeyPatch, **env: str | None) -> Any:
+    for key, value in env.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    for name in ("config.settings.test", "config.settings.base"):
+        sys.modules.pop(name, None)
+    return importlib.import_module("config.settings.test")
+
+
+@pytest.mark.parametrize("value", [SIMULATOR, ""])
+@pytest.mark.parametrize(
+    "loader",
+    [load_production, lambda m, **e: load_migrate(m, **MIGRATE_ENV, **e), load_test],
+    ids=["production", "migrate", "test"],
+)
+def test_only_the_local_settings_start_with_the_graph_simulator(
+    monkeypatch: pytest.MonkeyPatch, loader: Callable[..., Any], value: str
+) -> None:
+    """ADR-041: production, el job de migraciones y las pruebas no arrancan con la variable puesta,
+    aunque venga vacía; sin ella, su valor es vacío (`core.http` no la usa)."""
+    with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL") as raised:
+        loader(monkeypatch, META_GRAPH_SIMULATOR_URL=value)
+    assert SIMULATOR not in str(raised.value)
+    assert loader(monkeypatch, META_GRAPH_SIMULATOR_URL=None).META_GRAPH_SIMULATOR_URL == ""
+    assert load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value).META_GRAPH_SIMULATOR_URL == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://meta-sim:8090", "http://meta-sim", "http://meta-sim:8090/", "http://meta-sim:0",
+        "http://meta-sim:8090/v23.0", "http://user:pw@meta-sim:8090", "http://META-SIM:8090",
+        "http://meta-sim:8090?x=1", "http://meta-sim:99999", "ftp://meta-sim:8090",
+        "http://user@meta-sim:8090", "http://meta-sim:8090#x",
+    ],
+)  # fmt: skip
+def test_the_local_settings_refuse_a_simulator_that_is_not_a_bare_http_origin(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match="META_GRAPH_SIMULATOR_URL"):
+        load_local(monkeypatch, META_GRAPH_SIMULATOR_URL=value)
+
+
+def _imports_local(path: Path, root: Path) -> bool:
+    """¿El módulo importa `config.settings.local`? Con `ast`: `import`, `from … import` (también
+    relativo y entre paréntesis) e `import_module`/`__import__` con el nombre literal."""
+    package = ".".join(path.relative_to(root).with_suffix("").parts[:-1])
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            parts = package.split(".")
+            base = ".".join(parts[: len(parts) - node.level + 1]) if node.level else ""
+            module = ".".join(p for p in (base, node.module or "") if p)
+            names = [module, *(f"{module}.{alias.name}" for alias in node.names)]
+        elif isinstance(node, ast.Call) and _called(node) in ("import_module", "__import__"):
+            names = [str(a.value) for a in node.args[:1] if isinstance(a, ast.Constant)]
+        else:
+            continue
+        if any(n == LOCAL or n.startswith(f"{LOCAL}.") for n in names):
+            return True
+    return False
+
+
+LOCAL = "config.settings.local"
+
+
+def _called(node: ast.Call) -> str:
+    return str(getattr(node.func, "attr", None) or getattr(node.func, "id", ""))
+
+
+@pytest.mark.parametrize(
+    ("where", "code"),
+    [
+        ("config/settings/x.py", "from .local import *"),
+        ("config/settings/x.py", "from . import local"),
+        ("config/x.py", "from .settings import local"),
+        ("apps/x/y.py", "from config.settings import (\n    base,\n    local,\n)"),
+        ("core/x.py", "import config.settings.local as s"),
+        ("core/x.py", "importlib.import_module('config.settings.local')"),
+        ("core/x.py", "__import__('config.settings.local')"),
+    ],
+)
+def test_the_import_check_sees_every_form(tmp_path: Path, where: str, code: str) -> None:
+    path = tmp_path / where
+    path.parent.mkdir(parents=True)
+    path.write_text(code + "\n")
+    assert _imports_local(path, tmp_path)
+    path.write_text(code.replace("local", "base") + "\n")
+    assert not _imports_local(path, tmp_path)
+
+
+def test_only_the_local_settings_read_the_simulator_and_nothing_imports_them() -> None:
+    """ADR-041: en `config/settings/` solo `base` (vacío, sin leer el entorno) y `local` nombran
+    la variable; `env.simulator` solo en `local`; el código de la aplicación nunca importa
+    `config.settings.local` (solo por su nombre, en `DJANGO_SETTINGS_MODULE`)."""
+    root = Path(__file__).resolve().parents[1]
+    base_lines = [
+        line.strip() for line in (root / "config/settings/base.py").read_text().splitlines()
+        if "META_GRAPH_SIMULATOR_URL" in line and not line.strip().startswith("#")
+    ]  # fmt: skip
+    assert base_lines == ['META_GRAPH_SIMULATOR_URL = ""']
+    named = sorted(
+        path.name for path in (root / "config/settings").glob("*.py")
+        if "META_GRAPH_SIMULATOR_URL" in path.read_text()
+    )  # fmt: skip
+    assert named == ["base.py", "local.py"]
+    sources = [
+        path for folder in ("config", "core", "apps") for path in (root / folder).rglob("*.py")
+    ]
+    assert [str(p.relative_to(root)) for p in sources if "env.simulator(" in p.read_text()] == [
+        "config/settings/local.py"
+    ]
+    assert [str(p.relative_to(root)) for p in sources if _imports_local(p, root)] == []
