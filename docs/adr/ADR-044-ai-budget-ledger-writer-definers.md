@@ -1,6 +1,6 @@
 # ADR-044: Excepción acotada a ADR-002 §3.3 para las dos funciones que escriben el registro de gasto de IA
 
-- **Status:** Accepted (2026-11-18, decisión del propietario registrada en la sesión del orquestador, a raíz de la revisión independiente de [#944](https://github.com/PapiCuche/crm-gooddoggy/pull/944))
+- **Status:** Accepted (2026-11-18, decisión del propietario, [registrada en #932](https://github.com/PapiCuche/crm-gooddoggy/issues/932#issuecomment-6979061252), a raíz de la revisión independiente de [#944](https://github.com/PapiCuche/crm-gooddoggy/pull/944))
 - **Date:** 2026-11-18
 - **Deciders:** propietario del producto; redactado por el programa autónomo (ADR-015).
 - **Work items:** F8-05b1 ([#942](https://github.com/PapiCuche/crm-gooddoggy/issues/942)), parte de F8-05b ([#932](https://github.com/PapiCuche/crm-gooddoggy/issues/932))
