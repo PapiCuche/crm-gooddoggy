@@ -371,6 +371,11 @@ def word(w: SimpleNamespace, said: str, at: dt.datetime | None) -> bool:
     return bool(run(w.a, command, contact_id=w.mine, channel=WA, purpose=ALL, said_at=at))
 
 
+def past() -> dt.datetime:
+    """Una hora de Meta de hace una hora, por el reloj real (más vieja que 48 h no se cree)."""
+    return dt.datetime.now(dt.UTC).replace(microsecond=0) - dt.timedelta(hours=1)
+
+
 def stored(w: SimpleNamespace) -> tuple[str, str, dt.datetime | None]:
     with tenant_scope(ctx(w.a)):
         row = ContactConsent.objects.get()
@@ -472,12 +477,79 @@ def test_with_our_clock_behind_meta_an_older_alta_never_lifts_an_untimed_baja(
 def test_a_baja_without_a_time_keeps_a_later_stored_time(
     world: SimpleNamespace, clock: list[dt.datetime]
 ) -> None:
-    """Tras una baja con hora futura y una concesión del agente, una baja sin hora toma esa hora
-    (la mayor) y revoca: en el empate, la baja."""
-    assert word(world, "BAJA", SECOND + 3600 * S) is True
-    grant(world, source="AGENT_RECORDED")
+    """Un alta al borde del margen y nuestro reloj que luego retrocede 30 s (NTP): una baja sin hora
+    toma la hora guardada (la mayor) y revoca: en el empate, la baja."""
+    assert word(world, "ALTA", SECOND + 60 * S) is True
+    clock[0] = NOW - 30 * S
     assert word(world, "BAJA", None) is True
-    assert stored(world) == ("REVOKED", STOP, SECOND + 3600 * S)
+    assert stored(world) == ("REVOKED", STOP, SECOND + 60 * S)
+
+
+# ---- F7b-05g: un cambio manual y una hora imposible por lo vieja no pierden la baja
+
+
+@pytest.mark.parametrize("off", [0, 30, -30, 600, -600])  # nuestro reloj respecto al de Meta
+@pytest.mark.parametrize("later", ["now", "older", "untimed"])
+def test_a_manual_grant_clears_the_keyword_time_so_a_later_real_baja_always_revokes(
+    world: SimpleNamespace, clock: list[dt.datetime], later: str, off: int
+) -> None:
+    """BAJA con hora futura → concesión del agente → BAJA real (de ahora por Meta, una más vieja
+    entregada después, o sin hora): siempre `REVOKED`, con nuestro reloj desfasado o no."""
+    assert word(world, "BAJA", SECOND + 3600 * S) is True
+    clock[0] = NOW + off * S
+    row, changed = grant(world, source="AGENT_RECORDED")
+    assert (changed, row.status, row.keyword_at) == (True, "GRANTED", None)
+    said = {"now": SECOND, "older": SECOND - 600 * S, "untimed": None}[later]
+    clock[0] = NOW + (off + 5) * S
+    assert word(world, "BAJA", said) is True
+    assert stored(world) == ("REVOKED", STOP, said or SECOND + (off + 65) * S)
+    assert word(world, "ALTA", SECOND - 700 * S) is False  # más vieja que esa baja: no la levanta
+    assert stored(world)[0] == "REVOKED"
+
+
+def test_a_manual_grant_that_changes_nothing_keeps_the_time_of_the_last_alta(
+    world: SimpleNamespace, clock: list[dt.datetime]
+) -> None:
+    """Ya concedido por un alta: la concesión no escribe nada; una baja más vieja que esa alta no
+    revoca (la última palabra fue el alta) y una más nueva sí."""
+    assert word(world, "ALTA", SECOND) is True
+    row, changed = grant(world, source="AGENT_RECORDED")
+    assert (changed, row.keyword_at) == (False, SECOND)
+    assert word(world, "BAJA", SECOND - 5 * S) is False
+    assert word(world, "BAJA", SECOND + S) is True
+
+
+@pytest.mark.parametrize(
+    ("age", "stale"),
+    [(48 * 3600 - 1, False), (48 * 3600, False), (48 * 3600 + 1, True), (None, True)],
+)  # `None`: una hora de 2001, válida para `inbound.instant` pero imposible por lo vieja
+@pytest.mark.usefixtures("clock")
+def test_a_baja_older_than_meta_retries_counts_as_untimed_and_beats_a_newer_alta(
+    world: SimpleNamespace, age: int | None, stale: bool
+) -> None:
+    """La edad se mide con nuestro reloj, leído con el contacto bloqueado (la prueba de arriba)."""
+    assert consents.KEYWORD_STALE == 48 * 3600 * S
+    assert word(world, "ALTA", SECOND) is True
+    said = dt.datetime(2001, 9, 9, 1, 46, 40, tzinfo=dt.UTC) if age is None else SECOND - age * S
+    assert word(world, "BAJA", said) is stale
+    assert stored(world) == (
+        ("REVOKED", STOP, SECOND + 60 * S) if stale else ("GRANTED", "CUSTOMER_MESSAGE", SECOND)
+    )
+
+
+@pytest.mark.parametrize(("age", "counts"), [(48 * 3600, True), (48 * 3600 + 1, False)])
+@pytest.mark.usefixtures("clock")
+def test_an_alta_older_than_meta_retries_counts_for_nothing(
+    world: SimpleNamespace, age: int, counts: bool
+) -> None:
+    """Como un alta sin hora (decisión del propietario en #937): ni concede ni guarda una hora, y no
+    levanta la baja de una hora de 2001 (que cuenta como sin hora: nuestra hora más el margen)."""
+    assert word(world, "ALTA", SECOND - age * S) is counts
+    with tenant_scope(ctx(world.a)):
+        assert ContactConsent.objects.exists() is counts
+    assert word(world, "BAJA", dt.datetime(2001, 9, 9, tzinfo=dt.UTC)) is True
+    assert word(world, "ALTA", SECOND - age * S) is False
+    assert stored(world) == ("REVOKED", STOP, SECOND + 60 * S)
 
 
 def test_an_alta_without_a_time_writes_nothing(world: SimpleNamespace) -> None:
@@ -524,7 +596,7 @@ def test_two_words_in_the_same_second_of_meta_tie_and_the_baja_wins(
 def test_an_alta_never_lifts_a_revocation_of_any_other_source(
     world: SimpleNamespace, migrator: psycopg.Connection[Any], source: str, over_keyword: bool
 ) -> None:
-    at = SECOND.replace(year=2025)  # cualquier hora de Meta, ya pasada
+    at = past()  # cualquier hora de Meta, ya pasada
     if over_keyword:  # ya de baja por palabra: el otro origen igual se registra
         assert word(world, "BAJA", at) is True
     row, changed = revoke(world, source=source)
@@ -585,7 +657,7 @@ def on_a_contact(migrator: psycopg.Connection[Any]) -> bool:
 def test_an_alta_racing_an_agent_revocation_waits_on_the_contact_and_lifts_nothing(
     world: SimpleNamespace, migrator: psycopg.Connection[Any]
 ) -> None:
-    at = SECOND.replace(year=2025)
+    at = past()
     word(world, "BAJA", at)
     where = {"contact_id": world.mine, "channel": WA, "purpose": ALL}
 
@@ -615,15 +687,60 @@ def scenario(rng: random.Random, skews: float, delays: float, untimed: float) ->
     return {"skew": skew, "words": words, "start": rng.choice(STARTS), "k0": rng.randint(0, 30)}
 
 
+def latest(said: list[tuple[int, str]]) -> str:
+    """#937: la palabra más reciente por la hora de Meta (segundos enteros); empatadas, la baja."""
+    top = max(at for at, _ in said)
+    return "REVOKED" if ("BAJA" in {k for at, k in said if at == top}) else "GRANTED"
+
+
 def owner_rule(case: dict[str, Any]) -> str:
-    """#937: la palabra más reciente por la hora de Meta (segundos enteros); en un empate, la baja.
-    Una baja de otro origen no la levanta ninguna palabra."""
+    """La regla del propietario. Una baja de otro origen no la levanta ninguna palabra."""
     if case["start"] in OTHERS:
         return "REVOKED"
     said = [(int(at), kind) for kind, at, _, _ in case["words"]]
-    said += [(case["k0"], "BAJA")] if case["start"] == "keyword" else []
-    top = max(at for at, _ in said)
-    return "REVOKED" if ("BAJA" in {k for at, k in said if at == top}) else "GRANTED"
+    return latest(said + ([(case["k0"], "BAJA")] if case["start"] == "keyword" else []))
+
+
+def with_manual(rng: random.Random, case: dict[str, Any]) -> dict[str, Any]:
+    """F7b-05g: una o dos concesiones o revocaciones del agente, procesadas en un instante al azar
+    entre las palabras (por nuestro reloj)."""
+    servers = [at - case["skew"] + delay for _, at, delay, _ in case["words"]]
+    low, high = min(servers) - 1, max(servers) + 1
+    picks = [(rng.choice(["GRANT", "GRANT", "REVOKE"]), rng.uniform(low, high)) for _ in range(2)]
+    return case | {"manual": picks[: rng.randint(1, 2)]}
+
+
+def order(case: dict[str, Any]) -> list[tuple[dt.datetime, dt.datetime, str, bool]]:
+    """Lo que se procesa, por nuestro reloj: (servidor, hora de Meta, palabra o cambio manual, si
+    trae hora). Un cambio manual no tiene hora de Meta: lleva la del servidor, que no se usa."""
+    skew = dt.timedelta(seconds=case["skew"])
+    plays = sorted(
+        [(SECOND + dt.timedelta(seconds=at) - skew + dt.timedelta(seconds=delay),
+          SECOND + dt.timedelta(seconds=at), kind, timed)
+         for kind, at, delay, timed in case["words"]]
+        + [(SECOND + dt.timedelta(seconds=off),) * 2 + (kind, True)
+           for kind, off in case.get("manual", [])]
+    )  # fmt: skip
+    if case["start"] == "keyword":  # una baja anterior, procesada antes que todas
+        k0 = SECOND + case["k0"] * S
+        plays.insert(0, (min(plays[0][0], k0 - skew), k0, "BAJA", True))
+    return plays
+
+
+def manual_rule(case: dict[str, Any]) -> set[str]:
+    """Lo que puede quedar tras el último cambio manual: tras una revocación, `REVOKED`; tras una
+    concesión, la regla sobre las palabras procesadas después (la concesión borró la hora; sin
+    palabras, `GRANTED`), o sobre todas si la concesión no cambió nada (ya estaba concedido)."""
+    plays = order(case)
+    last = max(i for i, play in enumerate(plays) if play[2] in ("GRANT", "REVOKE"))
+    if plays[last][2] == "REVOKE":
+        return {"REVOKED"}
+    said = [
+        (i, int((at - SECOND).total_seconds()), kind)
+        for i, (_, at, kind, _) in enumerate(plays) if kind in ("BAJA", "ALTA")
+    ]  # fmt: skip
+    after, words = [(at, k) for i, at, k in said if i > last], [(at, k) for _, at, k in said]
+    return {latest(after) if after else "GRANTED", latest(words) if words else "GRANTED"}
 
 
 def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str, bool]:
@@ -633,16 +750,8 @@ def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str
     with tenant_scope(ctx(org)):
         where = {"contact_id": Contact.objects.create(display_name="Caso").pk}
     where |= {"channel": WA, "purpose": ALL}
-    skew = dt.timedelta(seconds=case["skew"])
-    plays = sorted(
-        (SECOND + dt.timedelta(seconds=at) - skew + dt.timedelta(seconds=delay),
-         SECOND + dt.timedelta(seconds=at), kind, timed)
-        for kind, at, delay, timed in case["words"]
-    )  # fmt: skip
-    if case["start"] == "keyword":  # una baja anterior, procesada antes que todas
-        k0 = SECOND + case["k0"] * S
-        plays.insert(0, (min(plays[0][0], k0 - skew), k0, "BAJA", True))
-    elif case["start"] != "none":
+    plays = order(case)
+    if case["start"] not in ("none", "keyword"):
         clock[0] = plays[0][0] - 120 * S
         with tenant_scope(ctx(org)) as tenant:
             write = grant_consent if case["start"] == "agent_grant" else revoke_consent
@@ -654,6 +763,10 @@ def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str
     within = True
     for server, at, kind, timed in plays:
         clock[0] = server
+        if kind in ("GRANT", "REVOKE"):  # F7b-05g: el agente, con un origen que no es una palabra
+            manual = grant_consent if kind == "GRANT" else revoke_consent
+            run(org, manual, **where, source="AGENT_RECORDED")
+            continue
         within &= (
             at.replace(microsecond=0) - server.replace(microsecond=0) <= consents.KEYWORD_AHEAD
         )
@@ -688,4 +801,30 @@ def test_any_skew_delay_and_order_keeps_the_owner_rule_or_stays_on_the_opt_out(
         unsafe = want == "REVOKED" and got == "GRANTED" and (within or not untimed_baja)
         if exact or unsafe:
             wrong.append((case, want, got))
+    assert not wrong, wrong[:3]
+
+
+@pytest.mark.parametrize(
+    ("seed", "skews", "delays", "untimed"),
+    [(11, 0.99, 30, 0.2), (12, 60, 200, 0.2), (13, 600, 200, 0.2), (14, 3600, 3600, 0.3),
+     (15, 30, 60, 0.0), (16, 600, 600, 0.0)],
+)  # fmt: skip
+def test_manual_changes_among_the_words_never_lose_a_later_opt_out(
+    world: SimpleNamespace, clock: list[dt.datetime], seed: int, skews: float, delays: float,
+    untimed: float,
+) -> None:  # fmt: skip
+    """F7b-05g: los mismos casos con concesiones y revocaciones del agente entre las palabras. Tras
+    una revocación manual, siempre `REVOKED`; tras una concesión, nunca `GRANTED` si la palabra más
+    reciente de Meta entre las procesadas después (y entre todas) fue una baja, con la misma
+    excepción de la baja sin hora. Dentro del margen y con todas las horas, la regla exacta."""
+    rng, wrong = random.Random(seed), []  # noqa: S311 — casos de prueba, no secretos
+    for _ in range(60):
+        case = with_manual(rng, scenario(rng, skews, delays, untimed))
+        allowed, (got, within) = manual_rule(case), play(world.a, case, clock)
+        timed = all(word[3] for word in case["words"])
+        untimed_baja = any(not t and k == "BAJA" for k, _, _, t in case["words"])
+        exact = within and timed and got not in allowed
+        unsafe = allowed == {"REVOKED"} and got == "GRANTED" and (within or not untimed_baja)
+        if exact or unsafe:
+            wrong.append((case, allowed, got))
     assert not wrong, wrong[:3]

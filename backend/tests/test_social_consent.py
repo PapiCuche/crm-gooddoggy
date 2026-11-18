@@ -8,6 +8,7 @@ entregada tarde no revierte otra posterior. PostgreSQL real con `crm_app`; el si
 webhooks y hace de Graph API."""
 
 import datetime as dt
+import logging
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -18,8 +19,9 @@ from django.utils import timezone
 from apps.contacts import keywords
 from apps.contacts.consents import revoke_consent
 from apps.contacts.models import ContactConsent
-from apps.conversations import inbound, ingress, meta_webhook, policy, tasks
+from apps.conversations import inbound, ingest_alerts, ingress, meta_webhook, policy, tasks
 from apps.conversations.models import Conversation, Message
+from core.observability import reporting
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import social
 from tests.meta_sim.page_graph import FakePageGraph
@@ -29,6 +31,7 @@ from tests.test_conversation_commands import outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_memberships import ctx
 from tests.test_messaging_policy import HOUR, NOW, decide
+from tests.test_meta_alerts import Spy, skewed
 from tests.test_meta_webhook import channel, post
 from tests.test_social_outbound import CHANNELS, graph, talk
 from tests.test_whatsapp_outbound import redis
@@ -413,3 +416,25 @@ def test_a_reply_reads_the_consent_only_when_it_would_go_out_with_the_tag(
     with pytest.raises(policy.WindowClosed):
         outbound(world, convo)
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_social_messages_ahead_of_our_clock_raise_the_skew_alert_with_figures_only(
+    world: SimpleNamespace, platform: str, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    """F7b-05g: el reloj del worker 45 s detrás del real; cinco mensajes nuevos avisan una vez."""
+    talk(world, platform)
+    skewed(monkeypatch, 45)
+    spy = Spy()
+    monkeypatch.setattr(reporting, "reporter", lambda: spy)
+    caplog.set_level(logging.DEBUG)
+    for n in range(ingest_alerts.SKEW_SAMPLES):
+        assert spy.messages == []
+        say(platform, event(platform, "Hola", f"m_SKEW{n:08d}", dt.timedelta(seconds=1)))
+    [(found, context, _)] = spy.messages
+    assert found == ingest_alerts.SKEW_EVENT and 40 <= context.pop("ahead_seconds") <= 45
+    assert context == {"samples": 5, "threshold": 30}
+    customer = SIM[platform].customer
+    for secret in (customer, "Hola", "m_SKEW"):
+        assert secret not in caplog.text, secret

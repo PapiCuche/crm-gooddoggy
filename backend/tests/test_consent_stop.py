@@ -22,8 +22,10 @@ from apps.contacts import consents, keywords
 from apps.contacts.consents import grant_consent, revoke_consent
 from apps.contacts.models import ConsentKeyword, ContactConsent, ContactConsentEvent
 from apps.contacts.selectors import is_revoked
-from apps.conversations import commands, inbound, ingress, policy, selectors
+from apps.conversations import commands, inbound, ingest_alerts, ingress, policy, selectors
 from apps.conversations.models import Conversation, Message
+from core.observability import reporting
+from core.tenancy.context import ActorType, TenantContext
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
@@ -34,6 +36,7 @@ from tests.test_inbound_whatsapp import broker, channel, contact, crm, fresh_wak
 from tests.test_inventory_stock import race
 from tests.test_memberships import ctx
 from tests.test_messaging_policy import HOUR, NOW, decide
+from tests.test_meta_alerts import Spy, skewed
 from tests.test_pipelines_tables import as_migrator
 from tests.test_webhook_ingress import deliver
 
@@ -309,8 +312,9 @@ def test_an_alta_never_lifts_a_revocation_that_was_not_a_keyword(
             tenant, contact_id=convo.contact_id, channel="WHATSAPP", purpose="ALL_PROACTIVE",
             source="AGENT_RECORDED",
         )  # fmt: skip
-    say("wamid.0", "BAJA", ago=dt.timedelta(seconds=60))  # más vieja que el ALTA: no revoca
-    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "AGENT_RECORDED")]
+    say("wamid.0", "BAJA", ago=dt.timedelta(seconds=60))  # más vieja que el ALTA, pero la
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    # concesión manual borró la hora (F7b-05g): una baja entregada después siempre revoca
 
 
 @pytest.mark.parametrize(
@@ -741,3 +745,32 @@ def test_the_migrations_go_back_and_forward(migrator: Any) -> None:
     assert migrator.execute(table).fetchone() == (True,)
     update = "SELECT has_table_privilege('crm_app', 'consent_keywords', 'UPDATE')"
     assert migrator.execute(update).fetchone() == (False,)
+
+
+def test_whatsapp_messages_ahead_of_our_clock_raise_the_skew_alert_with_figures_only(
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F7b-05g: el reloj del worker 60 s detrás del real. El mismo mensaje recibido otra vez no es
+    una muestra nueva; cinco mensajes nuevos de hace 1 s avisan una vez, solo con cifras."""
+    account = live(crm.a)
+    skewed(monkeypatch, 60)
+    spy = Spy()
+    monkeypatch.setattr(reporting, "reporter", lambda: spy)
+    caplog.set_level(logging.DEBUG)
+    context = TenantContext(crm.a, "webhook", actor_type=ActorType.INTEGRATION)
+    at = int(timezone.now().timestamp()) - 1
+
+    def receive(wamid: str) -> None:
+        with tenant_scope(context):
+            inbound.receive(context, account, webhooks.text_message("Hola", wamid=wamid, at=at))
+
+    for _ in range(ingest_alerts.SKEW_SAMPLES):
+        receive("wamid.0")
+    for n in range(1, ingest_alerts.SKEW_SAMPLES):
+        assert spy.messages == []
+        receive(f"wamid.{n}")
+    [(event, context_, _)] = spy.messages
+    assert event == ingest_alerts.SKEW_EVENT and 55 <= context_.pop("ahead_seconds") <= 60
+    assert context_ == {"samples": 5, "threshold": 30}
+    for secret in (CUSTOMER, "+" + CUSTOMER, "Cliente de prueba", "Hola", "wamid."):
+        assert secret not in caplog.text, secret
