@@ -1,5 +1,5 @@
 """La Graph API falsa de una página de Facebook: Messenger e Instagram con Facebook Login (ADR-035
-§2, §3, §6 y §9). Sirve `GET /<PAGE_ID>`, `GET` y `POST /<PAGE_ID>/subscribed_apps` y
+§2, §3, §6 y §9). Sirve `GET /<PAGE_ID>`, `GET`, `POST` y `DELETE /<PAGE_ID>/subscribed_apps` y
 `POST /<PAGE_ID>/messages` [S17] [S20], y el perfil `GET /<IGSID>?fields=name,username` de la User
 Profile API [S9] (F7b-04c), con la misma `GRAPH_VERSION` que WhatsApp (§6, D-F7-08).
 
@@ -103,6 +103,9 @@ class FakePageGraph:
                 if wanted == [""]:
                     return self._error("invalid")
                 self.subscribed[page] = wanted
+                return self._ok({"success": True})
+            case ("DELETE", [page, "subscribed_apps"]) if page in self.pages:  # F7b-06g
+                self.subscribed.pop(page, None)  # la página deja de tener la app suscrita
                 return self._ok({"success": True})
             case ("POST", [page, "messages"]) if page in self.pages:
                 return self._send(page, body)

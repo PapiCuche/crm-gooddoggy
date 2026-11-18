@@ -308,6 +308,36 @@ describe("Messenger e Instagram en Canales (F7b-06)", () => {
     expect(within(second!).getByText("El CRM atiende las conversaciones")).toBeVisible();
   });
 
+  it("una página sin suscribir lo dice en el motivo y en el checklist; suscrita, no (F7b-06g)", async () => {
+    const lost = social("i4", { status: "DEGRADED", status_detail: "PAGE_NOT_SUBSCRIBED" });
+    const waiting = social("i5", { status_detail: "PAGE_NOT_SUBSCRIBED" }); // aún PENDING
+    mockApi({ [LIST]: page([lost, waiting, { ...fb, status: "CONNECTED", status_detail: null }]) });
+    show();
+    const [first, second, third] = await cards();
+    const steps = (card: HTMLElement) =>
+      within(within(card).getByRole("list", { name: "Lo que falta para usar la cuenta" }))
+        .getAllByRole("listitem")
+        .map((item) => item.textContent);
+    expect(first).toHaveTextContent("La página no tiene suscrita la app del CRM: los mensajes");
+    expect(steps(first!)).toEqual([
+      "Token válido",
+      "La página no tiene suscrita la app del CRM",
+      "Mensajes de Meta recibidos",
+      "Acceso a los mensajes de Instagram activado",
+      "El CRM atiende las conversaciones",
+    ]);
+    expect(steps(second!).slice(1, 3)).toEqual([
+      "La página no tiene suscrita la app del CRM",
+      "Falta recibir el primer mensaje de Meta",
+    ]);
+    expect(steps(third!).slice(0, 3)).toEqual([
+      "Token válido",
+      "Página suscrita a la app del CRM",
+      "Mensajes de Meta recibidos",
+    ]);
+    expect(third).not.toHaveTextContent("no tiene suscrita");
+  });
+
   it.each([
     ["instagram", ig],
     ["messenger", fb],

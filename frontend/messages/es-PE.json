@@ -2537,6 +2537,7 @@
       "DISCONNECTED_BY_ADMIN": "La desconectó un administrador.",
       "PROVIDER_ERROR": "Meta no respondió bien en la última comprobación.",
       "MESSAGES_ACCESS_OFF": "El acceso a los mensajes está apagado en Instagram: actívalo en «Herramientas conectadas».",
+      "PAGE_NOT_SUBSCRIBED": "La página no tiene suscrita la app del CRM: los mensajes nuevos no llegan. Vuelve a suscribirla en Meta.",
       "UNKNOWN": "La cuenta informa de un motivo que esta versión no conoce."
     },
     "checklist": {
@@ -2544,6 +2545,10 @@
       "token": {
         "ok": "Token válido",
         "bad": "Falta un token válido"
+      },
+      "subscription": {
+        "ok": "Página suscrita a la app del CRM",
+        "bad": "La página no tiene suscrita la app del CRM"
       },
       "webhook": {
         "ok": "Mensajes de Meta recibidos",
