@@ -24,7 +24,7 @@ from core.tenancy.scope import tenant_scope
 from tests.meta_sim import social
 from tests.meta_sim.page_graph import FakePageGraph
 from tests.meta_sim.social import IG_ACCOUNT_ID, PAGE_ID
-from tests.test_consent_stop import spied
+from tests.test_consent_stop import final, spied, two_batches
 from tests.test_conversation_commands import outbound, world, writer
 from tests.test_conversations_dispatch import Retrying, state
 from tests.test_memberships import ctx
@@ -69,7 +69,7 @@ def test_a_stop_and_an_alta_are_recorded_against_the_channel_and_confirmed_in_it
     world: SimpleNamespace, platform: str
 ) -> None:
     convo = talk(world, platform)
-    assert say(platform, event(platform, "BAJA", "m_SIMIN000001")) == {"PROCESSED": 1}
+    assert say(platform, event(platform, "BAJA", "m_SIMIN000001", 2 * SECONDS)) == {"PROCESSED": 1}
     found = seen(world)
     assert found.consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
     [reply] = found.replies
@@ -175,9 +175,9 @@ def test_a_stop_claimed_again_after_an_alta_does_not_act_twice(
     world: SimpleNamespace, platform: str
 ) -> None:
     talk(world, platform)
-    stop = event(platform, "BAJA", "m_SIMIN000001")
+    stop = event(platform, "BAJA", "m_SIMIN000001", 2 * SECONDS)
     say(platform, stop)
-    say(platform, event(platform, "ALTA", "m_SIMIN000002"))
+    say(platform, event(platform, "ALTA", "m_SIMIN000002"))  # un empate lo dejaría de baja
     again = ingress.Claimed(  # el mismo ítem, reclamado otra vez después
         uuid4(), "message", None, None, stop | {"standby": False}, 2, platform,
         PAGE_ID if platform == "MESSENGER" else IG_ACCOUNT_ID,
@@ -186,6 +186,48 @@ def test_a_stop_claimed_again_after_an_alta_does_not_act_twice(
     found = seen(world)
     assert found.consents == [(platform, "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
     assert len(found.replies) == 2
+
+
+@pytest.mark.parametrize(("newer", "first", "gap"), [("ALTA", "new", 10), ("ALTA", "old", 0)])
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_two_batches_at_once_follow_the_time_of_meta_on_each_channel(
+    world: SimpleNamespace, migrator: Any, monkeypatch: pytest.MonkeyPatch, platform: str,
+    newer: str, first: str, gap: int,
+) -> None:  # fmt: skip
+    """F7b-05e: la ALTA más nueva se confirma antes que la BAJA vieja; o empatan y gana la baja."""
+    talk(world, platform)
+    older = "BAJA" if newer == "ALTA" else "ALTA"
+    base = int(timezone.now().timestamp()) * 1000 - 20_000  # una sola lectura: empate exacto
+    for word, at, mid in (
+        (older, base, "m_SIMIN000010"),
+        (newer, base + gap * 1000, "m_SIMIN000020"),
+    ):
+        found = social.text(SIM[platform], word, mid=mid, at=at)
+        assert post(social.signed(SIM[platform], found)).status_code == 200
+    leader = "m_SIMIN000020" if first == "new" else "m_SIMIN000010"
+    assert two_batches(migrator, monkeypatch, leader) == ["PROCESSED", "PROCESSED"]
+    assert seen(world).consents == [(platform, "ALL_PROACTIVE", *final(newer, gap))]
+
+
+@pytest.mark.parametrize("newer", ["ALTA", "BAJA"])
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_one_delivery_out_of_order_follows_the_time_of_meta_on_each_channel(
+    world: SimpleNamespace, platform: str, newer: str
+) -> None:
+    talk(world, platform)
+    older = "BAJA" if newer == "ALTA" else "ALTA"
+    both = (  # `store` guarda por clave: el `mid` menor, el más nuevo, se procesa primero
+        event(platform, newer, "m_SIMIN000001", 2 * SECONDS),
+        event(platform, older, "m_SIMIN000002", 4 * SECONDS),
+    )
+    assert post(social.signed(SIM[platform], *both)).status_code == 200
+    assert ingress.process() == {"PROCESSED": 2}
+    with tenant_scope(ctx(world.a)):
+        said = Message.objects.filter(direction="INBOUND").order_by("-created_at")
+        assert list(said.values_list("body", flat=True)[:2]) == [older, newer]  # al revés
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", *final(newer, 10))]
+    assert len(found.replies) == 1  # la vieja ni cambia ni confirma
 
 
 @pytest.mark.parametrize(
