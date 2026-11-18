@@ -1,12 +1,15 @@
-"""F8-05b1 (#942; ADR-034 §5, ADR-043, ADR-002 §3.3): el registro de gasto de IA solo cambia por
+"""F8-05b1 (#942; ADR-034 §5, ADR-043, ADR-044): el registro de gasto de IA solo cambia por
 dos funciones SECURITY DEFINER, `ai_budget_reserve` y `ai_budget_settle`. `crm_app` pierde el
 INSERT directo en `ai_budget_usage`, `ai_budget_reservations` y `ai_llm_calls` y sus permisos de
 columna de UPDATE: ya no baja `reserved_usd` ni inventa llamadas. La reserva guarda el propósito,
 quien pide (de la sesión), el proveedor, el modelo y la conversación, así que el ajuste no falla
 por ellos con el proveedor ya pagado. El mes es el de Lima (ADR-043); las particiones, por mes UTC.
 
-Las dos funciones son de `crm_migrator`, que tiene BYPASSRLS: cada sentencia filtra por
-`app_current_tenant()` de forma explícita y la organización y el usuario nunca son parámetros."""
+Las dos funciones son de `crm_migrator`, que tiene BYPASSRLS: escriben filas del tenant solo por la
+excepción acotada de ADR-044 a ADR-002 §3.3. Cada sentencia filtra por `app_current_tenant()` de
+forma explícita, y la organización y el usuario nunca son parámetros. Lo gastado (`spent_usd`,
+`cost_usd`) pasa a `numeric(18, 6)`: una llamada ya pagada se registra aunque cueste más que un
+tope de `numeric(12, 6)`."""
 
 from typing import Any
 
@@ -27,12 +30,14 @@ ALTER TABLE public.ai_budget_reservations
     FOREIGN KEY (organization_id, requested_by_user_id)
     REFERENCES public.organization_memberships (organization_id, user_id);
 ALTER TABLE public.ai_llm_calls DROP CONSTRAINT ai_llm_calls_outcome_check,
-  ADD CONSTRAINT ai_llm_calls_outcome_check CHECK (outcome IN {OUTCOMES});
+  ADD CONSTRAINT ai_llm_calls_outcome_check CHECK (outcome IN {OUTCOMES}),
+  ALTER COLUMN cost_usd TYPE numeric(18, 6);
 """
 DROP_COLUMNS = """
 ALTER TABLE public.ai_llm_calls DROP CONSTRAINT ai_llm_calls_outcome_check,
   ADD CONSTRAINT ai_llm_calls_outcome_check CHECK (outcome IN ('OK', 'CREDENTIALS_REJECTED',
-    'PROVIDER_BILLING', 'PROVIDER_UNAVAILABLE', 'PROVIDER_ERROR'));
+    'PROVIDER_BILLING', 'PROVIDER_UNAVAILABLE', 'PROVIDER_ERROR')),
+  ALTER COLUMN cost_usd TYPE numeric(12, 6);
 """
 
 
@@ -76,10 +81,11 @@ BEGIN
   IF p_amount IS NULL OR p_amount = 'NaN' OR p_amount <= 0 THEN
     {_raise("ai_budget_res_ck", "ai_budget_reserve: importe no válido")};
   END IF;
-  -- sin la partición de ahora o la de dentro de un día, el ajuste fallaría con la llamada pagada
+  -- sin la partición de este mes o la del siguiente (UTC), el ajuste podría fallar con la llamada
+  -- ya pagada
   IF to_regclass('public.ai_llm_calls_y' || to_char(now() AT TIME ZONE 'UTC', 'YYYY"m"MM')) IS NULL
-     OR to_regclass('public.ai_llm_calls_y'
-                    || to_char((now() + interval '1 day') AT TIME ZONE 'UTC', 'YYYY"m"MM')) IS NULL
+     OR to_regclass('public.ai_llm_calls_y' || to_char((now() + interval '1 month')
+                                                       AT TIME ZONE 'UTC', 'YYYY"m"MM')) IS NULL
   THEN
     {_raise("ai_llm_calls_partition_missing", "ai_budget_reserve: falta la partición")};
   END IF;
@@ -104,10 +110,15 @@ BEGIN
 END
 $fn$
 """  # noqa: S608 — solo constantes del módulo
-# Ajusta una reserva propia sin ajustar, una sola vez: `PROVIDER_UNCERTAIN` (salió y no hubo
-# respuesta: pudo cobrarla) cuenta la reserva entera y no lleva costo; cualquier otro resultado
-# lleva su costo (0 libera: no salió, o un error sin uso). Un costo mayor que lo reservado se
-# registra igual (el proveedor ya cobró) y devuelve `OVER`. NULL si no hay nada que ajustar.
+# Ajusta una reserva propia sin ajustar, una sola vez. Las únicas combinaciones admitidas:
+# - `OK`: costo > 0 y los tokens de entrada y de salida informados (lo que costó);
+# - `PROVIDER_UNCERTAIN`: sin costo ni tokens (salió y no hubo respuesta: pudo cobrarla), cuenta la
+#   reserva entera;
+# - `CREDENTIALS_REJECTED`, `PROVIDER_BILLING`, `PROVIDER_UNAVAILABLE`, `PROVIDER_ERROR`: costo 0 y
+#   sin tokens (no salió, o el proveedor respondió con un error sin uso): libera la reserva.
+# Cualquier otra, `ai_budget_settle_cost`. Un costo mayor que lo reservado se registra igual (el
+# proveedor ya cobró) y devuelve `OVER`; el `request-id`, a 64 caracteres como mucho. NULL si no
+# hay nada que ajustar (desconocida, de otra organización o ya ajustada).
 SETTLE = f"""
 CREATE FUNCTION public.ai_budget_settle(p_reservation uuid, p_outcome text, p_cost numeric,
   p_input integer, p_output integer, p_cache_write integer, p_cache_read integer,
@@ -121,8 +132,15 @@ BEGIN
   IF org IS NULL THEN
     {_raise("ai_budget_tenant_required", "ai_budget_settle: sin organización")};
   END IF;
-  IF (p_outcome IS NOT DISTINCT FROM 'PROVIDER_UNCERTAIN') <> (p_cost IS NULL)
-     OR p_cost = 'NaN' OR p_cost < 0 THEN
+  IF NOT coalesce(CASE
+       WHEN p_outcome = 'OK' THEN p_cost > 0 AND p_cost <> 'NaN'
+         AND p_input IS NOT NULL AND p_output IS NOT NULL
+       WHEN p_outcome = 'PROVIDER_UNCERTAIN' THEN p_cost IS NULL
+         AND num_nulls(p_input, p_output, p_cache_write, p_cache_read) = 4
+       WHEN p_outcome IN ('CREDENTIALS_REJECTED', 'PROVIDER_BILLING', 'PROVIDER_UNAVAILABLE',
+                          'PROVIDER_ERROR') THEN p_cost = 0
+         AND num_nulls(p_input, p_output, p_cache_write, p_cache_read) = 4
+     END, false) THEN
     {_raise("ai_budget_settle_cost", "ai_budget_settle: costo no válido para el resultado")};
   END IF;
   UPDATE public.ai_budget_reservations SET settled_at = now()
@@ -140,7 +158,7 @@ BEGIN
     cache_write_tokens, cache_read_tokens, latency_ms, outcome, request_id)
   VALUES (org, r.id, r.provider, r.model, r.purpose, r.conversation_id, r.requested_by_user_id,
     r.amount_usd, spent, p_input, p_output, p_cache_write, p_cache_read, p_latency_ms, p_outcome,
-    coalesce(p_request_id, ''));
+    left(coalesce(p_request_id, ''), 64));
   RETURN CASE WHEN spent > r.amount_usd THEN 'OVER' ELSE 'SETTLED' END;
 END
 $fn$
@@ -221,6 +239,11 @@ class Migration(migrations.Migration):
             model_name="aibudgetreservation",
             name="conversation_id",
             field=models.UUIDField(null=True),
+        ),
+        migrations.AlterField(
+            model_name="aibudgetusage",
+            name="spent_usd",
+            field=models.DecimalField(decimal_places=6, max_digits=18),
         ),
         migrations.RunSQL(COLUMNS, DROP_COLUMNS),
         migrations.RunPython(_functions, _drop_functions),

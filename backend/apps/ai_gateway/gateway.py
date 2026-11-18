@@ -61,9 +61,10 @@ def settle(
     ctx: TenantContext, reservation_id: UUID, outcome: Outcome, cost: Decimal | None,
     reply: LLMResponse | None = None, started: float | None = None, request_id: str = "",
 ) -> bool:  # fmt: skip
-    """Ajusta la reserva una sola vez: `cost` pasa a gastado y el resto se libera (0 la libera
-    entera); `PROVIDER_UNCERTAIN` va sin costo y cuenta la reserva entera. Escribe la fila de
-    `ai_llm_calls`. `False` si ya estaba ajustada, no existe o es de otra organización."""
+    """Ajusta la reserva una sola vez y escribe la fila de `ai_llm_calls`. `OK` con su costo (> 0)
+    y su uso; `PROVIDER_UNCERTAIN` sin costo ni uso (cuenta la reserva entera); un error, con costo
+    0 y sin uso (la libera). La base rechaza otra combinación. `False` si ya estaba ajustada, no
+    existe o es de otra organización."""
     use = reply.usage if reply else None
     tokens = (use.input_tokens, use.output_tokens, use.cache_write_5m + use.cache_write_1h,
               use.cache_read) if use else (None,) * 4  # fmt: skip
@@ -108,5 +109,8 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
             settle(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
         raise GatewayError(error.outcome) from None
     cost = prices.cost(provider, params["model"], reply.usage)
-    settle(ctx, held, Outcome.OK, cost, reply, started)
+    if cost > 0:
+        settle(ctx, held, Outcome.OK, cost, reply, started)
+    else:  # una respuesta sin uso no se cobra a 0 (la base lo rechaza): cuenta entera
+        settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
     return reply

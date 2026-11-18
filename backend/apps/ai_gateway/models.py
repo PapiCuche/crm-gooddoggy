@@ -119,8 +119,8 @@ class AIProviderKey(TenantModel):
         return str(self.pk)
 
 
-def _usd(null: bool = False) -> models.DecimalField[Any, Any]:
-    return models.DecimalField(max_digits=12, decimal_places=6, null=null)
+def _usd(null: bool = False, digits: int = 12) -> models.DecimalField[Any, Any]:
+    return models.DecimalField(max_digits=digits, decimal_places=6, null=null)
 
 
 class AIBudget(TenantModel):
@@ -143,7 +143,7 @@ class AIBudgetUsage(TenantModel):
 
     id = uuid7_primary_key()
     month = models.DateField()
-    spent_usd = _usd()
+    spent_usd = _usd(digits=18)  # lo ya pagado se registra aunque pase el tope (0003)
     reserved_usd = _usd()
 
     class Meta:

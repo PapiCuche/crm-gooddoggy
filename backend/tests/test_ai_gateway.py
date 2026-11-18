@@ -106,7 +106,9 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
     assert row[0] == "OK" and row[2:] == (cost, 1000, 500, ai_sim.REQUEST_ID, True, 300, 1000)
     assert row[1] > row[2] and (spent, reserved) == (cost, 0)
     held = migrator.execute("SELECT id FROM ai_budget_reservations").fetchone()[0]  # type: ignore[index]
-    assert gateway.settle(ctx(world.a), held, Outcome.OK, Decimal(0)) is False  # una sola vez
+    assert (
+        gateway.settle(ctx(world.a), held, Outcome.PROVIDER_ERROR, Decimal(0)) is False
+    )  # una sola vez
     assert ledger(migrator) == ([(spent, reserved)], [row])
     logged = caplog.text + str([r.__dict__ for r in caplog.records])
     assert not any(s in logged for s in (PROMPT, BODY_MARK, TEST_KEY))

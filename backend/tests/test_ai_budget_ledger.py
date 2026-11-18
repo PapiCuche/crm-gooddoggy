@@ -22,13 +22,20 @@ from core.tenancy.scope import tenant_scope
 from tests import test_ai_gateway
 from tests.conftest import migrator_settings
 from tests.factories import make_user
-from tests.test_ai_gateway import ASK, DB, PART, budget, call, ledger
+from tests.test_ai_gateway import ASK, DB, budget, call, ledger
 from tests.test_memberships import ctx, join
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
 world = test_ai_gateway.world  # la fixture de F8-05
 RESERVE = "SELECT public.ai_budget_reserve(%s, %s, 'ANTHROPIC', 'm', NULL)"
-SETTLE = "SELECT public.ai_budget_settle(%s, %s, %s, NULL, NULL, NULL, NULL, NULL, '')"
+SETTLE = "SELECT public.ai_budget_settle(%s, %s, %s, %s, %s, NULL, NULL, NULL, %s)"
+USED, NONE = (1, 1, ""), (None, None, "")  # tokens de entrada y de salida, `request-id`
+WRONG = (  # combinaciones de resultado, costo y uso que la base rechaza
+    ("PROVIDER_UNCERTAIN", 0, *NONE), ("PROVIDER_UNCERTAIN", None, *USED),
+    ("OK", None, *USED), ("OK", -1, *USED), ("OK", "NaN", *USED), ("OK", 0, *USED),
+    ("OK", "0.1", *NONE), ("PROVIDER_ERROR", 0, *USED), ("PROVIDER_ERROR", "0.1", *NONE),
+    ("CREDENTIALS_REJECTED", None, *NONE), ("OTHER", 0, *NONE), (None, 0, *NONE),
+)  # fmt: skip
 DEFINERS = (
     "public.ai_budget_reserve(numeric, text, text, text, uuid)",
     "public.ai_budget_settle(uuid, text, numeric, integer, integer, integer, integer, integer,"
@@ -89,19 +96,19 @@ def test_raw_calls_take_tenant_and_requester_from_the_session(
     with transaction.atomic():  # sin organización en la sesión
         assert refused(RESERVE, [1, "SUGGEST"]) == "ai_budget_tenant_required"
     with transaction.atomic():
-        assert refused(SETTLE, [uuid4(), "OK", 0]) == "ai_budget_tenant_required"
+        assert refused(SETTLE, [uuid4(), "OK", 1, *USED]) == "ai_budget_tenant_required"
     for amount in (0, -1, "NaN", None):
         with tenant_scope(ctx(world.a, world.ana)):
             assert refused(RESERVE, [amount, "SUGGEST"]) == "ai_budget_res_ck"
     with tenant_scope(ctx(world.a, world.ana)):
         held = scalar(RESERVE, ["0.5", "SUMMARY"])
-    for outcome, cost in (("PROVIDER_UNCERTAIN", 0), ("OK", None), ("OK", -1), ("OK", "NaN")):
+    for wrong in WRONG:
         with tenant_scope(ctx(world.a)):
-            assert refused(SETTLE, [held, outcome, cost]) == "ai_budget_settle_cost"
+            assert refused(SETTLE, [held, *wrong]) == "ai_budget_settle_cost", wrong
     with tenant_scope(ctx(world.b)):  # la reserva de otra organización: como si no existiera
-        assert scalar(SETTLE, [held, "OK", 0]) is None
+        assert scalar(SETTLE, [held, "OK", 1, *USED]) is None
     with tenant_scope(ctx(world.a)):
-        assert scalar(SETTLE, [uuid4(), "OK", 0]) is None
+        assert scalar(SETTLE, [uuid4(), "OK", 1, *USED]) is None
     assert ledger(migrator) == ([(0, Decimal("0.5"))], [(None, None, None, None, None, None,
                                                          False, None, None)])  # fmt: skip
     stored = (
@@ -109,12 +116,35 @@ def test_raw_calls_take_tenant_and_requester_from_the_session(
     )
     assert migrator.execute(stored).fetchall() == [(world.ana.pk, True)]
     with tenant_scope(ctx(world.a)):
-        assert scalar(SETTLE, [held, "PROVIDER_UNCERTAIN", None]) == "SETTLED"
-        assert scalar(SETTLE, [held, "OK", 0]) is None  # una sola vez
+        assert scalar(SETTLE, [held, "PROVIDER_UNCERTAIN", None, *NONE]) == "SETTLED"
+        assert scalar(SETTLE, [held, "OK", 1, *USED]) is None  # una sola vez
     [(spent, reserved)], [row] = ledger(migrator)
     assert (spent, reserved, row[0], row[2]) == (Decimal("0.5"), 0, "PROVIDER_UNCERTAIN", spent)
     who = migrator.execute("SELECT requested_by_user_id, purpose FROM ai_llm_calls").fetchall()
     assert who == [(world.ana.pk, "SUMMARY")]  # de la reserva, no de quien ajusta
+
+
+def test_a_paid_call_is_recorded_however_large_and_an_error_releases(
+    world: SimpleNamespace, migrator: DB
+) -> None:
+    budget(migrator, world.a, "999999")
+    with tenant_scope(ctx(world.a, world.ana)):
+        held = [scalar(RESERVE, ["0.5", "SUGGEST"]) for _ in range(2)]
+    with tenant_scope(ctx(world.a)):  # más de lo que cabe en numeric(12, 6), y un id largo
+        assert scalar(SETTLE, [held[0], "OK", 1_000_000, 1, 1, "r" * 200]) == "OVER"
+        assert scalar(SETTLE, [held[1], "PROVIDER_ERROR", 0, *NONE]) == "SETTLED"
+    [(spent, reserved)], rows = ledger(migrator)
+    assert (spent, reserved) == (Decimal(1_000_000), 0)
+    assert [(r[0], r[2], r[5]) for r in rows] == [
+        ("OK", Decimal(1_000_000), "r" * 64), ("PROVIDER_ERROR", 0, "")]  # fmt: skip
+
+
+def test_a_reply_without_usage_counts_whole(world: SimpleNamespace, migrator: DB) -> None:
+    budget(migrator, world.a, "1")
+    world.fake.usage = {"input_tokens": 0, "output_tokens": 0}  # un OK a costo 0: no se libera
+    call(world)
+    [(spent, reserved)], [row] = ledger(migrator)
+    assert (row[0], spent, reserved) == ("PROVIDER_UNCERTAIN", row[1], 0)
 
 
 def test_a_reservation_touches_only_its_organization(world: SimpleNamespace, migrator: DB) -> None:
@@ -127,6 +157,16 @@ def test_a_reservation_touches_only_its_organization(world: SimpleNamespace, mig
     assert migrator.execute(mine, [world.b]).fetchall() == [(Decimal("0.2"), Decimal("0.1"))]
 
 
+def test_only_the_own_cap_counts(world: SimpleNamespace, migrator: DB) -> None:
+    budget(migrator, world.b, "100")  # el tope de otra organización no vale para A
+    with pytest.raises(gateway.GatewayError, match="AI_BUDGET_NOT_SET"):
+        call(world)
+    budget(migrator, world.a, "0.01")  # menos que una reserva
+    with pytest.raises(gateway.GatewayError, match="AI_BUDGET_EXHAUSTED"):
+        call(world)
+    assert world.fake.calls == [] and ledger(migrator) == ([], [])
+
+
 def test_two_concurrent_settles_charge_once(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "1")
     with tenant_scope(ctx(world.a, world.ana)):
@@ -136,7 +176,7 @@ def test_two_concurrent_settles_charge_once(world: SimpleNamespace, migrator: DB
     def run() -> None:
         try:
             together.wait(timeout=10)
-            results.append(gateway.settle(ctx(world.a), held, Outcome.OK, Decimal("0.1")))
+            results.append(gateway.settle(ctx(world.a), held, Outcome.PROVIDER_UNCERTAIN, None))
         finally:
             connection.close()
 
@@ -147,7 +187,7 @@ def test_two_concurrent_settles_charge_once(world: SimpleNamespace, migrator: DB
         thread.join(timeout=20)
     assert sorted(results) == [False, True]
     [(spent, reserved)], [row] = ledger(migrator)
-    assert (spent, reserved, row[2]) == (Decimal("0.1"), 0, Decimal("0.1"))
+    assert (spent, reserved, row[2]) == (Decimal("0.5"), 0, Decimal("0.5"))
 
 
 def test_the_budget_month_is_lima_for_every_organization(migrator: DB) -> None:
@@ -156,6 +196,9 @@ def test_the_budget_month_is_lima_for_every_organization(migrator: DB) -> None:
                          ("2026-12-01 05:00:00+00", "2026-12-01"),
                          ("2027-01-01 00:00:00-05", "2027-01-01")):  # fmt: skip
         assert str(migrator.execute(month, [at]).fetchone()[0]) == expected  # type: ignore[index]
+    source = "SELECT prosrc FROM pg_proc WHERE proname = 'ai_budget_reserve'"
+    [(body,)] = migrator.execute(source).fetchall()
+    assert "m date := public.ai_budget_month(now());" in body and "date_trunc" not in body
 
 
 def test_a_cost_above_the_reservation_is_charged_and_flagged(
@@ -195,11 +238,17 @@ def test_the_reservation_is_committed_before_the_provider_call(
     assert seen == [(False, (1,))]  # otra conexión ya la ve; ninguna transacción abierta
 
 
+@pytest.mark.parametrize("months", [0, 1])  # la de este mes y la del siguiente (UTC)
 def test_without_a_partition_nothing_is_reserved_or_called(
-    world: SimpleNamespace, migrator: DB
+    world: SimpleNamespace, migrator: DB, months: int
 ) -> None:
     budget(migrator, world.a, "1")
-    migrator.execute(f"DROP TABLE {PART}")
+    gone = migrator.execute(
+        "SELECT 'ai_llm_calls_y' || to_char((now() + make_interval(months => %s))"
+        " AT TIME ZONE 'UTC', 'YYYY\"m\"MM')",
+        [months],
+    ).fetchone()[0]  # type: ignore[index]
+    migrator.execute(f"DROP TABLE {gone}")
     try:
         with pytest.raises(DatabaseError) as caught:
             call(world)

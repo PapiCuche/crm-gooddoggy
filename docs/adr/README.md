@@ -7,7 +7,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | ADR | Título | Estado | Fecha |
 |---|---|---|---|
 | [ADR-001](ADR-001-multi-tenancy.md) | Multi-tenancy con base de datos y esquema compartidos | Accepted (excepción acotada en ADR-026 §5: la organización de pruebas) | 2026-09-28 |
-| [ADR-002](ADR-002-postgresql-rls.md) | PostgreSQL Row Level Security como defensa en profundidad | Accepted | 2026-09-28 |
+| [ADR-002](ADR-002-postgresql-rls.md) | PostgreSQL Row Level Security como defensa en profundidad | Accepted (enmendado en parte por ADR-044: §3.3, excepción acotada para `ai_budget_reserve` y `ai_budget_settle`) | 2026-09-28 |
 | [ADR-003](ADR-003-auth-session.md) | Autenticación por sesión con cookie HttpOnly y MFA | Accepted | 2026-09-28 |
 | [ADR-004](ADR-004-identifiers.md) | UUIDv7 y numeración comercial por organización | Accepted | 2026-09-28 |
 | [ADR-005](ADR-005-ai-provider-abstraction.md) | Abstracción de proveedores de IA, tools y validación de salida | Accepted | 2026-09-28 |
@@ -48,6 +48,7 @@ Registro formal de las decisiones de arquitectura. Cada ADR es **inmutable una v
 | [ADR-041](ADR-041-local-meta-graph-simulator.md) | Simulador local de la Graph API de Meta: `META_GRAPH_SIMULATOR_URL` solo en los settings `local` (production, migrate y test no arrancan con ella) y una única excepción de `core.http` en desarrollo, solo para el host de Graph y después de su política (acota ADR-035 §6) | Accepted | 2026-11-17 |
 | [ADR-042](ADR-042-audit-exception-picomatch-ghsa-fc5q.md) | Excepción acotada y con caducidad en `pnpm audit`: ignora solo GHSA-fc5q-39xc-vjpf (ReDoS en picomatch ≤4.0.7, sin corrección; en producción solo por `next-intl > @parcel/watcher`) con `auditConfig.ignoreGhsas`, revisión cada 7 días y caducidad 2026-12-01 que hace cumplir una prueba; se retira en #929 (acota ADR-012) | Accepted (2026-11-17, decisión del propietario registrada en #928) | 2026-11-17 |
 | [ADR-043](ADR-043-ai-budget-time-zone-lima.md) | El día y el mes del presupuesto de IA, en hora de Lima (`America/Lima`) para toda organización, desde `now()` de la base; las particiones de `ai_llm_calls` siguen por mes UTC (enmienda ADR-034 §5) | Accepted (2026-11-18, decisión del propietario registrada en #932) | 2026-11-18 |
+| [ADR-044](ADR-044-ai-budget-ledger-writer-definers.md) | Excepción acotada a ADR-002 §3.3: solo `ai_budget_reserve` y `ai_budget_settle` pueden ser `SECURITY DEFINER` `VOLATILE` que escriben filas de un tenant, con el tenant y quien pide tomados solo de la sesión, filtro explícito por `organization_id` en cada sentencia y los demás requisitos de §3.3; otra función que escriba necesita su propio ADR | Accepted (2026-11-18, decisión del propietario) | 2026-11-18 |
 
 ## Plantilla
 
