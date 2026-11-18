@@ -589,6 +589,108 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/ai/budget/:
+    get:
+      operationId: ai_budget_retrieve
+      description: 'Los topes mensual y diario de IA de la organización, en USD con
+        6 decimales (`ai.manage` y segundo factor reciente); null si no hay: sin los
+        dos, la IA no llama (`AI_BUDGET_NOT_SET`). No cuenta en el tope por persona
+        de las escrituras.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiBudget'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+    put:
+      operationId: ai_budget_update
+      description: 'Fija los dos topes (`ai.manage` y segundo factor reciente) y lo
+        audita (`ai.limits.changed`, con el antes y el después). Importes en USD mayores
+        que cero, con 6 decimales como mucho; el diario no supera al mensual. Bajar
+        un tope por debajo de lo gastado corta la siguiente llamada. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiBudgetWriteRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiBudget'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/ai/provider-accounts/:
     get:
       operationId: ai_provider_accounts_list
@@ -11613,6 +11715,39 @@ components:
       - default_probability
       - name
       - stage_type
+    AiBudget:
+      type: object
+      properties:
+        monthly_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          nullable: true
+          description: 'Tope del mes de Lima en USD; null: sin tope.'
+        daily_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          nullable: true
+          description: 'Tope del día de Lima en USD; null: sin tope.'
+      required:
+      - daily_usd
+      - monthly_usd
+    AiBudgetWriteRequest:
+      type: object
+      properties:
+        monthly_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+        daily_usd:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,6}(?:\.\d{0,6})?$
+          description: No puede superar al mensual.
+      required:
+      - daily_usd
+      - monthly_usd
     AiProviderAccount:
       type: object
       properties:

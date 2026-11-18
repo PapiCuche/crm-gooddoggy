@@ -268,7 +268,7 @@ DENIED = (  # F8-05b1: `crm_app`, en el scope de A, solo cambia el registro por 
     CALL.format(HELD, "SUGGEST", 1, NEXT),  # una de un mes futuro
     f"INSERT INTO {PART} SELECT * FROM {PART}",  # noqa: S608 — ni por la partición
     "INSERT INTO ai_budgets (id, organization_id, monthly_usd) VALUES (uuidv7(), %s, 1000)",
-    "UPDATE ai_budgets SET monthly_usd = 1000",  # no sube su tope
+    "DELETE FROM ai_budgets",  # sus topes, solo por la ruta (F8-05b3); nunca los borra
     "UPDATE ai_llm_calls SET cost_usd = 0",  # de solo inserción
     "UPDATE ai_budget_reservations SET amount_usd = 1",
     "UPDATE ai_budget_usage SET month = month",
