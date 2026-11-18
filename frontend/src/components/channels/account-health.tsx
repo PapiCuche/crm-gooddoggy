@@ -98,3 +98,52 @@ export function Checklist({ account }: { account: ChannelAccount }) {
     </ul>
   );
 }
+
+// Lo que falta para usar una cuenta de Messenger o Instagram (F7b-06, ADR-035 §10): el token, el
+// primer evento firmado de Meta, en Instagram el acceso a los mensajes y qué app controla los
+// hilos (`standby`). Hasta ver un evento no se sabe nada de los dos últimos: se espera.
+export function SocialChecklist({ account }: { account: ChannelAccount }) {
+  const t = useTranslations("channels");
+  const { status_detail: detail } = account;
+  const unseen = detail === "WEBHOOK_NOT_SEEN";
+  const steps: { key: string; state: keyof typeof STATE }[] = [
+    {
+      key: "token",
+      state: account.token_last_four !== null && detail !== "TOKEN_INVALID" ? "ok" : "bad",
+    },
+    { key: "webhook", state: unseen ? "wait" : "ok" },
+    { key: "control", state: account.has_standby_conversations ? "warn" : unseen ? "wait" : "ok" },
+  ];
+  if (account.platform === "INSTAGRAM") {
+    const access = detail === "MESSAGES_ACCESS_OFF" ? "bad" : unseen ? "wait" : "ok";
+    steps.splice(2, 0, { key: "access", state: access });
+  }
+  return (
+    <ul aria-label={t("checklist.label")} className="flex flex-col gap-1 text-sm">
+      {steps.map(({ key, state }) => {
+        const { Icon, tone } = STATE[state];
+        return (
+          <li key={key} className="flex items-center gap-2">
+            <Icon aria-hidden className={cn("size-4 shrink-0", tone)} />
+            <span>{t(`checklist.${key}.${state}` as never)}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// El aviso de `standby` (ADR-035 §4): otra app de la página controla al menos un hilo abierto. Sus
+// mensajes llegan, pero aquí nunca se responde nada automáticamente en él.
+export function Standby() {
+  const t = useTranslations("channels.standby");
+  return (
+    <div role="note" className="border-danger flex gap-2 rounded-lg border p-3 text-sm">
+      <TriangleAlert aria-hidden className="text-danger mt-0.5 size-4 shrink-0" />
+      <p className="flex flex-col gap-0.5">
+        <span className="font-medium">{t("title")}</span>
+        <span>{t("body")}</span>
+      </p>
+    </div>
+  );
+}
