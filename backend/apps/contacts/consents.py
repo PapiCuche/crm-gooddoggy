@@ -12,7 +12,7 @@ Las palabras del cliente (F7b-05d) llevan el instante del proveedor (`said_at`):
 de la última (`keyword_at`, aunque no cambiara nada) y una más vieja, entregada tarde, no la toca.
 Decide la hora de Meta, nunca el orden de proceso (F7b-05e): dos lotes a la vez se serializan con
 el bloqueo del contacto, y el segundo compara con la hora que dejó el primero. En un empate gana la
-baja, en cualquier orden. Sin hora del proveedor (`None`) cuenta la llegada, como antes.
+baja, en cualquier orden.
 
 F7b-05f: se ordena por la hora cruda de Meta en segundos enteros (dos palabras del mismo segundo
 empatan y gana la baja), aunque el reloj del servidor vaya detrás. Un alta con una hora más allá de
@@ -21,7 +21,8 @@ posterior. Una baja guarda su hora aunque pase ese margen: una hora falsa en el 
 altas por palabra hasta entonces (del lado de la baja; un cambio manual sigue sin tocar la hora).
 Una baja sin hora del proveedor (o con una que no vale) guarda nuestra hora más `KEYWORD_AHEAD`, o
 la última guardada si es mayor: ningún alta dentro del margen la levanta (en un empate, la baja);
-el cliente vuelve a escribir ALTA pasado ese minuto.
+el cliente vuelve a escribir ALTA pasado ese minuto. Un alta sin hora del proveedor no cuenta
+(decisión del propietario en #937): el orden de llegada ya no decide nada.
 """
 
 import datetime as dt
@@ -59,19 +60,19 @@ def _evidence(value: dict[str, str] | None) -> dict[str, str]:
     return dict(found)
 
 
-class _AltaAhead(Exception):
-    """Un alta con una hora de Meta más allá del margen: no cuenta (F7b-05f)."""
+class _AltaIgnored(Exception):
+    """Un alta sin hora del proveedor, o con una más allá del margen: no cuenta (F7b-05f)."""
 
 
 def _said(said_at: dt.datetime | None, status: str) -> dt.datetime | None:
-    """La hora que ordena la palabra: la de Meta en segundos enteros (F7b-05f). `_AltaAhead` si es
+    """La hora que ordena la palabra: la de Meta en segundos enteros (F7b-05f). `_AltaIgnored` si es
     un alta más allá de «ahora» + `KEYWORD_AHEAD`; una baja vale con cualquier hora."""
     if said_at is None:
         return None
     said = said_at.replace(microsecond=0)
     ahead = said > timezone.now().replace(microsecond=0) + KEYWORD_AHEAD
     if ahead and status == ConsentStatus.GRANTED:
-        raise _AltaAhead
+        raise _AltaIgnored
     return said
 
 
@@ -91,6 +92,8 @@ def _write(
     with transaction.atomic(using=alias):
         live = Contact.objects.using(alias).filter(deleted_at__isnull=True)
         live.select_for_update(no_key=True).get(pk=contact_id)
+        if lift and said_at is None:  # decisión del propietario (#937): un alta sin hora no cuenta
+            raise _AltaIgnored
         said_at = _said(said_at, status)  # con el reloj leído ya dentro del bloqueo
         where = {"contact_id": contact_id, "channel": channel, "purpose": purpose}
         row = ContactConsent.objects.using(alias).filter(**where).first()
@@ -184,13 +187,13 @@ def lift_keyword_stop(
     """El alta por palabra (F7-08b): concede si la fila vigente está `REVOKED` por una palabra de
     baja (`KEYWORD_STOP`) o si no hay fila (F7b-05e: así guarda su hora y una BAJA más vieja,
     entregada después, no revoca). Revocada por otra vía no la levanta (`False`), pero guarda su
-    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora; con `said_at`
-    más allá de «ahora» + `KEYWORD_AHEAD` no hace nada (F7b-05f). Devuelve si cambió algo. Mismos
-    errores que `grant_consent`."""
+    hora. No revierte una palabra posterior a `said_at`, ni una baja de la misma hora; sin `said_at`
+    o con uno más allá de «ahora» + `KEYWORD_AHEAD` no hace nada (F7b-05f; decisión del propietario
+    en #937). Devuelve si cambió algo. Mismos errores que `grant_consent`."""
     try:
         return _write(
             ctx, contact_id, channel, purpose, ConsentStatus.GRANTED,
             ConsentSource.CUSTOMER_MESSAGE, evidence, lift=True, said_at=said_at,
         )[1]  # fmt: skip
-    except _AltaAhead:
-        return False  # ni concede ni guarda su hora: nunca frena una baja posterior
+    except _AltaIgnored:
+        return False  # ni concede ni guarda una hora: nunca frena ni levanta una baja

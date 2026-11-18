@@ -480,6 +480,16 @@ def test_a_baja_without_a_time_keeps_a_later_stored_time(
     assert stored(world) == ("REVOKED", STOP, SECOND + 3600 * S)
 
 
+def test_an_alta_without_a_time_writes_nothing(world: SimpleNamespace) -> None:
+    """Decisión del propietario (#937): sin fila, y sobre una baja por palabra, nada cambia."""
+    assert word(world, "ALTA", None) is False
+    with tenant_scope(ctx(world.a)):
+        assert not ContactConsent.objects.exists()
+    assert word(world, "BAJA", SECOND) is True
+    assert word(world, "ALTA", None) is False
+    assert stored(world) == ("REVOKED", STOP, SECOND)
+
+
 def test_the_clock_is_read_with_the_contact_locked(
     world: SimpleNamespace, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -619,7 +629,7 @@ def owner_rule(case: dict[str, Any]) -> str:
 def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str, bool]:
     """Juega el caso en un contacto nuevo. Devuelve el estado final y si todas las horas de Meta
     quedaron dentro del margen cuando se procesaron. Una palabra sin hora que valga: la BAJA se
-    aplica sin `said_at`; el ALTA no llega a `consents` (`inbound` la descarta)."""
+    aplica sin `said_at`; el ALTA no cuenta (decisión del propietario en #937)."""
     with tenant_scope(ctx(org)):
         where = {"contact_id": Contact.objects.create(display_name="Caso").pk}
     where |= {"channel": WA, "purpose": ALL}
@@ -647,10 +657,9 @@ def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str
         within &= (
             at.replace(microsecond=0) - server.replace(microsecond=0) <= consents.KEYWORD_AHEAD
         )
-        if timed or kind == "BAJA":
-            command = keyword_stop if kind == "BAJA" else lift_keyword_stop
-            said = at if timed else None
-            run(org, command, contact_id=where["contact_id"], channel=WA, purpose=ALL, said_at=said)
+        command = keyword_stop if kind == "BAJA" else lift_keyword_stop
+        said = at if timed else None
+        run(org, command, contact_id=where["contact_id"], channel=WA, purpose=ALL, said_at=said)
     with tenant_scope(ctx(org)):
         row = ContactConsent.objects.filter(**where).first()  # sin fila: un alta que no contó
     return (row.status if row else "NONE"), within

@@ -636,17 +636,31 @@ def test_a_whatsapp_reply_never_reads_the_consent(
     assert calls == []
 
 
-def test_a_keyword_without_the_provider_time_keeps_the_order_of_arrival(
-    crm: SimpleNamespace,
+@pytest.mark.parametrize("missing", [True, False])  # sin `timestamp`, o con `null`
+def test_an_alta_without_the_provider_time_counts_for_nothing(
+    crm: SimpleNamespace, migrator: Any, missing: bool
 ) -> None:
+    """Decisión del propietario (#937, 2026-11-18): un ALTA sin hora no cuenta, ni sola ni tras una
+    BAJA con hora más nueva entregada antes; ni fila, ni hora, ni confirmación."""
     live(crm.a)
-    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=10))
-    alta = webhooks.text_message("ALTA", wamid="wamid.2")
-    del alta["timestamp"]  # sin la hora del proveedor: cuenta la llegada, como antes
-    deliver(alta)
-    ingress.process()
+
+    def untimed(wamid: str) -> dict[str, Any]:
+        found = webhooks.text_message("ALTA", wamid=wamid)
+        if missing:
+            del found["timestamp"]
+        return found if missing else found | {"timestamp": None}
+
+    deliver(untimed("wamid.1"))
+    assert ingress.process() == {"PROCESSED": 1}
     found = seen(crm.a)
-    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert (found.consents, found.replies) == ([], [])
+    assert events(migrator, "consent.granted") == 0
+    say("wamid.2", "BAJA", ago=dt.timedelta(seconds=10))  # dicha después del ALTA
+    deliver(untimed("wamid.3"))
+    ingress.process()  # otro ALTA sin hora: tampoco levanta la baja
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert [r.body for r in found.replies] == [inbound.CONFIRMATIONS["WHATSAPP"][STOP]]
 
 
 @pytest.mark.parametrize("stamp", ["abc", "", "999", "4102444801", "-5", 1_700_000_000])

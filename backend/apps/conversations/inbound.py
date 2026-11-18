@@ -244,31 +244,28 @@ def receive(ctx: TenantContext, account: ChannelAccount, message: dict[str, Any]
                 ctx, display_name=phone, primary_phone_e164=phone,
                 source=Contact.Source.INBOUND_MESSAGE,
             )  # fmt: skip
-    stamp = message.get("timestamp")
-    at = instant(stamp)
+    at = instant(message.get("timestamp"))
     saved, created = commands.record_inbound(
         ctx, contact_id=contact.pk, channel_account_id=account.pk, external_message_id=external,
         body=body, message_type=message_type, provider_at=at, attachment=attachment,
     )  # fmt: skip
     if created and message_type == MessageType.TEXT:
-        _keyword(ctx, contact.pk, saved, account.platform, saved.body, at, stamp is not None)
+        _keyword(ctx, contact.pk, saved, account.platform, saved.body, at)
     return None
 
 
 def _keyword(
     ctx: TenantContext, contact_id: Any, saved: Message, platform: str, said: str,
-    at: dt.datetime | None, stamped: bool, *, confirm: bool = True,
+    at: dt.datetime | None, *, confirm: bool = True,
 ) -> None:  # fmt: skip
     """La baja o el alta del canal de la cuenta, si el texto del cliente (`said`) es entero una
     palabra; solo un cambio real confirma, y solo con `confirm` (un hilo en `standby` no). Con la
     hora cruda del proveedor (`at`), no la del mensaje, que va acotada a «ahora» para la ventana:
-    una palabra más vieja que la última no la revierte (F7b-05d). F7b-05f: si el proveedor mandó
-    una hora (`stamped`) que no vale (`at` es `None`), un alta no cuenta; una baja revoca igual."""
+    una palabra más vieja que la última no la revierte (F7b-05d). F7b-05f: sin una hora que valga
+    (`at` es `None`), `consents` no cuenta un alta (decisión del propietario, #937) y una baja
+    revoca igual."""
     action = keywords.action_for(ctx, said)
     if action is None:
-        return
-    if action == keywords.OPT_IN and stamped and at is None:  # solo sin hora cuenta la llegada
-        logger.info("meta.webhook.consent_keyword", action=action, changed=False)
         return
     channel = policy.CONSENT_CHANNELS[platform]  # la misma con la que la política la consulta
     where = {"contact_id": contact_id, "channel": channel, "purpose": "ALL_PROACTIVE"}
@@ -354,8 +351,7 @@ def receive_social(
     body, message_type = _social_body(message)
     identity = _identity(ctx, account, event["sender"]["id"])
     standby = event.get("standby") is True  # otra app controla el hilo: nunca se responde
-    stamp = event.get("timestamp")
-    at = instant_ms(stamp)  # en segundos: dos del mismo segundo empatan
+    at = instant_ms(event.get("timestamp"))  # en segundos: dos del mismo segundo empatan
     saved, created = commands.record_inbound(
         ctx, contact_id=identity.contact_id, channel_account_id=account.pk,
         external_message_id=message["mid"], body=body, message_type=message_type,
@@ -370,8 +366,5 @@ def receive_social(
             .filter(pk=saved.conversation_id, standby_since__isnull=False)
             .exists()
         )
-        _keyword(
-            ctx, identity.contact_id, saved, account.platform, said, at, stamp is not None,
-            confirm=not held,
-        )  # fmt: skip
+        _keyword(ctx, identity.contact_id, saved, account.platform, said, at, confirm=not held)
     return None
