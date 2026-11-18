@@ -406,18 +406,24 @@ def _reject(ctx: TenantContext, account_id: UUID, credential: Credential) -> str
 def check_account(organization_id: UUID, account_id: UUID) -> str:
     """Comprueba una cuenta con la Graph API (ADR-029 §12): lee en su scope, llama **sin
     transacción** con el token abierto solo durante la llamada y guarda en otro scope. Meta que
-    rechaza el token deja la cuenta en `ERROR`; Meta caída no cambia nada. Devuelve un resultado
-    corto (`OK`, `REJECTED`, `UNAVAILABLE`, `SKIPPED`)."""
+    rechaza el token deja la cuenta en `ERROR`; Meta caída no cambia nada. En Messenger e Instagram
+    (F7b-06g) lee las apps suscritas de la página: solo un `190` es un token rechazado; otro rechazo
+    (sin rol en la página) no cambia el estado y solo guarda la hora (`KEPT`). Devuelve un resultado
+    corto (`OK`, `REJECTED`, `KEPT`, `UNAVAILABLE`, `SKIPPED`)."""
     ctx = TenantContext(organization_id, "celery")
     with tenant_scope(ctx):
         target = accounts.health_target(ctx, channel_account_id=account_id)
     if target is None:
         return "SKIPPED"
-    waba, number, credential = target
+    platform, parent, number, credential = target
+    whatsapp, result = platform == "WHATSAPP", "OK"
     try:
         token = credentials.open_token(credential)
         try:
-            seen = graph.phone_number(token, waba, number)
+            if whatsapp:
+                seen = graph.phone_number(token, parent, number)
+            else:
+                subscribed = graph.ours(graph.subscribed_apps(token, parent))
         finally:
             del token
     except sealed.SealError:
@@ -428,10 +434,19 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
             logger.error("channel.healthcheck_key_missing", key_version=credential.key_version)
             return "UNAVAILABLE"
         return _reject(ctx, account_id, credential)
-    except graph.GraphRejected:  # el token ya no abre ese número
-        return _reject(ctx, account_id, credential)
+    except graph.GraphRejected as error:  # el token ya no abre ese número (o esa página: un 190)
+        if whatsapp or isinstance(error, graph.TokenRejected):
+            return _reject(ctx, account_id, credential)
+        subscribed, result = None, "KEPT"
     except graph.GraphUnavailable, graph.ChannelNotEnabled:
         return "UNAVAILABLE"  # Meta caída: no cambia nada y se reintenta en la siguiente pasada
+    if not whatsapp:
+        with tenant_scope(ctx):
+            accounts.apply_subscription(
+                ctx, channel_account_id=account_id, credential_id=credential.pk,
+                subscribed=subscribed,
+            )  # fmt: skip
+        return result
     with tenant_scope(ctx):
         accounts.apply_health(
             ctx, channel_account_id=account_id, quality=seen["quality_rating"],
@@ -442,10 +457,10 @@ def check_account(organization_id: UUID, account_id: UUID) -> str:
 
 @platform_task(name="conversations.healthcheck_accounts", ignore_result=True)
 def healthcheck_accounts(batch_size: int = 50) -> dict[str, int]:
-    """Comprueba la salud de las cuentas de WhatsApp a las que les toca (sin comprobación desde
-    `CHANNEL_HEALTH_INTERVAL_MINUTES`): descubre (organización, cuenta) con una función SECURITY
-    DEFINER (solo ids) y trabaja en el scope de cada una. Un fallo en una cuenta no detiene las
-    demás y solo se registra su tipo. Con el canal apagado no hace nada."""
+    """Comprueba la salud de las cuentas de WhatsApp, Messenger e Instagram a las que les toca
+    (sin comprobación desde `CHANNEL_HEALTH_INTERVAL_MINUTES`): descubre (organización, cuenta)
+    con una función SECURITY DEFINER (solo ids) y trabaja en el scope de cada una. Un fallo en una
+    cuenta no detiene las demás y solo se registra su tipo. Con el canal apagado no hace nada."""
     if not settings.META_ENABLED:
         return {}
     before = timezone.now() - dt.timedelta(minutes=settings.CHANNEL_HEALTH_INTERVAL_MINUTES)

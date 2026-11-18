@@ -99,24 +99,27 @@ export function Checklist({ account }: { account: ChannelAccount }) {
   );
 }
 
-// Lo que falta para usar una cuenta de Messenger o Instagram (F7b-06, ADR-035 §10): el token, el
-// primer evento firmado de Meta, en Instagram el acceso a los mensajes y qué app controla los
-// hilos (`standby`). Hasta ver un evento no se sabe nada de los dos últimos: se espera.
+// Lo que falta para usar una cuenta de Messenger o Instagram (F7b-06, ADR-035 §10): el token, la
+// app del CRM suscrita a la página (F7b-06g), el primer evento firmado de Meta, en Instagram el
+// acceso a los mensajes y qué app controla los hilos (`standby`). Hasta ver un evento no se sabe
+// nada de los dos últimos: se espera. Una cuenta `PENDING` sin suscripción aún no lo vio.
 export function SocialChecklist({ account }: { account: ChannelAccount }) {
   const t = useTranslations("channels");
   const { status_detail: detail } = account;
-  const unseen = detail === "WEBHOOK_NOT_SEEN";
+  const unsubscribed = detail === "PAGE_NOT_SUBSCRIBED";
+  const unseen = detail === "WEBHOOK_NOT_SEEN" || (unsubscribed && account.status === "PENDING");
   const steps: { key: string; state: keyof typeof STATE }[] = [
     {
       key: "token",
       state: account.token_last_four !== null && detail !== "TOKEN_INVALID" ? "ok" : "bad",
     },
+    { key: "subscription", state: unsubscribed ? "bad" : "ok" },
     { key: "webhook", state: unseen ? "wait" : "ok" },
     { key: "control", state: account.has_standby_conversations ? "warn" : unseen ? "wait" : "ok" },
   ];
   if (account.platform === "INSTAGRAM") {
     const access = detail === "MESSAGES_ACCESS_OFF" ? "bad" : unseen ? "wait" : "ok";
-    steps.splice(2, 0, { key: "access", state: access });
+    steps.splice(3, 0, { key: "access", state: access });
   }
   return (
     <ul aria-label={t("checklist.label")} className="flex flex-col gap-1 text-sm">
