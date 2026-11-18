@@ -28,6 +28,7 @@ es del host, no de una organización) cuánto va esa hora por delante del nuestr
 menor adelanto visto, las muestras y el umbral). Es una cota inferior: la entrega y la cola restan.
 """
 
+import contextlib
 import datetime as dt
 import os
 import threading
@@ -99,11 +100,12 @@ def provider_time(at: dt.datetime | None) -> None:
             return
         _skew_alerted = now
     context = {"ahead_seconds": int(least), "samples": SKEW_SAMPLES, "threshold": SKEW_AHEAD}
-    logger.error(SKEW_EVENT, **context)
-    try:
+    try:  # el registro y el reporte juntos: ninguno de los dos frena la ingesta
+        logger.error(SKEW_EVENT, **context)
         reporting.reporter().capture_message(SKEW_EVENT, context, fingerprint=[SKEW_EVENT])
-    except Exception:  # noqa: BLE001 — un reporte roto no frena la ingesta
-        logger.warning("meta.alert.report_failed", alert="clock_skew")
+    except Exception:  # noqa: BLE001 — un aviso roto no frena la ingesta
+        with contextlib.suppress(Exception):
+            logger.warning("meta.alert.report_failed", alert="clock_skew")
 
 
 def bad_signature() -> None:

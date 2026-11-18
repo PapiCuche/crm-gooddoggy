@@ -544,6 +544,23 @@ def test_a_broken_reporter_never_breaks_the_ingest(
     assert "meta.alert.report_failed" in caplog.text
 
 
+def test_a_broken_logger_never_breaks_the_ingest(
+    monkeypatch: pytest.MonkeyPatch, fresh: Spy, mono: list[float]
+) -> None:
+    """Revisión de #958: el registro del aviso también va dentro del `try`; si falla, la muestra
+    que lo disparó no tumba el mensaje."""
+
+    class Broken:
+        def error(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("sin registro")
+
+        def warning(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("sin registro")
+
+    monkeypatch.setattr(ingest_alerts, "logger", Broken())
+    ahead_by(monkeypatch, *(40,) * 5)  # no lanza
+
+
 def test_threads_at_once_keep_five_samples_and_raise_one_alert(
     monkeypatch: pytest.MonkeyPatch, fresh: Spy, mono: list[float]
 ) -> None:
