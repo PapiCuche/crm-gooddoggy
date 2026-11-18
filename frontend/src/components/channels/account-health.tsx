@@ -1,4 +1,4 @@
-import { Check, Clock, TriangleAlert, Unplug, X } from "lucide-react";
+import { Check, CircleHelp, Clock, TriangleAlert, Unplug, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import type { ChannelAccount } from "@/lib/api/model";
@@ -24,6 +24,7 @@ const STATE = {
   warn: { Icon: TriangleAlert, tone: "text-danger" },
   bad: { Icon: X, tone: "text-danger" },
   wait: { Icon: Clock, tone: "text-muted" },
+  unknown: { Icon: CircleHelp, tone: "text-muted" }, // no se comprobó: ni bien ni mal (F7b-06h)
 } as const;
 
 // Los códigos que la API manda y que esta pantalla sabe traducir. Un código que no está (la API
@@ -102,7 +103,8 @@ export function Checklist({ account }: { account: ChannelAccount }) {
 // Lo que falta para usar una cuenta de Messenger o Instagram (F7b-06, ADR-035 §10): el token, la
 // app del CRM suscrita a la página (F7b-06g), el primer evento firmado de Meta, en Instagram el
 // acceso a los mensajes y qué app controla los hilos (`standby`). Hasta ver un evento no se sabe
-// nada de los dos últimos: se espera. Una cuenta `PENDING` sin suscripción aún no lo vio.
+// nada de los dos últimos: se espera. Una cuenta `PENDING` sin suscripción aún no lo vio. La
+// suscripción solo sale bien si Meta lo dijo (`page_subscription`, F7b-06h); si no, «sin comprobar».
 export function SocialChecklist({ account }: { account: ChannelAccount }) {
   const t = useTranslations("channels");
   const { status_detail: detail } = account;
@@ -113,7 +115,10 @@ export function SocialChecklist({ account }: { account: ChannelAccount }) {
       key: "token",
       state: account.token_last_four !== null && detail !== "TOKEN_INVALID" ? "ok" : "bad",
     },
-    { key: "subscription", state: unsubscribed ? "bad" : "ok" },
+    {
+      key: "subscription",
+      state: unsubscribed ? "bad" : account.page_subscription === "SUBSCRIBED" ? "ok" : "unknown",
+    },
     { key: "webhook", state: unseen ? "wait" : "ok" },
     { key: "control", state: account.has_standby_conversations ? "warn" : unseen ? "wait" : "ok" },
   ];

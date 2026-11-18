@@ -470,11 +470,29 @@ def healthcheck_accounts(batch_size: int = 50) -> dict[str, int]:
         if time.monotonic() - started > HEALTH_PASS_SECONDS:
             break  # con Meta lenta, una pasada no ocupa el worker más que esto: sigue la próxima
         try:
-            done[check_account(organization_id, account_id)] += 1
+            outcome = check_account(organization_id, account_id)
         except Exception as error:  # una cuenta no detiene a las demás; nada del error ni del token
             logger.error("channel.healthcheck_failed", error=type(error).__name__)
-            done["ERROR"] += 1
+            outcome = "ERROR"
+        done[outcome] += 1
+        if outcome in UNFINISHED:
+            _attempted(organization_id, account_id)
     return dict(done)
+
+
+# F7b-06h: lo que no guarda la hora de la comprobación. Sin el intento, esas cuentas seguirían al
+# frente de la cola y dejarían sin turno a las demás. `REJECTED` no: ya deja la cuenta en `ERROR`.
+UNFINISHED = ("SKIPPED", "UNAVAILABLE", "ERROR")
+
+
+def _attempted(organization_id: UUID, account_id: UUID) -> None:
+    """Guarda el intento en el scope de la cuenta; si falla, solo se registra su tipo."""
+    ctx = TenantContext(organization_id, "celery")
+    try:
+        with tenant_scope(ctx):
+            accounts.note_attempt(ctx, channel_account_id=account_id)
+    except Exception as error:  # noqa: BLE001 — la pasada sigue con las demás
+        logger.error("channel.healthcheck_attempt_failed", error=type(error).__name__)
 
 
 @platform_task(name="conversations.reseal_credentials")
