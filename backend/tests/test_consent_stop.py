@@ -8,7 +8,6 @@ import datetime as dt
 import itertools
 import logging
 import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -19,7 +18,7 @@ from django.db import IntegrityError, connection
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
-from apps.contacts import keywords
+from apps.contacts import consents, keywords
 from apps.contacts.consents import grant_consent, revoke_consent
 from apps.contacts.models import ConsentKeyword, ContactConsent, ContactConsentEvent
 from apps.contacts.selectors import is_revoked
@@ -28,6 +27,7 @@ from apps.conversations.models import Conversation, Message
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim import webhooks
 from tests.meta_sim.webhooks import CUSTOMER, PHONE_NUMBER_ID, WABA_ID
+from tests.test_contact_consents import on_a_contact
 from tests.test_conversation_commands import outbound
 from tests.test_conversations_dispatch import Counting, dispatch
 from tests.test_inbound_whatsapp import broker, channel, contact, crm, fresh_wake, live, real_stack
@@ -40,6 +40,7 @@ from tests.test_webhook_ingress import deliver
 __all__ = ["broker", "channel", "crm", "fresh_wake", "real_stack"]  # las fixtures, para pytest
 pytestmark = pytest.mark.usefixtures("tenant_db", "no_realtime_broker")
 STOP, BACK = keywords.OPT_OUT, keywords.OPT_IN
+MINUTE = dt.timedelta(minutes=1)
 
 
 def say(wamid: str, body: str, *, ago: dt.timedelta = dt.timedelta(seconds=5)) -> dict[str, int]:
@@ -435,7 +436,8 @@ def ago(seconds: int) -> int:
 def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> list[str]:
     """Dos workers (`--concurrency 2`) reclaman cada uno su ítem antes de que ninguno lo procese.
     El del ítem cuyo payload lleva `first` escribe su palabra y retiene la transacción hasta que el
-    otro espera un bloqueo de PostgreSQL; entonces confirma y el otro sigue (F7b-05e)."""
+    otro espera la fila del contacto; entonces confirma y el otro sigue (F7b-05e). F7b-05f: solo en
+    esta prueba se quita el bloqueo de aviso por cliente, que de otro modo lo frenaría antes."""
     claimed = threading.Barrier(2, timeout=10)
     wrote, go, release = threading.Event(), threading.Event(), threading.Event()
     leader: list[threading.Thread] = []
@@ -454,6 +456,7 @@ def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> l
 
     for name in real:
         monkeypatch.setattr(inbound, name, holding(name))
+    monkeypatch.setattr(inbound, "_lock", lambda alias, key: None)  # solo aquí: ver el docstring
 
     def worker() -> None:
         try:
@@ -475,15 +478,14 @@ def two_batches(migrator: Any, monkeypatch: pytest.MonkeyPatch, first: str) -> l
         thread.start()
     assert wrote.wait(timeout=10)
     go.set()
-    deadline, waited = time.monotonic() + 10, False
-    while not waited and time.monotonic() < deadline:  # se observa la espera, no se supone
-        waited = migrator.execute("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()[0]
-        release.wait(timeout=0.02)
-    release.set()
-    for thread in threads:
-        thread.join(timeout=10)
+    try:
+        waited = on_a_contact(migrator)  # se observa la espera en la fila del contacto
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(timeout=10)
     assert not any(t.is_alive() for t in threads) and len(leader) == 1, outcome
-    assert waited, "el segundo lote no esperó al primero"
+    assert waited, "el segundo lote no esperó al primero en la fila del contacto"
     return outcome
 
 
@@ -516,6 +518,36 @@ def test_two_batches_at_once_follow_the_time_the_customer_wrote_them(
     with tenant_scope(ctx(crm.a)):
         revoked = is_revoked(found.convo.contact_id, "WHATSAPP", "FOLLOW_UP")
     assert revoked is (final(newer, gap)[0] == "REVOKED")
+
+
+@pytest.mark.parametrize("skew", [30, -30])  # nuestro reloj detrás del de Meta, o delante
+@pytest.mark.parametrize(("newer", "gap"), [("BAJA", 10), ("ALTA", 10), ("BAJA", 0)])
+def test_with_our_clock_off_meta_the_newest_word_by_meta_still_wins(
+    crm: SimpleNamespace, newer: str, gap: int, skew: int
+) -> None:
+    """F7b-05f: la más nueva se procesa antes; la vieja, después, con nuestro reloj más adelante."""
+    live(crm.a)
+    say("wamid.0", "Hola", ago=dt.timedelta(seconds=60))
+    older, base = ("BAJA" if newer == "ALTA" else "ALTA"), ago(-skew)  # la hora de la más nueva
+    for said, wamid, at in ((newer, "wamid.new", base), (older, "wamid.old", base - gap)):
+        deliver(webhooks.text_message(said, wamid=wamid, at=at))
+        assert ingress.process() == {"PROCESSED": 1}
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", *final(newer, gap))]
+
+
+def test_a_meta_time_ahead_of_our_clock_orders_the_words_but_never_moves_the_window(
+    crm: SimpleNamespace,
+) -> None:
+    live(crm.a)
+    at = ago(-30)  # Meta va 30 s por delante
+    deliver(webhooks.text_message("BAJA", wamid="wamid.1", at=at))
+    ingress.process()
+    found, now = seen(crm.a), timezone.now()
+    with tenant_scope(ctx(crm.a)):
+        row = ContactConsent.objects.get()
+    assert row.keyword_at == dt.datetime.fromtimestamp(at, dt.UTC)  # la de Meta, sin acotar
+    assert found.convo.last_inbound_at <= now  # la ventana de 24 h, acotada a «ahora» como antes
+    assert found.inbound[0].provider_timestamp <= now
 
 
 @pytest.mark.parametrize("newer", ["ALTA", "BAJA"])
@@ -604,17 +636,75 @@ def test_a_whatsapp_reply_never_reads_the_consent(
     assert calls == []
 
 
-def test_a_keyword_without_the_provider_time_keeps_the_order_of_arrival(
-    crm: SimpleNamespace,
+@pytest.mark.parametrize("missing", [True, False])  # sin `timestamp`, o con `null`
+def test_an_alta_without_the_provider_time_counts_for_nothing(
+    crm: SimpleNamespace, migrator: Any, missing: bool
 ) -> None:
+    """Decisión del propietario (#937, 2026-11-18): un ALTA sin hora no cuenta, ni sola ni tras una
+    BAJA con hora más nueva entregada antes; ni fila, ni hora, ni confirmación."""
     live(crm.a)
-    say("wamid.1", "BAJA", ago=dt.timedelta(seconds=10))
-    alta = webhooks.text_message("ALTA", wamid="wamid.2")
-    del alta["timestamp"]  # sin la hora del proveedor: cuenta la llegada, como antes
-    deliver(alta)
-    ingress.process()
+
+    def untimed(wamid: str) -> dict[str, Any]:
+        found = webhooks.text_message("ALTA", wamid=wamid)
+        if missing:
+            del found["timestamp"]
+        return found if missing else found | {"timestamp": None}
+
+    deliver(untimed("wamid.1"))
+    assert ingress.process() == {"PROCESSED": 1}
     found = seen(crm.a)
-    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+    assert (found.consents, found.replies) == ([], [])
+    assert events(migrator, "consent.granted") == 0
+    say("wamid.2", "BAJA", ago=dt.timedelta(seconds=10))  # dicha después del ALTA
+    deliver(untimed("wamid.3"))
+    ingress.process()  # otro ALTA sin hora: tampoco levanta la baja
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert [r.body for r in found.replies] == [inbound.CONFIRMATIONS["WHATSAPP"][STOP]]
+
+
+@pytest.mark.parametrize("stamp", ["abc", "", "999", "4102444801", "-5", 1_700_000_000])
+def test_a_provider_time_that_does_not_parse_lets_a_baja_revoke_but_never_an_alta_lift(
+    crm: SimpleNamespace, stamp: Any
+) -> None:
+    """F7b-05f: solo una palabra sin hora cuenta por llegada; con una hora que no vale (texto, fuera
+    de 2001-2100, un número sin comillas), la BAJA revoca igual y el ALTA no cuenta."""
+    live(crm.a)
+    say("wamid.1", "ALTA", ago=dt.timedelta(seconds=30))
+    for wamid, word in (("wamid.2", "BAJA"), ("wamid.3", "ALTA")):
+        deliver(webhooks.text_message(word, wamid=wamid) | {"timestamp": stamp})
+        assert ingress.process() == {"PROCESSED": 1}
+    found = seen(crm.a)
+    assert found.consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert [r.body for r in found.replies] == [
+        inbound.CONFIRMATIONS["WHATSAPP"][k] for k in (BACK, STOP)
+    ]  # el ALTA que no contó no confirma
+
+
+@pytest.mark.parametrize("stamp", ["abc", None, "MISSING", "4102444801"])
+def test_a_baja_without_a_usable_time_still_beats_an_older_alta_delivered_after_it(
+    crm: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, stamp: Any
+) -> None:
+    """Revisión de #951 (2.ª y 3.ª pasada): la BAJA, la más nueva, llega sin hora (o con una que no
+    vale) y guarda la nuestra más el margen; ni el ALTA de 30 s antes, entregada después, ni una de
+    5 s después la levantan. Una de 2 min después, procesada entonces, sí."""
+    live(crm.a)
+    say("wamid.0", "Hola", ago=dt.timedelta(seconds=60))
+    baja = webhooks.text_message("BAJA", wamid="wamid.1")
+    if stamp == "MISSING":
+        del baja["timestamp"]
+    else:
+        baja["timestamp"] = stamp
+    deliver(baja)
+    ingress.process()
+    say("wamid.2", "ALTA", ago=dt.timedelta(seconds=30))
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    say("wamid.3", "ALTA", ago=dt.timedelta(seconds=-5))  # 5 s después: dentro del minuto
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    now = timezone.now  # 2 min más tarde, en el reloj de Meta y en el nuestro
+    monkeypatch.setattr(consents, "timezone", SimpleNamespace(now=lambda: now() + 2 * MINUTE))
+    say("wamid.4", "ALTA", ago=-2 * MINUTE)
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
 
 
 def test_the_keyword_time_migration_goes_back_and_forward(

@@ -340,6 +340,62 @@ def test_a_baja_delivered_after_a_later_alta_does_not_revert_it(
     assert len(found.replies) == 2  # la baja vieja no confirma nada
 
 
+@pytest.mark.parametrize(
+    ("first", "second", "ms", "status"),
+    [("BAJA", "ALTA", (10_000, 0), "REVOKED"), ("BAJA", "ALTA", (100, 900), "REVOKED"),
+     ("ALTA", "BAJA", (10_000, 0), "GRANTED")],
+)  # fmt: skip
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_with_our_clock_behind_meta_each_word_keeps_its_meta_time(
+    world: SimpleNamespace, platform: str, first: str, second: str, ms: tuple[int, int],
+    status: str,
+) -> None:  # fmt: skip
+    """F7b-05f: Meta va 30 s por delante y `first` llega antes. Una palabra 10 s más vieja no
+    revierte la nueva; dos del mismo segundo (unos milisegundos aparte) empatan: gana la baja."""
+    talk(world, platform)
+    base = (int(timezone.now().timestamp()) + 30) * 1000
+    for said, at, mid in ((first, ms[0], "m_SIMIN000001"), (second, ms[1], "m_SIMIN000002")):
+        say(platform, social.text(SIM[platform], said, mid=mid, at=base + at))
+    source = "KEYWORD_STOP" if status == "REVOKED" else "CUSTOMER_MESSAGE"
+    assert seen(world).consents == [(platform, "ALL_PROACTIVE", status, source)]
+
+
+@pytest.mark.parametrize("stamp", ["1700000000000", -5, True, 10**15])
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_a_provider_time_that_does_not_parse_never_lets_an_alta_lift_a_baja(
+    world: SimpleNamespace, platform: str, stamp: Any
+) -> None:
+    """F7b-05f: con una hora que no vale (texto, negativa, booleana, más allá de 2100) la BAJA
+    revoca por llegada y el ALTA no cuenta; solo sin hora cuenta la llegada."""
+    talk(world, platform)
+    for word, mid in (("BAJA", "m_SIMIN000001"), ("ALTA", "m_SIMIN000002")):
+        say(platform, event(platform, word, mid) | {"timestamp": stamp})
+    assert seen(world).consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+
+
+@pytest.mark.parametrize("missing", [True, False])  # sin `timestamp`, o con `null`
+@pytest.mark.parametrize("platform", PLATFORMS)
+def test_an_alta_without_the_provider_time_counts_for_nothing_on_each_channel(
+    world: SimpleNamespace, platform: str, missing: bool
+) -> None:
+    """Decisión del propietario (#937): un ALTA sin hora no cuenta, sola o tras una BAJA."""
+    talk(world, platform)
+
+    def untimed(mid: str) -> dict[str, Any]:
+        found = event(platform, "ALTA", mid)
+        return {k: v for k, v in found.items() if k != "timestamp"} if missing else (
+            found | {"timestamp": None}
+        )  # fmt: skip
+
+    say(platform, untimed("m_SIMIN000001"))
+    assert (seen(world).consents, seen(world).replies) == ([], [])
+    say(platform, event(platform, "BAJA", "m_SIMIN000002"))
+    say(platform, untimed("m_SIMIN000003"))
+    found = seen(world)
+    assert found.consents == [(platform, "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    assert [r.body for r in found.replies] == [inbound.CONFIRMATIONS[platform][STOP]]
+
+
 @pytest.mark.parametrize("platform", PLATFORMS)
 def test_a_reply_reads_the_consent_only_when_it_would_go_out_with_the_tag(
     world: SimpleNamespace, settings: Any, monkeypatch: pytest.MonkeyPatch, platform: str
