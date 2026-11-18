@@ -373,6 +373,74 @@ describe("Inbox, motivo de un fallo: el conjunto cerrado", () => {
     expect(log.querySelectorAll("svg")).toHaveLength(0);
   });
 
+  // F7b-06f: el texto lo elige la plataforma de la conversación.
+  it("cada texto que nombra WhatsApp tiene su versión social, y ninguna nombra WhatsApp", () => {
+    const own = messages.inbox.failure as Record<string, string>;
+    const social = messages.inbox.failureSocial as Record<string, string>;
+    const codes: readonly string[] = Object.values(ProviderErrorCodeEnum);
+    for (const [code, text] of Object.entries(own)) {
+      if (text.includes("WhatsApp")) expect(typeof social[code]).toBe("string");
+    }
+    for (const [code, text] of Object.entries(social)) {
+      expect(codes).toContain(code);
+      expect(text).not.toContain("WhatsApp");
+      expect(text).toContain("{network}");
+    }
+  });
+
+  it("los textos de WhatsApp no cambian (byte a byte)", () => {
+    expect(messages.inbox.failure).toMatchObject({
+      TOKEN_INVALID:
+        "El acceso de WhatsApp ya no es válido. Pide a quien administra los canales que reconecte la cuenta.",
+      RECIPIENT_UNREACHABLE: "Ese número no puede recibir mensajes de WhatsApp.",
+      PROVIDER_REJECTED: "WhatsApp rechazó el mensaje.",
+      PROVIDER_UNKNOWN:
+        "Puede que sí se haya enviado: WhatsApp no lo confirmó. Reenviarlo podría duplicar el mensaje.",
+      RATE_LIMITED: "WhatsApp limitó el envío por exceso de mensajes. Inténtalo más tarde.",
+      QUALITY_BLOCKED: "WhatsApp bloqueó el envío por la calidad del número.",
+      PROVIDER_ERROR: "WhatsApp tuvo un problema al procesar el envío.",
+    });
+  });
+
+  it.each([
+    ["INSTAGRAM", "Instagram"],
+    ["MESSENGER", "Messenger"],
+    ["WHATSAPP", "WhatsApp"],
+    ["SANDBOX", "WhatsApp"], // fuera de Instagram y Messenger, los textos de siempre
+    ["constructor", "WhatsApp"], // una clave del prototipo no es una red social
+  ] as const)("en %s el motivo nombra %s", async (platform, network) => {
+    const failed = (id: string, code: string) =>
+      message(id, {
+        direction: "OUTBOUND",
+        sender_type: "USER",
+        delivery_status: "FAILED",
+        body: id,
+        provider_error_code: code as Message["provider_error_code"],
+      });
+    const odd = platform as Conversation["channel"]["platform"]; // una plataforma rara también
+    const chat = conversation("1", { channel: { id: "ch1", platform: odd, name: "Cuenta" } });
+    serve({
+      [LIST]: page([chat]),
+      [MESSAGES("1")]: page([
+        failed("c", "PROVIDER_UNKNOWN"),
+        failed("b", "WINDOW_CLOSED"),
+        failed("a", "PROVIDER_REJECTED"),
+      ]),
+    });
+    show();
+    await open(/Rosa Díaz/);
+    const log = await screen.findByRole("list", { name: "Mensajes" });
+    const row = (body: string) =>
+      within(log)
+        .getAllByRole("listitem")
+        .find((li) => li.querySelector("bdi")?.textContent === body)!;
+    expect(row("a")).toHaveTextContent(`${network} rechazó el mensaje.`);
+    expect(row("c")).toHaveTextContent(`${network} no lo confirmó`);
+    expect(row("c").querySelectorAll(".text-danger")).toHaveLength(0); // sigue sin ser un error
+    expect(row("b")).toHaveTextContent("Pasaron más de 24 horas"); // no nombra la red: el de siempre
+    if (network !== "WhatsApp") expect(log).not.toHaveTextContent("WhatsApp");
+  });
+
   it("el texto de TOKEN_INVALID manda a quien administra los canales, no a quien escribe", () => {
     expect(messages.inbox.failure.TOKEN_INVALID).toContain("quien administra los canales");
   });

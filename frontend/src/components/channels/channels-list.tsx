@@ -27,9 +27,10 @@ export function ChannelsList() {
   const list = useRef<CursorListHandle>(null);
   const refresh = () => list.current?.refetch();
   const t = useTranslations("channels");
-  // La cuenta desconectada desaparece de la lista (solo vienen las vivas): se dice aquí, fuera de
-  // su tarjeta, para que el aviso sobreviva a la lista nueva.
-  const [gone, setGone] = useState<string | null>(null);
+  // La cuenta desconectada desaparece de la lista (solo vienen las vivas), y también la que otra
+  // persona quitó (un 404 al rotar o al desconectar, F7b-06f): se dice aquí, fuera de su tarjeta,
+  // para que el aviso sobreviva a la lista nueva. El nombre va aislado (`Plain`), como en la pregunta.
+  const [notice, setNotice] = useState<Notice>(null);
   const connect = (route: Route) => (
     <ConnectAccount key={route} slug={slug} route={route} onConnected={refresh} />
   );
@@ -48,36 +49,41 @@ export function ChannelsList() {
           <div className="flex flex-wrap items-start gap-3">
             {(["whatsapp", "messenger", "instagram"] as const).map(connect)}
           </div>
-          <p role="status" className={gone ? "text-sm wrap-anywhere" : "sr-only"}>
-            {gone ? t("disconnect.done", { name: gone }) : ""}
+          <p role="status" className={notice ? "text-sm wrap-anywhere" : "sr-only"}>
+            {notice === "missing"
+              ? t("errors.NOT_FOUND")
+              : notice
+                ? t.rich("disconnect.done", { ...notice, n: (chunks) => <Plain>{chunks}</Plain> })
+                : ""}
           </p>
         </div>
       }
       rowClassName="flex flex-col gap-3"
     >
-      {(account) => (
-        <Account
-          slug={slug}
-          account={account}
-          refresh={refresh}
-          disconnected={() => setGone(account.name)}
-        />
-      )}
+      {(account) => <Account slug={slug} account={account} refresh={refresh} notify={setNotice} />}
     </CursorList>
   );
 }
+
+// «missing»: la cuenta ya no existe (404); `{ name }`: esta pantalla la desconectó.
+type Notice = "missing" | { name: string } | null;
 
 function Account({
   slug,
   account,
   refresh,
-  disconnected,
+  notify,
 }: {
   slug: string;
   account: ChannelAccount;
   refresh: () => void;
-  disconnected: () => void;
+  notify: (notice: Notice) => void;
 }) {
+  // Un 404: se avisa fuera de la tarjeta y se vuelve a leer la lista, que ya no la trae.
+  const missing = () => {
+    notify("missing");
+    refresh();
+  };
   const t = useTranslations("channels");
   const label = useCodeLabel();
   const format = useFormatter();
@@ -150,16 +156,18 @@ function Account({
       ) : null}
       {route && account.status !== "DISCONNECTED" ? (
         <div className="flex flex-col gap-3">
-          <RotateToken slug={slug} route={route} accountId={account.id} onRotated={refresh} />
+          <RotateToken
+            {...{ slug, route, accountId: account.id }}
+            onRotated={refresh}
+            onMissing={missing}
+          />
           <DisconnectAccount
-            slug={slug}
-            route={route}
-            accountId={account.id}
-            name={account.name}
-            onDisconnected={(mine) => {
-              if (mine) disconnected();
+            {...{ slug, route, accountId: account.id, name: account.name }}
+            onDisconnected={() => {
+              notify({ name: account.name });
               refresh();
             }}
+            onMissing={missing}
           />
         </div>
       ) : null}

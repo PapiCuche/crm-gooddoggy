@@ -146,7 +146,12 @@ export function ChatPanel({
     body = (
       <ol aria-label={t("chat.label")} className="flex flex-col gap-3">
         {rows.map((message) => (
-          <Bubble key={message.id} message={message} conversationId={conversation.id} />
+          <Bubble
+            key={message.id}
+            message={message}
+            conversationId={conversation.id}
+            platform={conversation.channel.platform}
+          />
         ))}
       </ol>
     );
@@ -283,6 +288,9 @@ export function ChatPanel({
 }
 
 const CODES: readonly string[] = Object.values(ProviderErrorCodeEnum);
+// La red que nombra el motivo de un fallo en Instagram y Messenger (F7b-06f): un mapa cerrado de la
+// plataforma a su clave de texto; nada se arma con lo que manda el servidor.
+const SOCIAL_NETWORK = { INSTAGRAM: "network.INSTAGRAM", MESSENGER: "network.MESSENGER" } as const;
 // `delivery_status` es un texto libre en el servidor: solo un estado conocido llega a `t()` y a
 // `MARKS` (`t.has` dice que sí de claves del prototipo como `constructor`).
 const STATES: readonly string[] = Object.keys(MARKS);
@@ -296,7 +304,15 @@ const MEDIA: Record<string, ReactNode> = {
   DOCUMENT: <FileText aria-hidden className="size-3.5" />,
 };
 
-function Bubble({ message, conversationId }: { message: Message; conversationId: string }) {
+function Bubble({
+  message,
+  conversationId,
+  platform,
+}: {
+  message: Message;
+  conversationId: string;
+  platform: string;
+}) {
   const t = useTranslations("inbox");
   const format = useFormatter();
   // Una nota interna es otra cosa que un mensaje al cliente: va aparte, rotulada y nunca como uno.
@@ -322,6 +338,16 @@ function Bubble({ message, conversationId }: { message: Message; conversationId:
     state === "FAILED" && code && CODES.includes(code) && t.has(`failure.${code}`) ? code : null;
   // «Puede que sí se haya enviado» no es un fallo seguro: tono neutro, no el rojo de un error.
   const unsure = reason === "PROVIDER_UNKNOWN";
+  // Los textos de `failure` que nombran WhatsApp tienen su versión para Instagram y Messenger
+  // (`failureSocial`, F7b-06f), con la red de la conversación; las demás plataformas, los de siempre.
+  const social = Object.hasOwn(SOCIAL_NETWORK, platform)
+    ? SOCIAL_NETWORK[platform as keyof typeof SOCIAL_NETWORK]
+    : null;
+  const why = !reason
+    ? null
+    : social && t.has(`failureSocial.${reason}`)
+      ? t(`failureSocial.${reason}`, { network: t(social) })
+      : t(`failure.${reason}`);
   return (
     <li
       className={cn(
@@ -381,10 +407,8 @@ function Bubble({ message, conversationId }: { message: Message; conversationId:
           </span>
         ) : null}
       </p>
-      {reason ? (
-        <p className={cn("text-xs", unsure ? "text-foreground" : "text-danger")}>
-          {t(`failure.${reason}`)}
-        </p>
+      {why ? (
+        <p className={cn("text-xs", unsure ? "text-foreground" : "text-danger")}>{why}</p>
       ) : null}
     </li>
   );
