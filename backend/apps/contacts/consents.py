@@ -19,6 +19,8 @@ empatan y gana la baja), aunque el reloj del servidor vaya detrás. Un alta con 
 «ahora» más `KEYWORD_AHEAD` no cuenta: ni concede ni guarda su hora, así nunca frena una baja
 posterior. Una baja guarda su hora aunque pase ese margen: una hora falsa en el futuro frena las
 altas por palabra hasta entonces (del lado de la baja; un cambio manual sigue sin tocar la hora).
+Una baja sin hora del proveedor (o con una que no vale) guarda nuestra hora, o la última guardada si
+es mayor: un alta con hora anterior no la levanta (en un empate, la baja); una posterior, sí.
 """
 
 import datetime as dt
@@ -92,6 +94,9 @@ def _write(
         where = {"contact_id": contact_id, "channel": channel, "purpose": purpose}
         row = ContactConsent.objects.using(alias).filter(**where).first()
         last = None if row is None else row.keyword_at
+        if said_at is None and source == ConsentSource.KEYWORD_STOP:  # una baja sin hora (F7b-05f)
+            said_at = timezone.now().replace(microsecond=0)
+            said_at = said_at if last is None else max(said_at, last)  # en un empate, la baja
         if row is not None and said_at is not None and last is not None and (
             said_at < last or (said_at == last and status == ConsentStatus.GRANTED)
         ):  # fmt: skip
@@ -161,9 +166,10 @@ def keyword_stop(
     said_at: dt.datetime | None, evidence: dict[str, str] | None = None,
 ) -> bool:  # fmt: skip
     """La baja por palabra (F7-08b): revoca con `KEYWORD_STOP`, salvo que la fila ya tenga una
-    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio). Un alta de la
-    misma hora no la detiene: en un empate gana la baja. Devuelve si cambió algo. Mismos errores
-    que `revoke_consent`."""
+    palabra posterior (`said_at`, el instante del proveedor; `None` si no lo dio o no vale: entonces
+    cuenta nuestra hora, o la última guardada si es mayor, F7b-05f). Un alta de la misma hora no la
+    detiene: en un empate gana la baja. Devuelve si cambió algo. Mismos errores que
+    `revoke_consent`."""
     return _write(
         ctx, contact_id, channel, purpose, ConsentStatus.REVOKED, ConsentSource.KEYWORD_STOP,
         evidence, said_at=said_at,

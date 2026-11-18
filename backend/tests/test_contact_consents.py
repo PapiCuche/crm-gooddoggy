@@ -441,6 +441,19 @@ def test_a_far_future_baja_blocks_keyword_altas_on_the_side_of_the_opt_out(
     assert stored(world) == ("REVOKED", STOP, far)
 
 
+@pytest.mark.parametrize(("alta", "status"), [(-1, "REVOKED"), (30, "REVOKED"), (31, "GRANTED")])
+def test_a_baja_without_a_time_takes_ours_or_the_later_stored_one(
+    world: SimpleNamespace, clock: list[dt.datetime], alta: int, status: str
+) -> None:
+    """Revisión de #951 (2.ª pasada): una baja sin hora guarda nuestra hora, o la última guardada
+    si es mayor (un alta 30 s por delante, dentro del margen); en un empate, la baja."""
+    assert word(world, "ALTA", SECOND + 30 * S) is True
+    assert word(world, "BAJA", None) is True
+    assert stored(world) == ("REVOKED", STOP, SECOND + 30 * S)
+    word(world, "ALTA", SECOND + alta * S)  # antes, en el empate o después de esa hora
+    assert stored(world)[0] == status
+
+
 def test_the_clock_is_read_with_the_contact_locked(
     world: SimpleNamespace, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -553,13 +566,14 @@ def test_an_alta_racing_an_agent_revocation_waits_on_the_contact_and_lifts_nothi
 STARTS = ["none", "agent_grant", "keyword", *OTHERS]  # cómo está la fila antes de las palabras
 
 
-def scenario(rng: random.Random, skews: float, delays: float) -> dict[str, Any]:
+def scenario(rng: random.Random, skews: float, delays: float, untimed: float) -> dict[str, Any]:
     """Unas palabras con su hora de Meta (con empates y milisegundos), nuestro reloj desfasado
-    `skew` segundos y cada una procesada con su retraso: el orden de proceso sale de ahí."""
+    `skew` segundos y cada una procesada con su retraso: el orden de proceso sale de ahí. Con
+    probabilidad `untimed`, llega sin una hora que valga (F7b-05f, 2.ª pasada de la revisión)."""
     skew = rng.choice([0.0, rng.uniform(-skews, skews), rng.choice([0.3, -0.3, 0.9, -0.9])])
     words = [
         (rng.choice(["BAJA", "ALTA"]), rng.randint(0, 30) + rng.choice([0, 0, rng.random()]),
-         rng.choice([0.0, rng.uniform(0, delays)]))
+         rng.choice([0.0, rng.uniform(0, delays)]), rng.random() >= untimed)
         for _ in range(rng.randint(1, 4))
     ]  # fmt: skip
     return {"skew": skew, "words": words, "start": rng.choice(STARTS), "k0": rng.randint(0, 30)}
@@ -570,7 +584,7 @@ def owner_rule(case: dict[str, Any]) -> str:
     Una baja de otro origen no la levanta ninguna palabra."""
     if case["start"] in OTHERS:
         return "REVOKED"
-    said = [(int(at), kind) for kind, at, _ in case["words"]]
+    said = [(int(at), kind) for kind, at, _, _ in case["words"]]
     said += [(case["k0"], "BAJA")] if case["start"] == "keyword" else []
     top = max(at for at, _ in said)
     return "REVOKED" if ("BAJA" in {k for at, k in said if at == top}) else "GRANTED"
@@ -578,16 +592,20 @@ def owner_rule(case: dict[str, Any]) -> str:
 
 def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str, bool]:
     """Juega el caso en un contacto nuevo. Devuelve el estado final y si todas las horas de Meta
-    quedaron dentro del margen cuando se procesaron."""
+    quedaron dentro del margen cuando se procesaron. Una palabra sin hora que valga: la BAJA se
+    aplica sin `said_at`; el ALTA no llega a `consents` (`inbound` la descarta)."""
     with tenant_scope(ctx(org)):
         where = {"contact_id": Contact.objects.create(display_name="Caso").pk}
     where |= {"channel": WA, "purpose": ALL}
     skew = dt.timedelta(seconds=case["skew"])
-    meta = [(SECOND + dt.timedelta(seconds=at), kind, delay) for kind, at, delay in case["words"]]
-    plays = sorted((at - skew + dt.timedelta(seconds=delay), at, kind) for at, kind, delay in meta)
+    plays = sorted(
+        (SECOND + dt.timedelta(seconds=at) - skew + dt.timedelta(seconds=delay),
+         SECOND + dt.timedelta(seconds=at), kind, timed)
+        for kind, at, delay, timed in case["words"]
+    )  # fmt: skip
     if case["start"] == "keyword":  # una baja anterior, procesada antes que todas
         k0 = SECOND + case["k0"] * S
-        plays.insert(0, (min(plays[0][0], k0 - skew), k0, "BAJA"))
+        plays.insert(0, (min(plays[0][0], k0 - skew), k0, "BAJA", True))
     elif case["start"] != "none":
         clock[0] = plays[0][0] - 120 * S
         with tenant_scope(ctx(org)) as tenant:
@@ -598,31 +616,40 @@ def play(org: UUID, case: dict[str, Any], clock: list[dt.datetime]) -> tuple[str
                 source=OTHERS[0] if case["start"] == "agent_grant" else case["start"],
             )
     within = True
-    for server, at, kind in plays:
+    for server, at, kind, timed in plays:
         clock[0] = server
         within &= (
             at.replace(microsecond=0) - server.replace(microsecond=0) <= consents.KEYWORD_AHEAD
         )
-        command = keyword_stop if kind == "BAJA" else lift_keyword_stop
-        run(org, command, contact_id=where["contact_id"], channel=WA, purpose=ALL, said_at=at)
+        if timed or kind == "BAJA":
+            command = keyword_stop if kind == "BAJA" else lift_keyword_stop
+            said = at if timed else None
+            run(org, command, contact_id=where["contact_id"], channel=WA, purpose=ALL, said_at=said)
     with tenant_scope(ctx(org)):
         row = ContactConsent.objects.filter(**where).first()  # sin fila: un alta que no contó
     return (row.status if row else "NONE"), within
 
 
 @pytest.mark.parametrize(
-    ("seed", "skews", "delays"),
-    [(1, 0.99, 5), (2, 60, 30), (3, 59, 200), (4, 600, 30), (5, 600, 200), (6, 3600, 3600)],
-)
+    ("seed", "skews", "delays", "untimed"),
+    [(1, 0.99, 5, 0.2), (2, 60, 30, 0.2), (3, 59, 200, 0.2), (4, 600, 30, 0.2),
+     (5, 600, 200, 0.2), (6, 3600, 3600, 0.2), (7, 5, 30, 0.5), (8, 60, 60, 0.5)],
+)  # fmt: skip
 def test_any_skew_delay_and_order_keeps_the_owner_rule_or_stays_on_the_opt_out(
-    world: SimpleNamespace, clock: list[dt.datetime], seed: int, skews: float, delays: float
-) -> None:
-    """Dentro del margen, la regla exacta del propietario; fuera, nunca `GRANTED` si la palabra
-    más reciente de Meta fue una baja (semillas fijas: el mismo resultado siempre)."""
+    world: SimpleNamespace, clock: list[dt.datetime], seed: int, skews: float, delays: float,
+    untimed: float,
+) -> None:  # fmt: skip
+    """Dentro del margen y con todas las horas, la regla exacta del propietario; si no, nunca
+    `GRANTED` si la palabra más reciente de Meta fue una baja, salvo una baja sin hora con nuestro
+    reloj detrás del de Meta (guarda nuestra hora: límite documentado). Semillas fijas."""
     rng, wrong = random.Random(seed), []  # noqa: S311 — casos de prueba, no secretos
     for _ in range(60):
-        case = scenario(rng, skews, delays)
+        case = scenario(rng, skews, delays, untimed)
         want, (got, within) = owner_rule(case), play(world.a, case, clock)
-        if got != want and (within or want == "REVOKED"):
+        timed = all(word[3] for word in case["words"])
+        untimed_baja = any(not t and k == "BAJA" for k, _, _, t in case["words"])
+        exact = within and timed and got != want
+        unsafe = want == "REVOKED" and got == "GRANTED" and not (untimed_baja and case["skew"] > 0)
+        if exact or unsafe:
             wrong.append((case, want, got))
     assert not wrong, wrong[:3]

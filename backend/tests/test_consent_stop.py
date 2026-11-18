@@ -666,6 +666,28 @@ def test_a_provider_time_that_does_not_parse_lets_a_baja_revoke_but_never_an_alt
     ]  # el ALTA que no contó no confirma
 
 
+@pytest.mark.parametrize("stamp", ["abc", None, "MISSING", "4102444801"])
+def test_a_baja_without_a_usable_time_still_beats_an_older_alta_delivered_after_it(
+    crm: SimpleNamespace, stamp: Any
+) -> None:
+    """Revisión de #951 (2.ª pasada): la BAJA, la más nueva, llega sin hora (o con una que no
+    vale) y guarda la nuestra; el ALTA de 30 s antes, entregada después, no la levanta. Un ALTA
+    posterior a esa hora, sí."""
+    live(crm.a)
+    say("wamid.0", "Hola", ago=dt.timedelta(seconds=60))
+    baja = webhooks.text_message("BAJA", wamid="wamid.1")
+    if stamp == "MISSING":
+        del baja["timestamp"]
+    else:
+        baja["timestamp"] = stamp
+    deliver(baja)
+    ingress.process()
+    say("wamid.2", "ALTA", ago=dt.timedelta(seconds=30))
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "REVOKED", "KEYWORD_STOP")]
+    say("wamid.3", "ALTA", ago=dt.timedelta(seconds=-5))  # 5 s después de la BAJA
+    assert seen(crm.a).consents == [("WHATSAPP", "ALL_PROACTIVE", "GRANTED", "CUSTOMER_MESSAGE")]
+
+
 def test_the_keyword_time_migration_goes_back_and_forward(
     crm: SimpleNamespace, migrator: Any
 ) -> None:
