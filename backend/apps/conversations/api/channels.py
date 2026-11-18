@@ -23,6 +23,7 @@ from apps.conversations import accounts, graph, selectors
 from apps.conversations.api import inputs
 from apps.conversations.models import (
     LIMIT_TIERS,
+    PAGE_SUBSCRIPTIONS,
     QUALITY_RATINGS,
     STATUS_DETAILS,
     AccountStatus,
@@ -99,6 +100,11 @@ class ChannelAccountSerializer(serializers.Serializer[Any]):
         help_text="Instagram o Messenger: alguna conversación no cerrada de la cuenta está en "
         "`standby` (otra app controla el hilo, ADR-035 §4)."
     )
+    page_subscription = serializers.ChoiceField(
+        choices=PAGE_SUBSCRIPTIONS, allow_null=True, read_only=True,
+        help_text="Messenger o Instagram: si la página tiene suscrita la app del CRM según la "
+        "última respuesta de Meta; `UNKNOWN` si no se comprobó o no se sabe. `null` en las demás.",
+    )  # fmt: skip
     version = serializers.IntegerField()
     created_at = serializers.DateTimeField()
     updated_at = serializers.DateTimeField()

@@ -12360,6 +12360,18 @@ components:
           type: boolean
           description: 'Instagram o Messenger: alguna conversación no cerrada de la
             cuenta está en `standby` (otra app controla el hilo, ADR-035 §4).'
+        page_subscription:
+          readOnly: true
+          nullable: true
+          description: |-
+            Messenger o Instagram: si la página tiene suscrita la app del CRM según la última respuesta de Meta; `UNKNOWN` si no se comprobó o no se sabe. `null` en las demás.
+
+            * `SUBSCRIBED` - SUBSCRIBED
+            * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED
+            * `UNKNOWN` - UNKNOWN
+          oneOf:
+          - $ref: '#/components/schemas/PageSubscriptionEnum'
+          - $ref: '#/components/schemas/NullEnum'
         version:
           type: integer
         created_at:
@@ -12377,6 +12389,7 @@ components:
       - last_healthcheck_at
       - messaging_limit_tier
       - name
+      - page_subscription
       - platform
       - quality_rating
       - status
@@ -14785,6 +14798,16 @@ components:
       - id
       - name
       - slug
+    PageSubscriptionEnum:
+      enum:
+      - SUBSCRIBED
+      - NOT_SUBSCRIBED
+      - UNKNOWN
+      type: string
+      description: |-
+        * `SUBSCRIBED` - SUBSCRIBED
+        * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED
+        * `UNKNOWN` - UNKNOWN
     PaginatedAuditEntryList:
       type: object
       required:

@@ -172,6 +172,7 @@ export * from "./opportunityLoseRequest";
 export * from "./opportunityMoveRequest";
 export * from "./opportunityWinRequest";
 export * from "./organizationSummary";
+export * from "./pageSubscriptionEnum";
 export * from "./paginatedAuditEntryList";
 export * from "./paginatedBatchLineList";
 export * from "./paginatedBranchList";

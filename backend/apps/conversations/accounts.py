@@ -16,6 +16,7 @@ from uuid import UUID
 
 from django.db import IntegrityError, connections, transaction
 from django.db.models import QuerySet
+from django.db.models.functions import Now
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
@@ -253,13 +254,16 @@ def rotate_token(
                 low = seen["quality_rating"] in ("YELLOW", "RED")
                 account.status = "DEGRADED" if low else "CONNECTED"
                 account.status_detail = "QUALITY_LOW" if low else None
-        _follow(account, seen.get("subscribed"))  # F7b-06g: lo que Meta dijo de la página
+        if account.platform in SOCIAL:  # F7b-06g/h: lo que Meta acaba de decir de la página
+            account.page_subscribed = seen["subscribed"]
+            _follow(account, seen["subscribed"])
         if account.status != status:
             changed["status"] = [status, account.status]
-        if account.status_detail not in (detail, None):  # un detalle nuevo, no uno que se limpia
+        if account.status_detail != detail:  # también uno que se limpia (F7b-06h)
             changed["status_detail"] = [detail, account.status_detail]
         account.version += 1
-        fields = [*ACCOUNT_FIELDS, "status", "status_detail", "version", "updated_at"]
+        fields = [*ACCOUNT_FIELDS, "status", "status_detail", "page_subscribed", "version",
+                  "updated_at"]  # fmt: skip
         account.save(using=alias, update_fields=fields)
         _announce(ctx, "channel_account.credentials_rotated", account, changed, str(credential.pk))
     return account, credential
@@ -386,8 +390,8 @@ def apply_subscription(
             return False
         before = (account.status, account.status_detail)
         _follow(account, subscribed)
-        account.last_healthcheck_at = timezone.now()
-        fields = ["last_healthcheck_at", "updated_at"]
+        account.last_healthcheck_at, account.page_subscribed = timezone.now(), subscribed
+        fields = ["last_healthcheck_at", "page_subscribed", "updated_at"]
         now = (account.status, account.status_detail)
         if now != before:
             account.version += 1
@@ -397,6 +401,16 @@ def apply_subscription(
             changes = {"status": [before[0], now[0]], "status_detail": [before[1], now[1]]}
             _announce(ctx, "channel_account.health", account, changes, None)
         return True
+
+
+def note_attempt(ctx: TenantContext, *, channel_account_id: UUID) -> None:
+    """Un intento de comprobación que no terminó (F7b-06h): guarda solo su hora, para que la cuenta
+    espere su turno como las demás. Ni el estado, ni la última comprobación, ni la versión, ni la
+    auditoría: no se supo nada nuevo de la cuenta. La hora es la de la base, la misma con la que
+    `channel_accounts_health_due` decide (un intento «futuro» cuenta como ninguno)."""
+    alias = require_scope(ctx)
+    found = ChannelAccount.objects.using(alias).filter(pk=channel_account_id)
+    found.update(health_attempt_at=Now())
 
 
 def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, tier: str) -> bool:
