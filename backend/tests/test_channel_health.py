@@ -181,6 +181,7 @@ def test_an_unreadable_credential_is_a_rejected_token_without_calling_meta(
         ChannelAccount.objects.filter(pk=mine).update(credential_id=other.pk)
     assert tasks.healthcheck_accounts() == {"SKIPPED": 1}  # la credencial no es de esta cuenta
     assert graph.requests == [] and read(world.a, mine).status == "CONNECTED"
+    assert tasks.healthcheck_accounts() == {}  # F7b-06h: espera su turno, no repite cada pasada
 
 
 def test_a_credential_that_does_not_open_is_a_rejected_token_without_calling_meta(

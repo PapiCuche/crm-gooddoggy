@@ -228,7 +228,7 @@ def test_each_organization_is_checked_in_its_own_scope_and_meta_is_asked_outside
     assert state(world.b, theirs) == ("CONNECTED", None)
 
 
-@pytest.mark.parametrize("code", [4, 17, 32, 613])
+@pytest.mark.parametrize("code", [4, 17, 32, 613, 80001, 80002, 80006])
 def test_a_throttle_is_unavailable_and_changes_nothing(
     world: SimpleNamespace, ours: FakePageGraph, monkeypatch: pytest.MonkeyPatch, code: int
 ) -> None:
@@ -294,6 +294,7 @@ def test_a_190_is_a_rejected_token_and_no_role_on_the_page_keeps_the_state(
     again(world.a, mine)
     assert tasks.healthcheck_accounts() == {"REJECTED": 1}
     assert state(world.a, mine) == ("ERROR", "TOKEN_INVALID")
+    assert read(world.a, mine).health_attempt_at is None  # F7b-06h: el rechazo no es un intento
     assert TEST_TOKEN not in caplog.text + str(audit(migrator))
 
 
@@ -321,6 +322,8 @@ def test_rotating_the_token_records_a_page_that_lost_the_subscription(
     rotated, _ = run(crm.a, crm.ana, accounts.rotate_token, channel_account_id=made.pk,
                      access_token=TEST_TOKEN, platform="MESSENGER")  # fmt: skip
     assert (rotated.status, rotated.status_detail) == ("CONNECTED", None)
+    last = [c for a, c, _ in audit(migrator) if a == "channel_account.credentials_rotated"][-1]
+    assert last["status_detail"] == ["PAGE_NOT_SUBSCRIBED", None]  # F7b-06h: también al limpiarlo
 
 
 def test_the_database_keeps_the_closed_set_and_the_due_function_returns_only_ids(

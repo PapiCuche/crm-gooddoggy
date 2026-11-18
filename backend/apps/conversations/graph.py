@@ -22,8 +22,9 @@ SUBSCRIBED_FIELDS = (
     "messages,message_echoes,message_deliveries,message_reads,messaging_handovers,standby"
 )
 # Códigos de límite de tasa de Meta: llegan con 400, pero no son un token rechazado (los mismos que
-# el adaptador de salida reintenta, `whatsapp.TOO_FAST`, y `32`, el límite de una página: F7b-06g).
-THROTTLED = (4, 17, 32, 613, 80007, 130429, 131056)
+# el adaptador de salida reintenta, `whatsapp.TOO_FAST`; `32`, el límite de una página, F7b-06g; y
+# los de uso del negocio de Pages `80001`, Instagram `80002` y Messenger `80006`, F7b-06h).
+THROTTLED = (4, 17, 32, 613, 80001, 80002, 80006, 80007, 130429, 131056)
 
 
 class ChannelNotEnabled(Exception):

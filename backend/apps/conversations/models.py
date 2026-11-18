@@ -25,6 +25,7 @@ class Platform(models.TextChoices):
 
 
 SOCIAL = (Platform.MESSENGER, Platform.INSTAGRAM)  # identidad por cuenta, sin teléfono (ADR-035)
+PAGE_SUBSCRIPTIONS = ("SUBSCRIBED", "NOT_SUBSCRIBED", "UNKNOWN")  # F7b-06h, `page_subscription`
 PAGE_OWNER = "channel_accounts_page_owner_ex"  # la página de Messenger o la de Instagram
 EXTERNAL_ID = r"^[A-Za-z0-9._-]{1,100}$"  # el PSID o el IGSID: un id opaco de Meta, sin espacios
 
@@ -149,6 +150,10 @@ class ChannelAccount(TenantModel):
     quality_rating = models.CharField(max_length=10, null=True, blank=True)  # noqa: DJ001
     messaging_limit_tier = models.CharField(max_length=16, null=True, blank=True)  # noqa: DJ001
     last_healthcheck_at = models.DateTimeField(null=True, blank=True)
+    # F7b-06h: lo último que Meta dijo de la app del CRM en la página (`None`, no se sabe) y el
+    # último intento de comprobación que no terminó (la cola de `channel_accounts_health_due`).
+    page_subscribed = models.BooleanField(null=True, blank=True)
+    health_attempt_at = models.DateTimeField(null=True, blank=True)
     created_by_user_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -250,10 +255,28 @@ class ChannelAccount(TenantModel):
                 | models.Q(messaging_limit_tier__in=LIMIT_TIERS),
                 name="channel_accounts_tier_ck",
             ),
+            models.CheckConstraint(  # F7b-06h: solo una página tiene apps suscritas
+                condition=models.Q(page_subscribed__isnull=True)
+                | models.Q(platform__in=["MESSENGER", "INSTAGRAM"]),
+                name="channel_accounts_page_subscribed_ck",
+            ),
         ]
 
     def __str__(self) -> str:
         return str(self.pk)
+
+    @property
+    def page_subscription(self) -> str | None:
+        """Lo que la pantalla puede afirmar de la suscripción de la página (F7b-06h), un código
+        cerrado: `SUBSCRIBED` solo si la última respuesta de Meta lo dijo y la cuenta se sigue
+        comprobando; `UNKNOWN` si no se sabe (sin `META_APP_ID`, un rechazo que no cambia nada,
+        `ERROR`); `None` fuera de Messenger e Instagram."""
+        if self.platform not in SOCIAL:
+            return None
+        if self.status_detail == "PAGE_NOT_SUBSCRIBED":
+            return "NOT_SUBSCRIBED"
+        checked = self.status in ("PENDING", "CONNECTED", "DEGRADED")
+        return "SUBSCRIBED" if checked and self.page_subscribed is True else "UNKNOWN"
 
 
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
