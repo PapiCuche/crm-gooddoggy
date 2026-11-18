@@ -54,8 +54,11 @@ export function DisconnectAccount({
       (error: ApiError) => {
         setBusy(false);
         if (error.status === 401) return; // `Providers` lleva al login
-        // La cuenta ya no existe (404): lo dice la lista, que se vuelve a leer.
-        if (error.status === 404) return onMissing();
+        // La cuenta ya no existe (404): la pregunta se cierra y lo dice la lista, que se vuelve a leer.
+        if (error.status === 404) {
+          setAsking(false);
+          return onMissing();
+        }
         setProblem(error.status === 403 ? errors("denied") : api(apiErrorKey(error)));
       },
     );

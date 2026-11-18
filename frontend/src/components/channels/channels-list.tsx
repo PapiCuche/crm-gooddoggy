@@ -31,6 +31,13 @@ export function ChannelsList() {
   // persona quitó (un 404 al rotar o al desconectar, F7b-06f): se dice aquí, fuera de su tarjeta,
   // para que el aviso sobreviva a la lista nueva. El nombre va aislado (`Plain`), como en la pregunta.
   const [notice, setNotice] = useState<Notice>(null);
+  // Un 404: el aviso, la lista nueva (que ya no la trae) y el foco al título, para que no caiga a
+  // `<body>` con el formulario o la tarjeta que se van.
+  const missing = () => {
+    setNotice("missing");
+    refresh();
+    list.current?.focusHeading();
+  };
   const connect = (route: Route) => (
     <ConnectAccount key={route} slug={slug} route={route} onConnected={refresh} />
   );
@@ -60,7 +67,7 @@ export function ChannelsList() {
       }
       rowClassName="flex flex-col gap-3"
     >
-      {(account) => <Account slug={slug} account={account} refresh={refresh} notify={setNotice} />}
+      {(account) => <Account {...{ slug, account, refresh, missing }} notify={setNotice} />}
     </CursorList>
   );
 }
@@ -73,17 +80,14 @@ function Account({
   account,
   refresh,
   notify,
+  missing,
 }: {
   slug: string;
   account: ChannelAccount;
   refresh: () => void;
   notify: (notice: Notice) => void;
+  missing: () => void;
 }) {
-  // Un 404: se avisa fuera de la tarjeta y se vuelve a leer la lista, que ya no la trae.
-  const missing = () => {
-    notify("missing");
-    refresh();
-  };
   const t = useTranslations("channels");
   const label = useCodeLabel();
   const format = useFormatter();

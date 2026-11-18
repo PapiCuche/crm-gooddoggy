@@ -457,8 +457,33 @@ describe("Canales (F7-07b)", () => {
       fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
     }
     await waitFor(() => expect(screen.queryByText("Tienda Lima")).toBeNull());
-    expect(screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.")).toBeVisible();
+    const notice = screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.");
+    expect(notice).toBeVisible();
+    expect(notice).toHaveAttribute("role", "status"); // se anuncia, fuera de la tarjeta
+    // el foco va al título: no cae a `<body>` con el formulario o la tarjeta que se fueron
+    expect(screen.getByRole("heading", { level: 1, name: "Canales" })).toHaveFocus();
+    expect(screen.queryByRole("alert")).toBeNull();
     noSecret();
+  });
+
+  it("desconectar: un 404 con la cuenta aún en la lista cierra la pregunta y avisa fuera de la tarjeta", async () => {
+    const api = mockApi({
+      [LIST]: page([wa]),
+      [DISCONNECT]: { status: 404, body: { code: "NOT_FOUND" } },
+    });
+    show();
+    const group = await askDisconnect();
+    fireEvent.click(within(group).getByRole("button", { name: "Sí, desconectar" }));
+    await waitFor(() => expect(listReads(api)).toBe(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: "Desconectar Tienda Lima" })).toBeNull(),
+    );
+    expect(screen.getByText("Esa cuenta ya no existe. Actualizamos la lista.")).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(screen.queryByRole("alert")).toBeNull(); // ningún aviso queda dentro de la tarjeta
+    expect(screen.getByRole("heading", { level: 1, name: "Canales" })).toHaveFocus();
   });
 
   it("rotar: 429 dice cuánto esperar", async () => {
