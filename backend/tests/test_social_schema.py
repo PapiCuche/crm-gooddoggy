@@ -35,7 +35,7 @@ DEFINER = (
 
 
 def account(org: UUID, platform: str = "MESSENGER", external: str = PAGE_ID, **over: Any) -> Any:
-    parent = PAGE_ID if platform == "INSTAGRAM" else None
+    parent = over.pop("external_parent_id", PAGE_ID if platform == "INSTAGRAM" else None)
     with tenant_scope(ctx(org)):
         return ChannelAccount.objects.create(
             platform=platform, name=platform.title(), status="PENDING",

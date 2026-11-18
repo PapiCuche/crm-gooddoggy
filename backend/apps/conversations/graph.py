@@ -149,6 +149,18 @@ def subscribe(token: str, page_id: str) -> None:
         raise GraphUnavailable
 
 
+def subscribed_apps(token: str, page_id: str) -> list[str]:
+    """Los ids de las apps suscritas a la página (`GET /<PAGE_ID>/subscribed_apps`, F7b-06e). Meta
+    solo la contesta a un token con un rol en la página: si no, `GraphRejected`. Una respuesta sin
+    la lista de `data` no es de Meta (`GraphUnavailable`)."""
+    if not re.fullmatch(META_ID, page_id):
+        raise ValueError("identificador de Meta no válido")
+    rows = _ask("GET", f"{page_id}/subscribed_apps", token).get("data")
+    if not isinstance(rows, list):
+        raise GraphUnavailable
+    return [str(r["id"]) for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+
+
 def profile(token: str, customer: str) -> dict[str, Any]:
     """`name` y `username` del cliente de Instagram `customer` (su IGSID) con el token de la página
     (User Profile API, ADR-035 [S9]; D-F7b-06). Son datos que escribe el cliente: se devuelven tal

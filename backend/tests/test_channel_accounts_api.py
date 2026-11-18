@@ -278,3 +278,17 @@ def test_a_request_the_csrf_check_refuses_or_an_anonymous_one_never_uses_the_lim
     assert post(ana).status_code == 201  # y la persona conserva todo su tope
     used = migrator.execute("SELECT failures FROM login_throttles WHERE key LIKE 'chn:%'")
     assert used.fetchall() == [(1,)]
+
+
+NAME_REFUSED = "Nombre: de 1 a 100 caracteres de una línea."
+
+
+@pytest.mark.parametrize("name", ["a\x07b", "a\nb", "a\u200bb", "a\u202eb"])
+def test_a_name_with_control_or_invisible_characters_is_a_field_error_not_a_500(
+    crm: SimpleNamespace, meta: FakeGraph, migrator: DB, name: str
+) -> None:  # F7b-06e: antes, `accounts._name` lanzaba un `ValueError` que nadie capturaba
+    response = post(signed(crm.ana), name=name)
+    assert response.status_code == 400 and list(response.json()["fields"]) == ["name"]
+    assert response.json()["fields"]["name"][0]["message"] == NAME_REFUSED  # sin repetir el valor
+    assert meta.calls == []
+    assert migrator.execute("SELECT count(*) FROM channel_accounts").fetchone() == (0,)

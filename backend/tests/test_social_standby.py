@@ -154,7 +154,8 @@ def test_another_organization_never_sees_nor_gets_the_state(
 ) -> None:
     convo = talk(world, platform)  # la cuenta de A, con el id real del simulador
     external, customer = CHANNELS[platform]
-    theirs = account(world.b, platform, f"9{external[1:]}")  # B: otra cuenta, el mismo cliente
+    page = "900000000000101" if platform == "INSTAGRAM" else None  # cada cuenta, su página
+    theirs = account(world.b, platform, f"9{external[1:]}", external_parent_id=page)  # B, otra
     who = identity(world.b, world.contact_b, theirs, customer)
     their_convo = tables.conversation(
         world.b, world.contact_b, theirs, "CONV-09999", contact_identity_id=who.pk

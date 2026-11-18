@@ -297,12 +297,17 @@ def test_reading_the_page_shows_the_linked_instagram_account_only_when_asked(
 
 @ALLOWED
 def test_subscribing_the_app_records_the_fields(graph: FakePageGraph) -> None:
+    def apps() -> Any:
+        return json.loads(http.request("GET", f"{BASE}/subscribed_apps", headers=AUTH).data)
+
+    assert apps() == {"data": []}  # una página sin suscribir: la lista vacía, no un fallo
     response = post("subscribed_apps?subscribed_fields=messages,message_echoes", payload={})
     assert json.loads(response.data) == {"success": True}
     assert graph.subscribed == {social.PAGE_ID: ["messages", "message_echoes"]}
     assert error_of(post("subscribed_apps", payload={}))[1] == 100
     assert post("subscribed_apps", payload={"subscribed_fields": "messages"}).status == 200
     assert graph.subscribed[social.PAGE_ID] == ["messages"]  # también en el cuerpo
+    assert [app["subscribed_fields"] for app in apps()["data"]] == [["messages"]]
 
 
 @ALLOWED
