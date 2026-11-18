@@ -106,7 +106,9 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
     assert row[0] == "OK" and row[2:] == (cost, 1000, 500, ai_sim.REQUEST_ID, True, 300, 1000)
     assert row[1] > row[2] and (spent, reserved) == (cost, 0)
     held = migrator.execute("SELECT id FROM ai_budget_reservations").fetchone()[0]  # type: ignore[index]
-    assert gateway.settle(ctx(world.a), held, ASK, Outcome.OK, Decimal(0)) is False  # una sola vez
+    assert (
+        gateway.settle(ctx(world.a), held, Outcome.PROVIDER_ERROR, Decimal(0)) is False
+    )  # una sola vez
     assert ledger(migrator) == ([(spent, reserved)], [row])
     logged = caplog.text + str([r.__dict__ for r in caplog.records])
     assert not any(s in logged for s in (PROMPT, BODY_MARK, TEST_KEY))
@@ -117,7 +119,7 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
 
 
 def test_at_the_cap_the_next_call_is_refused(world: SimpleNamespace, migrator: DB) -> None:
-    assert code(world) == Outcome.AI_BUDGET_EXHAUSTED  # sin tope (ni fila), nada
+    assert code(world) == Outcome.AI_BUDGET_NOT_SET  # sin tope (ni fila), nada
     assert world.fake.calls == [] and ledger(migrator) == ([], [])
     budget(migrator, world.a, "0.04")  # cada reserva es de ~0.0253 y cada llamada cuesta 0.007
     call(world)
@@ -180,7 +182,8 @@ def test_provider_errors_are_normalized_and_settled_once(
         assert code(world) == expected
     assert len(world.fake.calls) == calls and BODY_MARK not in caplog.text
     [(spent, reserved)], [row] = ledger(migrator)
-    assert (row[0], row[6], reserved) == (expected.value, True, 0)
+    recorded = Outcome.PROVIDER_UNCERTAIN if billed else expected  # lo dudoso, distinguible
+    assert (row[0], row[6], reserved) == (recorded.value, True, 0)
     assert (spent, row[2]) == ((row[1], row[1]) if billed else (0, 0))
     assert row[5] == ("" if name in ("unreachable", "timeout", "cut") else ai_sim.REQUEST_ID)
     if calls == 3:  # `retry-after` del 429 (2 s); sin él, 1 s
@@ -245,47 +248,75 @@ def test_a_cap_equal_to_one_reservation(world: SimpleNamespace, migrator: DB) ->
 
 
 CALL = ("INSERT INTO ai_llm_calls (organization_id, reservation_id, provider, model, purpose,"
-        " reserved_usd, cost_usd, outcome)"
-        " VALUES (%s, {}, 'ANTHROPIC', 'm', '{}', {}, 0, 'OK')")  # fmt: skip
+        " reserved_usd, cost_usd, outcome, created_at)"
+        " VALUES (%s, {}, 'ANTHROPIC', 'm', '{}', {}, 0, 'OK', {})")  # fmt: skip
 HELD = "(SELECT id FROM ai_budget_reservations)"
 PART = f"ai_llm_calls_y{timezone.now():%Y}m{timezone.now():%m}"  # la partición de este mes (UTC)
-REFUSED = {  # SQL de `crm_app` en el scope de A -> la restricción o el privilegio que lo frena
+NEXT = "now() + interval '1 month'"
+LATE = ("INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(),"
+        " NULL, {}, {}, provider, model FROM ai_budget_reservations")  # fmt: skip
+DENIED = (  # F8-05b1: `crm_app`, en el scope de A, solo cambia el registro por las funciones
+    "UPDATE ai_budget_usage SET reserved_usd = 0",  # no libera lo reservado
+    "UPDATE ai_budget_usage SET spent_usd = spent_usd + 1",
+    "INSERT INTO ai_budget_usage SELECT organization_id, uuidv7(), '2999-01-01', 0, 0"
+    " FROM ai_budget_usage",  # ni abre un mes a su gusto
+    "UPDATE ai_budget_reservations SET settled_at = now()",
+    "INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(), NULL,"
+    " purpose, requested_by_user_id, provider, model FROM ai_budget_reservations",
+    CALL.format(HELD, "SUGGEST", 1, "now()"),  # una segunda fila para una reserva ajustada
+    CALL.format(HELD, "SUGGEST", 1, NEXT),  # una de un mes futuro
+    f"INSERT INTO {PART} SELECT * FROM {PART}",  # noqa: S608 — ni por la partición
+    "INSERT INTO ai_budgets (id, organization_id, monthly_usd) VALUES (uuidv7(), %s, 1000)",
+    "UPDATE ai_budgets SET monthly_usd = 1000",  # no sube su tope
+    "UPDATE ai_llm_calls SET cost_usd = 0",  # de solo inserción
+    "UPDATE ai_budget_reservations SET amount_usd = 1",
+    "UPDATE ai_budget_usage SET month = month",
+    "DELETE FROM ai_llm_calls",  # ni borra lo gastado
+    f"DELETE FROM {PART}",  # noqa: S608
+    "DELETE FROM ai_budget_reservations",
+    "DELETE FROM ai_budget_usage",
+    "SELECT public.ai_llm_calls_ensure_partitions(12)",  # ni DDL (el mutante S09 de #933)
+    "SELECT public.ai_budget_month(now())",
+)
+GUARDED = {  # las guardas siguen para el dueño de las funciones -> la restricción que lo frena
     "UPDATE ai_budget_usage SET reserved_usd = -1": "ai_budget_usage_ck",
     "UPDATE ai_budget_usage SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
     "UPDATE ai_budget_usage SET spent_usd = 'NaN'": "ai_budget_usage_not_nan",
     "INSERT INTO ai_budget_usage SELECT * FROM ai_budget_usage ON CONFLICT (organization_id, month)"
     " DO UPDATE SET spent_usd = 0": "ai_budget_usage_spent_only_grows",
     "UPDATE ai_budget_reservations SET settled_at = now()": "ai_budget_reservations_settled_once",
-    "INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(), now()"
-    " FROM ai_budget_usage": "ai_budget_reservations_settled_once",  # ni nacer ajustada
-    CALL.format(HELD, "SUGGEST", 0): "ai_llm_calls_reserved_usd_check",
-    CALL.format(HELD, "OTHER", 1): "ai_llm_calls_purpose_check",
-    CALL.format("uuidv7()", "SUGGEST", 1): "ai_llm_calls_reservation_fk",
-    "INSERT INTO ai_budgets (id, organization_id, monthly_usd)"
-    " VALUES (uuidv7(), %s, 1000)": "permission denied",
-    "UPDATE ai_budgets SET monthly_usd = 1000": "permission denied",  # no sube su tope
-    "UPDATE ai_llm_calls SET cost_usd = 0": "permission denied",  # de solo inserción
-    "UPDATE ai_budget_reservations SET amount_usd = 1": "permission denied",
-    "UPDATE ai_budget_usage SET month = month": "permission denied",
-    "DELETE FROM ai_llm_calls": "permission denied",  # ni borra lo gastado
-    f"DELETE FROM {PART}": "permission denied",  # noqa: S608
-    "DELETE FROM ai_budget_reservations": "permission denied",
-    "DELETE FROM ai_budget_usage": "permission denied",
-}
+    "INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(), now(),"
+    " purpose, requested_by_user_id, provider, model FROM ai_budget_reservations":
+    "ai_budget_reservations_settled_once",  # ni nacer ajustada
+    CALL.format(HELD, "SUGGEST", 0, "now()"): "ai_llm_calls_reserved_usd_check",
+    CALL.format(HELD, "OTHER", 1, "now()"): "ai_llm_calls_purpose_check",
+    CALL.format("uuidv7()", "SUGGEST", 1, "now()"): "ai_llm_calls_reservation_fk",
+    LATE.format("'OTHER'", "requested_by_user_id"): "ai_budget_reservations_purpose_ck",
+    LATE.format("purpose", "uuidv7()"): "ai_budget_reservations_requested_by_fk",  # no miembro
+}  # fmt: skip
 
 
-@pytest.mark.parametrize("statement", REFUSED)
-def test_the_database_guards_the_ledger_from_crm_app(
+@pytest.mark.parametrize("statement", DENIED)
+def test_crm_app_cannot_write_the_ledger_but_through_the_functions(
     world: SimpleNamespace, migrator: DB, statement: str
 ) -> None:
     budget(migrator, world.a, "1")
     call(world)
-    with tenant_scope(ctx(world.a)), pytest.raises(DatabaseError) as caught:
+    with tenant_scope(ctx(world.a)), pytest.raises(DatabaseError, match="permission denied"):
         connection.cursor().execute(statement, [world.a] if "%s" in statement else None)
-    cause = caught.value.__cause__
-    assert REFUSED[statement] in (cause.diag.constraint_name, str(cause).split(" for ")[0])  # type: ignore[union-attr]
-    with tenant_scope(ctx(world.b)), pytest.raises(DatabaseError, match="row-level security"):
-        connection.cursor().execute(CALL.format("uuidv7()", "SUGGEST", 1), [world.a])
+    with tenant_scope(ctx(world.b)), pytest.raises(DatabaseError, match="permission denied"):
+        connection.cursor().execute(CALL.format("uuidv7()", "SUGGEST", 1, "now()"), [world.a])
+
+
+@pytest.mark.parametrize("statement", GUARDED)
+def test_the_guards_still_hold_for_the_owner(
+    world: SimpleNamespace, migrator: DB, statement: str
+) -> None:
+    budget(migrator, world.a, "1")
+    call(world)
+    with pytest.raises(psycopg.errors.IntegrityError) as caught:
+        migrator.execute(statement, [world.a] if "%s" in statement else None)
+    assert caught.value.diag.constraint_name == GUARDED[statement]
 
 
 TIER = {"above": 100, "input": "3", "cache_write_5m": "3.75", "cache_write_1h": "6",
