@@ -4,8 +4,9 @@ transacción, confirmada antes de llamar; llama fuera de toda transacción y **a
 una sola vez con `ai_budget_settle` en otra, que escribe el uso real en `ai_llm_calls` (de solo
 inserción; nunca el prompt ni la respuesta). Las dos funciones de la base (F8-05b1, #942) son lo
 único que cambia el registro: toman la organización y quien pide de la sesión, nunca de aquí. Solo
-libera si la petición no salió o hubo una respuesta de error; lo dudoso cuenta entero. El mes es el
-de Lima (ADR-043). Sin permisos de negocio: quien pide tiene que ser un miembro activo."""
+libera si la petición no salió o hubo una respuesta de error; lo dudoso cuenta entero. El mes y el
+día son los de Lima (ADR-043); sin tope mensual o diario no se llama (F8-05b2). Sin permisos de
+negocio: quien pide tiene que ser un miembro activo."""
 
 import time
 from decimal import Decimal

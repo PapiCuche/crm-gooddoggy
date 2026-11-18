@@ -61,10 +61,11 @@ def test_the_functions_are_minimal_definers(migrator: DB) -> None:
         " has_function_privilege('public', p.oid, 'EXECUTE'),"
         " has_function_privilege('crm_app', p.oid, 'EXECUTE') FROM pg_proc p"
         " WHERE p.proname IN ('ai_budget_reserve', 'ai_budget_settle', 'ai_budget_month',"
-        " 'ai_llm_calls_ensure_partitions') ORDER BY 1"
+        " 'ai_budget_day', 'ai_llm_calls_ensure_partitions') ORDER BY 1"
     ).fetchall()
     assert [r[1:] for r in rows] == [
-        (False, "crm_migrator", False, False),  # el mes: solo dentro de la reserva
+        (False, "crm_migrator", False, False),  # el día y el mes: solo dentro de la reserva
+        (False, "crm_migrator", False, False),
         (True, "crm_migrator", False, True),
         (True, "crm_migrator", False, True),
         (False, "crm_migrator", False, False),  # sin DDL para el runtime
