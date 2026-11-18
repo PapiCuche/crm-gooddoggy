@@ -51,9 +51,10 @@ def world(orgs: dict[str, UUID], monkeypatch: pytest.MonkeyPatch) -> SimpleNames
     return SimpleNamespace(a=orgs["A"], b=orgs["B"], ana=ana, fake=fake, sleeps=sleeps)
 
 
-def budget(migrator: DB, org: UUID, usd: str) -> None:
-    insert = "INSERT INTO ai_budgets (id, organization_id, monthly_usd) VALUES (uuidv7(), %s, %s)"
-    migrator.execute(insert, [org, usd])
+def budget(migrator: DB, org: UUID, usd: str, daily: str | None = None) -> None:
+    """El tope mensual y el diario (F8-05b2), por omisión el mismo."""
+    insert = "INSERT INTO ai_budgets VALUES (%s, uuidv7(), %s, %s)"
+    migrator.execute(insert, [org, usd, daily or usd])
 
 
 def call(w: SimpleNamespace, request: LLMRequest = ASK, org: UUID | None = None) -> Any:
@@ -254,7 +255,7 @@ HELD = "(SELECT id FROM ai_budget_reservations)"
 PART = f"ai_llm_calls_y{timezone.now():%Y}m{timezone.now():%m}"  # la partición de este mes (UTC)
 NEXT = "now() + interval '1 month'"
 LATE = ("INSERT INTO ai_budget_reservations SELECT organization_id, uuidv7(), month, 1, now(),"
-        " NULL, {}, {}, provider, model FROM ai_budget_reservations")  # fmt: skip
+        " NULL, {}, {}, provider, model, NULL, day FROM ai_budget_reservations")  # fmt: skip
 DENIED = (  # F8-05b1: `crm_app`, en el scope de A, solo cambia el registro por las funciones
     "UPDATE ai_budget_usage SET reserved_usd = 0",  # no libera lo reservado
     "UPDATE ai_budget_usage SET spent_usd = spent_usd + 1",
