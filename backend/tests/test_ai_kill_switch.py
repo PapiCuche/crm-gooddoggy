@@ -6,11 +6,13 @@ import time
 from functools import partial
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import psycopg
 import pytest
 from django.db import DatabaseError, connection
 from django.test import Client
+from psycopg import errors
 
 from apps.access.selectors import AccessDenied
 from apps.ai_gateway import accounts, gateway, keys, switch, turns
@@ -198,6 +200,8 @@ def test_the_probe_runs_with_the_organization_off_but_never_with_the_deployment_
     with tenant_scope(ctx(crm.a, crm.ana)) as tenant:
         made = keys.store(tenant, "ANTHROPIC", TEST_KEY)
     ana, test = signed(crm.ana), f"/api/v1/o/org-a/ai/provider-accounts/{made.pk}/test/"
+    opened: list[str] = []  # F8-06c: con el despliegue apagado, ni se abre la clave
+    monkeypatch.setattr(keys, "open_key", ahead(partial(opened.append, "key"), keys.open_key))
     assert migrator.execute(ROWS).fetchall() == []  # la organización, apagada
     assert send(ana, "post", test, None).json() == {"result": "OK"}  # se prueba antes de encender
     settings.AI_ENABLED = False
@@ -206,7 +210,7 @@ def test_the_probe_runs_with_the_organization_off_but_never_with_the_deployment_
     assert (refused.status_code, refused.json()["code"]) == (409, "AI_DISABLED")
     with tenant_scope(ctx(crm.a, crm.ana)) as tenant, pytest.raises(accounts.Disabled):
         accounts.check(tenant, provider="ANTHROPIC")
-    assert len(fake.calls) == 1
+    assert len(fake.calls) == 1 and opened == ["key"]
 
 
 def test_only_the_permissions_reach_the_switch_and_turning_off_needs_no_second_factor(
@@ -297,6 +301,34 @@ def test_each_organization_has_its_own_switch_and_crm_app_cannot_reach_another(
     with tenant_scope(ctx(crm.a)), connection.cursor() as cursor:  # B, intacta
         cursor.execute("UPDATE ai_switches SET enabled = true")
     assert {(o, e) for o, e, _ in migrator.execute(ROWS).fetchall()} == both
+
+
+def test_crm_app_cannot_choose_the_id_of_a_switch(orgs: dict[str, UUID], migrator: DB) -> None:
+    """F8-06c: solo las columnas concedidas (0009); el `id` lo pone la base, nunca `crm_app`."""
+    insert = "INSERT INTO ai_switches ({}organization_id, changed_at) VALUES ({}%s, now())"
+    with pytest.raises(DatabaseError) as refused, tenant_scope(ctx(orgs["A"])):
+        with connection.cursor() as cursor:
+            cursor.execute(insert.format("id, ", "uuidv7(), "), [orgs["A"]])
+    assert isinstance(refused.value.__cause__, errors.InsufficientPrivilege)  # no otra cosa
+    with tenant_scope(ctx(orgs["A"])), connection.cursor() as cursor:  # sin el `id`, entra
+        cursor.execute(insert.format("", ""), [orgs["A"]])
+    assert migrator.execute(ROWS).fetchall() == [(orgs["A"], False, None)]
+
+
+def test_the_advisory_lock_is_per_organization(orgs: dict[str, UUID], migrator: DB) -> None:
+    """F8-06c: con A apagándose (exclusivo, otra conexión), B toma el suyo sin esperar; A, no."""
+    a, b = orgs["A"], orgs["B"]
+    migrator.execute(test_ai_gateway.SWITCH_ON, [b, True])
+    with migrator.transaction():
+        migrator.execute(switch._EXCLUSIVE, [a, switch.LOCK_SALT])
+        with tenant_scope(ctx(b)) as tenant, connection.cursor() as cursor:
+            cursor.execute("SET LOCAL lock_timeout = '1s'")
+            assert switch.is_on(tenant) is True
+        with pytest.raises(DatabaseError) as waited, tenant_scope(ctx(a)) as tenant:
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout = '1s'")
+                switch.is_on(tenant)
+    assert isinstance(waited.value.__cause__, errors.LockNotAvailable)
 
 
 def test_turning_off_is_never_limited_and_turning_on_counts_in_the_write_limit(
