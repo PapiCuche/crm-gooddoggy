@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import threading
+import time
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -27,6 +28,7 @@ from apps.organizations import services as organizations
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_auth_api, test_authorization, test_invitation_preview
+from tests.conftest import migrator_conninfo
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_anti_escalation import EDIT
 from tests.test_authorization import give
@@ -56,6 +58,10 @@ AUDITED = (
     "SELECT actor_type, actor_id, entity_type, entity_id, changes, metadata, organization_id"
     " FROM audit_logs WHERE action = 'membership.activated'"
 )
+WAITING = (  # en esta base de pruebas: las demás del servidor no cuentan
+    "SELECT count(*) FROM pg_locks JOIN pg_stat_activity USING (pid)"
+    " WHERE NOT granted AND datname = current_database()"
+)
 MEMBERS = (
     "SELECT email, organization_id FROM organization_memberships JOIN users ON users.id = user_id"
 )
@@ -83,11 +89,23 @@ def directly(org: UUID, secret: str, session: Any = None) -> Callable[[TenantCon
     return lambda tenant: members.accept_invitation(tenant, invitation_id, digest(secret), **how)
 
 
+def waiting_for_a_lock(thread: threading.Thread, seconds: float = 10) -> None:
+    """Hasta que una conexión de esta base espera un bloqueo, visto desde otra conexión: seguir
+    vivo un rato no prueba que `thread` llegara al bloqueo (con carga, aún no ha llegado)."""
+    end = time.monotonic() + seconds
+    with psycopg.connect(migrator_conninfo(), autocommit=True) as watcher:
+        while thread.is_alive() and time.monotonic() < end:
+            if watcher.execute(WAITING).fetchone() != (0,):
+                return
+            time.sleep(0.02)
+    raise AssertionError("la segunda petición no esperó ningún bloqueo")
+
+
 def held(
     org: UUID, first: Callable[[TenantContext], Any], second: Callable[[], Any], by: Any = None
 ) -> Any:
     """`first` escribe (como `by`, o `SYSTEM`) y retiene su transacción; `second`, en otro hilo,
-    espera sus bloqueos."""
+    espera sus bloqueos, comprobado en `pg_locks`."""
     wrote, release, out = threading.Event(), threading.Event(), dict[str, Any]()
 
     def run_first() -> None:
@@ -97,7 +115,7 @@ def held(
             ) as tenant:
                 out["first"] = first(tenant)
                 wrote.set()
-                release.wait(timeout=10)
+                release.wait(timeout=30)
         finally:
             wrote.set()
             connection.close()
@@ -108,13 +126,16 @@ def held(
 
     one, two = threading.Thread(target=run_first), threading.Thread(target=run_second)
     one.start()
-    assert wrote.wait(timeout=10) and "first" in out
-    two.start()
-    two.join(timeout=1)
-    assert two.is_alive() and "second" not in out  # espera los bloqueos de la primera
-    release.set()
-    for thread in (one, two):
-        thread.join(timeout=10)
+    try:
+        assert wrote.wait(timeout=10) and "first" in out
+        two.start()
+        waiting_for_a_lock(two)
+        assert "second" not in out  # espera los bloqueos de la primera
+    finally:
+        release.set()
+        for thread in (one, two):
+            if thread.ident is not None:
+                thread.join(timeout=30)
     return out
 
 
