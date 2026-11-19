@@ -16,8 +16,7 @@ const PATIENCE = 30_000; // ms: un servidor que no contesta no deja la pantalla 
 const SECRET = /^[A-Za-z0-9_-]{43}$/;
 const ALERT =
   "border-danger/40 text-danger rounded-[10px] border px-3 py-2 text-sm transition-[opacity,transform] duration-200 ease-(--ease-out) starting:translate-y-1 starting:opacity-0";
-// Las escrituras: sin red fallan enseguida, y su caché no retiene el secreto ni la contraseña
-// de una petición terminada (como en `PasswordResetChange`).
+// Sin red fallan enseguida; la caché no retiene secreto ni contraseña (como `PasswordResetChange`).
 const WRITE = { mutation: { networkMode: "always", gcTime: 250 } } as const;
 
 type Step =
@@ -25,7 +24,10 @@ type Step =
   | { name: "waiting"; error: ApiError | null } // `null`: la vista previa no contestó
   | { name: "invalid"; unsure: boolean } // `unsure`: un intento sin respuesta pudo aceptarla
   | { name: "done"; organization: string };
-type Problems = { first?: string; password?: string; confirm?: string; form?: string };
+const FIELDS = { first: "first_name", last: "last_name", password: "password", confirm: "confirm" };
+type Field = keyof typeof FIELDS;
+type Problems = Partial<Record<Field | "form", string>>;
+const SECRET_FIELD = { type: "password", autoComplete: "new-password", maxLength: 1024 } as const;
 
 // Acepta una invitación (ADR-020 §4 y §5). El secreto llega en el fragmento de la URL, que el
 // navegador no envía al servidor: se saca de la barra de direcciones nada más leerlo, se guarda
@@ -43,6 +45,10 @@ export function InvitationAccept() {
   const secret = useRef<string | null>(null);
   const opened = useRef(false);
   const unsure = useRef(false);
+  // Una aceptación cuya respuesta aún no se leyó. No el estado `sending`, que es el de la última
+  // pantalla pintada: el plazo puede vencer con la respuesta ya leída y sin pintar.
+  const inFlight = useRef(false);
+  const aim = useRef(false); // el próximo aviso por campo lleva el foco al primero
   const heading = useRef<HTMLElement | null>(null); // lo que sustituye a la pantalla anterior
   const hold = (node: HTMLElement | null) => void (heading.current = node);
   const formRef = useRef<HTMLFormElement>(null);
@@ -84,6 +90,7 @@ export function InvitationAccept() {
     setSending(false);
     setProblems({});
     unsure.current = false;
+    inFlight.current = false;
     secret.current = SECRET.test(given) ? given : null;
     if (secret.current) check();
     // Un enlace con otra forma no se pregunta: la respuesta sería la de uno que no vale.
@@ -106,12 +113,15 @@ export function InvitationAccept() {
   useEffect(() => {
     if (!busy) return;
     const timer = setTimeout(() => {
-      forgetPreview(); // se deja de esperar esa respuesta
-      forgetAccept();
       if (!sending) {
+        forgetPreview(); // se deja de esperar esa respuesta
+        // Solo si aún se esperaba: una respuesta que llegó justo antes y aún no se pintó, manda.
         setStep((now) => (now.name === "checking" ? { name: "waiting", error: null } : now));
         return;
       }
+      if (!inFlight.current) return; // su respuesta ya se leyó: manda ella
+      inFlight.current = false;
+      forgetAccept();
       unsure.current = true; // sin respuesta, esa aceptación pudo llegar
       setSending(false);
       setProblems({ form: t("auth.stalled") });
@@ -123,13 +133,18 @@ export function InvitationAccept() {
   const shown = step.name;
   useEffect(() => {
     if (shown === "create") firstField.current?.focus();
-    else if (shown !== "opening" && shown !== "checking") heading.current?.focus();
+    else if (shown !== "opening") heading.current?.focus();
   }, [shown]);
 
-  // Lo que no se acepta se dice junto a su campo, con el foco en el primero.
+  // Lo que no se acepta se dice junto a su campo, con el foco en el primero; no al corregir.
   useEffect(() => {
+    if (!aim.current) return;
+    aim.current = false;
     formRef.current?.querySelector<HTMLInputElement>("[aria-invalid]")?.focus();
   }, [problems]);
+  // Al corregir un campo, su aviso ya no describe lo escrito.
+  const fix = (key: keyof Problems) => () =>
+    problems[key] && setProblems((now) => ({ ...now, [key]: undefined }));
 
   function rejection(error: ApiError | null) {
     if (!error) return t("auth.stalled");
@@ -151,6 +166,7 @@ export function InvitationAccept() {
     if (!password) found.password = t("invitationAccept.passwordRequired");
     else if (password !== confirm) found.confirm = t("invitationAccept.mismatch");
     if (Object.keys(found).length) {
+      aim.current = true;
       setProblems(found);
       return;
     }
@@ -159,6 +175,7 @@ export function InvitationAccept() {
     const last = String(form.get("last_name") ?? "").trim();
     setSending(true);
     setProblems({});
+    inFlight.current = true;
     send(
       { data: { token, first_name: first, last_name: last, password } },
       {
@@ -174,11 +191,14 @@ export function InvitationAccept() {
             setStep({ name: "exists" }); // sin cuenta al abrir, pero ya la tiene
           } else if (error.code === "VALIDATION_ERROR") {
             // Por campo y nunca con el texto de la API, que no dice qué regla falló.
-            const named = Object.hasOwn(error.fields ?? {}, "first_name");
-            const weak = !named || Object.hasOwn(error.fields ?? {}, "password");
+            const has = (key: string) => Object.hasOwn(error.fields ?? {}, key);
+            const known = has("first_name") || has("last_name") || has("password");
+            aim.current = true;
             setProblems({
-              first: named ? t("invitationAccept.firstNameRequired") : undefined,
-              password: weak ? t("invitationAccept.passwordRefused") : undefined,
+              first: has("first_name") ? t("invitationAccept.firstNameRequired") : undefined,
+              last: has("last_name") ? t("invitationAccept.lastNameRefused") : undefined,
+              password: has("password") ? t("invitationAccept.passwordRefused") : undefined,
+              form: known ? undefined : t("errors.api.INTERNAL_ERROR"),
             });
           } else {
             if (error.code === "NETWORK_ERROR") unsure.current = true; // pudo llegar igualmente
@@ -186,6 +206,7 @@ export function InvitationAccept() {
           }
         },
         onSettled: () => {
+          inFlight.current = false;
           setSending(false);
           forgetAccept();
         },
@@ -193,10 +214,26 @@ export function InvitationAccept() {
     );
   }
 
+  const input = (key: Field, more: Partial<Parameters<typeof TextField>[0]>) => (
+    <TextField
+      label={t(`invitationAccept.${key}`)}
+      name={FIELDS[key]}
+      error={problems[key]}
+      onInput={fix(key)}
+      {...more}
+    />
+  );
   const title = (key: string, values?: Record<string, string>) => (
     <h2 ref={hold} tabIndex={-1} className="text-lg font-semibold focus-visible:outline-none">
       {t(key, values)}
     </h2>
+  );
+  const enter = (
+    <p className="text-sm">
+      <Link href="/login" className={LINK}>
+        {t("invitationAccept.enter")}
+      </Link>
+    </p>
   );
   const alert = problems.form ? (
     <p role="alert" className={ALERT}>
@@ -205,7 +242,12 @@ export function InvitationAccept() {
   ) : null;
 
   if (step.name === "opening" || step.name === "checking") {
-    return <p className="text-muted">{t(`invitationAccept.${step.name}`)}</p>;
+    return (
+      // Con el foco tras «Volver a intentar», que ya no está.
+      <p ref={hold} tabIndex={-1} role="status" className="text-muted focus-visible:outline-none">
+        {t(`invitationAccept.${step.name}`)}
+      </p>
+    );
   }
   if (step.name === "absent" || step.name === "invalid") {
     const absent = step.name === "absent";
@@ -216,11 +258,7 @@ export function InvitationAccept() {
         {step.name === "invalid" && step.unsure ? (
           <>
             <p>{t("invitationAccept.invalidUnsure")}</p>
-            <p className="text-sm">
-              <Link href="/login" className={LINK}>
-                {t("invitationAccept.enter")}
-              </Link>
-            </p>
+            {enter}
           </>
         ) : null}
       </div>
@@ -243,11 +281,7 @@ export function InvitationAccept() {
       <div className="flex flex-col gap-3">
         {title("invitationAccept.doneTitle", { organization: step.organization })}
         <p>{t("invitationAccept.doneCreated", { email: invite?.email ?? "" })}</p>
-        <p className="text-sm">
-          <Link href="/login" className={LINK}>
-            {t("invitationAccept.enter")}
-          </Link>
-        </p>
+        {enter}
       </div>
     );
   }
@@ -288,37 +322,10 @@ export function InvitationAccept() {
           readOnly
           autoComplete="username"
         />
-        <TextField
-          ref={firstField}
-          label={t("invitationAccept.firstName")}
-          name="first_name"
-          autoComplete="given-name"
-          maxLength={150}
-          error={problems.first}
-        />
-        <TextField
-          label={t("invitationAccept.lastName")}
-          name="last_name"
-          autoComplete="family-name"
-          maxLength={150}
-        />
-        <TextField
-          label={t("invitationAccept.password")}
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          maxLength={1024}
-          hint={t("invitationAccept.rules")}
-          error={problems.password}
-        />
-        <TextField
-          label={t("invitationAccept.confirm")}
-          name="confirm"
-          type="password"
-          autoComplete="new-password"
-          maxLength={1024}
-          error={problems.confirm}
-        />
+        {input("first", { ref: firstField, autoComplete: "given-name", maxLength: 150 })}
+        {input("last", { autoComplete: "family-name", maxLength: 150 })}
+        {input("password", { hint: t("invitationAccept.rules"), ...SECRET_FIELD })}
+        {input("confirm", SECRET_FIELD)}
         {alert}
         <Button
           type="submit"

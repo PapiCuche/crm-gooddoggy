@@ -8,7 +8,6 @@ import { mockApi, renderApp } from "@/test-utils";
 
 import InvitationPage, { generateMetadata } from "./page";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock("next-intl/server", async () => {
   const { createTranslator } = await import("next-intl");
   const { default: messages } = await import("../../../messages/es-PE.json");

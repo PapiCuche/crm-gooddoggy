@@ -25,12 +25,37 @@ const bodies = (api: ReturnType<typeof mockApi>, path: string) =>
 const type = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
+const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), { status });
+const create = () => screen.getByRole("button", { name: /Crear cuenta y aceptar|Aceptando/ });
+// La vista previa contesta enseguida; cada aceptación, cuando la prueba quiera.
+function held() {
+  const answers: ((value: Response) => void)[] = [];
+  const api = mockApi({ [PREVIEW]: found(true) });
+  const routes = api.getMockImplementation()!;
+  api.mockImplementation((input, init) =>
+    String(input).endsWith("/accept/")
+      ? new Promise<Response>((resolve) => answers.push(resolve))
+      : routes(input, init),
+  );
+  return { api, answers };
+}
+// Deja que la respuesta se lea sin dar tiempo a pintarla (dentro de `act`): solo microtareas.
+// `pending`: sin respuesta, sigue pendiente.
+async function arrive(view: ReturnType<typeof renderApp>, pending = false) {
+  const status = () => view.client.getMutationCache().getAll().at(-1)?.state.status;
+  for (let tick = 0; tick < 100 && status() === "pending"; tick += 1) await Promise.resolve();
+  expect(status() === "pending").toBe(pending);
+}
+
 function open(fragment: string) {
   window.history.replaceState({ deNext: true }, "", `/invitacion?x=1${fragment}`);
   return renderApp(<InvitationAccept />);
 }
 async function register(first = "Ana", confirm = PASSWORD) {
   await screen.findByText(/Ese correo todavía no tiene cuenta/);
+  fill(first, confirm);
+}
+function fill(first = "Ana", confirm = PASSWORD) {
   type("Nombre", first);
   type("Apellidos (opcional)", " Paz ");
   type("Contraseña", PASSWORD);
@@ -62,36 +87,31 @@ describe("InvitationAccept", () => {
   it("saca el secreto de la barra al abrir y pide la vista previa una vez, en el cuerpo", async () => {
     configure({ reactStrictMode: true }); // los efectos dobles no gastan otro intento
     const api = mockApi({ [PREVIEW]: found(true) });
+    window.history.replaceState({ deNext: true }, "", `/invitacion?x=1#${LINK}`);
     const entries = window.history.length;
     const strip = vi.spyOn(window.history, "replaceState");
-    open(`#${LINK}`);
+    const real = History.prototype.replaceState.bind(window.history);
+    strip.mockImplementationOnce((...args) => {
+      // Hasta sacar el secreto de la barra, solo dice que abre la invitación.
+      expect(document.body.textContent).toBe("Abriendo la invitación…");
+      real(...args);
+    });
+    renderApp(<InvitationAccept />);
     expect(window.location.href).toBe(`${window.location.origin}/invitacion?x=1`);
     expect(window.location.hash).toBe("");
     expect(window.history.length).toBe(entries);
     await Promise.resolve();
-    expect(strip.mock.calls.slice(1)).toEqual([
+    expect(strip.mock.calls).toEqual([
       [{ deNext: true }, "", "/invitacion?x=1"],
       [null, "", "/invitacion?x=1"],
     ]);
     expect(await screen.findByText(/Acme te invitó a su espacio/)).toHaveTextContent("ana@acme.pe");
     expect(bodies(api, "/preview/")).toEqual([{ token: LINK }]);
-    const [url, init] = api.mock.calls[0] ?? [];
-    expect(String(url)).not.toContain(LINK);
+    const [, init] = api.mock.calls[0] ?? [];
     expect(new Headers(init?.headers).get("X-CSRFToken")).toBe("token-de-prueba");
     expect(screen.getByLabelText("Nombre")).toHaveFocus();
     expect(dom()).not.toContain(LINK);
     expect(bodies(api, "/accept/")).toEqual([]); // abrir no acepta
-  });
-
-  it("hasta sacar el secreto de la barra solo dice que abre la invitación", () => {
-    mockApi({});
-    window.history.replaceState(null, "", `/invitacion#${LINK}`);
-    const strip = vi.spyOn(window.history, "replaceState");
-    strip.mockImplementationOnce(() =>
-      expect(document.body.textContent).toBe("Abriendo la invitación…"),
-    );
-    renderApp(<InvitationAccept />);
-    expect(strip).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -147,24 +167,35 @@ describe("InvitationAccept", () => {
     expect(screen.getByText("Escribe tu nombre.")).toBeVisible();
     expect(screen.getByText("Las dos contraseñas no coinciden.")).toBeVisible();
     expect(bodies(api, "/accept/")).toEqual([]);
+    const confirm = screen.getByLabelText("Repite la contraseña");
+    confirm.focus(); // corregir un aviso no lleva el foco al otro campo con aviso
+    fireEvent.input(confirm, { target: { value: PASSWORD } });
+    expect(screen.queryByText("Las dos contraseñas no coinciden.")).not.toBeInTheDocument();
+    expect(confirm).toHaveFocus();
   });
 
-  it("una contraseña que la API no acepta se dice con las reglas, nunca con su texto", async () => {
-    const weak = { code: "invalid", message: "texto de la API" };
-    mockApi({
-      [PREVIEW]: found(true),
-      [ACCEPT]: { status: 400, body: { code: "VALIDATION_ERROR", fields: { password: [weak] } } },
-    });
-    open(`#${LINK}`);
-    expect(await screen.findByText(/Al menos 12 caracteres/)).toBeVisible(); // las reglas, antes
-    await register();
-    const field = screen.getByLabelText("Contraseña");
-    await waitFor(() => expect(field).toHaveFocus());
-    expect(field).toHaveAccessibleDescription(
-      "Esa contraseña no sirve. Revisa las reglas y elige otra.",
-    );
-    expect(dom()).not.toContain("texto de la API");
-  });
+  it.each([
+    ["password", "Contraseña", "Esa contraseña no sirve. Revisa las reglas y elige otra."],
+    ["last_name", "Apellidos (opcional)", "Revisa los apellidos: como mucho 150 caracteres."],
+  ])(
+    "lo que la API no acepta en %s se dice en su campo, nunca con su texto",
+    async (name, label, said) => {
+      const fields = { [name]: [{ code: "invalid", message: "texto de la API" }] };
+      mockApi({
+        [PREVIEW]: found(true),
+        [ACCEPT]: { status: 400, body: { code: "VALIDATION_ERROR", fields } },
+      });
+      open(`#${LINK}`);
+      expect(await screen.findByText(/Al menos 12 caracteres/)).toBeVisible(); // las reglas, antes
+      await register();
+      const field = screen.getByLabelText(label);
+      await waitFor(() => expect(field).toHaveFocus());
+      expect(field).toHaveAccessibleDescription(said);
+      expect(dom()).not.toContain("texto de la API");
+      fireEvent.input(field, { target: { value: "otra" } }); // al corregir, el aviso se va
+      expect(field).not.toHaveAttribute("aria-invalid");
+    },
+  );
 
   it.each([
     ["con cuenta al abrir", { [PREVIEW]: found(false) }],
@@ -180,17 +211,18 @@ describe("InvitationAccept", () => {
   });
 
   it("demasiados intentos: dice cuánto esperar y deja volver a preguntar", async () => {
-    let reply: { status: number; body?: unknown; headers?: Record<string, string> } = {
+    const limited = {
       status: 429,
       body: { code: "RATE_LIMITED" },
       headers: { "Retry-After": "600" },
     };
-    const api = mockApi({ [PREVIEW]: () => reply });
+    let answer: typeof limited | ReturnType<typeof found> = limited;
+    const api = mockApi({ [PREVIEW]: () => answer });
     open(`#${LINK}`);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Podrás volver a probar en 10 minutos.",
     );
-    reply = found(true);
+    answer = found(true);
     fireEvent.click(screen.getByRole("button", { name: "Volver a intentar" }));
     expect(await screen.findByLabelText("Nombre")).toBeVisible();
     expect(bodies(api, "/preview/")).toEqual([{ token: LINK }, { token: LINK }]);
@@ -207,6 +239,103 @@ describe("InvitationAccept", () => {
     expect(await screen.findByText(/puede que ya estés dentro/)).toBeVisible();
     expect(screen.getByRole("link", { name: "Entrar" })).toHaveAttribute("href", "/login");
   });
+
+  it("pulsar varias veces envía una sola aceptación, también entre la respuesta y su pantalla", async () => {
+    const { api, answers } = held();
+    const view = open(`#${LINK}`);
+    await register();
+    expect(create()).toHaveTextContent("Aceptando…");
+    expect(create()).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(create());
+    await waitFor(() => expect(answers).toHaveLength(1));
+    await act(async () => {
+      answers[0]!(reply({ code: "X" }, 500));
+      await arrive(view);
+      expect(create()).toHaveTextContent("Aceptando…"); // la respuesta llegó; la pantalla aún no
+      fireEvent.click(create());
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Algo salió mal");
+    expect(bodies(api, "/accept/")).toHaveLength(1);
+  });
+
+  it("sin respuesta de la vista previa a tiempo deja volver a preguntar; una justo antes del plazo manda", async () => {
+    const answers: ((value: Response) => void)[] = [];
+    const api = mockApi({});
+    api.mockImplementation(() => new Promise<Response>((resolve) => answers.push(resolve)));
+    vi.useFakeTimers();
+    try {
+      const view = open(`#${LINK}`);
+      await act(() => vi.advanceTimersByTimeAsync(29_000));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // aún espera
+      await act(() => vi.advanceTimersByTimeAsync(1_500));
+      expect(screen.getByRole("alert")).toHaveTextContent("tarda demasiado");
+      await act(async () => {
+        answers[0]!(reply(found(true).body, 200)); // la que se dejó de esperar
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(screen.queryByLabelText("Nombre")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Volver a intentar" }));
+      await act(() => vi.advanceTimersByTimeAsync(29_999));
+      expect(screen.getByRole("status")).toHaveFocus(); // el botón ya no está
+      await act(async () => {
+        answers[1]!(reply(found(true).body, 200));
+        await arrive(view);
+        vi.advanceTimersByTime(1); // el plazo vence con la respuesta leída y sin pintar: manda ella
+      });
+      expect(screen.getByLabelText("Nombre")).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(api).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["sin respuesta a tiempo", null, "tarda demasiado", true],
+    ["una aceptación justo antes del plazo", joined, "Ya eres parte de Acme.", false],
+    [
+      "un rechazo justo antes del plazo",
+      { status: 429, body: { code: "RATE_LIMITED" } },
+      "Espera un momento",
+      false,
+    ],
+  ])(
+    "al aceptar, %s: se dice, y la duda queda solo sin respuesta",
+    async (_, first, said, unsure) => {
+      const { answers } = held();
+      const view = open(`#${LINK}`);
+      await screen.findByLabelText("Nombre");
+      vi.useFakeTimers();
+      try {
+        fill();
+        await act(() => vi.advanceTimersByTimeAsync(29_999));
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // aún espera
+        await act(async () => {
+          if (first) answers[0]!(reply(first.body, first.status));
+          await arrive(view, !first);
+          vi.advanceTimersByTime(1); // el plazo vence con la respuesta leída y sin pintar
+        });
+        expect(document.body).toHaveTextContent(said);
+        if (first?.status === 200) return;
+        if (!first) {
+          await act(async () => {
+            answers[0]!(reply(joined.body, 200)); // la que se dejó de esperar no cambia la pantalla
+            await vi.advanceTimersByTimeAsync(250);
+          });
+          expect(screen.queryByText("Ya eres parte de Acme.")).not.toBeInTheDocument();
+        }
+        fireEvent.click(create());
+        await act(() => vi.advanceTimersByTimeAsync(10));
+        await act(async () => {
+          answers[1]!(reply(refused.body, 400));
+          await vi.advanceTimersByTimeAsync(10);
+        });
+        expect(screen.getByText(INVALID)).toBeVisible();
+        expect(screen.queryAllByText(/puede que ya estés dentro/)).toHaveLength(unsure ? 1 : 0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("otro enlace abierto en la misma pestaña se lee, se quita y se pregunta", async () => {
     const api = mockApi({ [PREVIEW]: found(true) });
