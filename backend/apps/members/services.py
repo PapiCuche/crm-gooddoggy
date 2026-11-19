@@ -159,10 +159,9 @@ def accept_invitation(
 ) -> tuple[str, bool]:
     """Acepta la invitación que encontró el hash de su enlace, en el scope `SYSTEM` de su
     organización (ADR-020 §4). Devuelve el nombre de la organización y si se creó la cuenta.
-
-    El orden de invitar y revocar: el bloqueo de RBAC, la fila releída y bloqueada, las reglas de
-    quien invitó tal como está ahora y que no haya membresía; solo entonces la cuenta
-    (`invited_account` con `account`). Lanza `NotAcceptable`. Si lanza, no escribe.
+    Orden de invitar y revocar: bloqueo de RBAC, fila releída y bloqueada, reglas de quien invitó
+    y ninguna membresía; después, la cuenta (`invited_account`). Lanza `NotAcceptable`,
+    `AccountExists` o `ValidationError` (cuenta nueva). Si lanza, no escribe.
     """
     with transaction.atomic(using=require_scope(ctx)):
         try:

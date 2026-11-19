@@ -284,7 +284,8 @@ def locked_invitation(
 ) -> tuple[str, InvitationRef] | None:
     """El nombre de la organización de `ctx` y la invitación, bloqueada hasta el final del scope,
     si sigue pendiente, sin caducar (reloj de la base), con ese hash y la organización admite
-    acceso; si no, `None` (ADR-020 §3). Otra aceptación de la fila espera aquí y ya no la ve."""
+    acceso; si no, `None` (ADR-020 §3). Otra aceptación espera antes, en el bloqueo de RBAC; el de
+    la fila protege de quien escribe sin él (el envío, 130c: RBAC y después fila, o bloquearla)."""
     alias = require_scope(ctx)
     organizations = Organization.objects.using(alias).filter(
         pk=ctx.organization_id, status__in=ACCESSIBLE_STATUSES
