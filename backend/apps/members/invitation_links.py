@@ -9,6 +9,7 @@ también si no tiene la forma de un secreto.
 """
 
 import re
+import secrets
 from typing import Any, NamedTuple
 from uuid import UUID
 
@@ -34,6 +35,12 @@ INVALID_MESSAGE = "El enlace no vale o ya caducó. Pide que te inviten otra vez.
 ACCOUNT_EXISTS = "ACCOUNT_EXISTS"
 EXISTS_MESSAGE = "Ese correo ya tiene cuenta. Inicia sesión con ella y vuelve a abrir el enlace."
 DENIED = "invitation.accept.denied"
+
+
+def new_secret() -> str:
+    """El secreto de un enlace nuevo (ADR-020 §3): 256 bits aleatorios con la forma de `SECRET`.
+    El único generador: lo usa la tarea que envía el correo (`invitation_mail`)."""
+    return secrets.token_urlsafe(32)
 
 
 class InvitationPreview(NamedTuple):
