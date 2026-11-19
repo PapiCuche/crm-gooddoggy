@@ -3,11 +3,15 @@ Tablas tenant-owned con FORCE RLS y FKs compuestas en la migración. Nada se bor
 marca borrada, una conversación se cierra o se archiva, el historial de asignaciones es inmutable
 y un mensaje no se reescribe salvo el estado de entrega, que solo avanza."""
 
+import datetime as dt
+
+from django.conf import settings
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.contrib.postgres.fields import RangeOperators
 from django.db import models
 from django.db.models.functions import Coalesce, Length, Lower, Now
 from django.db.models.lookups import LessThanOrEqual
+from django.utils import timezone
 
 from core.db.models import TenantModel, uuid7_primary_key
 
@@ -26,6 +30,10 @@ class Platform(models.TextChoices):
 
 SOCIAL = (Platform.MESSENGER, Platform.INSTAGRAM)  # identidad por cuenta, sin teléfono (ADR-035)
 PAGE_SUBSCRIPTIONS = ("SUBSCRIBED", "NOT_SUBSCRIBED", "UNKNOWN")  # F7b-06h, `page_subscription`
+SUBSCRIPTION_MAX_TURNS = 4  # F7b-06i: los intervalos de salud que vale un «página suscrita»
+# F7b-06i: el desfase de reloj tolerado entre quien escribe `last_healthcheck_at` (el worker) y
+# quien lo lee (la web, o la base en `channel_accounts_health_due`, `0052`); más allá, es futura.
+HEALTH_CLOCK_SKEW = dt.timedelta(minutes=5)
 PAGE_OWNER = "channel_accounts_page_owner_ex"  # la página de Messenger o la de Instagram
 EXTERNAL_ID = r"^[A-Za-z0-9._-]{1,100}$"  # el PSID o el IGSID: un id opaco de Meta, sin espacios
 
@@ -268,15 +276,26 @@ class ChannelAccount(TenantModel):
     @property
     def page_subscription(self) -> str | None:
         """Lo que la pantalla puede afirmar de la suscripción de la página (F7b-06h), un código
-        cerrado: `SUBSCRIBED` solo si la última respuesta de Meta lo dijo y la cuenta se sigue
+        cerrado: `SUBSCRIBED` solo si la última respuesta de Meta lo dijo, no es más vieja que
+        `subscription_max_age()` ni futura (más allá de `HEALTH_CLOCK_SKEW`), y la cuenta se sigue
         comprobando; `UNKNOWN` si no se sabe (sin `META_APP_ID`, un rechazo que no cambia nada,
-        `ERROR`); `None` fuera de Messenger e Instagram."""
+        `ERROR`, una respuesta vieja); `None` fuera de Messenger e Instagram."""
         if self.platform not in SOCIAL:
             return None
         if self.status_detail == "PAGE_NOT_SUBSCRIBED":
             return "NOT_SUBSCRIBED"
         checked = self.status in ("PENDING", "CONNECTED", "DEGRADED")
-        return "SUBSCRIBED" if checked and self.page_subscribed is True else "UNKNOWN"
+        at, now = self.last_healthcheck_at, timezone.now()
+        fresh = at is not None and now - subscription_max_age() <= at <= now + HEALTH_CLOCK_SKEW
+        return "SUBSCRIBED" if checked and fresh and self.page_subscribed is True else "UNKNOWN"
+
+
+def subscription_max_age() -> dt.timedelta:
+    """Hasta cuándo vale el último «página suscrita» de Meta (F7b-06i): cuatro intervalos de la
+    comprobación de salud (una hora por omisión). Una cuenta que Meta no contesta (un corte o un
+    límite de tasa largo) conserva su última respuesta; pasada esta edad la pantalla ya no la
+    afirma, y una hora futura tampoco vale."""
+    return dt.timedelta(minutes=SUBSCRIPTION_MAX_TURNS * settings.CHANNEL_HEALTH_INTERVAL_MINUTES)
 
 
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.

@@ -35,7 +35,9 @@ logger = get_logger(__name__)
 MID = r"^[!-~]{1,200}$"  # el `message_id` de Meta: ASCII visible (`messages.external_message_id`)
 WINDOW = (2018278, 2534022)  # los subcódigos de `10` que dicen «fuera de la ventana» [S26]
 ACCESS_OFF = (200, 2534041)  # el titular apagó «Allow access to messages» (Instagram)
-TOO_FAST = (4, 17, 32, 613)  # límites de tasa de la app, de la página y de la llamada: pasajeros
+# Límites de tasa, pasajeros: de la app, de la llamada y de la página (`4`, `17`, `613`, `32`) y
+# los de uso del negocio de Pages, Instagram y Messenger (`80001`, `80002`, `80006`, F7b-06i).
+TOO_FAST = (4, 17, 32, 613, 80001, 80002, 80006)
 SERVER = (1, 2)  # error desconocido o servicio no disponible de Meta: pudo haberse enviado
 CODES = {190: "TOKEN_INVALID", 551: "RECIPIENT_UNREACHABLE"}
 TEXT_LIMITS = {"MESSENGER": ("chars", 2000), "INSTAGRAM": ("bytes", 1000)}  # ADR-035 §7

@@ -103,7 +103,8 @@ class ChannelAccountSerializer(serializers.Serializer[Any]):
     page_subscription = serializers.ChoiceField(
         choices=PAGE_SUBSCRIPTIONS, allow_null=True, read_only=True,
         help_text="Messenger o Instagram: si la página tiene suscrita la app del CRM según la "
-        "última respuesta de Meta; `UNKNOWN` si no se comprobó o no se sabe. `null` en las demás.",
+        "última respuesta de Meta; `UNKNOWN` si no se comprobó, no se sabe o esa respuesta tiene "
+        "más de cuatro intervalos de salud (una hora por omisión). `null` en las demás.",
     )  # fmt: skip
     version = serializers.IntegerField()
     created_at = serializers.DateTimeField()

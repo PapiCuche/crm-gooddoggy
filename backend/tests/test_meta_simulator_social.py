@@ -235,6 +235,9 @@ KNOWN = {  # ADR-035 §6 [S26]: (estado, código, subcódigo) -> código propio
     "token": ((401, 190, None), "TOKEN_INVALID"),
     "token_400": ((400, 190, None), "TOKEN_INVALID"),  # el estado no decide: el código sí
     "rate_limit": ((400, 613, None), "RATE_LIMITED"),
+    "throttle_pages": ((400, 80001, None), "RATE_LIMITED"),  # F7b-06i: uso del negocio
+    "throttle_instagram": ((400, 80002, None), "RATE_LIMITED"),
+    "throttle_messenger": ((400, 80006, None), "RATE_LIMITED"),
     "messages_access_off": ((400, 200, 2534041), "MESSAGES_ACCESS_OFF"),
     "permission_10": ((400, 10, None), "PROVIDER_REJECTED"),  # `10` sin subcódigo de ventana
     "permission_200": ((400, 200, None), "PROVIDER_REJECTED"),  # `200` sin 2534041
