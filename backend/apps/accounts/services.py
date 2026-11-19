@@ -24,6 +24,7 @@ from apps.accounts.emails import canonical_email, presented_email
 from apps.accounts.models import MfaDevice, User
 from apps.audit import platform
 from apps.audit.services import Entity, Result
+from core import text
 from core.api.errors import ApiError
 from core.observability import reporting
 
@@ -197,15 +198,34 @@ class StaffAccount(Exception):
     """El correo es de una cuenta de personal de plataforma: nunca es miembro (ADR-001)."""
 
 
+NAME_MAX = User._meta.get_field("first_name").max_length or 0
+
+
+def _person_name(value: str, *, required: bool) -> str:
+    """Un nombre o apellido como se guarda (`core.text.line`: NFC, una línea, sin controles ni
+    caracteres de dirección) o `ValidationError` con un mensaje fijo, que nunca repite el valor.
+    Obligatorio: con alguna letra o cifra que se vea (`core.text.name`)."""
+    try:
+        tidy = text.line(value, NAME_MAX)
+    except ValueError:
+        message = "Escríbelo en una sola línea, sin caracteres de control ni de dirección."
+        raise ValidationError(message, code="invalid") from None
+    try:
+        return text.name(tidy, NAME_MAX) if required else tidy
+    except ValueError:
+        raise ValidationError("Escribe tu nombre.", code="required") from None
+
+
 def invited_account(
     email: str, *, session_user_id: UUID | None, password: str, first_name: str, last_name: str
 ) -> tuple[UUID, bool]:
     """La cuenta que acepta una invitación a `email` (canónico), como `(id, creada)` (ADR-020 §4).
 
-    Si existe, solo vale la de la sesión, activa, y no se toca: si no, `AccountExists` (también
-    desactivada) o `StaffAccount`. Si no, se crea con el nombre y una contraseña que pasa los
-    validadores (`ValidationError` por campo). Si otra aceptación la creó a la vez,
-    `AccountExists`: quien llama deshace su transacción entera. No inicia sesión.
+    Si existe, solo vale la de la sesión, activa, y no se toca (ni se miran los nombres): si no,
+    `AccountExists` (también desactivada) o `StaffAccount`. Si no, se crea con el nombre
+    (`_person_name`) y una contraseña que pasa los validadores con esos nombres
+    (`ValidationError` por campo, con el código de cada validador). Si otra aceptación la creó a
+    la vez, `AccountExists`: quien llama deshace su transacción entera. No inicia sesión.
     """
     existing = User.objects.filter(email=email).first()
     if existing is not None:
@@ -214,21 +234,22 @@ def invited_account(
         if existing.pk != session_user_id or not existing.is_active:
             raise AccountExists
         return existing.pk, False
-    first_name, last_name = first_name.strip(), last_name.strip()
-    problems: dict[str, list[str]] = {}
-    if not first_name:
-        problems["first_name"] = ["Escribe tu nombre."]
+    names = {"first_name": first_name, "last_name": last_name}
+    problems: dict[str, list[ValidationError]] = {}
+    for field, value in names.items():
+        try:
+            names[field] = _person_name(value, required=field == "first_name")
+        except ValidationError as invalid:
+            problems[field], names[field] = [invalid], ""
     try:
-        validate_password(password, User(email=email, first_name=first_name, last_name=last_name))
+        validate_password(password, User(email=email, **names))
     except ValidationError as weak:
-        problems["password"] = weak.messages
+        problems["password"] = weak.error_list  # con el código de cada validador
     if problems:
         raise ValidationError(problems)
     try:
         with transaction.atomic():  # savepoint: la misma cuenta pudo nacer en otra organización
-            user = User.objects.create_user(
-                email=email, password=password, first_name=first_name, last_name=last_name
-            )
+            user = User.objects.create_user(email=email, password=password, **names)
     except IntegrityError:
         raise AccountExists from None
     return user.pk, True

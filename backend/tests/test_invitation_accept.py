@@ -83,13 +83,18 @@ def directly(org: UUID, secret: str, session: Any = None) -> Callable[[TenantCon
     return lambda tenant: members.accept_invitation(tenant, invitation_id, digest(secret), **how)
 
 
-def held(org: UUID, first: Callable[[TenantContext], Any], second: Callable[[], Any]) -> Any:
-    """`first` acepta y retiene su transacción; `second`, en otro hilo, espera sus bloqueos."""
+def held(
+    org: UUID, first: Callable[[TenantContext], Any], second: Callable[[], Any], by: Any = None
+) -> Any:
+    """`first` escribe (como `by`, o `SYSTEM`) y retiene su transacción; `second`, en otro hilo,
+    espera sus bloqueos."""
     wrote, release, out = threading.Event(), threading.Event(), dict[str, Any]()
 
     def run_first() -> None:
         try:
-            with tenant_scope(TenantContext(org, "invitation_link")) as tenant:
+            with tenant_scope(
+                ctx(org, by) if by else TenantContext(org, "invitation_link")
+            ) as tenant:
                 out["first"] = first(tenant)
                 wrote.set()
                 release.wait(timeout=10)
@@ -245,10 +250,11 @@ def test_the_new_account_needs_a_name_and_a_password_the_platform_accepts(
     assert (status, body["code"]) == (400, "VALIDATION_ERROR")
     assert sorted(body["fields"]) == ["first_name", "password"]
     assert b"nora@cliente" not in weak.content  # ni el correo ni la contraseña
-    assert said(take(Client(), secret))[1]["code"] == "VALIDATION_ERROR"  # sin contraseña
+    alone = said(take(Client(), secret, first_name="Nora"))[1]  # sin contraseña
+    assert (alone["code"], list(alone["fields"])) == ("VALIDATION_ERROR", ["password"])
     assert migrator.execute(STATE).fetchone() == before
     assert migrator.execute(ROWS).fetchall() == rows  # el enlace no se gasta
-    assert reasons(migrator) == [{"reason": "password"}] * 2
+    assert reasons(migrator) == [{"reason": "name"}, {"reason": "password"}]  # nunca los valores
     assert said(take(Client(), secret, **NEW))[0] == 200
 
 
