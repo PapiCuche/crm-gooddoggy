@@ -18,8 +18,16 @@ crm_compose_override() {
     printf '%s\n' "$CRM_COMPOSE_OVERRIDE"
     return 0
   fi
-  crm_mode_file="${CRM_ENV_DIR:-/etc/crm}/host-mode"
-  [ -e "$crm_mode_file" ] || return 0
+  crm_mode_dir="${CRM_ENV_DIR:-/etc/crm}"
+  crm_mode_file="$crm_mode_dir/host-mode"
+  if [ ! -e "$crm_mode_file" ]; then
+    # Sin permiso sobre el directorio, -e dice «no existe»: eso no es «dedicado», es no saberlo.
+    if [ -d "$crm_mode_dir" ] && { [ ! -r "$crm_mode_dir" ] || [ ! -x "$crm_mode_dir" ]; }; then
+      echo "no se puede leer $crm_mode_dir (¿sin sudo?): no se sabe el modo del servidor" >&2
+      return 1
+    fi
+    return 0
+  fi
   crm_mode=$(tr -d ' \t\r\n' < "$crm_mode_file") || {
     echo "no se puede leer $crm_mode_file" >&2
     return 1

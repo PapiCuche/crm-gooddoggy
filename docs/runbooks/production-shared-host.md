@@ -31,12 +31,18 @@ sudo docker network ls -q | xargs sudo docker network inspect -f '{{.Name}} {{ra
 ip route
 ```
 
-Por omisión: `ingress` `172.31.250.0/29`, borde del CRM `172.31.251.0/24`, `data` `172.31.252.0/24`, `egress` `172.31.253.0/24`. Si alguna choca, cambiarla en `/etc/crm/release.env` (`CRM_*_SUBNET`, `STACK_SUBNET`, `CRM_INGRESS_PROXY_IP`, `CRM_EDGE_PROXY_IP`) y usar los mismos valores en el borde público.
+Direcciones fijas (no se cambian por entorno: `deploy.sh` solo admite digests y `REVISION` en `release.env`; cambiarlas es un PR que toca `compose.shared.yaml` y el override del borde público a la vez): `ingress` `172.31.250.0/29` con el borde público en `.2` y el `proxy` del CRM en `.3`, borde del CRM `172.31.251.0/24`, `data` `172.31.252.0/24`, `egress` `172.31.253.0/24`. Si alguna choca, parar aquí.
 
 Crear `ingress` una sola vez (interna: sin salida a Internet):
 
 ```bash
 sudo docker network create --driver bridge --internal --subnet 172.31.250.0/29 shared-ingress
+```
+
+`ingress` tiene **exactamente dos miembros**, el borde público (`.2`) y el `proxy` del CRM (`.3`). Ningún `backend` ni `frontend` de ninguna aplicación entra en ella: las dos usan esos nombres, y Docker los resolvería en la red común.
+
+```bash
+sudo docker network inspect shared-ingress -f '{{range .Containers}}{{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}'
 ```
 
 ## 3. Primer arranque
@@ -52,7 +58,14 @@ Igual que `production-first-boot.md`, con estas diferencias:
 | `deploy.sh` | Igual. El `proxy` arranca sin puertos y entra en `ingress` con su IP fija |
 | `smoke.sh https://crm.<dominio>` | Igual, contra el nombre público. Valida el certificado del borde, los topes (413) y `/health/*` (404) |
 
-Orden: (1) desplegar el CRM con `deploy.sh`. El `proxy` queda escuchando en `ingress`, sin tráfico. (2) El operador de la otra aplicación aplica su PR de borde. (3) `smoke.sh`.
+Orden:
+
+1. El operador de la otra aplicación aplica su PR de borde **primero**. Su Caddy obtiene el certificado de `crm.<dominio>` y responde 502 hasta que el CRM arranque. Al revés, `smoke.sh`, dentro de `deploy.sh`, no encuentra certificado en 120 s y el primer despliegue sale con `ROLLBACK IMPOSIBLE`.
+2. `deploy.sh`. El `proxy` arranca sin puertos y entra en `ingress` con su IP fija.
+3. `smoke.sh` contra el nombre **público**, nunca con `--resolve` a la IP del servidor. Desde el propio servidor, la petición entra por la pasarela de Docker y `smoke.sh` lo detecta como IP privada.
+4. Si la CDN tiene activado «Always Use HTTPS», responde 301 en vez del 308 de Caddy y la comprobación de HTTP a HTTPS falla. Desactivarlo para `crm.` o aceptar ese fallo de forma explícita.
+
+Para cualquier orden de Compose a mano, `sudo infra/prod/compose.sh …`. Ya añade `compose.shared.yaml`. Un `up` solo con `compose.yaml` vería la red `data` distinta y pararía PostgreSQL sin poder recrearla.
 
 ## 4. Comprobaciones propias del modo compartido
 
@@ -68,7 +81,7 @@ sudo docker inspect crm-proxy-1 -f '{{json .HostConfig.PortBindings}} {{range $k
 sudo docker compose -f infra/prod/compose.yaml -f infra/prod/compose.shared.yaml --env-file /etc/crm/release.env logs --since 2m proxy | grep -o '"client_ip":"[^"]*"' | sort | uniq -c
 ```
 
-La tasa de `/webhooks/*` es por cliente: el laboratorio de ADR-046 lo comprobó. En el servidor, `client_ip` del log tiene que ser la IP pública de quien prueba, nunca la del borde público (`172.31.250.2`).
+La tasa de `/webhooks/*` es por cliente: el laboratorio de ADR-046 lo comprobó. Con IPv6 a través de la CDN, un cliente puede rotar direcciones dentro de su /64; la regla de tasa de la CDN para `/webhooks/*` (ADR-046, decisión 6) lo cubre. En el servidor, `client_ip` del log tiene que ser la IP pública de quien prueba, nunca la del borde público (`172.31.250.2`).
 
 ## 5. Volver atrás
 

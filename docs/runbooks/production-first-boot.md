@@ -170,8 +170,8 @@ Si los paquetes de GHCR siguen privados, antes `sudo docker login ghcr.io` con u
 
 ```bash
 cd /opt/crm
-sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env up -d --wait postgres
-sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env exec -T postgres \
+sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env up -d --wait postgres
+sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env exec -T postgres \
   psql -U postgres -d crm -Atc "SELECT rolname, rolsuper, rolbypassrls, rolcreatedb FROM pg_roles WHERE rolname IN ('crm_app', 'crm_migrator') ORDER BY 1"
 ```
 
@@ -182,7 +182,7 @@ crm_app|f|f|f
 crm_migrator|f|t|f
 ```
 
-Si el volumen ya existía (un intento anterior), la imagen no vuelve a ejecutar el script. Es idempotente: con `postgres.env` aún en su sitio, `sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env exec -T postgres /docker-entrypoint-initdb.d/10-roles.sh` crea lo que falte y fija atributos y contraseñas.
+Si el volumen ya existía (un intento anterior), la imagen no vuelve a ejecutar el script. Es idempotente: con `postgres.env` aún en su sitio, `sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env exec -T postgres /docker-entrypoint-initdb.d/10-roles.sh` crea lo que falte y fija atributos y contraseñas.
 
 ## 4. Lo que necesitan los backups
 
@@ -210,7 +210,7 @@ sudo infra/prod/deploy.sh /root/release-<SHA>.env
 
 `deploy.sh` ([infra/prod/README.md](../../infra/prod/README.md), «Desplegar») valida el release, descarga los cinco digests, se salta el volcado previo (en el primer despliegue no hay nada que volcar), arranca PostgreSQL y Redis, ejecuta el job `migrate` como `crm_migrator`, levanta el stack y pasa la puerta de salud: `/health/ready` 200 desde dentro del backend, [`smoke.sh`](../../infra/prod/smoke.sh) y `https://crm.<DOMINIO>/login` 200. En el primer arranque Caddy pide el certificado en segundo plano, después de que `up --wait` termine: `smoke.sh` lo espera hasta 120 s de reloj (`CRM_SMOKE_TLS_TIMEOUT`; un intento cada 5 s, y cada uno corta a los 15 s) y, si tarda, dice cuánto (`smoke: certificado válido tras 15s`). Termina con `DESPLIEGUE OK: /etc/crm/release.env`.
 
-Si la puerta falla en el primer despliegue no hay versión a la que volver: sale con `ROLLBACK IMPOSIBLE` y el stack queda como está. Mira `sudo docker compose -f infra/prod/compose.yaml --env-file /root/release-<SHA>.env ps` y `… logs backend proxy`, corrige y repite la misma orden. Lo habitual:
+Si la puerta falla en el primer despliegue no hay versión a la que volver: sale con `ROLLBACK IMPOSIBLE` y el stack queda como está. Mira `sudo infra/prod/compose.sh --env-file /root/release-<SHA>.env ps` y `… logs backend proxy`, corrige y repite la misma orden. Lo habitual:
 
 - **El certificado:**
   - `smoke FAIL: el certificado de … no es válido tras 125s (curl sale con 35 …)` (o 7, o 28; los segundos son los reales, algo más de 120): Caddy no lo obtuvo en ese tiempo. Los logs de `proxy` dicen qué respondió la autoridad. Si el registro A no resuelve aquí (`getent`) o el 80 o el 443 están cerrados, corrígelo. Si la autoridad solo va lenta, repite con más margen: `sudo CRM_SMOKE_TLS_TIMEOUT=300 infra/prod/deploy.sh /root/release-<SHA>.env`.
@@ -226,8 +226,8 @@ Con `migrate` ya hecho, la contraseña de `crm_migrator` no puede quedar en el e
 
 ```bash
 sudo shred -u /etc/crm/postgres.env
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env up -d --wait --force-recreate postgres
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env exec -T postgres \
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env up -d --wait --force-recreate postgres
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env exec -T postgres \
   sh -c 'test -z "$POSTGRES_PASSWORD$CRM_MIGRATOR_PASSWORD$CRM_APP_PASSWORD" && echo limpio'
 ```
 
@@ -258,7 +258,7 @@ La última orden tiene que responder `limpio`. Las contraseñas de los roles sig
 
 ```bash
 cd /opt/crm
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env exec backend \
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env exec backend \
   python manage.py bootstrap_organization --slug <slug> --name "<Nombre de la organización>" \
   --owner-email <correo del Owner> --reason "primer arranque de producción"
 ```
@@ -298,7 +298,7 @@ Hoy no hay forma de recuperar una cuenta que pierde a la vez el teléfono y los 
 ```bash
 cd /opt/crm
 # /health/ready desde dentro del backend: «200» y el estado de database, redis y storage.
-sudo docker compose -f infra/prod/compose.yaml --env-file /etc/crm/release.env exec -T backend python -c 'import urllib.error as e, urllib.request as u
+sudo infra/prod/compose.sh --env-file /etc/crm/release.env exec -T backend python -c 'import urllib.error as e, urllib.request as u
 try: r = u.urlopen("http://127.0.0.1:8000/health/ready", timeout=5)
 except e.HTTPError as x: r = x
 print(r.status, r.read().decode())'

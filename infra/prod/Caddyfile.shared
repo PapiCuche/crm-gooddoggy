@@ -11,9 +11,10 @@
 #     conexión se usa la del socket: un cliente no puede elegir su IP;
 #   - la tasa de /webhooks/* se cuenta por {client_ip}; {remote_host} sería el borde público, y todo
 #     Internet compartiría un único cupo;
-#   - a cada upstream se le SUSTITUYE X-Forwarded-For por {client_ip} (no se encadena) y se fija
-#     X-Forwarded-Proto https. uvicorn solo cree a este proxy (FORWARDED_ALLOW_IPS) y toma esa IP;
-#     Django ve https (SECURE_PROXY_SSL_HEADER) y sus cookies Secure, CSRF y HSTS siguen igual.
+#   - a cada upstream se le SUSTITUYE X-Forwarded-For por {client_ip} (no se encadena) y se fijan
+#     X-Forwarded-Proto https y X-Forwarded-Host (el Host; Caddy conservaría el de un proxy de
+#     confianza, y el borde público confía en la CDN, que pasa el del cliente). uvicorn solo cree
+#     a este proxy (FORWARDED_ALLOW_IPS) y toma esa IP; Django ve https (SECURE_PROXY_SSL_HEADER) y sus cookies Secure, CSRF y HSTS siguen igual.
 # HSTS lo emiten Django y Next (ADR-033 §4.1); ni este Caddy ni el borde público añaden otro.
 
 (redacted_fields) {
@@ -24,6 +25,7 @@
 (upstream_identity) {
 	header_up X-Forwarded-For {client_ip}
 	header_up X-Forwarded-Proto https
+	header_up X-Forwarded-Host {host}
 }
 
 {

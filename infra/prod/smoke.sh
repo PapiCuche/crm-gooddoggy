@@ -107,4 +107,11 @@ logs=$(compose logs --since 5m proxy backend 2>&1) || fail "docker compose logs 
 if printf '%s\n' "$logs" | grep -q "$token"; then
   fail "la query de /webhooks aparece en los logs"
 fi
+# Servidor compartido (ADR-046): la IP del cliente que ve el proxy tiene que ser la pública de quien
+# llama. Una privada es la del borde público o la pasarela de Docker: todos los clientes compartirían
+# una sola IP para los límites y la auditoría. Por eso aquí smoke.sh va por el nombre público.
+if [ -n "$override" ]; then
+  private=$(printf '%s\n' "$logs" | grep -oE '"client_ip":"(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|fd|fe80)[^"]*"' | sort -u | head -n 3 | tr "\n" " ")
+  [ -z "$private" ] || fail "el proxy ve una IP privada como IP del cliente: $private"
+fi
 echo "smoke OK: $origin"

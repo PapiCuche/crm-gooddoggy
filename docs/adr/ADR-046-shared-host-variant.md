@@ -34,7 +34,10 @@ En modo `shared`, `infra/prod/compose.shared.yaml` se aplica encima de `compose.
    - Un cliente no puede elegir su IP en ningún tramo, y nunca comparten todos los clientes una dirección.
 5. **TLS (enmienda §4.1).** El certificado de `crm.<dominio>` lo obtiene y renueva el borde público. HSTS, cookies `Secure` y CSRF siguen en Django y Next, sin cambios: el esquema llega como `https`.
 6. **Topes de cuerpo en dos sitios.** El borde público repite la tabla del CRM y lee el cuerpo entero antes de reenviar (`request_buffers`). Si solo corta el `proxy` del CRM, el borde, que aún está enviando el cuerpo, responde 502 en vez de 413 (medido en laboratorio). El tope que protege al CRM sigue siendo el suyo; `smoke.sh` comprueba cada tope +1 byte, con y sin `Content-Length`, en cada despliegue.
-7. **Subredes fijas** para `data` (`172.31.252.0/24`) y `egress` (`172.31.253.0/24`), y `ingress` en `172.31.250.0/29`, todas sobreescribibles por `release.env`. El runbook comprueba solapes antes de crearlas.
+7. **Subredes fijas** para `data` (`172.31.252.0/24`) y `egress` (`172.31.253.0/24`), y `ingress` en `172.31.250.0/29` con dos miembros. No dependen del entorno: cambiarlas es un PR en los dos repositorios a la vez. El runbook comprueba solapes antes de crearlas.
+8. **`X-Forwarded-Host`** se fija al `Host` en los dos saltos. Caddy conserva el de un proxy de confianza, y la CDN pasa el del cliente: Next lo leería.
+9. **Memoria del borde público:** guarda como mucho 1 MiB de cada cuerpo del CRM. Con el cuerpo entero en memoria, cientos de subidas lentas sin sesión llenarían el servidor y caería también la otra aplicación.
+10. **Órdenes a mano:** `infra/prod/compose.sh` añade los mismos archivos que `deploy.sh`. Los runbooks lo usan. `smoke.sh`, en modo `shared`, falla si el proxy ve una IP privada como IP del cliente.
 
 Lo demás de ADR-033 no cambia: servicios, imágenes por digest, roles `crm_app`/`crm_migrator`, archivos de entorno, límites de memoria, backups cifrados, RPO/RTO, `/health/*` 404.
 
@@ -42,6 +45,7 @@ Lo demás de ADR-033 no cambia: servicios, imágenes por digest, roles `crm_app`
 
 - `validate.sh --caddy`: el compose compartido no publica puertos, solo cambia el `proxy`, y `Caddyfile.shared` valida.
 - `test-deploy.sh`, `test-smoke.sh`, `test-host-mode.sh` y shellcheck pasan.
+- Revisión adversarial independiente (2026-11-19): ningún hallazgo crítico. Corregidos aquí: `X-Forwarded-Host`, la memoria del borde, las órdenes de los runbooks sin el override (paraban PostgreSQL), el orden del primer arranque, `host-mode` sin permiso de lectura y la IP privada en `smoke.sh`. Quedan para decisión: IPv6 (6) y el firewall (5).
 - Laboratorio local con los dos Caddy reales y upstreams de prueba (28 comprobaciones, 3 corridas): IP real en backend y frontend, `X-Forwarded-For`/`CF-Connecting-IP` falsos ignorados, `Host` y `https` intactos, tasa por cliente (un cliente limitado no limita a otro), WebSocket 101, `/health/ready` 404, `Host` desconocido cortado, topes 413 con y sin `Content-Length`, y ninguna query en los logs.
 
 ## Alternatives considered
@@ -75,4 +79,5 @@ Lo demás de ADR-033 no cambia: servicios, imágenes por digest, roles `crm_app`
 | 2 | CDN delante de `crm.<dominio>` | Proxy de la CDN activado / solo DNS | Proxy activado: la cadena de IP de arriba lo supone; con solo DNS, el borde público usa la IP del socket, también correcta |
 | 3 | §6.2 (grupo `docker`) en este servidor | Aceptar la excepción / sacar al usuario de la otra aplicación del grupo / B | Aceptar mientras el propietario sea el único con SSH; revisar al dar acceso a otra persona |
 | 4 | Tabla de topes repetida en el borde público | Repetirla / aceptar 502 en vez de 413 | Repetirla; `smoke.sh` vigila que coincidan |
-| 5 | Cortafuegos del proveedor: 80/443 solo desde los rangos de la CDN | Sí / no | Sí, cuando la CDN esté activada para los dos nombres |
+| 5 | Cortafuegos del proveedor: 80/443 solo desde los rangos de la CDN | Sí / no | Sí, cuando la CDN esté activada para los dos nombres. Sin él, cualquiera que conozca la IP llega al borde sin la CDN |
+| 6 | IPv6 | Regla de tasa en la CDN para `/webhooks/*` (por /64) / desactivar IPv6 para `crm.` en la CDN / aceptar | Regla de tasa en la CDN. El `rate_limit` de Caddy cuenta por dirección completa, y un cliente IPv6 puede rotar dentro de su /64. El origen no tiene IPv6: la CDN llega por IPv4 |

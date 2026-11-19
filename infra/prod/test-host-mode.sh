@@ -37,5 +37,18 @@ export CRM_COMPOSE_OVERRIDE
 check "CRM_COMPOSE_OVERRIDE manda sobre shared" "/drill/override.yaml" "shared"
 check "CRM_COMPOSE_OVERRIDE manda sobre un modo inválido" "/drill/override.yaml" "xx"
 
+unset CRM_COMPOSE_OVERRIDE
+rm -f "$work/host-mode"
+chmod 000 "$work"
+if [ "$(id -u)" != 0 ]; then
+  if crm_compose_override /prod > /dev/null 2>&1; then
+    echo "FAIL directorio ilegible: tendría que parar"
+    failed=1
+  else
+    echo "ok   directorio ilegible: para (no supone dedicado)"
+  fi
+fi
+chmod 700 "$work"
+
 [ "$failed" = 0 ] || exit 1
 echo "test-host-mode OK"

@@ -223,7 +223,7 @@ class SharedStack(unittest.TestCase):
 
     def test_every_upstream_gets_the_client_ip_and_https_replaced_not_chained(self):
         self.assertRegex(self.caddyfile, r"\(upstream_identity\) \{\n\theader_up X-Forwarded-For \{client_ip\}\n"
-                                         r"\theader_up X-Forwarded-Proto https\n\}")
+                                         r"\theader_up X-Forwarded-Proto https\n\theader_up X-Forwarded-Host \{host\}\n\}")
         upstreams = re.findall(r"reverse_proxy (\S+) \{\n\t+import upstream_identity\n", self.caddyfile)
         self.assertEqual(upstreams, ["backend:8000", "backend:8000", "ws:8000", "frontend:3000"])
         self.assertEqual(self.caddyfile.count("reverse_proxy "), 4)
