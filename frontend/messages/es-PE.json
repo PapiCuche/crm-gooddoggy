@@ -315,6 +315,7 @@
     "createIntro": "Ese correo todavía no tiene cuenta. Créala para aceptar:",
     "loginIntro": "Ese correo ya tiene cuenta. Entra con ella para aceptar:",
     "readyIntro": "Ya entraste. Acepta la invitación para unirte.",
+    "forgotHint": "Se abre en otra pestaña. Cuando tengas tu contraseña, vuelve a esta para entrar y aceptar.",
     "otherAccount": "Esta invitación es para {email} y entraste con otra cuenta. Sal de ella y entra con {email}.",
     "logout": "Salir y entrar con otra cuenta",
     "loggingOut": "Saliendo…",

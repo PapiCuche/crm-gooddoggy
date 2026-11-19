@@ -1,3 +1,4 @@
+import { onlineManager } from "@tanstack/react-query";
 import { act, configure, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,6 +28,20 @@ const member = { status: 200, body: { organization_name: "Acme", account_created
 const user = { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "" };
 const signedIn = { status: 200, body: { user } };
 const anonymous = { status: 401, body: { code: "NOT_AUTHENTICATED" } };
+const stranger = { status: 200, body: { user: { ...user, email: "otro@acme.pe" } } };
+const leaveButton = () => screen.getByRole("button", { name: /Salir y entrar|Saliendo/ });
+// Las respuestas de salir, cuando la prueba quiera; lo demás, de `routes`.
+function heldLogout(routes: Parameters<typeof mockApi>[0]) {
+  const outs: ((value: Response) => void)[] = [];
+  const api = mockApi(routes);
+  const others = api.getMockImplementation()!;
+  api.mockImplementation((input, init) =>
+    String(input).endsWith("/logout/")
+      ? new Promise<Response>((resolve) => outs.push(resolve))
+      : others(input, init),
+  );
+  return { api, outs };
+}
 const INVALID = "Esta invitación no vale.";
 const dom = () => new XMLSerializer().serializeToString(document.documentElement);
 const bodies = (api: ReturnType<typeof mockApi>, path: string) =>
@@ -269,43 +284,122 @@ describe("InvitationAccept", () => {
   });
 
   it("sin cuenta al abrir pero con cuenta al aceptar (409): pide entrar con ella", async () => {
-    mockApi({ [PREVIEW]: found(true), [ACCEPT]: exists, [SESSION]: anonymous });
+    const temporary = { status: 403, body: { code: "PASSWORD_CHANGE_REQUIRED" } };
+    mockApi({ [PREVIEW]: found(true), [ACCEPT]: exists, [SESSION]: anonymous, [LOGIN]: temporary });
     open(`#${LINK}`);
     await register();
     expect(await screen.findByText(/Ese correo ya tiene cuenta. Entra con ella/)).toBeVisible();
-    expect(screen.getByLabelText("Correo")).toBeVisible();
+    await login();
+    expect(await screen.findByRole("alert")).toHaveTextContent("«¿Olvidaste tu contraseña?»");
+    // Lo que dice el aviso está a la vista, en otra pestaña: esta guarda el enlace.
+    const forgot = screen.getByRole("link", { name: "¿Olvidaste tu contraseña?" });
+    expect(forgot).toHaveAttribute("href", "/recuperar");
+    expect(forgot).toHaveAttribute("target", "_blank");
   });
 
-  it("con la sesión de otra cuenta (409): lo dice, deja salir y entrar con la buena sin reabrir el enlace", async () => {
-    let session: typeof signedIn | typeof anonymous = signedIn;
-    let out: { status: number; body?: unknown } = { status: 500, body: { code: "X" } };
-    const accepts = [exists, member];
+  it("con la sesión de otra cuenta: lo dice sin gastar un intento, deja salir y entrar con la buena sin reabrir el enlace", async () => {
+    let session: typeof stranger | typeof anonymous = stranger;
     const api = mockApi({
       [PREVIEW]: found(false),
       [SESSION]: () => session,
-      [ACCEPT]: () => accepts.shift()!,
+      [ACCEPT]: member,
       [LOGIN]: signedIn,
       [LOGOUT]: () => {
-        if (out.status === 204) session = anonymous;
-        return out;
+        session = anonymous;
+        return { status: 204 };
       },
     });
     open(`#${LINK}`);
-    fireEvent.click(await screen.findByRole("button", { name: "Aceptar invitación" }));
     const said = await screen.findByText(/Esta invitación es para ana@acme.pe/);
     expect(said).toHaveTextContent("Sal de ella y entra con ana@acme.pe.");
     await waitFor(() => expect(said).toHaveFocus());
-    const leave = screen.getByRole("button", { name: "Salir y entrar con otra cuenta" });
-    fireEvent.click(leave);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
-    expect(leave).toBeInTheDocument(); // sin salir, no se ofrece entrar
-    out = { status: 204 };
-    fireEvent.click(leave);
+    expect(bodies(api, "/accept/")).toEqual([]);
+    fireEvent.click(leaveButton());
     await login(); // la caché de la otra sesión no cuenta: se pide la clave
     fireEvent.click(await screen.findByRole("button", { name: "Aceptar invitación" }));
     await screen.findByRole("heading", { name: "Ya eres parte de Acme." });
-    expect(bodies(api, "/accept/")).toEqual([{ token: LINK }, { token: LINK }]);
+    expect(bodies(api, "/accept/")).toEqual([{ token: LINK }]);
     expect(bodies(api, "/preview/")).toHaveLength(1);
+  });
+
+  it("salir: también sin red; varias pulsaciones, un cierre; su error se retira al reintentar; un 401 es haber salido", async () => {
+    let session: typeof stranger | typeof anonymous = stranger;
+    const { api, outs } = heldLogout({ [PREVIEW]: found(false), [SESSION]: () => session });
+    open(`#${LINK}`);
+    await screen.findByText(/Esta invitación es para/);
+    onlineManager.setOnline(false); // `networkMode: "always"`: no queda en pausa
+    try {
+      fireEvent.click(leaveButton());
+      fireEvent.click(leaveButton()); // antes de que se pinte la primera
+      await waitFor(() => expect(outs).toHaveLength(1));
+      expect(leaveButton()).toHaveTextContent("Saliendo…");
+      await act(async () => outs[0]!(reply({ code: "X" }, 500)));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Algo salió mal");
+      fireEvent.click(leaveButton());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await waitFor(() => expect(outs).toHaveLength(2));
+      session = anonymous;
+      await act(async () => outs[1]!(reply(anonymous.body, 401)));
+      expect(await screen.findByLabelText("Correo")).toBeVisible();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+    expect(api.mock.calls.filter(([url]) => String(url).endsWith("/logout/"))).toHaveLength(2);
+  });
+
+  it("una respuesta de salir que llega con otro enlace ya abierto no lo pisa", async () => {
+    const { outs } = heldLogout({ [PREVIEW]: found(false), [SESSION]: stranger });
+    open(`#${LINK}`);
+    await screen.findByText(/Esta invitación es para/);
+    fireEvent.click(leaveButton());
+    await waitFor(() => expect(outs).toHaveLength(1));
+    mockApi({ [PREVIEW]: found(true) });
+    await act(async () => {
+      window.location.hash = "d".repeat(43);
+    });
+    await screen.findByLabelText("Nombre");
+    await act(async () => outs[0]!(new Response(null, { status: 204 })));
+    expect(screen.getByLabelText("Nombre")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Entrar/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["sigue abierta: es de otra cuenta", signedIn, /Esta invitación es para ana@acme.pe/],
+    ["ya no existe: se vuelve a entrar", anonymous, /Tu sesión terminó/],
+  ])("un 409 con la sesión de la cuenta pregunta por ella; si %s", async (_, after, said) => {
+    const mixed = { status: 200, body: { user: { ...user, email: "Ana@Acme.PE" } } };
+    const sessions = [mixed];
+    mockApi({
+      [PREVIEW]: found(false),
+      [SESSION]: () => sessions.shift() ?? after,
+      [ACCEPT]: exists,
+    });
+    open(`#${LINK}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Aceptar invitación" })); // mismo correo
+    expect(await screen.findByText(said)).toBeVisible();
+    if (after === anonymous) expect(await screen.findByLabelText("Correo")).toBeVisible();
+    else expect(leaveButton()).toBeVisible();
+  });
+
+  it("mientras se pregunta por la sesión tras un 409, otra pulsación no envía otra aceptación", async () => {
+    const asks: ((value: Response) => void)[] = [];
+    const api = mockApi({ [PREVIEW]: found(false), [ACCEPT]: exists });
+    const others = api.getMockImplementation()!;
+    api.mockImplementation((input, init) => {
+      if (!String(input).endsWith("/session/")) return others(input, init);
+      if (!api.mock.calls.some(([url]) => String(url).endsWith("/accept/"))) {
+        return Promise.resolve(reply(signedIn.body, 200)); // la del login, al abrir
+      }
+      return new Promise<Response>((resolve) => asks.push(resolve));
+    });
+    open(`#${LINK}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Aceptar invitación" }));
+    await waitFor(() => expect(asks).toHaveLength(1));
+    expect(create()).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(create());
+    await act(async () => asks[0]!(reply(signedIn.body, 200)));
+    expect(await screen.findByText(/Esta invitación es para/)).toBeVisible();
+    expect(bodies(api, "/accept/")).toHaveLength(1);
   });
 
   it("demasiados intentos: dice cuánto esperar y deja volver a preguntar", async () => {

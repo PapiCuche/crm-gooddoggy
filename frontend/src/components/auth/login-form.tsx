@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 import { useAuthLogin, useAuthSession } from "@/lib/api/client";
 import { apiErrorKey } from "@/lib/api-errors";
+import type { Session } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
 import { TestAccounts } from "./test-accounts";
@@ -20,9 +21,16 @@ const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulari
 // nada. El rechazo no dice si falló el correo o la contraseña (la API tampoco lo distingue).
 // Si la cuenta tiene segundo factor, la contraseña correcta no abre sesión (202): la pantalla
 // pasa al paso del código, en la misma tarjeta y sin navegar (ADR-023 §5).
-// `onEntered`: con ella, al entrar (o con la sesión ya abierta) se la llama en lugar de ir a
-// `next`. La usa la página de una invitación, que no puede navegar sin perder su enlace.
-export function LoginForm({ next, onEntered }: { next: string; onEntered?: () => void }) {
+// `onEntered(email)`: con ella, al entrar (o con la sesión ya abierta) se la llama con el correo
+// de la sesión en lugar de ir a `next`. La usa la página de una invitación, que no puede navegar
+// sin perder su enlace.
+export function LoginForm({
+  next,
+  onEntered,
+}: {
+  next: string;
+  onEntered?: (email: string) => void;
+}) {
   const t = useTranslations();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -56,14 +64,14 @@ export function LoginForm({ next, onEntered }: { next: string; onEntered?: () =>
   useEffect(() => {
     // Ya tiene sesión: no vuelve a pedir la clave.
     if (session.isSuccess) {
-      if (onEntered) onEntered();
+      if (onEntered) onEntered(session.data.user?.email ?? "");
       else router.replace(next);
     }
     // Sin sesión, el foco va al correo; no antes (se iría a otra página) ni si ya escribe.
     else if (session.isError && document.activeElement === document.body) {
       emailField.current?.focus();
     }
-  }, [session.isSuccess, session.isError, next, router, onEntered]);
+  }, [session.isSuccess, session.isError, session.data, next, router, onEntered]);
 
   useEffect(() => {
     if (second === "code" || !returned.current) return;
@@ -108,7 +116,7 @@ export function LoginForm({ next, onEntered }: { next: string; onEntered?: () =>
             return;
           }
           queryClient.clear(); // nada de lo que se leyó sin sesión sigue valiendo
-          if (onEntered) onEntered();
+          if (onEntered) onEntered((answer as Session | null)?.user?.email ?? "");
           else router.replace(next);
         },
       },

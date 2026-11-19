@@ -17,7 +17,8 @@ export function shouldRetry(failures: number, error: unknown): boolean {
 // escritura que responda 401 lleva al login, con vuelta a donde estaba. En el propio login no
 // hay a dónde ir, ni en la página de una invitación, que entra ahí mismo: salir perdería su
 // enlace. El cierre de sesión trata su propio 401 (`meta.ownSessionEnd`).
-const STAYS = /^\/(?:login|invitacion)$/; // la ruta exacta: no las de dentro de la app
+// La ruta exacta, con o sin la barra final que Next también sirve: no las de dentro de la app.
+const STAYS = /^\/(?:login|invitacion)\/?$/;
 export function sessionEnded(error: unknown, location: Pick<Location, "pathname" | "search">) {
   if (!(error instanceof ApiError) || error.status !== 401) return null;
   if (STAYS.test(location.pathname)) return null;

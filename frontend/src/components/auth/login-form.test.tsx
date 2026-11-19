@@ -269,7 +269,7 @@ describe("LoginForm con onEntered", () => {
       fireEvent.change(await screen.findByLabelText("Código"), { target: { value: "123456" } });
       fireEvent.click(screen.getByRole("button", { name: "Verificar y entrar" }));
     }
-    await waitFor(() => expect(entered).toHaveBeenCalled());
+    await waitFor(() => expect(entered).toHaveBeenCalledWith("ana@acme.pe"));
     if (LOGIN in routes) expect(client.getQueryData(["leído sin sesión"])).toBeUndefined();
     expect(router.replace).not.toHaveBeenCalled();
   });

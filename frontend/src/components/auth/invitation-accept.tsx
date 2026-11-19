@@ -9,7 +9,12 @@ import { LINK } from "@/components/auth/auth-card";
 import { LoginForm } from "@/components/auth/login-form";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
-import { useAuthLogout, useInvitationsAccept, useInvitationsPreview } from "@/lib/api/client";
+import {
+  authSession,
+  useAuthLogout,
+  useInvitationsAccept,
+  useInvitationsPreview,
+} from "@/lib/api/client";
 import type { InvitationAcceptRequest, InvitationPreview } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
@@ -22,7 +27,8 @@ const ALERT =
 const WRITE = { mutation: { networkMode: "always", gcTime: 250 } } as const;
 
 type Step =
-  | { name: "opening" | "checking" | "absent" | "create" | "login" | "ready" | "other" }
+  | { name: "opening" | "checking" | "absent" | "create" | "ready" | "other" }
+  | { name: "login"; ended?: boolean } // `ended`: la sesión con la que se entró ya no existe
   | { name: "waiting"; error: ApiError | null } // `null`: la vista previa no contestó
   | { name: "invalid"; unsure: boolean } // `unsure`: un intento sin respuesta pudo aceptarla
   | { name: "done"; organization: string; created: boolean };
@@ -61,6 +67,7 @@ export function InvitationAccept() {
   const formRef = useRef<HTMLFormElement>(null);
   const firstField = useRef<HTMLInputElement>(null);
   const acceptButton = useRef<HTMLButtonElement>(null);
+  const leaving = useRef(false); // un cierre de sesión en vuelo
 
   const check = useCallback(() => {
     const token = secret.current;
@@ -71,7 +78,7 @@ export function InvitationAccept() {
       {
         onSuccess: (found) => {
           setInvite(found);
-          setStep({ name: found.needs_account ? "create" : "login" });
+          setStep(found.needs_account ? { name: "create" } : { name: "login" });
         },
         onError: (error) => {
           if (error.code === "INVALID_INVITATION_LINK") {
@@ -163,12 +170,31 @@ export function InvitationAccept() {
     }
   };
 
-  // Con la sesión abierta (ahora o de antes), se acepta al pulsar. Solo la llama el login, que
-  // solo está en su paso.
-  const entered = useCallback(() => {
-    setProblems({});
-    setStep({ name: "ready" });
-  }, []);
+  // Con la sesión abierta (ahora o de antes), se acepta al pulsar. Si es de otra cuenta, se dice
+  // antes de gastar un intento; sin correo, decide el 409. Los dos correos llegan en su forma
+  // canónica (D-F2-3): la comparación sin mayúsculas es solo por si acaso.
+  const invited = invite?.email ?? "";
+  const entered = useCallback(
+    (email: string) => {
+      setProblems({});
+      const other = email && email.trim().toLowerCase() !== invited.trim().toLowerCase();
+      setStep({ name: other ? "other" : "ready" });
+    },
+    [invited],
+  );
+
+  // Un 409 con sesión: o la sesión es de otra cuenta o ya no existe. Se pregunta quién es.
+  function whose() {
+    const now = (next: Step) => setStep((was) => (was.name === "ready" ? next : was));
+    authSession({ signal: AbortSignal.timeout(PATIENCE) })
+      .then(() => now({ name: "other" }))
+      .catch((error: ApiError) => {
+        if (error.status !== 401) return now({ name: "other" });
+        queryClient.clear(); // la sesión leída ya no vale: el login no debe darla por abierta
+        now({ name: "login", ended: true });
+      })
+      .finally(() => setSending(false));
+  }
 
   function rejection(error: ApiError | null) {
     if (!error) return t("auth.stalled");
@@ -202,6 +228,7 @@ export function InvitationAccept() {
     const token = secret.current;
     if (sending || !token) return;
     const from = step.name;
+    let asking = false; // `whose` termina el envío
     setSending(true);
     setProblems({});
     inFlight.current = true;
@@ -218,8 +245,10 @@ export function InvitationAccept() {
             secret.current = null;
             setStep({ name: "invalid", unsure: unsure.current });
           } else if (error.code === "ACCOUNT_EXISTS") {
-            // Sin cuenta al abrir, pero ya la tiene: se entra con ella. Con sesión, es otra cuenta.
-            setStep({ name: from === "create" ? "login" : "other" });
+            // Sin cuenta al abrir, pero ya la tiene: se entra con ella.
+            if (from === "create") setStep({ name: "login" });
+            else whose();
+            asking = from !== "create";
           } else if (error.code === "VALIDATION_ERROR") {
             // Por campo y nunca con el texto de la API, que no dice qué regla falló.
             const has = (key: string) => Object.hasOwn(error.fields ?? {}, key);
@@ -238,7 +267,7 @@ export function InvitationAccept() {
         },
         onSettled: () => {
           inFlight.current = false;
-          setSending(false);
+          if (!asking) setSending(false);
           forgetAccept();
         },
       },
@@ -247,7 +276,8 @@ export function InvitationAccept() {
 
   // Sale de la otra cuenta; el enlace sigue en memoria para entrar con la buena.
   function leave() {
-    if (logout.isPending) return;
+    if (leaving.current) return; // también antes de que se pinte la primera pulsación
+    leaving.current = true;
     const out = () => {
       queryClient.clear(); // lo leído con la otra sesión ya no vale
       setStep((now) => (now.name === "other" ? { name: "login" } : now)); // no otro enlace abierto
@@ -256,6 +286,7 @@ export function InvitationAccept() {
     logout.mutate(undefined, {
       onSuccess: out,
       onError: (error) => (error.status === 401 ? out() : setProblems({ form: rejection(error) })),
+      onSettled: () => (leaving.current = false),
     });
   }
 
@@ -345,8 +376,20 @@ export function InvitationAccept() {
     return (
       <>
         {intro}
+        {step.ended ? (
+          <p role="alert" className={ALERT}>
+            {t("errors.api.NOT_AUTHENTICATED")}
+          </p>
+        ) : null}
         <p>{t("invitationAccept.loginIntro")}</p>
         <LoginForm next="/o" onEntered={entered} />
+        {/* En otra pestaña: esta guarda el enlace, que no sobrevive a una navegación. */}
+        <p className="text-sm">
+          <a href="/recuperar" target="_blank" rel="noopener noreferrer" className={LINK}>
+            {t("auth.forgot")}
+          </a>{" "}
+          <span className="text-muted">{t("invitationAccept.forgotHint")}</span>
+        </p>
       </>
     );
   }
