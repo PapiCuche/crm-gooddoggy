@@ -256,6 +256,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "ai_gateway.reseal_provider_keys",
         "schedule": crontab(hour=4, minute=7),
     },
+    # F8-05b5 (ADR-034 §5): cada 5 minutos cierra como gastadas las reservas de IA huérfanas.
+    "ai_gateway.close_orphan_reservations": {
+        "task": "ai_gateway.close_orphan_reservations",
+        "schedule": 300.0,
+        "options": {"expires": 300},
+    },
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
