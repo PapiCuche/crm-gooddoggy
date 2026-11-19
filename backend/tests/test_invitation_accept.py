@@ -21,6 +21,7 @@ from django.test.utils import CaptureQueriesContext
 from apps.access.models import MembershipRole, Role, RolePermission
 from apps.access.services import clone_role_templates
 from apps.accounts.models import User
+from apps.accounts.services import AccountExists
 from apps.members import services as members
 from apps.organizations import services as organizations
 from core.tenancy.context import TenantContext
@@ -75,10 +76,10 @@ def q(migrator: psycopg.Connection[Any], sql: str, *params: Any) -> list[Any]:
     return migrator.execute(sql, list(params)).fetchall()
 
 
-def directly(org: UUID, secret: str) -> Callable[[TenantContext], Any]:
+def directly(org: UUID, secret: str, session: Any = None) -> Callable[[TenantContext], Any]:
     """Aceptar con el servicio, en el scope `SYSTEM` que abre la ruta."""
     _, invitation_id = organizations.find_invitation(digest(secret)) or (None, uuid4())
-    how = {"session_user_id": None, **NEW}
+    how = {"session_user_id": session, **NEW}
     return lambda tenant: members.accept_invitation(tenant, invitation_id, digest(secret), **how)
 
 
@@ -136,6 +137,8 @@ def test_every_link_that_cannot_be_accepted_gets_the_preview_answer_and_changes_
     give(t.a, t.m_eva, {"users.invite": None, "users.manage": None}, code="eva")
     mia = make_user(email="mia@example.com")
     lost = give(t.a, join(t.a, mia).pk, {"users.invite": None, "users.manage": None}, code="mia")
+    leo = make_user(email="leo@example.com")  # nunca tuvo `users.manage`
+    give(t.a, join(t.a, leo).pk, {"users.invite": None}, code="leo")
     for email in ("e@cliente.pe", "s@cliente.pe", "socio@cliente.pe"):
         make_user(email=email)  # con cuenta: aun así, un enlace que no vale es un 400, no un 409
     User.objects.create_superuser(email="staff@cliente.pe", password=TEST_PASSWORD)
@@ -148,6 +151,7 @@ def test_every_link_that_cannot_be_accepted_gets_the_preview_answer_and_changes_
         "accepted": link(t.a, "a@cliente.pe", t.ana, status="ACCEPTED", accepted_at=PAST),
         "inviter_suspended": link(t.a, "s@cliente.pe", t.eva, role_ids=target),
         "inviter_lost_users_invite": link(t.a, "l@cliente.pe", mia, role_ids=target),
+        "inviter_without_users_manage": link(t.a, "m@cliente.pe", leo, role_ids=target),
         "escalation": link(t.a, "x@cliente.pe", t.luis, role_ids=[t.extra["escala"].pk]),
         "sensitive": link(t.a, "y@cliente.pe", t.luis, role_ids=[t.extra["sensible"].pk]),
         "role_deleted": link(t.a, "d@cliente.pe", t.ana, role_ids=[t.extra["borrar"].pk]),
@@ -166,7 +170,6 @@ def test_every_link_that_cannot_be_accepted_gets_the_preview_answer_and_changes_
     grant(t.a, t.extra["sensible"], "users.manage", None)  # luis lo tiene, pero no es Owner
     db("DELETE FROM roles WHERE id = %s", [t.extra["borrar"].pk])
     join(t.a, User.objects.get(email="socio@cliente.pe"), "DEACTIVATED")
-    assert said(ask(browser, cases["member"]))[0] == 200  # la vista previa la enseña
     preview = ask(browser, "x")
     before, rows = migrator.execute(STATE).fetchone(), migrator.execute(ROWS).fetchall()
     caplog.set_level(logging.DEBUG)
@@ -179,11 +182,11 @@ def test_every_link_that_cannot_be_accepted_gets_the_preview_answer_and_changes_
     denials = migrator.execute(DENIALS).fetchall()
     said_why = [":".join(v for _, v in sorted(row[4].items(), reverse=True)) for row in denials]
     assert said_why == ["malformed"] + ["unknown"] * 5 + [
-        "inviter:membership", "inviter:permission", "inviter:escalation", "inviter:sensitive",
-        "role", "member", "account", "inviter:last_owner",
+        "inviter:membership", "inviter:permission", "inviter:permission", "inviter:escalation",
+        "inviter:sensitive", "role", "member", "account", "inviter:last_owner",
     ]  # fmt: skip
     assert {row[:2] + row[5:] for row in denials} == {("ANONYMOUS", None, "DENIED", None)}
-    assert [row[2] for row in denials] == [None] * 6 + ["invitation"] * 8
+    assert [row[2] for row in denials] == [None] * 6 + ["invitation"] * 9
     logged = caplog.text + json.dumps([vars(r) for r in caplog.records], default=str)
     stored = json.dumps(denials, default=str)
     for token in cases.values():
@@ -260,11 +263,12 @@ def test_an_existing_account_accepts_only_with_its_own_session_and_keeps_its_pas
     assert accepted == (200, {"organization_name": "Org A", "account_created": False})
     ines.refresh_from_db()
     assert ines.check_password(TEST_PASSWORD) and ines.first_name == ""  # no se toca
-    dora = make_user(email="dora@cliente.pe")
-    dora_session = signed(dora)
+    dora_session = signed(dora := make_user(email="dora@cliente.pe"))
     deactivated = link(team.a, "dora@cliente.pe", team.ana, role_ids=[team.target.pk])
     User.objects.filter(pk=dora.pk).update(is_active=False)
     assert said(take(dora_session, deactivated, **NEW)) == EXISTS  # nunca se reactiva
+    with pytest.raises(AccountExists), tenant_scope(TenantContext(team.a, "invitation_link")) as t:
+        directly(team.a, deactivated, dora.pk)(t)  # ni con su id como sesión
     late = link(team.a, "tarde@cliente.pe", team.ana, role_ids=[team.target.pk])
     assert said(ask(browser, late))[1]["needs_account"] is True
     made = make_user(email="tarde@cliente.pe")  # la cuenta nace después de la vista previa

@@ -13527,8 +13527,6 @@ components:
       - status
     InvitationAcceptRequest:
       type: object
-      description: '`first_name`, `last_name` y `password`: solo si el correo no tiene
-        cuenta.'
       properties:
         token:
           type: string

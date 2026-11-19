@@ -6,9 +6,6 @@
  * OpenAPI spec version: 0.1.0
  */
 
-/**
- * `first_name`, `last_name` y `password`: solo si el correo no tiene cuenta.
- */
 export interface InvitationAcceptRequest {
   /**
    * El secreto del enlace, del fragmento de la URL.

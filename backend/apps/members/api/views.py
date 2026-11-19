@@ -382,9 +382,7 @@ _OPTIONAL: dict[str, Any] = {
 }
 
 
-class InvitationAcceptSerializer(InvitationLinkSerializer):
-    """`first_name`, `last_name` y `password`: solo si el correo no tiene cuenta."""
-
+class InvitationAcceptSerializer(InvitationLinkSerializer):  # sin cuenta: nombre y contraseña
     password = serializers.CharField(max_length=1024, trim_whitespace=False, **_OPTIONAL)
     first_name = serializers.CharField(max_length=150, **_OPTIONAL)
     last_name = serializers.CharField(max_length=150, **_OPTIONAL)
