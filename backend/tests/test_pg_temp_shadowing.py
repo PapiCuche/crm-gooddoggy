@@ -56,6 +56,7 @@ FUNCTIONS = (
     "public.ai_budget_reserve(numeric, text, text, text, uuid)",  # SECURITY DEFINER
     "public.ai_budget_settle(uuid, text, numeric, integer, integer, integer, integer, integer,"
     " text)",
+    "public.ai_budget_orphan_organizations(integer)",  # F8-05b5, SECURITY DEFINER
 )
 
 
