@@ -127,7 +127,8 @@ def accept(request: HttpRequest, *, token: str, **account: Any) -> Accepted:
     except AccountExists:
         _refuse(request, actor, "account_exists", entity=found[1])
         raise ApiError(ACCOUNT_EXISTS, 409, EXISTS_MESSAGE) from None
-    except ValidationError:
-        _refuse(request, actor, "password", entity=found[1])
+    except ValidationError as invalid:
+        named = {"first_name", "last_name"} & set(getattr(invalid, "error_dict", ()))
+        _refuse(request, actor, "name" if named else "password", entity=found[1])
         raise
     return Accepted(*done)
