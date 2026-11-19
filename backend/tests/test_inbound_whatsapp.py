@@ -430,7 +430,12 @@ def test_the_profile_name_is_cleaned_and_a_missing_one_falls_back_to_the_phone(
 
 @pytest.mark.parametrize(
     "profile",
-    ["Ana" + "\ufe01" * 40, "Ana\ufe0f", "Ana \U0001f468\u200d\U0001f469\u200d\U0001f467"],
+    [
+        "Ana" + "\ufe01" * 40,
+        "Ana\ufe0f",
+        "Ana" + "\u3164" * 40,
+        "Ana \U0001f468\u200d\U0001f469\u200d\U0001f467",
+    ],
 )
 def test_a_profile_name_with_hidden_data_or_a_joined_emoji_falls_back_to_the_phone(
     crm: SimpleNamespace, profile: str

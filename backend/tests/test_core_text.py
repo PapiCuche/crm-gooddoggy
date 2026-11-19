@@ -40,6 +40,8 @@ REFUSED = (
     "Ana\U000e0100",  # selector ideográfico tras una letra latina
     "\u2764\U000e0100",  # ni tras un símbolo
     "Ana\u180b",  # selector mongol tras una letra latina
+    "Ana\u180f",
+    "Ana\U000e01ef",  # el último selector ideográfico
     "\u8279\u180b",  # ni tras un ideograma
     "\u2800\ufe0f",  # tras el braille vacío, que no se ve
     "\u3164\ufe00",  # ni tras un relleno hangul
@@ -47,6 +49,25 @@ REFUSED = (
     "Own\u034fer",  # CGJ, siempre
     "Ana\u17b4",  # las vocales inherentes jemer, siempre
     "Ana\u17b5",
+    "Ana" + "\u3164" * 40,  # rellenos hangul: datos que no se ven aunque haya letras
+    "Ana\u1160",
+    "Ana\u115f",
+    "Ana\uffa0",
+    "Ana\U00013441",  # blancos jeroglíficos
+    "Ana\U00013442",
+    "Ana\U0001d159",  # la cabeza de nota nula
+    "\u0915\U00016fe4",  # el relleno kitán
+    "Ana\u200dMar\u00eda",  # entre letras latinas, ZWNJ y ZWJ no hacen falta
+    "\u0391\u200c\u0392",  # ni griegas
+    "\u0410\u200d\u0411",  # ni cirílicas
+    "\u4e00\u200c\u4e01",  # ni ideogramas
+    "\uac00\u200d\uac01",  # ni hangul
+    "\u3042\u200c\u3044",  # ni kana
+    "\u30a2\u200d\u30a4",
+    "\u0628\u200cA",  # ni junto a una latina
+    "Ana " + "\u2764\ufe0f" * 9,  # más de 8 selectores y ZWNJ/ZWJ
+    "\u0628\u200c" * 9 + "\u0628",  # 9 ZWNJ
+    "\u0628\u200c" * 5 + "\u0628 \u2764\ufe0f" * 4,  # 5 ZWNJ y 4 selectores
     "\u200cAna",  # ZWNJ o ZWJ al principio, al final, repetidos o junto a lo que no es letra
     "Ana\u200d",
     "An\u200c\u200ca",
@@ -76,6 +97,9 @@ ACCEPTED = (
     "\u0915\u094d\u200d\u0937",  # devanagari: ZWJ tras el virama
     "\u0dc1\u0dca\u200d\u0dbb\u0dd3",  # cingalés: Sri
     "\u0928\u094d\u200c\u0928",  # ZWNJ tras el virama
+    "\u2139\ufe0f Info",  # U+2139: una letra para Unicode, pero también un emoji
+    "Ana " + "\u2764\ufe0f" * 8,  # 8 selectores y ZWNJ/ZWJ: el tope
+    "\u0628\u200c" * 8 + "\u0628",
 )
 
 
@@ -93,9 +117,9 @@ def test_names_of_other_scripts_and_a_single_selector_after_its_base_are_kept(va
 
 
 def test_the_rules_hold_after_nfc_and_across_the_lines_of_a_note() -> None:
-    assert line("Jose\u0301\u200cpe", 50) == "José\u200cpe"  # NFC no mueve el ZWNJ
+    assert line("\u0627\u0653\u200c\u0628", 50) == "\u0622\u200c\u0628"  # NFC no mueve el ZWNJ
     with pytest.raises(ValueError):
-        line("Ana\u3000\u200cMaría", 50)  # un espacio ideográfico es un espacio
+        line("\u0628\u3000\u200c\u0628", 50)  # un espacio ideográfico es un espacio
     note = "Hola \u2764\ufe0f\nadiós"
     assert task_text(note, "nota", 99, lines=True) == note
     with pytest.raises(ValueError):
@@ -168,5 +192,6 @@ def test_every_user_of_core_text_keeps_common_names_and_refuses_hidden_data(fami
 
 def test_an_instagram_profile_name_with_hidden_data_is_dropped_not_raised() -> None:
     assert untrusted(HIDDEN, 100) == untrusted("Ana\ufe0f", 100) == ""
+    assert untrusted("Ana" + "\u3164" * 40, 100) == ""
     assert untrusted("Ana \U0001f468\u200d\U0001f469", 100) == "Ana \U0001f468\U0001f469"
     assert untrusted("Ana \u2764\ufe0f", 100) == "Ana \u2764\ufe0f"

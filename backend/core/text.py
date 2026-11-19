@@ -6,11 +6,16 @@ import unicodedata
 # Rellenos hangul y los blancos jeroglíficos (U+13441 y U+13442, Unicode 15): letras para Unicode
 # (`isalnum`), pero no se ven; un nombre solo de ellos parece vacío.
 FILLERS = frozenset("\u115f\u1160\u3164\uffa0\U00013441\U00013442")
-# Marcas que no se ven y que ningún nombre necesita (F2-131): el CGJ y las dos vocales inherentes
-# jemer, que Unicode desaconseja. Siempre se rechazan.
-UNSEEN_MARKS = frozenset("\u034f\u17b4\u17b5")
-# ZWNJ y ZWJ: sí hacen falta dentro de una palabra persa o índica.
+# Lo que no se ve y que ningún nombre necesita (F2-131), además de `FILLERS` (el coreano en NFC va
+# en sílabas compuestas): el CGJ, las vocales inherentes jemer que Unicode desaconseja, la cabeza
+# de nota nula y el relleno kitán. Siempre se rechazan.
+UNSEEN = frozenset("\u034f\u17b4\u17b5\U0001d159\U00016fe4") | FILLERS
+# ZWNJ y ZWJ: sí hacen falta dentro de una palabra persa, árabe o índica (no en estas escrituras).
 JOINERS = frozenset("\u200c\u200d")
+_UNJOINED = ("LATIN", "FULLWIDTH LATIN", "GREEK", "CYRILLIC", "CJK", "HANGUL", "HIRAGANA",
+             "KATAKANA", "HALFWIDTH")  # fmt: skip
+HIDDEN_MAX = 8  # selectores y ZWNJ/ZWJ en una línea: un nombre real lleva de 1 a 3
+INFO = "\u2139"  # U+2139: una letra para Unicode, pero también un emoji con VS16
 BLANK = "\u2800"  # el braille vacío: un símbolo que no se ve
 _IDEOGRAPH = ("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH")
 
@@ -26,6 +31,7 @@ def _selector_fits(selector: str, base: str) -> bool | None:
     point = ord(selector)
     if 0xFE00 <= point <= 0xFE0F:  # VS1–16: emoji o texto (un corazón, un keycap) e ideogramas
         symbol = bool(base) and base != BLANK and unicodedata.category(base)[0] in "SNP"
+        symbol = symbol or base == INFO
         return symbol or _named(base, _IDEOGRAPH)
     if 0xE0100 <= point <= 0xE01EF:  # VS17–256: variantes de ideograma (IVS)
         return _named(base, _IDEOGRAPH)
@@ -35,12 +41,15 @@ def _selector_fits(selector: str, base: str) -> bool | None:
 
 
 def _letter(char: str) -> bool:
-    return unicodedata.category(char)[0] == "L" and char not in FILLERS
+    """Una letra de una escritura que une con ZWNJ/ZWJ (ni latina, ni griega, ni cirílica, ni
+    CJK, ni hangul ni kana) y que se ve."""
+    named = unicodedata.category(char)[0] == "L" and not _named(char, _UNJOINED)
+    return named and char not in FILLERS
 
 
 def _joins(text: str, at: int) -> bool:
-    """¿El ZWNJ o ZWJ de `text[at]` está dentro de una palabra? Antes, una letra (con sus marcas,
-    como el virama índico); después, otra letra."""
+    """¿El ZWNJ o ZWJ de `text[at]` está dentro de una palabra que lo necesita? Antes, una letra
+    (con sus marcas, como el virama índico); después, otra letra; las dos de `_letter`."""
     before = at - 1
     while before >= 0 and unicodedata.category(text[before])[0] == "M":
         before -= 1
@@ -49,14 +58,17 @@ def _joins(text: str, at: int) -> bool:
 
 
 def _hides(text: str) -> bool:
-    """¿Lleva `text` algo que no se ve fuera de su sitio? Una marca de `UNSEEN_MARKS`, un selector
-    de variación que no sigue a una base que pueda cambiar (uno por base: tras otro selector
-    no cabe) o un ZWNJ/ZWJ fuera de una palabra."""
+    """¿Lleva `text` algo que no se ve fuera de su sitio? Un carácter de `UNSEEN`, un selector de
+    variación que no sigue a una base que pueda cambiar (uno por base: tras otro selector no
+    cabe), un ZWNJ/ZWJ fuera de una palabra o más de `HIDDEN_MAX` selectores y ZWNJ/ZWJ."""
+    hidden = 0
     for at, char in enumerate(text):
         fits = _selector_fits(char, text[at - 1] if at else "")
-        if char in UNSEEN_MARKS or fits is False or (char in JOINERS and not _joins(text, at)):
+        joiner = char in JOINERS
+        hidden += fits is not None or joiner
+        if char in UNSEEN or fits is False or (joiner and not _joins(text, at)):
             return True
-    return False
+    return hidden > HIDDEN_MAX
 
 
 def line(value: str, limit: int) -> str:

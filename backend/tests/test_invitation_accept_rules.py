@@ -35,6 +35,7 @@ INVALID = {"\x01", "\x1b", "\x7f", "\x85", "\n", "\t", "\u2028", "\u200b", "\u20
 BIDI = {"\u202a", "\u202e", "\u2066", "\u2069"}  # incrustan o aíslan: reordenan lo que se ve
 HIDDEN = {  # F2-131: selectores fuera de su base, marcas que no se ven, ZWNJ/ZWJ fuera de palabra
     "\ufe01" * 40, "\ufe0f", "\U000e0100", "\u180b", "\u034f", "\u17b5", "\u200c\u200c", "\u200d ",
+    "\u3164" * 40, "\u200d",
 }  # fmt: skip
 
 
@@ -201,12 +202,12 @@ def test_a_last_name_is_empty_or_readable_and_joiners_inside_a_word_are_kept(
     team: Any, migrator: psycopg.Connection[Any]
 ) -> None:
     secret = link(team.a, "nora@cliente.pe", team.ana, role_ids=[team.target.pk])
-    for blank in ("\u3164", "\u2800", "\u0301\u0301", "\U0001f436", "- ."):  # F2-131
+    for blank in ("\u2800", "\u0301\u0301", "\U0001f436", "- ."):  # F2-131
         answer = take(Client(), secret, **NEW | {"last_name": blank})
         errors = said(answer)[1]["fields"]
         message = "Escribe tu apellido con alguna letra o cifra, o déjalo vacío."
         assert errors == {"last_name": [{"code": "invalid", "message": message}]}, repr(blank)
-    assert reasons(migrator) == [{"reason": "name"}] * 5
+    assert reasons(migrator) == [{"reason": "name"}] * 4
     persian = {
         "first_name": "\u0641\u0627\u0637\u0645\u0647",
         "last_name": "\u062d\u0633\u06cc\u0646\u200c\u0632\u0627\u062f\u0647",
