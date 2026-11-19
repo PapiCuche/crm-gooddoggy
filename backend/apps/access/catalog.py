@@ -108,6 +108,8 @@ PERMISSIONS: tuple[PermissionDef, ...] = (  # docs/fase-0/03 §H (catálogo v1)
     # F8-03a (ADR-034 §10): la clave del proveedor de IA y, después, el modelo, los presupuestos
     # y el encendido. Sensible: solo el Owner al nacer (ADR-018); sus rutas piden segundo factor.
     PermissionDef("ai.manage", "ai", is_sensitive=True),
+    # F8-06 (ADR-034 §10, D-F8-08): solo **apagar** la IA de la organización, sin segundo factor.
+    PermissionDef("ai.kill_switch", "ai", is_sensitive=True),
 )
 BY_CODE = {permission.code: permission for permission in PERMISSIONS}
 
@@ -195,6 +197,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "conversations.assign",  # F6-01: «conversations.* ✅» para el Administrador en 03 §H
             "channels.manage",  # 03 §H lo marca ⚙️ (lo activa el Owner); a confirmar
             "quick_replies.manage",  # F6-08a1; las ya clonadas no lo reciben (ADR-018 §3)
+            "ai.kill_switch",  # F8-06, ADR-034 §10; las ya clonadas no lo reciben (ADR-018 §3)
         )
         | dict.fromkeys(
             (
@@ -228,6 +231,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "quotes.approve",  # sin `quotes.override_price`: 03 §H no lo lista y el precio manual
             "quotes.discount",  # puede ir bajo el costo sin que la cotización lo vea (a decidir)
             "conversations.assign",  # F6-01: reparte las de su equipo
+            "ai.kill_switch",  # F8-06: solo apagar; sensible: MFA si MFA_ENFORCEMENT=enforce
         )
         | {"contacts.view": Scope.TEAM}
         | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE}  # F5-04, 03 §H

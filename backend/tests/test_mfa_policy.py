@@ -57,12 +57,13 @@ def get(user: Any, org: str = "org-a", route: str = "me/") -> Any:
 
 def test_the_owner_the_template_admin_or_a_sensitive_permission_require_it(team: Any) -> None:
     assert required(team.a, team.ana) and required(team.a, team.ada)  # Owner, Administrador
-    assert not any(required(team.a, who) for who in (team.vera, team.sam, team.bea))
+    assert required(team.a, team.sam)  # Supervisor: `ai.kill_switch` es sensible (F8-06)
+    assert not any(required(team.a, who) for who in (team.vera, team.bea))
     assert not required(team.b, team.ana)  # por membresía: en B no tiene roles
     give(team.a, team.m["bea"], {"audit.view": None})  # un rol propio con un permiso sensible
     assert required(team.a, team.bea)
-    give(team.a, team.m["sam"], {"users.view": None}, code="admin-propio")
-    assert not required(team.a, team.sam)  # un rol propio, sin permiso sensible, no lo exige
+    give(team.a, team.m["vera"], {"users.view": None}, code="admin-propio")
+    assert not required(team.a, team.vera)  # un rol propio, sin permiso sensible, no lo exige
 
 
 def test_stripping_the_template_admin_or_renaming_it_does_not_free_it(team: Any) -> None:
