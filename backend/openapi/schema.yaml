@@ -12499,7 +12499,7 @@ components:
           readOnly: true
           nullable: true
           description: |-
-            Messenger o Instagram: si la página tiene suscrita la app del CRM según la última respuesta de Meta; `UNKNOWN` si no se comprobó o no se sabe. `null` en las demás.
+            Messenger o Instagram: si la página tiene suscrita la app del CRM según la última respuesta de Meta; `UNKNOWN` si no se comprobó, no se sabe o esa respuesta tiene más de cuatro intervalos de salud (una hora por omisión). `null` en las demás.
 
             * `SUBSCRIBED` - SUBSCRIBED
             * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED

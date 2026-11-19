@@ -33,6 +33,12 @@ ERRORS: dict[str, tuple[int, int, int | None, str, str]] = {
     "token_400": (400, 190, None, "Invalid OAuth access token.", "TOKEN_INVALID"),
     "rate_limit": (400, 613, None, "Calls to this api have exceeded the rate limit.",
                    "RATE_LIMITED"),
+    "throttle_pages": (400, 80001, None, "There have been too many calls to this Page account.",
+                       "RATE_LIMITED"),  # F7b-06i: los límites de uso del negocio
+    "throttle_instagram": (400, 80002, None, "There have been too many calls to this Instagram "
+                           "account.", "RATE_LIMITED"),
+    "throttle_messenger": (400, 80006, None, "There have been too many messages sent to this "
+                           "Messenger account.", "RATE_LIMITED"),
     "messages_access_off": (400, 200, 2534041, "The account owner has disabled access to "
                             "Instagram Direct Messaging.", "MESSAGES_ACCESS_OFF"),
     "permission_10": (400, 10, None, "Application does not have permission for this action",

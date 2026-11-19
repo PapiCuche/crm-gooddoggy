@@ -38,7 +38,7 @@ export interface ChannelAccount {
   /** Instagram o Messenger: alguna conversación no cerrada de la cuenta está en `standby` (otra app controla el hilo, ADR-035 §4). */
   has_standby_conversations: boolean;
   /**
-   * Messenger o Instagram: si la página tiene suscrita la app del CRM según la última respuesta de Meta; `UNKNOWN` si no se comprobó o no se sabe. `null` en las demás.
+   * Messenger o Instagram: si la página tiene suscrita la app del CRM según la última respuesta de Meta; `UNKNOWN` si no se comprobó, no se sabe o esa respuesta tiene más de cuatro intervalos de salud (una hora por omisión). `null` en las demás.
    *
    * * `SUBSCRIBED` - SUBSCRIBED
    * * `NOT_SUBSCRIBED` - NOT_SUBSCRIBED

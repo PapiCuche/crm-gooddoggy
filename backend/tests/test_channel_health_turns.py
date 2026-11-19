@@ -89,7 +89,9 @@ def test_the_api_shows_only_the_closed_code_and_the_database_keeps_it_off_whatsa
 ) -> None:
     mine, whatsapp = social(world.a), whatsapp_account(world.a)
     with tenant_scope(ctx(world.a)):
-        ChannelAccount.objects.filter(pk=mine).update(page_subscribed=True)
+        ChannelAccount.objects.filter(pk=mine).update(  # F7b-06i: una respuesta reciente
+            page_subscribed=True, last_healthcheck_at=timezone.now()
+        )
     rows = reader(world).get(API.format("org-a") + "channels/").json()["results"]
     found = {row["id"]: row["page_subscription"] for row in rows if row["platform"] != "SANDBOX"}
     assert found == {str(mine): "SUBSCRIBED", str(whatsapp): None}
