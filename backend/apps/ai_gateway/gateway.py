@@ -11,7 +11,8 @@ de negocio: quien pide tiene que ser un miembro activo. El modelo es el de la cu
 leído una vez en la transacción de la reserva: con él se estima, se reserva, se llama y se cobra;
 uno sin precio (fuera de `AI_MODELS`) falla cerrado antes de abrir la clave y de reservar. Un turno
 con tools (F8-05b7) se valida antes de todo; la cota suma lo que sus bytes no acotan: el
-razonamiento reenviado y las imágenes (`turns.surplus`)."""
+razonamiento reenviado y las imágenes (`turns.surplus`). Kill switch (F8-06, `AI_DISABLED`): el
+global antes de validar; el de la organización, primero en el scope. El ajuste no lo mira."""
 
 import time
 from decimal import Decimal
@@ -22,7 +23,7 @@ from django.conf import settings
 from django.db import DatabaseError, connections
 
 from apps.access.selectors import AccessDenied, Denied
-from apps.ai_gateway import keys, prices, turns
+from apps.ai_gateway import keys, prices, switch, turns
 from apps.ai_gateway.anthropic import AnthropicAdapter
 from apps.ai_gateway.llm import LLMProviderAdapter, LLMRequest, LLMResponse, Outcome, ProviderError
 from apps.ai_gateway.models import AccountStatus, AIProviderAccount
@@ -113,12 +114,16 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
     toda transacción (abre las suyas). `GatewayError` con el código si no hay respuesta."""
     if connections["default"].in_atomic_block:
         raise RuntimeError("complete() abre sus transacciones: ninguna puede estar abierta")
+    if not switch.globally_on():  # antes de todo: el respaldo del despliegue
+        raise GatewayError(Outcome.AI_DISABLED)
     params, adapter = settings.AI_PROVIDER_PARAMS[provider], ADAPTERS[provider]
     try:  # antes del scope, la clave, la reserva y la llamada
         blocks = turns.check(request)
     except turns.Rejected as error:
         _refuse(error.rule)
     with tenant_scope(ctx):
+        if not switch.is_on(ctx):  # bloqueada hasta confirmar la reserva: apagar la espera
+            raise GatewayError(Outcome.AI_DISABLED)
         model = _model(ctx, provider)  # el mismo para la cota, la reserva, la llamada y el costo
         try:  # el cuerpo ya codificado; lo que sus bytes no acotan (razonamiento e imágenes)
             body = adapter.encode(request, {**params, "model": model})
