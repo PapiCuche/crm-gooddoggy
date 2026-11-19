@@ -1078,8 +1078,9 @@ paths:
         y segundo factor reciente) con la llamada más barata, sin reintentos, y la
         audita (`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`,
         `PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor
-        ni la clave. 404: no existe, es de otra organización o está desactivada. 429
-        `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`.'
+        ni la clave. 404: no existe, es de otra organización o está desactivada. 409
+        `AI_DISABLED`: `AI_ENABLED` apagado. 429 `RATE_LIMITED`: el tope por persona
+        de las escrituras, con `Retry-After`.'
       parameters:
       - in: path
         name: account_id
@@ -1102,6 +1103,155 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AiProviderTest'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/switch/:
+    get:
+      operationId: ai_switch_retrieve
+      description: El interruptor de la organización y el del despliegue (`ai.kill_switch`
+        o `ai.manage`, sin segundo factor). La IA llama solo con los dos encendidos;
+        los dos nacen apagados.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiSwitch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/switch/off/:
+    post:
+      operationId: ai_switch_off
+      description: Apaga la IA de la organización (`ai.kill_switch` o `ai.manage`,
+        sin segundo factor ni tope por persona) y lo audita (`ai.kill_switch.activated`).
+        La siguiente llamada recibe `AI_DISABLED`; la que ya reservó termina. Apagada
+        ya, no cambia nada.
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiSwitch'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+  /api/v1/o/{org_slug}/ai/switch/on/:
+    post:
+      operationId: ai_switch_on
+      description: 'Enciende la IA de la organización (`ai.manage` y segundo factor
+        reciente) con la confirmación del aviso de datos y lo audita (`ai.kill_switch.deactivated`).
+        No enciende `AI_ENABLED`. Encendida ya, no cambia nada. 429 `RATE_LIMITED`:
+        el tope por persona de las escrituras, con `Retry-After`.'
+      parameters:
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiSwitchOnRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiSwitch'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
           description: ''
         '401':
           content:
@@ -12019,6 +12169,32 @@ components:
         * `CREDENTIALS_REJECTED` - CREDENTIALS_REJECTED
         * `PROVIDER_BILLING` - PROVIDER_BILLING
         * `PROVIDER_UNAVAILABLE` - PROVIDER_UNAVAILABLE
+    AiSwitch:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: El interruptor de la organización.
+        global_enabled:
+          type: boolean
+          description: '`AI_ENABLED`: apagado, no hay IA.'
+        changed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 'Último cambio; null: nunca.'
+      required:
+      - changed_at
+      - enabled
+      - global_enabled
+    AiSwitchOnRequest:
+      type: object
+      properties:
+        notice_confirmed:
+          type: boolean
+          description: 'Exactamente `true`: el aviso de datos.'
+      required:
+      - notice_confirmed
     AssignActionEnum:
       enum:
       - TAKE

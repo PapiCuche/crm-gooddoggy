@@ -26,12 +26,15 @@ type Step =
 // código, de la aplicación de autenticación o de respaldo. El acceso a medias vive en el
 // servidor, tras la cookie de sesión; aquí no se guarda nada, tampoco el código.
 // `onRestart(expired)`: vuelve al paso de la contraseña, porque la API lo pide o a voluntad.
+// `onEntered(email)`: como en `LoginForm`, se la llama en lugar de ir a `next`.
 export function LoginSecondStep({
   next,
   onRestart,
+  onEntered,
 }: {
   next: string;
   onRestart: (expired: boolean) => void;
+  onEntered?: (email: string) => void;
 }) {
   const t = useTranslations();
   const router = useRouter();
@@ -81,10 +84,11 @@ export function LoginSecondStep({
     mutate(
       { data: { code } },
       {
-        onSuccess: () => {
+        onSuccess: (session) => {
           setStep({ name: "entered" });
           queryClient.clear(); // nada de lo que se leyó sin sesión sigue valiendo
-          router.replace(next);
+          if (onEntered) onEntered(session?.user?.email ?? "");
+          else router.replace(next);
         },
         onError: (error) => {
           if (error.code === NOT_STARTED) onRestart(true);

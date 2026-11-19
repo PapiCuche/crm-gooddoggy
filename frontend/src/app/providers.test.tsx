@@ -42,6 +42,12 @@ describe("sesión terminada", () => {
       "/login?next=%2Fo%2Facme%2Fclientes%3Fvista%3D2",
     );
     expect(sessionEnded(expired, at("/login", "?next=%2Fo"))).toBeNull(); // ya está ahí
+    // La página de una invitación entra en la misma página: salir de ella perdería el enlace.
+    expect(sessionEnded(expired, at("/invitacion"))).toBeNull();
+    expect(sessionEnded(expired, at("/invitacion/"))).toBeNull(); // Next la sirve también
+    for (const path of ["/o/acme/invitaciones", "/invitacionx", "/o/invitacion"]) {
+      expect(sessionEnded(expired, at(path))).toBe(`/login?next=${encodeURIComponent(path)}`);
+    }
   });
 
   it("ningún otro error saca de la pantalla", () => {
