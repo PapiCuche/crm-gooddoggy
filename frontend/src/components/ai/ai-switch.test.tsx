@@ -156,18 +156,12 @@ describe("Interruptor de la IA (F8-06b)", () => {
     const api = mockApi({ [GET]: ok(state()), [OFF]: ok(state({ enabled: false })) });
     show(KILL);
     const region = await panel();
-    expect(
-      screen.getByText(
-        "La clave y el proveedor de IA los gestiona quien tiene el permiso de gestionar la IA.",
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(/proveedor de IA los gestiona quien/)).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
     await press("Apagar la IA");
     expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
     expect(within(region).queryByRole("button", { name: "Encender la IA" })).toBeNull();
-    expect(
-      within(region).getByText("Para encenderla hace falta el permiso de gestionar la IA."),
-    ).toBeVisible();
+    expect(within(region).getByText(/Para encenderla hace falta/)).toBeVisible();
     expect(calls(api, LIST)).toEqual([]);
     expect(calls(api, STEP_UP)).toEqual([]);
     expect(api.mock.calls.map(([to]) => String(to))).not.toContain(LIST_URL);
@@ -250,11 +244,7 @@ describe("Interruptor de la IA (F8-06b)", () => {
     await press("Apagar la IA");
     expect(await within(region).findByText(/quedó apagada/)).toBeVisible();
     await turnOn();
-    expect(
-      await within(region).findByText(
-        "Esta organización quedó encendida, pero la IA sigue apagada hasta que se encienda en el servidor.",
-      ),
-    ).toBeVisible();
+    expect(await within(region).findByText(/sigue apagada hasta que se encienda/)).toBeVisible();
     expect(within(region).getByText("La IA está apagada.")).toBeVisible();
     expect(calls(api, OFF)).toHaveLength(1);
   });

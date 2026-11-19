@@ -2732,18 +2732,12 @@
       "intro": "Apagarla corta las siguientes llamadas de {organization} al proveedor de IA; la que ya estaba en curso termina. No afecta a los canales ni al Inbox.",
       "loading": "Cargando el estado de la IA…",
       "denied": "No tienes permiso para ver el estado de la IA.",
-      "effective": {
-        "ON": "La IA está encendida.",
-        "OFF": "La IA está apagada."
-      },
+      "effective": { "ON": "La IA está encendida.", "OFF": "La IA está apagada." },
       "organization": "Esta organización",
       "system": "Todo el sistema",
       "changed": "Último cambio",
       "never": "Nunca",
-      "state": {
-        "ON": "Encendida",
-        "OFF": "Apagada"
-      },
+      "state": { "ON": "Encendida", "OFF": "Apagada" },
       "globalOff": "La IA está apagada en todo el sistema. Se enciende en el servidor, no desde esta pantalla: mientras siga apagada, la IA no funciona aunque esta organización esté encendida.",
       "turnOff": {
         "open": "Apagar la IA",
@@ -2769,15 +2763,8 @@
       },
       "readFailed": "Si es urgente, puedes apagarla igualmente."
     },
-    "provider": {
-      "ANTHROPIC": "Anthropic",
-      "UNKNOWN": "Otro proveedor"
-    },
-    "status": {
-      "ACTIVE": "Activa",
-      "DISABLED": "Borrada",
-      "UNKNOWN": "Estado desconocido"
-    },
+    "provider": { "ANTHROPIC": "Anthropic", "UNKNOWN": "Otro proveedor" },
+    "status": { "ACTIVE": "Activa", "DISABLED": "Borrada", "UNKNOWN": "Estado desconocido" },
     "fields": {
       "key": "Clave",
       "configured": "Guardada",
