@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 
-class Outcome(StrEnum):  # los seis primeros quedan en `ai_llm_calls.outcome`
+class Outcome(StrEnum):  # los siete primeros quedan en `ai_llm_calls.outcome`
     OK = "OK"
     CREDENTIALS_REJECTED = "CREDENTIALS_REJECTED"
     PROVIDER_BILLING = "PROVIDER_BILLING"
@@ -16,6 +16,8 @@ class Outcome(StrEnum):  # los seis primeros quedan en `ai_llm_calls.outcome`
     # Salió y no hubo respuesta (tiempo agotado, corte, cuerpo ilegible): pudo cobrarla, la reserva
     # cuenta entera. Solo en el registro; quien llama recibe `PROVIDER_UNAVAILABLE`.
     PROVIDER_UNCERTAIN = "PROVIDER_UNCERTAIN"
+    # Reserva huérfana (proceso caído) cerrada por el barrido: cuenta entera (F8-05b5).
+    ORPHANED = "ORPHANED"
     AI_NOT_CONFIGURED = "AI_NOT_CONFIGURED"  # sin cuenta activa, sin clave legible o sin precio
     AI_BUDGET_NOT_SET = "AI_BUDGET_NOT_SET"  # sin tope: no se llama, igual que sin margen
     AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"  # sin margen: no se llama

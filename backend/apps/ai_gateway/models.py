@@ -208,3 +208,10 @@ class AIBudgetReservation(TenantModel):
             models.UniqueConstraint(fields=["organization_id", "id"], name="ai_budget_res_uq"),
             models.CheckConstraint(condition=models.Q(amount_usd__gt=0), name="ai_budget_res_ck"),
         ]
+        indexes = [  # las abiertas, para el barrido de huérfanas (0007)
+            models.Index(
+                fields=["created_at"],
+                condition=models.Q(settled_at__isnull=True),
+                name="ai_budget_res_open_idx",
+            ),
+        ]
