@@ -1,9 +1,12 @@
 from django.urls import path
 
-from apps.ai_gateway.api import budget, views
+from apps.ai_gateway.api import budget, switch, views
 
 urlpatterns = [
     path("ai/budget/", budget.BudgetView.as_view(), name="ai-budget"),
+    path("ai/switch/", switch.SwitchView.as_view(), name="ai-switch"),
+    path("ai/switch/off/", switch.SwitchOffView.as_view(), name="ai-switch-off"),
+    path("ai/switch/on/", switch.SwitchOnView.as_view(), name="ai-switch-on"),
     path("ai/provider-accounts/", views.AccountsView.as_view(), name="ai-provider-accounts"),
     path(
         "ai/provider-accounts/<uuid:account_id>/",

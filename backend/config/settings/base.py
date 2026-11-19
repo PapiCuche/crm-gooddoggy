@@ -425,6 +425,10 @@ if META_ENABLED and META_GRAPH_HOST not in HTTP_ALLOWED_HOSTS:
 # F8-03b (ADR-034 §3): el host fijo de cada proveedor de IA; nunca una URL que dé el usuario. Solo
 # `apps.ai_gateway` lo llama, con la clave sellada de la organización.
 AI_PROVIDER_HOSTS = {"ANTHROPIC": "api.anthropic.com"}
+# F8-06 (ADR-034 §5): el interruptor global de IA. Apagado por omisión; un valor que no es booleano
+# no arranca. La aplicación no lo cambia (pide reiniciar): con él apagado no se llama a ningún
+# modelo ni se prueba ninguna clave, aunque una organización tenga su interruptor encendido.
+AI_ENABLED = env.boolean("AI_ENABLED", False)
 HTTP_ALLOWED_HOSTS.extend(h for h in AI_PROVIDER_HOSTS.values() if h not in HTTP_ALLOWED_HOSTS)
 # F8-05 (ADR-034 §3, D-F8-03): los modelos permitidos y su precio en USD por millón de tokens, de la
 # página oficial de precios de Anthropic (consultada el día `since`). Sin precio no se llama.
