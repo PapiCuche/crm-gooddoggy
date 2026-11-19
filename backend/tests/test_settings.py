@@ -35,6 +35,7 @@ BASE_ENV: dict[str, str | None] = {
     "SANDBOX_INBOUND_ENABLED": None,
     "SECRETS_KEKS": "1:" + base64.urlsafe_b64encode(bytes(range(32))).decode(),  # ADR-022 §6
     "META_ENABLED": None,
+    "AI_ENABLED": None,
     "META_APP_SECRETS": None,
     "META_WEBHOOK_VERIFY_TOKEN": None,
     "MFA_ENFORCEMENT": None,
@@ -166,6 +167,16 @@ def test_production_refuses_the_sandbox_inbound_and_has_it_off(
         assert settings.SANDBOX_INBOUND_ENABLED is False  # type: ignore[attr-defined]
     assert load_local(monkeypatch).SANDBOX_INBOUND_ENABLED is True
     assert load_local(monkeypatch, SANDBOX_INBOUND_ENABLED="false").SANDBOX_INBOUND_ENABLED is False
+
+
+@pytest.mark.parametrize(("value", "on"), [(None, False), ("false", False), ("true", True)])
+def test_ai_is_off_unless_the_environment_turns_it_on(
+    monkeypatch: Any, value: Any, on: bool
+) -> None:
+    """F8-06 (ADR-034 §5): apagado por omisión; un valor que no es booleano no arranca."""
+    assert load_production(monkeypatch, AI_ENABLED=value).AI_ENABLED is on  # type: ignore[attr-defined]
+    with pytest.raises(ImproperlyConfigured):
+        load_production(monkeypatch, AI_ENABLED="ture")
 
 
 @pytest.mark.parametrize("value", ["strict", "Enforce", "", "off"])

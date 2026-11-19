@@ -222,3 +222,21 @@ class AIBudgetReservation(TenantModel):
                 name="ai_budget_res_open_idx",
             ),
         ]
+
+
+class AISwitch(TenantModel):
+    """El interruptor de IA de la organización (F8-06; ADR-034 §5): sin fila, o con `enabled`
+    falso, el gateway no llama (`AI_DISABLED`). Apagado por omisión. Lo cambia
+    `apps.ai_gateway.switch` como `crm_app` bajo RLS: inserta la fila de su organización y cambia
+    solo el estado, quién y cuándo (0009); nunca la borra."""
+
+    id = uuid7_primary_key()
+    enabled = models.BooleanField(default=False, db_default=False)
+    changed_by_user_id = models.UUIDField(null=True)  # FK compuesta a las membresías (0009)
+    changed_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "ai_switches"
+        constraints = [
+            models.UniqueConstraint(fields=["organization_id"], name="ai_switches_org_uq"),
+        ]

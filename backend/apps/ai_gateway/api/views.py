@@ -39,6 +39,7 @@ MALFORMED = "La clave no tiene el formato de una clave de API."
 UNKNOWN = "Proveedor no admitido."
 MODEL_REFUSED = "Modelo no admitido: elige uno de la lista permitida de su proveedor."
 KEY_HELP = "Solo se escribe: ninguna respuesta la devuelve."
+DISABLED = "La IA está apagada en este despliegue: no se prueba ninguna clave."
 LIMITED = " 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`."
 
 
@@ -125,6 +126,8 @@ def account_errors() -> Iterator[None]:
         raise ApiError("AI_ACCOUNT_EXISTS", 409, EXISTS) from None
     except keys.AccountConflict:
         raise ApiError("AI_ACCOUNT_CONFLICT", 409, CONFLICT) from None
+    except accounts.Disabled:
+        raise ApiError("AI_DISABLED", 409, DISABLED) from None
 
 
 def provider_of(account_id: UUID) -> str:
@@ -223,12 +226,13 @@ class AccountView(APIView):
         operation_id="ai_provider_accounts_test",
         tags=["ai"],
         request=None,
-        responses={200: AiProviderTestSerializer, **errors(401, 403, 404, 429)},
+        responses={200: AiProviderTestSerializer, **errors(401, 403, 404, 409, 429)},
         description="Prueba la clave de la cuenta contra el proveedor (`ai.manage` y segundo "
         "factor reciente) con la llamada más barata, sin reintentos, y la audita "
         "(`ai.account.tested`). 200 con el código: `OK`, `CREDENTIALS_REJECTED`, "
         "`PROVIDER_BILLING` o `PROVIDER_UNAVAILABLE`; nunca el cuerpo del proveedor ni la clave. "
-        "404: no existe, es de otra organización o está desactivada." + LIMITED,
+        "404: no existe, es de otra organización o está desactivada. 409 `AI_DISABLED`: "
+        "`AI_ENABLED` apagado." + LIMITED,
     ),
 )
 class AccountTestView(APIView):

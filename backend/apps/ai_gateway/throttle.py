@@ -29,7 +29,8 @@ from django.http import HttpRequest, HttpResponse
 
 from core.api.errors import error_response
 
-PATH = re.compile(r"^/api/v1/o/[^/]+/ai/(provider-accounts|budget)/")
+# Encender la IA cuenta (F8-06); apagarla, nunca (`…/ai/switch/off/`, ADR-034 §5).
+PATH = re.compile(r"^/api/v1/o/[^/]+/ai/(provider-accounts/|budget/|switch/on/)")
 READS = ("GET", "HEAD", "OPTIONS")  # las que no cuentan; las demás, sí (F8-03e)
 _COUNT = """
 INSERT INTO login_throttles AS t (key, failures, blocked_until, updated_at)

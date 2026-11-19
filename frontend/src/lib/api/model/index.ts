@@ -20,6 +20,8 @@ export * from "./aiProviderKeyRequest";
 export * from "./aiProviderModelRequest";
 export * from "./aiProviderTest";
 export * from "./aiProviderTestResultEnum";
+export * from "./aiSwitch";
+export * from "./aiSwitchOnRequest";
 export * from "./assignActionEnum";
 export * from "./assignment";
 export * from "./assignmentStrategyEnum";

@@ -22,6 +22,7 @@ class Outcome(StrEnum):  # los siete primeros quedan en `ai_llm_calls.outcome`
     AI_BUDGET_NOT_SET = "AI_BUDGET_NOT_SET"  # sin tope: no se llama, igual que sin margen
     AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"  # sin margen: no se llama
     AI_TURN_INVALID = "AI_TURN_INVALID"  # un turno mal formado o sin cota: ni se reserva (F8-05b7)
+    AI_DISABLED = "AI_DISABLED"  # `AI_ENABLED` o el interruptor de la organización (F8-06)
 
 
 @dataclass(frozen=True)
