@@ -20,6 +20,7 @@ from apps.conversations import models, tasks
 from apps.conversations.models import ChannelAccount
 from core.tenancy.scope import tenant_scope
 from tests.meta_sim.page_graph import FakePageGraph
+from tests.test_channel_health_clock import db_now
 from tests.test_channel_health_turns import PAGES
 from tests.test_memberships import ctx
 from tests.test_pipelines_tables import as_migrator
@@ -128,10 +129,11 @@ def test_a_future_check_never_hides_an_account_from_the_health_queue(
     ahead_by(world, recent, "0 seconds")
     ahead_by(world, ahead, "1 year")
     assert due(before) == [(world.a, ahead)]  # como una nunca comprobada: la primera
+    start = db_now()
     assert tasks.healthcheck_accounts() == {"OK": 1}  # la comprobación corrige la hora
     fixed = read(world.a, ahead).last_healthcheck_at
-    assert fixed is not None and now <= fixed <= timezone.now()
-    assert due(before) == []  # con el reloj del worker: dentro del margen, no vuelve a la cola
+    assert fixed is not None and start <= fixed <= db_now()  # la de la base (F7b-06j)
+    assert due(before) == []  # recién comprobada: no vuelve a la cola
 
 
 def test_the_queue_tolerates_the_same_clock_skew_as_the_screen(

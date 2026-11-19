@@ -53,6 +53,14 @@ def _allowed(ctx: TenantContext) -> None:
         raise AccessDenied(Denied.PERMISSION)
 
 
+def _db_now(alias: str) -> Any:
+    """La hora de PostgreSQL (F7b-06j): `last_healthcheck_at` se escribe con ella, la misma con la
+    que `channel_accounts_health_due` decide a quién le toca. El reloj del worker no cuenta."""
+    with connections[alias].cursor() as cursor:
+        cursor.execute("SELECT statement_timestamp()")
+        return cursor.fetchone()[0]
+
+
 def _id(value: Any, what: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(META_ID, value):
         raise BadNumber(NUMBER_REFUSED) if what == "número" else ValueError(f"{what}: no válido")
@@ -144,9 +152,10 @@ def connect_whatsapp(
     _name(name)
     _allowed(ctx)
     seen = graph.phone_number(token, waba, number)  # sin tocar la base: antes de guardar nada
-    account_id, now = new_id(), timezone.now()
+    account_id = new_id()
     try:
         with transaction.atomic(using=alias):
+            now = _db_now(alias)
             credential = credentials.store(ctx, account_id, token)
             account = ChannelAccount.objects.using(alias).create(
                 id=account_id, platform=Platform.WHATSAPP, name=name, external_account_id=number,
@@ -209,7 +218,7 @@ def connect_social(
                 external_parent_id=page if instagram else None,
                 display_identifier="" if instagram else seen["name"],  # el @usuario: F7b-04c
                 status="PENDING", status_detail="WEBHOOK_NOT_SEEN",
-                last_healthcheck_at=timezone.now(), credential_id=credential.pk,
+                last_healthcheck_at=_db_now(alias), credential_id=credential.pk,
                 created_by_user_id=ctx.user_id,
             )  # fmt: skip
             _announce(ctx, "channel_account.connected", account, None, str(credential.pk))
@@ -239,12 +248,12 @@ def rotate_token(
     account = _live(platform).using(alias).get(pk=channel_account_id)
     seen = _check(token, account)
     with transaction.atomic(using=alias):
-        found = _live(platform).using(alias).select_for_update(no_key=True)
+        found = _live(platform).using(alias).select_for_update(no_key=True).annotate(db_now=Now())
         account = found.get(pk=channel_account_id)
         old, status, detail = account.credential_id, account.status, account.status_detail
         credentials.revoke(ctx, old)  # antes de guardar la nueva: una viva por cuenta
         credential = credentials.store(ctx, account.pk, token, rotated=True)
-        account.credential_id, account.last_healthcheck_at = credential.pk, timezone.now()
+        account.credential_id, account.last_healthcheck_at = credential.pk, account.db_now
         account.quality_rating = seen["quality_rating"]
         account.messaging_limit_tier = seen["messaging_limit_tier"]
         changed: dict[str, Any] = {"credential_id": [str(old) if old else None, str(credential.pk)]}
@@ -383,14 +392,14 @@ def apply_subscription(
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
         real = ChannelAccount.objects.filter(platform__in=SOCIAL, deleted_at__isnull=True)
-        found = real.using(alias).select_for_update(no_key=True).filter(
+        found = real.using(alias).select_for_update(no_key=True).annotate(db_now=Now()).filter(
             pk=channel_account_id, status__in=CHECKED, credential_id=credential_id
         )  # fmt: skip
         if (account := found.first()) is None:
             return False
         before = (account.status, account.status_detail)
         _follow(account, subscribed)
-        account.last_healthcheck_at, account.page_subscribed = timezone.now(), subscribed
+        account.last_healthcheck_at, account.page_subscribed = account.db_now, subscribed
         fields = ["last_healthcheck_at", "page_subscribed", "updated_at"]
         now = (account.status, account.status_detail)
         if now != before:
@@ -421,7 +430,7 @@ def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, 
     `False` si la cuenta ya no se comprueba (desconectada, en `ERROR`, borrada)."""
     alias = require_scope(ctx)
     with transaction.atomic(using=alias):
-        found = _live().using(alias).select_for_update(no_key=True)
+        found = _live().using(alias).select_for_update(no_key=True).annotate(db_now=Now())
         account = found.filter(
             pk=channel_account_id, status__in=("PENDING", "CONNECTED", "DEGRADED")
         ).first()  # fmt: skip
@@ -441,7 +450,7 @@ def apply_health(ctx: TenantContext, *, channel_account_id: UUID, quality: str, 
         account.quality_rating, account.messaging_limit_tier = quality, tier
         changes = {key: [was, getattr(account, key)] for key, was in before.items()
                    if getattr(account, key) != was}  # fmt: skip
-        account.last_healthcheck_at = timezone.now()
+        account.last_healthcheck_at = account.db_now  # la hora de la base, leída con el bloqueo
         fields = ["status", "status_detail", "quality_rating", "messaging_limit_tier"]
         if changes:
             account.version += 1

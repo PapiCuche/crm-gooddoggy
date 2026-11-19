@@ -463,7 +463,10 @@ def healthcheck_accounts(batch_size: int = 50) -> dict[str, int]:
     cuenta no detiene las demás y solo se registra su tipo. Con el canal apagado no hace nada."""
     if not settings.META_ENABLED:
         return {}
-    before = timezone.now() - dt.timedelta(minutes=settings.CHANNEL_HEALTH_INTERVAL_MINUTES)
+    with connection.cursor() as cursor:  # F7b-06j: con la hora de la base, no la del worker
+        minutes = settings.CHANNEL_HEALTH_INTERVAL_MINUTES
+        cursor.execute("SELECT statement_timestamp() - make_interval(mins => %s)", [minutes])
+        before = cursor.fetchone()[0]
     done: Counter[str] = Counter()
     started = time.monotonic()
     for organization_id, account_id in health_due(before, batch_size):

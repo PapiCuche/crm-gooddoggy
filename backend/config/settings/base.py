@@ -166,6 +166,8 @@ INBOX_GIVE_UP_AFTER_MINUTES = env.integer("INBOX_GIVE_UP_AFTER_MINUTES", 120)
 INBOX_SENDING_DEADLINE_MINUTES = env.integer("INBOX_SENDING_DEADLINE_MINUTES", 15)
 # F7-06b: cada cuánto se comprueba la salud de cada cuenta de WhatsApp (calidad, nivel, token).
 CHANNEL_HEALTH_INTERVAL_MINUTES = env.integer("CHANNEL_HEALTH_INTERVAL_MINUTES", 15)
+if CHANNEL_HEALTH_INTERVAL_MINUTES < 1:  # F7b-06j: con 0, «página suscrita» no valdría nunca
+    raise ImproperlyConfigured("CHANNEL_HEALTH_INTERVAL_MINUTES debe ser al menos 1")
 MEDIA_PER_ORG = 2  # F7-09a1b: descargas de medios a la vez por organización (a confirmar)
 # F7-15 (ADR-008): `host:puerto` de `clamd` (ClamAV). Vacío: nada recibe veredicto, ningún medio
 # entrante se abre (tras los reintentos queda `ERROR`) y ningún envío de un archivo se guarda
