@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import threading
+import time
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -27,6 +28,7 @@ from apps.organizations import services as organizations
 from core.tenancy.context import TenantContext
 from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_auth_api, test_authorization, test_invitation_preview
+from tests.conftest import migrator_conninfo
 from tests.factories import TEST_PASSWORD, make_user
 from tests.test_anti_escalation import EDIT
 from tests.test_authorization import give
@@ -56,6 +58,10 @@ AUDITED = (
     "SELECT actor_type, actor_id, entity_type, entity_id, changes, metadata, organization_id"
     " FROM audit_logs WHERE action = 'membership.activated'"
 )
+WAITING = (  # en esta base de pruebas: las demás del servidor no cuentan
+    "SELECT count(*) FROM pg_locks JOIN pg_stat_activity USING (pid)"
+    " WHERE NOT granted AND datname = current_database()"
+)
 MEMBERS = (
     "SELECT email, organization_id FROM organization_memberships JOIN users ON users.id = user_id"
 )
@@ -83,16 +89,33 @@ def directly(org: UUID, secret: str, session: Any = None) -> Callable[[TenantCon
     return lambda tenant: members.accept_invitation(tenant, invitation_id, digest(secret), **how)
 
 
-def held(org: UUID, first: Callable[[TenantContext], Any], second: Callable[[], Any]) -> Any:
-    """`first` acepta y retiene su transacción; `second`, en otro hilo, espera sus bloqueos."""
+def waiting_for_a_lock(thread: threading.Thread, seconds: float = 10) -> None:
+    """Hasta que una conexión de esta base espera un bloqueo, visto desde otra conexión: seguir
+    vivo un rato no prueba que `thread` llegara al bloqueo (con carga, aún no ha llegado)."""
+    end = time.monotonic() + seconds
+    with psycopg.connect(migrator_conninfo(), autocommit=True) as watcher:
+        while thread.is_alive() and time.monotonic() < end:
+            if watcher.execute(WAITING).fetchone() != (0,):
+                return
+            time.sleep(0.02)
+    raise AssertionError("la segunda petición no esperó ningún bloqueo")
+
+
+def held(
+    org: UUID, first: Callable[[TenantContext], Any], second: Callable[[], Any], by: Any = None
+) -> Any:
+    """`first` escribe (como `by`, o `SYSTEM`) y retiene su transacción; `second`, en otro hilo,
+    espera sus bloqueos, comprobado en `pg_locks`."""
     wrote, release, out = threading.Event(), threading.Event(), dict[str, Any]()
 
     def run_first() -> None:
         try:
-            with tenant_scope(TenantContext(org, "invitation_link")) as tenant:
+            with tenant_scope(
+                ctx(org, by) if by else TenantContext(org, "invitation_link")
+            ) as tenant:
                 out["first"] = first(tenant)
                 wrote.set()
-                release.wait(timeout=10)
+                release.wait(timeout=30)
         finally:
             wrote.set()
             connection.close()
@@ -103,13 +126,16 @@ def held(org: UUID, first: Callable[[TenantContext], Any], second: Callable[[], 
 
     one, two = threading.Thread(target=run_first), threading.Thread(target=run_second)
     one.start()
-    assert wrote.wait(timeout=10) and "first" in out
-    two.start()
-    two.join(timeout=1)
-    assert two.is_alive() and "second" not in out  # espera los bloqueos de la primera
-    release.set()
-    for thread in (one, two):
-        thread.join(timeout=10)
+    try:
+        assert wrote.wait(timeout=10) and "first" in out
+        two.start()
+        waiting_for_a_lock(two)
+        assert "second" not in out  # espera los bloqueos de la primera
+    finally:
+        release.set()
+        for thread in (one, two):
+            if thread.ident is not None:
+                thread.join(timeout=30)
     return out
 
 
@@ -245,10 +271,11 @@ def test_the_new_account_needs_a_name_and_a_password_the_platform_accepts(
     assert (status, body["code"]) == (400, "VALIDATION_ERROR")
     assert sorted(body["fields"]) == ["first_name", "password"]
     assert b"nora@cliente" not in weak.content  # ni el correo ni la contraseña
-    assert said(take(Client(), secret))[1]["code"] == "VALIDATION_ERROR"  # sin contraseña
+    alone = said(take(Client(), secret, first_name="Nora"))[1]  # sin contraseña
+    assert (alone["code"], list(alone["fields"])) == ("VALIDATION_ERROR", ["password"])
     assert migrator.execute(STATE).fetchone() == before
     assert migrator.execute(ROWS).fetchall() == rows  # el enlace no se gasta
-    assert reasons(migrator) == [{"reason": "password"}] * 2
+    assert reasons(migrator) == [{"reason": "name"}, {"reason": "password"}]  # nunca los valores
     assert said(take(Client(), secret, **NEW))[0] == 200
 
 
