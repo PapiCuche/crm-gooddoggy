@@ -13,7 +13,6 @@ from apps.accounts.models import PasswordReset
 from tests.factories import make_user
 
 pytestmark = pytest.mark.usefixtures("tenant_db")
-SOON = datetime.now(UTC) + timedelta(minutes=60)
 HASH = "ab" * 32
 INSERT = (
     "INSERT INTO password_resets (user_id, token_hash, created_at, expires_at, used_at)"
@@ -48,11 +47,12 @@ def test_it_keeps_a_sent_link_as_its_hash_without_any_organization() -> None:
 
 def test_the_hash_is_unique_and_two_accounts_keep_their_own_links() -> None:
     ana, luis = make_user(email="ana@example.com"), make_user(email="luis@example.com")
-    PasswordReset.objects.create(user=ana, token_hash=HASH, expires_at=SOON)
-    PasswordReset.objects.create(user=ana, token_hash="cd" * 32, expires_at=SOON)  # varios: sí
-    PasswordReset.objects.create(user=luis, token_hash="ef" * 32, expires_at=SOON)
+    soon = datetime.now(UTC) + timedelta(minutes=60)  # al correr, no al importar el módulo
+    PasswordReset.objects.create(user=ana, token_hash=HASH, expires_at=soon)
+    PasswordReset.objects.create(user=ana, token_hash="cd" * 32, expires_at=soon)  # varios: sí
+    PasswordReset.objects.create(user=luis, token_hash="ef" * 32, expires_at=soon)
     with pytest.raises(IntegrityError, match="password_resets_token_hash_key"):
-        PasswordReset.objects.create(user=luis, token_hash=HASH, expires_at=SOON)
+        PasswordReset.objects.create(user=luis, token_hash=HASH, expires_at=soon)
 
 
 def test_the_index_and_the_runtime_privileges_are_the_documented_ones() -> None:
