@@ -1,9 +1,9 @@
 # ADR-046: Variante de servidor compartido: el CRM detrás del borde HTTPS de otra aplicación
 
-- **Status:** Accepted (2026-11-19, decisión del propietario en la sesión de despliegue: las seis recomendaciones de «Decisiones requeridas del propietario»; a registrar en #760)
+- **Status:** Accepted (2026-11-19, decisión del propietario en la sesión de despliegue: las seis recomendaciones de «Decisiones requeridas del propietario»; registrada en #992)
 - **Date:** 2026-11-19
 - **Deciders:** propietario del producto; redactado por el programa autónomo (ADR-015).
-- **Work items:** F1-18 ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760))
+- **Work items:** F1-18a ([#992](https://github.com/PapiCuche/crm-gooddoggy/issues/992)), prerrequisito de F1-18 ([#760](https://github.com/PapiCuche/crm-gooddoggy/issues/760))
 - **Related:** [ADR-033](ADR-033-production-hosting.md) (lo enmienda **solo** en el modo `shared`; el modo dedicado no cambia), [ADR-015](ADR-015-autonomous-delivery-program.md)
 
 ## Context
