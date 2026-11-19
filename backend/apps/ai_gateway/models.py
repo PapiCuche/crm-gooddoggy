@@ -146,12 +146,15 @@ class AIBudget(TenantModel):
 
 class AIBudgetUsage(TenantModel):
     """Lo gastado y lo reservado de un mes (su primer día, en hora de Lima: ADR-043). `crm_app` solo
-    lo lee: lo cambian `ai_budget_reserve` y `ai_budget_settle` (0003)."""
+    lo lee: lo cambian `ai_budget_reserve` y `ai_budget_settle` (0003). Las marcas de los avisos
+    del mes, solo `ai_budget_reserve`, una vez cada una (0006)."""
 
     id = uuid7_primary_key()
     month = models.DateField()
     spent_usd = _usd(digits=18)  # lo ya pagado se registra aunque pase el tope (0003)
     reserved_usd = _usd()
+    threshold_alerted_at = models.DateTimeField(null=True)  # `ai.budget.threshold_reached`
+    exceeded_alerted_at = models.DateTimeField(null=True)  # `ai.budget.exceeded`
 
     class Meta:
         db_table = "ai_budget_usage"

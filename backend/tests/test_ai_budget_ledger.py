@@ -165,7 +165,7 @@ def test_only_the_own_cap_counts(world: SimpleNamespace, migrator: DB) -> None:
     budget(migrator, world.a, "0.01")  # menos que una reserva
     with pytest.raises(gateway.GatewayError, match="AI_BUDGET_EXHAUSTED"):
         call(world)
-    assert world.fake.calls == [] and ledger(migrator) == ([], [])
+    assert world.fake.calls == [] and ledger(migrator) == ([(0, 0)], [])  # el mes, con su aviso
 
 
 def test_two_concurrent_settles_charge_once(world: SimpleNamespace, migrator: DB) -> None:
