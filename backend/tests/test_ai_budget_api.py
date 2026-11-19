@@ -5,7 +5,6 @@ se repiten; auditoría con el antes y el después y nada más; y lo que `crm_app
 SQL directo: solo los dos topes de la fila de su organización (0005)."""
 
 import logging
-import re
 import threading
 import time
 from decimal import Decimal
@@ -43,6 +42,7 @@ BASE, B_BASE = "/api/v1/o/org-a/ai/budget/", "/api/v1/o/org-b/ai/budget/"
 EMPTY = {"monthly_usd": None, "daily_usd": None}
 WAITING = "SELECT count(*) FROM pg_locks WHERE NOT granted"
 CAPS = "SELECT organization_id, monthly_usd, daily_usd FROM ai_budgets ORDER BY organization_id"
+CLOCK = {"timestamp", "duration_ms"}  # campos de las líneas de log que vienen del reloj
 
 
 @pytest.fixture(autouse=True)
@@ -84,10 +84,16 @@ def test_set_read_and_change_are_audited_with_before_and_after_only(
         ("ai.limits.changed", row_id, {"monthly_usd": ["100.000000", "50.000000"],
                                        "daily_usd": ["10.500000", "50.000000"]}, {}, crm.a),
     ]  # fmt: skip
-    # Importes, solo en auditoría. La duración de una petición (`duration_ms`) puede valer 10.5:
-    # se quita antes de buscar, para que la prueba no dependa de cuánto tardó.
-    logged = re.sub(r"""duration_ms['"]?: [0-9.]+""", "", caplog.text)
-    assert "10.5" not in logged and "50.0" not in logged
+    # Importes, solo en auditoría. La hora (`timestamp`) y la duración (`duration_ms`) de una línea
+    # pueden contener «10.5» o «50.0»: se quitan antes de buscar, para que la prueba no dependa del
+    # reloj ni de cuánto tardó una petición.
+    logged = " ".join(
+        repr({k: v for k, v in r.msg.items() if k not in CLOCK})
+        if isinstance(r.msg, dict)
+        else r.getMessage()
+        for r in caplog.records
+    )
+    assert not any(amount in logged for amount in ("10.5", "50.0", "100.0"))
 
 
 def test_the_caps_open_and_cut_the_gateway_and_open_reservations_still_settle(
