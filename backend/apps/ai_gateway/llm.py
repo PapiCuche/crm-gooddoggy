@@ -21,13 +21,46 @@ class Outcome(StrEnum):  # los siete primeros quedan en `ai_llm_calls.outcome`
     AI_NOT_CONFIGURED = "AI_NOT_CONFIGURED"  # sin cuenta activa, sin clave legible o sin precio
     AI_BUDGET_NOT_SET = "AI_BUDGET_NOT_SET"  # sin tope: no se llama, igual que sin margen
     AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"  # sin margen: no se llama
+    AI_TURN_INVALID = "AI_TURN_INVALID"  # un turno mal formado o sin cota: ni se reserva (F8-05b7)
 
 
 @dataclass(frozen=True)
-class ToolCall:
+class Text:
+    text: str
+
+
+@dataclass(frozen=True)
+class Image:  # solo en base64: el proveedor no descarga nada
+    media_type: str
+    data: str
+
+
+@dataclass(frozen=True)
+class Thinking:  # se reenvía intacto: la firma lleva cifrado el razonamiento entero
+    thinking: str
+    signature: str
+
+
+@dataclass(frozen=True)
+class RedactedThinking:  # se reenvía intacto
+    data: str
+
+
+@dataclass(frozen=True)
+class ToolCall:  # el `tool_use` que pide el modelo y que se le reenvía
     id: str
     name: str
     input: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolResult:  # la respuesta a un `ToolCall` del turno anterior
+    tool_use_id: str
+    content: tuple[Text | Image, ...] = ()
+    is_error: bool = False
+
+
+Block = Text | Image | Thinking | RedactedThinking | ToolCall | ToolResult
 
 
 @dataclass(frozen=True)
@@ -38,9 +71,9 @@ class Tool:
 
 
 @dataclass(frozen=True)
-class Turn:  # devolver resultados de tools y reenviar los bloques del modelo: #932
+class Turn:  # los bloques del modelo vuelven tal cual (F8-05b7); un texto es un bloque de texto
     role: str  # "user" | "assistant"
-    text: str
+    content: str | tuple[Block, ...]
 
 
 @dataclass(frozen=True)
@@ -69,6 +102,7 @@ class LLMResponse:
     stop: str
     usage: Usage
     request_id: str
+    blocks: tuple[Block, ...] = ()  # los del modelo, en orden, para reenviarlos sin cambios
 
 
 class ProviderError(Exception):  # noqa: N818 — solo el código y si pudo facturar

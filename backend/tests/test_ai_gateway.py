@@ -31,7 +31,8 @@ DB = psycopg.Connection[Any]
 PROMPT, USAGE = "texto-del-cliente-que-no-se-registra", {"input_tokens": 1000, "output_tokens": 500}
 ASK = LLMRequest("SUGGEST", "Eres un asistente.", (Turn("user", PROMPT),))
 BAD = ({"input_tokens": -1, "output_tokens": 1}, {"output_tokens": 1}, {"input_tokens": 1})
-TWO, PARAMS = (*ASK.turns, Turn("assistant", "x")), settings.AI_PROVIDER_PARAMS["ANTHROPIC"]
+THREE = (*ASK.turns, Turn("assistant", "x"), Turn("user", "y"))  # el último, de quien pide
+PARAMS = settings.AI_PROVIDER_PARAMS["ANTHROPIC"]
 SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"],
           "additionalProperties": False}  # fmt: skip
 CACHED = {"cache_creation_input_tokens": 300, "cache_read_input_tokens": 1000,  # sin desglose: 1 h
@@ -86,7 +87,7 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
     world.fake.usage |= CACHED
     tools = (Tool("search_product", "Busca un producto", SCHEMA),)
     with caplog.at_level(logging.DEBUG):
-        reply = call(world, LLMRequest("SUMMARY", "s", TWO, tools, SCHEMA))
+        reply = call(world, LLMRequest("SUMMARY", "s", THREE, tools, SCHEMA))
     assert (reply.text, reply.stop, reply.usage) == (f"respuesta {BODY_MARK}", "end_turn",
                                                     Usage(1000, 500, 100, 200, 1000))  # fmt: skip
     [sent] = world.fake.calls
@@ -100,7 +101,8 @@ def test_a_call_passes_is_recorded_and_charged_without_logging_content(
     assert body["tools"] == [{"name": "search_product", "description": "Busca un producto",
                               "strict": True, "input_schema": SCHEMA}]  # fmt: skip
     assert body["messages"] == [{"role": "user", "content": PROMPT},
-                                {"role": "assistant", "content": "x"}]  # fmt: skip
+                                {"role": "assistant", "content": "x"},
+                                {"role": "user", "content": "y"}]  # fmt: skip
     assert world.fake.timeouts[0].read_timeout > 15  # el modelo tarda más que una API normal
     [(spent, reserved)], [row] = ledger(migrator)
     cost = Decimal("0.00815")  # 1000 × 2 + 100 × 2.5 + 200 × 4 + 1000 × 0.1 + 500 × 10, por millón
