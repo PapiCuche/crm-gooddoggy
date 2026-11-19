@@ -52,6 +52,7 @@ FUNCTIONS = (
     "public.ai_llm_calls_ensure_partitions(integer)",
     "public.ai_budget_month(timestamptz)",  # F8-05b1
     "public.ai_budget_day(timestamptz)",  # F8-05b2
+    "public.ai_budget_usage_alerted_once()",  # F8-05b4, INVOKER
     "public.ai_budget_reserve(numeric, text, text, text, uuid)",  # SECURITY DEFINER
     "public.ai_budget_settle(uuid, text, numeric, integer, integer, integer, integer, integer,"
     " text)",

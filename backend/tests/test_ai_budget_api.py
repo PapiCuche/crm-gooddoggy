@@ -97,7 +97,7 @@ def test_the_caps_open_and_cut_the_gateway_and_open_reservations_still_settle(
         held = scalar(RESERVE, ["0.4", "SUGGEST"])
     assert put(ana, "0.1", "0.1").status_code == 200  # por debajo de lo reservado
     with tenant_scope(ctx(crm.a, crm.ana)):
-        assert refused(RESERVE, ["0.000001", "SUGGEST"]) == "ai_budget_exhausted"
+        assert scalar(RESERVE, ["0.000001", "SUGGEST"]) is None  # cortada por el mes (F8-05b4)
     with tenant_scope(ctx(crm.a)):
         assert scalar(SETTLE, [held, "OK", "0.3", 1, 1, ""]) == "SETTLED"  # la abierta, sí
 

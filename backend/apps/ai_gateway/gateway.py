@@ -5,8 +5,9 @@ una sola vez con `ai_budget_settle` en otra, que escribe el uso real en `ai_llm_
 inserción; nunca el prompt ni la respuesta). Las dos funciones de la base (F8-05b1, #942) son lo
 único que cambia el registro: toman la organización y quien pide de la sesión, nunca de aquí. Solo
 libera si la petición no salió o hubo una respuesta de error; lo dudoso cuenta entero. El mes y el
-día son los de Lima (ADR-043); sin tope mensual o diario no se llama (F8-05b2). Sin permisos de
-negocio: quien pide tiene que ser un miembro activo."""
+día son los de Lima (ADR-043); sin tope mensual o diario no se llama (F8-05b2). Si el tope del mes
+corta, la función devuelve NULL para que su aviso se confirme (F8-05b4) y no se llama. Sin permisos
+de negocio: quien pide tiene que ser un miembro activo."""
 
 import time
 from decimal import Decimal
@@ -40,14 +41,17 @@ class GatewayError(Exception):  # noqa: N818 — solo lleva el código
         self.outcome = outcome
 
 
-def _reserve(ctx: TenantContext, request: LLMRequest, amount: Decimal, provider: str) -> UUID:
-    """En el scope de `ctx`: su transacción se confirma al salir, antes de llamar al proveedor."""
+def _reserve(
+    ctx: TenantContext, request: LLMRequest, amount: Decimal, provider: str
+) -> UUID | None:
+    """En el scope de `ctx`: su transacción se confirma al salir, antes de llamar al proveedor.
+    `None` si el tope del mes la corta: el aviso se confirma con esa transacción."""
     model = settings.AI_PROVIDER_PARAMS[provider]["model"]
     args = [amount, request.purpose, provider, model, request.conversation_id]
     try:
         with connections[require_scope(ctx)].cursor() as cursor:
             cursor.execute(RESERVE, args)
-            reservation_id: UUID = cursor.fetchone()[0]
+            reservation_id: UUID | None = cursor.fetchone()[0]
     except DatabaseError as error:  # la función no deja nada; el scope deshace el resto
         name = getattr(getattr(error.__cause__, "diag", None), "constraint_name", None)
         if name in REFUSED:
@@ -100,6 +104,8 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
         except sealed.SealError:
             raise GatewayError(Outcome.AI_NOT_CONFIGURED) from None
         held = _reserve(ctx, request, amount, provider)
+    if held is None:  # fuera del scope: el aviso del corte ya está confirmado
+        raise GatewayError(Outcome.AI_BUDGET_EXHAUSTED)
     started = time.monotonic()  # la reserva ya está confirmada: no hay transacción abierta
     try:
         reply = adapter.send(key, body, float(params["seconds"]))
