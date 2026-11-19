@@ -294,3 +294,39 @@ def test_the_lookup_finds_only_a_pending_unexpired_invitation_by_its_hash(
     stored = digest(secret)
     for shape in (None, stored.upper(), stored[:-1], stored + "0", secret, " " + stored):
         assert raw(LOOKUP, [shape]) == []
+
+
+def test_the_lookup_refuses_what_is_not_a_sha256_even_if_the_table_held_it(
+    world: Any, migrator: psycopg.Connection[Any]
+) -> None:
+    """La guarda de la función no depende de la restricción de la tabla: sin ella, ni un secreto en
+    claro ni un hash en mayúsculas guardados se devuelven. (Una guarda sin anclas sería equivalente:
+    `token_hash` es `varchar(64)`, y en 64 caracteres un SHA-256 sin anclas es toda la cadena.)"""
+    secret = link(world.a, "a@cliente.pe", world.ana)
+    check = "user_invitations_token_hash_ck"
+    (definition,) = migrator.execute(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s", [check]
+    ).fetchone() or (None,)
+    migrator.execute(f"ALTER TABLE user_invitations DROP CONSTRAINT {check}")
+    try:
+        for stored in (secret, digest(secret).upper()):  # en claro; en mayúsculas
+            migrator.execute("UPDATE user_invitations SET token_hash = %s", [stored])
+            assert raw(LOOKUP, [stored]) == []
+            assert raw(LOOKUP, [stored.lower()]) == []
+    finally:
+        migrator.execute("UPDATE user_invitations SET token_hash = NULL")
+        migrator.execute(f"ALTER TABLE user_invitations ADD CONSTRAINT {check} {definition}")
+
+
+def test_the_link_is_taken_as_sent_and_a_long_one_is_neither_counted_nor_looked_up(
+    browser: Client, world: Any, migrator: psycopg.Connection[Any], lookups: list[str]
+) -> None:
+    secret = link(world.a, "a@cliente.pe", world.ana)
+    for padded in (" " + secret, secret + "\n"):  # sin recortar: no es el secreto
+        assert said(ask(browser, padded)) == REFUSED
+    assert len(lookups) == 2
+    answer = ask(browser, "a" * 129)
+    assert said(answer)[0] == 400 and said(answer)[1]["code"] == "VALIDATION_ERROR"
+    assert len(lookups) == 2  # ni busca
+    counted = migrator.execute("SELECT failures FROM login_throttles").fetchall()
+    assert counted == [(2,)]  # ni cuenta
