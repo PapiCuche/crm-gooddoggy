@@ -1,10 +1,11 @@
 """El motor de autorización en DRF (ADR-003 §5, frontera B2). Denegación por defecto.
 
 `HasPermission` y `ScopeFilter` son los valores por defecto de DRF (`config.settings.base`).
-Una vista de tenant declara el permiso de cada método en `required_permissions` (un código, o
-una tupla de códigos si los exige todos) y, si es sensible, los métodos que piden MFA de hace 15
-minutos como mucho en `step_up_methods` (ADR-003 §4; 403 `STEP_UP_REQUIRED`). Vista sin
-declaración, método sin declarar, declaración que no se entiende o sin tenant: denegado.
+Una vista de tenant declara el permiso de cada método en `required_permissions` (un código, una
+tupla de códigos si los exige todos, o `AnyOf` si basta uno, F8-06) y, si es sensible, los
+métodos que piden MFA de hace 15 minutos como mucho en `step_up_methods` (ADR-003 §4; 403
+`STEP_UP_REQUIRED`). Vista sin declaración, método sin declarar, declaración que no se entiende
+o sin tenant: denegado.
 
 El contexto es el que resolvió el middleware (`core.tenancy.context`), nunca `request.user`
 ni datos del cliente. Las vistas de plataforma son las rutas fuera de `/api/v1/o/<slug>/`:
@@ -34,6 +35,11 @@ from apps.access.selectors import (
 from core.api.errors import ApiError
 from core.api.step_up import require_recent_mfa, seconds_left
 from core.tenancy import context
+
+
+class AnyOf(tuple[str, ...]):
+    """Basta **uno** (F8-06). Solo `HasPermission.has_permission` lo distingue; en lo demás es una
+    tupla y los exige todos (más estricto). Vacío no declara nada."""
 
 
 def required_codes(request: Any, view: Any) -> tuple[str, ...]:
@@ -87,7 +93,7 @@ class HasPermission(BasePermission):
         if ectx is None or not codes:
             return False
         held = [has_permission(ectx, code) for code in codes]  # un código desconocido falla
-        if not all(held):  # todos, no alguno
+        if not (any(held) if isinstance(codes, AnyOf) else all(held)):  # todos, salvo `AnyOf`
             return False
         if needs_step_up(request, view):  # después de los permisos: quien no puede, no se entera
             require_recent_mfa(request)

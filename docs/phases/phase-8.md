@@ -154,6 +154,12 @@ Cómo reparte ADR-034 entre ellos:
   - **La reserva acota lo reenviado:** los bytes del cuerpo y `AI_TOOL_TOKENS`, más, por cada bloque de razonamiento, `max(max_tokens, bytes de su texto o de sus datos)` (se cobra como entrada con el razonamiento entero, que una respuesta no puede pasar de su `max_tokens`), y por cada imagen `AI_IMAGE_TOKENS` (4 784, los tokens visuales del tramo de alta resolución). Un tipo de bloque sin cota falla cerrado. `ai_budget_reserve` y `ai_budget_settle` no cambian: se cobra el costo real y, si la cota se quedara corta, el caso `OVER` de ADR-034 §5.
   - **Límite conocido:** el texto visible de un bloque de razonamiento es un resumen; si un despliegue baja `max_tokens` mientras una conversación reenvía bloques de antes, la cota de esos bloques podría quedarse corta (el caso `OVER`).
 
+### F8-06a · Permiso del kill switch
+
+- **Hecho en F8-06a (#981)**, separado de F8-06 (#769) por tamaño (ADR-009):
+  - **Permiso `ai.kill_switch`** (sensible, sin alcance): solo **apagar** la IA de la organización, sin segundo factor (ADR-034 §10). Nace con el Owner y las plantillas Administrador y Supervisor de las organizaciones **nuevas**; en las que ya existían solo el Owner lo recibe al desplegar (ADR-018 §3). Decisión del propietario D-F8-08 (2026-11-19, en #769): en las organizaciones nuevas solo un Owner asigna o quita el rol Supervisor, y el Supervisor necesita segundo factor con `MFA_ENFORCEMENT=enforce`.
+  - **`AnyOf`** en `apps.access.permissions`: en `required_permissions`, basta uno de sus permisos. Solo `HasPermission.has_permission` lo distingue; en cualquier otro sitio (el objeto, `ScopeFilter`, la auditoría del URLconf) es una tupla y los exige todos. Una tupla normal sigue exigiéndolos todos. Ninguna ruta lo usa todavía: lo usa el interruptor de F8-06.
+
 ## Qué necesita el propietario (sin ningún valor real)
 
 | #   | Qué                                                                                     | Dónde se guarda                                                                                   | Cuándo se necesita                  |
