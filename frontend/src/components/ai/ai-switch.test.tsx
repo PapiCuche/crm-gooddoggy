@@ -6,6 +6,8 @@ import { TenantProvider } from "@/components/app-shell/tenant-context";
 import type { AiSwitch, SelfContext } from "@/lib/api/model";
 import { mockApi, renderApp } from "@/test-utils";
 
+import { browser } from "./ai-key-actions";
+
 const BASE = "/api/v1/o/acme/ai";
 const GET = `GET ${BASE}/switch/`;
 const OFF = `POST ${BASE}/switch/off/`;
@@ -14,6 +16,7 @@ const LIST_URL = `${BASE}/provider-accounts/`;
 const LIST = `GET ${LIST_URL}`;
 const STEP_UP = "POST /api/v1/auth/mfa/step-up/";
 const MANAGE = ["ai.manage"];
+const OWNER = ["ai.manage", "ai.kill_switch"];
 const KILL = ["ai.kill_switch"];
 const tenant = (codes: string[]): SelfContext => ({
   user: { id: "u1", email: "ana@acme.pe", first_name: "Ana", last_name: "López" },
@@ -105,7 +108,12 @@ describe("Interruptor de la IA (F8-06b)", () => {
     fireEvent.click(button);
     fireEvent.click(button); // la segunda pulsación no es otra petición
     expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
-    expect(within(region).getByText("La IA quedó apagada en esta organización.")).toBeVisible();
+    expect(within(region).getByRole("status")).toHaveTextContent(
+      "La IA quedó apagada en esta organización.",
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(region).getByRole("heading", { level: 2 })),
+    );
     expect(calls(api, OFF)).toEqual([null]);
     expect(calls(api, STEP_UP)).toEqual([]);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -218,6 +226,9 @@ describe("Interruptor de la IA (F8-06b)", () => {
     fireEvent.click(within(group).getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("group", { name: "Encender la IA" })).toBeNull();
     expect(calls(api, ON)).toHaveLength(1);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Encender la IA" })),
+    );
   });
 
   it("con `AI_ENABLED` apagado lo dice, cuenta la IA como apagada y no lo deja cambiar", async () => {
@@ -256,18 +267,142 @@ describe("Interruptor de la IA (F8-06b)", () => {
     show(KILL);
     const region = await panel();
     expect(await within(region).findByRole("alert")).toHaveTextContent(text);
-    expect(within(region).queryByRole("button", { name: "Apagar la IA" })).toBeNull();
     const again = mockApi({ [GET]: ok(state()) });
     fireEvent.click(within(region).getByRole("button", { name: "Reintentar" }));
     expect(await within(region).findByText("La IA está encendida.")).toBeVisible();
     expect(calls(again, GET)).toHaveLength(1);
   });
 
+  it("sin poder leer el estado, apagar sigue a mano (sin el permiso, no)", async () => {
+    const api = mockApi({
+      [GET]: fail(500, "INTERNAL_ERROR"),
+      [OFF]: ok(state({ enabled: false })),
+    });
+    show(KILL);
+    await press("Apagar la IA");
+    const region = await panel();
+    expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
+    expect(calls(api, OFF)).toHaveLength(1);
+    cleanup();
+    mockApi({ [GET]: fail(403, "PERMISSION_DENIED") });
+    show(KILL);
+    expect(await within(await panel()).findByRole("alert")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Apagar la IA" })).toBeNull();
+  });
+
+  it("un 401 al leer no se pinta como error (el shell lleva al login); al escribir, al login", async () => {
+    const go = vi.spyOn(browser, "assign").mockImplementation(() => {});
+    mockApi({ [GET]: fail(401, "NOT_AUTHENTICATED") });
+    show(KILL);
+    const region = await panel();
+    await waitFor(() =>
+      expect(within(region).getByText("Cargando el estado de la IA…")).toBeVisible(),
+    );
+    await new Promise((done) => setTimeout(done, 50));
+    expect(within(region).queryByRole("alert")).toBeNull();
+    expect(within(region).queryByRole("button")).toBeNull();
+    cleanup();
+    mockApi({ [GET]: ok(state()), [OFF]: fail(401, "NOT_AUTHENTICATED") });
+    show(KILL);
+    await press("Apagar la IA");
+    await waitFor(() => expect(go).toHaveBeenCalledWith(expect.stringContaining("/login")));
+    expect(within(await panel()).queryByRole("alert")).toBeNull();
+  });
+
+  it("una lectura en vuelo no pisa lo que devolvió apagar", async () => {
+    let release: (value: Response) => void = () => {};
+    let read = 0;
+    const api = mockApi({ [LIST]: ok([]), [OFF]: ok(state({ enabled: false })) });
+    const real = api.getMockImplementation()!;
+    api.mockImplementation((input, init) => {
+      if (`${init?.method ?? "GET"} ${String(input)}` !== GET) return real(input, init);
+      if (++read === 1) return Promise.resolve(new Response(JSON.stringify(state())));
+      return new Promise<Response>((done) => (release = done)); // la del foco, retenida
+    });
+    const view = show(OWNER);
+    const region = await panel();
+    expect(await within(region).findByText("La IA está encendida.")).toBeVisible();
+    void view.client.refetchQueries({ queryKey: [`${BASE}/switch/`] });
+    await waitFor(() => expect(read).toBe(2));
+    await press("Apagar la IA");
+    expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
+    release(new Response(JSON.stringify(state()))); // llega tarde, con el estado de antes
+    await new Promise((done) => setTimeout(done, 50));
+    expect(within(region).getByText("La IA está apagada.")).toBeVisible();
+  });
+
+  it("el Owner (los dos permisos) ve las cuentas, sin la nota, y puede encender", async () => {
+    const api = mockApi({ [GET]: ok(state({ enabled: false })), [LIST]: ok([]) });
+    show(OWNER);
+    expect(await screen.findByText("Todavía no hay ninguna clave guardada.")).toBeVisible();
+    expect(screen.queryByText(/los gestiona quien tiene el permiso/)).toBeNull();
+    expect(
+      await within(await panel()).findByRole("button", { name: "Encender la IA" }),
+    ).toBeVisible();
+    expect(calls(api, LIST)).toHaveLength(1);
+  });
+
+  it("el código de encender también desbloquea la lista de cuentas, sin pedir otro", async () => {
+    let listed = 0;
+    let tried = 0;
+    const api = mockApi({
+      [GET]: ok(state({ enabled: false })),
+      [LIST]: () => (++listed === 1 ? STEP : ok([])),
+      [ON]: () => (++tried === 1 ? STEP : ok(state())),
+      [STEP_UP]: ok({ step_up_expires_in: 900 }),
+    });
+    show(OWNER);
+    expect(await screen.findByRole("button", { name: "Confirmar con mi código" })).toBeVisible();
+    await turnOn();
+    await verify();
+    expect(await screen.findByText("Todavía no hay ninguna clave guardada.")).toBeVisible();
+    expect(calls(api, LIST)).toHaveLength(2);
+    expect(calls(api, STEP_UP)).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("con el sistema y la organización apagados lo dicen las dos filas y el aviso", async () => {
+    mockApi({ [GET]: ok(state({ enabled: false, global_enabled: false })), [LIST]: ok([]) });
+    show(MANAGE);
+    const region = await panel();
+    expect(await within(region).findByText(/apagada en todo el sistema/)).toBeVisible();
+    for (const term of ["Esta organización", "Todo el sistema"]) {
+      expect(within(region).getByText(term).nextElementSibling).toHaveTextContent("Apagada");
+    }
+  });
+
+  it("apagar con STEP_UP_REQUIRED lo dice sin abrir el código; el aviso se va al reintentar", async () => {
+    let release: (value: Response) => void = () => {};
+    let tried = 0;
+    const api = mockApi({ [GET]: ok(state()), [LIST]: ok([]), [OFF]: STEP });
+    const real = api.getMockImplementation()!;
+    api.mockImplementation((input, init) =>
+      `${init?.method} ${String(input)}` === OFF && ++tried === 2
+        ? new Promise<Response>((done) => (release = done)) // la segunda, retenida
+        : real(input, init),
+    );
+    show(MANAGE);
+    await press("Apagar la IA");
+    const region = await panel();
+    expect(await within(region).findByRole("alert")).toHaveTextContent("Confirma tu identidad");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(calls(api, STEP_UP)).toEqual([]);
+    await press("Apagar la IA");
+    // mientras la nueva petición está en vuelo, el aviso de la anterior ya no está
+    expect(await within(region).findByRole("button", { name: "Apagando…" })).toBeVisible();
+    expect(within(region).queryByRole("alert")).toBeNull();
+    release(new Response(JSON.stringify(state({ enabled: false }))));
+    expect(await within(region).findByText("La IA está apagada.")).toBeVisible();
+    expect(within(region).queryByRole("alert")).toBeNull();
+  });
+
   it.each([
-    [OFF, true, fail(500, "INTERNAL_ERROR"), "Algo salió mal de nuestro lado"],
-    [OFF, true, fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA."],
+    [OFF, true, fail(500, "INTERNAL_ERROR"), "No se pudo cambiar el estado de la IA."],
+    [OFF, true, fail(404, "NOT_FOUND"), "No se pudo cambiar el estado de la IA."],
+    [OFF, true, fail(403, "PERMISSION_DENIED"), "No tienes permiso para cambiar el estado"],
     [ON, false, fail(429, "RATE_LIMITED", "61"), "Vuelve a probar en 2 minutos."],
-    [ON, false, fail(403, "PERMISSION_DENIED"), "No tienes permiso para gestionar la IA."],
+    [ON, false, fail(404, "NOT_FOUND"), "No se pudo cambiar el estado de la IA."],
+    [ON, false, fail(403, "PERMISSION_DENIED"), "No tienes permiso para cambiar el estado"],
   ])(
     "un error de %s se explica por su código y el estado no cambia",
     async (route, on, reply, text) => {
@@ -278,6 +413,7 @@ describe("Interruptor de la IA (F8-06b)", () => {
       else await turnOn();
       expect(await within(region).findByRole("alert")).toHaveTextContent(text);
       expect(within(region).queryByText("TEXTO DEL SERVIDOR")).toBeNull();
+      expect(within(region).queryByText(/clave|gestionar/)).toBeNull();
       expect(
         within(region).getByText(on ? "La IA está encendida." : "La IA está apagada."),
       ).toBeVisible();

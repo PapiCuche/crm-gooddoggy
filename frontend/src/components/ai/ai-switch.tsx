@@ -6,12 +6,13 @@ import { useFormatter, useTranslations } from "next-intl";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { useTenant } from "@/components/app-shell/tenant-context";
-import { isStepUpCancelled, useStepUp } from "@/components/security/use-step-up";
+import { isStepUpCancelled, STEP_UP_REQUIRED, useStepUp } from "@/components/security/use-step-up";
 import { Button } from "@/components/ui/button";
 import {
   aiSwitchOff,
   aiSwitchOn,
   aiSwitchRetrieve,
+  getAiProviderAccountsListQueryKey,
   getAiSwitchRetrieveQueryKey,
 } from "@/lib/api/client";
 import type { AiSwitch } from "@/lib/api/model";
@@ -58,44 +59,53 @@ export function AiSwitchPanel() {
   const [missing, setMissing] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const notice = useRef<HTMLInputElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
   const title = useId();
   useEffect(() => {
     if (asking) notice.current?.focus();
   }, [asking]);
   if (!allowed) return null;
 
-  // Lo que se dice de un fallo, por `code`; `null`: nada (cancelar el código, o ir al login).
+  // Lo que se dice de un fallo, solo por los códigos de estas rutas; `null`: nada (cancelar el
+  // código, o ir al login). Un 403 de apagar con `STEP_UP_REQUIRED` se dice, no abre el código.
   const problem = (error: ApiError): string | null => {
     const cancelled: boolean = isStepUpCancelled(error); // cancelar el código no es un fallo
     if (cancelled || toLogin(error)) return null;
-    if (error.code === "PERMISSION_DENIED") return own("denied");
-    return aiError(error, own)?.text ?? errors(`api.${apiErrorKey(error)}`);
+    switch (error.code) {
+      case "PERMISSION_DENIED":
+        return t("errors.denied");
+      case "RATE_LIMITED":
+      case STEP_UP_REQUIRED:
+        return aiError(error, own)?.text ?? null;
+      default:
+        return t("errors.failed");
+    }
   };
-  function change(run: () => Promise<AiSwitch>, done: (value: AiSwitch) => string) {
+  // Una lectura en vuelo (al recuperar el foco) se cancela antes de escribir y antes de guardar la
+  // respuesta: si llegara después, pintaría el estado de antes encima del nuevo.
+  async function change(run: () => Promise<AiSwitch>, done: (value: AiSwitch) => string) {
     if (sending.current) return;
     sending.current = true;
     setBusy(true);
     setSaid(null);
-    run()
-      .then(
-        (value) => {
-          queryClient.setQueryData(key, value);
-          setAsking(false);
-          setSaid({ text: done(value) });
-          setTimeout(() => heading.current?.focus()); // el botón pulsado ya no está
-        },
-        (error: ApiError) => {
-          const text = problem(error);
-          setSaid(text ? { text, alert: true } : null);
-        },
-      )
-      .finally(() => {
-        sending.current = false;
-        setBusy(false);
-      });
+    try {
+      await queryClient.cancelQueries({ queryKey: key });
+      const value = await run();
+      await queryClient.cancelQueries({ queryKey: key });
+      queryClient.setQueryData(key, value);
+      setAsking(false);
+      setSaid({ text: done(value) });
+      setTimeout(() => heading.current?.focus()); // el botón pulsado ya no está
+    } catch (error) {
+      const text = problem(error as ApiError);
+      setSaid(text ? { text, alert: true } : null);
+    } finally {
+      sending.current = false;
+      setBusy(false);
+    }
   }
   const turnOff = () =>
-    change(
+    void change(
       () => aiSwitchOff(slug),
       () => t("turnOff.done"),
     );
@@ -105,9 +115,16 @@ export function AiSwitchPanel() {
       notice.current?.focus();
       return;
     }
-    change(
+    void change(
       () => withStepUp(() => aiSwitchOn(slug, { notice_confirmed: true })),
-      (value) => t(value.global_enabled ? "turnOn.done" : "turnOn.doneGlobalOff"),
+      (value) => {
+        // El código de encender también vale para la lista de cuentas: si la pedía, se relee.
+        const list = getAiProviderAccountsListQueryKey(slug);
+        if (queryClient.getQueryState<unknown, ApiError>(list)?.error?.code === STEP_UP_REQUIRED) {
+          void queryClient.refetchQueries({ queryKey: list });
+        }
+        return t(value.global_enabled ? "turnOn.done" : "turnOn.doneGlobalOff");
+      },
     );
   };
   const open = () => {
@@ -123,6 +140,16 @@ export function AiSwitchPanel() {
       {said.text}
     </p>
   ) : null;
+  const off = (
+    <Button
+      variant="primary"
+      className="min-h-11 self-start sm:min-h-9"
+      aria-disabled={busy}
+      onClick={turnOff}
+    >
+      {busy ? t("turnOff.busy") : t("turnOff.open")}
+    </Button>
+  );
   let body;
   if (data) {
     const on = data.enabled && data.global_enabled;
@@ -155,14 +182,7 @@ export function AiSwitchPanel() {
         </dl>
         {data.global_enabled ? null : <p className="text-sm">{t("globalOff")}</p>}
         {data.enabled ? (
-          <Button
-            variant="primary"
-            className="min-h-11 self-start sm:min-h-9"
-            aria-disabled={busy}
-            onClick={turnOff}
-          >
-            {busy ? t("turnOff.busy") : t("turnOff.open")}
-          </Button>
+          off
         ) : !manage ? (
           <p className="text-muted text-sm">{t("onlyManage")}</p>
         ) : asking ? (
@@ -175,7 +195,7 @@ export function AiSwitchPanel() {
               <input
                 ref={notice}
                 type="checkbox"
-                className="mt-0.5"
+                className="mt-0.5 size-4 shrink-0"
                 checked={noticed}
                 aria-invalid={missing && !noticed}
                 aria-describedby={missing && !noticed ? `${title}-missing` : undefined}
@@ -194,7 +214,11 @@ export function AiSwitchPanel() {
                 variant="ghost"
                 className={OUTLINE}
                 aria-disabled={busy}
-                onClick={() => !sending.current && setAsking(false)}
+                onClick={() => {
+                  if (sending.current) return;
+                  setAsking(false);
+                  setTimeout(() => opener.current?.focus());
+                }}
               >
                 {t("turnOn.cancel")}
               </Button>
@@ -209,7 +233,7 @@ export function AiSwitchPanel() {
             </div>
           </div>
         ) : (
-          <Button variant="ghost" className={cn(OUTLINE, "self-start")} onClick={open}>
+          <Button ref={opener} variant="ghost" className={cn(OUTLINE, "self-start")} onClick={open}>
             {t("turnOn.open")}
           </Button>
         )}
@@ -217,16 +241,23 @@ export function AiSwitchPanel() {
       </>
     );
   } else if (query.isError && query.error.status !== 401) {
+    // Sin el estado, apagar sigue a mano (repetirlo no cambia nada): en un incidente no se espera.
+    const denied = query.error.code === "PERMISSION_DENIED";
     body = (
       <div className="flex flex-col items-start gap-3">
         <p role="alert" className="text-danger">
-          {query.error.code === "PERMISSION_DENIED"
-            ? t("denied")
-            : errors(`api.${apiErrorKey(query.error)}`)}
+          {denied ? t("denied") : errors(`api.${apiErrorKey(query.error)}`)}
         </p>
-        <Button variant="primary" size="lg" onClick={() => void query.refetch()}>
+        <Button variant="ghost" className={OUTLINE} onClick={() => void query.refetch()}>
           {errors("retry")}
         </Button>
+        {denied ? null : (
+          <>
+            <p className="text-sm">{t("readFailed")}</p>
+            {off}
+            {alert}
+          </>
+        )}
       </div>
     );
   } else {
