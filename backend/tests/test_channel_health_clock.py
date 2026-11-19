@@ -5,13 +5,15 @@ de descubrimiento, 500. Graph API simulada; PostgreSQL real con `crm_app`."""
 
 import datetime as dt
 import re
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 from django.conf import settings
-from django.db import connection
+from django.db import connection, connections
 from django.utils import timezone
 
 from apps.conversations import accounts, meta_page, tasks
@@ -25,9 +27,11 @@ from tests.test_channel_accounts import connect as connect_number
 from tests.test_channel_accounts import meta as number_meta
 from tests.test_channel_health import account as number
 from tests.test_channel_health import graph
+from tests.test_channel_health_turns import PAGES
 from tests.test_memberships import ctx
 from tests.test_social_accounts import connect as connect_page
 from tests.test_social_accounts import meta as page_meta
+from tests.test_social_page_owner import app
 from tests.test_social_subscription import (
     OLD,
     crm,
@@ -130,6 +134,61 @@ def test_which_accounts_are_due_is_decided_with_the_database_time(
         ChannelAccount.objects.filter(pk=fresh).update(last_healthcheck_at=OLD)
     assert tasks.healthcheck_accounts() == {"OK": 1}  # hace una hora: le toca
     assert tasks.healthcheck_accounts() == {}  # y no otra vez en la siguiente pasada
+
+
+def test_the_pass_takes_the_accounts_checked_exactly_one_interval_ago_or_earlier(
+    world: SimpleNamespace, ours: FakePageGraph
+) -> None:
+    """El corte de la pasada es el intervalo exacto, contado con la hora de la base: un minuto
+    antes no le toca, un minuto después sí."""
+    minutes = settings.CHANNEL_HEALTH_INTERVAL_MINUTES
+    early, late = social(world.a, page=PAGES[0]), social(world.a)
+    with tenant_scope(ctx(world.a)), connection.cursor() as cursor:
+        for pk, ago in ((early, minutes - 1), (late, minutes + 1)):
+            cursor.execute(
+                "UPDATE channel_accounts SET last_healthcheck_at = now() - "
+                "make_interval(mins => %s) WHERE id = %s", [ago, pk]
+            )  # fmt: skip
+    kept = stored(world.a, early)
+    assert tasks.healthcheck_accounts() == {"OK": 1}
+    assert stored(world.a, early) == kept and stored(world.a, late) > kept
+
+
+def test_a_number_check_waits_for_the_row_lock_and_reads_the_row_again(
+    world: SimpleNamespace, graph: FakeGraph
+) -> None:
+    """Otra transacción tiene la fila y la pone en `ERROR`: la comprobación espera el bloqueo y ya
+    no la toca. Sin el `select_for_update` la pisaría con `DEGRADED`."""
+    mine, outcome = number(world.a), []
+
+    def check() -> None:
+        try:
+            with tenant_scope(ctx(world.a)) as tenant:
+                outcome.append(accounts.apply_health(
+                    tenant, channel_account_id=mine, quality="RED", tier="TIER_1K"
+                ))  # fmt: skip
+        finally:
+            connections.close_all()
+
+    with app() as holder, app() as watcher:
+        watcher.autocommit = True
+        holder.execute("SELECT set_config('app.tenant_id', %s, true)", [str(world.a)])
+        holder.execute("SELECT 1 FROM channel_accounts WHERE id = %s FOR NO KEY UPDATE", [mine])
+        thread = threading.Thread(target=check)
+        thread.start()
+        waiting = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+        for _ in range(200):
+            if watcher.execute(waiting).fetchone() != (0,):
+                break
+            time.sleep(0.05)
+        assert watcher.execute(waiting).fetchone() == (1,)
+        holder.execute("UPDATE channel_accounts SET status = 'ERROR', status_detail = "
+                       "'TOKEN_INVALID', version = version + 1 WHERE id = %s", [mine])  # fmt: skip
+        holder.commit()
+        thread.join(20)
+    found = read(world.a, mine)
+    assert not thread.is_alive() and outcome == [False]
+    assert (found.status, found.status_detail) == ("ERROR", "TOKEN_INVALID")
 
 
 def test_the_discovery_returns_at_most_500_accounts(world: SimpleNamespace) -> None:
