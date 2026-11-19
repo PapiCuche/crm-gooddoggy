@@ -39,6 +39,7 @@ BASE_ENV: dict[str, str | None] = {
     "META_WEBHOOK_VERIFY_TOKEN": None,
     "MFA_ENFORCEMENT": None,
     "META_GRAPH_SIMULATOR_URL": None,
+    "CHANNEL_HEALTH_INTERVAL_MINUTES": None,
 }
 MAIL_SECRET = secrets.token_hex(16)  # aleatorio por ejecución
 MAIL_ENV = {
@@ -467,6 +468,20 @@ def test_the_migrations_job_never_needs_the_whatsapp_settings(
         META_WEBHOOK_VERIFY_TOKEN=None,
     )
     assert settings.DATABASES["default"]["USER"] == "crm_migrator"  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("value", ["0", "00", "-1"])
+def test_the_channel_health_interval_is_at_least_one_minute_or_nothing_starts(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """F7b-06j: con 0, «página suscrita» no valdría nunca y cada pasada lo comprobaría todo."""
+    assert load_production(monkeypatch).CHANNEL_HEALTH_INTERVAL_MINUTES == 15  # type: ignore[attr-defined]
+    one = load_local(monkeypatch, CHANNEL_HEALTH_INTERVAL_MINUTES="1")
+    assert one.CHANNEL_HEALTH_INTERVAL_MINUTES == 1
+    with pytest.raises(ImproperlyConfigured, match="CHANNEL_HEALTH_INTERVAL_MINUTES"):
+        load_production(monkeypatch, CHANNEL_HEALTH_INTERVAL_MINUTES=value)
+    with pytest.raises(ImproperlyConfigured, match="CHANNEL_HEALTH_INTERVAL_MINUTES"):
+        load_local(monkeypatch, CHANNEL_HEALTH_INTERVAL_MINUTES=value)
 
 
 def test_the_channel_limit_window_is_shorter_than_what_the_login_purge_keeps() -> None:

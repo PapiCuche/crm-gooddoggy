@@ -31,8 +31,10 @@ class Platform(models.TextChoices):
 SOCIAL = (Platform.MESSENGER, Platform.INSTAGRAM)  # identidad por cuenta, sin teléfono (ADR-035)
 PAGE_SUBSCRIPTIONS = ("SUBSCRIBED", "NOT_SUBSCRIBED", "UNKNOWN")  # F7b-06h, `page_subscription`
 SUBSCRIPTION_MAX_TURNS = 4  # F7b-06i: los intervalos de salud que vale un «página suscrita»
-# F7b-06i: el desfase de reloj tolerado entre quien escribe `last_healthcheck_at` (el worker) y
-# quien lo lee (la web, o la base en `channel_accounts_health_due`, `0052`); más allá, es futura.
+# F7b-06i: el desfase de reloj tolerado al leer `last_healthcheck_at` (la web, o la base en
+# `channel_accounts_health_due`, `0052`); más allá, es futura. Desde F7b-06j lo escribe la hora de
+# la base, así que el margen cubre el reloj de la web, las filas escritas antes por un worker y un
+# salto atrás del reloj de la base.
 HEALTH_CLOCK_SKEW = dt.timedelta(minutes=5)
 PAGE_OWNER = "channel_accounts_page_owner_ex"  # la página de Messenger o la de Instagram
 EXTERNAL_ID = r"^[A-Za-z0-9._-]{1,100}$"  # el PSID o el IGSID: un id opaco de Meta, sin espacios
