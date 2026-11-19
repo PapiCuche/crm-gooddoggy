@@ -101,6 +101,8 @@ export * from "./inventoryMovementsListParams";
 export * from "./inventoryReservationsListParams";
 export * from "./inventoryReservationsListStatus";
 export * from "./invitation";
+export * from "./invitationLinkRequest";
+export * from "./invitationPreview";
 export * from "./invitationsListParams";
 export * from "./invitationStatusChangeRequest";
 export * from "./invitationStatusEnum";
