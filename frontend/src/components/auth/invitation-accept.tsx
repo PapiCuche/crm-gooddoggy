@@ -36,6 +36,11 @@ const FIELDS = { first: "first_name", last: "last_name", password: "password", c
 type Field = keyof typeof FIELDS;
 type Problems = Partial<Record<Field | "form", string>>;
 const SECRET_FIELD = { type: "password", autoComplete: "new-password", maxLength: 1024 } as const;
+// Lo que se pide con un enlace solo cambia la pantalla mientras ese enlace siga abierto.
+const since = (counter: { current: number }) => {
+  const mine = counter.current;
+  return () => counter.current === mine;
+};
 
 // Acepta una invitación (ADR-020 §4 y §5). El secreto llega en el fragmento de la URL, que el
 // navegador no envía al servidor: se saca de la barra de direcciones nada más leerlo, se guarda
@@ -68,19 +73,25 @@ export function InvitationAccept() {
   const firstField = useRef<HTMLInputElement>(null);
   const acceptButton = useRef<HTMLButtonElement>(null);
   const leaving = useRef(false); // un cierre de sesión en vuelo
+  // Cuenta los enlaces abiertos en esta pestaña. La respuesta de uno anterior (vista previa,
+  // aceptación, salir o la pregunta por la sesión) no cambia la pantalla ni libera `sending`.
+  const generation = useRef(0);
 
   const check = useCallback(() => {
     const token = secret.current;
     if (!token) return;
     setStep({ name: "checking" });
+    const live = since(generation);
     ask(
       { data: { token } },
       {
         onSuccess: (found) => {
+          if (!live()) return;
           setInvite(found);
           setStep(found.needs_account ? { name: "create" } : { name: "login" });
         },
         onError: (error) => {
+          if (!live()) return;
           if (error.code === "INVALID_INVITATION_LINK") {
             secret.current = null; // no vale: no se vuelve a presentar
             setStep({ name: "invalid", unsure: false });
@@ -99,8 +110,8 @@ export function InvitationAccept() {
     // El router de Next guarda su propia copia de la URL, con el fragmento: se entera por un
     // `replaceState` sin su marca en el estado, y no antes de que este efecto termine.
     queueMicrotask(() => window.history.replaceState(null, "", clean));
-    forgetPreview(); // lo que quedara en vuelo con el enlace anterior ya no cambia esta pantalla
-    forgetAccept();
+    generation.current += 1; // lo que quedara en vuelo con el enlace anterior ya no cuenta
+    leaving.current = false; // salir con el enlace anterior no impide salir con este
     setInvite(null);
     setSending(false);
     setProblems({});
@@ -110,7 +121,7 @@ export function InvitationAccept() {
     if (secret.current) check();
     // Un enlace con otra forma no se pregunta: la respuesta sería la de uno que no vale.
     else setStep(given ? { name: "invalid", unsure: false } : { name: "absent" });
-  }, [check, forgetPreview, forgetAccept]);
+  }, [check]);
   useEffect(() => {
     if (!opened.current) {
       opened.current = true;
@@ -185,15 +196,16 @@ export function InvitationAccept() {
 
   // Un 409 con sesión: o la sesión es de otra cuenta o ya no existe. Se pregunta quién es.
   function whose() {
-    const now = (next: Step) => setStep((was) => (was.name === "ready" ? next : was));
+    const live = since(generation);
     authSession({ signal: AbortSignal.timeout(PATIENCE) })
-      .then(() => now({ name: "other" }))
+      .then(() => live() && setStep({ name: "other" }))
       .catch((error: ApiError) => {
-        if (error.status !== 401) return now({ name: "other" });
+        if (!live()) return;
+        if (error.status !== 401) return setStep({ name: "other" });
         queryClient.clear(); // la sesión leída ya no vale: el login no debe darla por abierta
-        now({ name: "login", ended: true });
+        setStep({ name: "login", ended: true });
       })
-      .finally(() => setSending(false));
+      .finally(() => live() && setSending(false));
   }
 
   function rejection(error: ApiError | null) {
@@ -229,6 +241,7 @@ export function InvitationAccept() {
     if (sending || !token) return;
     const from = step.name;
     let asking = false; // `whose` termina el envío
+    const live = since(generation);
     setSending(true);
     setProblems({});
     inFlight.current = true;
@@ -236,11 +249,13 @@ export function InvitationAccept() {
       { data: { token, ...account } },
       {
         onSuccess: (done) => {
+          if (!live()) return;
           secret.current = null; // ya está usado
           const created = done.account_created;
           setStep({ name: "done", organization: done.organization_name, created });
         },
         onError: (error) => {
+          if (!live()) return;
           if (error.code === "INVALID_INVITATION_LINK") {
             secret.current = null;
             setStep({ name: "invalid", unsure: unsure.current });
@@ -266,9 +281,11 @@ export function InvitationAccept() {
           }
         },
         onSettled: () => {
+          forgetAccept();
+          // Con otro enlace abierto no libera el envío de ese (uno nuevo ya la desengancha).
+          if (!live()) return;
           inFlight.current = false;
           if (!asking) setSending(false);
-          forgetAccept();
         },
       },
     );
@@ -278,15 +295,20 @@ export function InvitationAccept() {
   function leave() {
     if (leaving.current) return; // también antes de que se pinte la primera pulsación
     leaving.current = true;
+    const live = since(generation);
     const out = () => {
       queryClient.clear(); // lo leído con la otra sesión ya no vale
-      setStep((now) => (now.name === "other" ? { name: "login" } : now)); // no otro enlace abierto
+      setStep({ name: "login" });
     };
     setProblems({});
     logout.mutate(undefined, {
-      onSuccess: out,
-      onError: (error) => (error.status === 401 ? out() : setProblems({ form: rejection(error) })),
-      onSettled: () => (leaving.current = false),
+      onSuccess: () => live() && out(),
+      onError: (error) => {
+        if (!live()) return;
+        if (error.status === 401) out();
+        else setProblems({ form: rejection(error) });
+      },
+      onSettled: () => (leaving.current = false), // con otro enlace ya vale `false`
     });
   }
 
