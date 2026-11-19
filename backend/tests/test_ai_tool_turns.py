@@ -45,16 +45,8 @@ LOOP = (Turn("user", "hola"),
         Turn("assistant", (Thinking(SEEN, SIG), RedactedThinking(RED), Text("busco"), *CALLED)),
         Turn("user", ANSWERS))  # fmt: skip
 SECRETS = (SEEN, SIG, RED, INPUT, RESULT, PNG, "toolu_1", "search_product")
-CONTEXT = {
-    "request_id",
-    "correlation_id",
-    "organization_id",
-    "user_id",
-    "actor_type",
-    "level",
-    "logger",
-    "timestamp",
-}  # lo que añade el logging a todo evento
+CONTEXT = {"request_id", "correlation_id", "organization_id", "user_id", "actor_type", "level",
+           "logger", "timestamp"}  # fmt: skip
 REPLY = [{"type": "thinking", "thinking": "", "signature": SIG}, {"type": "redacted_thinking",
          "data": RED}, {"type": "text", "text": "busco"}, {"type": "tool_use", "id": "toolu_7",
          "name": "search_product", "input": {"q": INPUT}}]  # fmt: skip
@@ -429,6 +421,43 @@ def test_an_empty_reply_is_charged_and_returns_no_blocks(
     assert (reply.blocks, reply.text, reply.tool_calls) == ((), "", ())
     [(spent, reserved)], [row] = ledger(migrator)
     assert (row[0], spent, reserved) == ("OK", row[2], 0) and 0 < row[2] < row[1]
+
+
+ANSWERED = ToolResult("toolu_1")
+
+
+def levels(n: int, kind: type) -> dict[str, Any]:
+    """Una entrada de tool con `n` contenedores anidados (el primero, el objeto de la entrada)."""
+    value: Any = 1.5  # un número finito es JSON
+    for _ in range(n - 1):
+        value = {"k": value} if kind is dict else [value]
+    return {"q": value}
+
+
+@pytest.mark.parametrize("kind", [dict, list])
+def test_a_tool_input_passes_at_64_levels_and_is_refused_at_65(kind: type) -> None:
+    def deep(n: int) -> LLMRequest:
+        call = ToolCall("toolu_1", "search_product", levels(n, kind))
+        return ask(Turn("user", "x"), Turn("assistant", (call,)), Turn("user", (ANSWERED,)))
+
+    assert len(turns.check(deep(64))) == 3
+    with pytest.raises(turns.Rejected, match="^field$"):
+        turns.check(deep(65))
+
+
+BAD_TOOLS = {"list_name": Tool(["x"], "d", SCHEMA), "spaced_name": Tool("a b", "d", SCHEMA),  # type: ignore[arg-type]
+             "int_description": Tool("t", 7, SCHEMA), "list_schema": Tool("t", "d", [SCHEMA]),  # type: ignore[arg-type]
+             "surrogate_description": Tool("t", "\ud800", SCHEMA)}  # fmt: skip
+
+
+@pytest.mark.parametrize("name", BAD_TOOLS)
+def test_a_malformed_tool_definition_is_refused_before_scope_and_reserve(
+    world: SimpleNamespace, migrator: Any, spies: list[str], name: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:  # fmt: skip
+    budget(migrator, world.a, "1")
+    assert rejected(world, ask(Turn("user", "x"), tools=(BAD_TOOLS[name],)), caplog) == "field"
+    assert spies == [] and world.fake.calls == [] and ledger(migrator) == ([], [])
 
 
 def test_a_tool_schema_that_is_not_json_is_refused_before_key_and_reserve(

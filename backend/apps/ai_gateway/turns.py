@@ -87,10 +87,9 @@ def _json(value: object, depth: int = 0) -> None:
             _json(item, depth + 1)
     elif type(value) is str:
         _utf8(value)
-    elif type(value) is float:
-        if not math.isfinite(value):
-            raise Rejected("field")
-    elif type(value) not in (int, bool, type(None)):
+    elif type(value) is float and not math.isfinite(value):
+        raise Rejected("field")
+    elif type(value) not in (int, float, bool, type(None)):
         raise Rejected("field")
 
 
@@ -134,6 +133,11 @@ def check(request: LLMRequest) -> tuple[Block, ...]:
     limits, conversation = settings.AI_TURN_LIMITS, request.turns
     if not 0 < len(conversation) <= limits["turns"]:
         raise Rejected("limit")
+    for tool in request.tools:  # las del código, pero un nombre que no es texto sería un 500
+        shape = (type(tool.name), type(tool.description), type(tool.schema))
+        if shape != (str, str, dict) or not ID.fullmatch(tool.name):
+            raise Rejected("field")
+        _utf8(tool.description)
     tools = {tool.name for tool in request.tools}
     flat: list[Block] = []
     seen: set[str] = set()
