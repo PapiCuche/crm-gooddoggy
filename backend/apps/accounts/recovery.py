@@ -100,12 +100,14 @@ SECRET = re.compile(r"[A-Za-z0-9_-]{43}")  # la forma de `secrets.token_urlsafe(
 INVALID_LINK = "INVALID_RESET_LINK"
 
 
-def _count(counters: dict[str, str]) -> None:
+def _count(counters: dict[str, str], limits: dict[str, tuple[int, int]] | None = None) -> None:
     """Cuenta el intento en cada clave (`{ámbito: clave}`, en su orden) y lo rechaza (429 con
-    `Retry-After`) si alguna pasó el tope de su ámbito. Un intento rechazado no cuenta."""
+    `Retry-After`) si alguna pasó el tope de su ámbito (`limits`, por omisión los de este
+    flujo). Un intento rechazado no cuenta."""
+    limits = limits or settings.PASSWORD_RESET_THROTTLE
     with transaction.atomic(), connection.cursor() as cursor:
         for scope, key in counters.items():  # siempre en el mismo orden: sin interbloqueos
-            limit, window = settings.PASSWORD_RESET_THROTTLE[scope]
+            limit, window = limits[scope]
             cursor.execute(_COUNT, {"key": f"rst:{key}", "window": window})
             asked, wait = cursor.fetchone()
             if asked > limit:
@@ -121,9 +123,17 @@ def _admit(email: str, ip: str | None) -> None:
     _count({"ip": attempt["ip"], "identifier": attempt["identifier"]})
 
 
+def count_link(key: str, limit: tuple[int, int]) -> None:
+    """Cuenta un enlace de otro flujo presentado desde `key` (`rst:<key>`), con su tope
+    (intentos, ventana en segundos): un enlace de invitación (ADR-020 §4). 429 si lo pasa."""
+    _count({"link": key}, {"link": limit})
+
+
 def purge_limits() -> int:
-    """Borra los contadores de peticiones cuya ventana ya pasó."""
-    window = max(window for _, window in settings.PASSWORD_RESET_THROTTLE.values())
+    """Borra los contadores de peticiones cuya ventana ya pasó: la más larga, también la de los
+    enlaces de invitación (`count_link`)."""
+    windows = [*settings.PASSWORD_RESET_THROTTLE.values(), settings.INVITATION_LINK_THROTTLE]
+    window = max(window for _, window in windows)
     with connection.cursor() as cursor:
         cursor.execute(_PURGE, {"window": window})
         return int(cursor.rowcount)
