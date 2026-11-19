@@ -6,6 +6,8 @@ estima, reserva, llama y cobra con el modelo de la cuenta; uno sin precio falla 
 abrir la clave y de reservar. PostgreSQL real con `crm_app`; la API de Anthropic, simulada."""
 
 import logging
+import threading
+import time
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -24,6 +26,7 @@ from apps.ai_gateway.llm import Outcome, Usage
 from core.api.step_up import STEP_UP_REQUIRED
 from core.tenancy.scope import tenant_scope
 from tests.ai_sim import TEST_KEY
+from tests.conftest import migrator_conninfo
 from tests.test_ai_gateway import ASK, USAGE, budget, call, code, ledger, world
 from tests.test_ai_provider_accounts import OTHER_KEY, audit, crm, real_stack
 from tests.test_ai_provider_accounts_api import BASE, create
@@ -46,6 +49,10 @@ SONNET, HAIKU, UNPRICED = "claude-sonnet-5-5", "claude-haiku-5-5", "claude-unpri
 CHEAP = {"input": "1", "cache_write_5m": "1.25", "cache_write_1h": "2", "cache_read": "0.1",
          "output": "5", "since": "2026-11-19"}  # fmt: skip
 MODELS = "SELECT organization_id, model FROM ai_provider_accounts ORDER BY organization_id"
+TOUCHED, WAITING = (
+    "SELECT updated_at FROM ai_provider_accounts",
+    "SELECT count(*) FROM pg_locks WHERE NOT granted",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -70,10 +77,14 @@ def test_the_owner_changes_the_model_and_it_is_audited_with_before_and_after_onl
     ana = signed(crm.ana)
     account = create(ana).json()
     assert account["model"] == SONNET  # una cuenta nueva nace con el de `AI_PROVIDER_PARAMS`
+    touched: list[Any] = [migrator.execute(TOUCHED).fetchone()]
     with caplog.at_level(logging.DEBUG):
         done = pick(ana, account["id"], HAIKU, organization_id=str(crm.b), provider="X")
+        touched.append(migrator.execute(TOUCHED).fetchone())
         again = pick(ana, account["id"], HAIKU)  # el mismo: nada que cambiar ni auditar
+        touched.append(migrator.execute(TOUCHED).fetchone())
         listed = ana.get(BASE).json()
+    assert touched[0] < touched[1] == touched[2]  # `updated_at`, solo con un cambio real
     assert done.status_code == again.status_code == 200
     assert done.json()["model"] == listed[0]["model"] == HAIKU and "api_key" not in done.json()
     assert migrator.execute(MODELS).fetchall() == [(crm.a, HAIKU)]
@@ -100,7 +111,9 @@ def test_the_permission_goes_before_the_second_factor_and_nothing_changes_withou
     assert migrator.execute(MODELS).fetchall() == [(crm.a, SONNET)] and changes(migrator) == []
 
 
-@pytest.mark.parametrize("model", ["claude-opus-9", "", "x" * 65, None, 7, "CLAUDE-SONNET-5-5"])
+@pytest.mark.parametrize(
+    "model", ["claude-opus-9", "", "x" * 65, None, 7, "CLAUDE-SONNET-5-5", "claude\x00sonnet"]
+)
 def test_a_model_outside_the_list_is_a_400_before_the_404_that_never_echoes_it(
     crm: SimpleNamespace, migrator: DB, model: Any
 ) -> None:
@@ -113,6 +126,8 @@ def test_a_model_outside_the_list_is_a_400_before_the_404_that_never_echoes_it(
             "model": [{"code": refusal.json()["fields"]["model"][0]["code"],
                        "message": MODEL_REFUSED}]}  # fmt: skip
         assert model in (None, "", 7) or str(model) not in refusal.content.decode()
+        listed = isinstance(model, str) and 0 < len(model) <= 64  # con NUL, el mismo
+        assert not listed or refusal.json()["fields"]["model"][0]["code"] == "invalid"
     assert migrator.execute(MODELS).fetchall() == [(crm.a, SONNET)] and changes(migrator) == []
 
 
@@ -230,6 +245,69 @@ def test_the_gateway_estimates_reserves_calls_and_charges_with_the_account_model
         " ON c.reservation_id = r.id"
     ).fetchall()
     assert logged == [(HAIKU, HAIKU)]
+
+
+def test_a_model_change_during_a_call_does_not_split_body_reservation_and_cost(
+    world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El modelo se lee una vez: si otra persona lo cambia con la llamada en curso (aquí, justo
+    antes de abrir la clave), la llamada sigue entera con el que leyó."""
+    budget(migrator, world.a, "1")
+    real = keys.open_key
+
+    def open_key(*args: Any) -> str:
+        migrator.execute("UPDATE ai_provider_accounts SET model = %s", [HAIKU])  # confirmado
+        return real(*args)
+
+    monkeypatch.setattr(keys, "open_key", open_key)
+    call(world)
+    assert world.fake.calls[0]["body"]["model"] == SONNET
+    [row] = ledger(migrator)[1]
+    assert row[:3] == ("OK", row[1], prices.cost("ANTHROPIC", SONNET, Usage(**USAGE)))
+    logged = migrator.execute(
+        "SELECT r.model, c.model, a.model FROM ai_budget_reservations r JOIN ai_llm_calls c"
+        " ON c.reservation_id = r.id"
+        " JOIN ai_provider_accounts a ON a.organization_id = r.organization_id"
+    ).fetchall()
+    assert logged == [(SONNET, SONNET, HAIKU)]
+
+
+def test_two_changes_at_once_chain_their_audit(
+    crm: SimpleNamespace, migrator: DB, settings: Any
+) -> None:
+    """Las dos esperan al bloqueo de la cuenta: el antes de cada una es lo que dejó la otra."""
+    opus = "claude-opus-5-5"
+    settings.AI_MODELS = {"ANTHROPIC": {**settings.AI_MODELS["ANTHROPIC"], opus: CHEAP}}
+    with tenant_scope(ctx(crm.a, crm.ana)) as tenant:
+        keys.store(tenant, "ANTHROPIC", TEST_KEY)
+    errors = list[BaseException]()
+
+    def run(model: str) -> None:
+        try:
+            with tenant_scope(ctx(crm.a, crm.ana)) as ana:
+                accounts.change_model(ana, provider="ANTHROPIC", model=model)
+        except BaseException as error:  # noqa: BLE001 — se comprueba abajo
+            errors.append(error)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=run, args=(m,)) for m in (HAIKU, opus)]
+    with psycopg.connect(migrator_conninfo()) as holder:  # las dos esperan a la vez
+        holder.execute("SELECT 1 FROM ai_provider_accounts FOR UPDATE")
+        for thread in threads:
+            thread.start()
+        for _ in range(200):
+            if migrator.execute(WAITING).fetchone() == (2,):
+                break
+            time.sleep(0.05)
+        holder.rollback()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert errors == []
+    pairs = [tuple(row[1]["model"]) for row in changes(migrator)]
+    [head] = [pair for pair in pairs if pair[0] == SONNET]
+    [tail] = [pair for pair in pairs if pair != head]
+    assert tail[0] == head[1] != tail[1] and migrator.execute(MODELS).fetchone()[1] == tail[1]  # type: ignore[index]
 
 
 def test_a_well_formed_model_without_a_price_fails_closed_before_the_key_and_the_reservation(

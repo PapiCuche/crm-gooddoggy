@@ -15,6 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from django.conf import settings
+from django.core.validators import ProhibitNullCharactersValidator
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound
@@ -73,9 +74,19 @@ class AiProviderAccountCreateSerializer(AiProviderKeySerializer):
     )
 
 
+class ModelField(serializers.CharField):
+    """Sin el validador de NUL de DRF (su propio mensaje): un id con NUL no está en la lista y
+    recibe el mismo `MODEL_REFUSED` que cualquier otro."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        current: list[Any] = self.validators  # type: ignore[has-type]
+        self.validators = [v for v in current if not isinstance(v, ProhibitNullCharactersValidator)]
+
+
 class AiProviderModelSerializer(serializers.Serializer[Any]):
     # Ningún mensaje repite el modelo enviado; el de otro proveedor lo rechaza el comando.
-    model = serializers.CharField(
+    model = ModelField(
         max_length=64, error_messages=dict.fromkeys(
             ("invalid", "required", "null", "blank", "max_length"), MODEL_REFUSED),
         help_text="Uno de la lista permitida del proveedor de la cuenta (`AI_MODELS`).",
