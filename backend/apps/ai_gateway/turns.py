@@ -5,8 +5,13 @@ del turno.
 
 Las reglas son las de la Messages API: a cada `tool_use` de un turno del asistente le contesta un
 `tool_result` en el turno siguiente de quien pide, y solo ahí, con los resultados primero; un
-`thinking` o `redacted_thinking` vuelve sin cambios; el último turno es de quien pide."""
+`thinking` o `redacted_thinking` vuelve sin cambios; el último turno es de quien pide. No se exige
+que el razonamiento vaya primero en un turno del asistente: con el razonamiento intercalado de
+`thinking: adaptive` («Adaptive mode relaxes this: no assistant turn needs to start with one», guía
+de thinking de Anthropic) llega también entre llamadas a tools, y exigirlo rechazaría respuestas
+válidas. Todo texto tiene que poder codificarse en UTF-8 y la entrada de una tool, en JSON."""
 
+import math
 import re
 from collections.abc import Callable
 from typing import Any
@@ -25,7 +30,7 @@ from apps.ai_gateway.llm import (
 )  # fmt: skip
 
 ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
-BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
+BASE64 = re.compile(r"(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?")
 MEDIA = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 ALLOWED: dict[str, tuple[type, ...]] = {
     "user": (Text, Image, ToolResult),
@@ -60,24 +65,58 @@ class Rejected(Exception):  # noqa: N818 — solo el código de la regla
         self.rule = rule
 
 
+def _utf8(text: str) -> None:
+    try:
+        text.encode()
+    except UnicodeEncodeError:  # un sustituto suelto: no se puede enviar
+        raise Rejected("field") from None
+
+
+def _json(value: object, depth: int = 0) -> None:
+    """La entrada de una tool: solo tipos JSON, claves de texto, números finitos y textos UTF-8."""
+    if depth > 64:
+        raise Rejected("field")
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise Rejected("field")
+            _utf8(key)
+            _json(item, depth + 1)
+    elif type(value) is list:
+        for item in value:
+            _json(item, depth + 1)
+    elif type(value) is str:
+        _utf8(value)
+    elif type(value) is float:
+        if not math.isfinite(value):
+            raise Rejected("field")
+    elif type(value) not in (int, bool, type(None)):
+        raise Rejected("field")
+
+
 def _fields(block: Any) -> None:
     if any(type(getattr(block, name)) is not kind for name, kind in FIELDS[type(block)]):
         raise Rejected("field")
+    for name, kind in FIELDS[type(block)]:
+        if kind is str:
+            _utf8(getattr(block, name))
     empty = {Text: "text", Thinking: "signature", RedactedThinking: "data"}.get(type(block))
     ids = [block.id] if type(block) is ToolCall else []
     ids += [block.tool_use_id] if type(block) is ToolResult else []
-    if (empty and not getattr(block, empty)) or not all(ID.fullmatch(i) for i in ids):
+    if (empty and not getattr(block, empty).strip()) or not all(ID.fullmatch(i) for i in ids):
         raise Rejected("field")
+    if type(block) is ToolCall:
+        _json(block.input)
     if type(block) is Image:
-        size = len(block.data) <= settings.AI_TURN_LIMITS["image_chars"]
-        if block.media_type not in MEDIA or not BASE64.fullmatch(block.data) or not size:
+        size = 0 < len(block.data) <= settings.AI_TURN_LIMITS["image_chars"]
+        if block.media_type not in MEDIA or not size or not BASE64.fullmatch(block.data):
             raise Rejected("image")
 
 
 def _blocks(role: str, content: object) -> tuple[Block, ...]:
     """Los bloques de un turno, con sus campos comprobados; el texto simple es un bloque."""
     blocks = (Text(content),) if type(content) is str else content
-    if type(blocks) is not tuple:
+    if type(blocks) is not tuple or not blocks:  # un turno vacío no se envía
         raise Rejected("field")
     for block in blocks:
         if type(block) not in ALLOWED[role]:

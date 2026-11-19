@@ -78,6 +78,22 @@ class Shout(Text):  # una subclase no pasa por su base
     pass
 
 
+class Pair(tuple[Any, ...]):  # una subclase de tupla no es el contenido de un turno
+    pass
+
+
+DEEP: list[Any] = []
+for _ in range(70):
+    DEEP = [DEEP]
+BAD_INPUTS: dict[str, Any] = {  # entradas de tool que no son JSON válido o no se codifican
+    "decimal": {"q": Decimal("1.5")}, "set": {"q": {1, 2}}, "bytes": {"q": b"x"},
+    "tuple_key": {("a",): 1}, "int_key": {1: "x"}, "tuple": {"q": (1, 2)},
+    "nan": {"q": float("nan")}, "inf": {"q": float("inf")}, "minus_inf": {"q": float("-inf")},
+    "surrogate": {"q": "\ud800"}, "surrogate_key": {"\ud800": 1}, "nested": {"q": [{"r": b"x"}]},
+    "deep": {"q": DEEP},  # 70 listas anidadas: más de 64 niveles
+}  # fmt: skip
+
+
 CASES: dict[str, tuple[str, tuple[Turn, ...]]] = {  # caso -> (regla, conversación)
     "result_without_call": ("pairing", (Turn("user", (ToolResult("toolu_1"),)),)),
     "missing_result": ("pairing", at(2, ANSWERS[0])),
@@ -141,6 +157,36 @@ CASES: dict[str, tuple[str, tuple[Turn, ...]]] = {  # caso -> (regla, conversaci
     "system_role": ("role", (Turn("system", "x"),)),
     "assistant_first": ("role", (Turn("assistant", "x"), Turn("user", "y"))),
     "nothing": ("limit", ()),
+    "empty_user": ("field", (Turn("user", ()),)),
+    "empty_assistant": ("field", (Turn("user", "x"), Turn("assistant", ()), Turn("user", "y"))),
+    "blank_text": ("field", at(0, Text(" \n\t"))),
+    "blank_plain": ("field", (Turn("user", "  "),)),
+    "tuple_subclass": ("field", (Turn("user", Pair((Text("x"),))),)),
+    "nested_svg": (
+        "image",
+        at(2, ToolResult("toolu_1", (Image("image/svg+xml", PNG),)), ANSWERS[1]),
+    ),  # fmt: skip
+    "nested_not_base64": (
+        "image",
+        at(2, ToolResult("toolu_1", (Image("image/png", "@@@@"),)), ANSWERS[1]),
+    ),  # fmt: skip
+    "base64_length": ("image", at(0, Image("image/png", PNG[:-1]))),
+    "base64_padding": ("image", at(0, Image("image/png", "iVBO=AAA"))),
+    "empty_image": ("image", at(0, Image("image/png", ""))),
+    "surrogate_text": ("field", at(0, Text("a\ud800"))),
+    "surrogate_plain": ("field", (Turn("user", "a\ud800"),)),
+    "surrogate_thinking": ("field", at(1, Thinking("\udfff", SIG), *CALLED)),
+    **{
+        f"input_{name}": (
+            "field",
+            (
+                Turn("user", "x"),
+                Turn("assistant", (ToolCall("toolu_1", "search_product", value),)),
+                Turn("user", (ToolResult("toolu_1"),)),
+            ),
+        )
+        for name, value in BAD_INPUTS.items()
+    },  # fmt: skip
 }
 
 
@@ -194,13 +240,14 @@ def many(kind: str, n: int) -> tuple[Turn, ...]:
     """Una conversación válida con `n` de `kind` (turnos, bloques, razonamiento o imágenes)."""
     if kind == "turns":
         return tuple(Turn("user" if i % 2 == 0 else "assistant", "x") for i in range(n))
-    if kind == "thinking":
-        return (Turn("user", "x"), Turn("assistant", (Thinking("", SIG),) * n), Turn("user", "y"))
+    if kind in ("thinking", "redacted"):  # los dos cuentan en el mismo límite
+        own = Thinking("", SIG) if kind == "thinking" else RedactedThinking(RED)
+        return (Turn("user", "x"), Turn("assistant", (own,) * n), Turn("user", "y"))
     block = Image("image/png", PNG) if kind == "images" else Text("x")
     return (Turn("user", (block,) * n),)
 
 
-@pytest.mark.parametrize("kind", ["turns", "blocks", "thinking", "images"])
+@pytest.mark.parametrize("kind", ["turns", "blocks", "thinking", "redacted", "images"])
 def test_each_count_limit_holds_at_the_limit_and_refuses_one_more(
     world: SimpleNamespace, migrator: Any, spies: list[str], kind: str,
     caplog: pytest.LogCaptureFixture,
@@ -209,12 +256,12 @@ def test_each_count_limit_holds_at_the_limit_and_refuses_one_more(
     assert LIMITS == {"turns": 100, "blocks": 400, "thinking": 100, "images": 20,
                       "image_chars": 2_000_000, "body_bytes": 8_000_000}  # fmt: skip
     limit = 5 if kind == "turns" else 4  # los turnos, impares: el último es de quien pide
-    with override_settings(AI_TURN_LIMITS={**LIMITS, kind: limit}):
+    with override_settings(AI_TURN_LIMITS={**LIMITS, kind.replace("redacted", "thinking"): limit}):
         gateway.complete(ctx(world.a, world.ana), ask(*many(kind, limit)))
         assert len(world.fake.calls) == 1
         world.fake.calls.clear()
         spies.clear()
-        over = many(kind, limit + 2 if kind == "turns" else limit + 1)
+        over = many(kind, limit + 1)
         assert rejected(world, ask(*over), caplog) == "limit"
     assert spies == [] and world.fake.calls == [] and len(ledger(migrator)[1]) == 1
 
@@ -352,3 +399,43 @@ def test_an_unreadable_reply_block_counts_the_reservation_whole(
     assert caught.value.outcome == Outcome.PROVIDER_UNAVAILABLE and INPUT not in caplog.text
     [(spent, reserved)], [row] = ledger(migrator)
     assert (row[0], spent, reserved) == ("PROVIDER_UNCERTAIN", row[1], 0)
+
+
+def test_an_unencodable_system_prompt_is_refused_before_key_and_reserve(
+    world: SimpleNamespace, migrator: Any, spies: list[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    budget(migrator, world.a, "1")
+    request = LLMRequest("SUGGEST", "s\ud800", (Turn("user", "x"),), TOOLS)
+    assert rejected(world, request, caplog) == "field"  # 400 antes: un 500 dentro del scope
+    assert "open_key" not in spies and "_reserve" not in spies
+    assert world.fake.calls == [] and ledger(migrator) == ([], [])
+
+
+def test_a_conversation_goes_on_after_a_tool_round(world: SimpleNamespace, migrator: Any) -> None:
+    budget(migrator, world.a, "1")
+    later = (*LOOP, Turn("assistant", "listo"), Turn("user", "gracias"))
+    gateway.complete(ctx(world.a, world.ana), ask(*later))
+    sent = world.fake.calls[-1]["body"]["messages"]
+    assert [m["role"] for m in sent] == ["user", "assistant", "user", "assistant", "user"]
+    assert [b["type"] for b in sent[2]["content"]] == ["tool_result", "tool_result", "text"]
+
+
+def test_an_empty_reply_is_charged_and_returns_no_blocks(
+    world: SimpleNamespace, migrator: Any
+) -> None:
+    budget(migrator, world.a, "1")
+    world.fake.content = []
+    reply = gateway.complete(ctx(world.a, world.ana), ask(Turn("user", "hola")))
+    assert (reply.blocks, reply.text, reply.tool_calls) == ((), "", ())
+    [(spent, reserved)], [row] = ledger(migrator)
+    assert (row[0], spent, reserved) == ("OK", row[2], 0) and 0 < row[2] < row[1]
+
+
+def test_a_tool_schema_that_is_not_json_is_refused_before_key_and_reserve(
+    world: SimpleNamespace, migrator: Any, spies: list[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    budget(migrator, world.a, "1")
+    odd = (Tool("search_product", "d", {"type": "object", "maximum": float("nan")}),)
+    assert rejected(world, ask(Turn("user", "x"), tools=odd), caplog) == "field"  # sin NaN en JSON
+    assert "open_key" not in spies and "_reserve" not in spies
+    assert world.fake.calls == [] and ledger(migrator) == ([], [])

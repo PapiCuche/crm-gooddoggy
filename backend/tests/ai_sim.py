@@ -73,7 +73,7 @@ class FakeAnthropic:
         if name == "ok" and route == ("POST", "/v1/messages"):
             text = [{"type": "text", "text": f"respuesta {BODY_MARK}"}]
             reply = {
-                "content": self.content or text,
+                "content": text if self.content is None else self.content,
                 "stop_reason": "end_turn",
                 "usage": self.usage,
             }

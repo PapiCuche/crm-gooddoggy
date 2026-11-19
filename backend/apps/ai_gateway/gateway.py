@@ -120,13 +120,15 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
         _refuse(error.rule)
     with tenant_scope(ctx):
         model = _model(ctx, provider)  # el mismo para la cota, la reserva, la llamada y el costo
-        body = adapter.encode(request, {**params, "model": model})
         try:  # el cuerpo ya codificado; lo que sus bytes no acotan (razonamiento e imágenes)
+            body = adapter.encode(request, {**params, "model": model})
             if len(body) > settings.AI_TURN_LIMITS["body_bytes"]:
                 raise turns.Rejected("limit")
             extra = turns.surplus(blocks, params["max_tokens"])
         except turns.Rejected as error:
             _refuse(error.rule)
+        except TypeError, ValueError:  # no se puede codificar (un NaN, un sustituto suelto)
+            _refuse("field")
         try:  # un token nunca es menos de un byte
             amount = prices.ceiling(provider, model, len(body) + settings.AI_TOOL_TOKENS + extra,
                                     params["max_tokens"])  # fmt: skip

@@ -107,7 +107,7 @@ class AnthropicAdapter:
             body["tool_choice"] = {"type": "auto"}  # los modelos actuales rechazan forzarla
         if request.output_schema is not None:
             output["format"] = {"type": "json_schema", "schema": request.output_schema}
-        return json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
+        return json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()
 
     def send(self, key: str, body: bytes, seconds: float) -> llm.LLMResponse:
         url = f"https://{settings.AI_PROVIDER_HOSTS['ANTHROPIC']}/v1/messages"
