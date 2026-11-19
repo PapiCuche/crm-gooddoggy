@@ -38,6 +38,7 @@ SETTLE_SIG = (
 )
 MINUTES = int(orphans.ORPHAN_AFTER.total_seconds() // 60)
 IDS = {"request_id", "correlation_id"}  # los de todo log
+DONE = ("closed", "skipped", "failed")
 AGE = "UPDATE ai_budget_reservations SET created_at = created_at - make_interval(mins => %s)"
 CALLS = (
     "SELECT r.organization_id, c.outcome, c.reserved_usd = c.cost_usd, c.input_tokens,"
@@ -61,6 +62,13 @@ def hold(w: SimpleNamespace, org: UUID, amount: str = "0.5") -> UUID:
 
 def age(migrator: DB, held: UUID, minutes: int) -> None:
     migrator.execute(AGE + " WHERE id = %s", [minutes, held])
+
+
+def logged(caplog: pytest.LogCaptureFixture, event: str) -> list[dict[str, Any]]:
+    """Los registros estructurados de un evento, como diccionarios."""
+    return [
+        dict(r.msg) for r in caplog.records if isinstance(r.msg, dict) and r.msg["event"] == event
+    ]
 
 
 def discover(limit: int | None) -> list[UUID]:
@@ -175,6 +183,9 @@ def test_the_sweep_closes_each_orphan_in_its_own_organization_and_nothing_else(
                     for r in caplog.records if isinstance(r.msg, dict))  # fmt: skip
     for amount in ("0.5", "0.25", "0.125", "0.635"):
         assert amount not in text  # ni importes en los logs
+    [summary] = logged(caplog, "ai.orphans_closed")
+    assert set(summary) == {"event", "level", "logger", "timestamp", *IDS, *DONE}
+    assert {k: summary[k] for k in DONE} == {"closed": 3, "skipped": 0, "failed": 0}
     assert tasks.close_orphan_reservations() == {"closed": 0, "skipped": 0, "failed": 0}
     with tenant_scope(ctx(both.a)), pytest.raises(TenantContextError):
         tasks.close_orphan_reservations()  # de plataforma: nunca con un tenant ya puesto
@@ -225,7 +236,12 @@ def test_one_failure_does_not_stop_the_others(
     third = hold(both, both.b)
     age(migrator, third, MINUTES + 1)
     monkeypatch.setattr(orphans, "_open", broken)
-    assert orphans.close() == {"closed": 1, "skipped": 0, "failed": 1}  # A falla; B sigue
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        assert orphans.close() == {"closed": 1, "skipped": 0, "failed": 1}  # A falla; B sigue
+    [org_failed] = logged(caplog, "ai.orphan_close_failed")
+    assert set(org_failed) <= {"event", "level", "logger", "timestamp", "error", *IDS}
+    assert org_failed["error"] == "RuntimeError" and str(both.a) not in str(org_failed)
     assert migrator.execute(OPEN).fetchall() == [(first,)]
 
 
@@ -292,7 +308,8 @@ def test_one_age_everywhere_and_the_beat_runs_the_sweep(migrator: DB) -> None:
         assert body.count(f"now() - {MIGRATION.ORPHAN_AGE}") == 1, signature
     beat = settings.CELERY_BEAT_SCHEDULE["ai_gateway.close_orphan_reservations"]
     assert beat["task"] == tasks.close_orphan_reservations.name
-    assert beat["schedule"] <= 300 and tasks.close_orphan_reservations.tenancy == "platform"
+    assert (beat["schedule"], beat["options"]) == (300.0, {"expires": 300})  # sin acumular
+    assert tasks.close_orphan_reservations.tenancy == "platform"
 
 
 def _settle_source(migrator: DB) -> Any:

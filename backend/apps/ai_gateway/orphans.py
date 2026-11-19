@@ -7,7 +7,9 @@ Descubre las organizaciones con una función SECURITY DEFINER de solo lectura qu
 (`ai_budget_orphan_organizations`) y trabaja en el scope de cada una, como `crm_app` bajo RLS: la
 organización sale de la base, nunca de un payload. La base vuelve a comprobar el plazo y que la
 reserva siga abierta: dos barridos a la vez (o un ajuste tardío) no la cierran dos veces. Los logs
-llevan solo cuentas y tipos de error.
+propios del barrido llevan solo cuentas y tipos de error; cada cierre pasa además por
+`gateway.settle`, que registra `ai.llm_call` con el id de la reserva y el resultado (como cualquier
+ajuste), nunca importes.
 
 `crm_app` no crea particiones (sin EXECUTE sobre `ai_llm_calls_ensure_partitions`): el horizonte lo
 mantiene el `post_migrate` de `apps.py`. El barrido solo avisa si falta la partición de dentro de
