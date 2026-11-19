@@ -2727,8 +2727,52 @@
     "verify": "Confirmar con mi código",
     "empty": "Todavía no hay ninguna clave guardada.",
     "missing": "No encontramos el proveedor de IA de esta organización. Recarga la página.",
-    "provider": { "ANTHROPIC": "Anthropic", "UNKNOWN": "Otro proveedor" },
-    "status": { "ACTIVE": "Activa", "DISABLED": "Borrada", "UNKNOWN": "Estado desconocido" },
+    "switch": {
+      "title": "Estado de la IA",
+      "intro": "Apagarla corta las siguientes llamadas de {organization} al proveedor de IA; la que ya estaba en curso termina. No afecta a los canales ni al Inbox.",
+      "loading": "Cargando el estado de la IA…",
+      "denied": "No tienes permiso para ver el estado de la IA.",
+      "effective": {
+        "ON": "La IA está encendida.",
+        "OFF": "La IA está apagada."
+      },
+      "organization": "Esta organización",
+      "system": "Todo el sistema",
+      "changed": "Último cambio",
+      "never": "Nunca",
+      "state": {
+        "ON": "Encendida",
+        "OFF": "Apagada"
+      },
+      "globalOff": "La IA está apagada en todo el sistema. Se enciende en el servidor, no desde esta pantalla: mientras siga apagada, la IA no funciona aunque esta organización esté encendida.",
+      "turnOff": {
+        "open": "Apagar la IA",
+        "busy": "Apagando…",
+        "done": "La IA quedó apagada en esta organización."
+      },
+      "turnOn": {
+        "open": "Encender la IA",
+        "title": "Encender la IA",
+        "notice": "Confirmo que el aviso de tratamiento de datos está publicado: qué datos salen a un proveedor de IA, para qué y su transferencia fuera del país.",
+        "required": "Marca la confirmación del aviso de datos para encender la IA.",
+        "submit": "Sí, encender",
+        "busy": "Encendiendo…",
+        "cancel": "Cancelar",
+        "done": "La IA quedó encendida en esta organización.",
+        "doneGlobalOff": "Esta organización quedó encendida, pero la IA sigue apagada hasta que se encienda en el servidor."
+      },
+      "onlyManage": "Para encenderla hace falta el permiso de gestionar la IA.",
+      "accountsNote": "La clave y el proveedor de IA los gestiona quien tiene el permiso de gestionar la IA."
+    },
+    "provider": {
+      "ANTHROPIC": "Anthropic",
+      "UNKNOWN": "Otro proveedor"
+    },
+    "status": {
+      "ACTIVE": "Activa",
+      "DISABLED": "Borrada",
+      "UNKNOWN": "Estado desconocido"
+    },
     "fields": {
       "key": "Clave",
       "configured": "Guardada",
