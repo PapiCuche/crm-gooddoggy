@@ -5,6 +5,7 @@ se repiten; auditoría con el antes y el después y nada más; y lo que `crm_app
 SQL directo: solo los dos topes de la fila de su organización (0005)."""
 
 import logging
+import re
 import threading
 import time
 from decimal import Decimal
@@ -83,7 +84,10 @@ def test_set_read_and_change_are_audited_with_before_and_after_only(
         ("ai.limits.changed", row_id, {"monthly_usd": ["100.000000", "50.000000"],
                                        "daily_usd": ["10.500000", "50.000000"]}, {}, crm.a),
     ]  # fmt: skip
-    assert "10.5" not in caplog.text and "50.0" not in caplog.text  # importes, solo en auditoría
+    # Importes, solo en auditoría. La duración de una petición (`duration_ms`) puede valer 10.5:
+    # se quita antes de buscar, para que la prueba no dependa de cuánto tardó.
+    logged = re.sub(r"""duration_ms['"]?: [0-9.]+""", "", caplog.text)
+    assert "10.5" not in logged and "50.0" not in logged
 
 
 def test_the_caps_open_and_cut_the_gateway_and_open_reservations_still_settle(
