@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import NamedTuple
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models.functions import Now
 from django.utils import timezone
 
@@ -277,3 +277,60 @@ def previewed_invitation(
     )
     name = organizations.values_list("name", flat=True).first()
     return (name, email) if email is not None and name is not None else None
+
+
+def locked_invitation(
+    ctx: TenantContext, invitation_id: UUID, token_hash: str
+) -> tuple[str, InvitationRef] | None:
+    """El nombre de la organización de `ctx` y la invitación, bloqueada hasta el final del scope,
+    si sigue pendiente, sin caducar (reloj de la base), con ese hash y la organización admite
+    acceso; si no, `None` (ADR-020 §3). Otra aceptación espera antes, en el bloqueo de RBAC; el de
+    la fila protege de quien escribe sin él (el envío, 130c: RBAC y después fila, o bloquearla)."""
+    alias = require_scope(ctx)
+    organizations = Organization.objects.using(alias).filter(
+        pk=ctx.organization_id, status__in=ACCESSIBLE_STATUSES
+    )
+    name = organizations.values_list("name", flat=True).first()
+    rows = UserInvitation.objects.using(alias).select_for_update(no_key=True)
+    rows = rows.filter(pk=invitation_id, token_hash=token_hash)
+    invitation = rows.filter(status=UserInvitation.Status.PENDING, expires_at__gt=Now()).first()
+    if name is None or invitation is None:
+        return None
+    fields = ("pk", "email", "role_ids", "status", "expires_at", "invited_by_id", "created_at")
+    return name, InvitationRef(*(getattr(invitation, field) for field in fields))
+
+
+def has_membership(ctx: TenantContext, *, email: str) -> bool:
+    """¿La cuenta de `email` tiene membresía en la organización de `ctx`, en el estado que sea?"""
+    memberships = OrganizationMembership.objects.using(require_scope(ctx))
+    return memberships.filter(user__email=email).exists()
+
+
+def accept_invitation(
+    ctx: TenantContext, invitation: InvitationRef, user_id: UUID, user_created: bool
+) -> UUID:
+    """Crea la membresía activa de `user_id`, deja la invitación (ya bloqueada y comprobada)
+    `ACCEPTED` sin el hash de su enlace y audita `membership.activated` (ADR-020 §4 y §6).
+    Devuelve la membresía. Una que apareció a la vez: `AlreadyMember`."""
+    alias = require_scope(ctx)
+    try:
+        with transaction.atomic(using=alias):
+            membership = OrganizationMembership.objects.using(alias).create(
+                user_id=user_id, status=Status.ACTIVE
+            )
+    except IntegrityError:
+        raise AlreadyMember from None
+    UserInvitation.objects.using(alias).filter(pk=invitation.id).update(
+        status=UserInvitation.Status.ACCEPTED, accepted_at=Now(), token_hash=None, updated_at=Now()
+    )
+    metadata = {
+        "via": "invitation",
+        "invitation_id": invitation.id,
+        "user_id": user_id,
+        "user_created": user_created,
+        "invited_by": invitation.invited_by_id,
+        "role_ids": [str(role_id) for role_id in invitation.role_ids],
+    }
+    changes = {"status": [None, Status.ACTIVE.value]}
+    record(ctx, "membership.activated", Entity("membership", membership.pk), changes, metadata)
+    return UUID(str(membership.pk))
