@@ -564,6 +564,46 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/invitations/preview/:
+    post:
+      operationId: invitations_preview
+      description: |-
+        Lo que enseña el enlace de una invitación pendiente: la organización, el correo
+        invitado y si hay que crear una cuenta. No cambia nada. 400 `INVALID_INVITATION_LINK`:
+        el enlace no vale, sin decir por qué. 429: demasiados intentos desde esta red.
+      tags:
+      - invitations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationLinkRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationPreview'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/me/organizations/:
     get:
       operationId: me_organizations
@@ -13438,6 +13478,34 @@ components:
       - invited_by
       - role_ids
       - status
+    InvitationLinkRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: El secreto del enlace, del fragmento de la URL.
+          maxLength: 128
+      required:
+      - token
+    InvitationPreview:
+      type: object
+      properties:
+        organization_name:
+          type: string
+          description: La organización que invita.
+        email:
+          type: string
+          description: El correo invitado.
+        needs_account:
+          type: boolean
+          description: 'El correo no tiene cuenta: hay que crearla (si no, iniciar
+            sesión).'
+      required:
+      - email
+      - needs_account
+      - organization_name
     InvitationStatusChangeRequest:
       type: object
       properties:

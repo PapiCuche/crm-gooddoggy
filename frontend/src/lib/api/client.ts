@@ -71,6 +71,8 @@ import type {
   InventoryMovementsListParams,
   InventoryReservationsListParams,
   Invitation,
+  InvitationLinkRequest,
+  InvitationPreview,
   InvitationStatusChangeRequest,
   InvitationsListParams,
   InviteRequest,
@@ -1724,6 +1726,111 @@ export function useAuthTestAccounts<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getInvitationsPreviewUrl = () => {
+  return `/api/v1/invitations/preview/`;
+};
+
+/**
+ * Lo que enseña el enlace de una invitación pendiente: la organización, el correo
+ * invitado y si hay que crear una cuenta. No cambia nada. 400 `INVALID_INVITATION_LINK`:
+ * el enlace no vale, sin decir por qué. 429: demasiados intentos desde esta red.
+ */
+export const invitationsPreview = async (
+  invitationLinkRequest: InvitationLinkRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<InvitationPreview> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<InvitationPreview>(getInvitationsPreviewUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(invitationLinkRequest),
+  });
+};
+
+export const getInvitationsPreviewMutationKey = () => ["invitationsPreview"] as const;
+
+export const getInvitationsPreviewMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsPreview>>,
+    TError,
+    InvitationsPreviewMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsPreview>>,
+  TError,
+  InvitationsPreviewMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsPreviewMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsPreview>>,
+    InvitationsPreviewMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return invitationsPreview(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsPreviewMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsPreview>>
+>;
+export type InvitationsPreviewMutationBody = InvitationLinkRequest;
+export type InvitationsPreviewMutationError = ErrorType<Error>;
+export type InvitationsPreviewMutationVariables = { data: InvitationLinkRequest };
+
+export const useInvitationsPreview = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsPreview>>,
+      TError,
+      InvitationsPreviewMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsPreview>>,
+  TError,
+  InvitationsPreviewMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsPreviewMutationOptions(options), queryClient);
+};
 
 export const getMeOrganizationsUrl = () => {
   return `/api/v1/me/organizations/`;

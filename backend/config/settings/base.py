@@ -99,6 +99,9 @@ PASSWORD_RESET_THROTTLE = {
     "identifier": (5, 60 * 60),  # un correo, desde cualquier dirección
     "change": (10, 15 * 60),  # presentar un enlace, desde una dirección de red (ADR-021 §5)
 }
+# Enlaces de invitación presentados desde una dirección de red (ADR-020 §4, F2-130a): intentos por
+# ventana, en segundos. Pendiente de confirmación del PO.
+INVITATION_LINK_THROTTLE = (10, 15 * 60)
 # Segundo factor (ADR-023 §5): códigos fallidos por cuenta, vengan de donde vengan, y la ventana
 # en segundos. Alcanzado el tope, se rechaza también el código correcto.
 MFA_CODE_THROTTLE = (10, 24 * 60 * 60)

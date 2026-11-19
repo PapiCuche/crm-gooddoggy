@@ -1,6 +1,7 @@
 """Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19), su
 sucursal (F2-69), sus equipos (F2-58, F2-59, D-F2-13) y las invitaciones a la organización:
-invitar (F2-80), listarlas (F2-81) y revocar una (F2-82)."""
+invitar (F2-80), listarlas (F2-81) y revocar una (F2-82). Y una ruta de plataforma: la vista previa
+del enlace de una invitación (F2-130a, ADR-020 §4 y su excepción a ADR-014 §4, D-F2-14)."""
 
 from typing import Any
 from uuid import UUID
@@ -15,6 +16,7 @@ from rest_framework.views import APIView
 
 from apps.access.permissions import rbac_errors
 from apps.access.services import UnknownRole
+from apps.members import invitation_links
 from apps.members.services import (
     ACTIVE,
     SUSPENDED,
@@ -41,6 +43,7 @@ from apps.organizations.services import (
 )
 from apps.organizations.teams import OwnTeamMembership
 from core.api.errors import ApiError
+from core.api.permissions import Public
 from core.api.schema import errors
 from core.tenancy import context
 
@@ -329,3 +332,40 @@ class InvitationStatusView(APIView):
             message = "Solo se revoca una invitación pendiente."
             raise ApiError("INVALID_TRANSITION", 409, message) from None
         return Response(InvitationSerializer(invitation).data)
+
+
+class InvitationLinkSerializer(serializers.Serializer[Any]):
+    token = serializers.CharField(
+        max_length=128,
+        trim_whitespace=False,
+        write_only=True,
+        help_text="El secreto del enlace, del fragmento de la URL.",
+    )
+
+
+class InvitationPreviewSerializer(serializers.Serializer[Any]):
+    organization_name = serializers.CharField(help_text="La organización que invita.")
+    email = serializers.CharField(help_text="El correo invitado.")
+    needs_account = serializers.BooleanField(
+        help_text="El correo no tiene cuenta: hay que crearla (si no, iniciar sesión)."
+    )
+
+
+class InvitationPreviewView(APIView):
+    permission_classes = [Public]
+
+    @extend_schema(
+        operation_id="invitations_preview",
+        tags=["invitations"],
+        auth=[],
+        request=InvitationLinkSerializer,
+        responses={200: InvitationPreviewSerializer, **errors(400, 403, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Lo que enseña el enlace de una invitación pendiente: la organización, el correo
+        invitado y si hay que crear una cuenta. No cambia nada. 400 `INVALID_INVITATION_LINK`:
+        el enlace no vale, sin decir por qué. 429: demasiados intentos desde esta red."""
+        sent = InvitationLinkSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        shown = invitation_links.preview(request._request, **sent.validated_data)
+        return Response(InvitationPreviewSerializer(shown._asdict()).data)
