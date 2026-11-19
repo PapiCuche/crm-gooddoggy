@@ -203,16 +203,20 @@ NAME_MAX = User._meta.get_field("first_name").max_length or 0
 
 def _person_name(value: str, *, required: bool) -> str:
     """Un nombre o apellido como se guarda (`core.text.line`: NFC, una línea, sin controles ni
-    caracteres de dirección) o `ValidationError` con un mensaje fijo, que nunca repite el valor.
-    Obligatorio: con alguna letra o cifra que se vea (`core.text.name`)."""
+    caracteres de dirección ni ocultos) o `ValidationError` con un mensaje fijo, que nunca repite
+    el valor. Con alguna letra o cifra que se vea (`core.text.name`): el nombre siempre y el
+    apellido si lo lleva (`core.text.optional_name`, F2-131)."""
     try:
         tidy = text.line(value, NAME_MAX)
     except ValueError:
         message = "Escríbelo en una sola línea, sin caracteres de control ni de dirección."
         raise ValidationError(message, code="invalid") from None
     try:
-        return text.name(tidy, NAME_MAX) if required else tidy
+        return text.name(tidy, NAME_MAX) if required else text.optional_name(tidy, NAME_MAX)
     except ValueError:
+        if not required:
+            message = "Escribe tu apellido con alguna letra o cifra, o déjalo vacío."
+            raise ValidationError(message, code="invalid") from None
         raise ValidationError("Escribe tu nombre.", code="required") from None
 
 

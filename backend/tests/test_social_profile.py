@@ -154,6 +154,10 @@ def test_an_http_404_is_a_rejection(
         ({"name": "N" * 300}, "N" * 100),
         ({"name": "ㅤᅟ", "username": "cliente.sim"}, "@cliente.sim"),  # rellenos: no
         ({"name": None, "username": "ana_perez.99"}, "@ana_perez.99"),
+        ({"name": "Ana" + "\ufe01" * 40, "username": "ana.sim"}, "@ana.sim"),  # F2-131: oculto
+        ({"name": "Ana\ufe0f", "username": "ana.sim"}, "@ana.sim"),
+        ({"name": "Ana \U0001f468\u200d\U0001f469"}, "Ana \U0001f468\U0001f469"),  # sin el ZWJ
+        ({"name": "Caf\u00e9 \u2764\ufe0f"}, "Caf\u00e9 \u2764\ufe0f"),
     ],
 )  # fmt: skip
 def test_the_profile_is_sanitized_and_capped(

@@ -222,7 +222,8 @@ describe("AuditList", () => {
       await screen.findByRole("list", { name: "Auditoría" });
       const options = (name: string) =>
         [...select(name).options].map((option) => [option.value, option.text]);
-      expect(options("Acción")).toHaveLength(46); // y el alta por un operador (F2-127)
+      expect(options("Acción")).toHaveLength(47); // y aceptar una invitación (F2-131)
+      expect(options("Acción")).toContainEqual(["membership.activated", "Invitación aceptada"]);
       expect(options("Acción")).toContainEqual([
         "membership.created",
         "Miembro añadido por un operador",
