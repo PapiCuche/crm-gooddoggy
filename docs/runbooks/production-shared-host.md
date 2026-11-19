@@ -1,6 +1,6 @@
-# Runbook: producción en un servidor compartido (ADR-046, Proposed)
+# Runbook: producción en un servidor compartido (ADR-046)
 
-Este runbook **complementa** `production-first-boot.md`: solo dice qué cambia cuando el CRM comparte servidor con otra aplicación que ya publica 80 y 443. No se aplica mientras ADR-046 no esté aceptado. Sin dominio, IP ni datos reales: `<dominio>` y `<servidor>` son marcadores.
+Este runbook **complementa** `production-first-boot.md`: solo dice qué cambia cuando el CRM comparte servidor con otra aplicación que ya publica 80 y 443. Sin dominio, IP ni datos reales: `<dominio>` y `<servidor>` son marcadores.
 
 ## 0. Antes de empezar
 

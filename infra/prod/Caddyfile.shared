@@ -1,4 +1,4 @@
-# Proxy INTERNO del CRM en un servidor compartido (ADR-046, Proposed; lo monta compose.shared.yaml).
+# Proxy INTERNO del CRM en un servidor compartido (ADR-046; lo monta compose.shared.yaml).
 # El borde público es el Caddy de la otra aplicación del servidor: publica 80/443, termina TLS y
 # reenvía crm.{$CRM_DOMAIN} aquí por la red `ingress`. Este Caddy no publica puertos, no pide
 # certificados y escucha HTTP en :80.

@@ -1,4 +1,4 @@
-# Variante de SERVIDOR COMPARTIDO (ADR-046, Proposed). Se aplica ENCIMA de compose.yaml, nunca sola:
+# Variante de SERVIDOR COMPARTIDO (ADR-046). Se aplica ENCIMA de compose.yaml, nunca sola:
 #   sudo docker compose -f infra/prod/compose.yaml -f infra/prod/compose.shared.yaml --env-file /etc/crm/release.env …
 # No hace falta escribirlo a mano: deploy.sh, smoke.sh y backup/ lo añaden cuando /etc/crm/host-mode
 # dice `shared` (infra/prod/host-mode.sh). Sin ese archivo, todo sigue como en ADR-033 (servidor dedicado).

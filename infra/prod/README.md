@@ -5,7 +5,7 @@ Producción en un servidor Linux con Docker Compose, según [ADR-033](../../docs
 | Archivo | Qué es |
 | --- | --- |
 | `compose.yaml` | Los servicios de ADR-033 §3, sin Garage, Mailpit ni `build:`. Usa imágenes por digest y límites de memoria, y rota los logs |
-| `compose.shared.yaml` | Variante de servidor compartido (ADR-046, Proposed), encima de `compose.yaml`: el `proxy` no publica puertos, monta `Caddyfile.shared` y entra en la red externa `ingress` |
+| `compose.shared.yaml` | Variante de servidor compartido (ADR-046), encima de `compose.yaml`: el `proxy` no publica puertos, monta `Caddyfile.shared` y entra en la red externa `ingress` |
 | `Caddyfile.shared` | El proxy interno del modo compartido: HTTP en `:80`, sin ACME, IP del cliente solo del borde público por su IP fija; mismas rutas y topes que `Caddyfile` (`validate.sh`) |
 | `host-mode.sh` | Qué archivos de Compose usa este servidor, según `/etc/crm/host-mode` (`dedicated` o `shared`). Lo leen `deploy.sh`, `smoke.sh` y `backup/`. Prueba: `test-host-mode.sh` |
 | `Caddyfile` | El borde: HTTPS automático para `crm.<DOMINIO>`, las rutas del stack local, los topes de cuerpo, la tasa por IP en `/webhooks/*` y los registros sin query. `/health/*` responde 404 |
