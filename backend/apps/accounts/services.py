@@ -13,8 +13,9 @@ from uuid import UUID
 from django.contrib.auth import SESSION_KEY, authenticate
 from django.contrib.auth import login as django_login
 from django.contrib.auth import logout as django_logout
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.db import DEFAULT_DB_ALIAS, transaction
+from django.db import DEFAULT_DB_ALIAS, IntegrityError, transaction
 from django.db.models import F
 from django.http import HttpRequest
 
@@ -186,6 +187,51 @@ def revoke_sessions(user_id: UUID, *, using: str = DEFAULT_DB_ALIAS) -> None:
     No comprueba permisos.
     """
     User.objects.using(using).filter(pk=user_id).update(session_epoch=F("session_epoch") + 1)
+
+
+class AccountExists(Exception):
+    """El correo ya tiene cuenta y no es la de la sesión, o se creó a la vez (ADR-020 §4)."""
+
+
+class StaffAccount(Exception):
+    """El correo es de una cuenta de personal de plataforma: nunca es miembro (ADR-001)."""
+
+
+def invited_account(
+    email: str, *, session_user_id: UUID | None, password: str, first_name: str, last_name: str
+) -> tuple[UUID, bool]:
+    """La cuenta que acepta una invitación a `email` (canónico), como `(id, creada)` (ADR-020 §4).
+
+    Si existe, solo vale la de la sesión, activa, y no se toca: si no, `AccountExists` (también
+    desactivada) o `StaffAccount`. Si no, se crea con el nombre y una contraseña que pasa los
+    validadores (`ValidationError` por campo). Si otra aceptación la creó a la vez,
+    `AccountExists`: quien llama deshace su transacción entera. No inicia sesión.
+    """
+    existing = User.objects.filter(email=email).first()
+    if existing is not None:
+        if existing.is_platform_staff:
+            raise StaffAccount
+        if existing.pk != session_user_id or not existing.is_active:
+            raise AccountExists
+        return existing.pk, False
+    first_name, last_name = first_name.strip(), last_name.strip()
+    problems: dict[str, list[str]] = {}
+    if not first_name:
+        problems["first_name"] = ["Escribe tu nombre."]
+    try:
+        validate_password(password, User(email=email, first_name=first_name, last_name=last_name))
+    except ValidationError as weak:
+        problems["password"] = weak.messages
+    if problems:
+        raise ValidationError(problems)
+    try:
+        with transaction.atomic():  # savepoint: la misma cuenta pudo nacer en otra organización
+            user = User.objects.create_user(
+                email=email, password=password, first_name=first_name, last_name=last_name
+            )
+    except IntegrityError:
+        raise AccountExists from None
+    return user.pk, True
 
 
 def logout(request: HttpRequest) -> None:

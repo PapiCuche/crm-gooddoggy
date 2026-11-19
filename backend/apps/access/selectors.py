@@ -72,9 +72,16 @@ def definition(code: str) -> PermissionDef:
 
 def execution_context(ctx: TenantContext) -> ExecutionContext:
     """Dos consultas, sea cual sea el número de roles. Sin membresía activa: `AccessDenied`."""
-    alias = require_scope(ctx)
     if ctx.actor_type != ActorType.USER or ctx.user_id is None:
         raise AccessDenied(Denied.MEMBERSHIP)
+    return member_context(ctx, ctx.user_id)
+
+
+def member_context(ctx: TenantContext, user_id: UUID) -> ExecutionContext:
+    """Los permisos efectivos de `user_id` en la organización de `ctx`, leídos ahora, sea quien sea
+    el actor de `ctx`: los de quien invitó, al aceptar su invitación (ADR-020 §2). Para
+    `access.services`; nunca autoriza al actor de `ctx`."""
+    alias = require_scope(ctx)
     memberships = apps.get_model("organizations", "OrganizationMembership")._default_manager
     # Los equipos van en la misma consulta que la membresía: cuentan todos aquellos a los que
     # pertenece, también si el equipo o la pertenencia están inactivos.
@@ -82,7 +89,7 @@ def execution_context(ctx: TenantContext) -> ExecutionContext:
     teams = ArraySubquery(belongs.filter(membership_id=OuterRef("pk")).values("team_id"))
     row = (
         memberships.using(alias)
-        .filter(user_id=ctx.user_id)
+        .filter(user_id=user_id)
         .annotate(teams=teams)
         .values_list("pk", "status", "user__is_active", "teams", "default_branch_id")
         .first()

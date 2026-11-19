@@ -71,6 +71,8 @@ import type {
   InventoryMovementsListParams,
   InventoryReservationsListParams,
   Invitation,
+  InvitationAcceptRequest,
+  InvitationAccepted,
   InvitationLinkRequest,
   InvitationPreview,
   InvitationStatusChangeRequest,
@@ -1726,6 +1728,112 @@ export function useAuthTestAccounts<
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+export const getInvitationsAcceptUrl = () => {
+  return `/api/v1/invitations/accept/`;
+};
+
+/**
+ * Acepta la invitación: la membresía con sus roles y, sin cuenta, la crea (`first_name`,
+ * `password`); con cuenta, hay que tener su sesión. No inicia sesión. 400: el enlace no vale
+ * (`INVALID_INVITATION_LINK`, sin decir por qué) o `VALIDATION_ERROR`. 409 `ACCOUNT_EXISTS`:
+ * el correo tiene cuenta y no es la de la sesión. 429: demasiados intentos desde esta red.
+ */
+export const invitationsAccept = async (
+  invitationAcceptRequest: InvitationAcceptRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<InvitationAccepted> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit["headers"]>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<InvitationAccepted>(getInvitationsAcceptUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getHeaders(options?.headers) },
+    body: JSON.stringify(invitationAcceptRequest),
+  });
+};
+
+export const getInvitationsAcceptMutationKey = () => ["invitationsAccept"] as const;
+
+export const getInvitationsAcceptMutationOptions = <
+  TError = ErrorType<Error>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof invitationsAccept>>,
+    TError,
+    InvitationsAcceptMutationVariables,
+    TContext
+  >;
+  request?: SecondParameter<typeof apiFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof invitationsAccept>>,
+  TError,
+  InvitationsAcceptMutationVariables,
+  TContext
+> => {
+  const mutationKey = getInvitationsAcceptMutationKey();
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation && "mutationKey" in options.mutation && options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof invitationsAccept>>,
+    InvitationsAcceptMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return invitationsAccept(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InvitationsAcceptMutationResult = NonNullable<
+  Awaited<ReturnType<typeof invitationsAccept>>
+>;
+export type InvitationsAcceptMutationBody = InvitationAcceptRequest;
+export type InvitationsAcceptMutationError = ErrorType<Error>;
+export type InvitationsAcceptMutationVariables = { data: InvitationAcceptRequest };
+
+export const useInvitationsAccept = <TError = ErrorType<Error>, TContext = unknown>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof invitationsAccept>>,
+      TError,
+      InvitationsAcceptMutationVariables,
+      TContext
+    >;
+    request?: SecondParameter<typeof apiFetch>;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof invitationsAccept>>,
+  TError,
+  InvitationsAcceptMutationVariables,
+  TContext
+> => {
+  return useMutation(getInvitationsAcceptMutationOptions(options), queryClient);
+};
 
 export const getInvitationsPreviewUrl = () => {
   return `/api/v1/invitations/preview/`;
