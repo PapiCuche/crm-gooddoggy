@@ -170,9 +170,7 @@ def test_production_refuses_the_sandbox_inbound_and_has_it_off(
 
 
 @pytest.mark.parametrize(("value", "on"), [(None, False), ("false", False), ("true", True)])
-def test_ai_is_off_unless_the_environment_turns_it_on(
-    monkeypatch: Any, value: Any, on: bool
-) -> None:
+def test_ai_is_off_unless_turned_on(monkeypatch: Any, value: Any, on: bool) -> None:
     """F8-06 (ADR-034 §5): apagado por omisión; un valor que no es booleano no arranca."""
     assert load_production(monkeypatch, AI_ENABLED=value).AI_ENABLED is on  # type: ignore[attr-defined]
     with pytest.raises(ImproperlyConfigured):

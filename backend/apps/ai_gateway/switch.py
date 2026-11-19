@@ -1,10 +1,6 @@
-"""El kill switch de IA en dos niveles (F8-06; ADR-034 §5, §10): `AI_ENABLED` (entorno, apagado por
-omisión; la aplicación no lo cambia) y la fila de `ai_switches` de cada organización (sin fila,
-apagada). El gateway llama solo con los dos encendidos y lee la fila en cada llamada (`is_on`).
-Apaga `ai.kill_switch` o `ai.manage`; enciende solo `ai.manage`, con la confirmación del aviso de
-datos (el segundo factor y el tope los ponen las rutas). Auditoría con el antes y el después:
-`ai.kill_switch.activated` al apagar, `ai.kill_switch.deactivated` al encender; repetir el estado no
-escribe ni audita. Como `crm_app` bajo RLS (0009)."""
+"""Kill switch de IA (F8-06; ADR-034 §5, §10): `AI_ENABLED` (entorno) y la fila de `ai_switches` de
+cada organización (sin fila, apagada). Apaga `ai.kill_switch` o `ai.manage`; enciende `ai.manage`
+con el aviso de datos confirmado. Auditado con antes y después; repetir el estado no escribe."""
 
 from django.conf import settings
 from django.db import connections, transaction
@@ -22,9 +18,8 @@ _CREATE = (  # la fila, apagada; si ya existe (o otra petición la crea a la vez
     "INSERT INTO public.ai_switches (organization_id, enabled, changed_at)"
     " VALUES (%s, false, now()) ON CONFLICT (organization_id) DO NOTHING"
 )
-# Candado consultivo por organización (de transacción), no el de la fila: las llamadas (compartido)
-# no se cuelan delante de quien apaga (exclusivo), que espera solo a las reservas ya en curso.
-# `LOCK_SALT` fija el espacio de claves; una colisión entre organizaciones solo comparte esperas.
+# Candado consultivo por organización (transacción): las llamadas (compartido) no se cuelan delante
+# de quien apaga (exclusivo). Una colisión del hash entre organizaciones solo comparte esperas.
 LOCK_SALT, _LOCK = 7_690_006, "hashtextextended(%s::text, %s)"
 _SHARED = f"SELECT pg_advisory_xact_lock_shared({_LOCK})"
 _EXCLUSIVE = f"SELECT pg_advisory_xact_lock({_LOCK})"
@@ -47,9 +42,8 @@ def _allowed(ctx: TenantContext, codes: tuple[str, ...]) -> None:
 
 
 def is_on(ctx: TenantContext) -> bool:
-    """El interruptor de la organización de `ctx` (RLS), dentro de su `tenant_scope`, con el
-    candado compartido hasta el fin de la transacción: apagar espera a la reserva que lo leyó
-    encendido, y la siguiente ya lo ve apagado. Sin fila, apagado."""
+    """El de la organización, con el candado compartido hasta el fin de la transacción: apagar
+    espera a la reserva que lo leyó encendido. Sin fila, apagado."""
     with connections[require_scope(ctx)].cursor() as cursor:
         cursor.execute(_SHARED, [ctx.organization_id, LOCK_SALT])
         cursor.execute(_READ, [ctx.organization_id])

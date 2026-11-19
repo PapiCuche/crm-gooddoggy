@@ -1,6 +1,5 @@
-"""El interruptor de IA de la organización (F8-06; ADR-034 §5, §10), fuera de
-`…/ai/provider-accounts/`: apagar es fácil y encender es difícil (`apps.ai_gateway.switch`). La
-organización es la de la ruta; el cuerpo solo aporta `notice_confirmed` al encender."""
+"""El interruptor de IA de la organización (F8-06; ADR-034 §5, §10), fuera de `provider-accounts`.
+La organización es la de la ruta; el cuerpo solo aporta `notice_confirmed` al encender."""
 
 from typing import Any
 

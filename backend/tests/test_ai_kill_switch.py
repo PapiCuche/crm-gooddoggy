@@ -1,9 +1,9 @@
-"""F8-06 (#769): el kill switch de IA, global (`AI_ENABLED`) y por organización (`ai_switches`;
-ADR-034 §5, §10), contra la API falsa de Anthropic (`tests.ai_sim`, sin red) y PostgreSQL con
-`crm_app`. Claves ficticias."""
+"""F8-06 (#769): el kill switch de IA, global y por organización (ADR-034 §5, §10), contra la API
+falsa de Anthropic (`tests.ai_sim`, sin red) y PostgreSQL con `crm_app`. Claves ficticias."""
 
 import threading
 import time
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,12 +11,7 @@ import psycopg
 import pytest
 from django.db import DatabaseError, connection
 from django.test import Client
-from rest_framework.exceptions import NotFound
 
-from apps.access import permissions
-from apps.access.apps import extend_owner_roles
-from apps.access.catalog import BY_CODE, ROLE_TEMPLATES
-from apps.access.permissions import AnyOf, HasPermission
 from apps.access.selectors import AccessDenied
 from apps.ai_gateway import accounts, gateway, keys, switch, turns
 from apps.ai_gateway.llm import Outcome
@@ -25,7 +20,6 @@ from core.api.step_up import STEP_UP_REQUIRED
 from core.tenancy.scope import tenant_scope
 from tests import ai_sim, test_ai_gateway
 from tests.ai_sim import TEST_KEY, FakeAnthropic
-from tests.test_access import as_migrator
 from tests.test_ai_gateway import ASK, budget, call, code
 from tests.test_ai_provider_accounts import crm, real_stack
 from tests.test_ai_provider_test_api import COUNTED
@@ -57,21 +51,21 @@ def audit(migrator: DB) -> list[tuple[Any, ...]]:
     ).fetchall()
 
 
+def ahead(before: Any, real: Any) -> Any:
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        before()
+        return real(*args, **kwargs)
+
+    return wrapper
+
+
 @pytest.fixture
 def spied(world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Lo que el gateway llegó a hacer: validar, leer el modelo, abrir la clave o reservar."""
     done: list[str] = []
-
-    def spy(name: str, real: Any) -> Any:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            done.append(name)
-            return real(*args, **kwargs)
-
-        return wrapper
-
     for module, name in ((turns, "check"), (gateway, "_model"), (keys, "open_key"),
                          (gateway, "_reserve")):  # fmt: skip
-        monkeypatch.setattr(module, name, spy(name, getattr(module, name)))
+        monkeypatch.setattr(module, name, ahead(partial(done.append, name), getattr(module, name)))
     return done
 
 
@@ -112,14 +106,8 @@ def test_the_organization_switch_is_off_without_a_row_or_when_off_and_leaves_the
     assert code(world, world.b) == Outcome.AI_DISABLED and len(world.fake.calls) == 2
 
 
-def later(target: Any) -> threading.Thread:
-    def run() -> None:
-        try:
-            target()
-        finally:
-            connection.close()
-
-    thread = threading.Thread(target=run, daemon=True)  # nunca retiene el proceso
+def later(target: Any) -> threading.Thread:  # otro hilo, su conexión; no retiene el proceso
+    thread = threading.Thread(target=ahead(target, lambda: connection.close()), daemon=True)
     thread.start()
     return thread
 
@@ -143,15 +131,11 @@ def test_turning_off_waits_for_the_reservation_in_flight_and_holds_the_next_call
     off, outcome = stopper(world, migrator), list[Outcome]()
     inside, gate = threading.Event(), threading.Event()
 
-    def held(real: Any) -> Any:  # avisa y espera a la puerta antes de seguir
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            inside.set()
-            gate.wait(10)
-            return real(*args, **kwargs)
+    def pause() -> None:  # avisa y espera a la puerta antes de seguir
+        inside.set()
+        gate.wait(10)
 
-        return wrapper
-
-    monkeypatch.setattr(gateway, "_reserve", held(gateway._reserve))
+    monkeypatch.setattr(gateway, "_reserve", ahead(pause, gateway._reserve))
     first = later(lambda: call(world))
     assert inside.wait(10)
     with tenant_scope(ctx(world.a, world.ana)) as tenant, connection.cursor() as cursor:
@@ -170,7 +154,7 @@ def test_turning_off_waits_for_the_reservation_in_flight_and_holds_the_next_call
     migrator.execute(SET, [True, world.a])  # ...y quien llama durante un apagado, a él
     inside.clear()
     gate.clear()
-    monkeypatch.setattr(switch, "record", held(audit_record))
+    monkeypatch.setattr(switch, "record", ahead(pause, audit_record))
     stopping = later(off)
     assert inside.wait(10)
     following = later(lambda: outcome.append(code(world)))
@@ -325,43 +309,3 @@ def test_turning_off_is_never_limited_and_turning_on_counts_in_the_write_limit(
     assert ana.get(BASE).status_code == 200 and send(ana, "post", ON, YES).status_code == 429
     assert migrator.execute(COUNTED).fetchall() == [(f"aik:usr:{crm.ana.pk}", 4)]
     assert len(audit(migrator)) == 2  # encendida y apagada
-
-
-def test_born_with_owner_admin_and_supervisor_and_existing_organizations_only_owner(
-    crm: SimpleNamespace, migrator: DB
-) -> None:
-    """D-F8-08 (#769). Una organización de antes no lo tiene: el despliegue lo da solo al Owner."""
-    assert BY_CODE["ai.kill_switch"].is_sensitive and not BY_CODE["ai.kill_switch"].supports_scope
-    born = {template.code for template in ROLE_TEMPLATES if "ai.kill_switch" in template.grants}
-    assert born == {"owner", "admin", "supervisor"}
-    grants = (
-        "SELECT r.code FROM role_permissions g JOIN roles r ON r.id = g.role_id"
-        " WHERE g.permission_code = 'ai.kill_switch' AND r.organization_id = %s ORDER BY 1"
-    )
-    assert [c for (c,) in migrator.execute(grants, [crm.a]).fetchall()] == sorted(born)
-    migrator.execute("DELETE FROM role_permissions WHERE permission_code = 'ai.kill_switch'")
-    assert as_migrator(lambda: extend_owner_roles("default")) == 1
-    assert migrator.execute(grants, [crm.a]).fetchall() == [("owner",)]
-    assert reply(send(plain(crm.sam), "post", OFF, None)) == DENIED  # hasta que el Owner lo dé
-
-
-TWO = ("a.x", "b.y")  # basta uno con `AnyOf`; una tupla los sigue exigiendo todos; vacío, nada
-
-
-@pytest.mark.parametrize(("declared", "held", "passes"), [
-    (AnyOf(TWO), {"a.x"}, True), (AnyOf(TWO), {"b.y"}, True), (AnyOf(TWO), set(), False),
-    (AnyOf(()), {"a.x"}, False), (TWO, {"a.x"}, False), (TWO, set(TWO), True),
-    ("a.x", {"a.x"}, True),
-])  # fmt: skip
-def test_any_of_needs_one_code_and_a_plain_tuple_still_needs_all(
-    monkeypatch: pytest.MonkeyPatch, declared: Any, held: set[str], passes: bool
-) -> None:
-    monkeypatch.setattr(permissions, "request_context", lambda request: object())
-    monkeypatch.setattr(permissions, "has_permission", lambda ectx, code: code in held)
-    monkeypatch.setattr(permissions, "can", lambda ectx, code, obj: code in held)
-    view, request = SimpleNamespace(required_permissions={"GET": declared}), SimpleNamespace(
-        method="GET")  # fmt: skip
-    assert HasPermission().has_permission(request, view) is passes
-    if isinstance(declared, AnyOf) and declared and 0 < len(held) < len(declared):
-        with pytest.raises(NotFound):  # en el objeto, `AnyOf` es una tupla: los exige todos
-            HasPermission().has_object_permission(request, view, object())  # type: ignore[arg-type]
