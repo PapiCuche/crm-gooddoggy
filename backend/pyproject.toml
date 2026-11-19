@@ -169,7 +169,7 @@ source_modules = ["apps.ai_gateway"]
 forbidden_modules = ["apps.access.api", "apps.accounts.api", "apps.accounts.tasks", "apps.audit.api", "apps.members.api", "apps.organizations.api", "apps.provisioning"]
 
 [[tool.importlinter.contracts]]
-name = "ai_agents no importa la API, las tareas ni los comandos de nadie: solo lee (ADR-034 §2, §11, F8-07a)"
+name = "ai_agents no importa la API, las tareas ni los comandos de nadie: solo lee (ADR-034 §2, §11, F8-07a); pricing.costs ya lo cierra su contrato protected"
 type = "forbidden"
 source_modules = ["apps.ai_agents"]
 forbidden_modules = [
@@ -177,7 +177,7 @@ forbidden_modules = [
     "apps.audit.api", "apps.catalog.api", "apps.contacts.api", "apps.conversations.api",
     "apps.conversations.tasks", "apps.deals.api", "apps.inventory.api", "apps.inventory.tasks", "apps.members.api",
     "apps.organizations.api", "apps.pricing.api", "apps.provisioning", "apps.quotes.api", "apps.quotes.tasks",
-    "apps.tasks.api", "apps.pricing.costs", "apps.pricing.floor", "apps.catalog.brands", "apps.catalog.categories",
+    "apps.tasks.api", "apps.pricing.floor", "apps.catalog.brands", "apps.catalog.categories",
     "apps.catalog.products", "apps.inventory.stock", "apps.inventory.warehouses", "apps.inventory.imports",
     "apps.inventory.reservations", "apps.inventory.transfers", "apps.conversations.commands",
 ]
