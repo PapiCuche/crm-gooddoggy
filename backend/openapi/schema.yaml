@@ -564,6 +564,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/invitations/accept/:
+    post:
+      operationId: invitations_accept
+      description: |-
+        Acepta la invitación: la membresía con sus roles y, sin cuenta, la crea (`first_name`,
+        `password`); con cuenta, hay que tener su sesión. No inicia sesión. 400: el enlace no vale
+        (`INVALID_INVITATION_LINK`, sin decir por qué) o `VALIDATION_ERROR`. 409 `ACCOUNT_EXISTS`:
+        el correo tiene cuenta y no es la de la sesión. 429: demasiados intentos desde esta red.
+      tags:
+      - invitations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationAcceptRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationAccepted'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/invitations/preview/:
     post:
       operationId: invitations_preview
@@ -13478,6 +13525,44 @@ components:
       - invited_by
       - role_ids
       - status
+    InvitationAcceptRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          writeOnly: true
+          minLength: 1
+          description: El secreto del enlace, del fragmento de la URL.
+          maxLength: 128
+        password:
+          type: string
+          writeOnly: true
+          default: ''
+          maxLength: 1024
+        first_name:
+          type: string
+          writeOnly: true
+          default: ''
+          maxLength: 150
+        last_name:
+          type: string
+          writeOnly: true
+          default: ''
+          maxLength: 150
+      required:
+      - token
+    InvitationAccepted:
+      type: object
+      properties:
+        organization_name:
+          type: string
+          description: La organización a la que se entró.
+        account_created:
+          type: boolean
+          description: Se creó una cuenta para el correo.
+      required:
+      - account_created
+      - organization_name
     InvitationLinkRequest:
       type: object
       properties:
