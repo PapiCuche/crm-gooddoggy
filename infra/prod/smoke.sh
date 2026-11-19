@@ -24,10 +24,18 @@ here=$(cd "$(dirname "$0")" && pwd)
 # `timeout` deja la orden en otro grupo de procesos: con la entrada en la terminal (tmux), `exec -T`
 # la leería y se pararía (SIGTTIN). Por eso </dev/null; -k 10 mata lo que no salga con TERM.
 compose() {
-  timeout -k 10 60 docker compose -f "$here/compose.yaml" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" \
-    "$@" < /dev/null
+  if [ -n "$override" ]; then
+    set -- -f "$override" --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"
+  else
+    set -- --env-file "${CRM_RELEASE_ENV:?release.env del despliegue}" "$@"
+  fi
+  timeout -k 10 60 docker compose -f "$here/compose.yaml" "$@" < /dev/null
 }
 fail() { echo "smoke FAIL: $*" >&2; exit 1; }
+# Los archivos de Compose de este servidor (dedicado o compartido, ADR-046): host-mode.sh.
+# shellcheck source=infra/prod/host-mode.sh
+. "$here/host-mode.sh"
+override=$(crm_compose_override "$here") || fail "modo del servidor ilegible (host-mode)"
 # Un curl que falla (o agota el plazo) dice por qué, también dentro de $(…), donde set -e sale sin más.
 code() {
   for url do :; done # la URL, el último argumento: las opciones de curl del operador no se imprimen

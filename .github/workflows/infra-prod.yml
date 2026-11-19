@@ -44,6 +44,8 @@ jobs:
         run: shellcheck -x infra/prod/*.sh infra/prod/postgres/*.sh infra/prod/backup/*.sh
       - name: deploy.sh (test-deploy.sh, sin servidor)
         run: bash infra/prod/test-deploy.sh
+      - name: Modo del servidor (test-host-mode.sh, ADR-046)
+        run: sh infra/prod/test-host-mode.sh
       - name: Frontera de los workflows (images.yml incluido)
         working-directory: .github/scripts
         run: python3 -m unittest -q test_workflow_security

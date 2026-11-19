@@ -1,0 +1,38 @@
+# Variante de SERVIDOR COMPARTIDO (ADR-046, Proposed). Se aplica ENCIMA de compose.yaml, nunca sola:
+#   sudo docker compose -f infra/prod/compose.yaml -f infra/prod/compose.shared.yaml --env-file /etc/crm/release.env …
+# No hace falta escribirlo a mano: deploy.sh, smoke.sh y backup/ lo añaden cuando /etc/crm/host-mode
+# dice `shared` (infra/prod/host-mode.sh). Sin ese archivo, todo sigue como en ADR-033 (servidor dedicado).
+#
+# Qué cambia frente a compose.yaml, y nada más:
+#   - `proxy` NO publica puertos. 80 y 443 son del borde público del servidor (el Caddy de la otra
+#     aplicación), que termina TLS y reenvía crm.<dominio> a este proxy por la red `ingress`;
+#   - `proxy` monta Caddyfile.shared (HTTP en :80, sin ACME, IP del cliente solo del borde público);
+#   - `proxy` entra en `ingress`, una red EXTERNA e interna (sin salida) que crea el operador una vez
+#     por servidor (runbook production-shared-host.md). Ningún `down` de ningún proyecto la borra;
+#   - las redes `data` y `egress` llevan subred fija, para no chocar con las del otro proyecto.
+# Todo lo demás (servicios, credenciales, roles, límites de memoria, volúmenes) es el de compose.yaml.
+services:
+  proxy:
+    ports: !reset []
+    volumes:
+      # Mismo destino que en compose.yaml: Compose sustituye ese montaje, no añade otro.
+      - ./Caddyfile.shared:/etc/caddy/Caddyfile:ro
+    environment:
+      # La única dirección cuyo X-Forwarded-For se cree (Caddyfile.shared, trusted_proxies).
+      CRM_EDGE_PROXY_IP: ${CRM_EDGE_PROXY_IP:-172.31.250.2}
+    networks:
+      ingress:
+        ipv4_address: ${CRM_INGRESS_PROXY_IP:-172.31.250.3}
+
+networks:
+  ingress:
+    name: ${CRM_INGRESS_NETWORK:-shared-ingress}
+    external: true
+  data:
+    ipam:
+      config:
+        - subnet: ${CRM_DATA_SUBNET:-172.31.252.0/24}
+  egress:
+    ipam:
+      config:
+        - subnet: ${CRM_EGRESS_SUBNET:-172.31.253.0/24}

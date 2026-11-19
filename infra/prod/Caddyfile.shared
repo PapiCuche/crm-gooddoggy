@@ -1,0 +1,126 @@
+# Proxy INTERNO del CRM en un servidor compartido (ADR-046, Proposed; lo monta compose.shared.yaml).
+# El borde público es el Caddy de la otra aplicación del servidor: publica 80/443, termina TLS y
+# reenvía crm.{$CRM_DOMAIN} aquí por la red `ingress`. Este Caddy no publica puertos, no pide
+# certificados y escucha HTTP en :80.
+#
+# Rutas, topes de cuerpo, tasa y redacción: LOS MISMOS que infra/prod/Caddyfile (validate.sh compara
+# las rutas y los topes de los dos archivos). Cambia solo esto:
+#   - auto_https off y sitio http://: el TLS lo termina el borde público;
+#   - la IP del cliente sale del X-Forwarded-For que escribe el borde público, y SOLO si la conexión
+#     viene de su dirección fija (CRM_EDGE_PROXY_IP, trusted_proxies_strict). De cualquier otra
+#     conexión se usa la del socket: un cliente no puede elegir su IP;
+#   - la tasa de /webhooks/* se cuenta por {client_ip}; {remote_host} sería el borde público, y todo
+#     Internet compartiría un único cupo;
+#   - a cada upstream se le SUSTITUYE X-Forwarded-For por {client_ip} (no se encadena) y se fija
+#     X-Forwarded-Proto https. uvicorn solo cree a este proxy (FORWARDED_ALLOW_IPS) y toma esa IP;
+#     Django ve https (SECURE_PROXY_SSL_HEADER) y sus cookies Secure, CSRF y HSTS siguen igual.
+# HSTS lo emiten Django y Next (ADR-033 §4.1); ni este Caddy ni el borde público añaden otro.
+
+(redacted_fields) {
+	request>uri regexp \?.* ?redacted
+	request>headers>Referer delete
+}
+
+(upstream_identity) {
+	header_up X-Forwarded-For {client_ip}
+	header_up X-Forwarded-Proto https
+}
+
+{
+	admin off
+	auto_https off
+	servers {
+		protocols h1 # el borde público llega por HTTP/1.1 (también el upgrade del WebSocket)
+		trusted_proxies static {$CRM_EDGE_PROXY_IP}
+		client_ip_headers X-Forwarded-For
+		trusted_proxies_strict
+		timeouts {
+			read_header 10s
+		}
+	}
+	order rate_limit before basic_auth
+	log default {
+		output stderr
+		format filter {
+			fields {
+				import redacted_fields
+			}
+			wrap json
+		}
+	}
+}
+
+http://crm.{$CRM_DOMAIN} {
+	log {
+		output stderr
+		format filter {
+			fields {
+				import redacted_fields
+			}
+			wrap json
+		}
+	}
+	encode zstd gzip
+	# Cabeceras de IP que mandaría un cliente: ningún upstream las recibe (X-Forwarded-For, Caddy la sustituye).
+	request_header -Forwarded
+	request_header -X-Real-IP
+	request_header -Client-IP
+	request_header -True-Client-IP
+	request_header -CF-Connecting-IP
+	header {
+		defer
+		-Server
+		?X-Content-Type-Options nosniff
+		?Referrer-Policy strict-origin-when-cross-origin
+	}
+	handle /api/* {
+		request_body {
+			max_size 11MB # F7-09b2: el ASGI de Django recibe el cuerpo entero antes de la vista
+		}
+		reverse_proxy backend:8000 {
+			import upstream_identity
+		}
+	}
+	handle /webhooks/* {
+		# Pública y sin sesión: el tope llega antes que Django, que con ASGI lee el cuerpo entero.
+		# 4 MB (10^6) cubre los 3 MiB de BODY_MAX en meta_webhook.py (F7-11b) con margen.
+		request_body {
+			max_size 4MB
+		}
+		# Por IP del cliente: {client_ip}, la que escribió el borde público (ver la cabecera).
+		rate_limit {
+			zone webhooks_per_ip {
+				key {client_ip}
+				events 50
+				window 10s
+			}
+		}
+		reverse_proxy backend:8000 {
+			import upstream_identity
+		}
+	}
+	handle /ws/* {
+		request_body {
+			max_size 1MB # el upgrade no lleva cuerpo; sin tope, Django lo leería entero
+		}
+		reverse_proxy ws:8000 {
+			import upstream_identity
+		}
+	}
+	handle /health/* {
+		respond 404 # sondas internas: /health/ready dice qué dependencia falla
+	}
+	handle {
+		request_body {
+			max_size 1MB # Next tampoco limita: 40 POST chunked de 30 MB lo mataban (#845)
+		}
+		reverse_proxy frontend:3000 {
+			import upstream_identity
+		}
+	}
+}
+
+# Cualquier otro Host que llegue por la red interna: nada que servir.
+:80 {
+	abort
+}

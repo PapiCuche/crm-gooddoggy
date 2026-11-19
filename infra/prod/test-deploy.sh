@@ -12,7 +12,7 @@ src=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/infra/prod" "$work/bin" "$work/etc"
-cp "$src/deploy.sh" "$src/compose.yaml" "$work/infra/prod/"
+cp "$src/deploy.sh" "$src/compose.yaml" "$src/host-mode.sh" "$work/infra/prod/"
 
 # docker falso: anota «<letra del release> <argumentos>» (la letra sale del digest del backend).
 cat > "$work/bin/docker" <<'EOF'
