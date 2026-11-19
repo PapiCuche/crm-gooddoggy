@@ -1,14 +1,16 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { LINK } from "@/components/auth/auth-card";
+import { LoginForm } from "@/components/auth/login-form";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
-import { useInvitationsAccept, useInvitationsPreview } from "@/lib/api/client";
-import type { InvitationPreview } from "@/lib/api/model";
+import { useAuthLogout, useInvitationsAccept, useInvitationsPreview } from "@/lib/api/client";
+import type { InvitationAcceptRequest, InvitationPreview } from "@/lib/api/model";
 import type { ApiError } from "@/lib/http";
 
 const PATIENCE = 30_000; // ms: un servidor que no contesta no deja la pantalla ocupada
@@ -20,10 +22,10 @@ const ALERT =
 const WRITE = { mutation: { networkMode: "always", gcTime: 250 } } as const;
 
 type Step =
-  | { name: "opening" | "checking" | "absent" | "create" | "exists" }
+  | { name: "opening" | "checking" | "absent" | "create" | "login" | "ready" | "other" }
   | { name: "waiting"; error: ApiError | null } // `null`: la vista previa no contestó
   | { name: "invalid"; unsure: boolean } // `unsure`: un intento sin respuesta pudo aceptarla
-  | { name: "done"; organization: string };
+  | { name: "done"; organization: string; created: boolean };
 const FIELDS = { first: "first_name", last: "last_name", password: "password", confirm: "confirm" };
 type Field = keyof typeof FIELDS;
 type Problems = Partial<Record<Field | "form", string>>;
@@ -32,12 +34,17 @@ const SECRET_FIELD = { type: "password", autoComplete: "new-password", maxLength
 // Acepta una invitación (ADR-020 §4 y §5). El secreto llega en el fragmento de la URL, que el
 // navegador no envía al servidor: se saca de la barra de direcciones nada más leerlo, se guarda
 // solo en memoria y viaja solo en el cuerpo de las peticiones. Abrir la página pide la vista
-// previa, que no gasta el enlace; aceptar es siempre una pulsación. Aceptar con una cuenta que ya
-// existe (con su sesión, ADR-020 §4) llega después: por ahora se dice y no se ofrece.
+// previa, que no gasta el enlace; aceptar es siempre una pulsación, también con sesión. Con una
+// cuenta que ya existe se entra aquí mismo (ADR-020 §4): navegar perdería el enlace.
 export function InvitationAccept() {
   const t = useTranslations();
+  const queryClient = useQueryClient();
   const { mutate: ask, reset: forgetPreview } = useInvitationsPreview(WRITE);
   const { mutate: send, reset: forgetAccept } = useInvitationsAccept(WRITE);
+  // Su 401 es «ya no había sesión»: como salir, y sin ir al login, que perdería el enlace.
+  const logout = useAuthLogout({
+    mutation: { networkMode: "always", meta: { ownSessionEnd: true } },
+  });
   const [step, setStep] = useState<Step>({ name: "opening" });
   const [invite, setInvite] = useState<InvitationPreview | null>(null);
   const [sending, setSending] = useState(false);
@@ -53,6 +60,7 @@ export function InvitationAccept() {
   const hold = (node: HTMLElement | null) => void (heading.current = node);
   const formRef = useRef<HTMLFormElement>(null);
   const firstField = useRef<HTMLInputElement>(null);
+  const acceptButton = useRef<HTMLButtonElement>(null);
 
   const check = useCallback(() => {
     const token = secret.current;
@@ -63,7 +71,7 @@ export function InvitationAccept() {
       {
         onSuccess: (found) => {
           setInvite(found);
-          setStep({ name: found.needs_account ? "create" : "exists" });
+          setStep({ name: found.needs_account ? "create" : "login" });
         },
         onError: (error) => {
           if (error.code === "INVALID_INVITATION_LINK") {
@@ -133,7 +141,8 @@ export function InvitationAccept() {
   const shown = step.name;
   useEffect(() => {
     if (shown === "create") firstField.current?.focus();
-    else if (shown !== "opening") heading.current?.focus();
+    else if (shown === "ready") acceptButton.current?.focus();
+    else if (shown !== "opening" && shown !== "login") heading.current?.focus(); // el login, el suyo
   }, [shown]);
 
   // Lo que no se acepta se dice junto a su campo, con el foco en el primero; no al corregir.
@@ -142,9 +151,24 @@ export function InvitationAccept() {
     aim.current = false;
     formRef.current?.querySelector<HTMLInputElement>("[aria-invalid]")?.focus();
   }, [problems]);
-  // Al corregir un campo, su aviso ya no describe lo escrito.
-  const fix = (key: keyof Problems) => () =>
-    problems[key] && setProblems((now) => ({ ...now, [key]: undefined }));
+  // Al corregir un campo, su aviso ya no describe lo escrito; al cambiar la contraseña, tampoco
+  // el de su repetición.
+  const fix = (key: Field) => () => {
+    const gone = key === "password" ? (["password", "confirm"] as const) : [key];
+    if (gone.some((one) => problems[one])) {
+      setProblems((now) => ({
+        ...now,
+        ...Object.fromEntries(gone.map((one) => [one, undefined])),
+      }));
+    }
+  };
+
+  // Con la sesión abierta (ahora o de antes), se acepta al pulsar. Solo la llama el login, que
+  // solo está en su paso.
+  const entered = useCallback(() => {
+    setProblems({});
+    setStep({ name: "ready" });
+  }, []);
 
   function rejection(error: ApiError | null) {
     if (!error) return t("auth.stalled");
@@ -170,25 +194,32 @@ export function InvitationAccept() {
       setProblems(found);
       return;
     }
+    const last = String(form.get("last_name") ?? "").trim();
+    accept({ first_name: first, last_name: last, password });
+  }
+
+  function accept(account: Omit<InvitationAcceptRequest, "token">) {
     const token = secret.current;
     if (sending || !token) return;
-    const last = String(form.get("last_name") ?? "").trim();
+    const from = step.name;
     setSending(true);
     setProblems({});
     inFlight.current = true;
     send(
-      { data: { token, first_name: first, last_name: last, password } },
+      { data: { token, ...account } },
       {
         onSuccess: (done) => {
           secret.current = null; // ya está usado
-          setStep({ name: "done", organization: done.organization_name });
+          const created = done.account_created;
+          setStep({ name: "done", organization: done.organization_name, created });
         },
         onError: (error) => {
           if (error.code === "INVALID_INVITATION_LINK") {
             secret.current = null;
             setStep({ name: "invalid", unsure: unsure.current });
           } else if (error.code === "ACCOUNT_EXISTS") {
-            setStep({ name: "exists" }); // sin cuenta al abrir, pero ya la tiene
+            // Sin cuenta al abrir, pero ya la tiene: se entra con ella. Con sesión, es otra cuenta.
+            setStep({ name: from === "create" ? "login" : "other" });
           } else if (error.code === "VALIDATION_ERROR") {
             // Por campo y nunca con el texto de la API, que no dice qué regla falló.
             const has = (key: string) => Object.hasOwn(error.fields ?? {}, key);
@@ -214,6 +245,20 @@ export function InvitationAccept() {
     );
   }
 
+  // Sale de la otra cuenta; el enlace sigue en memoria para entrar con la buena.
+  function leave() {
+    if (logout.isPending) return;
+    const out = () => {
+      queryClient.clear(); // lo leído con la otra sesión ya no vale
+      setStep((now) => (now.name === "other" ? { name: "login" } : now)); // no otro enlace abierto
+    };
+    setProblems({});
+    logout.mutate(undefined, {
+      onSuccess: out,
+      onError: (error) => (error.status === 401 ? out() : setProblems({ form: rejection(error) })),
+    });
+  }
+
   const input = (key: Field, more: Partial<Parameters<typeof TextField>[0]>) => (
     <TextField
       label={t(`invitationAccept.${key}`)}
@@ -228,10 +273,10 @@ export function InvitationAccept() {
       {t(key, values)}
     </h2>
   );
-  const enter = (
+  const enter = (where = "/login") => (
     <p className="text-sm">
-      <Link href="/login" className={LINK}>
-        {t("invitationAccept.enter")}
+      <Link href={where} className={LINK}>
+        {t(where === "/login" ? "invitationAccept.enter" : "invitationAccept.open")}
       </Link>
     </p>
   );
@@ -258,7 +303,7 @@ export function InvitationAccept() {
         {step.name === "invalid" && step.unsure ? (
           <>
             <p>{t("invitationAccept.invalidUnsure")}</p>
-            {enter}
+            {enter()}
           </>
         ) : null}
       </div>
@@ -280,8 +325,12 @@ export function InvitationAccept() {
     return (
       <div className="flex flex-col gap-3">
         {title("invitationAccept.doneTitle", { organization: step.organization })}
-        <p>{t("invitationAccept.doneCreated", { email: invite?.email ?? "" })}</p>
-        {enter}
+        <p>
+          {step.created
+            ? t("invitationAccept.doneCreated", { email: invite?.email ?? "" })
+            : t("invitationAccept.doneJoined")}
+        </p>
+        {enter(step.created ? "/login" : "/o")}
       </div>
     );
   }
@@ -292,12 +341,42 @@ export function InvitationAccept() {
       {t("invitationAccept.intro", { organization: invite?.organization_name ?? "", email })}
     </p>
   );
-  if (step.name === "exists") {
+  if (step.name === "login") {
+    return (
+      <>
+        {intro}
+        <p>{t("invitationAccept.loginIntro")}</p>
+        <LoginForm next="/o" onEntered={entered} />
+      </>
+    );
+  }
+  if (step.name === "ready" || step.name === "other") {
+    const ready = step.name === "ready";
     return (
       <div className="flex flex-col gap-3">
         {intro}
-        {title("invitationAccept.existsTitle")}
-        <p>{t("invitationAccept.existsBody")}</p>
+        {ready ? (
+          <p>{t("invitationAccept.readyIntro")}</p>
+        ) : (
+          <p ref={hold} tabIndex={-1} className="focus-visible:outline-none">
+            {t("invitationAccept.otherAccount", { email })}
+          </p>
+        )}
+        {alert}
+        {/* `aria-disabled` y no `disabled`: conserva el foco mientras se envía. */}
+        <Button
+          ref={ready ? acceptButton : undefined}
+          type="button"
+          variant="primary"
+          size="lg"
+          aria-disabled={ready ? sending : logout.isPending}
+          className="w-full"
+          onClick={ready ? () => accept({}) : leave}
+        >
+          {ready
+            ? t(sending ? "invitationAccept.accepting" : "invitationAccept.accept")
+            : t(logout.isPending ? "invitationAccept.loggingOut" : "invitationAccept.logout")}
+        </Button>
       </div>
     );
   }

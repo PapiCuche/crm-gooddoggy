@@ -20,7 +20,9 @@ const PATIENCE = 30_000; // ms: un servidor que no contesta no deja el formulari
 // nada. El rechazo no dice si falló el correo o la contraseña (la API tampoco lo distingue).
 // Si la cuenta tiene segundo factor, la contraseña correcta no abre sesión (202): la pantalla
 // pasa al paso del código, en la misma tarjeta y sin navegar (ADR-023 §5).
-export function LoginForm({ next }: { next: string }) {
+// `onEntered`: con ella, al entrar (o con la sesión ya abierta) se la llama en lugar de ir a
+// `next`. La usa la página de una invitación, que no puede navegar sin perder su enlace.
+export function LoginForm({ next, onEntered }: { next: string; onEntered?: () => void }) {
   const t = useTranslations();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -52,13 +54,16 @@ export function LoginForm({ next }: { next: string }) {
   const answered = useRef(false); // la respuesta del intento en curso ya se leyó
 
   useEffect(() => {
-    if (session.isSuccess)
-      router.replace(next); // ya tiene sesión: no vuelve a pedir la clave
+    // Ya tiene sesión: no vuelve a pedir la clave.
+    if (session.isSuccess) {
+      if (onEntered) onEntered();
+      else router.replace(next);
+    }
     // Sin sesión, el foco va al correo; no antes (se iría a otra página) ni si ya escribe.
     else if (session.isError && document.activeElement === document.body) {
       emailField.current?.focus();
     }
-  }, [session.isSuccess, session.isError, next, router]);
+  }, [session.isSuccess, session.isError, next, router, onEntered]);
 
   useEffect(() => {
     if (second === "code" || !returned.current) return;
@@ -103,7 +108,8 @@ export function LoginForm({ next }: { next: string }) {
             return;
           }
           queryClient.clear(); // nada de lo que se leyó sin sesión sigue valiendo
-          router.replace(next);
+          if (onEntered) onEntered();
+          else router.replace(next);
         },
       },
     );
@@ -121,6 +127,7 @@ export function LoginForm({ next }: { next: string }) {
     return (
       <LoginSecondStep
         next={next}
+        onEntered={onEntered}
         onRestart={(expired) => {
           returned.current = true;
           setSecond(expired ? "expired" : "no");
