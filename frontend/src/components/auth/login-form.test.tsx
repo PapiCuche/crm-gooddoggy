@@ -283,6 +283,9 @@ describe("safeNext", () => {
     "/restablecer#" + "a".repeat(43),
     "/o/../Restablecer?x=1#" + "a".repeat(43),
     "/recuperar",
+    // Ni la de una invitación, con un enlace ajeno en el fragmento.
+    "/invitacion#" + "a".repeat(43),
+    "/o/../%69nvitacion",
     "/%72establecer#" + "a".repeat(43), // Next abre la misma página con una letra codificada
     "/%6Cogin?next=/o",
     "/o/../login",
