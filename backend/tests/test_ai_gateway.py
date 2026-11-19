@@ -35,13 +35,17 @@ THREE = (*ASK.turns, Turn("assistant", "x"), Turn("user", "y"))  # el último, d
 PARAMS = settings.AI_PROVIDER_PARAMS["ANTHROPIC"]
 SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"],
           "additionalProperties": False}  # fmt: skip
+SWITCH_ON = "INSERT INTO ai_switches (organization_id, enabled, changed_at) VALUES (%s, %s, now())"
 CACHED = {"cache_creation_input_tokens": 300, "cache_read_input_tokens": 1000,  # sin desglose: 1 h
           "cache_creation": {"ephemeral_5m_input_tokens": 100}}  # fmt: skip
 
 
 @pytest.fixture
-def world(orgs: dict[str, UUID], monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """A con cuenta de Anthropic; B sin cuenta. Ninguna con tope: sin fila, no hay llamadas."""
+def world(orgs: dict[str, UUID], monkeypatch: pytest.MonkeyPatch, migrator: DB) -> SimpleNamespace:
+    """A con cuenta de Anthropic; B sin cuenta. Ninguna con tope: sin fila, no hay llamadas. Las
+    dos con la IA encendida (F8-06)."""
+    for org in (orgs["A"], orgs["B"]):
+        migrator.execute(SWITCH_ON, [org, True])
     ana = make_user(email="ana@example.com")
     join(orgs["A"], ana)
     with tenant_scope(ctx(orgs["A"], ana)) as tenant:
