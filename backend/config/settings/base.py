@@ -436,6 +436,11 @@ AI_PROVIDER_PARAMS: dict[str, dict[str, Any]] = {"ANTHROPIC": {
     "model": "claude-sonnet-5-5", "max_tokens": 2048, "effort": "medium", "seconds": 60,
 }}  # fmt: skip
 AI_TOOL_TOKENS = 1000  # margen de la reserva por los tokens que añade la API al usar tools
+# F8-05b7: los tokens visuales de una imagen como mucho (el tramo de alta resolución) y los límites
+# de un turno con tools; lo que los pasa ni se reserva (`AI_TURN_INVALID`).
+AI_IMAGE_TOKENS = 4784
+AI_TURN_LIMITS = {"turns": 100, "blocks": 400, "thinking": 100, "images": 20,
+                  "image_chars": 2_000_000, "body_bytes": 8_000_000}  # fmt: skip
 # Correo saliente (ADR-019): SMTP por entorno, sin proveedor fijado. Solo `core.mail` lo usa.
 # El backend por defecto de Django no envía nada: lo que no pasa por `core.mail` (el aviso a
 # `ADMINS` de `AdminEmailHandler`, `django.core.mail.send_mail`) no abre una conexión SMTP.

@@ -38,18 +38,58 @@ def _usage(usage: dict[str, Any]) -> llm.Usage:
                      _count(usage, "cache_read_input_tokens"))  # fmt: skip
 
 
+def _str(block: dict[str, Any], name: str) -> str:
+    if type(block[name]) is not str:
+        raise TypeError(name)  # sin el valor
+    return str(block[name])
+
+
+def _read(block: dict[str, Any]) -> llm.Block:
+    """Un bloque de la respuesta en el formato neutro, con sus campos tal cual (F8-05b7). Otro tipo
+    no se podría reenviar intacto: la respuesta no se usa y la reserva cuenta entera."""
+    kind = block["type"]
+    if kind == "text":
+        return llm.Text(_str(block, "text"))
+    if kind == "thinking":
+        return llm.Thinking(_str(block, "thinking"), _str(block, "signature"))
+    if kind == "redacted_thinking":
+        return llm.RedactedThinking(_str(block, "data"))
+    if kind == "tool_use" and type(block["input"]) is dict:
+        return llm.ToolCall(_str(block, "id"), _str(block, "name"), block["input"])
+    raise ValueError("block")  # sin el tipo
+
+
+def _write(block: llm.Block) -> dict[str, Any]:
+    """Un bloque neutro en la forma de la API, con los mismos textos, firmas y datos."""
+    match block:
+        case llm.Text(text):
+            return {"type": "text", "text": text}
+        case llm.Image(media_type, data):
+            return {"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                                "data": data}}  # fmt: skip
+        case llm.Thinking(thinking, signature):
+            return {"type": "thinking", "thinking": thinking, "signature": signature}
+        case llm.RedactedThinking(data):
+            return {"type": "redacted_thinking", "data": data}
+        case llm.ToolCall(id_, name, value):
+            return {"type": "tool_use", "id": id_, "name": name, "input": value}
+        case llm.ToolResult(tool_use_id, content, is_error):
+            return {"type": "tool_result", "tool_use_id": tool_use_id, "is_error": is_error,
+                    "content": [_write(inner) for inner in content]}  # fmt: skip
+    raise TypeError("block")  # `turns.check` ya lo rechazó
+
+
 def _parse(raw: bytes, request_id: str) -> llm.LLMResponse:
     try:
         data = json.loads(raw)
-        blocks = data["content"]
-        calls = tuple(llm.ToolCall(b["id"], b["name"], b["input"]) for b in blocks
-                      if b["type"] == "tool_use")  # fmt: skip
-        text = "".join(b["text"] for b in blocks if b["type"] == "text")
+        blocks = tuple(_read(block) for block in data["content"])
+        calls = tuple(b for b in blocks if type(b) is llm.ToolCall)
+        text = "".join(b.text for b in blocks if type(b) is llm.Text)
         usage, stop = _usage(data["usage"]), str(data["stop_reason"])
     except ValueError, KeyError, TypeError, AttributeError, RecursionError:
         raise ProviderError(Outcome.PROVIDER_UNAVAILABLE, billed=True,  # pudo cobrarla
                             request_id=request_id) from None  # fmt: skip
-    return llm.LLMResponse(text, calls, stop, usage, request_id)
+    return llm.LLMResponse(text, calls, stop, usage, request_id, blocks)
 
 
 class AnthropicAdapter:
@@ -58,7 +98,8 @@ class AnthropicAdapter:
         body: dict[str, Any] = {
             "model": params["model"], "max_tokens": params["max_tokens"], "output_config": output,
             "system": request.system,
-            "messages": [{"role": t.role, "content": t.text} for t in request.turns],
+            "messages": [{"role": t.role, "content": t.content if isinstance(t.content, str)
+                          else [_write(b) for b in t.content]} for t in request.turns],
         }  # fmt: skip
         if request.tools:
             body["tools"] = [{"name": t.name, "description": t.description, "strict": True,
