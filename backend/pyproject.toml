@@ -114,6 +114,8 @@ forbidden_modules = ["config", "apps"]
 name = "Capas (module-dependencies §1): inventory | pricing > catalog | contacts (L3) > provisioning | members (L2+) > organizations | access | accounts (L2) > audit | files | imports (L1) > core (L0)"
 type = "layers"
 layers = [
+    # L4: el copiloto (ADR-034 §2, F8-07a): lee el negocio con sus selectores y servicios
+    "apps.ai_agents",
     # L3: dominio de negocio (module-dependencies §1). inventory depende de catalog (§2): almacenes
     # y stock (Fase 3). catalog, el catálogo (Fase 3); contacts, los clientes (Fase 4):
     # independientes entre sí, no se importan. pricing, los precios (F3-40): sobre catalog, en la
@@ -152,19 +154,33 @@ ignore_imports = [
 name = "ai_gateway (L1) no importa módulos de negocio (L3) (ADR-034 §2, F8-03a)"
 type = "forbidden"
 source_modules = ["apps.ai_gateway"]
-forbidden_modules = ["apps.inventory", "apps.pricing", "apps.deals", "apps.conversations", "apps.tasks", "apps.quotes", "apps.catalog", "apps.contacts"]
+forbidden_modules = ["apps.inventory", "apps.pricing", "apps.deals", "apps.conversations", "apps.tasks", "apps.quotes", "apps.catalog", "apps.contacts", "apps.ai_agents"]
 
 [[tool.importlinter.contracts]]
 name = "Ningún módulo de L0 a L3 importa apps.ai_* (ADR-034 §2, F8-05)"
 type = "forbidden"
 source_modules = ["core", "apps.access", "apps.accounts", "apps.audit", "apps.catalog", "apps.contacts", "apps.conversations", "apps.deals", "apps.files", "apps.imports", "apps.inventory", "apps.members", "apps.organizations", "apps.pricing", "apps.provisioning", "apps.quotes", "apps.tasks"]
-forbidden_modules = ["apps.ai_gateway"]
+forbidden_modules = ["apps.ai_gateway", "apps.ai_agents"]
 
 [[tool.importlinter.contracts]]
 name = "apps.ai_* no importa la API ni las tareas de otros módulos (ADR-034 §2, F8-05)"
 type = "forbidden"
 source_modules = ["apps.ai_gateway"]
 forbidden_modules = ["apps.access.api", "apps.accounts.api", "apps.accounts.tasks", "apps.audit.api", "apps.members.api", "apps.organizations.api", "apps.provisioning"]
+
+[[tool.importlinter.contracts]]
+name = "ai_agents no importa la API, las tareas ni los comandos de nadie: solo lee (ADR-034 §2, §11, F8-07a)"
+type = "forbidden"
+source_modules = ["apps.ai_agents"]
+forbidden_modules = [
+    "apps.access.api", "apps.accounts.api", "apps.accounts.tasks", "apps.ai_gateway.api", "apps.ai_gateway.tasks",
+    "apps.audit.api", "apps.catalog.api", "apps.contacts.api", "apps.conversations.api",
+    "apps.conversations.tasks", "apps.deals.api", "apps.inventory.api", "apps.inventory.tasks", "apps.members.api",
+    "apps.organizations.api", "apps.pricing.api", "apps.provisioning", "apps.quotes.api", "apps.quotes.tasks",
+    "apps.tasks.api", "apps.pricing.costs", "apps.pricing.floor", "apps.catalog.brands", "apps.catalog.categories",
+    "apps.catalog.products", "apps.inventory.stock", "apps.inventory.warehouses", "apps.inventory.imports",
+    "apps.inventory.reservations", "apps.inventory.transfers", "apps.conversations.commands",
+]
 
 [[tool.importlinter.contracts]]
 name = "Fronteras de alta: solo provisioning importa los bootstrap.py de L2 (F2-06)"
