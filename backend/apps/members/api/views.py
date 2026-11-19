@@ -1,15 +1,18 @@
 """Rutas de tenant de `members`: el estado de un miembro, suspendido o activo (F2-19), su
 sucursal (F2-69), sus equipos (F2-58, F2-59, D-F2-13) y las invitaciones a la organización:
-invitar (F2-80), listarlas (F2-81) y revocar una (F2-82). Y una ruta de plataforma: la vista previa
-del enlace de una invitación (F2-130a, ADR-020 §4 y su excepción a ADR-014 §4, D-F2-14)."""
+invitar (F2-80), listarlas (F2-81) y revocar una (F2-82). Y dos rutas de plataforma: la vista previa
+del enlace de una invitación (F2-130a) y aceptarla (F2-130b), con la excepción de ADR-020 §4 a
+ADR-014 §4 (D-F2-14)."""
 
 from typing import Any
 from uuid import UUID
 
+from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
 from drf_spectacular.utils import extend_schema, extend_schema_field, extend_schema_view
 from rest_framework import generics, serializers
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.fields import get_error_detail
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -369,3 +372,48 @@ class InvitationPreviewView(APIView):
         sent.is_valid(raise_exception=True)
         shown = invitation_links.preview(request._request, **sent.validated_data)
         return Response(InvitationPreviewSerializer(shown._asdict()).data)
+
+
+_OPTIONAL: dict[str, Any] = {
+    "required": False,
+    "allow_blank": True,
+    "default": "",
+    "write_only": True,
+}
+
+
+class InvitationAcceptSerializer(InvitationLinkSerializer):
+    """`first_name`, `last_name` y `password`: solo si el correo no tiene cuenta."""
+
+    password = serializers.CharField(max_length=1024, trim_whitespace=False, **_OPTIONAL)
+    first_name = serializers.CharField(max_length=150, **_OPTIONAL)
+    last_name = serializers.CharField(max_length=150, **_OPTIONAL)
+
+
+class InvitationAcceptedSerializer(serializers.Serializer[Any]):
+    organization_name = serializers.CharField(help_text="La organización a la que se entró.")
+    account_created = serializers.BooleanField(help_text="Se creó una cuenta para el correo.")
+
+
+class InvitationAcceptView(APIView):
+    permission_classes = [Public]
+
+    @extend_schema(
+        operation_id="invitations_accept",
+        tags=["invitations"],
+        auth=[],
+        request=InvitationAcceptSerializer,
+        responses={200: InvitationAcceptedSerializer, **errors(400, 403, 409, 429)},
+    )
+    def post(self, request: Request) -> Response:
+        """Acepta la invitación: la membresía con sus roles y, sin cuenta, la crea (`first_name`,
+        `password`); con cuenta, hay que tener su sesión. No inicia sesión. 400: el enlace no vale
+        (`INVALID_INVITATION_LINK`, sin decir por qué) o `VALIDATION_ERROR`. 409 `ACCOUNT_EXISTS`:
+        el correo tiene cuenta y no es la de la sesión. 429: demasiados intentos desde esta red."""
+        sent = InvitationAcceptSerializer(data=request.data)
+        sent.is_valid(raise_exception=True)
+        try:
+            done = invitation_links.accept(request._request, **sent.validated_data)
+        except ValidationError as weak:
+            raise serializers.ValidationError(get_error_detail(weak)) from None
+        return Response(InvitationAcceptedSerializer(done._asdict()).data)

@@ -64,7 +64,7 @@ PLATFORM = frozenset(  # rutas de plataforma del proyecto: otra frontera (ADR-01
     | {"api/v1/auth/mfa/backup-codes/"}  # F2-110
     | {"api/v1/auth/mfa/step-up/"}  # F2-125
     | {"api/v1/auth/test-accounts/"}  # F2-117
-    | {"api/v1/invitations/preview/"}  # F2-130a: excepción de ADR-020 §4 (D-F2-14)
+    | {"api/v1/invitations/preview/", "api/v1/invitations/accept/"}  # F2-130a/b: ADR-020 §4
 )
 WEBHOOKS = frozenset({"webhooks/meta/"})  # webhooks públicos firmados (F7-03a): sin sesión ni CSRF
 WEBHOOKS_ROOT = "webhooks/"  # todo lo que hay debajo es un webhook: figura en `WEBHOOKS` o falla

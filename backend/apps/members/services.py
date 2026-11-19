@@ -1,6 +1,7 @@
 """Administración de miembros (F2-19, E01-07, ADR-017): suspender y reactivar una membresía,
 asignarle una sucursal (F2-69), ponerla en un equipo o quitarla (F2-58, F2-59, D-F2-13),
-invitar a alguien a la organización (F2-80, ADR-020) y revocar una invitación (F2-82).
+invitar a alguien a la organización (F2-80, ADR-020), revocar una invitación (F2-82) y aceptarla
+(F2-130b).
 
 Orquesta `access` (las reglas de RBAC), `organizations` (la membresía) y `accounts` (las
 sesiones), que no se importan entre sí. Primero las reglas, que toman el bloqueo de RBAC de la
@@ -15,18 +16,24 @@ from uuid import UUID
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from apps.access.selectors import AccessDenied
 from apps.access.services import (
+    UnknownRole,
     ensure_can_invite,
     ensure_can_manage_member,
     ensure_can_move_member,
     ensure_can_place_in_team,
     ensure_can_revoke_invitation,
+    ensure_inviter_can_grant,
+    grant_invited_roles,
+    lock_rbac,
 )
 from apps.accounts.emails import canonical_email
-from apps.accounts.services import revoke_sessions
+from apps.accounts.services import StaffAccount, invited_account, revoke_sessions
 from apps.organizations import services as organizations
 from apps.organizations import teams
 from apps.organizations.services import (
+    AlreadyMember,
     BranchRef,
     InvitationRef,
     create_invitation,
@@ -140,3 +147,43 @@ def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationR
         roles = invitation_role_ids(ctx, invitation_id=invitation_id)
         ensure_can_revoke_invitation(ctx, role_ids=roles)
         return organizations.revoke_invitation(ctx, invitation_id=invitation_id)
+
+
+class NotAcceptable(Exception):
+    """La invitación ya no se puede aceptar (ADR-020 §2 y §4): `args`, la razón para la auditoría
+    y, si es de quien invitó, la denegación."""
+
+
+def accept_invitation(
+    ctx: TenantContext, invitation_id: UUID, token_hash: str, **account: Any
+) -> tuple[str, bool]:
+    """Acepta la invitación que encontró el hash de su enlace, en el scope `SYSTEM` de su
+    organización (ADR-020 §4). Devuelve el nombre de la organización y si se creó la cuenta.
+
+    El orden de invitar y revocar: el bloqueo de RBAC, la fila releída y bloqueada, las reglas de
+    quien invitó tal como está ahora y que no haya membresía; solo entonces la cuenta
+    (`invited_account` con `account`). Lanza `NotAcceptable`. Si lanza, no escribe.
+    """
+    with transaction.atomic(using=require_scope(ctx)):
+        try:
+            lock_rbac(ctx)
+            found = organizations.locked_invitation(ctx, invitation_id, token_hash)
+            if found is None:
+                raise NotAcceptable("stale")
+            name, invitation = found
+            ensure_inviter_can_grant(ctx, invitation.invited_by_id, invitation.role_ids)
+        except AccessDenied as denied:
+            raise NotAcceptable("inviter", denied.reason) from None
+        except UnknownRole:
+            raise NotAcceptable("role") from None
+        if organizations.has_membership(ctx, email=invitation.email):
+            raise NotAcceptable("member")
+        try:
+            user_id, created = invited_account(invitation.email, **account)
+            membership_id = organizations.accept_invitation(ctx, invitation, user_id, created)
+        except StaffAccount:
+            raise NotAcceptable("account") from None
+        except AlreadyMember:
+            raise NotAcceptable("member") from None
+        grant_invited_roles(ctx, membership_id=membership_id, role_ids=invitation.role_ids)
+    return name, created
