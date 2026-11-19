@@ -15,6 +15,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+from django.db import DatabaseError
 from django.utils import timezone
 
 from apps.access.selectors import AccessDenied
@@ -43,6 +44,11 @@ El enlace vale {days} y una sola vez. Si te envían otro, este deja de valer.
 Si no esperabas esta invitación, no hagas nada: no se crea ninguna cuenta hasta que la aceptes.
 """
 Issued = tuple[str, str, str, datetime]  # secreto, organización, correo y caducidad
+
+
+class NotIssued(Exception):
+    """La base falló antes de confirmar el enlace: no se emitió nada y se puede reintentar.
+    Lleva solo el tipo del error."""
 
 
 def _issue(ctx: TenantContext, invitation_id: UUID, event_id: UUID) -> Issued | str:
@@ -79,14 +85,19 @@ def send(organization_id: UUID, invitation_id: UUID, event_id: UUID) -> str:
     `sent` o la razón por la que no envió nada (ver `_issue`). Una entrega repetida del mismo
     evento no envía otra vez (`served`).
 
-    Sin `APP_ORIGIN` lanza `ImproperlyConfigured` antes de mirar nada. Si la entrega falla lanza
-    `MailError`, con el enlace ya guardado y contado: vale aunque no haya llegado.
+    Sin `APP_ORIGIN` o sin correo configurado lanza `ImproperlyConfigured` antes de mirar nada.
+    Un fallo de la base antes de confirmar es `NotIssued` (sin enlace: se puede reintentar). Si
+    la entrega falla lanza `MailError`, con el enlace ya guardado y contado: vale aunque no haya
+    llegado, y no se reintenta.
     """
-    if not settings.APP_ORIGIN:
-        raise ImproperlyConfigured("APP_ORIGIN es obligatorio para emitir un enlace")
+    if not settings.APP_ORIGIN or not mail.configured():
+        raise ImproperlyConfigured("APP_ORIGIN y el correo son obligatorios para emitir un enlace")
     ctx = TenantContext(organization_id, "celery", actor_type=ActorType.SYSTEM)
-    with tenant_scope(ctx):
-        issued = _issue(ctx, invitation_id, event_id)
+    try:
+        with tenant_scope(ctx):
+            issued = _issue(ctx, invitation_id, event_id)
+    except DatabaseError as error:  # también en el COMMIT: si llegó a confirmarse, es `served`
+        raise NotIssued(type(error).__name__) from None
     ids = {"invitation_id": str(invitation_id), "organization_id": str(organization_id)}
     if isinstance(issued, str):
         logger.info("invitation.send_skipped", reason=issued, **ids)

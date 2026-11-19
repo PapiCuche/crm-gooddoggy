@@ -5,6 +5,8 @@ el correo, en memoria (`locmem`)."""
 
 import hashlib
 import re
+import threading
+import time
 from smtplib import SMTPException
 from typing import Any
 from uuid import UUID, uuid4
@@ -14,15 +16,22 @@ import pytest
 from django.core import mail as sent
 from django.core.exceptions import ImproperlyConfigured
 from django.core.mail import EmailMessage
+from django.db import OperationalError, connection
 from django.test import Client
 
+from apps.access.services import lock_rbac
 from apps.members import invitation_links, invitation_mail, tasks
+from apps.organizations import services as organizations
+from apps.organizations.models import UserInvitation
 from core import mail
 from core.outbox import handlers_for
 from core.outbox.publisher import publish_outbox
+from core.tenancy.context import TenantContext
+from core.tenancy.scope import tenant_scope
 from tests import test_anti_escalation, test_auth_api, test_authorization, test_self_context
 from tests.factories import make_user
 from tests.logs import log_text
+from tests.test_invitation_accept import waiting_for_a_lock
 from tests.test_invitation_preview import ask as preview
 from tests.test_invitations_table import invite as stored_invitation
 from tests.test_invite import ask as invite_route
@@ -295,14 +304,93 @@ def test_a_failed_delivery_keeps_the_counted_link_and_is_not_retried(
     assert row(migrator, invitation) == ("PENDING", digest(secret), 1, True)  # confirmado antes
     assert preview(browser, secret).status_code == 200  # vale, aunque no llegó
     assert secret not in log_text(caplog) and secret not in everything(migrator)
-    assert tasks.send_invitation.max_retries == 0 and not tasks.send_invitation.acks_late
+    assert not tasks.send_invitation.acks_late  # y no se reintentó: un solo secreto
 
 
-def test_without_app_origin_nothing_is_issued(
-    rbac: Any, migrator: psycopg.Connection[Any], settings: Any
+@pytest.mark.parametrize(
+    "missing", [{"APP_ORIGIN": ""}, {"MAIL_BACKEND": "smtp", "EMAIL_HOST": ""}]
+)
+def test_without_app_origin_or_mail_nothing_is_issued(
+    missing: dict[str, str], rbac: Any, migrator: psycopg.Connection[Any], settings: Any
 ) -> None:
     invitation = invited(rbac)
-    settings.APP_ORIGIN = ""
-    with pytest.raises(ImproperlyConfigured, match="APP_ORIGIN"):
+    for name, value in missing.items():
+        setattr(settings, name, value)
+    with pytest.raises(ImproperlyConfigured, match="APP_ORIGIN y el correo"):
         run(rbac.a, invitation, event_of(migrator, invitation))
     assert row(migrator, invitation) == ("PENDING", None, 0, False) and sent.outbox == []
+
+
+def test_a_failure_before_the_commit_is_retried_and_one_after_it_is_not(
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    invitation = invited(rbac)
+    event = event_of(migrator, invitation)
+    tries: list[str] = []
+
+    def broken(*args: Any, **kwargs: Any) -> None:
+        tries.append("store")
+        raise OperationalError("se cayó la conexión")
+
+    with monkeypatch.context() as patched:  # la base falla antes de confirmar: sin enlace
+        patched.setattr(organizations, "store_invitation_link", broken)
+        with pytest.raises(invitation_mail.NotIssued, match="^OperationalError$"):
+            run(rbac.a, invitation, event)
+    assert len(tries) == 4  # el intento y 3 reintentos
+    assert row(migrator, invitation) == ("PENDING", None, 0, False) and sent.outbox == []
+    assert run(rbac.a, invitation, event) == "sent"  # nada se emitió: el evento sigue sin servir
+    # El handler tampoco pierde el evento si el broker falla al encolar el envío.
+    monkeypatch.setattr(tasks.send_invitation, "apply_async", broken)
+    ids = {"event_id": str(event), "organization_id": str(rbac.a)}
+    assert tasks.invitation_event.apply(kwargs=ids).failed() and len(tries) == 8
+
+
+def test_the_task_takes_the_rbac_lock_before_the_row_like_revoke_and_accept(
+    rbac: Any, migrator: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Quien escribe en el orden de invitar, revocar y aceptar (RBAC y después la fila) y la tarea,
+    a la vez: con el orden al revés se interbloquean, y la base aborta a uno (el reintento de la
+    tarea lo taparía: se cuenta cuántas veces lo intentó)."""
+    invitation = invited(rbac)
+    event = event_of(migrator, invitation)
+    locked, go, out = threading.Event(), threading.Event(), dict[str, Any]()
+    tries: list[UUID] = []
+    real = invitation_mail._issue
+
+    def counted(*args: Any) -> Any:
+        tries.append(args[1])
+        return real(*args)
+
+    monkeypatch.setattr(invitation_mail, "_issue", counted)
+
+    def writer() -> None:
+        try:
+            with tenant_scope(TenantContext(rbac.a, "test")) as tenant:
+                lock_rbac(tenant)
+                locked.set()
+                go.wait(10)
+                rows = UserInvitation.objects.select_for_update(no_key=True)
+                out["row"] = rows.filter(pk=invitation).first() is not None
+        except Exception as error:  # noqa: BLE001 — el interbloqueo, por su nombre
+            out["writer"] = type(error).__name__
+        finally:
+            connection.close()
+
+    def task() -> None:
+        try:
+            out["task"] = run(rbac.a, invitation, event)
+        except Exception as error:  # noqa: BLE001
+            out["task"] = type(error).__name__
+        finally:
+            connection.close()
+
+    one, two = threading.Thread(target=writer), threading.Thread(target=task)
+    one.start()
+    assert locked.wait(10)
+    two.start()
+    waiting_for_a_lock(two)
+    time.sleep(0.3)  # sin el bloqueo de RBAC, la tarea ya tendría la fila
+    go.set()
+    one.join(30)
+    two.join(30)
+    assert out == {"row": True, "task": "sent"} and tries == [invitation]
