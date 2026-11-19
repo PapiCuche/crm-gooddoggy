@@ -12,6 +12,8 @@ export interface AiProviderAccount {
   id: string;
   provider: AiProviderEnum;
   status: AiProviderAccountStatusEnum;
+  /** Con el que se estima, reserva, llama y cobra. */
+  model: string;
   /** Lo único que se enseña de la clave. */
   key_last_four: string;
   /** Cuándo se guardó la clave vigente. */

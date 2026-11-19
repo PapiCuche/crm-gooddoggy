@@ -1,13 +1,16 @@
 """Comandos de la cuenta del proveedor de IA (F8-03b; ADR-034 §4): crear, rotar la clave,
-desactivar y probar. Cada uno comprueba `ai.manage` antes de leer nada o de llamar al proveedor; el
-segundo factor reciente y el límite de tasa los ponen las rutas (F8-03c, F8-03d). La clave la
-guarda `keys` (cifrada) y no sale: ni a la auditoría (solo el proveedor, ids, estados y el código
-de la prueba), ni al outbox (estos comandos no emiten eventos), ni a un error ni a un registro.
+desactivar, probar y cambiar el modelo (F8-05b6). Cada uno comprueba `ai.manage` antes de leer nada
+o de llamar al proveedor; el segundo factor reciente y el límite de tasa los ponen las rutas
+(F8-03c, F8-03d). La clave la guarda `keys` (cifrada) y no sale: ni a la auditoría (solo el
+proveedor, ids, estados y el código de la prueba), ni al outbox (estos comandos no emiten eventos),
+ni a un error ni a un registro.
 """
 
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from apps.access.selectors import AccessDenied, Denied, execution_context, has_permission
 from apps.ai_gateway import keys, probe
@@ -23,6 +26,10 @@ class AccountExists(Exception):  # noqa: N818 — un estado, no un fallo
 
 class AccountNotFound(Exception):  # noqa: N818 — un estado, no un fallo
     """La organización no tiene una cuenta activa de ese proveedor."""
+
+
+class InvalidModel(ValueError):  # noqa: N818 — nunca lleva el modelo pedido
+    """El modelo no está en la lista permitida (`AI_MODELS`) de ese proveedor."""
 
 
 def _allowed(ctx: TenantContext) -> None:
@@ -92,6 +99,26 @@ def disable(ctx: TenantContext, *, provider: str) -> AIProviderAccount:
         keys.revoke(ctx, provider)
         account: AIProviderAccount = AIProviderAccount.objects.using(alias).get(provider=provider)
         _audit(ctx, "ai.account.disabled", account, {"status": ["ACTIVE", account.status]})
+    return account
+
+
+def change_model(ctx: TenantContext, *, provider: str, model: str) -> AIProviderAccount:
+    """Elige el modelo de la cuenta activa entre los de la lista permitida de su proveedor y lo
+    audita con el antes y el después (el mismo modelo no cambia nada ni se audita). Cambia cuánto
+    gasta la organización: `ai.manage` antes de nada (ADR-034 §4). `InvalidModel`,
+    `AccountNotFound`, `AccessDenied`."""
+    alias = require_scope(ctx)
+    _allowed(ctx)
+    if model not in settings.AI_MODELS.get(provider, {}):
+        raise InvalidModel
+    with transaction.atomic(using=alias):
+        account = _active(alias, provider)
+        before = account.model
+        if before != model:
+            found = AIProviderAccount.objects.using(alias).filter(pk=account.pk)
+            found.update(model=model, updated_at=timezone.now())
+            account = found.get()
+            _audit(ctx, "ai.account.model_changed", account, {"model": [before, model]})
     return account
 
 

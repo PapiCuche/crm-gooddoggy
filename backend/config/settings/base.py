@@ -428,7 +428,8 @@ AI_MODELS: dict[str, dict[str, dict[str, Any]]] = {"ANTHROPIC": {"claude-sonnet-
     "since": "2026-11-17", "input": "2", "cache_write_5m": "2.50", "cache_write_1h": "4",
     "cache_read": "0.10", "output": "10",
 }}}  # fmt: skip
-# El modelo y los parámetros por proveedor (el modelo por cuenta, F8-05b); `seconds`: plazo total.
+# Los parámetros por proveedor; `model`: con el que nace una cuenta (cada cuenta elige el suyo de
+# `AI_MODELS`, F8-05b6). `seconds`: plazo total.
 AI_PROVIDER_PARAMS: dict[str, dict[str, Any]] = {"ANTHROPIC": {
     "model": "claude-sonnet-5-5", "max_tokens": 2048, "effort": "medium", "seconds": 60,
 }}  # fmt: skip

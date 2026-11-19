@@ -76,6 +76,7 @@ def test_schema_endpoint_serves_the_contract_without_internal_routes() -> None:
         "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/",
         "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/key/",
         "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/test/",  # F8-03d
+        "/api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/model/",  # F8-05b6
         "/api/v1/o/{org_slug}/channels/",  # F7-07a
         "/api/v1/o/{org_slug}/channels/{account_id}/",
         "/api/v1/o/{org_slug}/channels/sandbox/inbound/",

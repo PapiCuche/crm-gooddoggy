@@ -1,7 +1,7 @@
 """Cuentas de proveedor de IA y su clave sellada (F8-03a; ADR-034 §4, ADR-022). Tablas de tenant
 con FORCE RLS y FKs compuestas en la migración. La clave solo existe cifrada en `ai_provider_keys`;
 lo único a la vista es `key_last_four`. Nada se borra: una clave se invalida (cifrado borrado) y la
-cuenta se desactiva. El modelo elegido llega con la lista permitida (F8-05)."""
+cuenta se desactiva. El modelo de la cuenta es uno de la lista permitida (`AI_MODELS`, F8-05b6)."""
 
 from typing import Any
 
@@ -14,6 +14,9 @@ from core.db.models import TenantModel, uuid7_primary_key
 # Lo que mide un valor de `core.sealed` (ADR-022 §3): de 32 a 4127 bytes y el formato 1 al frente.
 SEALED_MIN, SEALED_MAX, SEALED_FORMAT = 32, 4127, b"\x01"
 KEY_PURPOSE = "ai.provider_key"  # el propósito de `core.sealed`, no un secreto
+# La forma de un id de modelo. La base no conoce la lista permitida: esa la aplica la aplicación, y
+# el gateway no llama con un modelo sin precio (F8-05b6).
+MODEL_SHAPE = r"^[a-z0-9][a-z0-9._-]*$"
 
 
 class Provider(models.TextChoices):
@@ -32,6 +35,7 @@ class AIProviderAccount(TenantModel):
     id = uuid7_primary_key()
     provider = models.CharField(max_length=16, choices=Provider.choices)
     status = models.CharField(max_length=16, choices=AccountStatus.choices, default="ACTIVE")
+    model = models.CharField(max_length=64)  # con el que se estima, reserva, llama y cobra
     key_last_four = models.CharField(max_length=4)
     configured_by_user_id = models.UUIDField(null=True, blank=True)  # FK a membresías (0001)
     configured_at = models.DateTimeField()  # quién guardó la clave vigente, y cuándo
@@ -60,6 +64,9 @@ class AIProviderAccount(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(key_last_four__regex=r"^.{4}$"),
                 name="ai_provider_accounts_last_four_ck",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(model__regex=MODEL_SHAPE), name="ai_provider_accounts_model_ck"
             ),
         ]
 

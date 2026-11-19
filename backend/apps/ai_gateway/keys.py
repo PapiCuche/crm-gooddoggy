@@ -9,6 +9,7 @@ comandos con `ai.manage`, auditoría y segundo factor llegan con F8-03b y F8-03c
 import re
 from uuid import UUID
 
+from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
@@ -67,8 +68,9 @@ def _locked(alias: str, provider: str) -> AIProviderAccount | None:
 def store(ctx: TenantContext, provider: str, key: str) -> AIProviderAccount:
     """Cifra y guarda la clave de la cuenta de `provider` de la organización del contexto, que se
     crea si no existe. Si ya tenía una viva, la invalida (rotación); si estaba desactivada, la
-    reactiva. Dos llamadas con la misma clave dan cifrados distintos. `AccountConflict` si otra
-    operación crea la misma cuenta a la vez."""
+    reactiva. Una cuenta nueva nace con el modelo de `AI_PROVIDER_PARAMS`; rotar o reactivar no
+    cambia el suyo. Dos llamadas con la misma clave dan cifrados distintos. `AccountConflict` si
+    otra operación crea la misma cuenta a la vez."""
     if provider not in Provider.values:
         raise ValueError("proveedor desconocido")
     if not KEY_FORMAT.fullmatch(key):
@@ -83,6 +85,7 @@ def store(ctx: TenantContext, provider: str, key: str) -> AIProviderAccount:
                 with transaction.atomic(using=alias):  # sin la carrera, la transacción sigue
                     account = accounts.create(
                         provider=provider, key_last_four=key[-4:],
+                        model=settings.AI_PROVIDER_PARAMS[provider]["model"],
                         configured_by_user_id=ctx.user_id, configured_at=now,
                     )  # fmt: skip
             except IntegrityError as error:
