@@ -25,6 +25,7 @@ const tenant = (codes: string[]): SelfContext => ({
 });
 const account = (changes: Partial<AiProviderAccount> = {}): AiProviderAccount => ({
   ...{ id: "k1", provider: "ANTHROPIC", status: "ACTIVE", key_last_four: "0001" },
+  ...{ model: "claude-sonnet-5-5" },
   ...{ configured_at: "2026-11-10T15:00:00Z", rotated_at: null, revoked_at: null },
   ...{ updated_at: "2026-11-10T15:00:00Z", ...changes },
 });

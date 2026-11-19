@@ -29,8 +29,8 @@ pytestmark = pytest.mark.usefixtures("tenant_db")
 DB = psycopg.Connection[Any]
 BASE = "/api/v1/o/org-a/ai/provider-accounts/"
 SHOWN = {
-    "id", "provider", "status", "key_last_four", "configured_at", "rotated_at", "revoked_at",
-    "updated_at",
+    "id", "provider", "status", "model", "key_last_four", "configured_at", "rotated_at",
+    "revoked_at", "updated_at",
 }  # fmt: skip
 
 

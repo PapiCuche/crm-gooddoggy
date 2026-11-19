@@ -1,16 +1,19 @@
 """El único punto por el que pasa toda llamada a un modelo (F8-05; ADR-034 §2, §5): abre la clave
 solo en memoria, **reserva** la cota superior del costo con `ai_budget_reserve` en su propia
-transacción, confirmada antes de llamar; llama fuera de toda transacción y **ajusta** la reserva
-una sola vez con `ai_budget_settle` en otra, que escribe el uso real en `ai_llm_calls` (de solo
+transacción, confirmada antes de llamar; llama fuera de toda transacción y **ajusta** la reserva una
+sola vez con `ai_budget_settle` en otra, que escribe el uso real en `ai_llm_calls` (de solo
 inserción; nunca el prompt ni la respuesta). Las dos funciones de la base (F8-05b1, #942) son lo
 único que cambia el registro: toman la organización y quien pide de la sesión, nunca de aquí. Solo
 libera si la petición no salió o hubo una respuesta de error; lo dudoso cuenta entero. El mes y el
 día son los de Lima (ADR-043); sin tope mensual o diario no se llama (F8-05b2). Si el tope del mes
 corta, la función devuelve NULL para que su aviso se confirme (F8-05b4) y no se llama. Sin permisos
-de negocio: quien pide tiene que ser un miembro activo."""
+de negocio: quien pide tiene que ser un miembro activo. El modelo es el de la cuenta (F8-05b6),
+leído una vez en la transacción de la reserva: con él se estima, se reserva, se llama y se cobra;
+uno sin precio (fuera de `AI_MODELS`) falla cerrado antes de abrir la clave y de reservar."""
 
 import time
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from django.conf import settings
@@ -20,6 +23,7 @@ from apps.access.selectors import AccessDenied, Denied
 from apps.ai_gateway import keys, prices
 from apps.ai_gateway.anthropic import AnthropicAdapter
 from apps.ai_gateway.llm import LLMProviderAdapter, LLMRequest, LLMResponse, Outcome, ProviderError
+from apps.ai_gateway.models import AccountStatus, AIProviderAccount
 from core import sealed
 from core.observability.logging import get_logger
 from core.tenancy.context import TenantContext
@@ -41,13 +45,23 @@ class GatewayError(Exception):  # noqa: N818 — solo lleva el código
         self.outcome = outcome
 
 
+def _model(ctx: TenantContext, provider: str) -> str:
+    """El modelo de la cuenta activa de `provider` (RLS). `GatewayError` sin cuenta activa."""
+    found = AIProviderAccount.objects.using(require_scope(ctx)).filter(
+        provider=provider, status=AccountStatus.ACTIVE
+    )
+    model: str | None = found.values_list("model", flat=True).first()
+    if model is None:
+        raise GatewayError(Outcome.AI_NOT_CONFIGURED)
+    return model
+
+
 def _reserve(
-    ctx: TenantContext, request: LLMRequest, amount: Decimal, provider: str
+    ctx: TenantContext, request: LLMRequest, amount: Decimal, provider: str, model: str
 ) -> UUID | None:
     """En el scope de `ctx`: su transacción se confirma al salir, antes de llamar al proveedor.
     `None` si el tope del mes la corta: el aviso se confirma con esa transacción."""
-    model = settings.AI_PROVIDER_PARAMS[provider]["model"]
-    args = [amount, request.purpose, provider, model, request.conversation_id]
+    args: list[Any] = [amount, request.purpose, provider, model, request.conversation_id]
     try:
         with connections[require_scope(ctx)].cursor() as cursor:
             cursor.execute(RESERVE, args)
@@ -92,18 +106,19 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
     if connections["default"].in_atomic_block:
         raise RuntimeError("complete() abre sus transacciones: ninguna puede estar abierta")
     params, adapter = settings.AI_PROVIDER_PARAMS[provider], ADAPTERS[provider]
-    body = adapter.encode(request, params)
-    try:  # un token nunca es menos de un byte
-        amount = prices.ceiling(provider, params["model"], len(body) + settings.AI_TOOL_TOKENS,
-                                params["max_tokens"])  # fmt: skip
-    except prices.Unpriced:
-        raise GatewayError(Outcome.AI_NOT_CONFIGURED) from None
     with tenant_scope(ctx):
+        model = _model(ctx, provider)  # el mismo para la cota, la reserva, la llamada y el costo
+        body = adapter.encode(request, {**params, "model": model})
+        try:  # un token nunca es menos de un byte
+            amount = prices.ceiling(provider, model, len(body) + settings.AI_TOOL_TOKENS,
+                                    params["max_tokens"])  # fmt: skip
+        except prices.Unpriced:
+            raise GatewayError(Outcome.AI_NOT_CONFIGURED) from None
         try:
             key = keys.open_key(ctx, provider)  # solo en memoria, para esta llamada
         except sealed.SealError:
             raise GatewayError(Outcome.AI_NOT_CONFIGURED) from None
-        held = _reserve(ctx, request, amount, provider)
+        held = _reserve(ctx, request, amount, provider, model)
     if held is None:  # fuera del scope: el aviso del corte ya está confirmado
         raise GatewayError(Outcome.AI_BUDGET_EXHAUSTED)
     started = time.monotonic()  # la reserva ya está confirmada: no hay transacción abierta
@@ -115,7 +130,7 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
         else:  # no salió, o un error sin uso: se libera
             settle(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
         raise GatewayError(error.outcome) from None
-    cost = prices.cost(provider, params["model"], reply.usage)
+    cost = prices.cost(provider, model, reply.usage)
     if cost > 0:
         settle(ctx, held, Outcome.OK, cost, reply, started)
     else:  # una respuesta sin uso no se cobra a 0 (la base lo rechaza): cuenta entera

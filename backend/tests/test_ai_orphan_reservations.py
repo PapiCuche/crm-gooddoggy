@@ -347,7 +347,11 @@ def test_the_migration_goes_back_to_the_exact_0004_settle_and_refuses_with_orpha
     held = hold(both, both.a)
     age(migrator, held, MINUTES + 1)
     assert orphans.close()["closed"] == 1
-    with as_migrator(), pytest.raises(RuntimeError, match="ORPHANED"):
-        call_command("migrate", "ai_gateway", "0006", verbosity=0)
-    assert _settle_source(migrator)[1:] == ((True,), (True,))  # nada se deshizo ni se borró
-    assert len(migrator.execute(CALLS).fetchall()) == 1
+    try:
+        with as_migrator(), pytest.raises(RuntimeError, match="ORPHANED"):
+            call_command("migrate", "ai_gateway", "0006", verbosity=0)
+        assert _settle_source(migrator)[1:] == ((True,), (True,))  # nada se deshizo ni se borró
+        assert len(migrator.execute(CALLS).fetchall()) == 1
+    finally:  # las migraciones posteriores a 0007 sí se deshicieron (F8-05b6)
+        with as_migrator():
+            call_command("migrate", verbosity=0)

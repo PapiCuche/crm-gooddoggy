@@ -916,6 +916,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: ''
+  /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/model/:
+    put:
+      operationId: ai_provider_accounts_set_model
+      description: 'Elige el modelo de la cuenta (`ai.manage` y segundo factor reciente)
+        entre los de la lista permitida de su proveedor y lo audita (`ai.account.model_changed`,
+        con el antes y el después). Cambia cuánto gasta la organización. 400 en `model`:
+        fuera de la lista (nunca repite lo enviado). 404: no existe, es de otra organización
+        o está desactivada. 429 `RATE_LIMITED`: el tope por persona de las escrituras,
+        con `Retry-After`.'
+      parameters:
+      - in: path
+        name: account_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: org_slug
+        schema:
+          type: string
+        required: true
+      tags:
+      - ai
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiProviderModelRequest'
+        required: true
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AiProviderAccount'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: ''
   /api/v1/o/{org_slug}/ai/provider-accounts/{account_id}/test/:
     post:
       operationId: ai_provider_accounts_test
@@ -11758,6 +11826,9 @@ components:
           $ref: '#/components/schemas/AiProviderEnum'
         status:
           $ref: '#/components/schemas/AiProviderAccountStatusEnum'
+        model:
+          type: string
+          description: Con el que se estima, reserva, llama y cobra.
         key_last_four:
           type: string
           description: Lo único que se enseña de la clave.
@@ -11780,6 +11851,7 @@ components:
       - configured_at
       - id
       - key_last_four
+      - model
       - provider
       - revoked_at
       - rotated_at
@@ -11823,6 +11895,16 @@ components:
           maxLength: 256
       required:
       - api_key
+    AiProviderModelRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 1
+          description: Uno de la lista permitida del proveedor de la cuenta (`AI_MODELS`).
+          maxLength: 64
+      required:
+      - model
     AiProviderTest:
       type: object
       properties:

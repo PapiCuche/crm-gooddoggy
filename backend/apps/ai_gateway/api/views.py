@@ -1,12 +1,12 @@
 """Las cuentas del proveedor de IA de la organización (F8-03c; ADR-034 §4): listar, crear, rotar la
-clave, borrar (desactivar) y probar la conexión (F8-03d). Cada ruta pide `ai.manage` y, después, el
-segundo factor de hace 15 minutos como mucho (`step_up_methods`, D-F7-11): sin el permiso, 403
-`PERMISSION_DENIED`, nunca `STEP_UP_REQUIRED`. Antes de todo eso, en las escrituras (POST y
-DELETE), el tope por persona (`apps.ai_gateway.throttle`, 429); listar no cuenta (F8-03e). El
-cuerpo se valida antes del 404. Una cuenta que no existe, es de otra organización o ya está
-desactivada da el mismo 404. Ninguna respuesta lleva la clave ni su cifrado (solo `key_last_four`,
-el proveedor, el estado y las fechas), ni el cuerpo del proveedor: la prueba devuelve solo su
-código.
+clave, borrar (desactivar), probar la conexión (F8-03d) y cambiar el modelo (F8-05b6). Cada ruta
+pide `ai.manage` y, después, el segundo factor de hace 15 minutos como mucho (`step_up_methods`,
+D-F7-11): sin el permiso, 403 `PERMISSION_DENIED`, nunca `STEP_UP_REQUIRED`. Antes de todo eso, en
+las escrituras (POST y DELETE, y PUT del modelo), el tope por persona (`apps.ai_gateway.throttle`,
+429); listar no cuenta (F8-03e). El cuerpo se valida antes del 404. Una cuenta que no existe, es de
+otra organización o ya está desactivada da el mismo 404. Ninguna respuesta lleva la clave ni su
+cifrado (solo `key_last_four`, el proveedor, el estado y las fechas), ni el cuerpo del proveedor: la
+prueba devuelve solo su código.
 """
 
 from collections.abc import Iterator
@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
+from django.core.validators import ProhibitNullCharactersValidator
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import serializers
 from rest_framework.exceptions import NotFound
@@ -35,6 +37,7 @@ EXISTS = "La organización ya tiene una cuenta de ese proveedor: rota su clave."
 CONFLICT = "Otra persona está guardando la misma cuenta. Vuelve a intentarlo."
 MALFORMED = "La clave no tiene el formato de una clave de API."
 UNKNOWN = "Proveedor no admitido."
+MODEL_REFUSED = "Modelo no admitido: elige uno de la lista permitida de su proveedor."
 KEY_HELP = "Solo se escribe: ninguna respuesta la devuelve."
 LIMITED = " 429 `RATE_LIMITED`: el tope por persona de las escrituras, con `Retry-After`."
 
@@ -43,6 +46,7 @@ class AiProviderAccountSerializer(serializers.Serializer[Any]):
     id = serializers.UUIDField()
     provider = serializers.ChoiceField(choices=Provider.choices)
     status = serializers.ChoiceField(choices=AccountStatus.choices)
+    model = serializers.CharField(help_text="Con el que se estima, reserva, llama y cobra.")
     key_last_four = serializers.CharField(help_text="Lo único que se enseña de la clave.")
     configured_at = serializers.DateTimeField(help_text="Cuándo se guardó la clave vigente.")
     rotated_at = serializers.DateTimeField(allow_null=True)
@@ -70,6 +74,30 @@ class AiProviderAccountCreateSerializer(AiProviderKeySerializer):
     )
 
 
+class ModelField(serializers.CharField):
+    """Sin el validador de NUL de DRF (su propio mensaje): un id con NUL no está en la lista y
+    recibe el mismo `MODEL_REFUSED` que cualquier otro."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        current: list[Any] = self.validators  # type: ignore[has-type]
+        self.validators = [v for v in current if not isinstance(v, ProhibitNullCharactersValidator)]
+
+
+class AiProviderModelSerializer(serializers.Serializer[Any]):
+    # Ningún mensaje repite el modelo enviado; el de otro proveedor lo rechaza el comando.
+    model = ModelField(
+        max_length=64, error_messages=dict.fromkeys(
+            ("invalid", "required", "null", "blank", "max_length"), MODEL_REFUSED),
+        help_text="Uno de la lista permitida del proveedor de la cuenta (`AI_MODELS`).",
+    )  # fmt: skip
+
+    def validate_model(self, value: str) -> str:
+        if not any(value in listed for listed in settings.AI_MODELS.values()):
+            raise serializers.ValidationError(MODEL_REFUSED)
+        return value
+
+
 class AiProviderTestSerializer(serializers.Serializer[Any]):
     result = serializers.ChoiceField(
         choices=[(code.value, code.value) for code in Probe],
@@ -91,6 +119,8 @@ def account_errors() -> Iterator[None]:
         raise serializers.ValidationError({"api_key": [MALFORMED]}) from None
     except accounts.AccountNotFound:
         raise NotFound from None
+    except accounts.InvalidModel:
+        raise serializers.ValidationError({"model": [MODEL_REFUSED]}) from None
     except accounts.AccountExists:
         raise ApiError("AI_ACCOUNT_EXISTS", 409, EXISTS) from None
     except keys.AccountConflict:
@@ -209,3 +239,30 @@ class AccountTestView(APIView):
         with account_errors():
             result = accounts.check(context.require(), provider=provider_of(account_id))
         return Response({"result": result.value})
+
+
+@extend_schema_view(
+    put=extend_schema(
+        operation_id="ai_provider_accounts_set_model",
+        tags=["ai"],
+        request=AiProviderModelSerializer,
+        responses={200: AiProviderAccountSerializer, **errors(400, 401, 403, 404, 429)},
+        description="Elige el modelo de la cuenta (`ai.manage` y segundo factor reciente) entre "
+        "los de la lista permitida de su proveedor y lo audita (`ai.account.model_changed`, con "
+        "el antes y el después). Cambia cuánto gasta la organización. 400 en `model`: fuera de "
+        "la lista (nunca repite lo enviado). 404: no existe, es de otra organización o está "
+        "desactivada." + LIMITED,
+    ),
+)
+class AccountModelView(APIView):
+    required_permissions = {"PUT": MANAGE}
+    step_up_methods = {"PUT"}
+
+    def put(self, request: Request, account_id: UUID, **kwargs: Any) -> Response:
+        wanted = AiProviderModelSerializer(data=request.data)  # el cuerpo, antes del 404
+        wanted.is_valid(raise_exception=True)
+        with account_errors():
+            done = accounts.change_model(
+                context.require(), provider=provider_of(account_id), **wanted.validated_data
+            )
+        return Response(shown(done))

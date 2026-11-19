@@ -185,8 +185,8 @@ def test_the_database_keeps_accounts_and_keys_inside_their_organization_and_narr
             assert migrator.execute(sql, [table, privilege]).fetchone() == (False,)
     assert updatable(migrator, "ai_provider_keys") == {"ciphertext", "key_version", "revoked_at"}
     assert updatable(migrator, "ai_provider_accounts") == {
-        "status", "key_last_four", "configured_by_user_id", "configured_at", "rotated_at",
-        "revoked_at", "updated_at",
+        "status", "model", "key_last_four", "configured_by_user_id", "configured_at",
+        "rotated_at", "revoked_at", "updated_at",
     }  # fmt: skip
     for statement in (
         lambda: AIProviderAccount.objects.filter(pk=mine.pk).update(provider="OPENAI"),
@@ -213,7 +213,8 @@ def test_the_database_keeps_accounts_and_keys_inside_their_organization_and_narr
     refused(crm.a, "configured_by_fk", lambda: configured_by(crm.luis.pk))  # luis es de B
     insert = (
         "INSERT INTO ai_provider_accounts (organization_id, provider, status, key_last_four,"
-        " configured_at, updated_at) VALUES (%s, 'ANTHROPIC', 'ACTIVE', 'abcd', now(), now())"
+        " configured_at, updated_at, model)"
+        " VALUES (%s, 'ANTHROPIC', 'ACTIVE', 'abcd', now(), now(), 'claude-sonnet-5-5')"
     )
     with pytest.raises(psycopg.errors.ForeignKeyViolation, match="organization_fk"):
         migrator.execute(insert, [uuid4()])  # ni con el migrador: la organización existe
@@ -260,6 +261,7 @@ def test_a_key_row_must_have_the_shape_of_a_sealed_value(
         ({"status": "DISABLED"}, "ai_provider_accounts_status_ck"),  # desactivada sin fecha
         ({"revoked_at": timezone.now()}, "ai_provider_accounts_status_ck"),  # activa revocada
         ({"key_last_four": "abc"}, "ai_provider_accounts_last_four_ck"),
+        ({"model": "Claude Opus"}, "ai_provider_accounts_model_ck"),  # solo la forma (F8-05b6)
         ({}, "ai_provider_accounts_provider_uq"),  # una por proveedor
     ],
 )
@@ -268,7 +270,8 @@ def test_an_account_row_keeps_its_shape(
 ) -> None:
     if constraint == "ai_provider_accounts_provider_uq":
         store(crm.a)
-    row = {"provider": ANTHROPIC, "key_last_four": "abcd", "configured_at": timezone.now()}
+    row = {"provider": ANTHROPIC, "key_last_four": "abcd", "configured_at": timezone.now(),
+           "model": "claude-sonnet-5-5"}  # fmt: skip
     refused(crm.a, constraint, lambda: AIProviderAccount.objects.create(**(row | fields)))
 
 
