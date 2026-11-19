@@ -17,6 +17,8 @@ urlpatterns = [
     path("api/v1/auth/test-accounts/", include("apps.provisioning.api.urls")),
     path("api/v1/auth/", include("apps.accounts.api.urls")),
     path("api/v1/me/", include("apps.organizations.api.urls")),
+    # El enlace de una invitación (F2-130a): excepción a ADR-014 §4 (ADR-020 §4, D-F2-14).
+    path("api/v1/invitations/", include("apps.members.api.platform_urls")),
     # Rutas de tenant: `TenantResolutionMiddleware` resuelve el slug antes de la vista.
     path("api/v1/o/<slug:org_slug>/", include("apps.access.api.urls")),
     path("api/v1/o/<slug:org_slug>/", include("apps.audit.api.urls")),

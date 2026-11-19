@@ -11,17 +11,20 @@ from datetime import datetime, timedelta
 from typing import NamedTuple
 from uuid import UUID
 
-from django.db import transaction
+from django.db import connection, transaction
+from django.db.models.functions import Now
 from django.utils import timezone
 
 from apps.audit.services import Entity, record
 from apps.organizations.models import (
     INVITATION_MAX_ROLES,
     Branch,
+    Organization,
     OrganizationMembership,
     UserInvitation,
 )
 from core.tenancy.context import TenantContext
+from core.tenancy.resolution import ACCESSIBLE_STATUSES
 from core.tenancy.scope import require_scope
 
 Status = OrganizationMembership.Status
@@ -243,3 +246,34 @@ def revoke_invitation(ctx: TenantContext, *, invitation_id: UUID) -> InvitationR
         invitation.invited_by_id,
         invitation.created_at,
     )
+
+
+def find_invitation(token_hash: str) -> tuple[UUID, UUID] | None:
+    """La organización y el id de la invitación pendiente y sin caducar cuyo enlace tiene ese
+    hash, o `None` (ADR-020 §3). Sin tenant: `resolve_invitation` es la única lectura de la tabla
+    fuera de RLS, y no dice por qué no encontró nada."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT * FROM public.resolve_invitation(%s)", [token_hash])
+        row = cursor.fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def previewed_invitation(
+    ctx: TenantContext, *, invitation_id: UUID, token_hash: str
+) -> tuple[str, str] | None:
+    """El nombre de la organización de `ctx` y el correo invitado, si la invitación sigue
+    pendiente, sin caducar y con ese hash, y la organización admite acceso; si no, `None`. Lo
+    vuelve a comprobar dentro del scope, con el reloj de la base: no escribe nada."""
+    alias = require_scope(ctx)
+    pending = UserInvitation.objects.using(alias).filter(
+        pk=invitation_id,
+        token_hash=token_hash,
+        status=UserInvitation.Status.PENDING,
+        expires_at__gt=Now(),
+    )
+    email = pending.values_list("email", flat=True).first()
+    organizations = Organization.objects.using(alias).filter(
+        pk=ctx.organization_id, status__in=ACCESSIBLE_STATUSES
+    )
+    name = organizations.values_list("name", flat=True).first()
+    return (name, email) if email is not None and name is not None else None
