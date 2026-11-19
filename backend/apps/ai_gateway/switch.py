@@ -22,7 +22,13 @@ _CREATE = (  # la fila, apagada; si ya existe (o otra petición la crea a la vez
     "INSERT INTO public.ai_switches (organization_id, enabled, changed_at)"
     " VALUES (%s, false, now()) ON CONFLICT (organization_id) DO NOTHING"
 )
-_READ = "SELECT enabled FROM public.ai_switches WHERE organization_id = %s FOR SHARE"  # y RLS
+# Candado consultivo por organización (de transacción), no el de la fila: las llamadas (compartido)
+# no se cuelan delante de quien apaga (exclusivo), que espera solo a las reservas ya en curso.
+# `LOCK_SALT` fija el espacio de claves; una colisión entre organizaciones solo comparte esperas.
+LOCK_SALT, _LOCK = 7_690_006, "hashtextextended(%s::text, %s)"
+_SHARED = f"SELECT pg_advisory_xact_lock_shared({_LOCK})"
+_EXCLUSIVE = f"SELECT pg_advisory_xact_lock({_LOCK})"
+_READ = "SELECT enabled FROM public.ai_switches WHERE organization_id = %s"  # y RLS
 
 
 class NoticeNotConfirmed(ValueError):  # noqa: N818 — sin la confirmación no se enciende
@@ -41,10 +47,11 @@ def _allowed(ctx: TenantContext, codes: tuple[str, ...]) -> None:
 
 
 def is_on(ctx: TenantContext) -> bool:
-    """El interruptor de la organización de `ctx` (RLS), dentro de su `tenant_scope`. Bloquea la
-    fila en modo compartido hasta el fin de la transacción: apagar espera a que se confirme la
-    reserva que lo leyó encendido, y la siguiente ya lo ve apagado. Sin fila, apagado."""
+    """El interruptor de la organización de `ctx` (RLS), dentro de su `tenant_scope`, con el
+    candado compartido hasta el fin de la transacción: apagar espera a la reserva que lo leyó
+    encendido, y la siguiente ya lo ve apagado. Sin fila, apagado."""
     with connections[require_scope(ctx)].cursor() as cursor:
+        cursor.execute(_SHARED, [ctx.organization_id, LOCK_SALT])
         cursor.execute(_READ, [ctx.organization_id])
         row = cursor.fetchone()
     return row is not None and row[0] is True
@@ -62,6 +69,7 @@ def _set(ctx: TenantContext, enabled: bool, action: str, metadata: dict[str, boo
     switches = AISwitch.objects.using(alias)
     with transaction.atomic(using=alias):
         with connections[alias].cursor() as cursor:
+            cursor.execute(_EXCLUSIVE, [ctx.organization_id, LOCK_SALT])
             cursor.execute(_CREATE, [ctx.organization_id])
         current = switches.select_for_update().get()
         if current.enabled != enabled:

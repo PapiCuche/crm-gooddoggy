@@ -231,7 +231,7 @@ ROLE_TEMPLATES: tuple[RoleTemplate, ...] = (
             "quotes.approve",  # sin `quotes.override_price`: 03 §H no lo lista y el precio manual
             "quotes.discount",  # puede ir bajo el costo sin que la cotización lo vea (a decidir)
             "conversations.assign",  # F6-01: reparte las de su equipo
-            "ai.kill_switch",  # F8-06, ADR-034 §10: solo apagar; exige segundo factor (sensible)
+            "ai.kill_switch",  # F8-06: solo apagar; sensible: MFA si MFA_ENFORCEMENT=enforce
         )
         | {"contacts.view": Scope.TEAM}
         | {f"opportunities.{a}": Scope.TEAM for a in OPPORTUNITY_OPERATE}  # F5-04, 03 §H

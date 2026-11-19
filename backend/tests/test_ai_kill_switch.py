@@ -2,6 +2,8 @@
 ADR-034 §5, §10), contra la API falsa de Anthropic (`tests.ai_sim`, sin red) y PostgreSQL con
 `crm_app`. Claves ficticias."""
 
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,13 +20,13 @@ from apps.access.permissions import AnyOf, HasPermission
 from apps.access.selectors import AccessDenied
 from apps.ai_gateway import accounts, gateway, keys, switch, turns
 from apps.ai_gateway.llm import Outcome
+from apps.audit.services import record as audit_record
 from core.api.step_up import STEP_UP_REQUIRED
 from core.tenancy.scope import tenant_scope
 from tests import ai_sim, test_ai_gateway
 from tests.ai_sim import TEST_KEY, FakeAnthropic
-from tests.conftest import migrator_conninfo
 from tests.test_access import as_migrator
-from tests.test_ai_gateway import ASK, USAGE, budget, call, code
+from tests.test_ai_gateway import ASK, budget, call, code
 from tests.test_ai_provider_accounts import crm, real_stack
 from tests.test_ai_provider_test_api import COUNTED
 from tests.test_authorization import give
@@ -45,6 +47,7 @@ OFF, ON, YES = BASE + "off/", BASE + "on/", {"notice_confirmed": True}
 SET = "UPDATE ai_switches SET enabled = %s WHERE organization_id = %s"
 ROWS = "SELECT organization_id, enabled, changed_by_user_id FROM ai_switches ORDER BY 1"
 HELD = "SELECT count(*) FROM ai_budget_reservations"
+MEMBERSHIP = "SELECT id FROM organization_memberships WHERE user_id = %s AND organization_id = %s"
 
 
 def audit(migrator: DB) -> list[tuple[Any, ...]]:
@@ -109,38 +112,99 @@ def test_the_organization_switch_is_off_without_a_row_or_when_off_and_leaves_the
     assert code(world, world.b) == Outcome.AI_DISABLED and len(world.fake.calls) == 2
 
 
-def test_the_switch_read_holds_the_row_until_the_reservation_commits(world: Any) -> None:
-    """Apagar espera a la reserva que lo leyó encendido: tras el 200, ninguna lo ve encendido."""
-    lock = "SELECT 1 FROM ai_switches WHERE organization_id = %s FOR UPDATE NOWAIT"
-    with psycopg.connect(migrator_conninfo(), autocommit=True) as other:
+def later(target: Any) -> threading.Thread:
+    def run() -> None:
+        try:
+            target()
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=run, daemon=True)  # nunca retiene el proceso
+    thread.start()
+    return thread
+
+
+def stopper(world: SimpleNamespace, migrator: DB) -> Any:
+    """ana, con `ai.kill_switch`, apaga A por el comando."""
+    [(membership,)] = migrator.execute(MEMBERSHIP, [world.ana.pk, world.a]).fetchall()
+    give(world.a, membership, {"ai.kill_switch": None})
+
+    def off() -> None:
         with tenant_scope(ctx(world.a, world.ana)) as tenant:
-            assert switch.is_on(tenant) is True
-            with pytest.raises(psycopg.errors.LockNotAvailable):
-                other.execute(lock, [world.a])
-        assert other.execute(lock, [world.a]).fetchone() == (1,)  # confirmada: libre
-        with tenant_scope(ctx(world.b, world.ana)) as tenant:  # B no bloquea la de A
-            assert switch.is_on(tenant) is True
-            assert other.execute(lock, [world.a]).fetchone() == (1,)
+            switch.turn_off(tenant)
+
+    return off
 
 
-def test_switching_off_cuts_the_next_call_and_the_reserved_one_still_settles_its_real_cost(
+def test_turning_off_waits_for_the_reservation_in_flight_and_holds_the_next_call(
     world: SimpleNamespace, migrator: DB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     budget(migrator, world.a, "10")
-    adapter = gateway.ADAPTERS["ANTHROPIC"]
-    real = adapter.send
+    off, outcome = stopper(world, migrator), list[Outcome]()
+    inside, gate = threading.Event(), threading.Event()
 
-    def off_meanwhile(*args: Any, **kwargs: Any) -> Any:  # otra persona apaga durante la llamada
-        migrator.execute(SET, [False, world.a])
-        return real(*args, **kwargs)
+    def held(real: Any) -> Any:  # avisa y espera a la puerta antes de seguir
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            inside.set()
+            gate.wait(10)
+            return real(*args, **kwargs)
 
-    monkeypatch.setattr(adapter, "send", off_meanwhile)
-    assert call(world).usage.input_tokens == USAGE["input_tokens"]
-    [(outcome, cost)] = migrator.execute("SELECT outcome, cost_usd FROM ai_llm_calls").fetchall()
-    assert outcome == "OK" and cost > 0  # ajustada con su costo real, ya apagada
+        return wrapper
+
+    monkeypatch.setattr(gateway, "_reserve", held(gateway._reserve))
+    first = later(lambda: call(world))
+    assert inside.wait(10)
+    with tenant_scope(ctx(world.a, world.ana)) as tenant, connection.cursor() as cursor:
+        cursor.execute("SET LOCAL lock_timeout = '1s'")
+        assert switch.is_on(tenant) is True  # otra llamada no espera a la que reserva
+    stopping = later(off)
+    stopping.join(0.5)
+    assert stopping.is_alive()  # apagar espera a la reserva en curso...
+    gate.set()
+    for thread in (first, stopping):
+        thread.join(10)
+    [(result, cost)] = migrator.execute("SELECT outcome, cost_usd FROM ai_llm_calls").fetchall()
+    assert result == "OK" and cost > 0  # ajustada con su costo real, ya apagada
     spent = migrator.execute("SELECT spent_usd, reserved_usd FROM ai_budget_usage").fetchone()
     assert spent == (cost, 0)
-    assert code(world) == Outcome.AI_DISABLED and len(world.fake.calls) == 1
+    migrator.execute(SET, [True, world.a])  # ...y quien llama durante un apagado, a él
+    inside.clear()
+    gate.clear()
+    monkeypatch.setattr(switch, "record", held(audit_record))
+    stopping = later(off)
+    assert inside.wait(10)
+    following = later(lambda: outcome.append(code(world)))
+    following.join(0.5)
+    assert following.is_alive()
+    gate.set()
+    for thread in (stopping, following):
+        thread.join(10)
+    assert outcome == [Outcome.AI_DISABLED] and len(world.fake.calls) == 1
+
+
+def test_turning_off_is_not_starved_by_a_stream_of_calls(world: Any, migrator: DB) -> None:
+    budget(migrator, world.a, "1000")
+    off, stop, seen = stopper(world, migrator), threading.Event(), set[Any]()
+
+    def stream() -> None:
+        while not stop.is_set():
+            try:
+                call(world)
+            except Exception as error:  # noqa: BLE001 — solo `AI_DISABLED` vale
+                seen.add(getattr(error, "outcome", type(error).__name__))
+
+    callers = [later(stream) for _ in range(16)]
+    for _ in range(400):  # en plena carga; `time.sleep` no espera aquí (`world`)
+        if threading.Event().wait(0.05) or len(world.fake.calls) >= 32:
+            break
+    started = time.monotonic()
+    later(off).join(10)  # acotado: si se queda sin turno, la prueba falla y no se cuelga
+    took = time.monotonic() - started
+    stop.set()
+    for thread in callers:
+        thread.join(30)
+    assert took < 2 and seen <= {Outcome.AI_DISABLED} and len(world.fake.calls) >= 32, took
+    assert code(world) == Outcome.AI_DISABLED
 
 
 def test_the_probe_runs_with_the_organization_off_but_never_with_the_deployment_off(
