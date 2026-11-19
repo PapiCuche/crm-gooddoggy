@@ -51,6 +51,7 @@ class FakeAnthropic:
     request_id, retry_after = REQUEST_ID, "2"  # F8-05: las cabeceras de la respuesta
     script: list[str] = field(default_factory=list)  # F8-05: un resultado por llamada, antes
     usage: dict[str, Any] = field(default_factory=lambda: {"input_tokens": 9, "output_tokens": 9})
+    content: list[dict[str, Any]] | None = None  # F8-05b7: los bloques de la respuesta, si no texto
 
     def handle(self, method: str, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
         parts, body = urlsplit(url), self.body
@@ -70,8 +71,12 @@ class FakeAnthropic:
         if route not in {("GET", "/v1/models"), ("POST", "/v1/messages")} and name == "ok":
             name = "not_found"
         if name == "ok" and route == ("POST", "/v1/messages"):
-            text = {"type": "text", "text": f"respuesta {BODY_MARK}"}
-            reply = {"content": [text], "stop_reason": "end_turn", "usage": self.usage}
+            text = [{"type": "text", "text": f"respuesta {BODY_MARK}"}]
+            reply = {
+                "content": text if self.content is None else self.content,
+                "stop_reason": "end_turn",
+                "usage": self.usage,
+            }
             return 200, json.dumps({"id": "msg_fake", "type": "message", **reply}).encode()
         if name == "ok":
             data = [{"type": "model", "id": "claude-fake-model", "display_name": BODY_MARK}]
