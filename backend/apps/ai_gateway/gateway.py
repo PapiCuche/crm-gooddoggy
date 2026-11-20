@@ -155,6 +155,10 @@ def complete(ctx: TenantContext, request: LLMRequest, provider: str = "ANTHROPIC
         else:  # no salió, o un error sin uso: se libera
             settle(ctx, held, error.outcome, Decimal(0), None, started, error.request_id)
         raise GatewayError(error.outcome) from None
+    if not {call.name for call in reply.tool_calls} <= {tool.name for tool in request.tools}:
+        # F8-07d: una tool que no se le dio no se podría reenviar (`unknown_tool`): ilegible
+        settle(ctx, held, Outcome.PROVIDER_UNCERTAIN, None, None, started, reply.request_id)
+        raise GatewayError(Outcome.PROVIDER_UNAVAILABLE)
     cost = prices.cost(provider, model, reply.usage)
     if cost > 0:
         settle(ctx, held, Outcome.OK, cost, reply, started)

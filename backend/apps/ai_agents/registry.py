@@ -6,7 +6,8 @@ costos, márgenes, listas internas o ubicaciones, y con un permiso no sensible. 
 registro se cierra. `invoke` corre con el `ExecutionContext` de **la persona** en el
 `tenant_scope` de su organización: valida la entrada sin devolverla, exige el permiso, comprueba
 la forma de la salida y devuelve el sobre `{ok, data | error, meta}` para el modelo y la evidencia,
-que se queda en el servidor. El log lleva solo la tool, el código y la duración."""
+que se queda en el servidor (con sus `facts`, F8-07d: lo exacto que el modelo no ve, como el stock).
+El log lleva solo la tool, el código y la duración."""
 
 import json
 import re
@@ -64,10 +65,15 @@ class NotFound(Exception):  # noqa: N818 — lo ausente, lo ajeno y lo no public
     pass
 
 
+def _no_facts() -> Mapping[str, int | None]:
+    return MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class Found:
     data: dict[str, Any]
     subjects: tuple[UUID, ...]  # lo que respalda la evidencia (productos, variantes…)
+    facts: Mapping[str, int | None] = field(default_factory=_no_facts, repr=False)
 
 
 @dataclass(frozen=True)
@@ -77,6 +83,9 @@ class Evidence:  # en el servidor: no se serializa hacia el modelo
     tool: str
     as_of: datetime
     subjects: tuple[UUID, ...]
+    # Lo exacto para el vendedor (F8-07d: el stock): de solo lectura, fuera del sobre, del `meta`,
+    # del log y del `repr`.
+    facts: Mapping[str, int | None] = field(default_factory=_no_facts, repr=False)
 
 
 @dataclass(frozen=True)
@@ -90,6 +99,8 @@ class ToolSpec:
     permission: str
     kind: str  # el tipo de evidencia: CATALOG, PRICE, STOCK
     handler: Callable[[ExecutionContext, dict[str, Any]], Found] = field(repr=False)
+    # Antes de leer nada (F8-07d): una configuración inválida falla cerrado, sin consultas
+    precheck: Callable[[], object] = field(default=lambda: None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -208,6 +219,7 @@ def _now(ectx: ExecutionContext) -> datetime:
 def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocation:
     if spec is None or spec.risk is not Risk.READ or spec.audience is not Audience.PUBLIC_SAFE:
         return _failed("UNKNOWN_TOOL")
+    spec.precheck()
     try:
         args = _clean(spec, raw)
     except Invalid:
@@ -222,7 +234,8 @@ def _run(spec: ToolSpec | None, ectx: ExecutionContext, raw: object) -> Invocati
         return _failed("NOT_FOUND")
     if not _conforms(found.data, spec.output):  # un fallo nuestro: no sale nada
         raise RuntimeError(f"{spec.name}: la salida no tiene la forma declarada")
-    evidence = Evidence(new_id(), spec.kind, spec.name, as_of, found.subjects)
+    facts = MappingProxyType(dict(found.facts))  # una copia: el handler ya no la cambia
+    evidence = Evidence(new_id(), spec.kind, spec.name, as_of, found.subjects, facts)
     meta = {"evidence_id": str(evidence.evidence_id), "kind": spec.kind,
             "as_of": as_of.isoformat()}  # fmt: skip
     text = _dump({"ok": True, "data": found.data, "meta": meta})
