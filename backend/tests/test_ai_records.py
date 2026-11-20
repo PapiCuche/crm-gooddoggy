@@ -3,8 +3,10 @@
 solo pasa a NULL, con FORCE RLS; `records.save` todo o nada, con la organización y quien pide de
 la sesión y la auditoría solo con ids (ADR-034 §5, §7; ADR-011). Con PostgreSQL y `crm_app`."""
 
+import importlib
 import json
 import pathlib
+import pkgutil
 import tomllib
 from contextlib import nullcontext
 from types import MappingProxyType, SimpleNamespace
@@ -384,9 +386,26 @@ def test_the_models_only_read(world: SimpleNamespace) -> None:
                 write()
 
 
-def test_only_the_records_writer_may_import_the_audit_service() -> None:
-    """La excepción al contrato de ai_agents (F8-07e) es solo esta, y no crece."""
+# F8-08g (#1024) añade aquí, a propósito, el módulo del runtime que llama a `records.save`
+RUNTIME: frozenset[str] = frozenset()
+
+
+def test_only_the_records_writer_reaches_the_audit_service() -> None:
+    """`ignore_imports` quita la arista `records -> audit.services` de todo el grafo: el
+    contrato de F8-08b impide que las tools, el registro, los campos, los modelos, `apps` y las
+    migraciones importen `records`, y todo módulo de `apps.ai_agents` está en él, es `records` o
+    es del runtime (`RUNTIME`). Un módulo nuevo sin decidir hace fallar esta prueba."""
     config = tomllib.loads((pathlib.Path(__file__).parents[1] / "pyproject.toml").read_text())
     contracts = config["tool"]["importlinter"]["contracts"]
     (mine,) = [c for c in contracts if c.get("source_modules") == ["apps.ai_agents"]]
     assert mine["ignore_imports"] == ["apps.ai_agents.records -> apps.audit.services"]
+    (writer,) = [c for c in contracts if c.get("forbidden_modules") == ["apps.ai_agents.records"]]
+    assert writer["type"] == "forbidden" and not writer.get("ignore_imports")
+    package = importlib.import_module("apps.ai_agents")
+    found = {m.name for m in pkgutil.walk_packages(package.__path__, "apps.ai_agents.")}
+    covered = {
+        name for name in found
+        if any(name == s or name.startswith(s + ".") for s in writer["source_modules"])
+    }  # fmt: skip
+    assert found - covered - RUNTIME == {"apps.ai_agents.records"}
+    assert "records" not in pathlib.Path(str(package.__file__)).read_text()  # ni el paquete
