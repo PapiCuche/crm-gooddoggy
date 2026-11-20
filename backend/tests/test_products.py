@@ -274,3 +274,19 @@ def test_a_product_does_not_take_a_brand_being_deleted(world: Any) -> None:
     assert refused == ["brand_id"]
     with tenant_scope(ctx(world.a)):
         assert not Product.objects.exists()
+
+
+HIDDEN = "hola \U0001f600" + "\U000e0100" * 200  # F8-11: texto escondido en un emoji
+
+
+def test_a_stored_description_with_hidden_data_does_not_block_editing_other_fields(
+    ana: Client, world: Any
+) -> None:
+    product = create(ana).json()
+    with tenant_scope(ctx(world.a)):  # guardado antes de F8-11
+        Product.objects.filter(pk=product["id"]).update(description=HIDDEN)
+    path = f"{url()}{product['id']}/"
+    assert send(ana, "patch", path, {"name": "Collar rojo"}).status_code == 200
+    assert send(ana, "patch", path, {"description": HIDDEN}).status_code == 400
+    with tenant_scope(ctx(world.a)):
+        assert Product.objects.get(pk=product["id"]).description == HIDDEN
