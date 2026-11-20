@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
+from core.text import BLANK, shows_all
+
 CANONICAL = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
@@ -41,7 +43,9 @@ class Uuid:
 
 @dataclass(frozen=True)
 class Query:
-    """Una línea en NFKC, sin caracteres invisibles ni de marcado, de `low` a `high` caracteres."""
+    """Una línea en NFKC, sin caracteres invisibles ni de marcado, de `low` a `high` caracteres.
+    Invisible es un control, un carácter de formato o sin asignar, el braille vacío o lo que
+    `core.text.unhide` quitaría (F8-07e: rellenos hangul, CGJ, U+17B4, un selector sin su base)."""
 
     description: str
     low: int = 2
@@ -55,7 +59,8 @@ class Query:
         if type(value) is not str or len(value) > 4 * self.high:  # antes de normalizar nada
             raise Invalid
         text = unicodedata.normalize("NFKC", value)
-        if any(unicodedata.category(c) in HIDDEN or c in MARKUP for c in text):
+        hidden = any(unicodedata.category(c) in HIDDEN or c in MARKUP or c == BLANK for c in text)
+        if hidden or not shows_all(text):
             raise Invalid
         text = " ".join(text.split())
         if not self.low <= len(text) <= self.high:

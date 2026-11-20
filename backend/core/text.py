@@ -29,6 +29,9 @@ TONES = range(0x1F3FB, 0x1F400)  # los tonos de piel de los emoji
 PLAIN = "\ufe0e\ufe0f"  # VS15 y VS16: texto o emoji (log2 3 bits por emoji visible), sin tope
 # Lo que lleva VS15/16 sin ser un símbolo (So, Sm): los keycaps y ‼ ⁉ 〰 〽 ™ ℹ.
 EMOJI = frozenset("#*0123456789\u203c\u2049\u3030\u303d\u2122\u2139")
+# Las bases de un keycap (F8-07e): cifras de cualquier texto, así que VS15/16 tras ellas solo vale
+# si sigue la tecla U+20E3; si no, cada cifra escondería un selector sin tope.
+KEYS, KEYCAP = frozenset("#*0123456789"), "\u20e3"
 INFO = "\u2139"  # U+2139: una letra para Unicode, pero también un emoji con VS16
 BLANK = "\u2800"  # el braille vacío: un símbolo que no se ve
 _IDEOGRAPH = ("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH")
@@ -38,12 +41,14 @@ def _named(char: str, prefix: str | tuple[str, ...]) -> bool:
     return bool(char) and unicodedata.name(char, "").startswith(prefix)
 
 
-def _selector_fits(selector: str, base: str) -> bool | None:
+def _selector_fits(selector: str, base: str, after: str) -> bool | None:
     """`None` si `selector` no es un selector de variación; si lo es, ¿puede cambiar a `base`
-    (el carácter anterior, o vacío)? Python no trae la tabla de secuencias de variación de
-    Unicode: es una aproximación por clase de base."""
+    (el carácter anterior, o vacío; `after` es el siguiente)? Python no trae la tabla de
+    secuencias de variación de Unicode: es una aproximación por clase de base."""
     point = ord(selector)
     if selector in PLAIN:  # VS15/16: tras un símbolo o lo que puede ser emoji (keycap, ‼, ™, ℹ)
+        if base in KEYS:
+            return after == KEYCAP
         kind = unicodedata.category(base) if base else ""
         return base != BLANK and (kind in ("So", "Sm") or base in EMOJI)
     if 0xFE00 <= point <= 0xFE0F:  # VS1–14: emoji o texto (un corazón, un keycap) e ideogramas
@@ -101,7 +106,7 @@ def _hides(text: str) -> bool:
     `HIDDEN_MAX` selectores y ZWNJ/ZWJ."""
     hidden = marks = 0
     for at, char in enumerate(text):
-        fits = _selector_fits(char, text[at - 1] if at else "")
+        fits = _selector_fits(char, text[at - 1] if at else "", text[at + 1 : at + 2])
         joiner = char in JOINERS
         hidden += fits is not None or joiner
         marks = marks + 1 if _mark(char) else 0
@@ -178,7 +183,7 @@ def unhide(text: str) -> str:
         if _ignored(char):
             continue
         after, mark = ahead[at + 1], _mark(char)
-        fits = _selector_fits(char, kept[-1] if kept else "")
+        fits = _selector_fits(char, kept[-1] if kept else "", after)
         if char in JOINERS:
             glue = char == "\u200d" and _glues(kept, len(kept), after)
             keep, counted = glue or _joins(kept, len(kept), after), not glue
